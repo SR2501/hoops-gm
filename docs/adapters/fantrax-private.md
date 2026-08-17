@@ -118,3 +118,10 @@ a freshly stored cookie without a restart.
 Nothing here is committed. The Code gate's secret scan covers
 `FANTRAXUSER`-shaped values and `userSecretId`, and `.gitignore` already
 excludes `.env`, `data/` and `*.cookie`.
+
+**Note:** until Phase 2 the scanner could not detect a credential inside a JSON
+file at all — its patterns required the key to be immediately followed by `=`
+or `:`, and JSON puts a closing quote in between. Fixed, and pinned by a test
+that plants a credential in a real tracked fixture. It matters here because the
+recorded fixtures are tens of thousands of lines of committed JSON that nobody
+reads.

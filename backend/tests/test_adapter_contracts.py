@@ -468,6 +468,31 @@ class TestBoxScoreV3:
         assert participation.inactives_available is True
         assert participation.inactive_count == 0
 
+    @pytest.mark.parametrize("degraded_side", ["homeTeam", "awayTeam"])
+    def test_one_team_reporting_is_not_the_source_telling_us(self, degraded_side: str) -> None:
+        """A one-sided degradation is not a usable inactive list.
+
+        Recording it as "the source told us" while half the game's inactives
+        are missing is structurally the same failure as the V2 rot this column
+        exists to make impossible — a partial answer presented as a whole one.
+        """
+        payload = load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        payload["boxScoreSummary"][degraded_side].pop("inactives", None)
+        _, participation = parse_box_score_summary_v3(payload)
+        assert participation.inactives_available is False, "one team's list is not the game's list"
+
+    @pytest.mark.parametrize("broken", [None, {}, "none", 0])
+    def test_a_malformed_inactives_value_is_not_an_empty_list(self, broken: object) -> None:
+        """`null` or an object under the key is the source failing to answer.
+
+        The type check has to precede the flag, or a malformed value is
+        recorded as an honest "nobody was inactive".
+        """
+        payload = load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        payload["boxScoreSummary"]["homeTeam"]["inactives"] = broken
+        _, participation = parse_box_score_summary_v3(payload)
+        assert participation.inactives_available is False
+
     def test_inactive_players_are_absent_from_the_traditional_box_score(self) -> None:
         """Which is why both endpoints are needed, not one.
 

@@ -46,9 +46,12 @@ class ImportCounts:
     created: int = 0
     updated: int = 0
     skipped: int = 0
+    #: Rows retired from the current-join set but kept as history.
+    superseded: int = 0
 
     def __str__(self) -> str:
-        return f"{self.created} created, {self.updated} updated, {self.skipped} skipped"
+        base = f"{self.created} created, {self.updated} updated, {self.skipped} skipped"
+        return f"{base}, {self.superseded} superseded" if self.superseded else base
 
 
 # --------------------------------------------------------------------------
@@ -159,20 +162,37 @@ def import_resolutions(
 ) -> ImportCounts:
     """Write accepted crosswalk matches as ``player_external_ids`` rows.
 
-    Two properties are load-bearing and both concern *not* overwriting things.
+    Three properties are load-bearing, and all three concern *not* silently
+    keeping something stale.
 
     **A manual override is final.** If a human has adjudicated a row, an
-    automated pass leaves it alone. That is the entire purpose of the flag, and
-    a resolver that re-decides a human's call is worse than no resolver.
+    automated pass leaves it alone entirely — including superseding it. That is
+    the whole purpose of the flag, and a resolver that re-decides a human's
+    call is worse than no resolver.
 
-    **Only accepted matches are written by default.** A row that needs review
-    belongs in the report, not in the crosswalk. Writing a low-confidence guess
-    and relying on ``confidence`` to warn downstream assumes every consumer
-    checks it, and the one that does not is the one that corrupts a number.
+    **Only accepted matches become current.** A row that needs review belongs
+    in the report, not in the crosswalk. Writing a low-confidence guess and
+    relying on ``confidence`` to warn downstream assumes every consumer checks
+    it, and the one that does not is the one that corrupts a number.
 
-    The resolution's ``target`` is the canonical side, so its key is an NBA
-    person id and the row being created maps *this* source's identifier onto
-    the player that id already belongs to.
+    **A match that is no longer accepted is superseded, not left standing.**
+    ``current_for_source`` is set to ``NULL``, which retains the row as history
+    while removing it from every join. Without this the crosswalk was
+    append-only in the worst sense: a match the resolver had since *retracted*
+    survived with its old high confidence and evidence, looking authoritative
+    to every consumer, and there was no code path anywhere that could ever
+    clear the flag.
+
+    Supersession also prevents an abort. When a source re-issues an identifier
+    for a player who already has a current row, the lookup keyed on
+    ``external_id`` misses, a second row is created with the same
+    ``current_for_source``, and the flush violates
+    ``uq_player_external_ids_current`` — killing a multi-season backfill
+    mid-run. Fantrax reissuing identifiers is not hypothetical; identifier
+    instability is the premise of R7.
+
+    Pass **all** resolutions, not only the accepted ones, so retraction can be
+    detected. ``accepted_only`` still governs what is *written*.
     """
     counts = ImportCounts()
     nba_links = {
@@ -181,13 +201,50 @@ def import_resolutions(
             select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.NBA)
         )
     }
-    existing = {
-        row.external_id: row
-        for row in session.scalars(
-            select(PlayerExternalId).where(PlayerExternalId.source == source)
-        )
+    rows_for_source = list(
+        session.scalars(select(PlayerExternalId).where(PlayerExternalId.source == source))
+    )
+    existing = {row.external_id: row for row in rows_for_source}
+    #: The one current row per player, which is what the unique constraint
+    #: protects and therefore what a new row can collide with.
+    current_by_player = {
+        row.player_id: row for row in rows_for_source if row.current_for_source is not None
     }
 
+    resolutions = list(resolutions)
+
+    # Pass 1: supersede. Done before anything is written, and flushed, so that
+    # a re-issued identifier frees the slot its predecessor occupied before the
+    # replacement is inserted.
+    for resolution in resolutions:
+        row = existing.get(resolution.source_record.key)
+        if row is None or row.is_manual_override or row.current_for_source is None:
+            continue
+        if resolution.accepted:
+            continue
+        row.current_for_source = None
+        current_by_player.pop(row.player_id, None)
+        counts.superseded += 1
+
+    for resolution in resolutions:
+        if not resolution.accepted or resolution.best is None:
+            continue
+        player_id = nba_links.get(resolution.best.target.key)
+        if player_id is None:
+            continue
+        incumbent = current_by_player.get(player_id)
+        if (
+            incumbent is not None
+            and incumbent.external_id != resolution.source_record.key
+            and not incumbent.is_manual_override
+        ):
+            incumbent.current_for_source = None
+            current_by_player.pop(player_id, None)
+            counts.superseded += 1
+
+    session.flush()
+
+    # Pass 2: write.
     for resolution in resolutions:
         if accepted_only and not resolution.accepted:
             counts.skipped += 1
@@ -213,17 +270,16 @@ def import_resolutions(
             continue
 
         if link is None:
-            link = PlayerExternalId(
-                source=source,
-                external_id=external_id,
-                current_for_source=source.value,
-            )
+            link = PlayerExternalId(source=source, external_id=external_id)
             session.add(link)
+            existing[external_id] = link
             counts.created += 1
         else:
             counts.updated += 1
 
         link.player_id = player_id
+        link.current_for_source = source.value
+        current_by_player[player_id] = link
         link.external_name = resolution.source_record.raw_name
         link.normalized_name = resolution.source_record.normalized.key
         link.external_team = resolution.source_record.team
@@ -287,7 +343,8 @@ def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCo
 
 def import_box_scores(session: Session, records: Sequence[PlayerBoxScoreRecord]) -> ImportCounts:
     counts = ImportCounts()
-    games, players, teams = _lookup_maps(session)
+    maps = LookupMaps.load(session)
+    games, players, teams = maps.games, maps.players, maps.teams
     existing = {(row.player_id, row.game_id): row for row in session.scalars(select(PlayerGameLog))}
 
     for record in records:
@@ -330,7 +387,41 @@ def import_box_scores(session: Session, records: Sequence[PlayerBoxScoreRecord])
     return counts
 
 
-def import_participation(session: Session, participation: GameParticipation) -> ImportCounts:
+@dataclass(frozen=True)
+class LookupMaps:
+    """Natural-key → surrogate-key maps, built once and reused.
+
+    The participation backfill calls :func:`import_participation` once per
+    game — up to 1,230 times for a season. Rebuilding these inside it loaded
+    every game, every NBA external id and every team on each call: roughly
+    7,700 ORM objects per game, about 9.5 million instantiations per season,
+    and worse across a multi-season run because the games table keeps growing.
+    """
+
+    games: dict[str, int]
+    players: dict[str, int]
+    teams: dict[int, int]
+
+    @classmethod
+    def load(cls, session: Session) -> LookupMaps:
+        return cls(
+            games={g.nba_game_id: g.id for g in session.scalars(select(NbaGame))},
+            players={
+                row.external_id: row.player_id
+                for row in session.scalars(
+                    select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.NBA)
+                )
+            },
+            teams={t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))},
+        )
+
+
+def import_participation(
+    session: Session,
+    participation: GameParticipation,
+    *,
+    lookups: LookupMaps | None = None,
+) -> ImportCounts:
     """Write one game's participation ledger.
 
     ``inactive_list_available`` is written on **every** row of the game, not
@@ -339,10 +430,12 @@ def import_participation(session: Session, participation: GameParticipation) -> 
     date" needs to know whether a zero means nobody or means nothing was
     reported — the distinction ``BoxScoreSummaryV2`` erased for an entire
     season.
+
+    Pass ``lookups`` when importing many games; see :class:`LookupMaps`.
     """
     counts = ImportCounts()
-    games, players, teams = _lookup_maps(session)
-    game_id = games.get(participation.nba_game_id)
+    maps = lookups or LookupMaps.load(session)
+    game_id = maps.games.get(participation.nba_game_id)
     if game_id is None:
         counts.skipped += len(participation.records)
         return counts
@@ -355,8 +448,8 @@ def import_participation(session: Session, participation: GameParticipation) -> 
     }
 
     for record in participation.records:
-        player_id = players.get(str(record.nba_player_id))
-        team_id = teams.get(record.nba_team_id)
+        player_id = maps.players.get(str(record.nba_player_id))
+        team_id = maps.teams.get(record.nba_team_id)
         if player_id is None or team_id is None:
             counts.skipped += 1
             continue
@@ -365,6 +458,7 @@ def import_participation(session: Session, participation: GameParticipation) -> 
         if row is None:
             row = PlayerParticipation(player_id=player_id, game_id=game_id, team_id=team_id)
             session.add(row)
+            existing[player_id] = row
             counts.created += 1
         else:
             counts.updated += 1
@@ -379,15 +473,3 @@ def import_participation(session: Session, participation: GameParticipation) -> 
 
     session.flush()
     return counts
-
-
-def _lookup_maps(session: Session) -> tuple[dict[str, int], dict[str, int], dict[int, int]]:
-    games = {g.nba_game_id: g.id for g in session.scalars(select(NbaGame))}
-    players = {
-        row.external_id: row.player_id
-        for row in session.scalars(
-            select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.NBA)
-        )
-    }
-    teams = {t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))}
-    return games, players, teams

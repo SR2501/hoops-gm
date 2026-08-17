@@ -254,6 +254,170 @@ class TestCrosswalkImport:
         assert session.scalar(select(func.count()).select_from(Player)) == 0
 
 
+class TestSupersession:
+    """`current_for_source` must be clearable, or the crosswalk cannot retract.
+
+    Nothing in the codebase ever set it to `NULL` before this. Two consequences,
+    both tested here: a retracted match survived looking authoritative, and a
+    re-issued identifier violated `uq_player_external_ids_current` and aborted
+    the whole multi-season backfill.
+    """
+
+    @pytest.fixture
+    def seeded(self, session: Session) -> Session:
+        import_teams(session, parse_teams(load("nba_static_teams.json")))
+        session.add_all(
+            [
+                Player(id=1, full_name="Nikola Jokic", normalized_name="nikola jokic"),
+                Player(id=2, full_name="Luka Doncic", normalized_name="luka doncic"),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                PlayerExternalId(
+                    player_id=1,
+                    source=ExternalSource.NBA,
+                    current_for_source=ExternalSource.NBA.value,
+                    external_id="203999",
+                    match_method=MatchMethod.ANCHOR_ID,
+                    confidence=1.0,
+                ),
+                PlayerExternalId(
+                    player_id=2,
+                    source=ExternalSource.NBA,
+                    current_for_source=ExternalSource.NBA.value,
+                    external_id="1629029",
+                    match_method=MatchMethod.ANCHOR_ID,
+                    confidence=1.0,
+                ),
+            ]
+        )
+        session.flush()
+        return session
+
+    def _resolve(self, pairs: list[tuple[str, str, str]]) -> ResolutionReport:
+        """Resolve Fantrax records against two known NBA players."""
+        targets = [
+            ResolvableRecord.build(key="203999", name="Jokic, Nikola", team="DEN"),
+            ResolvableRecord.build(key="1629029", name="Doncic, Luka", team="LAL"),
+        ]
+        sources = [
+            ResolvableRecord.build(key=key, name=name, team=team) for key, name, team in pairs
+        ]
+        return IdentityResolver(targets).resolve(sources)
+
+    def test_a_retracted_match_is_superseded_not_left_standing(self, seeded: Session) -> None:
+        """A match the resolver no longer accepts must stop being joined.
+
+        Left current, it keeps its old high confidence and evidence and looks
+        authoritative to every Phase 3 and Phase 4 consumer.
+        """
+        first = self._resolve([("fx-jokic", "Nikola Jokic", "DEN")])
+        import_resolutions(seeded, first.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+
+        def stored() -> PlayerExternalId:
+            # Re-read rather than reuse a narrowed reference: asserting
+            # `== "fantrax"` and later `is None` on the same attribute makes
+            # mypy consider the second assertion impossible, which it is not.
+            return seeded.scalars(
+                select(PlayerExternalId).where(PlayerExternalId.external_id == "fx-jokic")
+            ).one()
+
+        assert stored().current_for_source == ExternalSource.FANTRAX.value
+
+        # The same identifier now carries a name that matches nobody.
+        second = self._resolve([("fx-jokic", "Someone Else Entirely", "DEN")])
+        counts = import_resolutions(seeded, second.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+
+        row = stored()
+        assert counts.superseded == 1
+        assert row.current_for_source is None, "a retracted match must leave the join set"
+        # Kept as history rather than deleted: the evidence for the original
+        # decision is what makes it re-adjudicable.
+        assert row.external_name == "Nikola Jokic"
+
+    def test_a_reissued_identifier_does_not_abort_the_backfill(self, seeded: Session) -> None:
+        """The failure mode that killed a multi-season run.
+
+        A source re-issuing an id means the `external_id` lookup misses, a
+        second row is created with the same `current_for_source`, and the flush
+        violates `uq_player_external_ids_current`. `backfill.py` does not catch
+        `IntegrityError`, so the whole run dies.
+        """
+        first = self._resolve([("fx-old-id", "Nikola Jokic", "DEN")])
+        import_resolutions(seeded, first.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+
+        # Same player, new Fantrax identifier.
+        second = self._resolve([("fx-new-id", "Nikola Jokic", "DEN")])
+        counts = import_resolutions(seeded, second.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+
+        assert counts.created == 1
+        assert counts.superseded == 1
+        rows = {
+            row.external_id: row
+            for row in seeded.scalars(
+                select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.FANTRAX)
+            )
+        }
+        assert rows["fx-old-id"].current_for_source is None
+        assert rows["fx-new-id"].current_for_source == ExternalSource.FANTRAX.value
+
+    def test_at_most_one_current_row_per_player_per_source(self, seeded: Session) -> None:
+        """The invariant `uq_player_external_ids_current` exists to protect.
+
+        Without it the crosswalk fans out and every aggregate through it
+        double-counts.
+        """
+        for identifier in ("fx-a", "fx-b", "fx-c"):
+            report = self._resolve([(identifier, "Nikola Jokic", "DEN")])
+            import_resolutions(seeded, report.all_resolutions(), source=ExternalSource.FANTRAX)
+            seeded.flush()
+
+        current = [
+            row
+            for row in seeded.scalars(
+                select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.FANTRAX)
+            )
+            if row.current_for_source is not None
+        ]
+        assert len(current) == 1
+        assert current[0].external_id == "fx-c"
+
+    def test_a_manual_override_is_never_superseded(self, seeded: Session) -> None:
+        """A human decision survives retraction as well as re-matching."""
+        first = self._resolve([("fx-jokic", "Nikola Jokic", "DEN")])
+        import_resolutions(seeded, first.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+        row = seeded.scalars(
+            select(PlayerExternalId).where(PlayerExternalId.external_id == "fx-jokic")
+        ).one()
+        row.is_manual_override = True
+        row.match_method = MatchMethod.MANUAL_OVERRIDE
+        seeded.flush()
+
+        second = self._resolve([("fx-jokic", "Someone Else Entirely", "DEN")])
+        counts = import_resolutions(seeded, second.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+        seeded.refresh(row)
+
+        assert counts.superseded == 0
+        assert row.current_for_source == ExternalSource.FANTRAX.value
+        assert row.match_method is MatchMethod.MANUAL_OVERRIDE
+
+    def test_a_stable_match_is_not_needlessly_superseded(self, seeded: Session) -> None:
+        report = self._resolve([("fx-jokic", "Nikola Jokic", "DEN")])
+        import_resolutions(seeded, report.all_resolutions(), source=ExternalSource.FANTRAX)
+        seeded.flush()
+        counts = import_resolutions(seeded, report.all_resolutions(), source=ExternalSource.FANTRAX)
+        assert counts.superseded == 0
+        assert counts.updated == 1
+
+
 class TestGameAndBoxScoreImport:
     def test_games_import_and_are_idempotent(self, session: Session) -> None:
         import_teams(session, parse_teams(load("nba_static_teams.json")))

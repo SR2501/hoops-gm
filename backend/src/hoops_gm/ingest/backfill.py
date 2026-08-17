@@ -45,6 +45,7 @@ from hoops_gm.ingest.errors import SourceError
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
 from hoops_gm.ingest.importers import (
     ImportCounts,
+    LookupMaps,
     import_box_scores,
     import_games,
     import_nba_players,
@@ -146,7 +147,12 @@ def build_crosswalk(
     report = IdentityResolver(targets).resolve(sources)
 
     result.steps["fantrax crosswalk"] = import_resolutions(
-        session, report.accepted, source=ExternalSource.FANTRAX
+        session,
+        # All resolutions, not only the accepted ones: a match the resolver has
+        # since retracted must be superseded, and that cannot be detected from
+        # the accepted set alone.
+        report.all_resolutions(),
+        source=ExternalSource.FANTRAX,
     )
 
     # The three cross-reference identifiers ride along on an accepted match.
@@ -160,7 +166,7 @@ def build_crosswalk(
     ):
         aliased = [
             _with_key(resolution, value)
-            for resolution in report.accepted
+            for resolution in report.all_resolutions()
             if (player := by_fantrax_id.get(resolution.source_record.key)) is not None
             and (value := getattr(player, attribute))
         ]
@@ -222,6 +228,11 @@ def backfill_season(
         f"expect roughly {len(selected) * 2 * 1.1 / 60:.0f} minutes"
     )
 
+    # Built once. Inside the loop this reloaded every game, every NBA external
+    # id and every team per game — roughly 7,700 ORM objects each, ~9.5 million
+    # per season, and worse across a multi-season run as the games table grows.
+    lookups = LookupMaps.load(session)
+
     for index, game in enumerate(selected, start=1):
         try:
             _, dressed = parse_box_score_traditional_v3(nba.box_score_traditional(game.nba_game_id))
@@ -234,7 +245,9 @@ def backfill_season(
             # while the per-game endpoint is being fetched anyway.
             if summary_game is not None and summary_game.tipoff_utc is not None:
                 import_games(session, [replace(game, tipoff_utc=summary_game.tipoff_utc)])
-            counts = import_participation(session, combine_game_participation(dressed, summary))
+            counts = import_participation(
+                session, combine_game_participation(dressed, summary), lookups=lookups
+            )
             totals.created += counts.created
             totals.updated += counts.updated
             totals.skipped += counts.skipped

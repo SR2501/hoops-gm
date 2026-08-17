@@ -7,13 +7,18 @@ name = "hoops-gm-backend"
 version = "0.1.0"
 description = "hoops-gm backend: FastAPI service, persistence and REST/SSE contracts"
 readme = "README.md"
-# Raised from ">=3.11" in Phase 2, because ">=3.11" had become untrue rather
-# than merely untested. `nba_api` pulls in pandas, which pulls in numpy, and
-# numpy 2.5 declares `requires-python >= 3.12` — so the `ingest` extra cannot
-# be installed on 3.11, and the test suite imports the ingest package. CI has
-# only ever run 3.12 and local development is on 3.14; nothing has ever
-# exercised 3.11. Declaring support we cannot install and do not test is the
-# same class of unverified guarantee this project keeps getting caught by.
+# Raised from ">=3.11" in Phase 2.
+#
+# **The original justification for this was wrong**, and is corrected here
+# rather than quietly deleted: it claimed the `ingest` extra could not install
+# on 3.11 because numpy 2.5 requires 3.12. numpy's pin in `nba_api` is
+# version-gated (`numpy>=1.26 ; python_version < "3.13"`), so pip would have
+# resolved an older numpy on 3.11 perfectly well. Caught in review.
+#
+# The real reasons, both checkable: the package now uses PEP 695 type-parameter
+# syntax (`def portable_enum[E: enum.Enum]`), which is 3.12+ only; and CI has
+# only ever run 3.12 while local development is on 3.14, so 3.11 support was
+# never a tested claim to begin with.
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [

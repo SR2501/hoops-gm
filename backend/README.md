@@ -8,10 +8,13 @@ anything here.
 
 ## Requirements
 
-Python **3.12 or newer**. Raised from 3.11 in Phase 2: `nba_api` pulls in
-pandas, which pulls in numpy, and numpy 2.5 declares `requires-python >= 3.12`,
-so the `ingest` extra cannot be installed on 3.11 and the test suite imports
-it. Nothing has ever run on 3.11 — CI has only used 3.12.
+Python **3.12 or newer**. The package uses PEP 695 type-parameter syntax, and
+CI has only ever run 3.12 while local development is on 3.14 — 3.11 was never
+a tested claim.
+
+(An earlier version of this README said the `ingest` extra could not install on
+3.11 because of numpy. That was wrong: `nba_api`'s numpy pin is version-gated,
+so pip would have resolved an older numpy. Corrected in review.)
 
 ## Setup
 

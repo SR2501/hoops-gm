@@ -20,7 +20,7 @@ from hoops_gm.ingest.errors import (
     SourceRejected,
     SourceUnavailable,
 )
-from hoops_gm.ingest.rawstore import RawPayloadRef, RawPayloadStore
+from hoops_gm.ingest.rawstore import RawPayloadRef, RawPayloadStore, redact_params
 from hoops_gm.ingest.retry import RetryPolicy, call_with_retry
 from hoops_gm.ingest.throttle import RateLimiter
 
@@ -35,4 +35,5 @@ __all__ = [
     "SourceRejected",
     "SourceUnavailable",
     "call_with_retry",
+    "redact_params",
 ]

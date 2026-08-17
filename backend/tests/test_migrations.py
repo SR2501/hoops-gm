@@ -24,8 +24,10 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from hoops_gm.db.base import Base, enum_check_constraint_names
+from hoops_gm.db.models.enums import ExternalSource, FieldEvidence
 
 
 @pytest.fixture
@@ -123,7 +125,7 @@ def test_the_migration_creates_the_enum_check_constraints(
     assert "regular" in definitions, "no CHECK lists the permitted season types"
 
 
-def test_every_enum_member_is_accepted_by_a_migrated_database(
+def test_every_enum_column_has_its_own_check_listing_every_member(
     alembic_config: Config, migration_url: str
 ) -> None:
     """Phase 2 review finding: adding an enum member produces no migration.
@@ -141,35 +143,196 @@ def test_every_enum_member_is_accepted_by_a_migrated_database(
     by ``Base.metadata.create_all`` — which is what the rest of this suite
     uses. Green tests, broken production, no drift reported.
 
-    So this compares the two paths directly, on the real database, for every
-    enum member. The next person to add one finds out here.
+    **Scoped per constraint, not per table.** The first version of this test
+    joined every CHECK on a table into one string and searched that, so it only
+    proved a literal appeared *somewhere* on the table. ``name_evidence``,
+    ``team_evidence``, ``position_evidence`` and ``suffix_evidence`` all carry
+    ``{agree, disagree, unknown}`` — so any three of those four CHECKs could
+    have been missing from the migration entirely and it would still have
+    passed. Those four columns are the R7 evidence mechanism.
     """
     command.upgrade(alembic_config, "head")
 
     engine = create_engine(migration_url)
     try:
         inspector = inspect(engine)
-        by_table_column: dict[tuple[str, str], set[str]] = {}
+        problems: dict[str, str] = {}
         for table in Base.metadata.tables.values():
-            reflected = " ".join(
-                str(constraint.get("sqltext", ""))
-                for constraint in inspector.get_check_constraints(table.name)
-            )
+            constraints = {
+                str(c.get("name") or ""): str(c.get("sqltext", ""))
+                for c in inspector.get_check_constraints(table.name)
+            }
             for column in table.columns:
-                enum_type = getattr(column.type, "enums", None)
-                if not enum_type:
+                members = getattr(column.type, "enums", None)
+                type_name = getattr(column.type, "name", None)
+                if not members or not type_name:
                     continue
-                missing = {value for value in enum_type if f"'{value}'" not in reflected}
+
+                # The naming convention makes this deterministic:
+                # ck_<table>_<enum type name>.
+                expected = f"ck_{table.name}_{type_name}"
+                sqltext = constraints.get(expected)
+                where = f"{table.name}.{column.name}"
+                if sqltext is None:
+                    problems[where] = (
+                        f"no CHECK named {expected!r}; the table has {sorted(constraints)}"
+                    )
+                    continue
+                if column.name not in sqltext:
+                    problems[where] = f"{expected!r} does not constrain this column: {sqltext!r}"
+                    continue
+                missing = sorted(v for v in members if f"'{v}'" not in sqltext)
                 if missing:
-                    by_table_column[(table.name, column.name)] = missing
+                    problems[where] = f"{expected!r} omits {missing}"
     finally:
         engine.dispose()
 
-    assert not by_table_column, (
-        "these enum values are declared on the models but are not permitted by "
-        f"the migrated database's CHECK constraints: {by_table_column}. "
-        "Autogenerate does not detect a widened enum — the migration has to "
-        "drop and recreate the CHECK by hand, as 0002 does."
+    assert not problems, (
+        "enum columns whose migrated CHECK does not match the model: "
+        f"{problems}. Autogenerate does not detect a widened enum — the "
+        "migration has to drop and recreate the CHECK by hand, as 0002 does."
+    )
+
+
+def test_a_migrated_database_accepts_every_external_source_and_rejects_others(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The behavioural version of the test above: insert, do not inspect.
+
+    Reflection proves a constraint's *text*. This proves its *effect*, on the
+    table where getting it wrong is most expensive — and through raw SQL, so it
+    bypasses SQLAlchemy's Python-side enum validation. That validation is what
+    made the original Phase 1 enum bug invisible: the ORM rejected bad values
+    before they ever reached a database that would have accepted them.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO players (id, full_name, normalized_name, status, "
+                    "created_at, updated_at) VALUES (1, 'X', 'x', 'active', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+
+        insert = text(
+            "INSERT INTO player_external_ids (player_id, source, external_id, "
+            "confidence, match_method, is_manual_override, name_evidence, "
+            "team_evidence, position_evidence, suffix_evidence, created_at, "
+            "updated_at) VALUES (1, :source, :external_id, 1.0, 'fuzzy', false, "
+            ":evidence, 'unknown', 'unknown', 'unknown', CURRENT_TIMESTAMP, "
+            "CURRENT_TIMESTAMP)"
+        )
+        bad_insert = text(
+            "INSERT INTO player_external_ids (player_id, source, external_id, "
+            "confidence, match_method, is_manual_override, name_evidence, "
+            "team_evidence, position_evidence, suffix_evidence, created_at, "
+            "updated_at) VALUES (1, :source, :external_id, 1.0, 'fuzzy', false, "
+            ":name_evidence, :team_evidence, :position_evidence, :suffix_evidence, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+
+        for index, source in enumerate(ExternalSource):
+            with engine.begin() as connection:
+                connection.execute(
+                    insert,
+                    {
+                        "source": source.value,
+                        "external_id": f"ext-{index}",
+                        "evidence": FieldEvidence.AGREE.value,
+                    },
+                )
+
+        for evidence in FieldEvidence:
+            with engine.begin() as connection:
+                connection.execute(
+                    insert,
+                    {
+                        "source": ExternalSource.MANUAL.value,
+                        "external_id": f"ev-{evidence.value}",
+                        "evidence": evidence.value,
+                    },
+                )
+
+        # And the constraint must actually refuse something — in every evidence
+        # column, not just the first. A bogus value rejected only by
+        # `name_evidence` would leave the other three CHECKs untested, which is
+        # the exact shape of the bug this pair of tests replaced.
+        bad_cases: list[tuple[str, dict[str, str]]] = [
+            ("bad-source", {"source": "espn-totally-bogus"}),
+            ("bad-name", {"name_evidence": "maybe"}),
+            ("bad-team", {"team_evidence": "maybe"}),
+            ("bad-position", {"position_evidence": "maybe"}),
+            ("bad-suffix", {"suffix_evidence": "maybe"}),
+        ]
+        for external_id, override in bad_cases:
+            params = {
+                "source": ExternalSource.NBA.value,
+                "external_id": external_id,
+                "name_evidence": FieldEvidence.AGREE.value,
+                "team_evidence": FieldEvidence.UNKNOWN.value,
+                "position_evidence": FieldEvidence.UNKNOWN.value,
+                "suffix_evidence": FieldEvidence.UNKNOWN.value,
+                **override,
+            }
+            with pytest.raises(IntegrityError), engine.begin() as connection:
+                connection.execute(bad_insert, params)
+    finally:
+        engine.dispose()
+
+
+def test_the_evidence_default_is_pessimistic_in_a_migrated_database(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The pessimistic default has to hold on the paths that bypass Python.
+
+    ``name_evidence`` and friends default to ``unknown`` at the **server**, not
+    only in Python, so a raw ``text()`` insert, a data migration or a bulk load
+    cannot silently claim evidence nobody gathered. That is the same property
+    ``confidence`` and ``match_method`` already have, and the same reasoning as
+    the Phase 1 enum-CHECK finding: a guarantee that only exists in the ORM is
+    not a guarantee about the database.
+
+    Asserted here on the *migrated* schema, and in ``test_schema.py`` on the
+    ``create_all`` one, because those are two different code paths and Phase 2
+    already found them disagreeing once.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO players (id, full_name, normalized_name, status, "
+                    "created_at, updated_at) VALUES (1, 'X', 'x', 'active', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            # Every evidence column omitted on purpose.
+            connection.execute(
+                text(
+                    "INSERT INTO player_external_ids (player_id, source, external_id, "
+                    "confidence, match_method, is_manual_override, created_at, "
+                    "updated_at) VALUES (1, 'nba', 'x1', 0.0, 'fuzzy', false, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            row = connection.execute(
+                text(
+                    "SELECT name_evidence, team_evidence, position_evidence, "
+                    "suffix_evidence FROM player_external_ids WHERE external_id = 'x1'"
+                )
+            ).one()
+    finally:
+        engine.dispose()
+
+    assert list(row) == [FieldEvidence.UNKNOWN.value] * 4, (
+        "a caller that states no evidence must claim none; anything else "
+        "invents the very thing these columns exist to make explicit"
     )
 
 
@@ -193,6 +356,12 @@ def test_models_and_migrations_agree(alembic_config: Config, migration_url: str)
                 connection,
                 opts={
                     "compare_type": True,
+                    # Matches alembic/env.py. Without it this test was strictly
+                    # weaker than `alembic check` in exactly the dimension the
+                    # pessimistic-evidence-default guarantee lives in: a server
+                    # default present in the models and absent from the
+                    # migration would not have been reported.
+                    "compare_server_default": True,
                     "target_metadata": Base.metadata,
                     "include_object": _include,
                 },

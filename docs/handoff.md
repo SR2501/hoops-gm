@@ -220,3 +220,58 @@ Concretely: game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and is a 
 - Everything else in the Phase 2 entry above still stands, including that none of it is CI-verified.
 
 **Next:** unchanged. `quant` should note that `player_participation` rows join to `nba_games.game_date`, so this bug would have shifted a day's participation onto the wrong date for late games — which is exactly the kind of error the availability model would have absorbed as signal.
+
+---
+
+## 2026-08-17 — data-engineer — Second correction: the secret scanner could not see JSON
+
+**Changed:** Made every key pattern in `scripts/check_no_secrets.py` tolerate a closing quote before its separator, and added tests — including one that plants a credential in a real tracked fixture and runs the real entry point. Corrected in place for the same reason as the entry above: PR #4 is unmerged.
+
+**What I claimed and got wrong.** In the Phase 2 entry I predicted that the reviewer's most likely attack — planting a token in a fixture file — would fail, reasoning that `is_code_reference` only suppresses lines with no quotes outside a comment, and every line in a JSON fixture is quoted. I went to try it myself rather than wait.
+
+**The reasoning was correct and completely irrelevant.** The suppression was never reached, because **the patterns themselves never matched JSON**. Every key pattern required the key to be immediately followed by `=` or `:`, and JSON writes `"userSecretId": "value"` — a closing quote in between. Verified end to end: a credential planted in `nba_static_teams.json` and scanned with the real entry point passed **cleanly**.
+
+**This is not a hole I introduced. It is older than my change, and my change made it matter.** The scanner has never been able to detect a secret in any JSON file. That was survivable when the repository contained almost no committed JSON. Phase 2 adds **59,000 lines of it**, so a pre-existing blind spot became a live exposure in the same PR that widened it — and the fixtures are precisely the files nobody reads.
+
+**Now true:** JSON, YAML and query-string forms are all caught; five smuggling shapes are pinned by tests; the end-to-end test plants a credential in a tracked fixture, asserts exit code 1, and restores the file in a `finally`. Zero false positives on the legitimate credential-handling lines that motivated the original change. 341 tests.
+
+**Could not verify:**
+- **That the scanner now catches everything of this class.** I attacked it with fifteen shapes I could think of. Base64 blobs, split string concatenation, a URL-encoded value and a secret spanning two lines are all still invisible, and a line-oriented regex scanner cannot see the last of those at all. It remains deliberately dumb; the compensating controls are `.gitignore`, the `.env` path rule, and encrypting the cookie at rest.
+- **Whether any other pattern has the same structural blindness in a format I did not try.** I checked JSON and YAML because those are what this repository commits.
+
+**The lesson, which is the same one as the entry above and worth stating twice:** I reasoned confidently about the mechanism I had changed, and was right about it. Being right about the part you touched says nothing about the part you did not. The line-level tests I wrote would all have passed while the scanner was blind, because I wrote them against the shapes already in my head — only planting a credential in a real file and running the real entry point could have failed for the right reason.
+
+**Next:** unchanged.
+
+---
+
+## 2026-08-17 — data-engineer — Fourth correction: eight review findings, one critical
+
+**Changed:** Fixed all eight findings from the independent review of PR #4. Corrected in place, PR still unmerged. 381 tests.
+
+**What I claimed and was wrong about, in the order it matters:**
+
+1. **I made the secret scanner worse than the allowlist I refused to use.** `is_code_reference` searched the **whole line**, so any `name=value` or `key: value` fragment anywhere on it — including in a trailing comment — suppressed a real literal elsewhere on the same line. Executed both versions with the pattern list held constant: **eleven credential shapes were reported before my change and missed after it** — a session cookie or an API key assigned on a line that also carries a `# rotate with: ...` comment, for instance. It was also applied to the private-key and AWS patterns, which are not assignments at all. (The eleven are enumerated as test cases in `test_secret_scan.py`; they are not repeated here, because the scanner correctly reports its own handoff entry if they are.)
+
+   My reasoning for suppression over an allowlist was endorsed and remains right. The implementation did not deliver it: an allowlist would have blinded the scanner in three files; this blinded it on any line containing a second `=` or `:`. **And my own tests could not catch it**, because every "must still be caught" case I wrote was a bare single-assignment line with no comment — the one shape that still worked.
+   Suppression is now anchored to the **matched value**, never the line; opt-in per rule, so the two non-assignment patterns can never be silenced; and `scan_line()` is a single path that `main()` and the tests both call, so a test cannot pass while the real scan is blind. All eleven lines are now test cases.
+
+2. **`userSecretId` was written in cleartext to the raw-payload index**, which is append-only, never pruned, kept forever by design, and the artefact you would zip up to diagnose a problem — sitting in the same `data/` directory as the cookie I had gone to the trouble of encrypting. Redacted in `_append_index` while `request_key()` still hashes the real value, so cache identity is unchanged.
+
+3. **The test I wrote to close the widened-enum hole was table-scoped, not column-scoped.** It joined every CHECK on a table into one string, so it only proved a literal appeared *somewhere*. All four evidence columns carry `{agree, disagree, unknown}` — **any three of the four CHECKs could have been missing entirely and it would have passed.** I proved that by sabotaging the migration to emit only one of the four: the old test passed, the new one names all three missing constraints. Now scoped per constraint by name, plus a behavioural test that inserts every enum member through raw SQL and requires a bogus value to be rejected in each of the four columns.
+
+4. **The crosswalk had no supersession path at all.** Nothing anywhere set `current_for_source` to `NULL`. A match the resolver had since *retracted* survived with its old confidence and evidence, looking authoritative; and a re-issued identifier created a second current row, violating `uq_player_external_ids_current` and aborting a whole multi-season backfill, since `backfill.py` does not catch `IntegrityError`. Fixed with an explicit supersede-then-write pass; the backfill now passes **all** resolutions, because retraction cannot be detected from the accepted set alone. Five tests, including the id re-issue.
+
+**Also fixed:** the `gameEt` fallback now converts the instant to Eastern rather than truncating UTC (finding 5 was otherwise already fixed in `7feb92c`, which the review predated); `inactives_available` now requires **both** teams to report, and type-checks before setting the flag, so a one-sided or malformed answer is not recorded as "the source told us"; `compare_server_default=True` added to the in-suite drift test, which was strictly weaker than `alembic check` in exactly the dimension the pessimistic-default guarantee lives in, plus a test of that default on the migrated path; and the participation backfill builds its lookup maps once instead of ~9.5 million ORM instantiations per season.
+
+**A correction to a correction:** my stated reason for `requires-python >= 3.12` was false. I claimed the `ingest` extra could not install on 3.11 because numpy 2.5 requires 3.12; `nba_api`'s pin is version-gated (`numpy>=1.26 ; python_version < "3.13"`), so pip would have resolved an older numpy. The bump is still right — the package now uses PEP 695 syntax and CI has only ever run 3.12 — but the justification I wrote was another unverified claim, inside an entry complaining about unverified claims.
+
+**Could not verify:**
+- **Still nothing against Postgres.** The reviewer found no defect in migration `0002` and pre-empted the failure they expected, but was explicit that this is static analysis and that they are the fourth person to believe something about that file without running it. I am the fifth. `migration_url` honours `TEST_DATABASE_URL`, so the Postgres job will genuinely execute it once billing is fixed. **That job is the thing to restore first.**
+- **That the scanner now catches everything of this class.** I attacked it with twenty-six shapes across two rounds. Base64 blobs, split string concatenation, URL-encoded values and a secret spanning two lines remain invisible, and a line-oriented regex scanner cannot see the last of those at all.
+- **The supersession path has never run against real data.** Five unit tests exercise it; no live crosswalk rebuild has retracted a real match or seen Fantrax re-issue a real identifier.
+- Everything in the entries above still stands, including that none of it is CI-verified.
+
+**The pattern across all four corrections, since it is now unmistakable.** Every one was found by executing rather than reading — the V2 inactives rot by bisecting, the `gameEt` lie by printing fixture values, the enum divergence by inserting into a migrated database, the scanner regression by running both versions side by side. And in every case my *reasoning* about the mechanism I had just touched was correct; what was wrong was a mechanism I had assumed and not exercised. **Confidence about the part you changed says nothing about the part you did not.**
+
+**Next:** unchanged.

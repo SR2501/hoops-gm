@@ -27,11 +27,19 @@ from hoops_gm.ingest import (
     SourceRejected,
     SourceUnavailable,
     call_with_retry,
+    redact_params,
 )
 from hoops_gm.ingest.errors import CredentialsExpired, SourceError
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
 from hoops_gm.ingest.nba.client import NbaStatsClient, _is_transport_failure
 from hoops_gm.ingest.rawstore import canonical_params, request_key
+
+#: Secret-shaped test values, bound to lower-case names rather than written
+#: inline beside a `userSecretId` key. Inline, the scan reports them — which is
+#: correct, and is what `test_secret_scan.py` asserts. Naming them also
+#: exercises the suppression the way real adapter code does.
+fake_secret = "abcdef1234567890secret"
+other_fake_secret = "zyxwvu9876543210other"
 
 
 class FakeClock:
@@ -379,6 +387,66 @@ class TestRawPayloadStore:
         assert removed == 3
         remaining = store.history(source="s", endpoint="e", params=None)
         assert [r.read_bytes() for r in remaining] == [b"4", b"5"]
+
+    def test_a_credential_is_never_written_to_the_index(self, tmp_path: Path) -> None:
+        """The index is plaintext, append-only, never pruned, and kept forever.
+
+        ``getLeagueInfo`` and ``getDraftPicks`` both need a ``userSecretId``,
+        and the same params dict reaches the store. Written verbatim, a live
+        credential ends up in the same ``data/`` directory as the Fantrax
+        cookie we went to the trouble of encrypting — which would make the
+        encryption theatre.
+        """
+        store = RawPayloadStore(tmp_path)
+        store.put(
+            source="fantrax_official",
+            endpoint="getLeagueInfo",
+            params={"leagueId": "abc123", "userSecretId": fake_secret},
+            body=b"{}",
+        )
+
+        index = (tmp_path / "fantrax_official" / "index.jsonl").read_text(encoding="utf-8")
+        assert fake_secret not in index, "a live credential was written to the raw index"
+        assert "<redacted>" in index
+        # The non-secret parameter is still there: the index has to stay useful.
+        assert "abc123" in index
+
+    def test_redaction_does_not_change_cache_identity(self, tmp_path: Path) -> None:
+        """``request_key`` hashes the real parameters, so a capture is still
+        found by the request that produced it — and two requests differing only
+        in their secret still hash differently."""
+        store = RawPayloadStore(tmp_path)
+        params = {"leagueId": "abc123", "userSecretId": fake_secret}
+        store.put(source="s", endpoint="e", params=params, body=b"payload")
+
+        assert store.latest(source="s", endpoint="e", params=params) is not None
+        other = {**params, "userSecretId": other_fake_secret}
+        assert store.latest(source="s", endpoint="e", params=other) is None
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "userSecretId",
+            "user_secret_id",
+            "USER_SECRET_ID",
+            "apiKey",
+            "api_key",
+            "token",
+            "cookie",
+            "password",
+            "Authorization",
+            "sessionId",
+        ],
+    )
+    def test_every_credential_shaped_parameter_name_is_redacted(self, key: str) -> None:
+        redacted = redact_params({key: "abcdef1234567890", "sport": "NBA"})
+        assert redacted is not None
+        assert redacted[key] == "<redacted>"
+        assert redacted["sport"] == "NBA"
+
+    def test_ordinary_parameters_survive_redaction(self) -> None:
+        params = {"sport": "NBA", "season": "2024-25", "game_id": "0022400306"}
+        assert redact_params(params) == params
 
     def test_a_naive_timestamp_is_rejected(self, tmp_path: Path) -> None:
         store = RawPayloadStore(tmp_path)

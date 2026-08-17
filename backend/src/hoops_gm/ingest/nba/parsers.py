@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.nba.models import (
@@ -45,6 +46,11 @@ from hoops_gm.ingest.nba.models import (
 )
 
 SOURCE = "nba_stats"
+
+#: The NBA publishes its schedule in Eastern time, and ``gameEt`` is Eastern
+#: despite its ``Z`` suffix. A named zone rather than a fixed -5 offset,
+#: because the season crosses a daylight saving boundary in March.
+NBA_LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 
 
 # --------------------------------------------------------------------------
@@ -646,15 +652,19 @@ def _local_game_date(body: dict[str, Any], tipoff: datetime | None, *, endpoint:
     :func:`as_utc_datetime`, which would take the ``Z`` at face value and
     produce an instant five hours wrong.
 
-    Falls back to the UTC date only when ``gameEt`` is absent — better than
-    failing, but the wrong day for late games, so it is a last resort rather
-    than a default.
+    Falls back to the tip-off instant **converted to Eastern** only when
+    ``gameEt`` is absent — never to its raw UTC date, which is the bug this
+    function exists to prevent.
     """
     local = body.get("gameEt")
     if local:
         return as_date(local, endpoint=endpoint)
     if tipoff is not None:
-        return tipoff.date()
+        # Last resort, and still converted rather than truncated: the UTC date
+        # of a 7:30pm Eastern tip-off is the following day. `ZoneInfo` rather
+        # than a fixed -5 offset, because the NBA season crosses a daylight
+        # saving boundary in March.
+        return tipoff.astimezone(NBA_LOCAL_TIMEZONE).date()
     raise SourceContractError(
         "no gameEt and no gameTimeUTC, so the game has no date",
         source=SOURCE,
@@ -692,18 +702,24 @@ def parse_box_score_summary_v3(payload: Any) -> tuple[NbaGameRecord | None, Game
         raise SourceContractError("no gameId", source=SOURCE, endpoint=endpoint)
 
     records: list[PlayerParticipationRecord] = []
-    offered = False
+    #: Set only when **both** teams offered an inactives key. A one-sided
+    #: degradation would otherwise be recorded as "the source told us" while
+    #: half the game's inactives are missing — structurally the same failure as
+    #: the V2 rot this column exists to make impossible.
+    sides_offering = 0
+    sides_seen = 0
     for side in ("homeTeam", "awayTeam"):
         team = body.get(side)
         if not isinstance(team, dict):
             continue
+        sides_seen += 1
         team_id = as_int(team.get("teamId"))
-        if "inactives" not in team:
-            continue
-        offered = True
         inactives = team.get("inactives")
+        # The type check precedes the flag: a `null` or an object under this
+        # key is the source failing to answer, not answering "nobody".
         if not isinstance(inactives, list):
             continue
+        sides_offering += 1
         for entry in inactives:
             if not isinstance(entry, dict):
                 continue
@@ -726,6 +742,8 @@ def parse_box_score_summary_v3(payload: Any) -> tuple[NbaGameRecord | None, Game
                     player_name=name or None,
                 )
             )
+
+    offered = sides_seen == 2 and sides_offering == 2
 
     home = body.get("homeTeam")
     away = body.get("awayTeam")

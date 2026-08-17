@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 #: Characters allowed in a path segment derived from a source or endpoint name.
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -64,6 +64,54 @@ def canonical_params(params: dict[str, Any] | None) -> str:
 def request_key(params: dict[str, Any] | None) -> str:
     """Short stable hash of request parameters, used as a directory name."""
     return hashlib.sha256(canonical_params(params).encode("utf-8")).hexdigest()[:16]
+
+
+#: Parameter names whose values must never be written to the index.
+#:
+#: The index is append-only plaintext, deliberately greppable, kept forever by
+#: design (ADR-006), and never touched by :meth:`RawPayloadStore.prune`. It is
+#: also the artefact you would zip up to diagnose a payload problem. A live
+#: ``userSecretId`` written there ends up in the same ``data/`` directory as
+#: the Fantrax cookie we went to the trouble of encrypting — which makes the
+#: encryption theatre.
+#:
+#: Matched case-insensitively as a substring, so ``userSecretId``,
+#: ``user_secret_id`` and ``USER_SECRET_ID`` are all covered without having to
+#: enumerate every spelling an upstream might use.
+SECRET_PARAM_MARKERS: Final[tuple[str, ...]] = (
+    "secret",
+    "token",
+    "cookie",
+    "password",
+    "passwd",
+    "apikey",
+    "api_key",
+    "auth",
+    "credential",
+    "session",
+)
+
+REDACTED: Final = "<redacted>"
+
+
+def redact_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Replace credential-shaped parameter values for logging and indexing.
+
+    **Only for display.** :func:`request_key` hashes the *real* parameters, so
+    redaction never changes cache identity — two requests differing only in a
+    secret still hash differently, and a capture is still found by the request
+    that produced it.
+    """
+    if not params:
+        return params
+    redacted: dict[str, Any] = {}
+    for key, value in params.items():
+        lowered = str(key).lower()
+        if any(marker in lowered for marker in SECRET_PARAM_MARKERS):
+            redacted[key] = REDACTED
+        else:
+            redacted[key] = value
+    return redacted
 
 
 @dataclass(frozen=True)
@@ -269,7 +317,11 @@ class RawPayloadStore:
             "fetched_at": ref.fetched_at.isoformat(),
             "endpoint": ref.endpoint,
             "request_key": ref.request_key,
-            "params": ref.params,
+            # Redacted. The index is plaintext, append-only, never pruned, and
+            # the thing you would send someone to diagnose a problem.
+            # `request_key` above hashes the real parameters, so cache identity
+            # is unaffected.
+            "params": redact_params(ref.params),
             "http_status": ref.http_status,
             "content_type": ref.content_type,
             "byte_size": ref.byte_size,
