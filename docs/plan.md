@@ -269,6 +269,8 @@ Fantasy playoffs land exactly when eliminated teams start resting veterans and a
 
 A usage-redistribution graph: when player X sits, who gains, in which categories, and by how much. Built from historical with/without splits and validated against actual absence games.
 
+> ⚠️ **A full absence produces no row in any endpoint** (R35). A player out injured for a month is not flagged inactive — he simply does not appear anywhere. The participation ledger records only what was *observed*, so `quant` must construct the absent rows by crossing roster membership with scheduled games. A model trained on observed rows alone would systematically underestimate missed games, which is the exact error this project exists to avoid.
+
 This powers the thing you described directly:
 - **Stock watch** — injury news lands, affected players are recomputed, and the dashboard surfaces who just moved and by how much
 - Waiver-wire targeting the moment news breaks, ranked by *your* roster's category needs rather than generic value
