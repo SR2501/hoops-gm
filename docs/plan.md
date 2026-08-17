@@ -294,38 +294,44 @@ Deeper than games-per-week, since the availability model consumes it and streami
 
 ## Draft formats & rehearsal
 
-### Both formats are first-class
+### Auction is the confirmed format for 2026-27
 
-The league may be auction or snake this year — unknown at planning time, so both ship. Format is an abstraction alongside scoring profiles, not a fork in the code.
+**Confirmed with the commissioner on 2026-08-17: this year's league is an auction draft.** Snake remains implemented for multi-format support and for external mock corpora that only offer snake, but **auction is the primary format and the one that must be rehearsal-ready by draft day**.
 
-They are not variants of one another. Snake optimises pick-by-pick value against ADP and positional scarcity. Auction is a constrained budget-allocation problem with live price discovery. The math has almost nothing in common.
+They are not variants of one another. Snake optimises pick-by-pick value against ADP and positional scarcity. Auction is a constrained budget-allocation problem with live price discovery. The math has almost nothing in common, and the confirmation means the auction half is now critical path rather than insurance.
 
-**Snake:** value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, and roster construction across the turn.
-
-**Auction:**
+**Auction — the critical path:**
 - Dollar values derived from risk-adjusted G-score via value over replacement, scaled to the league's total budget pool
-- **Live inflation tracking** — as money leaves the board, every remaining player's true price moves. If the top tier goes over value, everything after it deflates. This is the single largest edge available in an auction, and most managers eyeball it.
+- **Live inflation tracking** — as money leaves the board, every remaining player's true price moves. If the top tier goes over value, everything after it deflates. This is the single largest edge available in an auction, and most managers eyeball it. It is now the headline feature of the whole tool.
 - **Max bid** — budget minus the $1 per unfilled roster slot you must reserve, recomputed continuously
 - **Nomination strategy** — nominate players you don't want while opponents still have money; nominate your targets once they're budget-constrained
 - **Budget burn rate vs. roster construction** — whether you're building stars-and-scrubs or balanced, and whether that's deliberate
 
-Worth saying plainly: auction is materially more work than snake. It's also where the edge is largest, because inflation math is genuinely hard to do in your head under a bid clock. If it turns out to be auction, that's the good outcome for a tool like this.
+**Snake — retained, deprioritised:** value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, and roster construction across the turn. Still needed for the scoring-profile abstraction and for ingesting snake mock corpora, but it is no longer a draft-day deliverable.
+
+Worth saying plainly: auction is materially more work than snake. It is also where the edge is largest, because inflation math is genuinely hard to do in your head under a bid clock. The format landing on auction is the good outcome for a tool like this.
+
+### Market data — an open question the format change exposes
+
+Snake drafting is priced by **ADP**, which Fantrax serves free and unauthenticated via `getAdp` (verified working). **Auction is priced by average auction value (AAV), which is a different quantity entirely, and no verified free source for it has been identified yet.** `getAdp` returns draft position, not dollars.
+
+This matters because the inflation model needs a *baseline expectation* of what each player should cost, and the model-vs-market divergence report needs the market's price, not the market's pick order. Options to investigate in Phase 8: whether Fantrax exposes auction values through any endpoint, whether the external mock sites publish AAV, or whether the mock corpus itself becomes the only AAV source — in which case the 10+ mocks must be **auction** mocks, not snake ones. Tracked as R37.
 
 ### The overlay in auction mode
 
-A different surface with different content: current nomination, your inflation-adjusted max bid, value versus the standing bid, budget and slots remaining, tier-exhaustion alerts. The pressure profile differs too — an auction gives you seconds rather than a minute, and what you need is one number, big and unambiguous.
+The auction panel is now **the** draft-day surface, not an alternative to the snake one. Different content: current nomination, your inflation-adjusted max bid, value versus the standing bid, budget and slots remaining, tier-exhaustion alerts. The pressure profile differs too — an auction gives you seconds rather than a minute, and what you need is one number, big and unambiguous.
 
 ### Ten-plus mocks, used for two different things
 
-No fewer than ten mock drafts before the real one. They serve two distinct purposes and the plan keeps them separate:
+No fewer than ten mock drafts before the real one. **Given the auction confirmation, the majority must be auction mocks**, since snake mocks cannot calibrate inflation curves or budget behaviour. They serve two distinct purposes and the plan keeps them separate:
 
-**Fantrax mocks — the dress rehearsal.** Same DOM, same bridge, same overlay, same automation path. This is the only place the userscript and overlay get genuinely tested, and the rehearsal harness instruments it.
+**Fantrax mocks — the dress rehearsal.** Same DOM, same bridge, same overlay, same automation path. This is the only place the userscript and overlay get genuinely tested, and the rehearsal harness instruments it. **These must be auction format.**
 
 **External mocks (ESPN, Yahoo, FantasyPros, RTSports and similar) — the market corpus.** Different DOM, so no bridge rehearsal, but the *results* are valuable and captured by paste or CSV import:
 
-- **Market model** — empirical ADP and auction price curves from real drafting behaviour, not published estimates
+- **Market model** — empirical auction price curves and inflation behaviour from real drafting, not published estimates
 - **Model-vs-market divergence** — the report that actually matters. Where our valuation and the market disagree is exactly where the edge is, and it names the players to target and the ones to let go.
-- **Opponent calibration** — simulated opponents in the draft simulator tuned from observed behaviour rather than invented priors
+- **Opponent calibration** — simulated opponents in the draft simulator tuned from observed bidding behaviour rather than invented priors
 
 Ten mocks is a real corpus — enough to calibrate inflation curves and opponent models rather than guess at them.
 
@@ -489,9 +495,9 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - **Availability is the edge, so it's in the spine.** Phase 4, before valuation, because it's an input to it. Building valuation first and retrofitting availability means rewriting the valuation layer.
 - **Separate production from availability, always.** Keeping them separate is what lets you answer "is this guy good, or just present?" and price the two differently.
 - **Calibration beats accuracy for p(play).** A model that says 70% and is right 70% of the time is more useful for lineup decisions than one with a better raw hit rate but overconfident probabilities. The Model gate scores calibration explicitly.
-- **Draft day is a hard deadline.** Phases 0–5, 8 and 9 must be done and rehearsed before your draft. Phases 6–7 and 11–12 can land during the season. No fewer than ten mocks, with the Fantrax ones serving as true dress rehearsals against the real UI.
-- **Auction is the scope risk worth taking.** Building both formats is meaningfully more work than snake alone, and until the format is confirmed both must be ready. If it lands on auction, the inflation engine is the largest single edge in the whole tool — nobody does that math well under a bid clock.
-- **Confirm the format as early as you can.** It doesn't change the spine, but it changes what gets rehearsed and where the last few weeks of effort go. Worth asking the commissioner well before draft day.
+- **Auction is the confirmed format, and it is the good outcome.** Confirmed 2026-08-17. Inflation math under a bid clock is exactly what a human cannot do and a tool can, so the largest available edge is now definitely in scope rather than contingent. Snake stays implemented but is no longer a draft-day deliverable.
+- **The auction confirmation exposed a data gap (R37):** snake is priced by ADP, which Fantrax serves free; auction is priced by AAV, and no verified free source has been found. Resolve early — the inflation baseline and the model-vs-market report both depend on it, and if the mock corpus turns out to be the only AAV source, every one of the 10+ mocks must be an auction mock.
+- **Draft day is a hard deadline.** Phases 0–5, 8 and 9 must be done and rehearsed before your draft. Phases 6–7 and 11–12 can land during the season. No fewer than ten mocks, now predominantly auction, with the Fantrax ones serving as true dress rehearsals against the real UI.
 - **One screen is the design target.** Fantrax only has to be open and foreground for the live draft and for lineup writes; everything else runs without it. The overlay must be sufficient on a laptop, and the rehearsal harness measures whether it actually is rather than assuming.
 - **Percentage categories are the classic bug.** FG%/FT% must be modelled as volume-weighted impact, not raw percentage; a 90% FT shooter on 1 attempt is not valuable. This is where most homebrew tools go wrong.
 - **Reason codes will be messy.** DNP reasons are inconsistently reported and "rest" is often laundered as a minor ailment. Expect a normalization layer with manual mapping, and don't over-trust stated reasons; the model should lean on observed patterns over official explanations.

@@ -56,7 +56,8 @@ Severity: 🔴 high · 🟡 medium · 🟢 low
 | ID | Risk | Sev | Mitigation | Owner |
 |---|---|---|---|---|
 | R18 | **Draft day does not move; spine incomplete by then** | 🔴 | Spine-first sequencing; phases 0–5, 8, 9 are the deadline set | `architect` |
-| R19 | Draft format unconfirmed — auction vs snake | 🟡 | Both built as first-class; confirm with commissioner early | owner |
+| R19 | Draft format unconfirmed — auction vs snake | ✅ **Closed** | **Confirmed auction on 2026-08-17.** Auction is now the primary format and critical path; snake is retained for multi-format support and snake mock corpora but is no longer a draft-day deliverable. Rehearsal mocks must be auction format — snake mocks cannot calibrate inflation curves or budget behaviour | owner |
+| R37 | **No verified free source of average auction value (AAV)** | 🟡 | Exposed by the auction confirmation. Snake is priced by ADP, which Fantrax serves free via `getAdp` (verified). **Auction is priced by AAV, which is a different quantity, and `getAdp` returns draft position not dollars.** The inflation model needs a baseline expectation of what each player should cost, and model-vs-market needs the market's *price*, not its pick order. Investigate: whether Fantrax exposes auction values on any endpoint, whether external mock sites publish AAV, or whether the mock corpus becomes the only AAV source — in which case the 10+ mocks must all be auction | `data-engineer` |
 | R20 | Chrome throttles background tabs, stalling draft polling | 🟡 | Fantrax must be visible and active during a draft; documented in the runbook | `bridge` |
 | R21 | Scope growth crowds out rehearsal time | 🟡 | Rehearsal is a deliverable, not a buffer; 10+ mocks are scheduled work | `architect` |
 | R22 | Governance overhead exceeds its value for a solo project | 🟢 | `architect` owns the call to cut it; four gates and seven agents is the deliberate floor | `architect` |
