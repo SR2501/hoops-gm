@@ -77,6 +77,9 @@ Escalate and stop. Do not decide these. Full list in `docs/governance/owner-deci
 ## House rules
 
 - **Nothing important lives only in a chat.** If it is worth returning to, it is in this repository. That is why this file exists.
+- **State claims in the form that lets someone disprove them cheaply.** Name the file, the mechanism, the specific thing you believe is true. "The repository holds projection data and Fantrax access details" is checkable in ninety seconds and turned out to be false; "keeping it private is safer for obvious reasons" is the same wrongness with the falsifiable part removed, and nothing in the gates would ever have caught it.
+
+  This matters because there are two ways to be confidently wrong here and only one of them has a test. **Unexamined inheritance** — believing a docstring, trusting a guarantee nobody exercised — is caught by executable tests, and that is now systemic. **Rhetorical convenience** — reaching for the objection that sounds most serious rather than the one you can evidence — has no CI job and never will. Stating the mechanism converts the second kind into the first, which is the kind we know how to catch. It is a writing habit rather than a gate, and it is why this project found four false guarantees instead of shipping four unarguable paragraphs.
 - **Append to `docs/handoff.md` when you finish a unit of work.** The "could not verify" field is mandatory, and "nothing" is rarely the honest answer.
 - **Separate production from availability.** Always. See ADR-002.
 - **Percentage categories are volume-weighted impact, not raw percentage.** A 90% FT shooter on one attempt is worthless. This is the single most common bug in homebrew fantasy tools.
