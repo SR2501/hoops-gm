@@ -275,3 +275,34 @@ Concretely: game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and is a 
 **The pattern across all four corrections, since it is now unmistakable.** Every one was found by executing rather than reading — the V2 inactives rot by bisecting, the `gameEt` lie by printing fixture values, the enum divergence by inserting into a migrated database, the scanner regression by running both versions side by side. And in every case my *reasoning* about the mechanism I had just touched was correct; what was wrong was a mechanism I had assumed and not exercised. **Confidence about the part you changed says nothing about the part you did not.**
 
 **Next:** unchanged.
+
+---
+
+## 2026-08-17 — data-engineer — Fifth correction: the Code gate depended on third-party availability
+
+**Changed:** `addopts = "-q --strict-markers -m 'not live_smoke'"` in `backend/pyproject.toml`. One line, and it is the difference between a deterministic Code gate and one that goes red when `stats.nba.com` has a bad day.
+
+**Found by CI coming back.** The first real run of this branch sat for **fifteen minutes** on a suite that takes thirty seconds locally, on both the Ubuntu job and the Postgres job. `pytest` with no arguments collects **every** test, including the twelve marked `live_smoke` that hit `stats.nba.com` and `fantrax.com` for real. `stats.nba.com` does not answer a GitHub runner the way it answers a laptop, and the adapter's 60-second timeout with three retries multiplies that across twelve tests.
+
+**This defeated the isolation `ci.yml` was explicitly designed to provide.** Its `live-smoke` job is gated to `schedule`/`workflow_dispatch` with the comment *"Not on pull requests: a third party's outage must not look like a broken change."* That reasoning is right and the job implements it correctly — but the `backend` job runs bare `pytest`, which pulled the same tests in anyway. **The isolation the workflow author built was bypassed by a marker I did not exclude.** I wrote those tests and never checked what the default invocation did with them.
+
+Verified all four selections after the fix: default is 369 passed and 12 deselected; `-m live_smoke` still selects 12; `-m adapter_contract` still selects 62; `-m model_backtest` still exits 5, which the model-gate job depends on.
+
+**What CI told me before it stalled, which is the point of having it.** On Ubuntu with Python 3.12, and on **real Postgres**:
+
+- **Migration `0002` applies from empty on Postgres.** ✅
+- **`alembic check` agrees on Postgres.** ✅
+- **Downgrade to base works on Postgres.** ✅
+
+**R34 is resolved by execution rather than by argument.** The `batch_alter_table(copy_from=...)` Postgres path — the code four people in a row had reasoned about without running — takes a completely different route from SQLite's copy-and-rename, and it works. I was the fifth to believe it; the runner is the first thing to have checked it.
+
+Also green on Ubuntu/3.12: lint, format, type-check, the frontend, the secret scan, the adapter-gate contract tests, and migrations on SQLite. So the `requires-python` bump, the PEP 695 syntax and the three compiled-wheel dependencies all install and pass off my machine.
+
+**Could not verify:**
+- **The full suite against Postgres has still not completed**, because I cancelled the run once I knew why it was stalling. The migration steps passed; the 369 tests against Postgres have not. That is the next thing to watch.
+- **That the fifteen minutes was entirely live smoke.** It is the obvious explanation and the timing fits, but job logs are not retrievable while a run is in progress and I cancelled before they were. If the next run is still slow, the diagnosis was wrong.
+- **Whether the live smoke tests pass at all from a GitHub runner.** They pass from here. `stats.nba.com` blocking cloud IPs is well documented, so the scheduled `live-smoke` job may fail for reasons unrelated to our parsers — which would make it noise rather than signal, and that needs solving rather than tolerating.
+
+**Now also true, and it changes the threat model:** the repository is **public**. The fixtures are 59,000 lines of world-readable committed JSON. The scan is clean, including with the JSON-aware patterns added two entries ago that the original scanner did not have. Public repositories also get GitHub-native secret scanning with push protection and CodeQL for free — an independent check on precisely the control this review found I had regressed.
+
+**Next:** unchanged.
