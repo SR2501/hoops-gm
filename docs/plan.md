@@ -280,6 +280,44 @@ This powers the thing you described directly:
 
 ---
 
+## Layer purity — aggregates never flow backwards
+
+The single most important data-architecture rule in the project, and an extension of ADR-002 rather than a restatement. Recorded as **ADR-008**.
+
+**The problem.** Published rankings, AAV and consensus tiers are *synthesized aggregates*. A ranking already contains production, an availability assumption, a scoring-format assumption and often positional scarcity. AAV adds market psychology and budget structure on top. Blend any of them into our projection or availability layers and all of those hidden components come with it.
+
+The owner's analogy: holding mutual funds and then buying company stock through an ESPP, only to find the fund was already heavily weighted in your employer. The exposure was there all along; the aggregate concealed it. Two positions that looked independent were not.
+
+**Why it is worse than double-counting.** Availability would be applied twice — once by our model, once inside the imported ranking — but the real damage is that afterwards *no query can separate "he is good" from "he is durable."* The distinction is destroyed at import and cannot be recovered. That distinction is the entire thesis of this tool.
+
+**The rule.** Layers are ordered and information flows one way:
+
+```
+observations → projections → availability → valuation → rankings / dollar values
+  (facts)      (per-game)     (p(play))      (fused)          (TERMINAL)
+```
+
+- **Aggregate within a layer only.** Projections blend with projections — per-game rates, never seasonal totals with games baked in. Availability blends with availability. Never across.
+- **Terminal products never re-enter.** No ranking, AAV or composite value is an input to any earlier layer, at any weight.
+- **External aggregates may be compared against, never blended in.** That is precisely what the model-vs-market report is for — and divergence only means anything if the two sides are genuinely independent. Blending would make the report measure our own reflection.
+- **Every stored quantity records its layer**, and a test rejects any flow from a higher layer to a lower one. Make it inexpressible rather than merely documented.
+
+**Where this bites in practice.** FantasyPros publishes both consensus rankings and underlying projections. Only the projections may be imported, with their embedded games-played assumption stripped and replaced by ours. The rankings may only ever appear on the other side of a divergence report. Same for every AAV seed source (see the auction section) — a seeded AAV is market evidence, not a valuation input.
+
+**The pattern this belongs to.** Third instance on this project of laundering derived information into apparent independent evidence: using a name-matched ID dataset as a crosswalk bridge would have laundered a name match into an apparent hard key (R23); bidding with our own values in mocks would launder our own output back in as market data (R38); this would launder an aggregate into an input.
+
+### The draft-day sequence
+
+Because rankings are terminal and reproducible, the draft-day workflow is a clean, versioned pipeline rather than a scramble:
+
+1. **Final synthesis on the morning of 18 October.** One versioned run producing our own rankings and dollar values end-to-end from our own projections and availability, with no external ranking anywhere in the lineage. The version is recorded so it is always knowable exactly what numbers we walked in with.
+2. **Live availability adjustment during the draft.** News breaks — a player is out, suspended, or a rotation changes. That updates the *availability* layer, and the valuation and dollar values are recomputed downstream. It does **not** patch the rankings directly, because a hand-edited ranking is an aggregate with no lineage and re-introduces exactly the problem this rule exists to prevent.
+3. **Contingent value recomputes with it.** A player ruled out moves his teammates' values through the usage-redistribution graph, so the overlay reflects both sides of the news rather than only the obvious one.
+
+> ⚠️ **Gap to resolve before draft day (R40).** The NBA official injury report is published per-game, and the season opens *after* the 18 October draft — so **no official injury report exists on draft morning.** Draft-day availability news comes from preseason reporting, training-camp news, suspensions and Fantrax's own player notes. The `injury-report-ingest` built for the regular season does not cover this window, and a separate preseason news path is needed.
+
+---
+
 ## Schedule intelligence
 
 Deeper than games-per-week, since the availability model consumes it and streaming lives on it.

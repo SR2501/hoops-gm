@@ -23,9 +23,14 @@ Each ADR records the context, the decision, its consequences, what was rejected,
 | [005](ADR-005-supervised-default.md) | Automation is supervised by default; autonomous is opt-in and gated | **Accepted** | Eight guardrails; `safety` holds veto; enabling autonomy is owner-only |
 | [006](ADR-006-adapter-isolation.md) | External adapters isolated behind contract tests | **Accepted** | Recorded fixtures; drift fails loudly in CI rather than degrading a number silently |
 | [007](ADR-007-availability-in-spine.md) | Availability is a spine concern, modelled before valuation | **Accepted** | It is an input to valuation, not an attribute of it |
+| [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | Proposed | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
 
 ## Accepted
 
-All seven were accepted by the project owner on **2026-08-17**, after review.
+ADR-001 through ADR-007 were accepted by the project owner on **2026-08-17**, after review.
 
 They record the decisions reached in the planning conversation of the same day and are now settled — but not immutable. Each states the condition that would flip it, and an accepted ADR can still be amended when reality disagrees with it. If one of those conditions is met, say so rather than working around the decision.
+
+## Awaiting the owner
+
+**ADR-008** is `Proposed`. It was originated by the owner but, per the house rule, an agent cannot mark it accepted.
