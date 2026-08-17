@@ -152,14 +152,39 @@ def test_phase_one_entity_groups_are_present(group: str, expected: set[str]) -> 
 
 
 def test_later_phase_entity_groups_are_absent() -> None:
-    """Availability, projections, valuation, draft and bridge belong to other agents."""
+    """Projections, valuation, draft and bridge belong to other agents.
+
+    ``player_participation`` was on this list until Phase 2 and has been
+    removed deliberately, because the boundary it was drawing turned out to be
+    in the wrong place. The plan groups the whole of Availability together, but
+    the group contains two different kinds of thing:
+
+    * what a source **said happened** — who played, who was inactive, what
+      reason was given. That is an observation, it arrives through an adapter,
+      and capturing it is what ingest is for;
+    * what a model **infers from that** — ``p(play)``, reliability, shutdown
+      risk. Those are `quant`'s and are still absent below.
+
+    DNP reasons and inactive lists cannot be ingested without somewhere to put
+    them, and the alternative — ingesting them into a table `quant` has not
+    designed yet — is worse than agreeing the split here. Keeping the two apart
+    also stops a model's output from later being mistaken for an observation,
+    which is the failure this project can least afford.
+
+    ``injury_reports`` stays absent: the NBA injury report is a Phase 4 source
+    and nothing ingests it yet.
+    """
     not_yet = {
-        "player_participation",
         "injury_reports",
         "availability_predictions",
         "reliability_metrics",
+        "shutdown_risk",
+        "absence_splits",
+        "usage_redistribution",
+        "stock_movements",
         "projections",
         "blended_projections",
+        "expected_games",
         "valuations",
         "risk_adjusted_valuations",
         "drafts",
@@ -169,3 +194,19 @@ def test_later_phase_entity_groups_are_absent() -> None:
     }
 
     assert not_yet & set(Base.metadata.tables) == set()
+
+
+def test_the_observed_participation_ledger_is_present() -> None:
+    """Phase 2 owns the observed half of Availability. See the note above."""
+    assert "player_participation" in Base.metadata.tables
+
+    columns = set(Base.metadata.tables["player_participation"].columns.keys())
+    # The two columns that exist because of what the sources actually do.
+    assert "raw_comment" in columns, (
+        "the normalisation of a DNP reason will be wrong at first and must be "
+        "re-derivable from the source's own words"
+    )
+    assert "inactive_list_available" in columns, (
+        "'nobody was inactive' and 'the source stopped telling us' are different "
+        "facts, and BoxScoreSummaryV2 erased the difference for a whole season"
+    )

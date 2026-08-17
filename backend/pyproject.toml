@@ -7,7 +7,19 @@ name = "hoops-gm-backend"
 version = "0.1.0"
 description = "hoops-gm backend: FastAPI service, persistence and REST/SSE contracts"
 readme = "README.md"
-requires-python = ">=3.11"
+# Raised from ">=3.11" in Phase 2.
+#
+# **The original justification for this was wrong**, and is corrected here
+# rather than quietly deleted: it claimed the `ingest` extra could not install
+# on 3.11 because numpy 2.5 requires 3.12. numpy's pin in `nba_api` is
+# version-gated (`numpy>=1.26 ; python_version < "3.13"`), so pip would have
+# resolved an older numpy on 3.11 perfectly well. Caught in review.
+#
+# The real reasons, both checkable: the package now uses PEP 695 type-parameter
+# syntax (`def portable_enum[E: enum.Enum]`), which is 3.12+ only; and CI has
+# only ever run 3.12 while local development is on 3.14, so 3.11 support was
+# never a tested claim to begin with.
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115",
@@ -27,11 +39,31 @@ dev = [
     "httpx2>=2.10",
     "mypy>=1.13",
     "ruff>=0.8",
+    # The adapter and identity tests exercise real client code, so the ingest
+    # dependencies are needed to run the suite.
+    "hoops-gm-backend[ingest]",
     # Only used to test the CI workflow's own coherence. A job that gates on an
     # event the workflow never declares is silently dead, which is how the live
     # smoke job spent its first day unable to run.
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
+]
+# Phase 2. **Pinned exactly, on purpose.**
+#
+# `fantraxapi` wraps /fxpa/req, undocumented internal Fantrax infrastructure,
+# and `nba_api` wraps stats.nba.com, which deprecates endpoints mid-season. A
+# floating version means an upstream behaviour change arrives as a mysterious
+# difference in a number rather than as a deliberate upgrade with a contract
+# test to run against it.
+#
+# Note that the plan's suggested fantraxapi 0.3.0 does not exist on PyPI — the
+# published versions go 0.2.9 -> 1.0.0, and 1.0.x has a different API surface
+# from the 0.2.x line most online examples use.
+ingest = [
+    "nba_api==1.11.4",
+    "fantraxapi==1.0.1",
+    # Fernet, for the Fantrax session cookie at rest.
+    "cryptography>=44",
 ]
 # ADR-001's destination. Declared so CI can run the whole suite against a real
 # Postgres — without a driver, every portability claim is static analysis of
@@ -52,7 +84,7 @@ packages = ["src/hoops_gm"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -80,7 +112,7 @@ known-first-party = ["hoops_gm"]
 # --- Types ------------------------------------------------------------------
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["src", "tests"]
 strict = true
 plugins = ["pydantic.mypy"]
@@ -92,11 +124,56 @@ exclude = "^alembic/"
 module = "alembic.*"
 ignore_missing_imports = true
 
+# Third-party ingestion libraries ship no usable type information. `nba_api` in
+# particular returns bare dicts from every endpoint, which is why the parsers
+# in hoops_gm.ingest are written against `Any` and validate structure
+# explicitly rather than trusting a type.
+#
+# `follow_imports = "skip"`, not merely `ignore_missing_imports`: nba_api pulls
+# in pandas, which pulls in numpy, whose bundled stubs are only valid for the
+# Python version numpy itself requires. Type-checking a dependency we do not
+# control buys nothing here — the parsers deliberately treat every payload as
+# `Any` and validate its structure explicitly, because a type from an untyped
+# upstream is a claim nobody checked.
+[[tool.mypy.overrides]]
+module = [
+    # Both the bare name and the wildcard: in mypy, `numpy.*` matches
+    # submodules but not `numpy` itself, and the offending stub is
+    # numpy/__init__.pyi.
+    "nba_api",
+    "nba_api.*",
+    "fantraxapi",
+    "fantraxapi.*",
+    "requests",
+    "requests.*",
+    "pandas",
+    "pandas.*",
+    "numpy",
+    "numpy.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 # --- Tests ------------------------------------------------------------------
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+# `-m "not live_smoke"` by default. Without it, `pytest` with no arguments
+# collects the live smoke tests, which hit stats.nba.com and fantrax.com for
+# real — so the **Code gate would depend on third-party availability**, and an
+# upstream outage would turn a correct change red. That is precisely what
+# ci.yml's live-smoke job is gated to schedule/dispatch to prevent ("a third
+# party's outage must not look like a broken change"), and running them inside
+# the default suite defeated that isolation entirely.
+#
+# Found when CI came back: the backend job sat for fifteen minutes on a suite
+# that takes thirty seconds locally, because stats.nba.com does not answer a
+# GitHub runner the way it answers a laptop, and the adapter's 60s timeout with
+# three retries multiplies that across twelve tests.
+#
+# A command-line `-m` overrides this, so `pytest -m live_smoke` and
+# `pytest -m adapter_contract` both still work, and both CI jobs are unaffected.
+addopts = "-q --strict-markers -m 'not live_smoke'"
 markers = [
     # Code gate: the default suite. Everything unmarked runs on every push.
     "sqlite_only: behaviour specific to the development database; skipped when TEST_DATABASE_URL is set",
@@ -105,7 +182,7 @@ markers = [
     # registered now and wired into CI now, so that when Phase 2 and Phase 4
     # land there is nothing to remember.
     "adapter_contract: offline contract test asserting a parser still matches a recorded fixture (Adapter gate)",
-    "live_smoke: hits a real external source; allowed to fail, must fail loudly (Adapter gate)",
+    "live_smoke: hits a real external source; allowed to fail, must fail loudly (Adapter gate). Excluded from the default run by addopts below — select explicitly with -m live_smoke",
     "model_backtest: held-out backtest reporting calibration for a decision-bearing number (Model gate)",
 ]
 filterwarnings = ["error"]

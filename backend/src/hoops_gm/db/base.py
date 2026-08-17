@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy import DateTime as SADateTime
 from sqlalchemy import Dialect, MetaData, func
@@ -54,10 +54,7 @@ class Base(DeclarativeBase):
     metadata = metadata_obj
 
 
-_E = TypeVar("_E", bound=enum.Enum)
-
-
-def portable_enum(enum_cls: type[_E], name: str, **kwargs: Any) -> SAEnum:
+def portable_enum[E: enum.Enum](enum_cls: type[E], name: str, **kwargs: Any) -> SAEnum:
     """A string-backed enum column that behaves identically on SQLite and Postgres.
 
     ``create_constraint=True`` is mandatory and must not be removed: without it

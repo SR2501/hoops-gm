@@ -37,6 +37,7 @@ from hoops_gm.db.base import Base, IntPk, TimestampMixin, portable_enum
 from hoops_gm.db.models.enums import (
     Conference,
     ExternalSource,
+    FieldEvidence,
     MatchMethod,
     PlayerStatus,
 )
@@ -191,6 +192,46 @@ class PlayerExternalId(IntPk, TimestampMixin, Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     match_method: Mapped[MatchMethod] = mapped_column(portable_enum(MatchMethod, "match_method"))
     is_manual_override: Mapped[bool] = mapped_column(default=False, index=True)
+
+    #: Per-field match evidence. Phase 1 left open whether a single
+    #: ``confidence`` float suffices; Phase 2 measured it against the real
+    #: payload and it does not. 1,206 of the 1,788 Fantrax player rows carry
+    #: ``team: "(N/A)"``, so for two thirds of the payload the team contributes
+    #: no evidence at all — and a scalar cannot distinguish that from a team
+    #: that is known and contradicts. The first is an ordinary free agent and
+    #: probably a correct match; the second is probably two different people.
+    #:
+    #: Stored as four three-valued columns rather than one JSON blob so that
+    #: the unmatched/low-confidence report stays a plain SQL query on both
+    #: dialects, which is the same reason ``portable_enum`` exists.
+    #:
+    #: All default to ``UNKNOWN``, and the default is a **server** default as
+    #: well as a Python one. That is deliberate: it keeps the pessimistic
+    #: default true for a raw ``text()`` insert, a data migration or a bulk
+    #: load, none of which go through the ORM. A caller who states nothing has
+    #: claimed nothing — the same property ``confidence`` and ``match_method``
+    #: already have, extended to the paths that bypass Python.
+    name_evidence: Mapped[FieldEvidence] = mapped_column(
+        portable_enum(FieldEvidence, "name_evidence"),
+        default=FieldEvidence.UNKNOWN,
+        server_default=FieldEvidence.UNKNOWN.value,
+    )
+    team_evidence: Mapped[FieldEvidence] = mapped_column(
+        portable_enum(FieldEvidence, "team_evidence"),
+        default=FieldEvidence.UNKNOWN,
+        server_default=FieldEvidence.UNKNOWN.value,
+    )
+    position_evidence: Mapped[FieldEvidence] = mapped_column(
+        portable_enum(FieldEvidence, "position_evidence"),
+        default=FieldEvidence.UNKNOWN,
+        server_default=FieldEvidence.UNKNOWN.value,
+    )
+    suffix_evidence: Mapped[FieldEvidence] = mapped_column(
+        portable_enum(FieldEvidence, "suffix_evidence"),
+        default=FieldEvidence.UNKNOWN,
+        server_default=FieldEvidence.UNKNOWN.value,
+    )
+
     #: Set when a human has looked at this row, whether or not they changed it.
     reviewed_at: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
