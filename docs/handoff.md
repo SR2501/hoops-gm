@@ -197,3 +197,26 @@ V2 is the endpoint most public examples use. **Had this adapter used it, the par
 2. **A Fantrax league id and session cookie would unblock a whole item.** `fantrax-private` is built but entirely unverified. `docs/adapters/fantrax-private.md` has the capture procedure; the cookie is encrypted at rest and never committed.
 3. **`docker compose up --build` is still unrun**, and so is anything against Postgres. Both were outstanding from Phase 1 and Phase 2 has added a migration that makes the second one matter more.
 4. The Fantrax official API is beta and undocumented; this adapter reads it at one request per two seconds and identifies itself honestly in its User-Agent. Say if you would rather it were anonymous.
+
+---
+
+## 2026-08-17 — data-engineer — Correction to the Phase 2 entry: game dates were off by a day
+
+**Changed:** One bug fix in `parse_box_score_summary_v3`, plus three contract tests pinning it. Corrected in place rather than appended as a separate entry would be after merge — PR #4 is not merged, and the header rule above says an unmerged entry is not memory yet. The original claim is kept visible below rather than edited away.
+
+**What the Phase 2 entry above implied and got wrong:** it presents `tipoff_utc` as the Phase 3 input for rest-day and back-to-back detection and says nothing about `game_date`, having silently derived it from the tip-off instant. **`nba_games.game_date` means the *local* calendar date** — fantasy days are defined in local time — and `tipoff.date()` is the wrong day for every game tipping after 7pm Eastern, which is most of them.
+
+Concretely: game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and is a **2026-01-12** game. The parser produced the 13th. `LeagueGameFinder` supplies the 12th, so the same game arrived with two different dates depending on which endpoint wrote it last, and every day-boundary calculation downstream would have inherited the disagreement.
+
+**The trap underneath it, which is the more useful half:** **`gameEt` carries a `Z` suffix and is not UTC.** The same payload shows `gameTimeUTC = 2024-12-01T20:30:00Z` and `gameEt = 2024-12-01T15:30:00Z` — five hours apart, both marked UTC. It is Eastern time wearing a UTC marker. It must be read for its **date only** and must never reach `as_utc_datetime`, which would take the `Z` at face value and produce an instant five hours wrong.
+
+**Now true:** `game_date` comes from `gameEt`'s date, falling back to the UTC date only when `gameEt` is absent. Three contract tests pin it: the local date for the known late game, the two fields disagreeing while both claim UTC, and the two endpoints agreeing on the date for the same game. 333 tests.
+
+**Why this was found at all:** the Phase 1 review-remediation entry above warns that "Phase 2 ingest will meet upstreams that emit naive local times, and the temptation will be to relax the type rather than fix the boundary." I went to verify I had done that, printed the actual fixture values instead of reading my own code, and found something worse than the thing I was checking for — the value was not naive, it was mislabelled. **Timezone-correct parsing of a field that lies about its timezone is still wrong**, and no amount of strictness in `UTCDateTime` would have caught it, because the resulting datetime is perfectly well-formed.
+
+**Could not verify:**
+- **Whether `gameEt` is Eastern in every payload, or merely arena-local.** Every fixture checked is Eastern, and the NBA publishes schedules in Eastern, but I have not checked a game in a venue that would distinguish the two. It only matters for the date, and only for games tipping within a few hours of midnight.
+- **Whether anything else in this PR derives a date from an instant.** I checked `parse_league_game_finder`, which takes `GAME_DATE` directly, and `import_games`, which never overwrites `game_date` on an existing row. I have not audited every date-producing path with the same care.
+- Everything else in the Phase 2 entry above still stands, including that none of it is CI-verified.
+
+**Next:** unchanged. `quant` should note that `player_participation` rows join to `nba_games.game_date`, so this bug would have shifted a day's participation onto the wrong date for late games — which is exactly the kind of error the availability model would have absorbed as signal.

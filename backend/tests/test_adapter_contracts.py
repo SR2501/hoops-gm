@@ -18,6 +18,7 @@ the half of the Adapter gate that actually earns its keep.
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -500,6 +501,64 @@ class TestBoxScoreV3:
         # One row per player, always.
         identifiers = [r.nba_player_id for r in combined.records]
         assert len(identifiers) == len(set(identifiers))
+
+    def test_the_game_date_is_the_local_date_not_the_utc_one(self) -> None:
+        """A real bug, found after the PR was opened, by checking rather than assuming.
+
+        ``nba_games.game_date`` means the **local** calendar date, because
+        fantasy days are defined in local time. Game ``0022500560`` has
+        ``gameTimeUTC = 2026-01-13T00:30:00Z`` and is a **2026-01-12** game.
+        Taking ``tipoff.date()`` produced the 13th — wrong for every game
+        tipping after 7pm Eastern, which is most of them — and disagreed with
+        ``LeagueGameFinder``, so the same game got two different dates
+        depending on which endpoint wrote it last.
+        """
+        game, _ = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        )
+        assert game is not None
+        assert game.game_date == date(2026, 1, 12), (
+            "the local game date, not the UTC date of the tip-off instant"
+        )
+        # The instant is still the real UTC instant, on the following day.
+        assert game.tipoff_utc is not None
+        assert game.tipoff_utc.date() == date(2026, 1, 13)
+
+    def test_game_et_lies_about_its_timezone_and_is_read_for_its_date_only(self) -> None:
+        """``gameEt`` is Eastern time wearing a ``Z`` suffix.
+
+        The same payload carries ``gameTimeUTC = 2024-12-01T20:30:00Z`` and
+        ``gameEt = 2024-12-01T15:30:00Z`` — five hours apart, both marked UTC.
+        Passing ``gameEt`` to the instant parser would produce a time five
+        hours wrong, so it is only ever read for its date.
+        """
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        body = payload["boxScoreSummary"]
+        utc = body["gameTimeUTC"]
+        eastern = body["gameEt"]
+        assert utc.endswith("Z") and eastern.endswith("Z")
+        assert utc != eastern, "the two fields disagree despite both claiming UTC"
+
+        game, _ = parse_box_score_summary_v3(payload)
+        assert game is not None
+        # The instant comes from gameTimeUTC, so it matches that field and not
+        # the mislabelled local one.
+        assert game.tipoff_utc is not None
+        assert game.tipoff_utc.hour == 20
+
+    def test_the_game_date_agrees_with_the_schedule_endpoint(self) -> None:
+        """Two endpoints, one game, one date. The disagreement is the bug."""
+        summary_game, _ = parse_box_score_summary_v3(load("nba_boxscoresummaryv3_0022400306.json"))
+        assert summary_game is not None
+        games = {
+            g.nba_game_id: g
+            for g in parse_league_game_finder(
+                load("nba_leaguegamefinder_trimmed.json"), season="2024-25"
+            )
+        }
+        scheduled = games.get(summary_game.nba_game_id)
+        if scheduled is not None:
+            assert scheduled.game_date == summary_game.game_date
 
     def test_a_payload_without_the_v3_body_is_a_contract_error(self) -> None:
         with pytest.raises(SourceContractError):

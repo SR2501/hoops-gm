@@ -625,6 +625,43 @@ def parse_box_score_traditional_v3(
     return box_scores, participation
 
 
+def _local_game_date(body: dict[str, Any], tipoff: datetime | None, *, endpoint: str) -> date:
+    """The date the game belongs to, which is its **local** date, not its UTC one.
+
+    ``nba_games.game_date`` means the local calendar date, because fantasy days
+    are defined in local time. Deriving it from ``gameTimeUTC`` is wrong for
+    every game tipping after 7pm Eastern — which is most of them. Game
+    ``0022500560`` has ``gameTimeUTC = 2026-01-13T00:30:00Z`` and is a
+    **2026-01-12** game; ``LeagueGameFinder`` agrees it is the 12th. An earlier
+    version of this function took ``tipoff.date()`` and produced the 13th, so
+    the same game arrived with two different dates depending on which endpoint
+    wrote it last, and every day-boundary calculation downstream inherited the
+    disagreement.
+
+    **``gameEt`` is the local field, and it lies about its timezone.** It is
+    Eastern time carrying a ``Z`` suffix: the same payload shows
+    ``gameTimeUTC = 2024-12-01T20:30:00Z`` and
+    ``gameEt = 2024-12-01T15:30:00Z``, five hours apart and both marked UTC.
+    So it must be read for its **date only**, and must never be passed to
+    :func:`as_utc_datetime`, which would take the ``Z`` at face value and
+    produce an instant five hours wrong.
+
+    Falls back to the UTC date only when ``gameEt`` is absent — better than
+    failing, but the wrong day for late games, so it is a last resort rather
+    than a default.
+    """
+    local = body.get("gameEt")
+    if local:
+        return as_date(local, endpoint=endpoint)
+    if tipoff is not None:
+        return tipoff.date()
+    raise SourceContractError(
+        "no gameEt and no gameTimeUTC, so the game has no date",
+        source=SOURCE,
+        endpoint=endpoint,
+    )
+
+
 def _slug_set(value: Any) -> frozenset[str]:
     if not isinstance(value, list):
         return frozenset()
@@ -699,12 +736,11 @@ def parse_box_score_summary_v3(payload: Any) -> tuple[NbaGameRecord | None, Game
     game: NbaGameRecord | None = None
     if home_id is not None and away_id is not None:
         tipoff = as_utc_datetime(body.get("gameTimeUTC"))
-        game_date = tipoff.date() if tipoff else as_date(body.get("gameEt"), endpoint=endpoint)
         game = NbaGameRecord(
             nba_game_id=game_id,
             season="",
             season_type="regular",
-            game_date=game_date,
+            game_date=_local_game_date(body, tipoff, endpoint=endpoint),
             home_team_id=home_id,
             away_team_id=away_id,
             home_score=as_int(home_team.get("score")),

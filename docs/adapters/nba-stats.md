@@ -122,6 +122,22 @@ the crosswalk entirely.
 uses. That is a convenience, not a contract: the box-score endpoints give the
 name in parts and the game logs give `"First Last"`.
 
+### `gameEt` carries a `Z` suffix and is not UTC
+
+The same payload shows `gameTimeUTC = 2024-12-01T20:30:00Z` and
+`gameEt = 2024-12-01T15:30:00Z` — five hours apart, both marked UTC. `gameEt`
+is Eastern time wearing a UTC marker.
+
+It is read for its **date only** and never passed to the instant parser, which
+would take the `Z` at face value and be five hours wrong.
+
+This matters because `nba_games.game_date` means the **local** date — fantasy
+days are defined in local time — so it must come from `gameEt`, not from
+`gameTimeUTC`. Game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and
+is a **2026-01-12** game. Deriving the date from the instant is wrong for every
+game tipping after 7pm Eastern, which is most of them, and disagrees with
+`LeagueGameFinder` for the same game. Pinned by three contract tests.
+
 ---
 
 ## Throttling, retry and failure
