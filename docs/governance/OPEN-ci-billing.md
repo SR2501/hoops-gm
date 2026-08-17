@@ -59,5 +59,15 @@ The commands are in `backend/README.md`. This is fine for a day. As a standing a
 
 - Gate commands run locally before any merge.
 - **Do not trust a tick** until Actions is running again.
-- **PR #3 is held open, not merged.** It repairs a real CI defect — a `live-smoke` job gating on a `schedule` event the workflow never declared, so the one job meant to catch upstream drift could never run — and it adds tests that make the workflow check its own coherence. It is verified locally but unverifiable by CI. Merging past a dead gate, in the exact circumstance the gate exists for, would set the wrong precedent for the sake of a few hours.
+- **PR #3 is held open, not merged.** It repairs a real CI defect — a `live-smoke` job gating on a `schedule` event the workflow never declared, so the one job meant to catch upstream drift could never run — and it adds tests that make the workflow check its own coherence. It is verified locally but unverifiable by CI.
+
+  Merging it now would buy nothing: **the nightly cron it enables cannot fire until Actions is restored**, so merging gets the configuration without the behaviour, while still spending the precedent of merging past a dead gate in the exact circumstance the gate exists for. It merges the moment Actions runs, at which point config and behaviour arrive together.
 - Phase 2 continues. It is not blocked by this, only unverified by CI.
+
+## Why this lands hardest on Phase 2
+
+Phase 2 builds the external adapters, and the Adapter gate is its main safeguard — the gate that requires a contract test which "runs in CI, offline, always". That word is doing the work, and right now it cannot.
+
+Worse, the gate's other half is already unavailable for a different reason. **A contract test against a recorded fixture can never detect that an upstream source changed**, because the fixture keeps passing forever. Only the live smoke test catches drift — and that is both the job PR #3 repairs and the job that cannot run while Actions is stopped.
+
+So Phase 2 is building against `/fxpa/req` and `stats.nba.com` — undocumented internal infrastructure and an unstable public endpoint, exactly the pairing the Adapter gate was written for — with neither half of that gate operating. `data-engineer` has been told directly rather than left to discover it when a fixture drifts.
