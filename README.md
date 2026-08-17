@@ -33,9 +33,46 @@ Fantrax only needs to be open and foreground during a live draft and for lineup 
 
 ## Status
 
-**Planning complete, implementation starting.** 75 tracked work items across 14 phases.
+**Phase 1 (Foundations) built.** 75 tracked work items across 14 phases; the
+scaffold, backend skeleton, database foundation, dashboard skeleton and CI are
+in place. No ingestion, no modelling, no automation yet.
 
-Build order is spine-first: player identity → schedule → availability → projections → valuation, then features. Availability comes before valuation because it is an input to it, not an attribute of it.
+Build order is spine-first: player identity → schedule → availability →
+projections → valuation, then features. Availability comes before valuation
+because it is an input to it, not an attribute of it.
+
+## Running it
+
+Requires Python 3.11+ and Node 20.19+.
+
+```bash
+cp .env.example .env          # fill in; .env is gitignored and stays that way
+
+cd backend
+python -m venv .venv && .venv/Scripts/activate    # source .venv/bin/activate
+pip install -e ".[dev]"
+alembic upgrade head
+python -m hoops_gm            # http://127.0.0.1:8000
+
+cd ../frontend
+npm install
+npm run dev                   # http://127.0.0.1:5173
+```
+
+Or the whole stack at once:
+
+```bash
+docker compose up --build
+```
+
+Everything binds to `127.0.0.1`. Nothing is exposed to the network — see
+[`docs/decisions/ADR-001-local-first.md`](docs/decisions/ADR-001-local-first.md).
+
+| Where | What |
+|---|---|
+| [`backend/`](backend/) | FastAPI service, SQLAlchemy models, Alembic migrations |
+| [`frontend/`](frontend/) | React + TypeScript dashboard |
+| [`userscript/`](userscript/) | Reserved for the Tampermonkey bridge (Phase 8) |
 
 ## Working on this
 
@@ -49,6 +86,7 @@ Start with **[`AGENTS.md`](AGENTS.md)**, then **[`docs/handoff.md`](docs/handoff
 | [`docs/governance/`](docs/governance/) | Ownership, readiness gates, owner-only decisions, risk register |
 | [`docs/models/`](docs/models/) | Model cards for anything producing a decision-bearing number |
 | [`.github/agents/`](.github/agents/) | Agent definitions |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI enforcing the Code gate, with the Adapter and Model gates already wired |
 
 Nothing important lives only in a chat transcript. If it is worth returning to, it is in this repository.
 

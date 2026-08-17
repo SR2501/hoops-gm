@@ -27,12 +27,20 @@ node_modules/
 dist/
 .vite/
 *.tsbuildinfo
+coverage/
+npm-debug.log*
+# package-lock.json is committed on purpose — `npm ci` in CI needs it.
 
 # Editors / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+build/
+*.egg
+.tox/
 
 # Local data — raw pulls and imports stay out of git
 data/

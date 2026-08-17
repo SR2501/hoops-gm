@@ -1,0 +1,303 @@
+# Code gate (docs/governance/gates.md).
+#
+# "Lint clean, type-check clean, tests green, no secrets committed" — applies
+# to all code, enforced here.
+#
+# The Adapter and Model gates arrive with Phase 2 and Phase 4. Their jobs are
+# already wired below and already running: they select pytest markers that
+# currently match nothing, so the day a contract test or a backtest lands, it
+# is enforced without anyone remembering to come back here.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '22'
+
+jobs:
+  # --- Code gate ------------------------------------------------------------
+
+  backend:
+    name: Backend — lint, type-check, tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format
+        run: ruff format --check .
+
+      - name: Type-check
+        run: mypy
+
+      - name: Tests
+        run: pytest
+
+  migrations:
+    name: Backend — migrations apply from empty
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Upgrade from empty
+        env:
+          DATABASE_URL: sqlite:///./ci-migrations.db
+        run: alembic upgrade head
+
+      # Fails when a model changed without a migration behind it. That drift is
+      # invisible until a query hits a column the database does not have, which
+      # on a local-first tool means mid-season.
+      - name: Models and migrations agree
+        env:
+          DATABASE_URL: sqlite:///./ci-migrations.db
+        run: alembic check
+
+      - name: Downgrade to base
+        env:
+          DATABASE_URL: sqlite:///./ci-migrations.db
+        run: alembic downgrade base
+
+  postgres:
+    name: Backend — the same suite against Postgres (ADR-001)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    # This job is the one that turns ADR-001 from an assertion into something
+    # enforced. Every check in test_portability.py is static analysis of
+    # metadata, and the three divergences that actually bit — enum columns with
+    # no CHECK, DateTime(timezone=True) silently dropping the offset on SQLite,
+    # and '%' in a connection URL — are invisible to all of them, because they
+    # only appear when a value or a connection really crosses the seam.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hoops
+          # Contains '%' and '#' on purpose: a URL-encoded password is the
+          # normal case, and it used to crash `alembic upgrade head`.
+          POSTGRES_PASSWORD: 'ho%ops#pw'
+          POSTGRES_DB: hoops_gm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hoops -d hoops_gm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://hoops:ho%25ops%23pw@127.0.0.1:5432/hoops_gm_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev,postgres]"
+
+      - name: Migrations apply from empty on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic upgrade head
+
+      - name: Models and migrations agree on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic check
+
+      - name: Downgrade to base on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic downgrade base
+
+      - name: Full suite against Postgres
+        run: pytest
+
+  frontend:
+    name: Frontend — lint, type-check, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  secrets:
+    name: Code gate — no secrets committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python scripts/check_no_secrets.py
+
+  # --- Adapter gate (Phase 2 onwards) ---------------------------------------
+  #
+  # Contract tests run offline against committed fixtures and block a merge.
+  # The live smoke test hits the real source and is allowed to fail — but
+  # loudly and visibly, never silently. That asymmetry is the whole point:
+  # /fxpa/req is undocumented internal infrastructure and stats.nba.com is
+  # unstable, and we want to find out here rather than at lineup lock.
+
+  adapter-gate:
+    name: Adapter gate — recorded-fixture contract tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Contract tests
+        # Exit code 5 is "no tests collected", which is the correct state until
+        # Phase 2 adds the first adapter.
+        run: |
+          set +e
+          pytest -m adapter_contract
+          status=$?
+          set -e
+          if [ $status -eq 5 ]; then
+            echo "::notice::No adapter contract tests yet — expected until Phase 2."
+            exit 0
+          fi
+          exit $status
+
+  live-smoke:
+    name: Adapter gate — live smoke (allowed to fail, loudly)
+    runs-on: ubuntu-latest
+    # Not on pull requests: a third party's outage must not look like a broken
+    # change. Scheduled and manual runs are where upstream drift shows up.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Live smoke tests
+        run: |
+          set +e
+          pytest -m live_smoke
+          status=$?
+          set -e
+          if [ $status -eq 5 ]; then
+            echo "::notice::No live smoke tests yet — expected until Phase 2."
+            exit 0
+          fi
+          if [ $status -ne 0 ]; then
+            echo "::warning::Live smoke tests failed. An upstream has changed or is down."
+          fi
+          exit $status
+
+  # --- Model gate (Phase 4 onwards) -----------------------------------------
+  #
+  # Backtests report calibration, not just accuracy. A model that says 70% and
+  # is right 70% of the time is more useful for a lineup decision than a
+  # higher-accuracy model that is overconfident. The gate also requires a model
+  # card in docs/models/ and an explicit statement of what the model cannot
+  # see; those are review obligations, not automatable ones.
+
+  model-gate:
+    name: Model gate — backtests report calibration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Backtests
+        run: |
+          set +e
+          pytest -m model_backtest
+          status=$?
+          set -e
+          if [ $status -eq 5 ]; then
+            echo "::notice::No model backtests yet — expected until Phase 4."
+            exit 0
+          fi
+          exit $status

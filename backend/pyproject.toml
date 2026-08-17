@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hoops-gm-backend"
+version = "0.1.0"
+description = "hoops-gm backend: FastAPI service, persistence and REST/SSE contracts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    # Starlette's TestClient prefers httpx2; with httpx it emits a deprecation
+    # warning, which the error-on-warning policy below turns into a failure.
+    "httpx2>=2.10",
+    "mypy>=1.13",
+    "ruff>=0.8",
+]
+# ADR-001's destination. Declared so CI can run the whole suite against a real
+# Postgres — without a driver, every portability claim is static analysis of
+# metadata, and the three divergences that actually bit (enum CHECKs, dropped
+# timezone offsets, '%' in a connection URL) only appear when a value or a
+# connection crosses the seam.
+postgres = [
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+hoops-gm = "hoops_gm.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hoops_gm"]
+
+# --- Lint -------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "C4",   # comprehensions
+    "TID",  # tidy imports
+    "RUF",
+]
+ignore = [
+    "B008",  # FastAPI dependency injection relies on calls in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hoops_gm"]
+
+# --- Types ------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+# Alembic migration scripts are generated and intentionally untyped.
+exclude = "^alembic/"
+
+[[tool.mypy.overrides]]
+module = "alembic.*"
+ignore_missing_imports = true
+
+# --- Tests ------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    # Code gate: the default suite. Everything unmarked runs on every push.
+    "sqlite_only: behaviour specific to the development database; skipped when TEST_DATABASE_URL is set",
+    #
+    # Extension points for the later gates (docs/governance/gates.md). These are
+    # registered now and wired into CI now, so that when Phase 2 and Phase 4
+    # land there is nothing to remember.
+    "adapter_contract: offline contract test asserting a parser still matches a recorded fixture (Adapter gate)",
+    "live_smoke: hits a real external source; allowed to fail, must fail loudly (Adapter gate)",
+    "model_backtest: held-out backtest reporting calibration for a decision-bearing number (Model gate)",
+]
+filterwarnings = ["error"]

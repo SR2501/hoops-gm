@@ -1,0 +1,100 @@
+# hoops-gm — local development stack.
+#
+#   docker compose up --build
+#   http://127.0.0.1:5173   dashboard
+#   http://127.0.0.1:8000   backend  (/health, /docs)
+#
+# ADR-001, and the one thing that looks like a violation of it but is not:
+# every published port is bound to 127.0.0.1, so nothing is reachable from the
+# network. The processes inside the containers bind 0.0.0.0 because a
+# container-internal loopback bind cannot be reached through a port mapping at
+# all. The host binding is what enforces local-only access, not the value of
+# HOST inside the container.
+
+name: hoops-gm
+
+services:
+  backend:
+    build:
+      context: ./backend
+    # host:container — the 127.0.0.1 prefix is load-bearing. Do not drop it.
+    ports:
+      - '127.0.0.1:8000:8000'
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8000'
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
+      ENVIRONMENT: development
+      DATABASE_URL: sqlite:////data/hoops_gm.db
+      CORS_ORIGINS: http://127.0.0.1:5173,http://localhost:5173
+    env_file:
+      # Secrets are never baked into the image or this file. The repo-root .env
+      # is gitignored; .env.example documents its shape.
+      - path: .env
+        required: false
+    volumes:
+      - backend-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - '127.0.0.1:5173:5173'
+    environment:
+      DEV_SERVER_HOST: 0.0.0.0
+      # Service name, not localhost: the proxy runs inside the frontend
+      # container, where 127.0.0.1 is the frontend itself.
+      VITE_API_PROXY_TARGET: http://backend:8000
+    volumes:
+      # Live reload against the working tree. The anonymous volume keeps the
+      # image's node_modules, which are built for the container's platform.
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Postgres is the destination, not the development database (ADR-001). Kept
+  # behind a profile so it is a real, runnable seam rather than commented-out
+  # code that has never been executed:
+  #
+  #   docker compose --profile postgres up
+  #   DATABASE_URL=postgresql+psycopg://hoops:hoops@127.0.0.1:5433/hoops_gm
+  #
+  # Moving to it is a configuration change plus `alembic upgrade head`. Nothing
+  # in the application branches on the dialect.
+  postgres:
+    profiles: [postgres]
+    image: postgres:16-alpine
+    ports:
+      - '127.0.0.1:5433:5432'
+    environment:
+      POSTGRES_USER: hoops
+      POSTGRES_PASSWORD: hoops
+      POSTGRES_DB: hoops_gm
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hoops -d hoops_gm']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  backend-data:
+  postgres-data:
