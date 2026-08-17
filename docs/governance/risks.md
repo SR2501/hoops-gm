@@ -53,6 +53,7 @@ Severity: 🔴 high · 🟡 medium · 🟢 low
 | R20 | Chrome throttles background tabs, stalling draft polling | 🟡 | Fantrax must be visible and active during a draft; documented in the runbook | `bridge` |
 | R21 | Scope growth crowds out rehearsal time | 🟡 | Rehearsal is a deliverable, not a buffer; 10+ mocks are scheduled work | `architect` |
 | R22 | Governance overhead exceeds its value for a solo project | 🟢 | `architect` owns the call to cut it; four gates and seven agents is the deliberate floor | `architect` |
+| R29 | **GitHub Actions is stopped by account billing — all four gates are unenforced** | 🔴 **Open, owner-only** | Since 2026-08-17 ~12:58Z every job fails before executing a single step (`steps: 0`), with *"recent account payments have failed or your spending limit needs to be increased"*. Last green run 12:56Z. This is an account-level stop, not a code failure. **The gates are enforced by exactly one mechanism and it is off**, including the Postgres job that made ADR-001 enforceable — it was green for about forty minutes. A red tick currently says nothing about the code and a green one is unobtainable. Resolution is owner-only: it either commits money or changes repo visibility. Meanwhile: run the gate commands locally before every merge (`backend/README.md`) and **do not trust a tick**. PR #3 is held open rather than merged, since merging past a dead gate in the exact situation the gate exists for would set the wrong precedent | owner |
 
 ## Realised
 
