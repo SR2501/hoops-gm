@@ -1,0 +1,41 @@
+# Secrets — never commit real values
+.env
+.env.*
+!.env.example
+*.cookie
+fantraxloggedin.cookie
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local data — raw pulls and imports stay out of git
+data/
+*.csv
+!docs/**/*.csv
+!**/fixtures/**/*.csv
