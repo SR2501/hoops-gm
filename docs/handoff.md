@@ -355,3 +355,15 @@ The full decision, options and recommendation now live in `docs/governance/OPEN-
 - `cdn.nba.com` still returns 403 from the development machine (R26). Diagnosed as Global Secure Access egress rather than a property of the source, but unconfirmed from an unenrolled device. Only matters at Phase 6.
 
 **Next:** `data-engineer` to complete the Phase 2 review fixes, then investigate the AAV question (R37) as the highest-priority unknown. `architect` to merge PR #3 and PR #4 once GitHub's API incident clears, and to watch the Postgres job on PR #4 — it will finally execute the `batch_alter_table` path that three people have now reasoned about without running.
+
+---
+
+## 2026-08-17 — bridge — Phase 9 userscript foundation
+
+**Changed:** Added the dependency-free `userscript/` build pipeline, producing a readable `dist/hoops-gm.user.js` with Fantrax league-page-only metadata, loopback `GM_xmlhttpRequest` permission, and no page interception or DOM mutation. The bridge generates a 32-byte secret with `crypto.getRandomValues`, persists it through Tampermonkey storage, sends it only as `X-Bridge-Secret`, exposes `/health` and the planned handshake transport, and rejects backend failures without throwing into the page. Added tests and install/development documentation.
+
+**Now true:** Running `npm run build` produces one installable userscript whose metadata matches only `https://*.fantrax.com/fantasy/league/*` hosts explicitly listed in the header and whose transport target is hard-coded to `http://127.0.0.1:8000`. A browser-compatible GM request shim completed a real HTTP `/health` round trip against a local loopback mock and observed the response; the backend endpoint itself could not be started here because the checkout's global Python environment lacks `structlog`. The backend handshake route remains a contract for the backend work and is not fabricated in this userscript-only phase.
+
+**Could not verify:** The real FastAPI `/health` round trip could not be executed on this machine because backend dependencies are not installed globally (`structlog` is missing), and installing them would change the environment rather than verify the repository's normal backend setup. Tampermonkey itself was not available for an in-browser install test, so metadata and GM APIs were exercised through the build output and a Node HTTP shim. CI is also not a substitute for those two runtime checks.
+
+**Next:** `backend` must expose and authenticate `POST /api/v1/bridge/handshake` using the configured `BRIDGE_SECRET`; `bridge-capture` can build on `HoopsGmTransport` without adding page mutation or `/fxpa/req` interception to this foundation.
