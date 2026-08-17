@@ -392,6 +392,60 @@ Ten mocks is a real corpus — enough to calibrate inflation curves and opponent
 
 ---
 
+## Timing & deadline intelligence
+
+Most managers lose value to the calendar rather than to bad analysis. Deadlines pass while people sleep, work, or simply forget. This is the most reliably automatable edge in the game, because being present at the right moment requires no skill — only something that is awake.
+
+### League settings are the prerequisite
+
+None of this can be computed without knowing the league's actual rules. Ingest and model:
+
+- **Lineup lock type** — per-player at tipoff (Fantrax default) versus daily or weekly lock
+- **Waiver period and processing time** — when claims resolve and when players clear
+- **Claim mechanism** — waiver priority versus FAAB budget, and the budget if applicable
+- **Games-played caps** — per week, per position, or per season
+- **Roster limits** — active, bench, IR slots and their eligibility rules
+- **Scoring periods** — week boundaries, which already live on `scoring_periods`
+- **Trade deadline, playoff weeks, keeper rules**
+
+`getLeagueInfo` returns scoring settings and league config, but **whether it carries the timing fields is unverified** — that is exactly the kind of assumption this project keeps disproving. Verify against the live endpoint before building on it; the bridge is the fallback.
+
+### The four timing edges, in order of value
+
+**1. Waiver clear timing.** When a player clears waivers he becomes first-come-first-served. A useful player clearing at 3am goes to whoever is present. Knowing the exact clear moment — and being there — is the single largest timing edge available, and it is pure calendar arithmetic once the settings are known.
+
+**2. Per-player lock exploitation.** Because Fantrax locks each player individually at his own tipoff, **late-slate decisions can be made with early-slate results already in hand.** If the early games leave you needing blocks and comfortably ahead in assists, the correct late-game start changes. This is a category-management edge, not merely a punctuality one, and it is invisible to anyone not watching the matchup state live.
+
+**3. Games-cap management.** Where a league caps games per week or per position, burning the cap early strands roster spots later. Track games remaining against the cap alongside the schedule grid so streaming decisions account for it.
+
+**4. Deadline warnings.** Lineup locks, waiver claim cutoffs, trade deadline, playoff roster deadlines. Unglamorous and the most common source of quiet loss.
+
+### Notification system
+
+Read-only alerting, separate from any write automation:
+
+- Configurable lead times per deadline type — a lock warning is useful at 30 minutes, a waiver clear at 5
+- Contextual, not just chronological: *"Lineup locks in 30 minutes and you have two players on teams that are already out"* beats a bare countdown
+- Actionable, linking straight to the relevant dashboard or Fantrax view
+- Quiet hours and severity tiers, so the system stays worth listening to
+
+> **Where this crosses into the write path.** Alerting is read-only and carries none of ADR-005's concerns. **Automatically claiming a player the moment he clears waivers is a write**, and goes through the full guardrail set with `safety` review and owner-only enabling. Worth noting once, without labouring it: there is a difference between what Fantrax permits and what leaguemates enjoy. Supervised alerting — where the tool wakes you and you act — captures most of the edge without that question arising at all.
+
+### The always-on problem (R42)
+
+**A system whose purpose is acting while you sleep needs something that is awake, and the laptop is not it.** ADR-001 puts the backend on the owner's machine, which is closed at 3am — precisely when the waiver-clear edge exists. Options:
+
+| Option | Cost | Notes |
+|---|---|---|
+| **Scheduled GitHub Actions workflow** | Free | The repo is public, so scheduled runs are unlimited. Needs the Fantrax cookie in Actions secrets — encrypted and not readable from a public repo, but it does place a live credential in a third-party system, and fork-PR workflow permissions must be locked down. |
+| Small always-on box (Pi, mini PC, old laptop) | Hardware | Keeps every credential local, which fits ADR-001 best |
+| Cheap cloud VM | ~$5/month | Simple, but moves the cookie off-machine anyway |
+| Keep the laptop awake | Free | Fragile, and defeated by a single reboot or sleep setting |
+
+Recommendation: build the notification engine so the *scheduler* is pluggable, then decide the host separately. The logic is identical either way, and the hosting choice is an owner decision with a security dimension rather than a technical one.
+
+---
+
 ## Automation safety model
 
 You asked for both supervised and autonomous. Design applies to both, since the real risk is a bug, not detection.
