@@ -21,13 +21,16 @@ Severity: 🔴 high · 🟡 medium · 🟢 low
 
 | ID | Risk | Sev | Mitigation | Owner |
 |---|---|---|---|---|
-| R7 | **Player identity mismatch silently corrupts every downstream number** | 🔴 | Anchor on Fantrax `getPlayerIds` + `nba_api`; confidence scoring; unmatched report; manual override; dedicated test suite | `data-engineer` |
+| R7 | **Player identity mismatch silently corrupts every downstream number** | 🔴 | **No shared key exists** — see R23. Fuzzy match on normalized name + team + position, confidence scoring, unmatched report, manual override treated as final, dedicated test suite | `data-engineer` |
 | R8 | Availability model is overconfident — poorly calibrated `p(play)` | 🔴 | Model gate requires calibration reporting, not accuracy alone; held-out backtest | `quant` |
 | R9 | Percentage categories modelled as raw pct instead of volume-weighted impact | 🔴 | Explicit test cases: low-volume high-pct players must not rank highly | `quant` |
 | R10 | DNP reason codes are inconsistent; "rest" laundered as minor ailment | 🟡 | Normalization layer; model leans on observed patterns over stated reasons | `quant` |
 | R11 | Availability model trained on stale regime — league behaviour shifts season to season | 🟡 | Recency weighting; re-evaluate calibration in-season | `quant` |
 | R12 | Auction inflation model wrong under live conditions, never tested at speed | 🟡 | Validate against the mock corpus before the real draft | `quant` |
 | R13 | Overfitting to a small mock corpus when calibrating opponents | 🟢 | 10+ mocks minimum; treat opponent models as priors, not truth | `quant` |
+| R23 | **Fantrax exposes no NBA.com player id**, so there is no clean anchor pair for the crosswalk | 🔴 | Verified live 2026-08-17: `getPlayerIds` returns `statsIncId`, `rotowireId`, `sportRadarId` only. The join to `nba_api` is fuzzy from the first step. Investigate `sportRadarId` as a bridge via public datasets; otherwise name+team+position with confidence scoring and manual override | `data-engineer` |
+| R24 | `getPlayerIds` mixes non-player rows into the player payload | 🟡 | Team entities appear alongside players (`position: "Tm"`, `#` in the id, e.g. `40220#3020`). Filter explicitly on ingest; a naive importer creates garbage identity rows. Names are `"Last, First"` and need normalising | `data-engineer` |
+| R25 | Portability claims are static analysis only — nothing runs against Postgres | 🔴 | Found by review of PR #1: no Postgres driver declared, no CI job against Postgres, so value-level and connection-level dialect divergence is entirely unchecked. Stand up the profile-gated Postgres service in CI and run the same suite against it | `backend` |
 
 ## Automation & account
 
@@ -50,4 +53,6 @@ Severity: 🔴 high · 🟡 medium · 🟢 low
 
 ## Realised
 
-*(none yet — record here with date and outcome when one lands)*
+| Date | ID | What happened |
+|---|---|---|
+| 2026-08-17 | R25 | PR #1 claimed enum columns render as VARCHAR + CHECK and that `DateTime(timezone=True)` is portable. Independent review found neither held: `Enum.create_constraint` defaults to `False` in SQLAlchemy 1.4+, so 17 enum columns had 0 CHECK constraints; and SQLite silently drops the offset, so `tipoff_utc` stored local wall-clock time — four hours wrong, and correct on Postgres from the identical write. Both were caught only because a reviewer executed the claims rather than reading them. Root cause: no CI job runs against Postgres, so every portability assertion was static analysis of metadata. **Lesson: a portability guarantee that is never exercised across the seam is a belief, not a guarantee.** |
