@@ -11,10 +11,10 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 from hoops_gm.core.config import get_settings
-from hoops_gm.db.base import Base
+from hoops_gm.db.base import Base, UTCDateTime, enum_check_constraint_names
 from hoops_gm.db.session import enable_sqlite_foreign_keys
 
 # Importing the models package is what populates Base.metadata. Without it,
@@ -28,23 +28,57 @@ if config.config_file_name is not None:
 
 settings = get_settings()
 
-# An explicitly configured URL wins. Nothing sets one from the command line —
-# alembic.ini deliberately has no ``sqlalchemy.url`` — so ordinary use always
-# goes through application settings and the app and its migrations cannot end
-# up pointed at different databases. Tests construct a ``Config`` in process
-# and set the URL directly, which is the one case that needs the override.
-_configured_url = config.get_main_option("sqlalchemy.url", None)
-database_url = _configured_url or settings.database_url
-config.set_main_option("sqlalchemy.url", database_url)
+# The URL never passes through ``config.set_main_option``. Alembic stores main
+# options in a ConfigParser using BasicInterpolation, which treats ``%`` as an
+# escape — so a URL-encoded Postgres password (``%40`` for ``@``, ``%23`` for
+# ``#``) crashes ``alembic upgrade head`` with an interpolation error that says
+# nothing about why. That would fire at exactly the moment ADR-001's "config
+# change plus a data migration" is being exercised for the first time.
+#
+# ``config.attributes`` is a plain dict and bypasses the ConfigParser entirely.
+# Tests construct a Config in process and set the URL there; ordinary CLI use
+# has no attribute set and falls through to application settings, so the app
+# and its migrations cannot end up pointed at different databases.
+_configured_url = config.attributes.get("sqlalchemy_url")
+database_url: str = _configured_url or settings.database_url
 
 target_metadata = Base.metadata
+
+_ENUM_CHECK_NAMES = enum_check_constraint_names(target_metadata)
 
 
 def _include_object(
     _object: object, name: str | None, type_: str, _reflected: bool, _compare_to: object
 ) -> bool:
-    """Ignore Alembic's own bookkeeping table when comparing."""
-    return not (type_ == "table" and name == "alembic_version")
+    """Filter objects out of autogenerate comparison.
+
+    Two exclusions, both narrow:
+
+    * Alembic's own ``alembic_version`` bookkeeping table.
+    * The CHECK constraints SQLAlchemy generates for enum columns, which
+      autogenerate reflects from the database but skips in metadata — see
+      ``enum_check_constraint_names``. Their existence is asserted by
+      ``test_database_guarantees.py`` against raw SQL, which is a stronger
+      check than their presence in a diff.
+    """
+    if type_ == "table" and name == "alembic_version":
+        return False
+    return not (type_ == "check_constraint" and name in _ENUM_CHECK_NAMES)
+
+
+def _render_item(type_: str, obj: object, autogen_context: object) -> str | bool:
+    """Render custom column types as plain SQLAlchemy types.
+
+    Autogenerate would otherwise emit ``hoops_gm.db.base.UTCDateTime()`` into
+    the migration, which makes a migration depend on live application code —
+    so renaming or moving that class silently breaks the ability to migrate an
+    old database. Migrations must stay readable and runnable years after the
+    code they were generated from has moved on. ``UTCDateTime`` is only a
+    bind/result behaviour; its DDL is exactly ``DateTime(timezone=True)``.
+    """
+    if type_ == "type" and isinstance(obj, UTCDateTime):
+        return "sa.DateTime(timezone=True)"
+    return False
 
 
 def run_migrations_offline() -> None:
@@ -56,6 +90,7 @@ def run_migrations_offline() -> None:
         compare_type=True,
         compare_server_default=True,
         include_object=_include_object,
+        render_item=_render_item,
         # SQLite cannot ALTER most things in place. Batch mode rewrites the
         # table instead. This is a migration-tooling accommodation, not a
         # SQLite behaviour leaking into application queries.
@@ -66,12 +101,9 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    section = config.get_section(config.config_ini_section, {})
-    connectable = engine_from_config(
-        section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # create_engine directly rather than engine_from_config: the URL must not
+    # be round-tripped through the ConfigParser (see the note above).
+    connectable = create_engine(database_url, poolclass=pool.NullPool)
 
     if connectable.dialect.name == "sqlite":
         # Registered on the engine, not executed on the connection. Running a
@@ -88,6 +120,7 @@ def run_migrations_online() -> None:
             compare_type=True,
             compare_server_default=True,
             include_object=_include_object,
+            render_item=_render_item,
             render_as_batch=connection.dialect.name == "sqlite",
         )
         with context.begin_transaction():

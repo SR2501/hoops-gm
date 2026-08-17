@@ -28,6 +28,14 @@ dev = [
     "mypy>=1.13",
     "ruff>=0.8",
 ]
+# ADR-001's destination. Declared so CI can run the whole suite against a real
+# Postgres — without a driver, every portability claim is static analysis of
+# metadata, and the three divergences that actually bit (enum CHECKs, dropped
+# timezone offsets, '%' in a connection URL) only appear when a value or a
+# connection crosses the seam.
+postgres = [
+    "psycopg[binary]>=3.2",
+]
 
 [project.scripts]
 hoops-gm = "hoops_gm.__main__:main"
@@ -86,6 +94,7 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
     # Code gate: the default suite. Everything unmarked runs on every push.
+    "sqlite_only: behaviour specific to the development database; skipped when TEST_DATABASE_URL is set",
     #
     # Extension points for the later gates (docs/governance/gates.md). These are
     # registered now and wired into CI now, so that when Phase 2 and Phase 4

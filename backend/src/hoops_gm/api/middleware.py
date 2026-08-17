@@ -43,7 +43,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
             )
-            structlog.contextvars.clear_contextvars()
+            # Deliberately no clear_contextvars() here. The exception is about
+            # to propagate to the application's 500 handler, which reads
+            # request_id off the logging context to put it in the response
+            # body and header. Clearing first leaves that handler with None —
+            # losing correlation for exactly the errors it exists to trace.
+            # The next request clears at the top of dispatch anyway.
             raise
 
         duration_ms = round((time.perf_counter() - started) * 1000, 2)

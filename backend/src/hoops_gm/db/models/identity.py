@@ -113,13 +113,43 @@ class PlayerExternalId(IntPk, TimestampMixin, Base):
     """One source's identifier for a canonical player.
 
     ``(source, external_id)`` is unique: a single upstream identifier may not
-    point at two people. The reverse is not constrained — a player legitimately
-    has one row per source, and more than one row for a source that changed its
-    identifier between seasons is a real situation the resolver must be able to
-    represent.
+    point at two people.
+
+    The reverse is deliberately *not* unique, but it is not unconstrained
+    either, and the distinction matters because two different things look
+    alike here:
+
+    * **Sibling identifiers across sources are normal.** Fantrax exposes
+      ``statsIncId``, ``rotowireId`` and ``sportRadarId``; each is its own
+      source and gets its own row. Nothing should prevent that.
+    * **Superseded identifiers within one source are history.** When a source
+      changes a player's identifier between seasons, the old row must be
+      retained but must stop being the one joins pick up.
+
+    Without that second constraint, two ``fantrax`` rows for one player make
+    ``players JOIN player_external_ids ON source = 'fantrax'`` fan out, and
+    every aggregate through the crosswalk silently double-counts.
+
+    ``current_for_source`` enforces it portably: it holds the source value
+    while the row is current and ``NULL`` once superseded, and
+    ``(player_id, current_for_source)`` is unique. SQL treats NULLs as
+    distinct on both dialects, so any number of superseded rows coexist while
+    at most one current row per source survives. This is the same technique as
+    ``player_season_stats.team_key``, and it is used in preference to a partial
+    unique index because that would need ``sqlite_where`` and
+    ``postgresql_where`` — dialect-specific DDL, in the table where ADR-001
+    matters most.
 
     ``confidence`` and ``match_method`` exist so that the unmatched/low-
     confidence report required by Phase 2 is a query, not a re-derivation.
+    Neither has a permissive default: ``match_method`` has no default at all,
+    so a caller must state how it matched, and ``confidence`` defaults to
+    ``0.0``. An earlier version defaulted to ``ANCHOR_ID`` and ``1.0``, so a
+    forgotten field asserted the strongest possible provenance — matched on a
+    shared identifier, fully confident — for a join where no shared identifier
+    exists at all. On the project's highest-severity risk, the silent default
+    must be the pessimistic one.
+
     ``is_manual_override`` is the resolver's stop sign: a human decision must
     survive the next automated pass.
     """
@@ -127,9 +157,14 @@ class PlayerExternalId(IntPk, TimestampMixin, Base):
     __tablename__ = "player_external_ids"
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_player_external_ids_source_ext"),
+        UniqueConstraint("player_id", "current_for_source", name="uq_player_external_ids_current"),
         CheckConstraint(
             "confidence >= 0.0 AND confidence <= 1.0",
             name="confidence_range",
+        ),
+        CheckConstraint(
+            "current_for_source IS NULL OR current_for_source = source",
+            name="current_marker_matches_source",
         ),
         Index("ix_player_external_ids_player_source", "player_id", "source"),
         Index("ix_player_external_ids_source_norm_name", "source", "normalized_name"),
@@ -137,6 +172,10 @@ class PlayerExternalId(IntPk, TimestampMixin, Base):
 
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), index=True)
     source: Mapped[ExternalSource] = mapped_column(portable_enum(ExternalSource, "external_source"))
+    #: Equal to ``source`` while this is the identifier joins should use, and
+    #: NULL once superseded. Carries the uniqueness a boolean flag could not
+    #: without a dialect-specific partial index.
+    current_for_source: Mapped[str | None] = mapped_column(String(48))
     #: Optional finer scoping within a source — a specific CSV import batch, or
     #: a league id where the source namespaces identifiers per league.
     source_detail: Mapped[str | None] = mapped_column(String(64))
@@ -149,10 +188,8 @@ class PlayerExternalId(IntPk, TimestampMixin, Base):
     external_team: Mapped[str | None] = mapped_column(String(16))
     external_position: Mapped[str | None] = mapped_column(String(16))
 
-    confidence: Mapped[float] = mapped_column(Float, default=1.0)
-    match_method: Mapped[MatchMethod] = mapped_column(
-        portable_enum(MatchMethod, "match_method"), default=MatchMethod.ANCHOR_ID
-    )
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    match_method: Mapped[MatchMethod] = mapped_column(portable_enum(MatchMethod, "match_method"))
     is_manual_override: Mapped[bool] = mapped_column(default=False, index=True)
     #: Set when a human has looked at this row, whether or not they changed it.
     reviewed_at: Mapped[date | None] = mapped_column(Date)

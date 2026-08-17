@@ -44,6 +44,7 @@ from hoops_gm.db.models.enums import (
     ScoringType,
     TransactionType,
 )
+from hoops_gm.db.models.stats import stat_key_sql_list
 
 if TYPE_CHECKING:
     from hoops_gm.db.models.identity import Player
@@ -145,6 +146,26 @@ class LeagueScoringCategory(IntPk, TimestampMixin, Base):
             "OR (kind = 'ratio' AND numerator_stat IS NOT NULL "
             "AND denominator_stat IS NOT NULL)",
             name="ratio_components_present",
+        ),
+        # Components must name real box-score columns. Without this, a typo
+        # like 'ftm_typo' is accepted and the valuation engine silently has
+        # nothing to weight the category by — which is the R9 bug wearing a
+        # different hat.
+        CheckConstraint(
+            f"numerator_stat IS NULL OR numerator_stat IN ({stat_key_sql_list()})",
+            name="numerator_in_vocabulary",
+        ),
+        CheckConstraint(
+            f"denominator_stat IS NULL OR denominator_stat IN ({stat_key_sql_list()})",
+            name="denominator_in_vocabulary",
+        ),
+        # A known percentage category declared as COUNTING is the R9 bug
+        # stated outright. An IN list rather than a LIKE pattern, because
+        # SQLite's LIKE is case-insensitive and Postgres's is not, and this
+        # module may not introduce a dialect divergence.
+        CheckConstraint(
+            "key NOT IN ('fg_pct', 'ft_pct', 'fg3_pct', 'ts_pct', 'efg_pct') OR kind = 'ratio'",
+            name="percentage_keys_are_ratios",
         ),
     )
 
@@ -333,20 +354,39 @@ class MatchupCategoryResult(IntPk, TimestampMixin, Base):
     because a result is a historical fact and must survive the league moving to
     a new scoring profile version.
 
-    Ratio categories keep their numerator and denominator alongside the value,
-    so the live scorecard can answer "how many makes from how many attempts do
-    I still need" rather than only showing a percentage.
+    ``kind`` is denormalised alongside it for the same reason, and it is what
+    makes the ratio guarantee enforceable: the table cannot consult the profile
+    to discover that ``fg_pct`` is a ratio, so it carries that fact itself and
+    a CHECK requires the components to be present. Without it, Fantrax's
+    matchup feed — which supplies ``.478`` directly — makes the path of least
+    resistance in Phase 2 ingest a stored raw percentage with no denominator,
+    which is precisely risk R9.
     """
 
     __tablename__ = "matchup_category_results"
     __table_args__ = (
         UniqueConstraint("matchup_id", "category_key", name="uq_matchup_cat_results_key"),
+        CheckConstraint(
+            "kind = 'counting' OR ("
+            "home_numerator IS NOT NULL AND home_denominator IS NOT NULL "
+            "AND away_numerator IS NOT NULL AND away_denominator IS NOT NULL)",
+            name="ratio_components_present",
+        ),
+        CheckConstraint(
+            "category_key NOT IN ('fg_pct', 'ft_pct', 'fg3_pct', 'ts_pct', 'efg_pct') "
+            "OR kind = 'ratio'",
+            name="percentage_keys_are_ratios",
+        ),
     )
 
     matchup_id: Mapped[int] = mapped_column(
         ForeignKey("matchups.id", ondelete="CASCADE"), index=True
     )
     category_key: Mapped[str] = mapped_column(String(32))
+    #: Denormalised from the scoring category that was in force at the time.
+    kind: Mapped[CategoryKind] = mapped_column(
+        portable_enum(CategoryKind, "category_kind"), default=CategoryKind.COUNTING
+    )
     home_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     away_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     home_numerator: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))

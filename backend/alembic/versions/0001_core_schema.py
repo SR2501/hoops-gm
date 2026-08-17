@@ -14,9 +14,25 @@ The Availability, Contingent value, Projections, Valuation, Draft, Decisions
 and Bridge groups are deliberately absent; they belong to later phases and
 their owning agents.
 
-Enums render as VARCHAR with a CHECK constraint rather than a native Postgres
-type, so the same DDL is correct on both dialects and adding a value does not
-require a type migration.
+Enums render as VARCHAR **plus a CHECK constraint** — note the
+``create_constraint=True`` on every ``sa.Enum`` below. It is not decoration.
+That argument defaults to ``False``, and the first version of this migration
+omitted it, so the schema had 18 enum columns and no enum CHECKs at all while
+three docstrings claimed the opposite. An unknown value inserted cleanly
+through any path that bypassed the ORM, and adding an enum member required no
+migration because there was no constraint to widen.
+
+Timestamps are plain ``sa.DateTime(timezone=True)`` here rather than the
+application's ``UTCDateTime``. The two produce identical DDL; ``UTCDateTime``
+only adds bind and result behaviour. Keeping application classes out of
+migrations means renaming one cannot break the ability to migrate an old
+database.
+
+This migration was regenerated rather than followed by a corrective one. It
+had not been merged or applied anywhere, and a second migration performing a
+SQLite batch table-rebuild would have been permanent complexity in the history
+of a schema that was never released. Anyone holding a database created by the
+earlier version must drop it and re-run; there is no data to preserve.
 
 Revision ID: 0001
 Revises:
@@ -53,6 +69,7 @@ def upgrade() -> None:
                 "points",
                 name="scoring_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -66,6 +83,7 @@ def upgrade() -> None:
                 "unknown",
                 name="draft_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -104,7 +122,14 @@ def upgrade() -> None:
         sa.Column("city", sa.String(length=64), nullable=True),
         sa.Column(
             "conference",
-            sa.Enum("East", "West", name="conference", native_enum=False, length=48),
+            sa.Enum(
+                "East",
+                "West",
+                name="conference",
+                native_enum=False,
+                create_constraint=True,
+                length=48,
+            ),
             nullable=True,
         ),
         sa.Column("division", sa.String(length=32), nullable=True),
@@ -181,6 +206,7 @@ def upgrade() -> None:
                 "points",
                 name="scoring_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -232,6 +258,7 @@ def upgrade() -> None:
                 "playoffs",
                 name="season_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -249,6 +276,7 @@ def upgrade() -> None:
                 "cancelled",
                 name="game_status",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -315,6 +343,7 @@ def upgrade() -> None:
                 "unknown",
                 name="player_status",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -437,7 +466,14 @@ def upgrade() -> None:
         sa.Column("label", sa.String(length=48), nullable=False),
         sa.Column(
             "kind",
-            sa.Enum("counting", "ratio", name="category_kind", native_enum=False, length=48),
+            sa.Enum(
+                "counting",
+                "ratio",
+                name="category_kind",
+                native_enum=False,
+                create_constraint=True,
+                length=48,
+            ),
             nullable=False,
         ),
         sa.Column("direction", sa.Integer(), nullable=False),
@@ -461,6 +497,18 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "(kind = 'counting' AND numerator_stat IS NULL AND denominator_stat IS NULL) OR (kind = 'ratio' AND numerator_stat IS NOT NULL AND denominator_stat IS NOT NULL)",
             name=op.f("ck_league_scoring_categories_ratio_components_present"),
+        ),
+        sa.CheckConstraint(
+            "denominator_stat IS NULL OR denominator_stat IN ('assists', 'blocks', 'defensive_rebounds', 'field_goals_attempted', 'field_goals_made', 'free_throws_attempted', 'free_throws_made', 'offensive_rebounds', 'personal_fouls', 'plus_minus', 'points', 'rebounds', 'seconds_played', 'steals', 'three_pointers_attempted', 'three_pointers_made', 'turnovers')",
+            name=op.f("ck_league_scoring_categories_denominator_in_vocabulary"),
+        ),
+        sa.CheckConstraint(
+            "key NOT IN ('fg_pct', 'ft_pct', 'fg3_pct', 'ts_pct', 'efg_pct') OR kind = 'ratio'",
+            name=op.f("ck_league_scoring_categories_percentage_keys_are_ratios"),
+        ),
+        sa.CheckConstraint(
+            "numerator_stat IS NULL OR numerator_stat IN ('assists', 'blocks', 'defensive_rebounds', 'field_goals_attempted', 'field_goals_made', 'free_throws_attempted', 'free_throws_made', 'offensive_rebounds', 'personal_fouls', 'plus_minus', 'points', 'rebounds', 'seconds_played', 'steals', 'three_pointers_attempted', 'three_pointers_made', 'turnovers')",
+            name=op.f("ck_league_scoring_categories_numerator_in_vocabulary"),
         ),
         sa.CheckConstraint(
             "direction IN (-1, 1)", name=op.f("ck_league_scoring_categories_direction_sign")
@@ -492,6 +540,7 @@ def upgrade() -> None:
                 "final",
                 name="matchup_status",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -562,10 +611,12 @@ def upgrade() -> None:
                 "manual",
                 name="external_source",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
         ),
+        sa.Column("current_for_source", sa.String(length=48), nullable=True),
         sa.Column("source_detail", sa.String(length=64), nullable=True),
         sa.Column("external_id", sa.String(length=64), nullable=False),
         sa.Column("external_name", sa.String(length=128), nullable=True),
@@ -584,6 +635,7 @@ def upgrade() -> None:
                 "manual_override",
                 name="match_method",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -608,6 +660,10 @@ def upgrade() -> None:
             "confidence >= 0.0 AND confidence <= 1.0",
             name=op.f("ck_player_external_ids_confidence_range"),
         ),
+        sa.CheckConstraint(
+            "current_for_source IS NULL OR current_for_source = source",
+            name=op.f("ck_player_external_ids_current_marker_matches_source"),
+        ),
         sa.ForeignKeyConstraint(
             ["player_id"],
             ["players.id"],
@@ -615,6 +671,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_player_external_ids")),
+        sa.UniqueConstraint(
+            "player_id", "current_for_source", name="uq_player_external_ids_current"
+        ),
         sa.UniqueConstraint("source", "external_id", name="uq_player_external_ids_source_ext"),
     )
     with op.batch_alter_table("player_external_ids", schema=None) as batch_op:
@@ -708,13 +767,21 @@ def upgrade() -> None:
                 "playoffs",
                 name="season_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
         ),
         sa.Column(
             "scope",
-            sa.Enum("team", "total", name="stat_scope", native_enum=False, length=48),
+            sa.Enum(
+                "team",
+                "total",
+                name="stat_scope",
+                native_enum=False,
+                create_constraint=True,
+                length=48,
+            ),
             nullable=False,
         ),
         sa.Column("team_key", sa.String(length=8), nullable=False),
@@ -796,6 +863,7 @@ def upgrade() -> None:
                 "minors",
                 name="roster_status",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -849,6 +917,7 @@ def upgrade() -> None:
                 "playoffs",
                 name="season_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -919,6 +988,7 @@ def upgrade() -> None:
                 "other",
                 name="transaction_type",
                 native_enum=False,
+                create_constraint=True,
                 length=48,
             ),
             nullable=False,
@@ -986,6 +1056,18 @@ def upgrade() -> None:
         "matchup_category_results",
         sa.Column("matchup_id", sa.Integer(), nullable=False),
         sa.Column("category_key", sa.String(length=32), nullable=False),
+        sa.Column(
+            "kind",
+            sa.Enum(
+                "counting",
+                "ratio",
+                name="category_kind",
+                native_enum=False,
+                create_constraint=True,
+                length=48,
+            ),
+            nullable=False,
+        ),
         sa.Column("home_value", sa.Numeric(precision=12, scale=4), nullable=True),
         sa.Column("away_value", sa.Numeric(precision=12, scale=4), nullable=True),
         sa.Column("home_numerator", sa.Numeric(precision=12, scale=4), nullable=True),
@@ -994,7 +1076,15 @@ def upgrade() -> None:
         sa.Column("away_denominator", sa.Numeric(precision=12, scale=4), nullable=True),
         sa.Column(
             "outcome",
-            sa.Enum("home", "away", "tie", name="category_outcome", native_enum=False, length=48),
+            sa.Enum(
+                "home",
+                "away",
+                "tie",
+                name="category_outcome",
+                native_enum=False,
+                create_constraint=True,
+                length=48,
+            ),
             nullable=True,
         ),
         sa.Column("id", sa.Integer(), nullable=False),
@@ -1009,6 +1099,14 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("(CURRENT_TIMESTAMP)"),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "category_key NOT IN ('fg_pct', 'ft_pct', 'fg3_pct', 'ts_pct', 'efg_pct') OR kind = 'ratio'",
+            name=op.f("ck_matchup_category_results_percentage_keys_are_ratios"),
+        ),
+        sa.CheckConstraint(
+            "kind = 'counting' OR (home_numerator IS NOT NULL AND home_denominator IS NOT NULL AND away_numerator IS NOT NULL AND away_denominator IS NOT NULL)",
+            name=op.f("ck_matchup_category_results_ratio_components_present"),
         ),
         sa.ForeignKeyConstraint(
             ["matchup_id"],

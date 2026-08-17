@@ -13,12 +13,11 @@ minutes loses information and invites floating-point comparisons in aggregation.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import (
     CheckConstraint,
     Date,
-    DateTime,
     ForeignKey,
     Index,
     String,
@@ -26,7 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from hoops_gm.db.base import Base, IntPk, TimestampMixin, portable_enum
+from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
 from hoops_gm.db.models.enums import GameStatus, SeasonType, StatScope
 
 if TYPE_CHECKING:
@@ -63,6 +62,38 @@ class BoxScoreMixin:
     plus_minus: Mapped[int | None] = mapped_column()
 
 
+#: The vocabulary a ratio scoring category may name as its numerator or
+#: denominator. Written out rather than derived from ``BoxScoreMixin`` at
+#: import time, because these values end up inside a CHECK constraint in a
+#: migration and a constraint whose contents shift with a refactor is worse
+#: than one that is explicit. ``test_schema.py`` asserts it stays in step with
+#: the mixin.
+BOX_SCORE_STAT_KEYS: Final[tuple[str, ...]] = (
+    "assists",
+    "blocks",
+    "defensive_rebounds",
+    "field_goals_attempted",
+    "field_goals_made",
+    "free_throws_attempted",
+    "free_throws_made",
+    "offensive_rebounds",
+    "personal_fouls",
+    "plus_minus",
+    "points",
+    "rebounds",
+    "seconds_played",
+    "steals",
+    "three_pointers_attempted",
+    "three_pointers_made",
+    "turnovers",
+)
+
+
+def stat_key_sql_list() -> str:
+    """The stat vocabulary as a SQL ``IN`` list, for CHECK constraints."""
+    return ", ".join(f"'{key}'" for key in BOX_SCORE_STAT_KEYS)
+
+
 class NbaGame(IntPk, TimestampMixin, Base):
     """A single NBA game."""
 
@@ -80,9 +111,12 @@ class NbaGame(IntPk, TimestampMixin, Base):
     )
     nba_game_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     game_date: Mapped[date] = mapped_column(Date, index=True)
-    #: Tip-off in UTC. Local date and UTC instant are both needed: fantasy days
-    #: are defined in local time, back-to-back detection needs the instant.
-    tipoff_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Tip-off as a UTC instant. Local date and instant are both needed:
+    #: fantasy days are defined in local time, back-to-back and rest-day
+    #: detection need the instant. ``UTCDateTime`` rather than
+    #: ``DateTime(timezone=True)`` because SQLite silently discards the offset
+    #: from the latter, and this column feeds the availability model.
+    tipoff_utc: Mapped[datetime | None] = mapped_column(UTCDateTime)
     status: Mapped[GameStatus] = mapped_column(
         portable_enum(GameStatus, "game_status"), default=GameStatus.SCHEDULED
     )

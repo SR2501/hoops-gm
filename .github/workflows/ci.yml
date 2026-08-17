@@ -96,6 +96,66 @@ jobs:
           DATABASE_URL: sqlite:///./ci-migrations.db
         run: alembic downgrade base
 
+  postgres:
+    name: Backend — the same suite against Postgres (ADR-001)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    # This job is the one that turns ADR-001 from an assertion into something
+    # enforced. Every check in test_portability.py is static analysis of
+    # metadata, and the three divergences that actually bit — enum columns with
+    # no CHECK, DateTime(timezone=True) silently dropping the offset on SQLite,
+    # and '%' in a connection URL — are invisible to all of them, because they
+    # only appear when a value or a connection really crosses the seam.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hoops
+          # Contains '%' and '#' on purpose: a URL-encoded password is the
+          # normal case, and it used to crash `alembic upgrade head`.
+          POSTGRES_PASSWORD: 'ho%ops#pw'
+          POSTGRES_DB: hoops_gm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hoops -d hoops_gm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://hoops:ho%25ops%23pw@127.0.0.1:5432/hoops_gm_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev,postgres]"
+
+      - name: Migrations apply from empty on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic upgrade head
+
+      - name: Models and migrations agree on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic check
+
+      - name: Downgrade to base on Postgres
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: alembic downgrade base
+
+      - name: Full suite against Postgres
+        run: pytest
+
   frontend:
     name: Frontend — lint, type-check, tests, build
     runs-on: ubuntu-latest

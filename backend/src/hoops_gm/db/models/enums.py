@@ -1,8 +1,14 @@
 """Enumerated values used across the schema.
 
-All of these are stored as strings via :func:`hoops_gm.db.base.portable_enum`.
-Adding a member requires a migration to widen the CHECK constraint, which is
-the point: an unrecognised value should be a loud failure, not a silent row.
+All of these are stored as strings via :func:`hoops_gm.db.base.portable_enum`,
+which emits a VARCHAR plus a CHECK constraint. Adding a member requires a
+migration to widen that constraint, which is the point: an unrecognised value
+should be a loud failure, not a silent row.
+
+That claim was false when this module was first written — ``create_constraint``
+defaults to ``False`` and had been omitted, so no CHECK existed and an unknown
+value inserted cleanly through any path that bypassed the ORM. See
+``db/base.py`` for the detail.
 """
 
 from __future__ import annotations
@@ -13,10 +19,20 @@ import enum
 class ExternalSource(enum.StrEnum):
     """Systems that have their own idea of a player's identifier.
 
-    Risk R7: these disagree, constantly. ``NBA`` and ``FANTRAX`` are the anchor
-    pair; everything else is matched against that anchor with a confidence
-    score. Projection providers are listed individually because a name string
-    from one CSV is not interchangeable with a name string from another.
+    Risk R7: these disagree, constantly, and **no two of them share a key**.
+    Fantrax's ``getPlayerIds`` exposes ``statsIncId``, ``rotowireId`` and
+    ``sportRadarId`` — none of which is an NBA.com identifier — so there is no
+    anchor pair to match against. Every cross-source match is inferred, which
+    makes ``confidence``, ``match_method`` and ``is_manual_override``
+    load-bearing rather than metadata.
+
+    An earlier version of this docstring claimed ``NBA`` and ``FANTRAX`` were a
+    clean anchor pair. They are not; that was disproved by hitting the endpoint.
+
+    Adding a member here **does** require a migration: these are stored as
+    VARCHAR with a CHECK constraint, so the constraint has to be widened. Phase 2
+    owns adding the Fantrax cross-reference sources above, since it owns the
+    crosswalk and knows which of them are worth recording.
     """
 
     NBA = "nba"

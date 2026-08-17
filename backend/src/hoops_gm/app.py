@@ -113,6 +113,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> JSONResponse:
         return _error_response(422, "validation_error", str(exc.errors()))
 
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+        """Keep 500s inside the error contract.
+
+        Without this, Starlette returns a plain-text "Internal Server Error"
+        with no ``X-Request-ID`` — correlation is broken for precisely the
+        failures it exists to trace. The detail is the exception *type*, never
+        its message: an exception string can carry a connection URL, and a
+        connection URL can carry a password.
+        """
+        log.error("request.unhandled_exception", error_type=type(exc).__name__)
+        return _error_response(
+            500,
+            "internal_error",
+            f"Unhandled {type(exc).__name__}. See the server log for this request id.",
+        )
+
     app.include_router(ops_router)
     app.include_router(api_v1_router)
 

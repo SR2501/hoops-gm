@@ -80,6 +80,36 @@ def test_unknown_route_uses_the_stable_error_envelope(client: TestClient) -> Non
     assert body["error"] == "http_error"
 
 
+def test_an_unhandled_exception_stays_inside_the_error_contract(app: FastAPI) -> None:
+    """Review finding 5.
+
+    A 500 used to escape as plain-text "Internal Server Error" with no
+    X-Request-ID, breaking correlation for exactly the failures it exists to
+    trace. Note that registering the handler was not sufficient on its own —
+    the middleware also cleared the logging context before re-raising, so the
+    handler saw request_id=None.
+    """
+
+    @app.get("/api/v1/_boom")
+    def _boom() -> None:
+        raise RuntimeError("database on fire")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/api/v1/_boom")
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    body = response.json()
+    assert set(body) == {"error", "detail", "request_id"}
+    assert body["error"] == "internal_error"
+    assert body["request_id"], "correlation lost on the errors that most need it"
+    assert response.headers["X-Request-ID"] == body["request_id"]
+    # The exception message can carry a connection URL, and a URL can carry a
+    # password. Only the type is safe to return.
+    assert "database on fire" not in body["detail"]
+    assert "RuntimeError" in body["detail"]
+
+
 def test_openapi_document_is_servable(client: TestClient) -> None:
     response = client.get("/openapi.json")
 

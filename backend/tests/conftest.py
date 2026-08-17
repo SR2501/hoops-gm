@@ -39,19 +39,44 @@ _ENV_TO_CLEAR = (
 )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Markers are declared in pyproject.toml; nothing to add here."""
+    del config
+
+
+@pytest.fixture(autouse=True)
+def _skip_sqlite_only(request: pytest.FixtureRequest) -> None:
+    """Skip SQLite-specific tests when the suite runs against Postgres."""
+    if request.node.get_closest_marker("sqlite_only") and os.environ.get("TEST_DATABASE_URL"):
+        pytest.skip("sqlite-only behaviour; suite is running against another dialect")
+
+
 @pytest.fixture(autouse=True)
 def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _ENV_TO_CLEAR:
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(scope="session")
+def test_database_url() -> str | None:
+    """An external database to run the suite against, or None for SQLite.
+
+    Set ``TEST_DATABASE_URL`` to point the whole suite at Postgres. CI does
+    exactly that, because every portability claim in ``test_portability.py`` is
+    static analysis of metadata — three real divergences (enum CHECKs, dropped
+    timezone offsets, ``%`` in a connection URL) only appear when a value or a
+    connection actually crosses the seam.
+    """
+    return os.environ.get("TEST_DATABASE_URL") or None
+
+
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    """Settings pointed at a file-backed SQLite database in a temp directory."""
-    db_path = (tmp_path / "test.db").as_posix()
+def settings(tmp_path: Path, test_database_url: str | None) -> Settings:
+    """Settings pointed at a throwaway database."""
+    url = test_database_url or f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
     return Settings(
         environment="test",
-        database_url=f"sqlite:///{db_path}",
+        database_url=url,
         log_format="json",
         _env_file=None,
     )
@@ -60,6 +85,9 @@ def settings(tmp_path: Path) -> Settings:
 @pytest.fixture
 def database(settings: Settings) -> Iterator[Database]:
     db = Database.from_settings(settings)
+    # drop first: a previous failing run against a persistent database would
+    # otherwise leave tables behind and mask the next failure.
+    Base.metadata.drop_all(db.engine)
     Base.metadata.create_all(db.engine)
     try:
         yield db

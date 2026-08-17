@@ -100,6 +100,7 @@ def test_no_raw_driver_sql_in_the_package() -> None:
     assert offenders == []
 
 
+@pytest.mark.sqlite_only
 def test_sqlite_enforces_foreign_keys(tmp_path: Path) -> None:
     settings = Settings(
         environment="test",
