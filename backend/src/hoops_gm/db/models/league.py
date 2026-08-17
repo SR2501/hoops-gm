@@ -1,0 +1,406 @@
+"""League: Fantrax league state — settings, teams, rosters, periods, matchups.
+
+Two structural decisions here carry weight beyond Phase 1.
+
+**Scoring profiles are versioned and immutable.** ``league_scoring_profiles``
+carries a ``version`` and is unique on ``(league_id, name, version)``. Changing
+a profile means inserting a new version, never mutating the old row. That is
+the seam the plan's versioning requirement rests on: when Phase 5 stores a
+valuation, it takes a foreign key to a profile *row*, and the exact configuration
+that produced a number stays recoverable forever. The same applies to the punt
+configs and blend profiles that arrive later — they follow this pattern.
+
+**Ratio categories carry their numerator and denominator.** FG% is not a number
+to be averaged; it is made-over-attempted, and its fantasy impact is weighted by
+volume. Recording the component stat keys here is what lets the valuation engine
+do that correctly instead of averaging percentages (risk R9).
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from hoops_gm.db.base import Base, IntPk, TimestampMixin, portable_enum
+from hoops_gm.db.models.enums import (
+    CategoryKind,
+    CategoryOutcome,
+    DraftType,
+    MatchupStatus,
+    RosterStatus,
+    ScoringType,
+    TransactionType,
+)
+
+if TYPE_CHECKING:
+    from hoops_gm.db.models.identity import Player
+
+
+class League(IntPk, TimestampMixin, Base):
+    """A fantasy league for one season."""
+
+    __tablename__ = "leagues"
+    __table_args__ = (
+        UniqueConstraint("fantrax_league_id", "season", name="uq_leagues_fantrax_season"),
+    )
+
+    #: Nullable so a league can exist locally before it is linked to Fantrax —
+    #: mock drafts and imported market data need somewhere to live.
+    fantrax_league_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    season: Mapped[str] = mapped_column(String(9), index=True)
+    scoring_type: Mapped[ScoringType] = mapped_column(
+        portable_enum(ScoringType, "scoring_type"), default=ScoringType.H2H_CATEGORIES
+    )
+    draft_type: Mapped[DraftType] = mapped_column(
+        portable_enum(DraftType, "draft_type"), default=DraftType.UNKNOWN
+    )
+    team_count: Mapped[int | None] = mapped_column()
+    roster_size: Mapped[int | None] = mapped_column()
+    #: Auction only. Numeric rather than float: this is money and it is compared.
+    auction_budget: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    scoring_profiles: Mapped[list[LeagueScoringProfile]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+    fantasy_teams: Mapped[list[FantasyTeam]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+    roster_slots: Mapped[list[RosterSlot]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+    scoring_periods: Mapped[list[ScoringPeriod]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<League {self.name!r} {self.season}>"
+
+
+class LeagueScoringProfile(IntPk, TimestampMixin, Base):
+    """A versioned, immutable snapshot of how a league scores.
+
+    Do not update a profile in place. Insert the next version and repoint.
+    Anything that stores a computed number takes a foreign key here, which is
+    how "what settings produced this valuation" stays answerable.
+    """
+
+    __tablename__ = "league_scoring_profiles"
+    __table_args__ = (
+        UniqueConstraint("league_id", "name", "version", name="uq_league_scoring_profiles_ver"),
+        CheckConstraint("version >= 1", name="version_positive"),
+    )
+
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="default")
+    version: Mapped[int] = mapped_column(default=1)
+    scoring_type: Mapped[ScoringType] = mapped_column(
+        portable_enum(ScoringType, "scoring_type"), default=ScoringType.H2H_CATEGORIES
+    )
+    is_active: Mapped[bool] = mapped_column(default=True, index=True)
+    source_note: Mapped[str | None] = mapped_column(Text)
+
+    league: Mapped[League] = relationship(back_populates="scoring_profiles")
+    categories: Mapped[list[LeagueScoringCategory]] = relationship(
+        back_populates="profile", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<LeagueScoringProfile {self.name!r} v{self.version}>"
+
+
+class LeagueScoringCategory(IntPk, TimestampMixin, Base):
+    """One scored category within a profile.
+
+    ``kind`` separates counting categories from ratio categories. For a ratio,
+    ``numerator_stat`` and ``denominator_stat`` name the underlying counting
+    stats, so downstream code weights impact by volume rather than averaging a
+    percentage.
+
+    ``direction`` is ``-1`` for turnovers. Storing the sign rather than
+    special-casing a category name means points and roto profiles slot in
+    without touching the engine.
+    """
+
+    __tablename__ = "league_scoring_categories"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "key", name="uq_league_scoring_categories_key"),
+        CheckConstraint("direction IN (-1, 1)", name="direction_sign"),
+        CheckConstraint(
+            "(kind = 'counting' AND numerator_stat IS NULL AND denominator_stat IS NULL) "
+            "OR (kind = 'ratio' AND numerator_stat IS NOT NULL "
+            "AND denominator_stat IS NOT NULL)",
+            name="ratio_components_present",
+        ),
+    )
+
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("league_scoring_profiles.id", ondelete="CASCADE"), index=True
+    )
+    #: Stable machine key: ``pts``, ``reb``, ``fg_pct``, ``to``.
+    key: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(48))
+    kind: Mapped[CategoryKind] = mapped_column(
+        portable_enum(CategoryKind, "category_kind"), default=CategoryKind.COUNTING
+    )
+    #: ``1`` where more is better, ``-1`` where less is better (turnovers).
+    direction: Mapped[int] = mapped_column(default=1)
+    display_order: Mapped[int] = mapped_column(default=0)
+    #: Points-league weight. Null for category leagues.
+    point_value: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+
+    numerator_stat: Mapped[str | None] = mapped_column(String(32))
+    denominator_stat: Mapped[str | None] = mapped_column(String(32))
+
+    profile: Mapped[LeagueScoringProfile] = relationship(back_populates="categories")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<LeagueScoringCategory {self.key}>"
+
+
+class FantasyTeam(IntPk, TimestampMixin, Base):
+    """A team within a fantasy league."""
+
+    __tablename__ = "fantasy_teams"
+    __table_args__ = (
+        UniqueConstraint("league_id", "fantrax_team_id", name="uq_fantasy_teams_fantrax"),
+    )
+
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
+    fantrax_team_id: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(128))
+    short_name: Mapped[str | None] = mapped_column(String(32))
+    owner_name: Mapped[str | None] = mapped_column(String(128))
+    #: Whose team this is. Almost every view is relative to it.
+    is_owner_team: Mapped[bool] = mapped_column(default=False, index=True)
+
+    league: Mapped[League] = relationship(back_populates="fantasy_teams")
+    roster_entries: Mapped[list[RosterEntry]] = relationship(
+        back_populates="fantasy_team", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<FantasyTeam {self.name!r}>"
+
+
+class RosterSlot(IntPk, TimestampMixin, Base):
+    """A slot in the league's roster structure — the shape, not an occupant."""
+
+    __tablename__ = "roster_slots"
+    __table_args__ = (
+        UniqueConstraint("league_id", "code", name="uq_roster_slots_code"),
+        CheckConstraint("slot_count >= 0", name="slot_count_non_negative"),
+    )
+
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
+    #: ``PG``, ``G``, ``F``, ``C``, ``UTIL``, ``BN``, ``IR``.
+    code: Mapped[str] = mapped_column(String(16))
+    label: Mapped[str | None] = mapped_column(String(48))
+    slot_count: Mapped[int] = mapped_column(default=1)
+    display_order: Mapped[int] = mapped_column(default=0)
+    #: Only starting slots accrue stats; bench and IR do not.
+    is_starting: Mapped[bool] = mapped_column(default=True)
+    is_injury_reserve: Mapped[bool] = mapped_column(default=False)
+    #: Comma-separated NBA positions eligible for this slot, e.g. ``PG,SG``.
+    eligible_positions: Mapped[str | None] = mapped_column(String(64))
+
+    league: Mapped[League] = relationship(back_populates="roster_slots")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<RosterSlot {self.code}>"
+
+
+class RosterEntry(IntPk, TimestampMixin, Base):
+    """A player currently on a fantasy team.
+
+    Current state only. Daily lineup assignment across a scoring period is a
+    Phase 11 concern with a different shape, and conflating the two here would
+    force a rewrite then.
+    """
+
+    __tablename__ = "rosters"
+    __table_args__ = (
+        UniqueConstraint("fantasy_team_id", "player_id", name="uq_rosters_team_player"),
+        Index("ix_rosters_player_status", "player_id", "status"),
+    )
+
+    fantasy_team_id: Mapped[int] = mapped_column(
+        ForeignKey("fantasy_teams.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), index=True)
+    slot_code: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[RosterStatus] = mapped_column(
+        portable_enum(RosterStatus, "roster_status"), default=RosterStatus.ACTIVE
+    )
+    acquired_on: Mapped[date | None] = mapped_column(Date)
+    #: Auction price or keeper salary where the league has one.
+    salary: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+
+    fantasy_team: Mapped[FantasyTeam] = relationship(back_populates="roster_entries")
+    player: Mapped[Player] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<RosterEntry team={self.fantasy_team_id} player={self.player_id}>"
+
+
+class ScoringPeriod(IntPk, TimestampMixin, Base):
+    """One scoring period — in H2H, a fantasy week.
+
+    This is the league-scoped calendar. The plan also lists a schedule-side
+    ``week_definitions``; see ``schedule.py`` for why that was not built as a
+    second table.
+    """
+
+    __tablename__ = "scoring_periods"
+    __table_args__ = (
+        UniqueConstraint("league_id", "period_number", name="uq_scoring_periods_number"),
+        CheckConstraint("end_date >= start_date", name="period_dates_ordered"),
+        Index("ix_scoring_periods_league_dates", "league_id", "start_date", "end_date"),
+    )
+
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
+    period_number: Mapped[int] = mapped_column()
+    label: Mapped[str | None] = mapped_column(String(48))
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    #: The weeks that decide the season. Flagged here so playoff schedule
+    #: strength is a query during the draft, not a March discovery.
+    is_playoff: Mapped[bool] = mapped_column(default=False, index=True)
+
+    league: Mapped[League] = relationship(back_populates="scoring_periods")
+    matchups: Mapped[list[Matchup]] = relationship(
+        back_populates="scoring_period", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<ScoringPeriod {self.league_id}#{self.period_number}>"
+
+
+class Matchup(IntPk, TimestampMixin, Base):
+    """A head-to-head matchup within a scoring period."""
+
+    __tablename__ = "matchups"
+    __table_args__ = (
+        UniqueConstraint("scoring_period_id", "home_team_id", name="uq_matchups_period_home"),
+        CheckConstraint("home_team_id <> away_team_id", name="distinct_fantasy_teams"),
+    )
+
+    scoring_period_id: Mapped[int] = mapped_column(
+        ForeignKey("scoring_periods.id", ondelete="CASCADE"), index=True
+    )
+    home_team_id: Mapped[int] = mapped_column(
+        ForeignKey("fantasy_teams.id", ondelete="CASCADE"), index=True
+    )
+    away_team_id: Mapped[int] = mapped_column(
+        ForeignKey("fantasy_teams.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[MatchupStatus] = mapped_column(
+        portable_enum(MatchupStatus, "matchup_status"), default=MatchupStatus.SCHEDULED
+    )
+    home_category_wins: Mapped[int | None] = mapped_column()
+    away_category_wins: Mapped[int | None] = mapped_column()
+    category_ties: Mapped[int | None] = mapped_column()
+
+    scoring_period: Mapped[ScoringPeriod] = relationship(back_populates="matchups")
+    home_team: Mapped[FantasyTeam] = relationship(foreign_keys=[home_team_id])
+    away_team: Mapped[FantasyTeam] = relationship(foreign_keys=[away_team_id])
+    category_results: Mapped[list[MatchupCategoryResult]] = relationship(
+        back_populates="matchup", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<Matchup {self.home_team_id} v {self.away_team_id}>"
+
+
+class MatchupCategoryResult(IntPk, TimestampMixin, Base):
+    """Per-category state of a matchup.
+
+    ``category_key`` is stored rather than a foreign key to a scoring category,
+    because a result is a historical fact and must survive the league moving to
+    a new scoring profile version.
+
+    Ratio categories keep their numerator and denominator alongside the value,
+    so the live scorecard can answer "how many makes from how many attempts do
+    I still need" rather than only showing a percentage.
+    """
+
+    __tablename__ = "matchup_category_results"
+    __table_args__ = (
+        UniqueConstraint("matchup_id", "category_key", name="uq_matchup_cat_results_key"),
+    )
+
+    matchup_id: Mapped[int] = mapped_column(
+        ForeignKey("matchups.id", ondelete="CASCADE"), index=True
+    )
+    category_key: Mapped[str] = mapped_column(String(32))
+    home_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    away_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    home_numerator: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    home_denominator: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    away_numerator: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    away_denominator: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    outcome: Mapped[CategoryOutcome | None] = mapped_column(
+        portable_enum(CategoryOutcome, "category_outcome")
+    )
+
+    matchup: Mapped[Matchup] = relationship(back_populates="category_results")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<MatchupCategoryResult {self.matchup_id} {self.category_key}>"
+
+
+class Transaction(IntPk, TimestampMixin, Base):
+    """A league transaction: add, drop, waiver claim, trade leg, draft pick.
+
+    One row per player movement rather than per transaction envelope. A trade
+    is several rows sharing a ``group_key``, which keeps the table uniform and
+    still lets a multi-player deal be reassembled.
+    """
+
+    __tablename__ = "transactions"
+    __table_args__ = (
+        UniqueConstraint("league_id", "fantrax_transaction_id", name="uq_transactions_fantrax_id"),
+        Index("ix_transactions_league_date", "league_id", "occurred_on"),
+        Index("ix_transactions_group", "league_id", "group_key"),
+    )
+
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
+    fantrax_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    #: Shared by every leg of one logical transaction.
+    group_key: Mapped[str | None] = mapped_column(String(64))
+    transaction_type: Mapped[TransactionType] = mapped_column(
+        portable_enum(TransactionType, "transaction_type")
+    )
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    player_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), index=True
+    )
+    from_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("fantasy_teams.id", ondelete="SET NULL")
+    )
+    to_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("fantasy_teams.id", ondelete="SET NULL")
+    )
+    bid_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    player: Mapped[Player | None] = relationship()
+    from_team: Mapped[FantasyTeam | None] = relationship(foreign_keys=[from_team_id])
+    to_team: Mapped[FantasyTeam | None] = relationship(foreign_keys=[to_team_id])
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<Transaction {self.transaction_type} player={self.player_id}>"
