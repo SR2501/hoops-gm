@@ -1,6 +1,7 @@
 # ADR-003 — G-score as the default valuation scheme for H2H
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

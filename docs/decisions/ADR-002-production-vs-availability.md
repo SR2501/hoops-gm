@@ -1,6 +1,7 @@
 # ADR-002 — Separate per-game production from expected games played
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

@@ -1,7 +1,8 @@
 # hoops-gm — Fantasy Basketball League Management Tool
 
 **Target season:** 2026–27 NBA
-**Repo:** new repo `SR2501/hoops-gm` (name changeable)
+**Draft day:** **Sunday 18 October 2026** — auction format, confirmed. Hard deadline.
+**Repo:** [`SR2501/hoops-gm`](https://github.com/SR2501/hoops-gm) — public
 **Primary user:** you, then possibly 1–2 leaguemates
 **Primary format:** H2H 9-cat (FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO), architected for points/roto later
 
@@ -40,7 +41,7 @@ Gathered before planning; these are load-bearing constraints, not trivia.
 | Write automation | No supported write API. Reverse-engineered writes violate ToS. Fantrax *does* natively offer auto-draft and auto-subs. | Writes go through the browser bridge as real DOM interaction on your own account, defaulting to supervised, with hard guardrails. |
 | Tampermonkey viability | `GM_xmlhttpRequest` runs at extension privilege — bypasses both CORS and the page CSP. No existing Fantrax userscripts exist publicly. | The localhost bridge works cleanly. We're building from scratch. |
 | `nba_api` (v1.11.4, Feb 2026) | Actively maintained, Python 3.10+. `stats.nba.com` needs specific headers and ~1 req/s throttling. `PlayByPlayV2`/`ScoreboardV2` deprecated → use V3. **✅ Verified working 2026-08-17** — `nba_api` 1.11.4 reached `stats.nba.com` and returned data. Note that raw curl with the full documented headers is *reset* by the host (R27), so use the library, not hand-rolled requests. | Primary historical stats source. Also the source of inactive lists and DNP reasons — critical for the availability ledger. |
-| Live scoring | `cdn.nba.com/static/json/liveData/` — scoreboard + boxscore JSON, 1–5s refresh, no auth, no key. **⚠️ Verified 2026-08-17: returns Akamai 403 from the development network** (see R26). `www.nba.com` returns 200 from the same IP, so it is a WAF rule on the CDN JSON paths. Must be re-tested from the owner's home network before Phase 6. | Free live scorecard *if reachable*. Poll every ~5s, only while games are live. Fallback is BALLDONTLIE All-Star (~$9.99/mo), an owner-only decision. |
+| Live scoring | `cdn.nba.com/static/json/liveData/` — scoreboard + boxscore JSON, 1–5s refresh, no auth, no key. **⚠️ Returns Akamai 403 from the development machine** (R26). Not TLS fingerprinting — Chrome and Safari impersonation still 403. The machine routes via Microsoft Entra Global Secure Access, so it egresses from cloud IPs that Akamai denies on the CDN JSON paths; `www.nba.com` returns 200 from the same address. Confirm from a device not enrolled in GSA. | Free live scorecard *if reachable*. Poll every ~5s, only while games are live. Likely a managed-laptop artifact rather than a property of the source. Fallback is BALLDONTLIE All-Star (~$9.99/mo), an owner-only decision. |
 | Projections | No source has an API. Hashtag (Patreon), Basketball Monster (~$9.95/mo), FantasyPros (free CSV), DARKO (historical CSV only). | CSV import is the only integration path. Most published projections bundle a games-played assumption — capture it separately so our availability model can override it. |
 | Basketball-Reference | 20 req/min hard limit; data-use policy forbids database building. | ❌ Avoid entirely. `nba_api` covers the same ground. |
 | Valuation math | Z-score is standard; **G-score** (arXiv 2307.02188) models weekly variance and outperforms z-score specifically in H2H. | Implement both. G-score is the better default — and its variance framework is the natural place to absorb availability risk, not just production variance. |
@@ -229,6 +230,8 @@ This is the pillar that separates competing from winning, so it gets real engine
 
 Every player, every scheduled team game, with an outcome and a reason code: played · DNP-CD · injury (with body part where stated) · rest / load management · personal · suspension · G-League assignment · inactive. Reconstructed historically from box scores and inactive lists so the model has multi-season training data rather than vibes.
 
+> ⚠️ **Use `BoxScoreSummaryV3` for inactive lists, never V2** (R30). V2 returns inactives for 2025-10-21 and **zero rows for every later date in the 2025-26 season** — silently, with a 200 response. V2 is the endpoint most public examples use, so the obvious implementation yields a ledger with no inactives for the entire most recent season and no sign anything is wrong. The contract test must assert a non-zero inactive count for a known mid-season date, not merely that the call succeeded.
+
 ### 2. Injury report ingestion
 
 The NBA official injury report drops the evening before and updates on game day. Ingest status tags (OUT / DOUBTFUL / QUESTIONABLE / PROBABLE / AVAILABLE) and — importantly — **track their historical hit rates**. "Questionable" is not a coin flip and its true play rate varies meaningfully by team, by player, and by game context. That empirical conversion rate is itself a modelled quantity.
@@ -267,6 +270,8 @@ Fantasy playoffs land exactly when eliminated teams start resting veterans and a
 
 A usage-redistribution graph: when player X sits, who gains, in which categories, and by how much. Built from historical with/without splits and validated against actual absence games.
 
+> ⚠️ **A full absence produces no row in any endpoint** (R35). A player out injured for a month is not flagged inactive — he simply does not appear anywhere. The participation ledger records only what was *observed*, so `quant` must construct the absent rows by crossing roster membership with scheduled games. A model trained on observed rows alone would systematically underestimate missed games, which is the exact error this project exists to avoid.
+
 This powers the thing you described directly:
 - **Stock watch** — injury news lands, affected players are recomputed, and the dashboard surfaces who just moved and by how much
 - Waiver-wire targeting the moment news breaks, ranked by *your* roster's category needs rather than generic value
@@ -290,38 +295,44 @@ Deeper than games-per-week, since the availability model consumes it and streami
 
 ## Draft formats & rehearsal
 
-### Both formats are first-class
+### Auction is the confirmed format for 2026-27
 
-The league may be auction or snake this year — unknown at planning time, so both ship. Format is an abstraction alongside scoring profiles, not a fork in the code.
+**Confirmed with the commissioner on 2026-08-17: this year's league is an auction draft.** Snake remains implemented for multi-format support and for external mock corpora that only offer snake, but **auction is the primary format and the one that must be rehearsal-ready by draft day**.
 
-They are not variants of one another. Snake optimises pick-by-pick value against ADP and positional scarcity. Auction is a constrained budget-allocation problem with live price discovery. The math has almost nothing in common.
+They are not variants of one another. Snake optimises pick-by-pick value against ADP and positional scarcity. Auction is a constrained budget-allocation problem with live price discovery. The math has almost nothing in common, and the confirmation means the auction half is now critical path rather than insurance.
 
-**Snake:** value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, and roster construction across the turn.
-
-**Auction:**
+**Auction — the critical path:**
 - Dollar values derived from risk-adjusted G-score via value over replacement, scaled to the league's total budget pool
-- **Live inflation tracking** — as money leaves the board, every remaining player's true price moves. If the top tier goes over value, everything after it deflates. This is the single largest edge available in an auction, and most managers eyeball it.
+- **Live inflation tracking** — as money leaves the board, every remaining player's true price moves. If the top tier goes over value, everything after it deflates. This is the single largest edge available in an auction, and most managers eyeball it. It is now the headline feature of the whole tool.
 - **Max bid** — budget minus the $1 per unfilled roster slot you must reserve, recomputed continuously
 - **Nomination strategy** — nominate players you don't want while opponents still have money; nominate your targets once they're budget-constrained
 - **Budget burn rate vs. roster construction** — whether you're building stars-and-scrubs or balanced, and whether that's deliberate
 
-Worth saying plainly: auction is materially more work than snake. It's also where the edge is largest, because inflation math is genuinely hard to do in your head under a bid clock. If it turns out to be auction, that's the good outcome for a tool like this.
+**Snake — retained, deprioritised:** value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, and roster construction across the turn. Still needed for the scoring-profile abstraction and for ingesting snake mock corpora, but it is no longer a draft-day deliverable.
+
+Worth saying plainly: auction is materially more work than snake. It is also where the edge is largest, because inflation math is genuinely hard to do in your head under a bid clock. The format landing on auction is the good outcome for a tool like this.
+
+### Market data — an open question the format change exposes
+
+Snake drafting is priced by **ADP**, which Fantrax serves free and unauthenticated via `getAdp` (verified working). **Auction is priced by average auction value (AAV), which is a different quantity entirely, and no verified free source for it has been identified yet.** `getAdp` returns draft position, not dollars.
+
+This matters because the inflation model needs a *baseline expectation* of what each player should cost, and the model-vs-market divergence report needs the market's price, not the market's pick order. Options to investigate in Phase 8: whether Fantrax exposes auction values through any endpoint, whether the external mock sites publish AAV, or whether the mock corpus itself becomes the only AAV source — in which case the 10+ mocks must be **auction** mocks, not snake ones. Tracked as R37.
 
 ### The overlay in auction mode
 
-A different surface with different content: current nomination, your inflation-adjusted max bid, value versus the standing bid, budget and slots remaining, tier-exhaustion alerts. The pressure profile differs too — an auction gives you seconds rather than a minute, and what you need is one number, big and unambiguous.
+The auction panel is now **the** draft-day surface, not an alternative to the snake one. Different content: current nomination, your inflation-adjusted max bid, value versus the standing bid, budget and slots remaining, tier-exhaustion alerts. The pressure profile differs too — an auction gives you seconds rather than a minute, and what you need is one number, big and unambiguous.
 
 ### Ten-plus mocks, used for two different things
 
-No fewer than ten mock drafts before the real one. They serve two distinct purposes and the plan keeps them separate:
+No fewer than ten mock drafts before the real one. **Given the auction confirmation, the majority must be auction mocks**, since snake mocks cannot calibrate inflation curves or budget behaviour. They serve two distinct purposes and the plan keeps them separate:
 
-**Fantrax mocks — the dress rehearsal.** Same DOM, same bridge, same overlay, same automation path. This is the only place the userscript and overlay get genuinely tested, and the rehearsal harness instruments it.
+**Fantrax mocks — the dress rehearsal.** Same DOM, same bridge, same overlay, same automation path. This is the only place the userscript and overlay get genuinely tested, and the rehearsal harness instruments it. **These must be auction format.**
 
 **External mocks (ESPN, Yahoo, FantasyPros, RTSports and similar) — the market corpus.** Different DOM, so no bridge rehearsal, but the *results* are valuable and captured by paste or CSV import:
 
-- **Market model** — empirical ADP and auction price curves from real drafting behaviour, not published estimates
+- **Market model** — empirical auction price curves and inflation behaviour from real drafting, not published estimates
 - **Model-vs-market divergence** — the report that actually matters. Where our valuation and the market disagree is exactly where the edge is, and it names the players to target and the ones to let go.
-- **Opponent calibration** — simulated opponents in the draft simulator tuned from observed behaviour rather than invented priors
+- **Opponent calibration** — simulated opponents in the draft simulator tuned from observed bidding behaviour rather than invented priors
 
 Ten mocks is a real corpus — enough to calibrate inflation curves and opponent models rather than guess at them.
 
@@ -352,6 +363,8 @@ Note kept in `docs/`: this operates your own account on your own team. Fantrax n
 
 - **Identity** — `players` (canonical), `player_external_ids` (source, source_id, confidence), `nba_teams`
 - **Stats** — `nba_games`, `player_game_logs`, `player_season_stats`
+
+  > ⚠️ `nba_games.game_date` is the **local** date and must be derived from `gameEt`, never from the UTC tipoff (R36). `gameEt` carries a `Z` suffix and is *not* UTC — it is Eastern wearing a UTC marker, five hours off `gameTimeUTC` in the same payload. Deriving the date from the UTC field is wrong for every game tipping after 7pm Eastern, and `player_participation` joins on it.
 - **Availability** — `player_participation` (game, status, reason_code, minutes), `injury_reports` (report_time, status, description), `injury_status_conversion` (empirical status → play rate), `availability_predictions` (game, p_play, driver features, model version), `reliability_metrics` (window, availability rate, B2B sit rate, minutes CV, per-category std dev, floor/ceiling, grade), `shutdown_risk`
 - **Contingent value** — `absence_splits` (with/without production deltas), `usage_redistribution` (absent player → beneficiary → category delta), `stock_movements` (trigger, value before/after, driver)
 - **Schedule** — `team_schedule`, `schedule_density` (B2B, 3-in-4, 4-in-6, rest diff), `off_night_slates`, `opponent_context` (pace, category defence, blowout risk). Fantasy week boundaries live on `scoring_periods` under League — a fantasy week *is* a scoring period, and two tables that must agree with nothing enforcing agreement is a bug waiting to happen. Add a league-independent NBA week calendar only if streaming analysis later proves it necessary.
@@ -362,7 +375,9 @@ Note kept in `docs/`: this operates your own account on your own team. Fantrax n
 - **Decisions** — `trade_scenarios`, `trade_evaluations`, `lineup_plans`, `automation_actions`
 - **Bridge** — `bridge_payloads` (raw captured JSON, for replay and debugging)
 
-**Highest-risk foundational item: player identity.** Fantrax IDs, NBA IDs, and projection-CSV name strings all disagree — and, verified live on 2026-08-17, **no two of them share a key.** `getPlayerIds` returns `statsIncId`, `rotowireId` and `sportRadarId`, none of which is an NBA.com id, so there is no anchor pair and every cross-source match is inferred from the first join onward. Resolution is normalized-name + team + position matching, with a confidence score, a recorded match method, a manual-override flag the resolver must treat as final, and an unmatched-players report. `sportRadarId` is worth investigating as a bridge via public datasets. The payload also mixes non-player rows (team entities, `position: "Tm"`) in with players, which the importer must filter explicitly. Getting this wrong silently corrupts every downstream number, so it ships with its own test suite. See R7, R23 and R24.
+**Highest-risk foundational item: player identity.** Fantrax IDs, NBA IDs, and projection-CSV name strings all disagree — and, verified live on 2026-08-17, **no two of them share a key.** `getPlayerIds` returns `statsIncId`, `rotowireId` and `sportRadarId`, none of which is an NBA.com id, so there is no anchor pair and every cross-source match is inferred from the first join onward. Resolution is normalized-name + team + position matching, with **per-field match evidence** (not a single confidence float), a recorded match method, a manual-override flag the resolver must treat as final, and an unmatched-players report.
+
+Per-field evidence is required rather than optional: Fantrax reports `team` as `(N/A)` for **1,206 of 1,788 rows** (R32), so for two thirds of the payload team is *absent* evidence rather than *disagreeing* evidence. A single score cannot express that difference, and it is exactly the difference a human needs when adjudicating the tail. A free `sportRadarId` → NBA person id bridge was investigated and **does not exist** — public ID datasets carry BBRef/ESPN/Spotrac and are themselves name-matched — but all three Fantrax ids are stored as first-class crosswalk rows regardless, because they de-duplicate *within* Fantrax where genuine duplicate names exist (two Jalen Johnsons). The payload also mixes non-player rows (team entities, `position: "Tm"`) in with players, which the importer must filter explicitly. Getting this wrong silently corrupts every downstream number, so it ships with its own test suite. See R7, R23, R24 and R32.
 
 ---
 
@@ -481,9 +496,18 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - **Availability is the edge, so it's in the spine.** Phase 4, before valuation, because it's an input to it. Building valuation first and retrofitting availability means rewriting the valuation layer.
 - **Separate production from availability, always.** Keeping them separate is what lets you answer "is this guy good, or just present?" and price the two differently.
 - **Calibration beats accuracy for p(play).** A model that says 70% and is right 70% of the time is more useful for lineup decisions than one with a better raw hit rate but overconfident probabilities. The Model gate scores calibration explicitly.
-- **Draft day is a hard deadline.** Phases 0–5, 8 and 9 must be done and rehearsed before your draft. Phases 6–7 and 11–12 can land during the season. No fewer than ten mocks, with the Fantrax ones serving as true dress rehearsals against the real UI.
-- **Auction is the scope risk worth taking.** Building both formats is meaningfully more work than snake alone, and until the format is confirmed both must be ready. If it lands on auction, the inflation engine is the largest single edge in the whole tool — nobody does that math well under a bid clock.
-- **Confirm the format as early as you can.** It doesn't change the spine, but it changes what gets rehearsed and where the last few weeks of effort go. Worth asking the commissioner well before draft day.
+- **Auction is the confirmed format, and it is the good outcome.** Confirmed 2026-08-17. Inflation math under a bid clock is exactly what a human cannot do and a tool can, so the largest available edge is now definitely in scope rather than contingent. Snake stays implemented but is no longer a draft-day deliverable.
+- **The auction confirmation exposed a data gap (R37):** snake is priced by ADP, which Fantrax serves free; auction is priced by AAV, and no verified free source has been found. Resolve early — the inflation baseline and the model-vs-market report both depend on it, and if the mock corpus turns out to be the only AAV source, every one of the 10+ mocks must be an auction mock.
+- **Draft day is Sunday 18 October 2026 — 62 days from planning, and it does not move.** The NBA season opens the following week, so this is the last Sunday before it. Working backwards, the hard backstops are:
+
+  | Milestone | Backstop | Slack to draft |
+  |---|---|---|
+  | Spine complete — Phases 2–5 (identity, schedule, availability, valuation) | **Sun 20 Sep** | 4 weeks |
+  | Auction engine + overlay — Phases 8–9 | **Sun 04 Oct** | 2 weeks |
+  | Mock rehearsals begin (10+, predominantly auction) | **Mon 05 Oct** | 13 days |
+  | Feature freeze — fixes only | **Sun 11 Oct** | 7 days |
+
+  The rehearsal window is the part most likely to get squeezed and the part that must not be. Ten auction mocks at roughly one an evening needs the full fortnight, and the whole purpose of the harness is to find what the overlay is missing *before* it costs a real pick. **Treat 4 October as the real deadline; 18 October is only when the consequences arrive.** Phases 6–7 and 11–12 (live scorecard, schedule UI, lineup manager, trades) can land during the season and should be cut first if anything slips.
 - **One screen is the design target.** Fantrax only has to be open and foreground for the live draft and for lineup writes; everything else runs without it. The overlay must be sufficient on a laptop, and the rehearsal harness measures whether it actually is rather than assuming.
 - **Percentage categories are the classic bug.** FG%/FT% must be modelled as volume-weighted impact, not raw percentage; a 90% FT shooter on 1 attempt is not valuable. This is where most homebrew tools go wrong.
 - **Reason codes will be messy.** DNP reasons are inconsistently reported and "rest" is often laundered as a minor ailment. Expect a normalization layer with manual mapping, and don't over-trust stated reasons; the model should lean on observed patterns over official explanations.
