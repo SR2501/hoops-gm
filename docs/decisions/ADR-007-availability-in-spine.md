@@ -1,6 +1,7 @@
 # ADR-007 — Availability is a spine concern, modelled before valuation
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

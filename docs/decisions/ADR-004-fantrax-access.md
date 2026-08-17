@@ -1,6 +1,7 @@
 # ADR-004 — Fantrax access: read via API, write only via the browser bridge
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

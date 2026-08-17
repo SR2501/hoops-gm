@@ -42,6 +42,11 @@ dev = [
     # The adapter and identity tests exercise real client code, so the ingest
     # dependencies are needed to run the suite.
     "hoops-gm-backend[ingest]",
+    # Only used to test the CI workflow's own coherence. A job that gates on an
+    # event the workflow never declares is silently dead, which is how the live
+    # smoke job spent its first day unable to run.
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
 ]
 # Phase 2. **Pinned exactly, on purpose.**
 #

@@ -1,6 +1,7 @@
 # ADR-005 — Automation is supervised by default; autonomous is opt-in and gated
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

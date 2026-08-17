@@ -310,3 +310,48 @@ Also green on Ubuntu/3.12: lint, format, type-check, the frontend, the secret sc
 **Now also true, and it changes the threat model:** the repository is **public**. The fixtures are 59,000 lines of world-readable committed JSON. The scan is clean, including with the JSON-aware patterns added two entries ago that the original scanner did not have. Public repositories also get GitHub-native secret scanning with push protection and CodeQL for free — an independent check on precisely the control this review found I had regressed.
 
 **Next:** unchanged.
+## 2026-08-17 — backend — Dead CI condition fixed; **CI now blocked by GitHub Actions billing (owner action required)**
+
+**Changed:** Fixed a defect in the CI pipeline I shipped in Phase 1. The `live-smoke` job gated on `github.event_name == 'schedule'` while the workflow declared no `schedule` trigger, so the one event its own comment described as the point of the job could never fire — it would only ever have run if someone remembered to click it. Added a nightly cron.
+
+Also removed `continue-on-error: true` from that job. The Adapter gate says a live smoke test is "allowed to fail without blocking a merge, but it must fail loudly and visibly", and `continue-on-error` does the opposite: it paints a real upstream break green on a nightly run nobody is watching. It cannot block a merge regardless, structurally, because it does not run on `push` or `pull_request`.
+
+Added `backend/tests/test_ci_workflow.py`. CI enforces every gate and nothing was enforcing CI — the same failure as the enum CHECK and the timezone type, and the third instance of R25 in two days. It asserts that no job gates on an undeclared event, that the Code gate jobs are unconditional, that the later-gate jobs still select their registered markers, and that the Postgres job's password still carries the percent-encoding that used to crash `alembic upgrade head`. Verified by reintroducing the original defect and watching the test fail, then restoring.
+
+**Now true:**
+- The nightly live smoke run can actually run, and will go red rather than green when an upstream breaks. R26 (`cdn.nba.com` returning 403) and R27 (`stats.nba.com` reachable only through `nba_api`) are precisely what it is for: neither is visible to a contract test against a recorded fixture, because the fixture keeps passing.
+- The CI configuration is itself covered by tests, so a job that cannot run is a failing build rather than a silent absence.
+
+**Could not verify:**
+- **Nothing on this branch has run in CI.** Every job failed with *"The job was not started because recent account payments have failed or your spending limit needs to be increased"*. Zero steps executed in any job — this is an account-level billing stop, not a code failure. The local gate is green: ruff, `ruff format --check`, mypy `strict`, 104 tests.
+- **Whether the nightly schedule actually fires**, for the same reason. Scheduled runs only execute on the default branch, so it cannot be confirmed until this merges *and* billing is restored.
+- `docker compose up` — unchanged, still never run by anyone.
+
+**ESCALATION — owner decision, work stopped on this item.** Raising a GitHub Actions spending limit or resolving a failed payment commits money, which is not an agent decision under `docs/governance/owner-decisions.md`. I have not changed any billing setting and will not.
+
+What is needed: check **Billing & plans** in GitHub settings. Until it is resolved, **CI enforces nothing** — the Code gate is effectively suspended and every PR will show red for a reason unrelated to its contents. That is a governance outage, not an inconvenience: the gates in `docs/governance/gates.md` are enforced by exactly one mechanism, and it is currently off.
+
+Two options if the limit is deliberate rather than accidental: make the repository public, which makes Actions free for standard runners; or run the gates locally before merge and accept that nothing enforces them. Both are owner calls, and I am not making either.
+
+**Correction to the line above, made before this entry merged.** I originally gave the argument against going public as the repository holding personal-use projection data and Fantrax access details. That was asserted, not checked, and it is wrong: no tracked file contains a credential, there is no `.env`, no cookie file and no projection CSV, and `FANTRAX_LEAGUE_ID=` in `.env.example` is empty — `scripts/check_no_secrets.py` passes on all 95 tracked files. The real objection is competitive rather than security: the repository contains the valuation methodology, the auction-inflation approach, the availability model design and the mock-draft programme, for a league the owner plays in annually against people who could find it. Worth stating precisely, because the security objection sounds more serious and is the weaker of the two. Found by `architect` checking rather than reasoning, which is the same lesson as everything else in this entry.
+
+The full decision, options and recommendation now live in `docs/governance/OPEN-ci-billing.md` under risk R29. That document is the single source of truth; this entry records only that the escalation happened and why work stopped, so the two cannot drift apart.
+
+**Next:** whoever picks this up should confirm CI is running again before trusting a green tick, since a red tick currently means nothing about the code. Phase 2 is otherwise unblocked: `data-engineer` can work locally against the same gate commands, which are in `backend/README.md`.
+## 2026-08-17 — owner — Seven ADRs accepted, auction confirmed, repository public
+
+**Changed:** The project owner reviewed and accepted ADR-001 through ADR-007, moving all seven from `Proposed` to `Accepted`. Separately, the owner confirmed the league's 2026-27 draft format is **auction**, and set the draft date as **Sunday 18 October 2026**. The repository was made public, which restored CI.
+
+**Now true:**
+- The seven foundational decisions are settled: local-first with a Postgres seam; production and expected games modelled separately; G-score as the H2H default; Fantrax read via API and write only through the browser bridge; automation supervised by default with autonomous opt-in; adapters isolated behind contract tests; availability modelled before valuation. They remain amendable — each records the condition that would flip it — but they are no longer open questions.
+- **Auction is the confirmed format and therefore critical path.** Inflation tracking moves from possible headline feature to actual one. Snake stays implemented for multi-format support and snake mock corpora but is no longer a draft-day deliverable. R19 closed.
+- **The deadline is dated: Sunday 18 October 2026, 62 days from planning.** Backstops working backwards: spine complete (Phases 2-5) by 20 Sep; auction engine and overlay by 4 Oct; mock rehearsals from 5 Oct; feature freeze 11 Oct. The rehearsal fortnight is the part most likely to be squeezed and the part that must not be. Treat 4 October as the real deadline.
+- **CI is restored.** The repository is public, so it is exempt from the Actions quota entirely rather than merely given a higher limit. `main` verified green on every job including the Postgres job. R29 closed. Public repos additionally get free secret scanning, push protection and CodeQL — independent controls, which matters given the Phase 2 review found the homegrown scanner had regressed.
+
+**Could not verify:**
+- **No verified free source of average auction value (R37).** Snake is priced by ADP, which Fantrax serves free and which is verified working; auction is priced by AAV, a different quantity, and `getAdp` returns draft position not dollars. The inflation baseline and the model-vs-market report both need it. If the mock corpus turns out to be the only source, every one of the 10+ rehearsal mocks must be an auction mock — a scheduling constraint, not just a data one. **This is now the most urgent open question in the project.**
+- Whether the 62-day schedule is achievable. The backstops are derived from the phase dependency graph, not from measured velocity. Phase 1 took roughly a day including two rounds of review; Phase 2 is still in review at the time of writing.
+- `docker compose` remains entirely unrun and Docker is not installed on the development machine.
+- `cdn.nba.com` still returns 403 from the development machine (R26). Diagnosed as Global Secure Access egress rather than a property of the source, but unconfirmed from an unenrolled device. Only matters at Phase 6.
+
+**Next:** `data-engineer` to complete the Phase 2 review fixes, then investigate the AAV question (R37) as the highest-priority unknown. `architect` to merge PR #3 and PR #4 once GitHub's API incident clears, and to watch the Postgres job on PR #4 — it will finally execute the `batch_alter_table` path that three people have now reasoned about without running.
