@@ -247,7 +247,7 @@ Concretely: game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and is a 
 
 ---
 
-## 2026-08-17 — data-engineer — Fourth correction: eight review findings, one critical
+## 2026-08-17 — data-engineer — Third correction: eight review findings, one critical
 
 **Changed:** Fixed all eight findings from the independent review of PR #4. Corrected in place, PR still unmerged. 381 tests.
 
@@ -280,7 +280,7 @@ Concretely: game `0022500560` has `gameTimeUTC = 2026-01-13T00:30:00Z` and is a 
 
 ---
 
-## 2026-08-17 — data-engineer — Fifth correction: the Code gate depended on third-party availability
+## 2026-08-17 — data-engineer — Fourth correction: the Code gate depended on third-party availability
 
 **Changed:** `addopts = "-q --strict-markers -m 'not live_smoke'"` in `backend/pyproject.toml`. One line, and it is the difference between a deterministic Code gate and one that goes red when `stats.nba.com` has a bad day.
 
