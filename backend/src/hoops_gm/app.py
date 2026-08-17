@@ -105,7 +105,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def http_exception_handler(
         _request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
-        return _error_response(exc.status_code, "http_error", str(exc.detail))
+        # Routes may provide a stable machine-readable code without creating a
+        # second error envelope. The header is consumed here, never returned.
+        error = (exc.headers or {}).get("X-Bridge-Error", "http_error")
+        return _error_response(exc.status_code, error, str(exc.detail))
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(

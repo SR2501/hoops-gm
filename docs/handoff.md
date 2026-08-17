@@ -393,3 +393,35 @@ The full decision, options and recommendation now live in `docs/governance/OPEN-
 - Whether the built user script actually installs and runs in Tampermonkey against a live Fantrax page. It has never been loaded in a browser.
 
 **Next:** `backend` to add the handshake endpoint, or `bridge` to build `bridge-capture` against `/health` until it exists. Whoever goes first should decide deliberately rather than discovering the gap mid-task.
+
+## 2026-08-17 — owner — Tampermonkey browsers available
+
+**Changed:** The owner confirmed that Tampermonkey is installed and pinned in both Brave and Edge.
+
+**Now true:** The browser-installation prerequisite for the Phase 9 userscript foundation is satisfied. A real browser verification can now be performed in either supported browser.
+
+**Could not verify:** The merged userscript has not yet been installed and exercised against a Fantrax league page. The backend handshake route is still absent, so only the `/health` round trip can currently succeed end to end.
+
+**Next:** `bridge` or the owner should install the generated `userscript/dist/hoops-gm.user.js` in one pinned browser and verify the loopback `/health` request; `backend` must add and authenticate `POST /api/v1/bridge/handshake` before handshake verification.
+
+---
+
+## 2026-08-17 — architect — Planning session closed; backlog persisted to the repository
+
+**Changed:** Exported the full task graph to `docs/backlog.md` and linked it from `README.md` and `AGENTS.md`. Closing the planning session that produced this project.
+
+**Now true:**
+- **The task list is in the repository.** 96 items with their dependencies and status, 18 done. It existed only in a chat session's database until now — which is precisely the failure `docs/handoff.md` was created to prevent, and it took most of a day to notice. A task is ready when every one of its dependencies is done.
+- Phases 0, 1 and 2 are complete and merged, plus the Phase 9 userscript transport foundation. `main` is clean with no open pull requests and CI green on every job including Postgres.
+- Nine tasks are unblocked. The critical path runs through `schedule-ingest`, which gates all of Phase 3, which gates the availability model.
+- The repository is public. Actions quota no longer applies, and GitHub-native secret scanning, push protection and CodeQL are enabled — independent controls, which matters because this project's own scanner regressed once already.
+- Draft day is **Sunday 18 October 2026**, auction format, confirmed. The working deadline is **4 October**: the rehearsal fortnight exists to find what the overlay is missing before it costs a real pick, and it must not be compressed.
+
+**Could not verify:**
+- **Eight guarantees were written down, believed, and false today.** Enum CHECK constraints never emitted; timezone handling silently corrupting `tipoff_utc`; a CI job gating on an event the workflow never declared; `BoxScoreSummaryV2` returning zero inactives for an entire season; `gameEt` claiming UTC while carrying Eastern; a secret scanner that regressed to miss eleven patterns it used to catch; an unchecked security claim; and a pull request that was green and mergeable and would have deleted fifty files. Every one was caught by executing something rather than reading it. **Two were mine.** The rate is not obviously declining, so assume a ninth exists.
+- No verified source of average auction value (R37). The inflation engine — the largest single edge in an auction — has no baseline yet.
+- No official injury report exists on draft morning (R40), because the season opens after the draft.
+- `docker compose` has still never been run; Docker is not installed on the development machine.
+- Whether the 62-day schedule is achievable. The backstops come from the dependency graph, not from measured velocity.
+
+**Next:** `data-engineer` on `schedule-ingest` — the largest domino. `backend` on `bridge-handshake-endpoint`, which the userscript already calls and which does not exist. The owner is running blind auction mocks, which are the uncontaminated control group and the only experiment here that expires.

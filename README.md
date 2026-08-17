@@ -81,6 +81,7 @@ Start with **[`AGENTS.md`](AGENTS.md)**, then **[`docs/handoff.md`](docs/handoff
 | Where | What |
 |---|---|
 | [`docs/plan.md`](docs/plan.md) | The full plan, including the research that constrains it |
+| [`docs/backlog.md`](docs/backlog.md) | **The task list.** 96 items with dependencies and status. A task is ready when every dependency is done |
 | **[`docs/governance/OPEN-ci-billing.md`](docs/governance/OPEN-ci-billing.md)** | ⚠️ **Open, needs the owner.** GitHub Actions is stopped by billing, so all four gates are currently unenforced |
 | [`docs/handoff.md`](docs/handoff.md) | Append-only project memory. Read before starting; append when finishing |
 | [`docs/decisions/`](docs/decisions/) | ADRs — what was decided, what was rejected, what would flip it |

@@ -47,6 +47,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `GET /health` | Liveness. Touches nothing. |
 | `GET /health/ready` | Readiness. Verifies the database answers. |
 | `GET /api/v1/meta` | Service metadata. |
+| `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 
 ## Code gate
 

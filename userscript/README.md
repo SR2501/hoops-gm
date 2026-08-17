@@ -19,11 +19,11 @@ Tampermonkey-only key, and sent only as the `X-Bridge-Secret` request header.
 It is never placed in source control or written to the console. Removing the
 userscript's stored data generates a new secret on the next page load.
 
-The handshake request is prepared for the backend contract at
-`POST /api/v1/bridge/handshake`. The current backend foundation does not expose
-that route yet, so the request reports a controlled failure until the backend
-bridge endpoint lands. The independent `/health` probe is the executable
-browser-to-backend round trip for this phase.
+The handshake calls the backend contract at
+`POST /api/v1/bridge/handshake` with `{ "protocol": 1 }` and the
+`X-Bridge-Secret` header. A successful response confirms `{ "status": "ok",
+"protocol": 1 }`. The independent `/health` probe remains available as a
+browser-to-backend round trip.
 
 ## Local development loop
 
