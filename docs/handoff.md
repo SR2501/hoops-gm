@@ -367,3 +367,29 @@ The full decision, options and recommendation now live in `docs/governance/OPEN-
 **Could not verify:** The real FastAPI `/health` round trip could not be executed on this machine because backend dependencies are not installed globally (`structlog` is missing), and installing them would change the environment rather than verify the repository's normal backend setup. Tampermonkey itself was not available for an in-browser install test, so metadata and GM APIs were exercised through the build output and a Node HTTP shim. CI is also not a substitute for those two runtime checks.
 
 **Next:** `backend` must expose and authenticate `POST /api/v1/bridge/handshake` using the configured `BRIDGE_SECRET`; `bridge-capture` can build on `HoopsGmTransport` without adding page mutation or `/fxpa/req` interception to this foundation.
+## 2026-08-17 — owner — CDN access denied confirmed
+
+**Changed:** The owner attempted the CDN request from the development environment and received an XML `AccessDenied` response with a request id and host id.
+
+**Now true:** The CDN edge is reachable from the machine, but the request is denied before a usable payload is returned. This is stronger evidence than the earlier connection-level observation and keeps the source unusable for ingestion until access is explained or an alternate egress is tested.
+
+**Could not verify:** The exact policy decision is still unknown: the response does not identify whether the denial is due to egress reputation, required headers, signed access, rate limiting, or the specific object URL. No alternate network or known-good CDN request has been tested.
+
+**Next:** `data-engineer` should test the same request from an unenrolled or alternate network and capture the exact URL, headers, status and response as a live-smoke fixture without committing credentials.
+
+---
+
+## 2026-08-17 — architect — PR #5 rebased before merge; a green tick that meant nothing
+
+**Changed:** Rebased the Phase 9 userscript branch onto current `main` before merging, and merged it as `df9ce7c`.
+
+**Now true:**
+- PR #5 was mergeable with green CI and would have **deleted 50 Phase 2 files** - the whole identity crosswalk, every adapter, migration 0002 - and reverted `scripts/check_no_secrets.py` from 189 lines to 103, undoing the scanner regression fix from the PR #4 review. The branch was cut before Phase 2 landed, so it was an internally consistent snapshot of an older repository. **That is why CI passed on it.** A green tick on a stale branch is a statement about the branch, not about what merging it would do.
+- After rebasing: 67 files became 7, 60,256 deletions became zero, purely additive. Verified locally before pushing - 3 userscript tests pass, secret scan clean on 155 files, build produces a valid 2.9KB user script, scanner confirmed back at 189 lines.
+- The userscript transport is sound: dependency-injected `GM_xmlhttpRequest` and storage so it is testable outside a browser, a 32-byte crypto-random secret in GM storage, and all four failure paths handled with a 3s timeout so an unreachable backend cannot hang the Fantrax page. `@match` is correctly narrow (`fantrax.com/fantasy/league/*`) rather than the whole site.
+
+**Could not verify:**
+- **The userscript calls `POST /api/v1/bridge/handshake` and that endpoint does not exist in the backend.** The tests inject a fake transport, so nothing catches it, and the branch's own CI could not have. The transport foundation is still correct; the server half is simply absent. `bridge-capture` must not assume it is there.
+- Whether the built user script actually installs and runs in Tampermonkey against a live Fantrax page. It has never been loaded in a browser.
+
+**Next:** `backend` to add the handshake endpoint, or `bridge` to build `bridge-capture` against `/health` until it exists. Whoever goes first should decide deliberately rather than discovering the gap mid-task.
