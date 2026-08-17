@@ -392,6 +392,23 @@ A fourth, quieter benefit: every *"I wish I knew X right now"* moment during a l
 
 Capture protocol and per-mock template live in `docs/mocks/`. **League configuration is mandatory** on every entry, because AAV does not transfer between configurations (R39).
 
+### Adherence measurement — the list is the product
+
+**The owner will follow the list. The goal is making it reliable, not making him a better drafter.** That reorders priorities: valuation quality matters more than interface polish, and the overlay should present decisions unambiguously rather than invite second-guessing under a clock.
+
+**The experiment.** Enter mocks with different lists, some **deliberately perturbed** — a shuffled tier, an inflated position, a planted overvalue. Ground truth is known by construction, so adherence is measured rather than inferred.
+
+**The owner must not know which list is perturbed.** The capture records what he did; a sealed record in `docs/mocks/lists/` states what the list was. Opened only afterwards. Mocks only — never a real draft, and perturbation records are terminal metadata under ADR-008.
+
+**Unit of analysis is the decision, not the mock** — ~13 per auction, so 10 mocks ≈ 130 observations. Enough for a solid overall adherence rate; per-position is directional only. 20 mocks would make position-level findings trustworthy (~4h/week vs ~2h/week over seven weeks).
+
+**What it cannot measure: whether a deviation was right.** Mocks do not play out, and scoring a deviation against the list's own valuation is circular when the list is what is being tested. Adherence is the clean measurement, and the one that matters here.
+
+**Deviations are not automatically errors.** Separate *systematic* deviation (bias to guard against) from *situational* deviation (real information the model lacks, and therefore a feature).
+
+**Open question for ADR-005.** If adherence is very high, does a script executing the same list beat a human executing it under a bid clock? Perhaps — but high adherence to the *list* is not the same as zero value from *presence*, since a human at the draft notices things no model sees. Unresolved, and owner-only regardless.
+
+
 ### Ten-plus mocks, used for two different things
 
 No fewer than ten mock drafts before the real one. **Given the auction confirmation, the majority must be auction mocks**, since snake mocks cannot calibrate inflation curves or budget behaviour. They serve two distinct purposes and the plan keeps them separate:

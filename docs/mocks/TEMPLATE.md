@@ -29,6 +29,26 @@
 
 Notes:
 
+## List used
+
+| Field | Value |
+|---|---|
+| List identifier | e.g. `list-C`, or `none` |
+| Open during bidding? | yes / partly / no |
+| How much consulted | constantly / at decisions / glanced / ignored |
+
+> Don't guess whether it was perturbed. If you know, the measurement is worthless.
+
+## Adherence — one row per roster spot
+
+"Followed" = took the list's top available recommendation at that moment.
+
+| # | Player | Paid | List rank | Followed? | If not, why |
+|---|---|---|---|---|---|
+| 1 | | $ | | Y / N | |
+
+Deviation reasons: be specific. "Gut" is honest and valid. So is "saw an injury note", "panicked on budget", "list looked wrong". This column separates bias from real information.
+
 ## Engagement level
 
 Affects how much the clearing prices can be trusted.
