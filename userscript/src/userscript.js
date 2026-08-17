@@ -4,6 +4,7 @@
   const BACKEND_ORIGIN = "http://127.0.0.1:8000";
   const SECRET_KEY = "hoops-gm.bridge-secret";
   const HANDSHAKE_PATH = "/api/v1/bridge/handshake";
+  const PAYLOADS_PATH = "/api/v1/bridge/payloads";
 
   function generateSecret() {
     const bytes = new Uint8Array(32);
@@ -62,10 +63,16 @@
       secretKey: SECRET_KEY,
       healthCheck: () => send("GET", "/health"),
       handshake: () => send("POST", HANDSHAKE_PATH, { protocol: 1 }),
+      // Forwards one normalized bridge-capture envelope (see capture.js) over the
+      // same authenticated loopback channel as the handshake. This is a contract
+      // call: the backend endpoint and its `bridge_payloads` table are not part
+      // of this userscript-only change and may not exist yet, exactly as the
+      // handshake path was built before the backend route existed.
+      sendPayload: (envelope) => send("POST", PAYLOADS_PATH, envelope),
     };
   }
 
-  const bridge = { createTransport, getSecret, HANDSHAKE_PATH };
+  const bridge = { createTransport, getSecret, HANDSHAKE_PATH, PAYLOADS_PATH };
   globalThis.HoopsGmBridge = bridge;
 
   if (typeof GM_xmlhttpRequest === "function") {

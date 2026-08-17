@@ -49,7 +49,7 @@ Severity: 🔴 high · 🟡 medium · 🟢 low
 | R14 | **Automation bug submits a wrong pick or an illegal lineup** | 🔴 | Full guardrail set; dry-run default; validity precheck; independent `safety` sign-off | `safety` |
 | R15 | Auto-set fires on stale injury data | 🔴 | Availability freshness check — escalate rather than act on stale reports | `safety` |
 | R16 | ToS exposure from write automation | 🟡 | Supervised default; owner's own account only; owner-only decision to enable autonomous | owner |
-| R17 | Bridge secret leaks, exposing the local action queue | 🟢 | Locally generated secret, `127.0.0.1` binding, secret never committed | `bridge` |
+| R17 | Bridge secret leaks, exposing the local action queue | 🟢 | Locally generated secret, one-time pairing, `127.0.0.1` binding, secret never committed; same-machine compromise remains out of scope | `bridge` |
 
 ## Schedule & delivery
 

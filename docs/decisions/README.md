@@ -26,7 +26,8 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [006](ADR-006-adapter-isolation.md) | External adapters isolated behind contract tests | **Accepted** | Recorded fixtures; drift fails loudly in CI rather than degrading a number silently |
 | [007](ADR-007-availability-in-spine.md) | Availability is a spine concern, modelled before valuation | **Accepted** | It is an input to valuation, not an attribute of it |
 | [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | Proposed | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
-| [009](ADR-009-schedule-intelligence-contract.md) | Phase 3 schedule intelligence: table ownership and output contract | Proposed | `schedule-ingest`/`schedule-density` are data-engineer facts; `schedule-context` is quant's Phase 4 model, not a Phase 3 ingest |
+| [009](ADR-009-schedule-intelligence-contract.md) | Phase 3 schedule intelligence: table ownership and output contract | **Accepted** | `schedule-ingest`/`schedule-density` are data-engineer facts; `schedule-context` is quant's Phase 4 model, not a Phase 3 ingest |
+| [010](ADR-010-local-bridge-pairing.md) | One-time local pairing for the browser bridge | Proposed | A displayed, single-use local code provisions the userscript bearer secret without putting it in source control |
 
 ## Accepted
 
@@ -34,6 +35,8 @@ ADR-001 through ADR-007 were accepted by the project owner on **2026-08-17**, af
 
 They record the decisions reached in the planning conversation of the same day and are now settled — but not immutable. Each states the condition that would flip it, and an accepted ADR can still be amended when reality disagrees with it. If one of those conditions is met, say so rather than working around the decision.
 
+ADR-009 was accepted by the project owner on **2026-08-17**.
+
 ## Awaiting the owner
 
-**ADR-008** and **ADR-009** are `Proposed`. Agents cannot mark their own work accepted.
+**ADR-008** is `Proposed`. Agents cannot mark their own work accepted.

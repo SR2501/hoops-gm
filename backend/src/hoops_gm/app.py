@@ -16,6 +16,7 @@ from hoops_gm import __version__
 from hoops_gm.api.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from hoops_gm.api.routes import api_v1_router, ops_router
 from hoops_gm.api.schemas import ErrorResponse
+from hoops_gm.core.bridge_pairing import BridgePairing
 from hoops_gm.core.config import Settings, get_settings
 from hoops_gm.core.logging import configure_logging, get_logger
 from hoops_gm.db.session import Database
@@ -90,6 +91,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.state.settings = settings
+    configured_secret = (
+        settings.bridge_secret.get_secret_value() if settings.bridge_secret else None
+    )
+    app.state.bridge_pairing = BridgePairing(settings.bridge_secret_path, configured_secret)
+    if configured_secret is None and app.state.bridge_pairing.has_secret:
+        app.state.settings = settings.model_copy(
+            update={"bridge_secret": app.state.bridge_pairing.secret}
+        )
 
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(

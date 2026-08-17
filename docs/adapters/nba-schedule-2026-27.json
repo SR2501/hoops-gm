@@ -1,0 +1,48 @@
+{
+  "source": "cdn.nba.com",
+  "kind": "official_schedule_pdf",
+  "url": "https://cdn.nba.com/manage/2026/08/2026-27-NBA-Regular-Season-Schedule-By-Date.pdf",
+  "retrieved_at": "2026-08-17T22:19:01.1246087Z",
+  "response": {
+    "status": 200,
+    "content_type": "application/pdf",
+    "content_length": 541060,
+    "etag": "\"8123719378c23fd64301dc62fed4e78f\"",
+    "last_modified": "Thu, 13 Aug 2026 19:02:55 GMT",
+    "accept_ranges": "bytes"
+  },
+  "sha256": "5E82E37EF1B19E226DEE57BE69958B95B5694516280D3034AA7C1D64292B3570",
+  "inspection": {
+    "pdf_pages": 23,
+    "extracted_schedule_rows": 1200,
+    "game_number_range": [1, 1200],
+    "date_range": ["2026-10-20", "2027-04-11"],
+    "columns": [
+      "GAME",
+      "DAY",
+      "DATE",
+      "TEAM 1",
+      "TEAM 2",
+      "LOCAL",
+      "ET",
+      "NAT TV",
+      "R #"
+    ],
+    "row_shape": "GAME DAY DATE AWAY at HOME LOCAL_TIME ET_TIME [NAT_TV] [RANKING_MARKER]",
+    "notes": [
+      "The PDF is paginated by date and repeats a header; extracted rows are numbered 1 through 1200 with no duplicates.",
+      "The PDF is an Excel-generated document, not a machine-readable JSON/CSV contract. Text extraction is positional and optional TV/ranking fields are variable.",
+      "No parser is added from this inspection alone. A parser must be built only after the team-name mapping, time semantics, and the apparent 1200-game count are reconciled against a second verified schedule source."
+    ]
+  },
+  "repository_fixture": {
+    "pdf_committed": false,
+    "reason": "The repository license covers source code only and does not grant redistribution rights for NBA-published schedule artwork/data. Existing fixture conventions require a real capture for a parser, but no parser is being added; retain this provenance manifest without redistributing the PDF."
+  },
+  "cdn_403_risk": {
+    "affected": false,
+    "observed": "This manage/ PDF URL returned HTTP 200 from the development machine.",
+    "distinct_from": "The documented R26 Akamai 403 affects cdn.nba.com/static/json/liveData/ JSON endpoints from this managed network; it was not observed on this schedule PDF path.",
+    "live_smoke": "Not added: no schedule adapter/parser exists yet. The source URL should be probed explicitly when the schedule adapter is implemented."
+  }
+}

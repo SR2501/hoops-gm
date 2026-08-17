@@ -190,7 +190,6 @@ def test_later_phase_entity_groups_are_absent() -> None:
         "drafts",
         "draft_picks",
         "automation_actions",
-        "bridge_payloads",
     }
 
     assert not_yet & set(Base.metadata.tables) == set()
@@ -199,7 +198,6 @@ def test_later_phase_entity_groups_are_absent() -> None:
 def test_the_observed_participation_ledger_is_present() -> None:
     """Phase 2 owns the observed half of Availability. See the note above."""
     assert "player_participation" in Base.metadata.tables
-
     columns = set(Base.metadata.tables["player_participation"].columns.keys())
     # The two columns that exist because of what the sources actually do.
     assert "raw_comment" in columns, (
@@ -210,3 +208,8 @@ def test_the_observed_participation_ledger_is_present() -> None:
         "'nobody was inactive' and 'the source stopped telling us' are different "
         "facts, and BoxScoreSummaryV2 erased the difference for a whole season"
     )
+
+
+def test_the_raw_bridge_payload_table_is_present() -> None:
+    """Bridge captures are raw observations and are now part of the backend seam."""
+    assert "bridge_payloads" in Base.metadata.tables

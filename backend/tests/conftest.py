@@ -78,6 +78,7 @@ def settings(tmp_path: Path, test_database_url: str | None) -> Settings:
         environment="test",
         database_url=url,
         log_format="json",
+        bridge_secret_path=tmp_path / "bridge_secret",
         _env_file=None,
     )
 

@@ -47,7 +47,10 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `GET /health` | Liveness. Touches nothing. |
 | `GET /health/ready` | Readiness. Verifies the database answers. |
 | `GET /api/v1/meta` | Service metadata. |
+| `GET /api/v1/bridge/pairing` | Loopback-only, ten-minute one-time pairing code when no secret exists. |
+| `POST /api/v1/bridge/pair` | Loopback-only exchange of `X-Hoops-GM-Pairing-Code` for the bearer secret. |
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
+| `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 
 ## Code gate
 
@@ -166,3 +169,9 @@ tests/
   and are never updated in place, so a stored number's inputs stay recoverable.
 - **Secrets are `SecretStr`.** They cannot then be printed into a log line by
   accident.
+- **Bridge pairing is local-only.** With no explicit `BRIDGE_SECRET`, the
+  backend writes the generated bearer secret to `data/bridge_secret` using an
+  atomic replacement and restrictive file permissions. `BRIDGE_SECRET` remains
+  the explicit recovery/override and takes precedence over that file. Pairing
+  codes are never logged, expire after ten minutes, and lock after five failed
+  attempts.

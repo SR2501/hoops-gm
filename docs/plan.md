@@ -547,13 +547,15 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - `fantrax-private-adapter` — `fantraxapi` integration, encrypted cookie storage, re-login flow, roster/matchup sync.
 - `adapter-contract-tests` — Recorded fixtures + CI contract tests so upstream schema drift fails loudly.
 
-**Phase 3 — Schedule intelligence** · owner: `data-engineer`, `quant`
+**Phase 3 — Schedule intelligence** · owner: `data-engineer` (ADR-009)
 - `schedule-ingest` — Season schedule, fantasy week definitions, per-week game counts.
-- `schedule-density` — B2Bs, 3-in-4 / 4-in-5 / 4-in-6, rest differentials, road-trip structure.
-- `schedule-context` — Off-night light slates, opponent pace, per-category defensive profiles, blowout likelihood.
+- `schedule-density` — B2Bs, 3-in-4 / 4-in-5 / 4-in-6, rest differentials, road-trip structure. Pure calendar arithmetic only, no modelling judgment.
 - `playoff-schedule` — Fantasy playoff week schedule strength and game counts.
 
+`schedule-context` (off-night slates, opponent pace, category defence, blowout risk) moved to Phase 4 — see below and ADR-009. It requires modelling decisions and is `quant`'s deliverable, not a Phase 3 ingest fact.
+
 **Phase 4 — Availability & reliability engine** · owner: `quant`
+- `schedule-context` — Off-night light slates, opponent pace, per-category defensive profiles, blowout likelihood. Moved here from Phase 3 (ADR-009): a modelling choice, not an ingest fact.
 - `participation-ledger` — Historical per-player, per-game participation with normalized reason codes.
 - `injury-report-ingest` — NBA official injury report ingestion with status history.
 - `injury-status-conversion` — Empirical status → actual play rates, segmented by team, player and context.

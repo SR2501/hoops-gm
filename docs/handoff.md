@@ -425,3 +425,245 @@ The full decision, options and recommendation now live in `docs/governance/OPEN-
 - Whether the 62-day schedule is achievable. The backstops come from the dependency graph, not from measured velocity.
 
 **Next:** `data-engineer` on `schedule-ingest` — the largest domino. `backend` on `bridge-handshake-endpoint`, which the userscript already calls and which does not exist. The owner is running blind auction mocks, which are the uncontaminated control group and the only experiment here that expires.
+
+---
+
+## 2026-08-17 — backend — Authenticated bridge handshake
+
+**Changed:** Added `POST /api/v1/bridge/handshake`. It accepts only JSON
+`{"protocol": 1}`, requires `X-Bridge-Secret`, compares it with the configured
+`BRIDGE_SECRET`, and returns the minimal stable success response
+`{"status": "ok", "protocol": 1}`. Missing, incorrect, and unconfigured-secret
+cases have explicit machine-readable error codes in the existing error envelope.
+Added focused API tests, OpenAPI coverage, and directly related backend/userscript
+documentation.
+
+**Now true:** The merged userscript's handshake path now has an authenticated
+server endpoint. Secret values are held as `SecretStr`, compared without logging,
+and never included in responses or request logs. Invalid protocol values and
+extra body fields are rejected with the existing `validation_error` envelope.
+
+**Could not verify:** A real Tampermonkey request against the running backend has
+not been exercised; browser installation and end-to-end handshake remain unverified.
+The focused and full backend tests, lint, format, type checks, and secret scan
+passed locally. The default test invocation still needs `-p no:asyncio` in this
+Python 3.14 environment because the installed `pytest-asyncio` plugin treats a
+deprecated asyncio API warning as an error; this is an environment/tooling issue,
+not a test failure.
+
+**Next:** `bridge` or the owner should install the generated userscript in Brave
+or Edge and verify the handshake against a backend started with the same
+`BRIDGE_SECRET`; `backend` can then proceed to bridge payload capture.
+
+---
+
+## 2026-08-17 — architect — ADR-009: closing the Phase 3 shape question, in parallel with the handshake work
+
+**Changed:** Another session was already working the bridge handshake endpoint, so picked up the item Phase 1 deliberately deferred rather than duplicate that work: the shape of `schedule_density`/`off_night_slates`/`opponent_context`, still unresolved as `schedule-ingest` becomes the next critical-path item. Drafted ADR-009, splitting Phase 3. `schedule-ingest`, `schedule-density` and `playoff-schedule` stay `data-engineer`'s and are restricted to pure calendar-arithmetic facts. `schedule-context` (opponent pace, category defence, blowout risk) moves to Phase 4 under `quant`, because it requires modelling judgment, not ingestion — the same production/availability separation ADR-002 already requires, applied one layer up. Updated `docs/plan.md` (Phase 3/4 lists), `docs/governance/ownership.md`, and the ADR index to match. `docs/backlog.md` needed no edit — it tracks dependencies, not phase/owner, and the dependency graph is unaffected.
+
+**Now true:** `data-engineer` can start `schedule-ingest` without an open question about where `schedule-context` lands or who owns it. The Phase 1 handoff's open item ("their shape... is not yet built... these are modelling choices owned by quant and data-engineer in Phase 3") is now a decided split rather than a shared TODO.
+
+**Could not verify:** Whether `schedule-context` really has no calendar-only reduction — ADR-009's own reversal condition. Nobody has attempted to compute pace or category-defence normalization yet, so this is a judgment call by analogy to ADR-002, not evidence. Also did not touch or verify the concurrent handshake work in the other session (`backend/tests/test_api.py`, `test_bridge.py` showed as modified but uncommitted at the time of writing) — left entirely alone to avoid a merge collision.
+
+**Next:** Owner to accept or reject ADR-009. `data-engineer` can begin `schedule-ingest` against the narrowed Phase 3 scope immediately; `quant` should treat `schedule-context` as gated behind the availability model's Model-gate backtest rather than the Adapter gate, per ADR-009.
+
+---
+
+## 2026-08-17 — architect — ADR-009 accepted; Phase 3 tasked out
+
+**Changed:** Owner accepted ADR-009. Updated its status to `Accepted` and the decision index accordingly. Tasked out the four affected items (`schedule-ingest`, `schedule-density`, `playoff-schedule` for `data-engineer`; `schedule-context` for `quant`, now Phase 4) with the ADR-009 scope written directly into each task so nobody re-derives the boundary from memory.
+
+**Now true:** Only `schedule-ingest` is actually ready — its sole dependency, `nba-stats-ingest`, is done. `schedule-density` depends on `schedule-ingest`, and `playoff-schedule` on `schedule-density`, so Phase 3 is a **sequential chain, not three parallel-workable items** — despite Phase 3 having no other unmet dependencies. `schedule-context` (Phase 4, `quant`) only needs `schedule-ingest`, so it can start in parallel with `schedule-density`/`playoff-schedule` once `schedule-ingest` lands, rather than waiting for all of Phase 3.
+
+The unreconciled PDF inspection (`docs/adapters/nba-schedule-2026-27.json`) is a candidate input for `schedule-ingest`, not a finished parser — team-name mapping, LOCAL-vs-ET semantics, and the 1,200-game count are still unverified against a second source, and R36 (a schedule time field that lied about its own timezone) is the specific reason to check the LOCAL/ET columns rather than trust their labels.
+
+**Could not verify:** Whether the PDF's apparent 1,200-game count is correct, or whether `LOCAL`/`ET` are what they claim to be — unchanged from the earlier entry, and now the first thing `schedule-ingest` must resolve rather than merely note.
+
+**Next:** `data-engineer` starts `schedule-ingest`. `quant` can start planning `schedule-context` in parallel but cannot execute until `schedule-ingest` produces `team_schedule`.
+
+
+---
+
+## 2026-08-17 — bridge — `bridge-capture`: read-only `/fxpa/req` capture, typed envelope, forwarding contract
+
+**Changed:** Added `userscript/src/capture.js`, a dependency-injected module that wraps `window.fetch` and `window.XMLHttpRequest` to observe (never modify) responses from Fantrax's internal `/fxpa/req` JSON-RPC endpoint (ADR-004). Every captured response is normalized into a typed `hoops-gm.bridge-payload.v1` envelope — method, URL, status/`ok`, response `Content-Type`, raw body always preserved, best-effort `JSON.parse` with an explicit `parseError` for malformed/non-JSON bodies — and forwarded via a new `transport.sendPayload()` on the existing authenticated loopback transport (`userscript/src/userscript.js`), which reuses the same `X-Bridge-Secret` header and origin as the handshake, POSTing to `/api/v1/bridge/payloads`. Added a bounded FIFO dedupe cache so a page polling the same call every few seconds doesn't forward byte-identical repeats. `@match`, `@grant`, and the loopback-only transport target are unchanged; no new grants were needed since fetch/XHR patching is plain page-privilege JS, not a `GM_*` API. `build.mjs` now concatenates `userscript.js` then `capture.js` (order matters: capture's auto-install checks for the transport the first file creates); version bumped to 0.2.0. Updated `userscript/README.md` with a full section on the capture module's guarantees. Added 22 new focused DI tests in `userscript/test/capture.test.js` (filtering, malformed/non-JSON/empty bodies, envelope shape and header/body exclusion, dedupe, fetch/XHR wiring including that the page's own response and event listeners are unaffected, and that a failing/misconfigured transport never throws or produces an unhandled rejection) plus one new test in `userscript/test/userscript.test.js` covering `sendPayload`. All 26 userscript tests pass; `npm run build` succeeds.
+
+**Now true:**
+- Capture is strictly read-only and response-only: no outgoing request body is ever read, no header other than the response's own `Content-Type` is ever captured (never `Set-Cookie`, never anything request-side), and the page's own promise/callback still resolves with the exact unmodified response — verified by a test asserting `fetch`'s return value is reference-equal to the original response object, and by fetch reading a `.clone()` of the body so the page's own stream read is never consumed.
+- Filtering is exact-pathname (`/fxpa/req` only), not a prefix or substring match, so the capture surface cannot silently widen if Fantrax adds a similarly named path; verified with tests for near-miss paths (`/fxpa/reqSomethingElse`, `/fxpa/req/sub`, the official `/fxea/general/*` API).
+- Every failure path — a malformed body, an empty body, a `response.clone().text()` rejection, a broken logger, `transport.sendPayload` rejecting, an internal exception mid-capture — is caught and logged as a warning rather than thrown into the page or left as an unhandled rejection. This is the "fail safe, never disruptive" requirement from this role's brief, applied to the read path rather than the write path (the write path itself is still untouched — no overlay, no action executor, nothing in scope for the Automation gate).
+- The `POST /api/v1/bridge/payloads` endpoint and the `bridge_payloads` table are a **contract only** at this point, exactly like the handshake before `backend` built it: `backend/tests/test_portability.py` still explicitly asserts `bridge_payloads` is absent from `Base.metadata.tables` (`test_later_phase_entity_groups_are_absent`), confirmed by running it, so this change does not get ahead of that boundary or fabricate backend state.
+- Because this is read-only capture (not the write path, not the action executor, not automation), the Automation gate in `docs/governance/gates.md` does not apply and no `safety` sign-off or dry-run transcript was sought for it; the Code gate does apply and is green (tests, and the repository's `scripts/check_no_secrets.py` scan is clean across 159 tracked files including the new source and test files).
+
+**Could not verify:**
+- Real Tampermonkey/browser behavior of the `fetch`/`XMLHttpRequest` patches against a live Fantrax page — exercised only through Node's `vm` module with fully faked `fetch`/`XMLHttpRequest`/`Response`-shaped objects, the same limitation the Phase 9 foundation entry recorded for the transport itself. In particular, real browser quirks (e.g. Fantrax's own code caching a reference to `window.fetch` before `document-start` runs, or a `Response` whose `headers.get` throws) are untested here.
+- Whether Fantrax's SPA uses `fetch`, `XMLHttpRequest`, or a mix for `/fxpa/req` calls — both paths are implemented and tested independently, but which one(s) actually fire in production is unconfirmed without a live session.
+- The full backend test suite could not be used as a baseline here: this checkout currently has other uncommitted, in-progress changes from a concurrent session (`backend/tests/test_api.py`, `backend/tests/test_bridge.py`, `docs/plan.md`, `docs/governance/ownership.md` all show as modified, matching the ADR-009 entry above), and with those in place `Base.metadata.tables` is empty, failing every `test_portability.py` table-presence check unrelated to anything in this change. Ran `backend/tests/test_bridge.py` and `backend/tests/test_api.py` directly instead (15/15 pass) since those are the actual bridge contract surface this work touches, and confirmed via `git diff --stat` that none of the failing files were touched by this change.
+- Whether the dedupe window (200 entries, no time-based expiry) is well-tuned for a multi-hour draft session; it has not been exercised against real polling frequency or payload sizes.
+
+**Next:** `backend` to add `POST /api/v1/bridge/payloads` and the `bridge_payloads` table (raw JSON storage for replay/diagnosis per `docs/plan.md`'s Bridge data-model entry) so `sendPayload` calls stop failing silently; until then, captures are attempted, rejected, logged, and dropped, which is the documented and tested behavior rather than a bug. `bridge` (this role) can then build `bridge-overlay` on top of `HoopsGmCapture`/`HoopsGmTransport` without adding DOM mutation or write-path code to this capture-only foundation — and any future work in that direction re-triggers the Automation gate and requires independent `safety` sign-off, per `docs/governance/gates.md`.
+
+---
+
+## 2026-08-17 — bridge — capture host filtering tightened
+
+**Changed:** Tightened `/fxpa/req` capture filtering to require the Fantrax
+`fantrax.com` or `www.fantrax.com` host as well as the exact pathname. Added a
+near-miss host test and updated the userscript README.
+
+**Now true:** A page-side request to `/fxpa/req` on an unrelated host cannot be
+forwarded by the capture module.
+
+**Could not verify:** Host filtering has only been exercised with dependency-
+injected URL tests; live Fantrax browser behavior remains unverified.
+
+**Next:** Backend should implement the payload contract; then run a live
+Tampermonkey capture smoke test on both supported Fantrax hostnames.
+
+---
+
+## 2026-08-17 — backend — authenticated bridge payload persistence
+
+**Changed:** Implemented authenticated `POST /api/v1/bridge/payloads`, reusing
+the handshake's constant-time `X-Bridge-Secret` check. The endpoint accepts a
+strict, bounded `hoops-gm.bridge-payload.v1` envelope, preserves the exact
+request JSON plus the captured response's raw body and parse error, and stores
+diagnosis/replay metadata in the new SQLAlchemy `bridge_payloads` model and
+Alembic `0003` migration. No Fantrax payload normalization, parsing, actions, or
+automation was added. Added API/OpenAPI-facing persistence tests and updated
+the backend endpoint documentation.
+
+**Now true:** Missing, incorrect, unconfigured, malformed, unknown-field, and
+oversized bridge requests return the stable error envelope; valid captures are
+stored with no secret-bearing headers or log fields. SQLite and Postgres use
+portable SQLAlchemy types, including JSON and UTC-aware timestamps.
+
+**Could not verify:** The local Python 3.14 test environment's installed
+`pytest-asyncio` emits a deprecation warning that the repository's
+error-on-warning policy promotes to setup errors; focused tests therefore need
+that environment dependency refreshed before the full gate can run. Static
+schema/import checks and migration code were exercised.
+
+**Next:** Run the backend focused suite, `alembic upgrade/downgrade`, and the
+repository code gate in CI or an environment with a compatible
+`pytest-asyncio`; bridge can then use the endpoint for live capture smoke
+testing.
+
+---
+
+## 2026-08-17 — architect — Browser smoke-test boundary clarified
+
+**Changed:** Corrected the interpretation of the shared browser smoke test.
+
+**Now true:** The embedded browser can confirm that the signed-in Fantrax league
+page loads and that Fantrax makes real `/fxpa/req` requests. It does not share
+the owner's Brave or Edge profile and does not have the owner's Tampermonkey
+installation.
+
+**Could not verify:** No claim can be made from the embedded browser about
+userscript execution, capture, or loopback forwarding. Those require the
+owner's installed Tampermonkey browser and a backend configured with the same
+bridge secret.
+
+**Next:** Use the owner's Brave or Edge session for the actual Tampermonkey
+smoke test; keep the embedded browser as a Fantrax request-shape probe only.
+
+---
+
+## 2026-08-17 — owner — Tampermonkey installation verified
+
+**Changed:** The owner reinstalled the generated `hoops-gm.user.js` in the
+real browser after removing an accidental Fantrax exclusion.
+
+**Now true:** Tampermonkey reports `hoops-gm bridge` as running on the Fantrax
+league Players page in the owner's browser. The userscript installation and
+URL matching are verified outside the embedded browser.
+
+**Could not verify:** The backend handshake and payload persistence have not
+been exercised from the userscript. The current secret provisioning path still
+requires an explicit bridge-secret setup before that round trip can be tested.
+
+**Next:** Make bridge-secret provisioning straightforward and secure, then
+verify handshake and captured payload persistence from the installed script.
+
+---
+
+## 2026-08-17 — architect — Local bridge pairing contract
+
+**Changed:** Proposed ADR-010 for a one-time, loopback-only pairing flow. The
+backend displays a short-lived 12-character code in the local dashboard; the
+Tampermonkey menu command sends that code in a custom header over
+`GM_xmlhttpRequest`, receives the generated bearer secret once, and stores it
+in GM storage. Pairing is atomic, rate-limited, non-replayable, and does not
+use cookies. Reset revokes the secret and requires an explicit local
+confirmation.
+
+**Now true:** The cross-module contract and threat boundary are documented.
+Existing `X-Bridge-Secret` handshake and payload routes remain unchanged after
+pairing. The backend must persist the secret outside source control, with
+`BRIDGE_SECRET` retained as an explicit recovery override.
+
+**Could not verify:** No implementation exists yet, so the exact Tampermonkey
+menu/prompt UX, local persistence permissions, and browser `Origin` behavior
+for `GM_xmlhttpRequest` remain untested.
+
+**Next:** `backend` and `bridge` should agree the endpoint schema and test the
+round trip; `safety` must review before any write-path use. The owner must
+accept ADR-010 and choose whether UI reset is sufficient or a local CLI reset
+is required.
+
+---
+
+## 2026-08-17 — backend — Local bridge pairing
+
+**Changed:** Implemented the proposed ADR-010 local bridge pairing flow. With no
+explicit `BRIDGE_SECRET`, loopback-only pairing endpoints issue a cryptographically
+random 12-character code, expire it after ten minutes, lock it after five failed
+attempts, and atomically exchange it once for a generated 32-byte bearer secret.
+The secret is persisted at `data/bridge_secret` via an atomic restrictive-permission
+write; an explicit `BRIDGE_SECRET` remains the recovery/override and takes precedence.
+
+**Now true:** Pairing uses the stable error envelope, rejects cookies and cross-origin
+requests, does not log codes or secrets, and existing authenticated handshake and
+payload routes continue to use the configured secret.
+
+**Could not verify:** A real multi-process race and native Postgres execution were not
+run locally; the in-process lock protects concurrent requests within one backend
+process, while file replacement is atomic for persistence.
+
+**Next:** `bridge` can wire the userscript menu/prompt to
+`GET /api/v1/bridge/pairing` and `POST /api/v1/bridge/pair`; `safety` should
+independently review the write-path authentication boundary before automation work.
+
+---
+
+## 2026-08-17 — data-engineer — Official 2026-27 schedule PDF inspection
+
+**Changed:** Probed and downloaded the official NBA schedule PDF to a temporary
+location for inspection, then recorded its provenance and observed structure in
+`docs/adapters/nba-schedule-2026-27.json`. The response was HTTP 200
+(`application/pdf`, 541,060 bytes, ETag and Last-Modified recorded); SHA-256 is
+`5E82E37EF1B19E226DEE57BE69958B95B5694516280D3034AA7C1D64292B3570`. The PDF
+contains 23 pages and 1,200 numbered schedule rows from 2026-10-20 through
+2027-04-11, with repeated headers and variable optional TV/ranking fields. The
+PDF itself was not committed.
+
+**Now true:** Phase 3 has a source manifest with URL, retrieval timestamp,
+response metadata, hash, and actual structural observations. The official
+`manage/` PDF path is reachable from this environment. No parser or database
+write was invented from a positional PDF whose team-name mapping, time
+semantics, and apparent 1,200-game count still need reconciliation.
+
+**Could not verify:** The PDF does not state a machine-readable contract, and
+no second verified source was used to explain the 1,200-game count or validate
+team-name/time parsing. The PDF's redistribution/licensing terms were not
+provided; the repository license explicitly excludes imported NBA data, so the
+binary was not added as a fixture. The existing R26 Akamai 403 was not tested
+against the live-data JSON path in this task.
+
+**Next:** `data-engineer` should obtain a permitted recorded fixture or an
+approved source representation before implementing the schedule parser, then
+add an offline contract test and a loud live smoke test under the Adapter gate.
+`quant` can use the eventual per-team schedule facts only after the parser
+reconciles the row count and time semantics; the 403 risk should remain tracked
+separately for live scoring.

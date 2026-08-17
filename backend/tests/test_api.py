@@ -117,3 +117,4 @@ def test_openapi_document_is_servable(client: TestClient) -> None:
     paths = response.json()["paths"]
     assert "/health" in paths
     assert "/api/v1/meta" in paths
+    assert "/api/v1/bridge/handshake" in paths

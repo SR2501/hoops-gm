@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from pytest import LogCaptureFixture
 
 from hoops_gm.core.config import Settings
 
@@ -13,9 +14,7 @@ SECRET = "bridge-test-secret"
 
 def _configure_secret(app: FastAPI) -> None:
     settings: Settings = app.state.settings
-    app.state.settings = settings.model_copy(
-        update={"bridge_secret": SecretStr(SECRET)}
-    )
+    app.state.settings = settings.model_copy(update={"bridge_secret": SecretStr(SECRET)})
 
 
 def test_handshake_accepts_protocol_one_with_the_configured_secret(
@@ -57,9 +56,7 @@ def test_handshake_rejects_an_incorrect_secret(app: FastAPI, client: TestClient)
     assert response.json()["detail"] == "Bridge secret is incorrect."
 
 
-def test_handshake_reports_when_no_secret_is_configured(
-    app: FastAPI, client: TestClient
-) -> None:
+def test_handshake_reports_when_no_secret_is_configured(app: FastAPI, client: TestClient) -> None:
     response = client.post(
         "/api/v1/bridge/handshake",
         json={"protocol": 1},
@@ -71,9 +68,7 @@ def test_handshake_reports_when_no_secret_is_configured(
     assert response.json()["detail"] == "Bridge authentication is not configured."
 
 
-def test_handshake_rejects_invalid_protocol_and_body(
-    app: FastAPI, client: TestClient
-) -> None:
+def test_handshake_rejects_invalid_protocol_and_body(app: FastAPI, client: TestClient) -> None:
     _configure_secret(app)
 
     invalid_protocol = client.post(
@@ -94,7 +89,7 @@ def test_handshake_rejects_invalid_protocol_and_body(
 
 
 def test_handshake_never_echoes_or_logs_the_secret(
-    app: FastAPI, client: TestClient, caplog
+    app: FastAPI, client: TestClient, caplog: LogCaptureFixture
 ) -> None:
     _configure_secret(app)
 

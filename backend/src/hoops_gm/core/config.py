@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./hoops_gm.db"
     database_echo: bool = False
 
+    # The bridge accepts one bounded envelope at a time. Keep this small enough
+    # that a malformed browser response cannot turn the local service into a
+    # memory sink.
+    bridge_max_payload_bytes: int = Field(default=1_048_576, ge=1, le=16_777_216)
+
     # --- Frontend ------------------------------------------------------------
     # The dev server proxies /api, so CORS is a belt-and-braces default for
     # anyone running the two apps on different origins.
@@ -68,6 +73,7 @@ class Settings(BaseSettings):
 
     # --- Secrets. Never committed; .env.example documents the shape. ---------
     bridge_secret: SecretStr | None = None
+    bridge_secret_path: Path = REPO_ROOT / "data" / "bridge_secret"
     fantrax_user_secret_id: SecretStr | None = None
     fantrax_league_id: str | None = None
     fantrax_cookie: SecretStr | None = None

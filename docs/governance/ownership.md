@@ -10,8 +10,8 @@ One owner per module. Ownership means: you write it, you are accountable for it,
 | `docs/governance/` | `architect` | |
 | `backend/app/ingest/` | `data-engineer` | nba_api, Fantrax official + private, injury reports |
 | `backend/app/identity/` | `data-engineer` | Player crosswalk — highest-risk foundational item |
-| `backend/app/schedule/` | `data-engineer` | Ingest and density; `quant` consumes |
-| `backend/app/availability/` | `quant` | Participation ledger, p(play), reliability, shutdown, contingent value |
+| `backend/app/schedule/` | `data-engineer` | Ingest and density only — pure calendar facts, no modelling judgment (ADR-009) |
+| `backend/app/availability/` | `quant` | Schedule context (opponent pace, category defence), participation ledger, p(play), reliability, shutdown, contingent value (ADR-009) |
 | `backend/app/projections/` | `quant` | CSV import mapping is shared with `data-engineer` |
 | `backend/app/valuation/` | `quant` | z-score, G-score, risk-adjusted, punts, auction pricing |
 | `backend/app/engines/` | `quant` | Draft, lineup, trade, streaming |

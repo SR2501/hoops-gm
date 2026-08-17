@@ -59,3 +59,23 @@ test("backend failures reject instead of affecting the page", async () => {
 
   await assert.rejects(transport.healthCheck(), /backend unreachable/);
 });
+
+test("sendPayload forwards a captured envelope to the payloads contract path with the stored secret", async () => {
+  let requestOptions;
+  const bridge = await loadBridge();
+  const transport = bridge.createTransport({
+    storage: { get: () => "c".repeat(64), set: () => {} },
+    request: (options) => {
+      requestOptions = options;
+      options.onload({ status: 202, responseText: "{}" });
+    },
+  });
+
+  const envelope = { schema: "hoops-gm.bridge-payload.v1", source: "fetch" };
+  await transport.sendPayload(envelope);
+
+  assert.equal(requestOptions.method, "POST");
+  assert.equal(requestOptions.url, "http://127.0.0.1:8000/api/v1/bridge/payloads");
+  assert.equal(requestOptions.headers["X-Bridge-Secret"], "c".repeat(64));
+  assert.deepEqual(JSON.parse(requestOptions.data), envelope);
+});
