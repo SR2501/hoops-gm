@@ -376,6 +376,22 @@ Tracked as R37, with `aav-source`, `aav-blending` and `aav-calibration` in Phase
 
 The auction panel is now **the** draft-day surface, not an alternative to the snake one. Different content: current nomination, your inflation-adjusted max bid, value versus the standing bid, budget and slots remaining, tier-exhaustion alerts. The pressure profile differs too — an auction gives you seconds rather than a minute, and what you need is one number, big and unambiguous.
 
+### Blind mocks — start immediately, before the tool exists
+
+A **blind mock** is one run without the tool. It is not a degraded rehearsal; it is a different experiment, and three of its properties cannot be recovered later:
+
+- **It is the uncontaminated control group.** R38 records the circularity risk — once we bid using our own values, the corpus contains our own output and the loop self-reinforces. A mock run before the tool exists is definitionally clean, and is the only market evidence that can never be accused of echoing us.
+- **It is the counterfactual.** Without a record of drafting *without* the tool, "did this actually help?" is unanswerable. That measurement is available only before the tool is used, and never again.
+- **It captures the other managers.** Nine to eleven people bidding real dollars on real players is precisely the AAV evidence R37 needs, accumulating immediately at zero cost and off the critical path.
+
+A fourth, quieter benefit: every *"I wish I knew X right now"* moment during a live auction is an overlay requirement discovered under real time pressure rather than imagined at a desk. That is better requirements-gathering than any amount of design discussion.
+
+**Schedule value.** The rehearsal window is 5–18 October, the tightest part of the plan. Every blind mock run before then is corpus that does not have to be gathered inside it — and if the build slips, the market data still exists.
+
+**Honest limitation.** Mock participants behave differently from real ones: some autodraft, some disengage, some bid carelessly with nothing at stake. Expect clearing prices to be noisier and probably softer than a real draft, especially late. That makes mocks *a source with a characteristic bias*, which is exactly how the blending layer treats every other source — record the engagement level so calibration can weight it.
+
+Capture protocol and per-mock template live in `docs/mocks/`. **League configuration is mandatory** on every entry, because AAV does not transfer between configurations (R39).
+
 ### Ten-plus mocks, used for two different things
 
 No fewer than ten mock drafts before the real one. **Given the auction confirmation, the majority must be auction mocks**, since snake mocks cannot calibrate inflation curves or budget behaviour. They serve two distinct purposes and the plan keeps them separate:
