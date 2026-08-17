@@ -1,6 +1,7 @@
 # ADR-001 — Local-first architecture with a Postgres seam
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

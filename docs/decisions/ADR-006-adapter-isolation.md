@@ -1,6 +1,7 @@
 # ADR-006 — External adapters isolated behind contract tests
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-17 by the project owner
 **Date:** 2026-08-17
 
 ## Context

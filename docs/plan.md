@@ -1,7 +1,8 @@
 # hoops-gm — Fantasy Basketball League Management Tool
 
 **Target season:** 2026–27 NBA
-**Repo:** new repo `SR2501/hoops-gm` (name changeable)
+**Draft day:** **Sunday 18 October 2026** — auction format, confirmed. Hard deadline.
+**Repo:** [`SR2501/hoops-gm`](https://github.com/SR2501/hoops-gm) — public
 **Primary user:** you, then possibly 1–2 leaguemates
 **Primary format:** H2H 9-cat (FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO), architected for points/roto later
 
@@ -497,7 +498,16 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - **Calibration beats accuracy for p(play).** A model that says 70% and is right 70% of the time is more useful for lineup decisions than one with a better raw hit rate but overconfident probabilities. The Model gate scores calibration explicitly.
 - **Auction is the confirmed format, and it is the good outcome.** Confirmed 2026-08-17. Inflation math under a bid clock is exactly what a human cannot do and a tool can, so the largest available edge is now definitely in scope rather than contingent. Snake stays implemented but is no longer a draft-day deliverable.
 - **The auction confirmation exposed a data gap (R37):** snake is priced by ADP, which Fantrax serves free; auction is priced by AAV, and no verified free source has been found. Resolve early — the inflation baseline and the model-vs-market report both depend on it, and if the mock corpus turns out to be the only AAV source, every one of the 10+ mocks must be an auction mock.
-- **Draft day is a hard deadline.** Phases 0–5, 8 and 9 must be done and rehearsed before your draft. Phases 6–7 and 11–12 can land during the season. No fewer than ten mocks, now predominantly auction, with the Fantrax ones serving as true dress rehearsals against the real UI.
+- **Draft day is Sunday 18 October 2026 — 62 days from planning, and it does not move.** The NBA season opens the following week, so this is the last Sunday before it. Working backwards, the hard backstops are:
+
+  | Milestone | Backstop | Slack to draft |
+  |---|---|---|
+  | Spine complete — Phases 2–5 (identity, schedule, availability, valuation) | **Sun 20 Sep** | 4 weeks |
+  | Auction engine + overlay — Phases 8–9 | **Sun 04 Oct** | 2 weeks |
+  | Mock rehearsals begin (10+, predominantly auction) | **Mon 05 Oct** | 13 days |
+  | Feature freeze — fixes only | **Sun 11 Oct** | 7 days |
+
+  The rehearsal window is the part most likely to get squeezed and the part that must not be. Ten auction mocks at roughly one an evening needs the full fortnight, and the whole purpose of the harness is to find what the overlay is missing *before* it costs a real pick. **Treat 4 October as the real deadline; 18 October is only when the consequences arrive.** Phases 6–7 and 11–12 (live scorecard, schedule UI, lineup manager, trades) can land during the season and should be cut first if anything slips.
 - **One screen is the design target.** Fantrax only has to be open and foreground for the live draft and for lineup writes; everything else runs without it. The overlay must be sufficient on a laptop, and the rehearsal harness measures whether it actually is rather than assuming.
 - **Percentage categories are the classic bug.** FG%/FT% must be modelled as volume-weighted impact, not raw percentage; a 90% FT shooter on 1 attempt is not valuable. This is where most homebrew tools go wrong.
 - **Reason codes will be messy.** DNP reasons are inconsistently reported and "rest" is often laundered as a minor ailment. Expect a normalization layer with manual mapping, and don't over-trust stated reasons; the model should lean on observed patterns over official explanations.
