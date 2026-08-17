@@ -356,6 +356,8 @@ Note kept in `docs/`: this operates your own account on your own team. Fantrax n
 
 - **Identity** — `players` (canonical), `player_external_ids` (source, source_id, confidence), `nba_teams`
 - **Stats** — `nba_games`, `player_game_logs`, `player_season_stats`
+
+  > ⚠️ `nba_games.game_date` is the **local** date and must be derived from `gameEt`, never from the UTC tipoff (R36). `gameEt` carries a `Z` suffix and is *not* UTC — it is Eastern wearing a UTC marker, five hours off `gameTimeUTC` in the same payload. Deriving the date from the UTC field is wrong for every game tipping after 7pm Eastern, and `player_participation` joins on it.
 - **Availability** — `player_participation` (game, status, reason_code, minutes), `injury_reports` (report_time, status, description), `injury_status_conversion` (empirical status → play rate), `availability_predictions` (game, p_play, driver features, model version), `reliability_metrics` (window, availability rate, B2B sit rate, minutes CV, per-category std dev, floor/ceiling, grade), `shutdown_risk`
 - **Contingent value** — `absence_splits` (with/without production deltas), `usage_redistribution` (absent player → beneficiary → category delta), `stock_movements` (trigger, value before/after, driver)
 - **Schedule** — `team_schedule`, `schedule_density` (B2B, 3-in-4, 4-in-6, rest diff), `off_night_slates`, `opponent_context` (pace, category defence, blowout risk). Fantasy week boundaries live on `scoring_periods` under League — a fantasy week *is* a scoring period, and two tables that must agree with nothing enforcing agreement is a bug waiting to happen. Add a league-independent NBA week calendar only if streaming analysis later proves it necessary.
