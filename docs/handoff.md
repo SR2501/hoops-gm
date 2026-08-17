@@ -135,3 +135,30 @@ Two departures from the brief, argued rather than assumed:
 **Next:** `data-engineer` for Phase 2, unchanged. Two things that are now different from the previous entry's handover: `match_method` is required on every `player_external_ids` row, and `current_for_source` must be set to the source value for the identifier joins should use. Adding the Fantrax cross-reference sources to `ExternalSource` genuinely does require a migration now.
 
 **For the owner:** still `docker compose up --build`. Everything else the review raised is fixed and enforced by CI on both dialects.
+
+---
+
+## 2026-08-17 — backend — Dead CI condition fixed; **CI now blocked by GitHub Actions billing (owner action required)**
+
+**Changed:** Fixed a defect in the CI pipeline I shipped in Phase 1. The `live-smoke` job gated on `github.event_name == 'schedule'` while the workflow declared no `schedule` trigger, so the one event its own comment described as the point of the job could never fire — it would only ever have run if someone remembered to click it. Added a nightly cron.
+
+Also removed `continue-on-error: true` from that job. The Adapter gate says a live smoke test is "allowed to fail without blocking a merge, but it must fail loudly and visibly", and `continue-on-error` does the opposite: it paints a real upstream break green on a nightly run nobody is watching. It cannot block a merge regardless, structurally, because it does not run on `push` or `pull_request`.
+
+Added `backend/tests/test_ci_workflow.py`. CI enforces every gate and nothing was enforcing CI — the same failure as the enum CHECK and the timezone type, and the third instance of R25 in two days. It asserts that no job gates on an undeclared event, that the Code gate jobs are unconditional, that the later-gate jobs still select their registered markers, and that the Postgres job's password still carries the percent-encoding that used to crash `alembic upgrade head`. Verified by reintroducing the original defect and watching the test fail, then restoring.
+
+**Now true:**
+- The nightly live smoke run can actually run, and will go red rather than green when an upstream breaks. R26 (`cdn.nba.com` returning 403) and R27 (`stats.nba.com` reachable only through `nba_api`) are precisely what it is for: neither is visible to a contract test against a recorded fixture, because the fixture keeps passing.
+- The CI configuration is itself covered by tests, so a job that cannot run is a failing build rather than a silent absence.
+
+**Could not verify:**
+- **Nothing on this branch has run in CI.** Every job failed with *"The job was not started because recent account payments have failed or your spending limit needs to be increased"*. Zero steps executed in any job — this is an account-level billing stop, not a code failure. The local gate is green: ruff, `ruff format --check`, mypy `strict`, 104 tests.
+- **Whether the nightly schedule actually fires**, for the same reason. Scheduled runs only execute on the default branch, so it cannot be confirmed until this merges *and* billing is restored.
+- `docker compose up` — unchanged, still never run by anyone.
+
+**ESCALATION — owner decision, work stopped on this item.** Raising a GitHub Actions spending limit or resolving a failed payment commits money, which is not an agent decision under `docs/governance/owner-decisions.md`. I have not changed any billing setting and will not.
+
+What is needed: check **Billing & plans** in GitHub settings. Until it is resolved, **CI enforces nothing** — the Code gate is effectively suspended and every PR will show red for a reason unrelated to its contents. That is a governance outage, not an inconvenience: the gates in `docs/governance/gates.md` are enforced by exactly one mechanism, and it is currently off.
+
+Two options if the limit is deliberate rather than accidental: make the repository public, which makes Actions free for standard runners; or run the gates locally before merge and accept that nothing enforces them. The first has to be weighed against the repository holding personal-use projection data and Fantrax access details — an owner call either way, and I am not making it.
+
+**Next:** whoever picks this up should confirm CI is running again before trusting a green tick, since a red tick currently means nothing about the code. Phase 2 is otherwise unblocked: `data-engineer` can work locally against the same gate commands, which are in `backend/README.md`.
