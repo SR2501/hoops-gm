@@ -53,13 +53,32 @@ Worth checking at the same time *what* consumed 2,000 minutes, since this projec
 
 The quota resets in 15 days. No money, no disclosure, no action. But it means the entire Phase 2 review, the Postgres migration verification that R34 depends on, and PR #3 all sit until then, with every merge in between unverified.
 
-### 3. Make the repository public — free unlimited runners
+### 3. Make the repository public — free unlimited runners *and* free security tooling
 
-Public repositories get unlimited free standard runners.
+Public repositories are **exempt from the Actions quota entirely** — not given a higher limit, but removed from the pool. Whatever else on the account is consuming the 2,000 minutes would get all of them back.
 
-**On secrets, the repository is verifiably clean.** Checked on 2026-08-17: no tracked file contains a credential pattern, no `.env`, no cookie file, no projection CSVs. `.env.example` is an empty template. A CI job scans for secrets on every push.
+Verified feature difference on the Free plan (checked 2026-08-17):
 
-**The stronger argument against is competitive, not security.** This repository contains the complete valuation methodology, the punt-build and auction-inflation approach, the availability model design, and the mock-draft programme. In a league the owner plays annually against people who could find it, that is the edge itself, published and searchable. Also not cleanly reversible: forks and search indexing persist.
+| | Private (Free) | Public (Free) |
+|---|---|---|
+| Actions minutes | 2,000/month, shared across all private repos | **Unlimited standard runners, exempt from the quota** |
+| Secret scanning + push protection | Paid add-on (GitHub Secret Protection) | **Free** |
+| CodeQL code scanning | Paid add-on (Advanced Security) | **Free** |
+
+**The security tooling is pointed directly at this project's demonstrated weak spot.** Within one hour on 2026-08-17 the project found (a) its own secret scanner had regressed to miss eleven credential patterns it previously caught, and (b) a live `userSecretId` being written to disk in cleartext. GitHub's native scanning is an **independent** control — not the same scanner this project wrote and broke — and push protection blocks a real secret at the push, before it enters history. That is the "verify with something that did not write the claim" principle, automated and free.
+
+**The git history is verifiably clean.** Every commit on every branch was scanned on 2026-08-17 for credential patterns. The only matches are deliberately-planted test fixtures in `test_secret_scan.py`: `hunter2hunter2hunter2`, `AKIAIOSFODNN7EXAMPLE` (AWS's own published documentation example), and bare `BEGIN PRIVATE KEY` headers with no key material. **No real credential has ever been committed**, so going public would not expose one retroactively.
+
+**The cost is competitive, not security — and it is smaller than it feels.** The repository contains the valuation methodology, punt-build approach, auction-inflation design and the mock-draft programme, for a league the owner plays annually against people who could find it. But the *methods* are public knowledge: z-scores are standard, G-score is a published arXiv paper, and Basketball Monster sells inflation and category analysis commercially. What is genuinely proprietary is the implementation, the specific weightings, and the draft-day workflow. A leaguemate would have to find the repository, read roughly forty thousand words, and then build it.
+
+Not cleanly reversible: forks and search indexing persist after a repository is made private again.
+
+**Two coherent paths:**
+
+- **Public now.** CI works today at no cost, security tooling improves, quota freed. Accept modest strategy exposure.
+- **Stay private with a small spending limit (~$1–4/month), go public after the draft.** Keeps the edge for this season and takes the features afterwards.
+
+If the goal is working CI today without spending anything, public is the answer. If the exposure is unwelcome at all, the spending limit is cheap enough that this stops being a financial decision.
 
 ### 4. Self-hosted runner — free, some setup
 
