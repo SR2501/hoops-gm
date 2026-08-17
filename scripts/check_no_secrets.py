@@ -28,6 +28,10 @@ ALLOWED_PATHS = {
     ".env.example",
     ".gitignore",
     "scripts/check_no_secrets.py",
+    # Contains one deliberately secret-shaped string per pattern, asserting
+    # that each is still caught. Without this entry the scanner reports its own
+    # test suite, which is both correct and useless.
+    "backend/tests/test_secret_scan.py",
 }
 
 SKIP_SUFFIXES = {
@@ -49,7 +53,10 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "Fantrax userSecretId",
-        re.compile(r"user_?[Ss]ecret_?[Ii]d\s*[=:]\s*['\"]?[A-Za-z0-9._\-]{12,}"),
+        # Case-insensitive: the environment variable is spelled
+        # FANTRAX_USER_SECRET_ID, and the original case-sensitive pattern would
+        # not have caught it written that way in a committed file.
+        re.compile(r"user_?secret_?id\s*[=:]\s*['\"]?[A-Za-z0-9._\-]{12,}", re.IGNORECASE),
     ),
     (
         "assigned bridge secret",
@@ -68,6 +75,46 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     ),
 ]
+
+#: A right-hand side that is obviously *code reading* a secret rather than a
+#: literal secret. ``user_secret_id=settings.fantrax_user_secret_id`` and
+#: ``user_secret_id=secret.get_secret_value()`` are the shapes that appear all
+#: over an adapter that has to pass a credential around, and every one of them
+#: matched the ``userSecretId`` pattern above.
+#:
+#: Suppressed here rather than by adding the files to ``ALLOWED_PATHS``,
+#: because allowlisting a whole source file blinds the scanner to a real secret
+#: added to it later — and the files that legitimately handle credentials are
+#: exactly the files where that would most likely happen.
+#:
+#: **Lower-case letters, underscores and dots only — no digits.** That is the
+#: whole trick, and it was arrived at by watching a looser version swallow
+#: ``BRIDGE_SECRET=hunter2hunter2hunter2``. A Python name is
+#: ``fantrax_user_secret_id``; a credential is ``abc123def456ghi789jkl``.
+#: Requiring the right-hand side to be digit-free keeps every real token shape
+#: reportable while dropping the false positives, and a token that happens to
+#: contain no digits at all is a narrow enough gap to accept knowingly.
+CODE_REFERENCE = re.compile(
+    r"""
+    [=:]\s*
+    [a-z_]+                 # a snake_case name
+    (?:\.[a-z_]+)*          # optionally attribute access
+    (?:\(\s*\))?            # optionally a no-argument call
+    \s*(?:$|[,)\]}#])       # and nothing else of substance after it
+    """,
+    re.VERBOSE,
+)
+
+
+def is_code_reference(line: str) -> bool:
+    """True when the line assigns from an expression, not from a literal."""
+    # A quoted value anywhere outside a comment means we cannot be confident,
+    # so we do not suppress. Better a false positive with an explanation than a
+    # missed credential.
+    outside_comment = line.split("#", 1)[0]
+    if "'" in outside_comment or '"' in outside_comment:
+        return False
+    return bool(CODE_REFERENCE.search(line))
 
 
 def tracked_files() -> list[Path]:
@@ -104,7 +151,7 @@ def main() -> int:
 
         for lineno, line in enumerate(content.splitlines(), start=1):
             for label, pattern in PATTERNS:
-                if pattern.search(line):
+                if pattern.search(line) and not is_code_reference(line):
                     findings.append(f"{relative}:{lineno}: possible {label}")
 
     if findings:

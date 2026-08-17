@@ -123,6 +123,56 @@ def test_the_migration_creates_the_enum_check_constraints(
     assert "regular" in definitions, "no CHECK lists the permitted season types"
 
 
+def test_every_enum_member_is_accepted_by_a_migrated_database(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """Phase 2 review finding: adding an enum member produces no migration.
+
+    ``enum_check_constraint_names`` excludes enum CHECKs from autogenerate
+    comparison — necessary, or every ``alembic check`` reports one spurious
+    removal per enum column. The consequence is that **widening an enum is
+    invisible to autogenerate and to drift detection**, so the CHECK keeps the
+    old value list while the models advertise the new one.
+
+    That is not hypothetical. Phase 2 added three ``ExternalSource`` members,
+    autogenerate emitted nothing for them, and
+    ``INSERT INTO player_external_ids (source) VALUES ('fantrax_sportradar')``
+    was rejected by a **migrated** database while succeeding against one built
+    by ``Base.metadata.create_all`` — which is what the rest of this suite
+    uses. Green tests, broken production, no drift reported.
+
+    So this compares the two paths directly, on the real database, for every
+    enum member. The next person to add one finds out here.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        inspector = inspect(engine)
+        by_table_column: dict[tuple[str, str], set[str]] = {}
+        for table in Base.metadata.tables.values():
+            reflected = " ".join(
+                str(constraint.get("sqltext", ""))
+                for constraint in inspector.get_check_constraints(table.name)
+            )
+            for column in table.columns:
+                enum_type = getattr(column.type, "enums", None)
+                if not enum_type:
+                    continue
+                missing = {value for value in enum_type if f"'{value}'" not in reflected}
+                if missing:
+                    by_table_column[(table.name, column.name)] = missing
+    finally:
+        engine.dispose()
+
+    assert not by_table_column, (
+        "these enum values are declared on the models but are not permitted by "
+        f"the migrated database's CHECK constraints: {by_table_column}. "
+        "Autogenerate does not detect a widened enum — the migration has to "
+        "drop and recreate the CHECK by hand, as 0002 does."
+    )
+
+
 def test_models_and_migrations_agree(alembic_config: Config, migration_url: str) -> None:
     """Fails on any model change that has no migration behind it."""
     command.upgrade(alembic_config, "head")

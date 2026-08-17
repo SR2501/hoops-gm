@@ -37,11 +37,95 @@ class ExternalSource(enum.StrEnum):
 
     NBA = "nba"
     FANTRAX = "fantrax"
+    #: Cross-reference identifiers that Fantrax carries for other providers.
+    #: Recorded as first-class sources by Phase 2 for two reasons that pay off
+    #: immediately rather than hypothetically: they de-duplicate *within*
+    #: Fantrax, which contains genuine duplicate names (two "Johnson, Jalen",
+    #: two "Jackson, Justin"), and they survive Fantrax rotating its own
+    #: ``fantraxId`` between seasons.
+    #:
+    #: They are **not** a bridge to NBA.com. That was investigated as the plan
+    #: suggested and the bridge does not exist: no free, stable public dataset
+    #: maps a Sportradar GUID to an NBA.com person id, the open ID datasets
+    #: carry Basketball-Reference/ESPN/Spotrac instead and are themselves built
+    #: by name matching, and Sportradar's own mapping endpoint is behind a
+    #: commercial subscription — an owner-only decision.
+    FANTRAX_STATS_INC = "fantrax_stats_inc"
+    FANTRAX_ROTOWIRE = "fantrax_rotowire"
+    FANTRAX_SPORTRADAR = "fantrax_sportradar"
     FANTASYPROS = "fantasypros"
     HASHTAG = "hashtag"
     BASKETBALL_MONSTER = "basketball_monster"
     DARKO = "darko"
     MANUAL = "manual"
+
+
+class FieldEvidence(enum.StrEnum):
+    """What one field says about whether two records are the same person.
+
+    Three values, not two, and that is the point. Phase 1 left open whether a
+    single ``confidence`` float suffices or whether per-field evidence is
+    needed. Phase 2 measured it and the answer is per-field: **1,206 of the
+    1,788 Fantrax player rows carry ``team: "(N/A)"``**, so for two thirds of
+    the payload the team says nothing at all. A scalar cannot distinguish a
+    team that is unknown from a team that is known and contradicts — the first
+    is an ordinary free agent and probably a correct match, the second is
+    probably two different people. A human adjudicating the tail needs to know
+    which, so it is stored per field.
+    """
+
+    AGREE = "agree"
+    DISAGREE = "disagree"
+    UNKNOWN = "unknown"
+
+
+class ParticipationOutcome(enum.StrEnum):
+    """What happened to one player for one of their team's games.
+
+    The distinction between ``INACTIVE`` and ``UNKNOWN`` carries real weight.
+    A player absent from every list for a game is not *known* to have been
+    inactive — they may not have been on the roster, may have been on a
+    G-League assignment, or the source may simply have a gap. Recording that as
+    ``INACTIVE`` manufactures availability evidence out of silence, and
+    availability is the quantity this entire project exists to model.
+    """
+
+    PLAYED = "played"
+    DID_NOT_PLAY = "did_not_play"
+    DID_NOT_DRESS = "did_not_dress"
+    NOT_WITH_TEAM = "not_with_team"
+    INACTIVE = "inactive"
+    UNKNOWN = "unknown"
+
+
+class DnpReason(enum.StrEnum):
+    """Normalised absence reason, derived from free text that is also kept.
+
+    House rule: **do not trust stated DNP reasons.** "Rest" is routinely
+    laundered as a minor ailment, and the vocabulary is inconsistent between
+    seasons and scorers — the same 2025-26 season yielded
+    ``"DNP - Coach's Decision"``, ``"DND - Injury/Illness"``,
+    ``"NWT - Not With Team"`` and ``"NWT-Return to Competition
+    Reconditioning"``, the last with no spaces around its hyphen.
+
+    So this is a convenience for querying, not a fact. Unrecognised text maps
+    to ``OTHER`` rather than being forced into the nearest category, and
+    ``player_participation.raw_comment`` retains the original so a better
+    normalisation can be re-derived. ``NONE_GIVEN`` means no reason was stated
+    at all, which is different from a stated reason we did not recognise.
+    """
+
+    COACHES_DECISION = "coaches_decision"
+    INJURY_OR_ILLNESS = "injury_or_illness"
+    REST = "rest"
+    PERSONAL = "personal"
+    SUSPENSION = "suspension"
+    G_LEAGUE = "g_league"
+    TRADE_PENDING = "trade_pending"
+    CONDITIONING = "conditioning"
+    NOT_WITH_TEAM = "not_with_team"
+    OTHER = "other"
+    NONE_GIVEN = "none_given"
 
 
 class MatchMethod(enum.StrEnum):

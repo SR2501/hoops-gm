@@ -1,0 +1,7 @@
+{
+ "error": {
+  "onScreen": false,
+  "code": "WARNING",
+  "message": "Missing 'leagueId' parameter"
+ }
+}

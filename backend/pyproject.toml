@@ -7,7 +7,14 @@ name = "hoops-gm-backend"
 version = "0.1.0"
 description = "hoops-gm backend: FastAPI service, persistence and REST/SSE contracts"
 readme = "README.md"
-requires-python = ">=3.11"
+# Raised from ">=3.11" in Phase 2, because ">=3.11" had become untrue rather
+# than merely untested. `nba_api` pulls in pandas, which pulls in numpy, and
+# numpy 2.5 declares `requires-python >= 3.12` — so the `ingest` extra cannot
+# be installed on 3.11, and the test suite imports the ingest package. CI has
+# only ever run 3.12 and local development is on 3.14; nothing has ever
+# exercised 3.11. Declaring support we cannot install and do not test is the
+# same class of unverified guarantee this project keeps getting caught by.
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115",
@@ -27,6 +34,26 @@ dev = [
     "httpx2>=2.10",
     "mypy>=1.13",
     "ruff>=0.8",
+    # The adapter and identity tests exercise real client code, so the ingest
+    # dependencies are needed to run the suite.
+    "hoops-gm-backend[ingest]",
+]
+# Phase 2. **Pinned exactly, on purpose.**
+#
+# `fantraxapi` wraps /fxpa/req, undocumented internal Fantrax infrastructure,
+# and `nba_api` wraps stats.nba.com, which deprecates endpoints mid-season. A
+# floating version means an upstream behaviour change arrives as a mysterious
+# difference in a number rather than as a deliberate upgrade with a contract
+# test to run against it.
+#
+# Note that the plan's suggested fantraxapi 0.3.0 does not exist on PyPI — the
+# published versions go 0.2.9 -> 1.0.0, and 1.0.x has a different API surface
+# from the 0.2.x line most online examples use.
+ingest = [
+    "nba_api==1.11.4",
+    "fantraxapi==1.0.1",
+    # Fernet, for the Fantrax session cookie at rest.
+    "cryptography>=44",
 ]
 # ADR-001's destination. Declared so CI can run the whole suite against a real
 # Postgres — without a driver, every portability claim is static analysis of
@@ -47,7 +74,7 @@ packages = ["src/hoops_gm"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -75,7 +102,7 @@ known-first-party = ["hoops_gm"]
 # --- Types ------------------------------------------------------------------
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["src", "tests"]
 strict = true
 plugins = ["pydantic.mypy"]
@@ -86,6 +113,36 @@ exclude = "^alembic/"
 [[tool.mypy.overrides]]
 module = "alembic.*"
 ignore_missing_imports = true
+
+# Third-party ingestion libraries ship no usable type information. `nba_api` in
+# particular returns bare dicts from every endpoint, which is why the parsers
+# in hoops_gm.ingest are written against `Any` and validate structure
+# explicitly rather than trusting a type.
+#
+# `follow_imports = "skip"`, not merely `ignore_missing_imports`: nba_api pulls
+# in pandas, which pulls in numpy, whose bundled stubs are only valid for the
+# Python version numpy itself requires. Type-checking a dependency we do not
+# control buys nothing here — the parsers deliberately treat every payload as
+# `Any` and validate its structure explicitly, because a type from an untyped
+# upstream is a claim nobody checked.
+[[tool.mypy.overrides]]
+module = [
+    # Both the bare name and the wildcard: in mypy, `numpy.*` matches
+    # submodules but not `numpy` itself, and the offending stub is
+    # numpy/__init__.pyi.
+    "nba_api",
+    "nba_api.*",
+    "fantraxapi",
+    "fantraxapi.*",
+    "requests",
+    "requests.*",
+    "pandas",
+    "pandas.*",
+    "numpy",
+    "numpy.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 # --- Tests ------------------------------------------------------------------
 

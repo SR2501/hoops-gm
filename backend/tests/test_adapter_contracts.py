@@ -1,0 +1,551 @@
+"""Adapter gate: contract tests against recorded fixtures.
+
+These run offline, on every push, and they are the mechanism that turns a
+silent upstream schema change into a red build (ADR-006). They assert on the
+*shape and the specific findings*, not merely that parsing did not raise —
+a test that only checks "no exception" would have stayed green throughout the
+period when ``BoxScoreSummaryV2`` was returning empty inactive lists.
+
+**Never regenerate a fixture to make one of these pass.** If one goes red, find
+out what changed upstream, record it in ``docs/handoff.md``, and only then run
+``python -m hoops_gm.ingest.record_fixtures``.
+
+A recorded fixture also cannot, by construction, tell us the upstream changed —
+it keeps passing forever. That is what ``test_live_smoke.py`` is for, and it is
+the half of the Adapter gate that actually earns its keep.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from hoops_gm.db.models.enums import DnpReason, ParticipationOutcome
+from hoops_gm.ingest.errors import SourceContractError, SourceRejected
+from hoops_gm.ingest.fantrax_official import (
+    parse_adp,
+    parse_league_info,
+    parse_player_ids,
+)
+from hoops_gm.ingest.nba import (
+    combine_game_participation,
+    parse_box_score_summary_v3,
+    parse_box_score_traditional_v3,
+    parse_common_all_players,
+    parse_league_game_finder,
+    parse_minutes_to_seconds,
+    parse_participation_comment,
+    parse_player_game_logs,
+    parse_teams,
+)
+
+pytestmark = pytest.mark.adapter_contract
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def load(name: str) -> Any:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def manifest() -> dict[str, Any]:
+    loaded = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+# ==========================================================================
+# Fantrax official
+# ==========================================================================
+
+
+class TestFantraxPlayerIds:
+    """``getPlayerIds`` — the crosswalk's Fantrax side, and risk R24."""
+
+    def test_the_payload_splits_into_players_and_team_entities(self) -> None:
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+
+        # R24: thirty franchise entities are mixed in with the players. A naive
+        # importer creates thirty garbage identity rows named "Team" and then
+        # matches them against each other forever.
+        assert len(result.team_entities) == 30, (
+            "expected exactly one non-player entity per NBA franchise; "
+            "a change here means the payload's row mix has changed"
+        )
+        assert len(result.players) > 1500
+        assert result.unclassified == []
+        assert result.total_rows == len(result.players) + 30
+
+    def test_no_team_entity_is_parsed_as_a_player(self) -> None:
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        assert not [p for p in result.players if p.name == "Team"]
+        assert not [p for p in result.players if p.position == "Tm"]
+
+    def test_the_hash_in_a_team_identifier_corroborates_the_positional_label(self) -> None:
+        """Both markers identify the same rows — but only one is relied on.
+
+        ``position == "Tm"`` is what the parser uses. The ``#`` in the
+        identifier is checked here as corroboration only: baking one source's
+        incidental identifier format into the importer would make it
+        structural, and it is not.
+        """
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        assert all("#" in t.fantrax_id for t in result.team_entities)
+        assert not [p for p in result.players if "#" in p.fantrax_id]
+
+    def test_cross_reference_identifiers_are_optional_and_often_absent(self) -> None:
+        """Every id is missing for some players, so none may be assumed.
+
+        Measured 2026-08-17: sportRadarId on 1,438 of 1,788 rows, rotowireId on
+        1,723, statsIncId on only 851. A parser that required any of them would
+        drop between 4% and 52% of the payload.
+        """
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        total = len(result.players)
+        with_sportradar = sum(1 for p in result.players if p.sport_radar_id)
+        with_stats_inc = sum(1 for p in result.players if p.stats_inc_id)
+
+        assert 0 < with_sportradar < total, "sportRadarId must be present-but-partial"
+        assert 0 < with_stats_inc < total, "statsIncId must be present-but-partial"
+        # statsIncId is the sparsest of the three by a wide margin.
+        assert with_stats_inc < with_sportradar
+
+    def test_identifiers_are_coerced_to_text_regardless_of_json_type(self) -> None:
+        """``statsIncId`` is a JSON integer, ``sportRadarId`` a string.
+
+        Both land in ``player_external_ids.external_id``, which is a string
+        column, so the coercion has to be the adapter's job.
+        """
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        for player in result.players:
+            for value in (player.stats_inc_id, player.rotowire_id, player.sport_radar_id):
+                assert value is None or isinstance(value, str)
+
+    def test_team_is_blank_for_most_rows_rather_than_absent(self) -> None:
+        """``"(N/A)"`` normalises to ``""`` — unknown, not disagreeing.
+
+        This is the measurement that settled Phase 1's open question about
+        per-field evidence: two thirds of the payload can contribute no team
+        evidence at all, and a single confidence float cannot distinguish that
+        from a team that is known and contradicts.
+        """
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        blank = sum(1 for p in result.players if not p.team)
+        assert blank > len(result.players) / 2, (
+            "most Fantrax player rows carry no team; if this stops being true "
+            "the resolver's evidence weighting should be revisited"
+        )
+        assert not [p for p in result.players if p.team == "(N/A)"]
+
+    def test_names_arrive_last_comma_first(self) -> None:
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        assert all(", " in p.name for p in result.players)
+
+    def test_duplicate_names_exist_within_one_source(self) -> None:
+        """Two people share a name inside Fantrax alone.
+
+        This is why name-only matching cannot be trusted, and why the
+        cross-reference identifiers are worth storing even though they bridge
+        to nothing external.
+        """
+        result = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        names = [p.name for p in result.players]
+        duplicated = {n for n in names if names.count(n) > 1}
+        assert duplicated, "expected at least one duplicated name in the payload"
+
+    def test_a_payload_with_no_players_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_player_ids({"40220#3020": {"position": "Tm", "teamName": "X"}})
+
+    def test_a_json_array_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_player_ids([{"name": "Jokic, Nikola"}])
+
+
+class TestFantraxAdp:
+    def test_adp_parses_and_stays_sorted(self) -> None:
+        entries = parse_adp(load("fantrax_getadp_nba.json"))
+        assert len(entries) > 100
+        assert all(e.fantrax_id for e in entries)
+        values = [e.adp for e in entries]
+        assert values == sorted(values), "the endpoint has always returned ADP ascending"
+
+    def test_limit_n_returns_n_minus_one_rows(self) -> None:
+        """The ``limit`` parameter is off by one, and the adapter does not fix it.
+
+        Verified live for limit=1, 2, 3, 5 and 10 on 2026-08-17: the endpoint
+        returns ``limit - 1`` rows, and ``limit=1`` returns none at all.
+        Silently adding one would hide an upstream fix; pinning it here means
+        we find out if the behaviour ever changes.
+        """
+        entries = parse_adp(load("fantrax_getadp_nba_limit5.json"))
+        assert len(entries) == 4, "limit=5 has always returned 4 rows"
+
+    def test_a_non_numeric_adp_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_adp([{"id": "abc", "name": "X", "pos": "PG", "ADP": "not a number"}])
+
+    def test_a_missing_id_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_adp([{"name": "X", "pos": "PG", "ADP": 1.0}])
+
+
+class TestFantraxErrorEnvelope:
+    """Fantrax signals refusal with an HTTP 200 body, not a status code."""
+
+    def test_the_error_envelope_is_a_rejection_not_data(self) -> None:
+        payload = load("fantrax_getleagueinfo_missing_league_id.json")
+        # The fixture is a real HTTP 200 response body.
+        assert "error" in payload
+
+        with pytest.raises(SourceRejected) as caught:
+            parse_league_info(payload)
+        assert "leagueId" in str(caught.value)
+
+    def test_every_parser_checks_the_envelope_before_parsing(self) -> None:
+        """A client trusting ``response.ok`` would hand this to any of them."""
+        payload = load("fantrax_getleagueinfo_missing_league_id.json")
+        for parser in (parse_player_ids, parse_adp, parse_league_info):
+            with pytest.raises(SourceRejected):
+                parser(payload)
+
+
+# ==========================================================================
+# nba_api
+# ==========================================================================
+
+
+class TestNbaStaticAndPlayers:
+    def test_all_thirty_teams_parse(self) -> None:
+        teams = parse_teams(load("nba_static_teams.json"))
+        assert len(teams) == 30
+        assert len({t.abbreviation for t in teams}) == 30
+        assert all(t.nba_team_id > 0 for t in teams)
+
+    def test_common_all_players_gives_a_last_comma_first_name(self) -> None:
+        """The same shape Fantrax uses — convenient, and not a contract.
+
+        The box-score endpoints give the name in parts and the game logs give
+        "First Last", so the resolver normalises rather than relying on this.
+        """
+        players = parse_common_all_players(load("nba_commonallplayers_current.json"))
+        assert len(players) > 400
+        assert all(", " in p.display_last_comma_first for p in players)
+
+    def test_the_current_season_fixture_has_a_team_for_every_player(self) -> None:
+        """Which is exactly why the crosswalk must use the current season.
+
+        Against a historical season, every player who moved in the offseason
+        produces a spurious team disagreement.
+        """
+        players = parse_common_all_players(load("nba_commonallplayers_current.json"))
+        assert all(p.team_abbreviation for p in players)
+
+    def test_a_missing_column_is_a_contract_error(self) -> None:
+        payload = load("nba_commonallplayers_current.json")
+        payload["resultSets"][0]["headers"] = [
+            h for h in payload["resultSets"][0]["headers"] if h != "DISPLAY_LAST_COMMA_FIRST"
+        ]
+        with pytest.raises(SourceContractError) as caught:
+            parse_common_all_players(payload)
+        assert "DISPLAY_LAST_COMMA_FIRST" in str(caught.value)
+
+    def test_a_payload_with_no_result_sets_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_common_all_players({"resource": "commonallplayers"})
+
+
+class TestNbaGamesAndLogs:
+    def test_games_collapse_to_one_record_with_home_and_away_the_right_way_round(
+        self,
+    ) -> None:
+        """``MATCHUP`` is the only thing distinguishing the two rows per game.
+
+        ``"LAL vs. POR"`` is the home row and ``"LAL @ POR"`` the away one.
+        Collapsing on GAME_ID without reading it makes home and away depend on
+        row order.
+        """
+        games = parse_league_game_finder(
+            load("nba_leaguegamefinder_trimmed.json"), season="2024-25"
+        )
+        assert games
+        for game in games:
+            assert game.home_team_id != game.away_team_id
+        assert len({g.nba_game_id for g in games}) == len(games)
+
+    def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
+        payload = load("nba_leaguegamefinder_trimmed.json")
+        table = payload["resultSets"][0]
+        position = table["headers"].index("MATCHUP")
+        table["rowSet"][0][position] = "LAL versus POR"
+        with pytest.raises(SourceContractError):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_game_logs_parse_with_exact_seconds(self) -> None:
+        """``MIN_SEC`` is exact; ``MIN`` is a rounded decimal.
+
+        Preferring the wrong one loses information on every row, which is the
+        sort of error that never announces itself.
+        """
+        logs = parse_player_game_logs(load("nba_playergamelogs_trimmed.json"))
+        assert logs
+        played = [log for log in logs if log.seconds_played]
+        assert played
+        # A rounded decimal would land on a multiple of 6 seconds far more
+        # often than chance; exact values do not.
+        seconds = [log.seconds_played for log in played if log.seconds_played is not None]
+        assert any(value % 60 not in (0, 6, 12, 24, 30, 36, 48) for value in seconds)
+
+    def test_makes_and_attempts_are_kept_not_percentages(self) -> None:
+        """Risk R9 at the ingest boundary.
+
+        A percentage without its denominator cannot be volume-weighted later,
+        and a 90% free-throw shooter on one attempt is worthless.
+        """
+        logs = parse_player_game_logs(load("nba_playergamelogs_trimmed.json"))
+        shooters = [log for log in logs if log.field_goals_attempted]
+        assert shooters
+        assert all(
+            log.field_goals_made is not None and log.field_goals_attempted is not None
+            for log in shooters
+        )
+
+
+class TestMinutesParsing:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("34:12", 34 * 60 + 12),
+            ("48:24", 48 * 60 + 24),
+            ("1:49", 109),
+            ("PT34M12.00S", 34 * 60 + 12),
+            ("PT0M00.00S", 0),
+            (34.2, 2052),
+            # Absent is not zero: a player who did not appear has no minutes,
+            # and flattening that to 0 would make an absence look like an
+            # appearance that produced nothing.
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_every_observed_minutes_representation(
+        self, value: object, expected: int | None
+    ) -> None:
+        assert parse_minutes_to_seconds(value) == expected
+
+
+class TestParticipationComments:
+    @pytest.mark.parametrize(
+        ("comment", "outcome", "reason"),
+        [
+            (
+                "DNP - Coach's Decision",
+                ParticipationOutcome.DID_NOT_PLAY,
+                DnpReason.COACHES_DECISION,
+            ),
+            (
+                "DND - Injury/Illness",
+                ParticipationOutcome.DID_NOT_DRESS,
+                DnpReason.INJURY_OR_ILLNESS,
+            ),
+            (
+                "DNP - Injury/Illness",
+                ParticipationOutcome.DID_NOT_PLAY,
+                DnpReason.INJURY_OR_ILLNESS,
+            ),
+            (
+                "NWT - Not With Team",
+                ParticipationOutcome.NOT_WITH_TEAM,
+                DnpReason.NOT_WITH_TEAM,
+            ),
+            # No spaces around the hyphen. Observed in the same season as the
+            # spaced forms; splitting on " - " drops this one on the floor.
+            (
+                "NWT-Return to Competition Reconditioning",
+                ParticipationOutcome.NOT_WITH_TEAM,
+                DnpReason.CONDITIONING,
+            ),
+        ],
+    )
+    def test_the_real_comment_vocabulary(
+        self, comment: str, outcome: ParticipationOutcome, reason: DnpReason
+    ) -> None:
+        assert parse_participation_comment(comment) == (outcome, reason)
+
+    def test_an_empty_comment_means_the_player_appeared(self) -> None:
+        assert parse_participation_comment("") == (None, DnpReason.NONE_GIVEN)
+
+    def test_an_unrecognised_reason_is_other_not_a_guess(self) -> None:
+        outcome, reason = parse_participation_comment("DNP - Left The Arena Early")
+        assert outcome is ParticipationOutcome.DID_NOT_PLAY
+        assert reason is DnpReason.OTHER
+
+    def test_a_reason_containing_a_hyphen_keeps_its_tail(self) -> None:
+        outcome, reason = parse_participation_comment("DNP - Injury/Illness - Left Knee - Soreness")
+        assert outcome is ParticipationOutcome.DID_NOT_PLAY
+        assert reason is DnpReason.INJURY_OR_ILLNESS
+
+
+class TestBoxScoreV3:
+    def test_traditional_v3_yields_box_scores_and_participation(self) -> None:
+        box_scores, participation = parse_box_score_traditional_v3(
+            load("nba_boxscoretraditionalv3_0022400306.json")
+        )
+        assert box_scores
+        assert participation
+        # Everyone in the box score dressed; some of them did not play.
+        assert len(participation) >= len(box_scores)
+        played = [r for r in participation if r.outcome is ParticipationOutcome.PLAYED]
+        assert len(played) == len(box_scores)
+
+    def test_a_dnp_record_keeps_the_raw_comment_verbatim(self) -> None:
+        """The normalisation will be wrong at first; the raw text is the recourse."""
+        _, participation = parse_box_score_traditional_v3(
+            load("nba_boxscoretraditionalv3_0022400306.json")
+        )
+        absences = [r for r in participation if r.outcome is not ParticipationOutcome.PLAYED]
+        assert absences, "this fixture was chosen because it contains absences"
+        for record in absences:
+            assert record.raw_comment.strip(), "an absence must carry the source's own words"
+
+    def test_summary_v3_carries_tipoff_as_an_aware_utc_instant(self) -> None:
+        """``UTCDateTime`` rejects a naive datetime, and rest-day detection
+        depends on this column being a real instant rather than a local
+        wall-clock time."""
+        game, _ = parse_box_score_summary_v3(load("nba_boxscoresummaryv3_0022400306.json"))
+        assert game is not None
+        assert game.tipoff_utc is not None
+        assert game.tipoff_utc.tzinfo is not None
+        assert game.tipoff_utc.utcoffset() is not None
+
+    def test_summary_v3_carries_inactive_players_for_a_midseason_game(self) -> None:
+        """**The finding this whole fixture set exists to pin.**
+
+        ``BoxScoreSummaryV2.InactivePlayers`` returned data for 2025-10-21 and
+        **zero rows for every 2025-26 date after it** — bisected on 2026-08-17.
+        V2 is the endpoint most public examples use. Had this adapter used it,
+        the participation ledger would have held no inactives at all for the
+        most recent season, with no error and no failing test: a pillar of this
+        project built on nothing.
+
+        So this asserts a **non-zero** count for a known mid-season game. A
+        test asserting only that the call succeeded, or that the key exists,
+        would have passed throughout the period the data was silently gone.
+        """
+        _, participation = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        )
+        assert participation.inactives_available is True
+        assert participation.inactive_count > 0, (
+            "a mid-season NBA game always has inactive players; zero here means "
+            "the endpoint has stopped reporting them, exactly as V2 did"
+        )
+        for record in participation.records:
+            assert record.outcome is ParticipationOutcome.INACTIVE
+            # The inactive list states no reason. Recording INJURY_OR_ILLNESS
+            # because most inactives are injuries would fabricate a training
+            # label for the availability model.
+            assert record.reason is DnpReason.NONE_GIVEN
+
+    def test_an_absent_inactives_key_is_not_an_empty_inactive_list(self) -> None:
+        """ "Nobody was inactive" and "we no longer know" are different facts."""
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        for side in ("homeTeam", "awayTeam"):
+            payload["boxScoreSummary"][side].pop("inactives", None)
+        _, participation = parse_box_score_summary_v3(payload)
+        assert participation.inactives_available is False
+        assert participation.inactive_count == 0
+
+        payload = load("nba_boxscoresummaryv3_0022400306.json")
+        for side in ("homeTeam", "awayTeam"):
+            payload["boxScoreSummary"][side]["inactives"] = []
+        _, participation = parse_box_score_summary_v3(payload)
+        assert participation.inactives_available is True
+        assert participation.inactive_count == 0
+
+    def test_inactive_players_are_absent_from_the_traditional_box_score(self) -> None:
+        """Which is why both endpoints are needed, not one.
+
+        A player on the inactive list has no row in ``BoxScoreTraditionalV3``
+        at all, so the participation ledger cannot be built from it alone.
+        """
+        box_scores, participation = parse_box_score_traditional_v3(
+            load("nba_boxscoretraditionalv3_0022500560_midseason.json")
+        )
+        _, summary = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        )
+        dressed = {r.nba_player_id for r in participation}
+        inactive = {r.nba_player_id for r in summary.records}
+        assert inactive
+        assert not (dressed & inactive)
+        assert box_scores
+
+    def test_combining_both_endpoints_gives_the_whole_game(self) -> None:
+        _, participation = parse_box_score_traditional_v3(
+            load("nba_boxscoretraditionalv3_0022500560_midseason.json")
+        )
+        _, summary = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022500560_midseason.json")
+        )
+        combined = combine_game_participation(participation, summary)
+
+        assert combined.inactives_available is True
+        assert combined.inactive_count == len(summary.records)
+        assert len(combined.records) == len(participation) + len(summary.records)
+        # One row per player, always.
+        identifiers = [r.nba_player_id for r in combined.records]
+        assert len(identifiers) == len(set(identifiers))
+
+    def test_a_payload_without_the_v3_body_is_a_contract_error(self) -> None:
+        with pytest.raises(SourceContractError):
+            parse_box_score_traditional_v3({"meta": {}})
+        with pytest.raises(SourceContractError):
+            parse_box_score_summary_v3({"meta": {}})
+
+
+# ==========================================================================
+# The fixtures themselves
+# ==========================================================================
+
+
+class TestFixtureManifest:
+    def test_every_fixture_is_described_in_the_manifest(self, manifest: dict[str, Any]) -> None:
+        on_disk = {p.name for p in FIXTURES.glob("*.json")} - {"manifest.json"}
+        assert on_disk == set(manifest), (
+            "every fixture must record where it came from and when; an undocumented "
+            "fixture cannot be refreshed deliberately"
+        )
+
+    def test_every_manifest_entry_names_its_source_and_endpoint(
+        self, manifest: dict[str, Any]
+    ) -> None:
+        for name, entry in manifest.items():
+            assert entry.get("source"), name
+            assert entry.get("endpoint"), name
+            assert entry.get("captured_at"), name
+
+    def test_a_trimmed_fixture_records_what_was_removed(self, manifest: dict[str, Any]) -> None:
+        """Trimming removes whole rows and never edits a value.
+
+        A fixture that had been quietly edited would be a hand-written mock
+        wearing a recording's clothes, which is exactly what ADR-006 rejects.
+        """
+        for name, entry in manifest.items():
+            if entry.get("trimmed"):
+                assert entry.get("original_row_counts"), name
+                assert entry.get("kept_rows_per_result_set"), name
+
+    def test_the_trimmed_fixtures_came_from_full_size_payloads(
+        self, manifest: dict[str, Any]
+    ) -> None:
+        """The real scale is asserted here even though the fixture is smaller."""
+        logs = manifest["nba_playergamelogs_trimmed.json"]
+        assert logs["original_row_counts"]["PlayerGameLogs"] > 20000, (
+            "a season of player game logs is tens of thousands of rows; a much "
+            "smaller number means the request stopped returning a whole season"
+        )

@@ -1,9 +1,11 @@
 """ORM models.
 
-Phase 1 implements four of the entity groups in the plan's data model:
-Identity, Stats, League and Schedule. The Availability, Contingent value,
-Projections, Valuation, Draft, Decisions and Bridge groups belong to later
-phases and their owning agents, and are deliberately absent.
+Phase 1 implemented four of the entity groups in the plan's data model:
+Identity, Stats, League and Schedule. Phase 2 adds the *observed* part of
+Availability — ``player_participation``, the ledger of who took part in what.
+The modelled parts of Availability (``p(play)``, reliability, shutdown risk)
+plus Contingent value, Projections, Valuation, Draft, Decisions and Bridge
+belong to later phases and their owning agents, and are deliberately absent.
 
 Import every model here. Alembic autogenerate and ``Base.metadata`` both see
 only what has been imported, so a model missing from this list is a table that
@@ -11,15 +13,19 @@ silently never gets a migration.
 """
 
 from hoops_gm.db.base import Base
+from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
     CategoryKind,
     CategoryOutcome,
     Conference,
+    DnpReason,
     DraftType,
     ExternalSource,
+    FieldEvidence,
     GameStatus,
     MatchMethod,
     MatchupStatus,
+    ParticipationOutcome,
     PlayerStatus,
     RosterStatus,
     ScoringType,
@@ -48,9 +54,11 @@ __all__ = [
     "CategoryKind",
     "CategoryOutcome",
     "Conference",
+    "DnpReason",
     "DraftType",
     "ExternalSource",
     "FantasyTeam",
+    "FieldEvidence",
     "GameStatus",
     "League",
     "LeagueScoringCategory",
@@ -61,9 +69,11 @@ __all__ = [
     "MatchupStatus",
     "NbaGame",
     "NbaTeam",
+    "ParticipationOutcome",
     "Player",
     "PlayerExternalId",
     "PlayerGameLog",
+    "PlayerParticipation",
     "PlayerSeasonStat",
     "PlayerStatus",
     "RosterEntry",

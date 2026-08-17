@@ -1,0 +1,137 @@
+{
+  "fantrax_getadp_nba.json": {
+    "byte_size": 24598,
+    "captured_at": "2026-08-17T13:30:21.971670+00:00",
+    "endpoint": "getAdp",
+    "params": {
+      "sport": "NBA"
+    },
+    "source": "fantrax_official",
+    "trimmed": false
+  },
+  "fantrax_getadp_nba_limit5.json": {
+    "byte_size": 360,
+    "captured_at": "2026-08-17T13:30:25.983976+00:00",
+    "endpoint": "getAdp",
+    "note": "limit=5 returns 4 rows. The limit is off by one; verified for 1, 2, 3, 5, 10.",
+    "params": {
+      "limit": 5,
+      "sport": "NBA"
+    },
+    "source": "fantrax_official",
+    "trimmed": false
+  },
+  "fantrax_getleagueinfo_missing_league_id.json": {
+    "byte_size": 110,
+    "captured_at": "2026-08-17T13:30:23.995289+00:00",
+    "endpoint": "getLeagueInfo",
+    "note": "Returned with HTTP status 200. A client that trusts the status code parses this error envelope as data.",
+    "params": {},
+    "source": "fantrax_official",
+    "trimmed": false
+  },
+  "fantrax_getplayerids_nba.json": {
+    "byte_size": 347998,
+    "captured_at": "2026-08-17T13:30:20.067667+00:00",
+    "endpoint": "getPlayerIds",
+    "note": "Committed in full. The whole point of this fixture is the row mix \u2014 player rows alongside the 30 team entities that risk R24 is about \u2014 so trimming it would remove the thing it exists to test.",
+    "params": {
+      "sport": "NBA"
+    },
+    "source": "fantrax_official",
+    "trimmed": false
+  },
+  "nba_boxscoresummaryv3_0022400306.json": {
+    "byte_size": 26176,
+    "captured_at": "2026-08-17T13:30:54.543126+00:00",
+    "endpoint": "BoxScoreSummaryV3",
+    "note": "Inactive lists under homeTeam.inactives / awayTeam.inactives.",
+    "params": {
+      "game_id": "0022400306"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_boxscoresummaryv3_0022500560_midseason.json": {
+    "byte_size": 20632,
+    "captured_at": "2026-08-17T13:30:56.604368+00:00",
+    "endpoint": "BoxScoreSummaryV3",
+    "note": "Inactive lists live under homeTeam.inactives / awayTeam.inactives. BoxScoreSummaryV2 returns an empty InactivePlayers table for this game; V3 returns the real one.",
+    "params": {
+      "game_id": "0022500560"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_boxscoretraditionalv3_0022400306.json": {
+    "byte_size": 27626,
+    "captured_at": "2026-08-17T13:30:53.406017+00:00",
+    "endpoint": "BoxScoreTraditionalV3",
+    "params": {
+      "game_id": "0022400306"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_boxscoretraditionalv3_0022500560_midseason.json": {
+    "byte_size": 27622,
+    "captured_at": "2026-08-17T13:30:55.544027+00:00",
+    "endpoint": "BoxScoreTraditionalV3",
+    "params": {
+      "game_id": "0022500560"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_commonallplayers_current.json": {
+    "byte_size": 164263,
+    "captured_at": "2026-08-17T13:30:50.836175+00:00",
+    "endpoint": "CommonAllPlayers",
+    "note": "Current-season rosters, which is what the crosswalk must match against. Matching against a historical season manufactures a team disagreement for every player who moved in the offseason.",
+    "params": {
+      "is_only_current_season": 1,
+      "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_leaguegamefinder_trimmed.json": {
+    "byte_size": 46338,
+    "captured_at": "2026-08-17T13:30:51.196190+00:00",
+    "endpoint": "LeagueGameFinder",
+    "kept_rows_per_result_set": 120,
+    "note": "Whole rows removed from the end. No value edited.",
+    "original_row_counts": {
+      "LeagueGameFinderResults": 2460
+    },
+    "params": {
+      "season_nullable": "2024-25"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
+  "nba_playergamelogs_trimmed.json": {
+    "byte_size": 176623,
+    "captured_at": "2026-08-17T13:30:52.882760+00:00",
+    "endpoint": "PlayerGameLogs",
+    "kept_rows_per_result_set": 200,
+    "note": "Whole rows removed from the end. No value edited.",
+    "original_row_counts": {
+      "PlayerGameLogs": 26306
+    },
+    "params": {
+      "season_nullable": "2024-25"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
+  "nba_static_teams.json": {
+    "byte_size": 5692,
+    "captured_at": "2026-08-17T13:30:49.853794+00:00",
+    "endpoint": "static.teams",
+    "note": "Packaged with nba_api; no network call.",
+    "params": {},
+    "source": "nba_stats",
+    "trimmed": false
+  }
+}
