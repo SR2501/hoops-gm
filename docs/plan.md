@@ -312,11 +312,27 @@ They are not variants of one another. Snake optimises pick-by-pick value against
 
 Worth saying plainly: auction is materially more work than snake. It is also where the edge is largest, because inflation math is genuinely hard to do in your head under a bid clock. The format landing on auction is the good outcome for a tool like this.
 
-### Market data — an open question the format change exposes
+### Market data — a two-track approach to auction values
 
-Snake drafting is priced by **ADP**, which Fantrax serves free and unauthenticated via `getAdp` (verified working). **Auction is priced by average auction value (AAV), which is a different quantity entirely, and no verified free source for it has been identified yet.** `getAdp` returns draft position, not dollars.
+Snake drafting is priced by **ADP**, which Fantrax serves free and unauthenticated via `getAdp` (verified working). **Auction is priced by average auction value (AAV), which is a different quantity, and no verified free source has been identified.** `getAdp` returns draft position, not dollars.
 
-This matters because the inflation model needs a *baseline expectation* of what each player should cost, and the model-vs-market divergence report needs the market's price, not the market's pick order. Options to investigate in Phase 8: whether Fantrax exposes auction values through any endpoint, whether the external mock sites publish AAV, or whether the mock corpus itself becomes the only AAV source — in which case the 10+ mocks must be **auction** mocks, not snake ones. Tracked as R37.
+This matters because the inflation model needs a *baseline expectation* of what each player should cost, and the model-vs-market divergence report needs the market's price, not its pick order. Two tracks, run in parallel and converging:
+
+**Track A — seeded AAV from published sources, weighted by source.** Reuses the projection-blending machinery rather than inventing a second one: each source is imported via the generic CSV path, gets a weight, and the blend is versioned so every downstream dollar value traces to its inputs. Owner is hunting for sources.
+
+**Track B — empirical AAV from the mock corpus.** Every auction mock produces real clearing prices for real players. The corpus becomes a source in its own right, and unlike the seeds it reflects *this* format and *this* player pool.
+
+**The convergence: score each source against observed clearing prices and re-weight on evidence.** Once there are enough mocks, each seed source has a measurable error against what players actually went for. Weights stop being guesses and become calibrated — the same "measure it, don't assert it" principle the rest of the project runs on. Expect the empirical source's weight to rise as the corpus grows and seed weights to differentiate sharply; published AAV varies a lot in quality.
+
+#### Three traps this design has to avoid
+
+1. **Circularity.** Mock participants price players using the same public AAV we are seeding from, so early mock clearing prices partly *echo* the seeds rather than independently testing them. Worse, if we bid in mocks using our own model's values, the corpus becomes contaminated with our own output and the feedback loop self-reinforces. **Mitigation:** record, per mock, whether our model drove our bidding, and treat model-driven mocks as separate evidence from observation-only ones. Early mocks should be run without acting on our own numbers.
+
+2. **Normalisation.** AAV does not transfer between league configurations. A $200 budget in a 12-team league with 13 roster spots produces entirely different dollar values than $100 in a 10-team with 10. **Every seed source must be normalised to this league's budget pool, team count and roster size before blending** — the same way projections are normalised before valuation. A raw import would be silently wrong in exactly the way this project keeps finding.
+
+3. **Scoring-format mismatch.** Most published AAV is built for points leagues or default 9-cat settings, not this league's specific categories and roster rules. The same care applied to projections applies here: capture the source's assumed format and either adjust or down-weight accordingly.
+
+Tracked as R37, with `aav-source`, `aav-blending` and `aav-calibration` in Phase 8.
 
 ### The overlay in auction mode
 
