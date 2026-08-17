@@ -362,7 +362,7 @@ Note kept in `docs/`: this operates your own account on your own team. Fantrax n
 - **Decisions** — `trade_scenarios`, `trade_evaluations`, `lineup_plans`, `automation_actions`
 - **Bridge** — `bridge_payloads` (raw captured JSON, for replay and debugging)
 
-**Highest-risk foundational item: player identity.** Fantrax IDs, NBA IDs, and projection-CSV name strings all disagree. Resolution is Fantrax `getPlayerIds` + `nba_api` roster as the anchor pair, then normalized-name + team + position matching for CSVs, with a confidence score and a manual-override UI for the tail. Getting this wrong silently corrupts every downstream number, so it ships with its own test suite and an unmatched-players report.
+**Highest-risk foundational item: player identity.** Fantrax IDs, NBA IDs, and projection-CSV name strings all disagree — and, verified live on 2026-08-17, **no two of them share a key.** `getPlayerIds` returns `statsIncId`, `rotowireId` and `sportRadarId`, none of which is an NBA.com id, so there is no anchor pair and every cross-source match is inferred from the first join onward. Resolution is normalized-name + team + position matching, with a confidence score, a recorded match method, a manual-override flag the resolver must treat as final, and an unmatched-players report. `sportRadarId` is worth investigating as a bridge via public datasets. The payload also mixes non-player rows (team entities, `position: "Tm"`) in with players, which the importer must filter explicitly. Getting this wrong silently corrupts every downstream number, so it ships with its own test suite. See R7, R23 and R24.
 
 ---
 
