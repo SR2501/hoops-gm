@@ -12,6 +12,8 @@ Each ADR records the context, the decision, its consequences, what was rejected,
 - Body: 150–400 words. Every sentence should change what an implementer builds.
 - **Amend rather than supersede** unless the decision itself actually changed. Add an `## Amendments` section with a date.
 
+New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decision and why it was made, without assuming you already know the codebase.
+
 ## Index
 
 | # | Title | Status | Summary |
@@ -24,6 +26,7 @@ Each ADR records the context, the decision, its consequences, what was rejected,
 | [006](ADR-006-adapter-isolation.md) | External adapters isolated behind contract tests | **Accepted** | Recorded fixtures; drift fails loudly in CI rather than degrading a number silently |
 | [007](ADR-007-availability-in-spine.md) | Availability is a spine concern, modelled before valuation | **Accepted** | It is an input to valuation, not an attribute of it |
 | [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | Proposed | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
+| [009](ADR-009-schedule-intelligence-contract.md) | Phase 3 schedule intelligence: table ownership and output contract | Proposed | `schedule-ingest`/`schedule-density` are data-engineer facts; `schedule-context` is quant's Phase 4 model, not a Phase 3 ingest |
 
 ## Accepted
 
@@ -33,4 +36,4 @@ They record the decisions reached in the planning conversation of the same day a
 
 ## Awaiting the owner
 
-**ADR-008** is `Proposed`. It was originated by the owner but, per the house rule, an agent cannot mark it accepted.
+**ADR-008** and **ADR-009** are `Proposed`. Agents cannot mark their own work accepted.
