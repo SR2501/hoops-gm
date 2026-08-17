@@ -27,6 +27,11 @@ dev = [
     "httpx2>=2.10",
     "mypy>=1.13",
     "ruff>=0.8",
+    # Only used to test the CI workflow's own coherence. A job that gates on an
+    # event the workflow never declares is silently dead, which is how the live
+    # smoke job spent its first day unable to run.
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
 ]
 # ADR-001's destination. Declared so CI can run the whole suite against a real
 # Postgres — without a driver, every portability claim is static analysis of

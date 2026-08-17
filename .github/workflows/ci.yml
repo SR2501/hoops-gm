@@ -15,6 +15,13 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+  # Nightly, for the live smoke job below. Scheduled runs only ever fire on the
+  # default branch, which is what you want for upstream drift: the question is
+  # "did an external source change under main overnight", not "does this PR
+  # work". The Code gate jobs run too, which is a small cost and a real canary
+  # — a dependency that breaks without any commit shows up here.
+  schedule:
+    - cron: '0 9 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -234,12 +241,21 @@ jobs:
           exit $status
 
   live-smoke:
-    name: Adapter gate — live smoke (allowed to fail, loudly)
+    name: Adapter gate — live smoke (must fail loudly, cannot block a merge)
     runs-on: ubuntu-latest
-    # Not on pull requests: a third party's outage must not look like a broken
-    # change. Scheduled and manual runs are where upstream drift shows up.
+    # Never on push or pull_request: a third party's outage must not look like
+    # a broken change. That is what stops this blocking a merge — structurally,
+    # because it does not run on the events a merge depends on.
+    #
+    # Deliberately no continue-on-error. The Adapter gate says a live smoke
+    # test is "allowed to fail without blocking a merge, but it must fail
+    # loudly and visibly", and continue-on-error does the opposite: it paints
+    # a real upstream break green on a nightly run nobody is watching. Let it
+    # go red. Three of the project's findings so far — no NBA id in Fantrax
+    # (R7), cdn.nba.com returning 403 (R26), stats.nba.com reachable only via
+    # nba_api (R27) — were invisible until something executed against the real
+    # source. This job is how that keeps happening after Phase 2.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    continue-on-error: true
     defaults:
       run:
         working-directory: backend
@@ -263,7 +279,10 @@ jobs:
             exit 0
           fi
           if [ $status -ne 0 ]; then
-            echo "::warning::Live smoke tests failed. An upstream has changed or is down."
+            echo "::error::Live smoke tests failed. An upstream has changed, is"\
+                 "down, or is blocking this network. Check the recorded-fixture"\
+                 "contract tests too: if those still pass, the parser is fine and"\
+                 "the source is the problem."
           fi
           exit $status
 
