@@ -856,6 +856,71 @@ Fixed by adding `Base.metadata.drop_all(...)` before `create_all` in the `client
 
 ---
 
+## 2026-08-17 — bridge — Userscript auto-update path (one-time install, no bridge secret in served bytes)
+
+**Changed:** Replaced the "reinstall in Tampermonkey's editor after every
+rebuild" workflow with the auto-update path implied by ADR-010: `npm run
+build` in `userscript/` now reads `@version` from `package.json` (previously
+hardcoded separately in `build.mjs`, which had already drifted once) and
+stamps `@updateURL`/`@downloadURL` onto the built file, both pointing at a
+new loopback-only backend route, `GET /bridge/userscript.user.js`. That route
+lives unversioned next to `/health` (it's a static-file surface, not part of
+the `/api/v1` JSON contract), reads `userscript/dist/hoops-gm.user.js` fresh
+off disk on every request via a setting (`Settings.userscript_dist_path`, not
+a module-level constant, so tests can point it at a throwaway file), and
+returns a clear, actionable `404` (`X-Bridge-Error: userscript_build_missing`,
+`detail` naming the exact `npm install && npm run build` to run) when the
+file is absent — the failure mode the owner's live log actually hit. Response
+headers set `Cache-Control: no-store` so neither an intermediate cache nor
+Tampermonkey's own check can serve a stale build. Extracted the loopback-host
+check that bridge pairing already had into a shared `hoops_gm.api.security`
+module so this route and pairing share one definition of "local" rather than
+diverging.
+
+**Now true:** The one-time install step in `userscript/README.md` and the
+root `README.md` now targets `http://127.0.0.1:8000/bridge/userscript.user.js`
+directly (installable from that URL in the browser) instead of the generated
+file path, and is genuinely one-time going forward: a source change is now
+`npm run build` (after bumping `package.json`'s `version` — an unchanged
+version is invisible to Tampermonkey's own comparison, not merely slow) plus
+keeping the backend running, and Tampermonkey's own update check does the
+rest. New backend tests (`test_userscript_serving.py`) cover the missing-build
+404 with its exact detail text, a present build served with the right
+content-type/cache header, a non-loopback caller rejected with the
+`app`/`client` test fixtures deliberately bypassed (built via `create_app`
+directly with `environment="development"`, since the shared fixtures always
+force `environment="test"` to satisfy Starlette's synthetic `TestClient` host
+— that escape hatch meant this exact 403 branch, and pairing's equivalent
+branch, had zero prior coverage), and — the specific ADR-010 guarantee this
+task called for — that a configured `bridge_secret` never appears in the
+served bytes even when one exists. A new userscript test
+(`test/build.test.js`) runs the real `build.mjs` and asserts `@updateURL`/
+`@downloadURL` are present, identical, and loopback, and that no hex-64 or
+base64url-43 secret-shaped literal (the two accepted stored-secret shapes)
+appears anywhere in the build output. Both suites pass locally (48/48
+userscript, full backend suite, ruff/mypy/`check_no_secrets.py` clean), and a
+`userscript` CI job was added — there was none before, so these new tests
+would otherwise never run in CI; `test_ci_workflow.py`'s own coherence check
+still passes against the edited `ci.yml`.
+
+**Could not verify:** No real Tampermonkey install was exercised in this
+session — the route was checked with `curl`/pytest only, not a live browser
+picking up an actual update prompt. The 43-character base64url check in
+`build.test.js` originally false-positived on an unrelated comment divider
+line of dashes (the character class also matches `-`); fixed by requiring
+both a letter and a digit in the run, but has not been proven against a real
+accidentally-embedded secret beyond the unit test's synthetic case. Whether
+Tampermonkey's background update-check interval is frequent enough in
+practice to feel "automatic" to the owner (versus needing the dashboard's
+manual "Check for updates" most of the time) is unmeasured.
+
+**Next:** Owner should do one real end-to-end pass: build, install from the
+served URL, bump the version, rebuild, and confirm Tampermonkey's own update
+prompt actually fires without any manual reinstall. No write-path or
+automation code was touched — this is entirely a serving/build concern — so
+the Automation gate does not apply here; only the Code gate does, and it
+passed.
+
 ---
 
 ## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets

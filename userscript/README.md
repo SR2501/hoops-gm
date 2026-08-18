@@ -17,7 +17,10 @@ Phase 10 automation are separate, later work.
 1. Start the local backend on `http://127.0.0.1:8000`.
 2. Install Tampermonkey and enable developer mode if the browser asks for it.
 3. Run `npm install` and `npm run build` in this directory.
-4. Open `dist/hoops-gm.user.js` and install it in Tampermonkey.
+4. With the backend running, open
+   `http://127.0.0.1:8000/bridge/userscript.user.js` in the same browser and
+   install it in Tampermonkey. This is a one-time step — see "Updating"
+   below for why you should not need to repeat it.
 5. Open a Fantrax URL matching `https://www.fantrax.com/fantasy/league/*`.
 
 In Tampermonkey's extension menu, choose **Pair hoops-gm bridge**. The command
@@ -28,8 +31,42 @@ key and sent only as the `X-Bridge-Secret` request header. Neither the secret no
 pairing code is logged to the console. A pairing code expires after ten minutes
 and can be used only once.
 
-Rebuilding changes only `dist/hoops-gm.user.js`; Tampermonkey keeps running the
-installed copy until you reinstall it or update it through its editor.
+## Updating
+
+The built script's `@updateURL`/`@downloadURL` metadata both point at
+`http://127.0.0.1:8000/bridge/userscript.user.js` — the same loopback backend
+that serves the handshake and pairing endpoints, never a public host.
+Tampermonkey periodically re-fetches that URL, compares `@version`, and
+prompts to update in place when it changes:
+
+1. From `userscript/`, run `npm run build` after any source change. The build
+   reads `@version` from `package.json`, so bump that field for the change to
+   be seen as an update at all — an unchanged version is invisible to
+   Tampermonkey's comparison, not merely slow to arrive.
+2. Keep the local backend running: Tampermonkey's update check is a plain GET
+   against that URL, so if the backend (and therefore the built file) is
+   unreachable, the check silently finds nothing to update rather than
+   erroring visibly.
+3. Trigger Tampermonkey's check manually (its dashboard has a "Check for
+   userscript updates" action) or wait for its own schedule, then approve the
+   update prompt when it appears.
+
+This means step 4 in **Install** above is a true one-time action for source
+changes going forward: rebuilding is enough, without reopening Tampermonkey's
+editor or reinstalling the file by hand. Rebuilding without bumping the
+version still regenerates `dist/hoops-gm.user.js` correctly; it only means
+Tampermonkey has nothing new to detect until the version moves.
+
+If `http://127.0.0.1:8000/bridge/userscript.user.js` returns 404, the backend
+is running but `userscript/dist/hoops-gm.user.js` does not exist yet — the
+response's `detail` field says so directly. Run `npm install && npm run
+build` in this directory and reload the URL; the route reads the file from
+disk on every request; nothing needs restarting.
+
+The served bytes are always exactly what a local `npm run build` produces:
+the endpoint is loopback-only and never contains a bridge secret, ADR-010's
+pairing exchange is the only path to one. Neither the build nor the serving
+route reads `BRIDGE_SECRET` or the on-disk paired secret file.
 
 The handshake calls the backend contract at
 `POST /api/v1/bridge/handshake` with `{ "protocol": 1 }` and the
@@ -168,8 +205,13 @@ npm run build
 `npm run build` concatenates `src/userscript.js` and `src/capture.js` (in
 that order, since capture's auto-install checks for the transport the first
 file creates) into one readable installable file at
-`userscript/dist/hoops-gm.user.js`; `dist/` is ignored. Rebuild after source
-changes, then use Tampermonkey's editor or reinstall the generated file.
+`userscript/dist/hoops-gm.user.js`, prefixed with the `==UserScript==`
+metadata block; `dist/` is ignored. The `@version` in that block comes from
+`package.json`, and `@updateURL`/`@downloadURL` both point at the backend's
+`GET /bridge/userscript.user.js`, so Tampermonkey's own update check is what
+picks up a rebuild after the version is bumped — see "Updating" above. This
+is a change from the original workflow, which required reopening
+Tampermonkey's editor or reinstalling the file by hand after every rebuild.
 
 The backend must remain loopback-bound. The userscript connects only to
 `http://127.0.0.1:8000`; do not change this to `0.0.0.0` or a public hostname.
@@ -249,3 +291,9 @@ manual export (`captureManual` bypassing the `/fxpa/req` filter, app-state
 preference over DOM snapshot, script/style stripping, size truncation, and the
 Tampermonkey menu wiring). It also verifies that the hook has no request body
 or header field and that its real page response remains intact.
+`test/build.test.js` runs the real `build.mjs` and asserts on the produced
+`dist/hoops-gm.user.js`: `@version` matches `package.json`, `@updateURL` and
+`@downloadURL` are both present, identical, and loopback (never a hostname
+that could resolve off-machine), and no hex-64 or base64url-43 secret-shaped
+literal — the two accepted stored-secret shapes — appears anywhere in the
+build (ADR-010).

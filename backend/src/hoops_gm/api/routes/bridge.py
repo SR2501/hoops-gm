@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 from hoops_gm.api.deps import SessionDep, SettingsDep
+from hoops_gm.api.security import require_loopback_host
 from hoops_gm.core.bridge_pairing import BridgePairing
 from hoops_gm.db.models.bridge import BridgePayload
 
@@ -116,16 +117,9 @@ def require_bridge_secret(
 
 
 def _require_local_pairing_request(request: Request) -> None:
-    host = request.client.host if request.client else None
-    if (
-        host not in {"127.0.0.1", "::1", "localhost"}
-        and request.app.state.settings.environment != "test"
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="Bridge pairing is local-only.",
-            headers={"X-Bridge-Error": "pairing_local_only"},
-        )
+    require_loopback_host(
+        request, error_code="pairing_local_only", detail="Bridge pairing is local-only."
+    )
     if request.headers.get("cookie") or request.headers.get("origin"):
         raise HTTPException(
             status_code=403,

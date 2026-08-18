@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     fantrax_league_id: str | None = None
     fantrax_cookie: SecretStr | None = None
 
+    # --- Userscript serving ---------------------------------------------------
+    # One-time Tampermonkey install and its @updateURL/@downloadURL auto-update
+    # target (ADR-010's follow-on: pairing already keeps the secret out of
+    # source control, and it must stay out of this build too). `npm run build`
+    # in userscript/ is what produces this file; it is gitignored and absent
+    # until then, which the serving route must report clearly rather than as a
+    # bare 404.
+    userscript_dist_path: Path = REPO_ROOT / "userscript" / "dist" / "hoops-gm.user.js"
+
     @field_validator("database_url")
     @classmethod
     def _resolve_relative_sqlite_path(cls, value: str) -> str:

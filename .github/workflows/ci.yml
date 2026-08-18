@@ -193,6 +193,34 @@ jobs:
       - name: Build
         run: npm run build
 
+  userscript:
+    name: Userscript — tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: userscript
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: userscript/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Tests
+        # Includes build.test.js, which runs the real build.mjs and checks
+        # its output: @version tracks package.json, @updateURL/@downloadURL
+        # are both present and loopback-only, and no secret-shaped literal
+        # (ADR-010) is ever baked into the built file.
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
   secrets:
     name: Code gate — no secrets committed
     runs-on: ubuntu-latest

@@ -101,19 +101,44 @@ then asks you to paste it back to confirm. It stores the returned bearer secret
 only in Tampermonkey storage; do not add it to source control or browser-page
 storage.
 
-For userscript source changes, run `npm run build` in `userscript/`, then
-reinstall `userscript/dist/hoops-gm.user.js` or update the script in
-Tampermonkey's editor. Building alone does not update the already-installed
-script. Reload the Fantrax tab after updating: capture uses a CSP-safe,
-page-world response observer because isolated-world `fetch`/`XMLHttpRequest`
-patches do not intercept Fantrax's SPA requests in Chromium Tampermonkey.
-Then visit Players, Roster, and League normally and confirm a new
-`bridge_payloads` row. Some `/fxpa/req` traffic is issued by Fantrax's own
-service worker rather than page script, which no page-world hook can observe;
-if `bridge_payloads` stays empty, use Tampermonkey's **hoops-gm: capture
-current Fantrax view** menu command as a guaranteed, owner-triggered fallback.
-See [`userscript/README.md`](userscript/README.md) for
-the non-sensitive live-test and troubleshooting procedure.
+### Building, starting, and updating the userscript
+
+1. **Build once:** `cd userscript && npm install && npm run build` produces
+   `userscript/dist/hoops-gm.user.js` (gitignored — this is a local artifact,
+   not something committed).
+2. **Start the backend** (`python -m hoops_gm` from `backend/`, or `docker
+   compose up`) so it can serve that file.
+3. **Install once:** with the backend running, open
+   `http://127.0.0.1:8000/bridge/userscript.user.js` in the browser and
+   install it in Tampermonkey. If this 404s, the backend is up but the build
+   from step 1 hasn't happened yet — the response says so directly.
+4. **Update after any source change:** bump the `version` field in
+   `userscript/package.json`, run `npm run build` again, and keep the backend
+   running. The installed script's `@updateURL`/`@downloadURL` both point back
+   at that same loopback endpoint, so Tampermonkey's own periodic update check
+   (or its dashboard's manual "Check for userscript updates") picks up the new
+   build without reopening its editor or reinstalling the file by hand — the
+   one-time install in step 3 stays one-time. See
+   [`userscript/README.md`](userscript/README.md#updating) for what happens
+   if you forget to bump the version, or the backend isn't reachable when the
+   check runs.
+
+The served file never contains a bridge secret: pairing (above) is the only
+way the userscript ever obtains one, and the serving endpoint is loopback-only
+like every other local surface here (see
+[`ADR-010`](docs/decisions/ADR-010-local-bridge-pairing.md)).
+
+For userscript source changes, follow the update flow above (bump the
+version, rebuild, let Tampermonkey pick it up), then reload the Fantrax tab:
+capture uses a CSP-safe, page-world response observer because isolated-world
+`fetch`/`XMLHttpRequest` patches do not intercept Fantrax's SPA requests in
+Chromium Tampermonkey. Then visit Players, Roster, and League normally and
+confirm a new `bridge_payloads` row. Some `/fxpa/req` traffic is issued by
+Fantrax's own service worker rather than page script, which no page-world
+hook can observe; if `bridge_payloads` stays empty, use Tampermonkey's
+**hoops-gm: capture current Fantrax view** menu command as a guaranteed,
+owner-triggered fallback. See [`userscript/README.md`](userscript/README.md)
+for the non-sensitive live-test and troubleshooting procedure.
 
 ## Notes
 
