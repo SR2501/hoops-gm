@@ -34,6 +34,11 @@ import pytest
 from hoops_gm.identity import IdentityResolver, ResolvableRecord
 from hoops_gm.ingest.errors import SourceRejected
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient, parse_league_info
+from hoops_gm.ingest.injury_report import (
+    InjuryReportClient,
+    ReportNotAvailable,
+    parse_injury_report_pdf,
+)
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     parse_box_score_summary_v3,
@@ -53,9 +58,11 @@ pytestmark = pytest.mark.live_smoke
 #: Live calls bypass the cache entirely. A smoke test served from a capture is
 #: a contract test wearing a disguise, and would report the source as healthy
 #: long after it stopped answering.
-from datetime import timedelta  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
+_EASTERN = ZoneInfo("America/New_York")
 
 
 @pytest.fixture
@@ -66,6 +73,11 @@ def fantrax() -> FantraxOfficialClient:
 @pytest.fixture
 def nba() -> NbaStatsClient:
     return NbaStatsClient()
+
+
+@pytest.fixture
+def injury_report() -> InjuryReportClient:
+    return InjuryReportClient()
 
 
 # ==========================================================================
@@ -346,3 +358,50 @@ class TestCrosswalkAgainstLiveData:
             "payloads has moved; check the unmatched report before trusting any "
             "number that crosses sources"
         )
+
+
+# ==========================================================================
+# NBA official injury report
+# ==========================================================================
+
+
+class TestInjuryReportIsAlive:
+    #: A real evening-before report from the 2025-26 season, permanently
+    #: archived on the CDN. Distinct from the committed contract-test fixture
+    #: timestamp so this test proves live reachability rather than replaying
+    #: the same capture the offline test already checked.
+    _KNOWN_GOOD_TIMESTAMP = datetime(2025, 12, 1, 13, 0, tzinfo=_EASTERN)
+
+    def test_a_known_historical_report_is_still_reachable_and_parses(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: the CDN path moved, or the PDF's column layout changed.
+
+        Unlike ``cdn.nba.com`` (risk R26, blocked from this network), this
+        source has been reachable from this machine every time it has been
+        checked. A failure here means the URL template, filename format era
+        boundary, or table layout has drifted since 2026-08-17.
+        """
+        body = injury_report.fetch(self._KNOWN_GOOD_TIMESTAMP, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body,
+            report_timestamp=self._KNOWN_GOOD_TIMESTAMP,
+            source_url="https://ak-static.cms.nba.com/referee/injury/"
+            "Injury-Report_2025-12-01_01PM.pdf",
+        )
+        assert len(result.entries) > 0, "a real evening-before report had zero entries"
+
+    def test_a_timestamp_with_no_published_report_is_reported_as_unavailable(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: an off-season timestamp stops being rejected cleanly.
+
+        Verified live 2026-08-17: this CDN answers a pre-season date with
+        HTTP **403**, not 404 — the two are folded together into
+        :class:`ReportNotAvailable` for exactly that reason (see
+        ``client.py``). A month with no NBA games at all should never have a
+        report.
+        """
+        off_season = datetime(2025, 8, 15, 17, 0, tzinfo=_EASTERN)
+        with pytest.raises(ReportNotAvailable):
+            injury_report.fetch(off_season, max_age=NO_CACHE)

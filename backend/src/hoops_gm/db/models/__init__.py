@@ -29,6 +29,7 @@ from hoops_gm.db.models.enums import (
     ExternalSource,
     FieldEvidence,
     GameStatus,
+    InjuryReportStatus,
     MatchMethod,
     MatchupStatus,
     ParticipationOutcome,
@@ -41,6 +42,7 @@ from hoops_gm.db.models.enums import (
     TransactionType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.db.models.injury_report import InjuryReportEntry
 from hoops_gm.db.models.league import (
     FantasyTeam,
     League,
@@ -73,6 +75,8 @@ __all__ = [
     "FantasyTeam",
     "FieldEvidence",
     "GameStatus",
+    "InjuryReportEntry",
+    "InjuryReportStatus",
     "League",
     "LeagueScoringCategory",
     "LeagueScoringProfile",

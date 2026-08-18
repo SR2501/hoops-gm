@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,12 +31,14 @@ from hoops_gm.db.models.enums import (
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.db.models.injury_report import InjuryReportEntry
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.resolver import Resolution
+from hoops_gm.ingest.injury_report.models import InjuryReportEntryRecord
 from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
     GameParticipation,
@@ -650,3 +652,153 @@ def import_participation(
 
     session.flush()
     return counts
+
+
+# --------------------------------------------------------------------------
+# Injury report
+# --------------------------------------------------------------------------
+
+
+def import_injury_report_entries(
+    session: Session,
+    entries: Sequence[InjuryReportEntryRecord],
+    *,
+    source_url: str,
+) -> ImportCounts:
+    """Write one report capture's entries idempotently, by natural key.
+
+    ``(report_timestamp, team_raw, player_name_raw)`` identifies a row: an
+    identical capture re-ingested twice converges rather than duplicates, and
+    a later capture at a *different* timestamp is genuine history, never an
+    overwrite of an earlier one — see ``db.models.injury_report`` on why the
+    timestamp is part of the key rather than a mere column.
+
+    ``team_id``, ``game_id`` and ``player_id`` are resolved best-effort and
+    left ``NULL`` on any ambiguity, never guessed. Team and game resolve from
+    the report's own tricode ``matchup_raw`` (e.g. ``"SAC@MIL"``) rather than
+    from the free-text ``team_raw`` column, because the tricode is an exact,
+    unambiguous match against ``nba_teams.abbreviation`` while a full team
+    name is not. Which of the two tricodes is *this* row's team is derived
+    from team order of appearance within the matchup block: the away team's
+    roster is always listed first in the report, verified against a real
+    2025-11-01 capture.
+    """
+    counts = ImportCounts()
+    teams_by_abbr = {t.abbreviation: t.id for t in session.scalars(select(NbaTeam))}
+    games_by_key = {
+        (g.home_team_id, g.away_team_id, g.game_date): g.id
+        for g in session.scalars(select(NbaGame))
+    }
+    players_by_norm: dict[str, list[int]] = {}
+    player_team: dict[int, int | None] = {}
+    for player in session.scalars(select(Player)):
+        players_by_norm.setdefault(player.normalized_name, []).append(player.id)
+        player_team[player.id] = player.current_team_id
+
+    existing = {
+        (row.report_timestamp, row.team_raw, row.player_name_raw): row
+        for row in session.scalars(select(InjuryReportEntry))
+    }
+
+    # First appearance order of each distinct team within a matchup decides
+    # which tricode is "this" team's: the report always lists the away
+    # team's roster before the home team's.
+    matchup_team_order: dict[str, list[str]] = {}
+    for record in entries:
+        seen = matchup_team_order.setdefault(record.matchup_raw, [])
+        if record.team_raw and record.team_raw not in seen:
+            seen.append(record.team_raw)
+
+    for record in entries:
+        team_id = _resolve_team_id(record, matchup_team_order, teams_by_abbr)
+        game_id = _resolve_game_id(record, teams_by_abbr, games_by_key)
+        player_id = _resolve_player_id(record, team_id, player_team, players_by_norm)
+
+        key = (record.report_timestamp, record.team_raw, record.player_name_raw)
+        row = existing.get(key)
+        if row is None:
+            row = InjuryReportEntry(
+                report_timestamp=record.report_timestamp,
+                team_raw=record.team_raw,
+                player_name_raw=record.player_name_raw,
+            )
+            session.add(row)
+            existing[key] = row
+            counts.created += 1
+        else:
+            counts.updated += 1
+
+        row.game_date = record.game_date
+        row.game_time_raw = record.game_time_raw
+        row.matchup_raw = record.matchup_raw
+        row.team_id = team_id
+        row.game_id = game_id
+        row.player_id = player_id
+        row.status_raw = record.status_raw
+        row.status = record.status
+        row.reason_raw = record.reason_raw
+        row.source = ExternalSource.NBA
+        row.source_url = source_url
+
+    session.flush()
+    return counts
+
+
+def _matchup_tricodes(matchup_raw: str) -> tuple[str, str] | None:
+    """``"SAC@MIL"`` -> ``("SAC", "MIL")`` (away, home), or ``None`` if malformed."""
+    away, sep, home = matchup_raw.partition("@")
+    if not sep or not away or not home:
+        return None
+    return away, home
+
+
+def _resolve_team_id(
+    record: InjuryReportEntryRecord,
+    matchup_team_order: dict[str, list[str]],
+    teams_by_abbr: dict[str, int],
+) -> int | None:
+    tricodes = _matchup_tricodes(record.matchup_raw)
+    order = matchup_team_order.get(record.matchup_raw, [])
+    if tricodes is None or record.team_raw not in order:
+        return None
+    slot = order.index(record.team_raw)  # 0 = away, 1 = home
+    if slot >= len(tricodes):
+        return None
+    return teams_by_abbr.get(tricodes[slot])
+
+
+def _resolve_game_id(
+    record: InjuryReportEntryRecord,
+    teams_by_abbr: dict[str, int],
+    games_by_key: dict[tuple[int, int, date], int],
+) -> int | None:
+    tricodes = _matchup_tricodes(record.matchup_raw)
+    if tricodes is None:
+        return None
+    away_tri, home_tri = tricodes
+    away_id = teams_by_abbr.get(away_tri)
+    home_id = teams_by_abbr.get(home_tri)
+    if away_id is None or home_id is None:
+        return None
+    return games_by_key.get((home_id, away_id, record.game_date))
+
+
+def _resolve_player_id(
+    record: InjuryReportEntryRecord,
+    team_id: int | None,
+    player_team: dict[int, int | None],
+    players_by_norm: dict[str, list[int]],
+) -> int | None:
+    if not record.player_name_raw:
+        return None
+    candidates = players_by_norm.get(normalize_name(record.player_name_raw).key, [])
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1 and team_id is not None:
+        # Disambiguate by current team. Only accept a match that is unique
+        # after narrowing — an unresolved ambiguity is left NULL rather than
+        # guessed, per R7.
+        on_team = [pid for pid in candidates if player_team.get(pid) == team_id]
+        if len(on_team) == 1:
+            return on_team[0]
+    return None

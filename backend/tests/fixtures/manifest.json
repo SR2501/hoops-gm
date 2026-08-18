@@ -145,6 +145,17 @@
     "source": "nba_stats",
     "trimmed": false
   },
+  "nba_injury_report_2025-11-01_0530pm.pdf": {
+    "byte_size": 78771,
+    "captured_at": "2026-08-17T21:56:00+00:00",
+    "endpoint": "InjuryReportPdf",
+    "note": "Real captured report, committed whole rather than trimmed: it is a 7-page PDF (~79KB) and the parser's row-boundary logic depends on the full multi-page, multi-matchup, multi-line-reason and page-footer structure, including a same-team 'NOT YET SUBMITTED' marker row for two teams whose report had not been filed as of this capture.",
+    "params": {
+      "url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf"
+    },
+    "source": "nba_injury_report",
+    "trimmed": false
+  },
   "nba_leaguegamefinder_trimmed.json": {
     "byte_size": 46338,
     "captured_at": "2026-08-17T13:30:51.196190+00:00",

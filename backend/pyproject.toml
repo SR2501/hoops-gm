@@ -64,6 +64,12 @@ ingest = [
     "fantraxapi==1.0.1",
     # Fernet, for the Fantrax session cookie at rest.
     "cryptography>=44",
+    # Pinned exactly: the injury report parser reads the PDF's word positions
+    # and drawn ruling lines directly (see
+    # ingest/injury_report/parser.py), and pdfplumber's own extraction
+    # behaviour is exactly the kind of thing an upgrade could silently change
+    # underneath a geometry-dependent parser.
+    "pdfplumber==0.11.10",
 ]
 # ADR-001's destination. Declared so CI can run the whole suite against a real
 # Postgres — without a driver, every portability claim is static analysis of
@@ -150,6 +156,8 @@ module = [
     "pandas.*",
     "numpy",
     "numpy.*",
+    "pdfplumber",
+    "pdfplumber.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

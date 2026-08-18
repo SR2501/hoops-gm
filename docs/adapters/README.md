@@ -13,6 +13,7 @@ is down or returns garbage.
 |---|---|---|
 | Fantrax official `/fxea/general/` | [fantrax-official.md](fantrax-official.md) | Working, verified live |
 | `stats.nba.com` via `nba_api` | [nba-stats.md](nba-stats.md) | Working, verified live |
+| NBA official injury report PDF | [nba-injury-report.md](nba-injury-report.md) | Working, verified live |
 | Fantrax private `/fxpa/req` via `fantraxapi` | [fantrax-private.md](fantrax-private.md) | **Unverified** — no credentials yet |
 | `cdn.nba.com` live feeds | — | **Blocked** from this network (R26); Phase 6 |
 
