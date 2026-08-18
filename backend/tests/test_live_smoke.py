@@ -58,7 +58,7 @@ from hoops_gm.ingest.record_fixtures import (
 # defined and unit-tested offline in `test_injury_report.py` (no `live_smoke`
 # marker there), and imported here rather than duplicated so the exact logic
 # proven offline is what this live test actually runs.
-from test_injury_report import SEASON_2026_27_START, SEASON_SPAN, select_recent_report_candidate
+from test_injury_report import FRESHNESS_WINDOW, select_recent_report_candidate
 
 pytestmark = pytest.mark.live_smoke
 
@@ -470,20 +470,29 @@ class TestInjuryReportCurrentSeasonIsAlive:
     2026-27. Only a request built from "now", at test-run time, has any
     chance of being served by whatever the source actually looks like today.
 
+    The candidate itself is never a calendar guess ("yesterday"): it is
+    always a date `select_recent_report_candidate` (`test_injury_report.py`)
+    has independently confirmed had a real game, read from the committed,
+    real `ScheduleLeagueV2` fixture, and it is only used once its own 17:30
+    ET evening has actually passed relative to "now" -- see that function's
+    docstring for exactly why both of those guards exist and what they
+    fixed (a second focused review found a same-day future-timestamp bug and
+    a routine-no-game-date false-failure risk in an earlier, calendar-only
+    version of this probe).
+
     **What this can detect:** the CDN URL pattern or PDF column layout
-    breaking for a *current*, in-season request -- the one shape of drift
-    the two archived probes above structurally cannot see.
+    breaking for a *current*, game-backed, already-published request -- the
+    one shape of drift the two archived probes above structurally cannot
+    see.
 
     **What this cannot detect:** anything about a specific past or future
-    format era; it makes no claim about when the 2025-12-22 boundary or any
-    future one falls, and it is not a substitute for the archived legacy and
-    15-minute probes above, which are the only ones that pin those two eras
-    specifically to a fixed, reproducible instant. It also cannot
-    distinguish "the source broke" from "there happened to be no game that
-    specific day" any more precisely than the season-window guard in
-    ``select_recent_report_candidate`` does -- see that function's own
-    docstring in ``test_injury_report.py`` for exactly what ground truth
-    that guard rests on.
+    format era (that is what the archived legacy and 15-minute probes above
+    are for, and this is not a substitute for either); nor, beyond what
+    `select_recent_report_candidate`'s known-game-dates + freshness guard
+    already rules out, can it distinguish every possible "the source broke"
+    from every possible "there happened to be no game that day" -- it can
+    only ever probe a date this project has actually recorded as a real game
+    day, so it says nothing about any other date.
 
     **Bounded by construction:** exactly one candidate timestamp, therefore
     at most one HTTP request, per run -- never a scan across multiple days.
@@ -492,27 +501,25 @@ class TestInjuryReportCurrentSeasonIsAlive:
     def test_a_recently_expected_report_is_reachable_and_parses(self) -> None:
         """FAILS IF: the source or its layout has drifted for a live, current request.
 
-        Skips (does not fail) outside the known 2026-27 season window
-        (``SEASON_2026_27_START`` through ``+ SEASON_SPAN`` in
-        ``test_injury_report.py``) rather than either producing a noisy
-        red result against a source with nothing to report yet, or --
-        the failure mode this whole probe exists to avoid -- silently
-        treating an expected off-season 403/404 as if it proved the
-        adapter still works. A 403/404 encountered *in* that window is not
-        caught here: it is a real failure, because the candidate was
-        deliberately chosen (yesterday evening ET, the report's documented
-        publication window) to be a timestamp a report is actually expected
-        to exist for.
+        Skips (does not fail) when `select_recent_report_candidate` returns
+        ``None`` -- no known game date is both already-published and fresh
+        enough (see that function's docstring) -- rather than either
+        producing a noisy red result against a source with nothing to
+        report, or -- the failure mode this whole probe exists to avoid --
+        silently treating an expected 403/404 as if it proved the adapter
+        still works. A 403/404 encountered on an actual candidate is not
+        caught here: it is a real failure, because the candidate is only
+        ever a date this project has independently confirmed had a game.
         """
         candidate = select_recent_report_candidate(datetime.now(tz=UTC))
         if candidate is None:
             pytest.skip(
-                "current date is outside the known 2026-27 season window "
-                f"({SEASON_2026_27_START} + {SEASON_SPAN.days}d) established by the "
-                "recorded ScheduleLeagueV2 fixture; no report is expected to exist, "
-                "so this probe is skipped rather than producing a noisy off-season "
-                "failure or silently treating a 403/404 as success. The candidate-"
-                "selection logic itself is proven offline by "
+                "no known game date (from the recorded ScheduleLeagueV2 fixture) is "
+                f"both already-published and within the {FRESHNESS_WINDOW.days}-day "
+                "freshness window of now; no report is expected to exist for a date "
+                "this probe can defend, so it is skipped rather than producing a "
+                "noisy failure or silently treating an expected 403/404 as success. "
+                "The candidate-selection logic itself is proven offline by "
                 "test_injury_report.py::test_select_recent_report_candidate_*."
             )
         client = InjuryReportClient()

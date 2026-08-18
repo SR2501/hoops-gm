@@ -1762,3 +1762,65 @@ actually concludes, so a future session should tighten this once one does.
 this fix. This closes the last outstanding finding raised so far; no other
 follow-up is expected from this session absent further review feedback.
 
+---
+
+## 2026-08-18 — data-engineer — PR #13: fixed 2 remaining blockers in the dynamic live-smoke probe
+
+**Changed:** Final focused review of the prior commit found two real
+defects in the current-season dynamic probe: (1) the opening-day clamp
+could select a **future** timestamp — on opening day itself, if "now" was
+earlier that same morning, the clamp returned that same day at 17:30 ET,
+which is *after* "now", guaranteeing a false-red 404 against a report not
+yet published; (2) the fixed "yesterday always has a game" rule silently
+treated routine no-game dates (All-Star break, scattered rest days, gaps
+beyond the recorded schedule) as source drift, when a 403/404 on a genuine
+no-game date is the correct response, not a bug. Redesigned
+`select_recent_report_candidate` from scratch to eliminate both classes of
+guess rather than patch around them: a candidate is now **only** ever built
+from a date `known_game_dates_from_schedule_fixture` reads directly from the
+real, committed `nba_scheduleleaguev2_2026_27.json` capture (currently
+`2026-10-20`, `2026-12-04`, `2027-03-14`) — never "yesterday", never a
+clamped guess — and among those known dates, only the most recent one that
+is both **strictly before now** (never future/present) and within a 45-day
+`FRESHNESS_WINDOW` (so a stale, months-old anchor is not silently treated as
+current) is eligible. `SEASON_2026_27_START`/`SEASON_SPAN` are gone entirely,
+replaced by this schedule-grounded selection. The function also now accepts
+an optional `known_game_dates` override so its offline unit tests can
+exercise arbitrary calendar shapes (a no-game gap, a stale anchor, multiple
+candidates) without waiting for the real fixture's sparse three dates to
+line up. `test_live_smoke.py`'s `TestInjuryReportCurrentSeasonIsAlive` and
+its skip message were updated to match; the archived legacy/15-minute probes
+and the one-bounded-request property are unchanged.
+
+**Now true:** Eight offline unit tests in `test_injury_report.py` pin the
+new logic directly, including the two specific defects found: a same-day
+game date is rejected until its own evening has passed (proves fix 1) and a
+day with no confirmed game is skipped in favour of the true most recent
+known game date rather than assumed to have one (proves fix 2), plus
+naive-`now` rejection, the pure off-season case (empty known-dates list),
+multi-candidate "most recent wins", the stale-anchor freshness cutoff, a
+non-Eastern-aware `now`, and a direct pin of
+`known_game_dates_from_schedule_fixture`'s three real dates so the whole
+design stays anchored to what the committed fixture actually contains.
+Ran the live test directly today (2026-08-18): it `pytest.skip`s with the
+new, more precise reason (no known game date is both published and fresh
+enough) rather than the old season-window message. `docs/adapters/
+nba-injury-report.md`'s "Live smoke coverage" section was rewritten to
+describe both fixes and the new schedule-grounded design plainly. Full
+local Code gate green: ruff lint/format (one reformat needed after the new
+tests, now clean), mypy strict (84 source files), full default pytest
+suite, and the injury-report live smoke tests run separately (3 passed, 1
+skipped — the dynamic probe, correctly, for the new stated reason).
+
+**Could not verify:** Whether the dynamic probe actually fetches (rather
+than skips) once a known game date both exists and is fresh — by
+construction, the earliest that can happen live is 2026-10-20 evening
+onward, which has not arrived yet. The 45-day `FRESHNESS_WINDOW` is a
+judgment call, not a captured value; a future session may need to widen it
+if the schedule fixture's recorded anchors are not refreshed often enough
+to keep the probe from going quiet for long season stretches.
+
+**Next:** PR #13 awaits another focused re-review of this HEAD. No other
+follow-up is expected from this session absent further review feedback; did
+not merge or self-approve.
+

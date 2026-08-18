@@ -234,7 +234,7 @@ anything.
 
 ---
 
-## Live smoke coverage: two archived eras plus one dynamic, current-season probe
+## Live smoke coverage: two archived eras plus one dynamic, schedule-grounded probe
 
 `test_live_smoke.py::TestInjuryReportIsAlive` pins two **permanently
 archived** timestamps — one legacy-hourly (2025-12-01), one 15-minute-era
@@ -245,40 +245,61 @@ probe can therefore ever detect the NBA introducing a **third** filename
 convention or column layout for 2026-27 — they can only ever re-prove what
 already worked on 2026-08-17.
 
-`TestInjuryReportCurrentSeasonIsAlive` (added after independent review flagged
-this gap) closes it with a probe built from *now*, at test-run time, so it
-has an actual chance of being served by whatever the source looks like today
-rather than what it looked like when these tests were written.
+`TestInjuryReportCurrentSeasonIsAlive` (added after independent review
+flagged this gap) closes it with a probe built from *now*, at test-run time,
+so it has an actual chance of being served by whatever the source looks like
+today rather than what it looked like when these tests were written.
 `select_recent_report_candidate` (`test_injury_report.py`, unit-tested
-offline) is the guard that makes this safe to run unattended:
+offline) is the guard that makes this safe to run unattended — redesigned
+once already after a second focused review found two real defects in a
+first, calendar-only version:
 
-- **In season** (within `SEASON_2026_27_START` — the real first `gameDate`
-  from the recorded `ScheduleLeagueV2` fixture, not a calendar guess — through
-  a documented 240-day span covering the regular season and playoffs), it
-  returns yesterday-evening-ET, the report's own documented "evening before
-  tip-off" publication window, and the live test fetches and parses exactly
-  that one candidate. A 403/404 or parse failure there is a **real,
-  unswallowed failure** — the whole point of choosing a timestamp a report is
-  actually expected to exist for, rather than treating every 403/404 as
-  either automatic success or automatic drift.
-- **Outside that window** (including right now, 2026-08-18 — the season has
-  not started), it returns `None` and the live test explicitly `pytest.skip`s
-  with the reason spelled out, rather than producing either a noisy
-  off-season red result or a false-positive silent pass.
-- **Bounded by construction**: exactly one candidate, therefore at most one
-  HTTP request, per run.
+1. **Never a future timestamp.** An earlier version clamped "yesterday"
+   forward to a fixed season-start date on opening day itself, which could
+   select *today* at 17:30 ET even while "now" was still that morning — a
+   future timestamp, guaranteeing a false-red 404 against a report that had
+   not been published yet. Fixed: a candidate date's own 17:30 ET evening
+   must be strictly before "now", never equal to or after it.
+2. **Never an assumed game day.** The same earlier version treated every
+   "yesterday" as a game day, which silently mistook a routine no-game date
+   (the All-Star break, a scattered rest day, a gap beyond the recorded
+   regular-season schedule) for source drift — a 403/404 on a genuine
+   no-game date is the *correct* response, not a bug. Fixed: a candidate is
+   only ever built from a date `known_game_dates_from_schedule_fixture`
+   reads directly from the real, committed `nba_scheduleleaguev2_2026_27.json`
+   capture (the actual `leagueSchedule.gameDates[].gameDate` values,
+   currently `2026-10-20`, `2026-12-04`, `2027-03-14`) — never a calendar
+   guess. A date this project has not independently confirmed as a game day
+   is never used.
+
+Both guards compose into one rule: among the known game dates, only the
+**most recent one that is both already-published (`< now`) and within a
+45-day `FRESHNESS_WINDOW`** is eligible. If none qualify — before the
+season starts, in a gap between recorded anchors wider than 45 days, or on
+a known game date before its own evening has arrived — `None` comes back
+and the live test explicitly `pytest.skip`s with the reason spelled out,
+rather than producing a noisy failure or silently treating an expected
+403/404 as success. When a candidate *is* returned, a 403/404 or parse
+failure on it is a **real, unswallowed failure**: the whole point of the
+guards above is that the candidate is always a timestamp a report is
+actually expected to exist for. Exactly one candidate, therefore at most
+one HTTP request, per run.
 
 **What the dynamic probe can detect:** the CDN URL pattern or PDF column
-layout breaking for a current, in-season request — the one drift shape the
-two archived probes structurally cannot see.
+layout breaking for a current, game-backed, already-published request — the
+one drift shape the two archived probes structurally cannot see.
 
 **What it cannot detect:** which specific format era is in effect, or
 anything about a fixed historical instant (that is what the archived probes
-are for); nor can it distinguish "the source broke" from "there happened to
-be no game that specific day" any more precisely than the season-window
-guard's own 240-day approximation allows — a real limitation, documented
-rather than hidden, since no fixture yet records the season's actual final
-game.
+are for, and this is not a substitute for either); nor, beyond what the
+known-game-dates + freshness guard already rules out, can it distinguish
+every possible "the source broke" from every possible "there happened to be
+no game that day" — it only ever probes a date this project has actually
+recorded as a real game day, so it says nothing about any other date. The
+freshness window also means the probe goes quiet (skips) for stretches
+between the sparse anchors the trimmed fixture happens to record — a real
+limitation, documented rather than hidden, that would shrink if the fixture
+recorded more game dates.
 
 ---
 

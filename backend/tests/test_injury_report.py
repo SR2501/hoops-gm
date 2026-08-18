@@ -8,6 +8,8 @@ marker for two teams whose report had not been filed as of this capture.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -596,59 +598,93 @@ def test_import_does_not_swap_teams_when_entries_are_out_of_report_order(session
 # `test_live_smoke.py::TestInjuryReportCurrentSeasonIsAlive`, which imports
 # `select_recent_report_candidate` from this module rather than duplicating
 # it, so the exact logic proven here offline is what runs live.
+#
+# Redesigned after a second focused review found two real defects in a
+# calendar-only version of this logic: (1) clamping "yesterday" forward to
+# a fixed season-start date could select a timestamp later *today*, i.e. in
+# the future relative to "now", guaranteeing a false-red 404; (2) treating
+# every "yesterday" as a game day ignored that the real NBA calendar has
+# routine no-game dates (the All-Star break, scattered rest days, gaps
+# beyond the recorded regular-season schedule) on which a 403/404 is the
+# *correct* response, not source drift. Both are fixed by never inventing a
+# candidate date: a candidate is only ever a date this project has actually
+# recorded the league schedule reporting as a real game day, and it is only
+# ever used once its own evening has actually passed relative to "now".
 # ==========================================================================
 
-#: The earliest confirmed game date of the 2026-27 season -- taken directly
-#: from the real captured `ScheduleLeagueV2` response recorded as
-#: `nba_scheduleleaguev2_2026_27.json` (see `hoops_gm.ingest.record_fixtures`),
-#: not a calendar guess about when an NBA season "usually" starts. This is
-#: the independently defensible ground truth the current-season live smoke
-#: probe needs, so that an off-season day produces a documented, deliberate
-#: skip rather than either a noisy 403/404 "failure" against a source with
-#: nothing to report, or -- the failure mode this whole probe exists to
-#: avoid -- silently treating that same 403/404 as evidence the adapter
-#: still works.
-SEASON_2026_27_START = date(2026, 10, 20)
+SCHEDULE_FIXTURE_PATH = FIXTURES / "nba_scheduleleaguev2_2026_27.json"
 
-#: How long after the season start a request is still plausibly "in
-#: season" for this probe's purposes: long enough to span the regular
-#: season and playoffs (roughly October through mid-June), short enough
-#: that running this code long after the season actually ended is not
-#: mistaken for a live one. This is an approximation, not a captured end
-#: date -- no fixture yet records the season's actual final game -- and is
-#: documented here explicitly rather than left implicit.
-SEASON_SPAN = timedelta(days=240)
+#: How stale the most recent independently-confirmed game date may be before
+#: it stops counting as "current enough" for this probe's purpose. Long
+#: enough that a session run a few weeks after the last date the committed
+#: schedule fixture happens to record does not spuriously skip; short enough
+#: that a months-old anchor is not silently mistaken for a current one --
+#: which would make this "dynamic" probe just a slower-moving version of the
+#: fixed-archive probes it was added to stop being. When every known date is
+#: this stale, the honest answer is to skip and ask for the fixture to be
+#: refreshed with a more recent recorded game date, not to keep reusing an
+#: old one indefinitely.
+FRESHNESS_WINDOW = timedelta(days=45)
 
 
-def select_recent_report_candidate(now: datetime) -> datetime | None:
-    """Pick a recent, in-season evening report timestamp to probe live.
+def known_game_dates_from_schedule_fixture() -> list[date]:
+    """Game dates this project has actually recorded the league playing.
 
-    Returns ``None`` -- deliberately, rather than fabricating a timestamp
-    nothing grounds -- when ``now`` falls outside the known 2026-27 season
-    window (``SEASON_2026_27_START`` through ``SEASON_2026_27_START +
-    SEASON_SPAN``). A caller that gets ``None`` back should skip the live
-    probe entirely rather than either failing noisily against a source with
-    nothing to report that day, or silently treating a 403/404 as evidence
-    the adapter still works -- the same class of false-positive this project
-    already avoided once by folding both codes into one explicit
-    ``ReportNotAvailable``.
+    Reads `leagueSchedule.gameDates[].gameDate` directly from the committed
+    `nba_scheduleleaguev2_2026_27.json` fixture -- the real captured
+    `ScheduleLeagueV2` response `schedule-ingest` already recorded and
+    contract-tests against (`test_schedule.py`) -- rather than assuming any
+    particular calendar date has a game. A date not in this list is not
+    known to have a game, and this selector must never guess that it does.
+    """
+    payload = json.loads(SCHEDULE_FIXTURE_PATH.read_text())
+    return sorted(
+        datetime.strptime(entry["gameDate"].split(" ")[0], "%m/%d/%Y").date()
+        for entry in payload["leagueSchedule"]["gameDates"]
+    )
 
-    When ``now`` is in season, returns the evening *before* ``now``'s own
-    date at 17:30 ET: solidly inside the report's documented "evening
-    before tip-off, updated through game day" publication window
-    (``docs/adapters/nba-injury-report.md``) regardless of what time of day
-    ``now`` itself is, and clamped so it is never earlier than the season's
-    own start -- on opening day itself, "yesterday" has no report to find.
+
+def select_recent_report_candidate(
+    now: datetime, known_game_dates: Sequence[date] | None = None
+) -> datetime | None:
+    """Pick a recent, game-backed evening report timestamp to probe live.
+
+    A candidate is only ever built from a date in ``known_game_dates``
+    (defaulting to `known_game_dates_from_schedule_fixture`) -- never from
+    "yesterday" or any other calendar assumption -- because the real NBA
+    calendar has routine no-game dates (the All-Star break, scattered rest
+    days) on which a 403/404 from the source is the *correct* answer, not
+    drift; this selector must never manufacture a candidate for a date it
+    cannot independently confirm had a game.
+
+    Among the known game dates, only one both **already published** (its own
+    17:30 ET evening is strictly before ``now`` -- never a future or
+    same-moment timestamp, which would guarantee a false-red 404) and
+    **fresh enough** (within `FRESHNESS_WINDOW` of ``now``, so a probe run
+    long after the season's last recorded date does not keep reusing a
+    stale anchor and calling it current) is eligible. Returns the most
+    recent eligible date's 17:30 ET evening, or ``None`` if none qualify --
+    the correct response before the season starts, during a gap between
+    recorded anchors wider than `FRESHNESS_WINDOW`, or on a known game date
+    before its own evening has actually arrived.
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     now_eastern = now.astimezone(EASTERN)
-    season_start = datetime.combine(SEASON_2026_27_START, time(0, 0), tzinfo=EASTERN)
-    season_end = season_start + SEASON_SPAN
-    if not (season_start <= now_eastern <= season_end):
+    dates = (
+        list(known_game_dates)
+        if known_game_dates is not None
+        else known_game_dates_from_schedule_fixture()
+    )
+    eligible = [
+        d
+        for d in dates
+        if datetime.combine(d, time(17, 30), tzinfo=EASTERN) < now_eastern
+        and (now_eastern.date() - d) <= FRESHNESS_WINDOW
+    ]
+    if not eligible:
         return None
-    candidate_date = max((now_eastern - timedelta(days=1)).date(), SEASON_2026_27_START)
-    return datetime.combine(candidate_date, time(17, 30), tzinfo=EASTERN)
+    return datetime.combine(max(eligible), time(17, 30), tzinfo=EASTERN)
 
 
 def test_select_recent_report_candidate_rejects_a_naive_now() -> None:
@@ -656,48 +692,99 @@ def test_select_recent_report_candidate_rejects_a_naive_now() -> None:
         select_recent_report_candidate(datetime(2027, 1, 15, 12, 0))
 
 
-def test_select_recent_report_candidate_returns_none_before_the_season_starts() -> None:
-    """FAILS IF the off-season guard stops recognising the pre-season period.
+def test_select_recent_report_candidate_returns_none_with_no_known_game_dates() -> None:
+    """FAILS IF the selector invents a candidate with nothing to ground it.
 
-    Without this guard, the current-season live smoke probe would attempt a
-    fetch on every off-season day and either fail noisily against a source
-    that has published nothing yet, or -- worse -- treat that expected
-    403/404 as if it proved the adapter still works.
+    This is the off-season case in practice (today, 2026-08-18, precedes
+    every date the recorded schedule fixture confirms), reached here via an
+    explicitly empty list so the assertion does not silently stop meaning
+    anything once the real fixture gains more dates.
     """
-    before_season = datetime(2026, 8, 18, 12, 0, tzinfo=EASTERN)
-    assert select_recent_report_candidate(before_season) is None
+    now = datetime(2026, 8, 18, 12, 0, tzinfo=EASTERN)
+    assert select_recent_report_candidate(now, known_game_dates=[]) is None
 
 
-def test_select_recent_report_candidate_returns_none_long_after_the_season_span() -> None:
-    """FAILS IF the probe keeps firing long after the season is presumed over."""
+def test_select_recent_report_candidate_never_returns_a_future_or_present_timestamp() -> None:
+    """FAILS IF a same-day candidate can be selected before its own evening.
+
+    A real defect from the second focused review: clamping "yesterday"
+    forward to a fixed season-start date could select *today* at 17:30 ET
+    even when "now" was still this morning -- a future timestamp,
+    guaranteeing a false-red 404 against a report that has not been
+    published yet. A known game date must not be used until its own
+    evening has actually passed.
+    """
+    game_day = date(2026, 10, 20)
+    before_evening = datetime.combine(game_day, time(9, 0), tzinfo=EASTERN)
+    assert select_recent_report_candidate(before_evening, known_game_dates=[game_day]) is None
+
+    after_evening = datetime.combine(game_day, time(18, 0), tzinfo=EASTERN)
+    assert select_recent_report_candidate(
+        after_evening, known_game_dates=[game_day]
+    ) == datetime.combine(game_day, time(17, 30), tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_does_not_assume_an_unconfirmed_date_had_a_game() -> None:
+    """FAILS IF the selector falls back to assuming "yesterday" had a game.
+
+    The other real defect from the second focused review: treating every
+    "yesterday" as a game day silently mistakes a routine no-game date (the
+    All-Star break, a scattered rest day) for source drift when the report
+    is unavailable. Here, the day immediately before "now" is deliberately
+    *not* in the known-game-dates list -- standing in for exactly that kind
+    of gap -- and the selector must skip past it to the true most recent
+    confirmed game date instead of guessing.
+    """
+    confirmed_game_day = date(2027, 1, 5)
+    now = datetime(2027, 1, 10, 9, 0, tzinfo=EASTERN)  # "yesterday" (Jan 9) has no game
+    candidate = select_recent_report_candidate(now, known_game_dates=[confirmed_game_day])
+    assert candidate == datetime(2027, 1, 5, 17, 30, tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_picks_the_most_recent_eligible_date() -> None:
+    now = datetime(2027, 1, 10, 9, 0, tzinfo=EASTERN)
+    known = [date(2027, 1, 2), date(2027, 1, 5), date(2027, 1, 8)]
+    candidate = select_recent_report_candidate(now, known_game_dates=known)
+    assert candidate == datetime(2027, 1, 8, 17, 30, tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_returns_none_when_only_known_dates_are_stale() -> None:
+    """FAILS IF a months-old anchor is silently treated as current.
+
+    A probe run long after the last date the schedule fixture happens to
+    record should not keep reusing that stale anchor indefinitely and
+    calling it a live, current-format check -- that would make this
+    "dynamic" probe just a slower-moving version of the fixed-archive
+    probes it exists to improve on.
+    """
+    stale_game_day = date(2026, 10, 20)
     long_after = datetime.combine(
-        SEASON_2026_27_START + SEASON_SPAN + timedelta(days=30), time(12, 0), tzinfo=EASTERN
+        stale_game_day + FRESHNESS_WINDOW + timedelta(days=1), time(12, 0), tzinfo=EASTERN
     )
-    assert select_recent_report_candidate(long_after) is None
-
-
-def test_select_recent_report_candidate_returns_yesterday_evening_when_in_season() -> None:
-    mid_season = datetime(2027, 1, 15, 9, 0, tzinfo=EASTERN)
-    candidate = select_recent_report_candidate(mid_season)
-    assert candidate == datetime(2027, 1, 14, 17, 30, tzinfo=EASTERN)
-
-
-def test_select_recent_report_candidate_clamps_to_season_start_on_opening_day() -> None:
-    """FAILS IF opening day resolves to a "yesterday" that predates the season.
-
-    The day the season opens, there is no game -- and no report -- the day
-    before it; the candidate must clamp forward to the season's own start
-    rather than probing a date guaranteed to have nothing published.
-    """
-    opening_day = datetime.combine(SEASON_2026_27_START, time(9, 0), tzinfo=EASTERN)
-    candidate = select_recent_report_candidate(opening_day)
-    assert candidate == datetime.combine(SEASON_2026_27_START, time(17, 30), tzinfo=EASTERN)
+    assert select_recent_report_candidate(long_after, known_game_dates=[stale_game_day]) is None
 
 
 def test_select_recent_report_candidate_accepts_a_non_eastern_aware_now() -> None:
     """FAILS IF the function assumes its caller already converted to Eastern."""
     from datetime import UTC
 
-    mid_season_utc = datetime(2027, 1, 15, 14, 0, tzinfo=UTC)  # 09:00 ET
-    candidate = select_recent_report_candidate(mid_season_utc)
-    assert candidate == datetime(2027, 1, 14, 17, 30, tzinfo=EASTERN)
+    game_day = date(2027, 1, 5)
+    now_utc = datetime(2027, 1, 10, 14, 0, tzinfo=UTC)  # 09:00 ET
+    candidate = select_recent_report_candidate(now_utc, known_game_dates=[game_day])
+    assert candidate == datetime(2027, 1, 5, 17, 30, tzinfo=EASTERN)
+
+
+def test_known_game_dates_from_schedule_fixture_reads_the_real_recorded_dates() -> None:
+    """FAILS IF the fixture-reading helper stops matching the committed fixture.
+
+    Pins the exact three dates the trimmed, real `ScheduleLeagueV2` capture
+    records (`docs/adapters/README.md` / `manifest.json`): the season
+    opener, an NBA Cup date, and an October/March time-zone-transition
+    sample. `select_recent_report_candidate`'s default grounding is only as
+    defensible as this list actually being read correctly.
+    """
+    assert known_game_dates_from_schedule_fixture() == [
+        date(2026, 10, 20),
+        date(2026, 12, 4),
+        date(2027, 3, 14),
+    ]
