@@ -1106,3 +1106,31 @@ strength-of-schedule consumer require matching provenance cohorts when they are
 implemented. `data-engineer` should expose schedule-ingest refresh provenance
 for the context computation to record. The Model gate remains required before
 any decision-facing computation.
+
+---
+
+## 2026-08-17 — backend — Fix schedule-context Code-gate failure
+
+**Changed:** Classified both failed PR #8 Backend Code-gate jobs as
+PR-caused: each failed only
+`tests/test_schema.py::test_no_table_anywhere_stores_a_percentage` after
+`off_night_slates` introduced `light_slate_percentile` and
+`threshold_percentile`. Added those two fields to the test's explicit
+allowlist with the required explanation: they are schedule-distribution
+percentiles, not fantasy shooting ratios, so no volume denominator is lost.
+
+**Now true:** The R9 guard still rejects percentage-shaped columns by default,
+while permitting only the two non-ratio percentile fields introduced by this
+schedule-context change. Local verification used this worktree's
+`backend/src` explicitly and passed `ruff check .`, `ruff format --check .`,
+`mypy`, and `pytest` (410 passed, 12 deselected).
+
+**Could not verify:** The local interpreter is Python 3.14 whereas CI uses
+Python 3.12, and its pre-existing `pytest-asyncio` deprecation must still be
+suppressed for the local full suite; no Postgres service was available locally.
+The CI failure itself was reproduced before the correction and was a
+deterministic assertion failure, not transient infrastructure.
+
+**Next:** Push the correction and re-run the two failed Backend Code-gate
+checks on PR #8; both should pass if the Ubuntu/Python 3.12 environment
+matches its prior successful lint and type-check steps.

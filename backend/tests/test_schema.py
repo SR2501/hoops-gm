@@ -359,10 +359,13 @@ def test_foreign_keys_are_enforced_on_sqlite(session: Session) -> None:
 
 
 #: Tables permitted to hold a column whose name looks like a percentage.
-#: Deliberately empty. If a future phase needs one, adding it here forces the
-#: person to justify it in a diff rather than discover the problem in a
-#: valuation six months later.
-PERCENTAGE_COLUMN_ALLOWLIST: dict[str, set[str]] = {}
+#: These are schedule-distribution percentiles, not fantasy shooting ratios;
+#: no volume denominator is discarded by storing them.
+#: Adding an entry still requires a justification in the diff rather than
+#: discovering a bad valuation input six months later.
+PERCENTAGE_COLUMN_ALLOWLIST: dict[str, set[str]] = {
+    "off_night_slates": {"light_slate_percentile", "threshold_percentile"},
+}
 
 
 def test_no_table_anywhere_stores_a_percentage() -> None:
