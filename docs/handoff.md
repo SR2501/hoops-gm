@@ -1286,22 +1286,30 @@ and the decision index.
 **Changed:** Added pure calendar-arithmetic density helpers in
 `backend/src/hoops_gm/ingest/nba/schedule.py` built only from `team_schedule`
 rows. The logic computes back-to-back flags, `rest_days`, 3-in-4 / 4-in-5 /
-4-in-6 windows, and the current road-trip length/structure by walking the
-team's games in date order. The code stays in the ingest-data boundary and does
-not infer any scoring-model or risk judgment.
+4-in-6 windows, opponent rest-day differential, and the current road-trip
+length/structure by walking each team's games in date order. An off-day does
+not end a consecutive-away-game run; the run ends at the next home game. The
+code stays in the ingest-data boundary and does not infer any scoring-model or
+risk judgment.
 
 **Now true:** `team_schedule` alone is sufficient to derive the required density
 facts without consulting the availability model, opponent context, or any
 non-schedule source. The helper exports a stable `ScheduleDensityRecord` and
 supports the common `build_schedule_density` / `team_schedule_density` /
 `schedule_density` call patterns. After rebasing onto refresh-lineage migration
-`0005`, the pinned backend Code gate passes: Ruff, formatting, strict mypy, the
-secret scan, 433 default tests, all 7 schedule tests, and SQLite migration
-upgrade/check/downgrade.
+`0005`, callers must provide that cohort's `schedule_version` and timezone-aware
+`schedule_refreshed_at`; every density row preserves both values for downstream
+cohort checks. Tests pin the opponent-relative rest differential and a road trip
+that continues across an off-day rather than silently treating rest as a return
+home. Against the current `main`, the pinned backend Code gate passes Ruff,
+formatting, strict mypy, the secret scan, 441 default tests, all 8 schedule
+tests, and SQLite migration upgrade/check/downgrade.
 
 **Could not verify:** No Postgres service or live NBA schedule request was
-available in this environment. No downstream availability-model claims are made
-from these numbers yet.
+available in this environment. The schedule records expose consecutive
+away-game runs and opponent IDs, but the calendar alone cannot prove where a
+team physically spent an off-day. No downstream availability-model claims are
+made from these numbers yet.
 
 **Next:** `quant` can consume these density facts once the schedule facts are in
 place; no extra schedule-context work should be folded into this Phase 3 item.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +168,7 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
 
 
 def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:
+    refreshed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     rows = [
         TeamScheduleEntry(
             id=1,
@@ -216,16 +217,44 @@ def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> N
             opponent_team_id=6,
             season="2026-27",
             season_type=SeasonType.REGULAR,
-            game_date=date(2026, 10, 19),
+            game_date=date(2026, 10, 20),
+            is_home=False,
+        ),
+        TeamScheduleEntry(
+            id=6,
+            team_id=3,
+            game_id=99,
+            opponent_team_id=8,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 14),
+            is_home=True,
+        ),
+        TeamScheduleEntry(
+            id=7,
+            team_id=3,
+            game_id=102,
+            opponent_team_id=42,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 16),
             is_home=True,
         ),
     ]
 
-    density = build_schedule_density(rows)
-    by_date = {row.game_date: row for row in density}
+    density = build_schedule_density(
+        rows,
+        schedule_version="schedule-v1",
+        schedule_refreshed_at=refreshed_at,
+    )
+    team_density = [row for row in density if row.team_id == 42]
+    by_date = {row.game_date: row for row in team_density}
 
+    assert {row.schedule_version for row in density} == {"schedule-v1"}
+    assert {row.schedule_refreshed_at for row in density} == {refreshed_at}
     assert by_date[date(2026, 10, 16)].is_back_to_back is True
     assert by_date[date(2026, 10, 16)].rest_days == 0
+    assert by_date[date(2026, 10, 16)].rest_days_differential == -1
     assert by_date[date(2026, 10, 17)].games_in_4_days == 3
     assert by_date[date(2026, 10, 17)].is_3_in_4 is True
     assert by_date[date(2026, 10, 18)].games_in_5_days == 4
@@ -233,5 +262,23 @@ def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> N
     assert by_date[date(2026, 10, 18)].games_in_6_days == 4
     assert by_date[date(2026, 10, 18)].is_4_in_6 is True
     assert by_date[date(2026, 10, 18)].road_trip_length == 3
-    assert by_date[date(2026, 10, 18)].road_trip_structure == ("A", "A", "A")
-    assert by_date[date(2026, 10, 19)].road_trip_length == 0
+    assert by_date[date(2026, 10, 18)].road_trip_structure == (3, 4, 5)
+    assert by_date[date(2026, 10, 20)].rest_days == 1
+    assert by_date[date(2026, 10, 20)].road_trip_length == 4
+    assert by_date[date(2026, 10, 20)].road_trip_structure == (3, 4, 5, 6)
+
+
+def test_schedule_density_requires_refresh_lineage() -> None:
+    with pytest.raises(ValueError, match="schedule_version"):
+        build_schedule_density(
+            [],
+            schedule_version="",
+            schedule_refreshed_at=datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
+        )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        build_schedule_density(
+            [],
+            schedule_version="schedule-v1",
+            schedule_refreshed_at=datetime(2026, 8, 18, 12, 0),
+        )
