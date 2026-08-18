@@ -41,8 +41,8 @@ from hoops_gm.ingest.nba.schedule import (
     build_schedule_density,
     compute_schedule_density,
     parse_schedule,
-    scheduled_game_counts,
     schedule_density,
+    scheduled_game_counts,
     team_schedule_density,
 )
 

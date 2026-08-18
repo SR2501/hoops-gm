@@ -115,7 +115,11 @@ def build_schedule_density(
                 road_trip_structure: tuple[str, ...] = ()
                 current_trip = []
             else:
-                if previous is None or previous.is_home or (entry.game_date - previous.game_date).days > 1:
+                if (
+                    previous is None
+                    or previous.is_home
+                    or (entry.game_date - previous.game_date).days > 1
+                ):
                     current_trip = [entry]
                 else:
                     current_trip.append(entry)
@@ -252,9 +256,7 @@ def scheduled_game_counts(
     ]
 
 
-def _games_in_window(
-    ordered: Sequence[TeamScheduleEntry], current_date: date, days: int
-) -> int:
+def _games_in_window(ordered: Sequence[TeamScheduleEntry], current_date: date, days: int) -> int:
     start = current_date - timedelta(days=days - 1)
     return sum(1 for entry in ordered if start <= entry.game_date <= current_date)
 

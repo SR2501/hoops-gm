@@ -1294,12 +1294,14 @@ not infer any scoring-model or risk judgment.
 facts without consulting the availability model, opponent context, or any
 non-schedule source. The helper exports a stable `ScheduleDensityRecord` and
 supports the common `build_schedule_density` / `team_schedule_density` /
-`schedule_density` call patterns.
+`schedule_density` call patterns. After rebasing onto refresh-lineage migration
+`0005`, the pinned backend Code gate passes: Ruff, formatting, strict mypy, the
+secret scan, 433 default tests, all 7 schedule tests, and SQLite migration
+upgrade/check/downgrade.
 
-**Could not verify:** The targeted schedule tests pass locally on SQLite, but
-Docker/Postgres is not available in this environment, so the cross-dialect
-validation remains a CI follow-up. No downstream availability-model claims are
-made from these numbers yet.
+**Could not verify:** No Postgres service or live NBA schedule request was
+available in this environment. No downstream availability-model claims are made
+from these numbers yet.
+
 **Next:** `quant` can consume these density facts once the schedule facts are in
-place; no extra schedule-context work should be folded into this Phase 3 item.
 place; no extra schedule-context work should be folded into this Phase 3 item.
