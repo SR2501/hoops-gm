@@ -709,3 +709,24 @@ environment issue is pre-existing and unrelated to the PR changes.
 
 **Next:** Push the formatting fix and rerun CI. No follow-up code change is
 needed for either original check.
+
+---
+
+## 2026-08-18 — data-engineer — PR #6 Postgres portability follow-up
+
+**Changed:** The post-format CI run passed the original backend check
+(`95553580175`) but exposed one Postgres-only failure in the new schedule
+test. Its synthetic abbreviations (`T` plus the full NBA numeric ID) exceeded
+the existing `nba_teams.abbreviation` `VARCHAR(8)` contract; SQLite did not
+enforce that length. Changed only the test fixture to generate unique,
+eight-character abbreviations.
+
+**Now true:** The schedule test passes locally, and Ruff format, lint and mypy
+remain green. The original two failing checks are fixed; the Postgres failure
+was PR-caused by the test data and is addressed in the follow-up commit.
+
+**Could not verify:** Docker is unavailable in the local environment, so the
+native Postgres suite cannot be reproduced here. CI must confirm the
+cross-dialect fix.
+
+**Next:** Push this test-data correction and rerun the full CI workflow.

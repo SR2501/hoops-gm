@@ -93,7 +93,10 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     }
     import_teams(
         session,
-        [NbaTeamRecord(team_id, f"T{team_id}", f"Team {team_id}") for team_id in sorted(team_ids)],
+        [
+            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
+            for team_id in sorted(team_ids)
+        ],
     )
     league = League(
         name="Test league",
