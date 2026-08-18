@@ -5788,3 +5788,35 @@ and cannot import production. This is not merge approval.
 native Postgres runs to pass, and return the exact resulting head to the
 independent reviewer. Keep `csv-importer` blocked on real-derived vendor
 evidence regardless of Code-gate status.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 final integration evidence
+
+**Changed:** Published review-corrected code head `50d5cc5` after restacking on
+main `875d40e`. GitHub runs `32159332778` and `32159336827` passed every
+configured blocking job, including both native Postgres full-suite jobs and
+both migration-from-empty jobs. An independent exact-head review then verified
+the transformed-value finiteness guard, surplus-cell rejection and row
+accounting, and byte-for-byte preservation of the merged-main handoff prefix;
+it found no new high-confidence code defect.
+
+**Now true:** PR #12's Code gate and all configured repository Adapter jobs are
+green on the reviewed code. Migration `0010` follows the injury-report `0009`
+with one Alembic head. ADR-002 production/availability separation, ADR-008
+terminal-output exclusion, exact-byte and immutable transformation lineage,
+fail-closed identity handling, and exact-output reconciliation remain intact.
+No merge or self-approval occurred.
+
+**Could not verify:** The projection-specific Adapter gate remains unmet despite
+green repository Adapter jobs. No privacy-safe fixture derived from a real
+FantasyPros, Hashtag, or Basketball Monster export exists, and no
+projection-specific live smoke exists. Consequently those vendor profiles
+remain unverified and cannot import production. This known evidence gap keeps
+`csv-importer` blocked and PR #12 not ready to merge.
+
+**Next:** The coordinator should retain the Adapter-gate block until a real
+vendor export is manually verified, reduced to privacy-safe recorded evidence,
+and paired with an offline contract test and loud live-smoke path. Any eventual
+merge decision requires independent review; this entry is only a readiness
+report.
