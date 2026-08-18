@@ -29,6 +29,7 @@ from hoops_gm.db.models.enums import (
     MatchupStatus,
     ParticipationOutcome,
     PlayerStatus,
+    RefreshArtifactType,
     RosterStatus,
     ScoringType,
     SeasonType,
@@ -48,6 +49,7 @@ from hoops_gm.db.models.league import (
     ScoringPeriod,
     Transaction,
 )
+from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog, PlayerSeasonStat
@@ -82,6 +84,8 @@ __all__ = [
     "PlayerParticipation",
     "PlayerSeasonStat",
     "PlayerStatus",
+    "RefreshArtifactType",
+    "RefreshRun",
     "RosterEntry",
     "RosterSlot",
     "RosterStatus",

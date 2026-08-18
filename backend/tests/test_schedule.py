@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
+from hoops_gm.db.lineage import current_refresh
+from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.ingest.errors import SourceContractError
@@ -125,3 +127,40 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     assert session.scalars(select(TeamScheduleEntry)).all()
     assert len(counts) == 6
     assert {row.games for row in counts} == {1}
+
+
+def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session: Any) -> None:
+    """The schedule refresh registry is a side effect of ``import_schedule``.
+
+    A re-import that changes nothing must not invent a new schedule cohort:
+    downstream ``schedule_version`` stamps (``schedule_context.py``) would
+    otherwise go stale for no reason every time the importer merely confirms
+    what it already knew.
+    """
+    result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
+    team_ids = {
+        team_id
+        for record in result.games
+        for team_id in (record.home_nba_team_id, record.away_nba_team_id)
+    }
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
+            for team_id in sorted(team_ids)
+        ],
+    )
+
+    import_schedule(session, result.games)
+    first_run = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    assert first_run is not None
+    assert first_run.season == "2026-27"
+    assert first_run.summary["team_schedule_rows"] == 20
+
+    import_schedule(session, result.games)
+    second_run = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    assert second_run is not None
+
+    assert second_run.id == first_run.id, "identical facts must not open a new cohort"
+    assert second_run.version == first_run.version
+    assert second_run.refreshed_at >= first_run.refreshed_at

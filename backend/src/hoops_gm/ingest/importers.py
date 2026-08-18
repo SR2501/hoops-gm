@@ -18,12 +18,14 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import content_fingerprint, record_refresh
 from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
     ExternalSource,
     FieldEvidence,
     GameStatus,
     MatchMethod,
+    RefreshArtifactType,
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
@@ -386,7 +388,45 @@ def import_schedule(session: Session, records: Sequence[ScheduleGameRecord]) -> 
                 entry.is_home = is_home
                 counts.updated += 1
     session.flush()
+    _register_schedule_refresh(session, records)
+    session.flush()
     return counts
+
+
+def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameRecord]) -> None:
+    """Stamp a schedule refresh cohort from the season(s) just imported.
+
+    The version is a content fingerprint over the current ``team_schedule``
+    rows for each season touched, so a re-import that changes nothing
+    converges on the same version rather than advancing "current" for no
+    reason — the same idempotency guarantee ``import_schedule`` already gives
+    its own rows, applied one level up to the refresh registry
+    ``schedule-context`` consumers (``quant``) key their own
+    ``schedule_version`` stamps against. See ``hoops_gm.db.lineage``.
+    """
+    seasons = {record.game.season for record in records}
+    for season in sorted(seasons):
+        rows = session.scalars(
+            select(TeamScheduleEntry)
+            .where(TeamScheduleEntry.season == season)
+            .order_by(TeamScheduleEntry.game_id, TeamScheduleEntry.team_id)
+        ).all()
+        if not rows:
+            continue
+        fingerprint_parts = [
+            f"{row.game_id}:{row.team_id}:{row.opponent_team_id}:"
+            f"{row.game_date.isoformat()}:{row.is_home}"
+            for row in rows
+        ]
+        version = content_fingerprint(fingerprint_parts)
+        record_refresh(
+            session,
+            artifact_type=RefreshArtifactType.SCHEDULE,
+            version=version,
+            source="nba_api:ScheduleLeagueV2",
+            season=season,
+            summary={"team_schedule_rows": len(rows)},
+        )
 
 
 def import_box_scores(session: Session, records: Sequence[PlayerBoxScoreRecord]) -> ImportCounts:

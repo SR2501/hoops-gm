@@ -666,6 +666,14 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
 
 
+### `refresh-lineage` - Recording schedule/projection/model refresh provenance
+
+- [x] **done**
+- **Depends on:** `schedule-ingest`
+
+A small `refresh_runs` registry and `/api/v1/lineage` contract recording when a schedule, projection, or model artifact was last (re)computed at a given version, and letting a downstream consumer check whether its claimed `schedule_version`/`model_version`/`projection_version` cohort is still current, stale, or unregistered. `import_schedule` stamps a content-fingerprinted schedule refresh as a side effect. Deliberately does not compute anything the registry describes — not SOS convergence (ADR-011), not p(play), not a projection blend — it only makes an existing versioning claim (ADR-009's `model_version`/`schedule_version` columns on `opponent_context`/`off_night_slates`) mechanically checkable. `quant` owns stamping its own rows consistently with what this reports as current and owns registering projection/model refreshes when those exist; this item does not modify the already-merged `schedule_context` schema.
+
+
 ### `schedule-context` - Building opponent and slate context
 
 - [ ] **pending**

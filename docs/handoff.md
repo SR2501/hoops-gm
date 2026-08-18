@@ -819,6 +819,45 @@ Added `schedule-ingest` as a dependency of `draft-recommender` and extended `tra
 
 ---
 
+## 2026-08-17 — backend — Recursive refresh lineage: schedule/projection/model cohort contract
+
+**Changed:** Added the smallest useful persistence/API contract for refresh provenance, `refresh-lineage` in the backlog. `schedule_context.py` (merged Phase 4 schema, PR #8) already stamps `opponent_context`/`off_night_slates` rows with `model_version`/`schedule_version` per ADR-009's versioning seam, but nothing recorded where those strings come from or let a consumer check whether a claimed version is still current. Added:
+
+- `RefreshArtifactType` enum (`schedule`, `projection`, `model`) and a `refresh_runs` table (`db/models/lineage.py`, migration `0005`) — a registry of when an artifact was last (re)computed at a given version, idempotent by `(artifact_type, version)` so a re-run that changes nothing does not open a new cohort. History is retained; "current" is the latest `refreshed_at` per artifact type.
+- `hoops_gm.db.lineage` — `record_refresh`, `current_refresh`, `content_fingerprint` (a stable content hash for deriving a version label from a set of rows), and `check_cohort`, which reports `"current"` / `"stale"` / `"unknown"` per claimed version without deciding whether a mismatch is fatal — that stays the caller's policy.
+- `GET /api/v1/lineage/current` and `POST /api/v1/lineage/validate` (`api/routes/lineage.py`) — the read/validate surface over the registry. An empty claim (no fields supplied) is never `accepted`; asserting nothing must not read as "everything is fine".
+- `import_schedule` now registers a schedule refresh as a side effect: the version is a content fingerprint over that season's `team_schedule` rows, so two imports of identical facts converge on the same registered version rather than advancing "current" for no reason (test: `test_schedule_import_registers_a_refresh_that_converges_on_re_import`).
+
+Explicitly out of scope, by design: this does **not** implement SOS convergence (ADR-011), p(play), or any projection/model computation. `PROJECTION` and `MODEL` artifact types are registered and checkable today but nothing writes them yet — that remains `quant`'s call under the Model gate when `gscore-engine`/`baseline-model` land. This also does not modify the already-merged `schedule_context` schema (no FK from `opponent_context.schedule_version` to this registry) — `quant` is responsible for stamping its own rows consistently with what `/api/v1/lineage/current` reports, and adding referential enforcement there is a separate, larger change deliberately not taken here to avoid speculative schema redesign.
+
+**Now true:** A downstream consumer can ask "what is the current schedule/projection/model version" and "does my claimed cohort still match" through one small, generic contract instead of trusting a free-floating string. `import_schedule`'s refresh registration is idempotent and content-derived, matching the same natural-key idempotency discipline the rest of `ingest/importers.py` already uses. 22 new tests added (21 in `test_lineage.py`, 1 in `test_schedule.py`); full backend suite (432 tests total, up from 410 before this change), ruff, ruff format, mypy strict, `alembic upgrade head` from empty, and `alembic check` (no drift) all pass locally.
+
+**Could not verify:** Native Postgres was not exercised locally (Docker unavailable, consistent with every prior handoff entry on this point); the new enum column and JSON column follow the exact pattern already proven portable elsewhere in the schema, but CI's Postgres job is the actual check. Whether a content fingerprint over `team_schedule` rows is the right granularity for a schedule cohort long-term is also unverified — it changes whenever any team's game, date, or opponent changes for that season, which is deliberately coarse; a consumer needing per-team or per-game-level staleness (rather than whole-season) is not served by this and would need a finer-grained registration, which was not built speculatively here.
+
+**For `quant`:** this registry is a `backend`-owned mechanism, not a model. It does not choose what "current" should be, does not validate that a `schedule_version`/`model_version` you stamp is *correct*, and does not implement any part of ADR-011/ADR-012. When `opponent_context`/`off_night_slates` computation exists, call `record_refresh(artifact_type=SCHEDULE, ...)` is already done for you by `import_schedule`; you additionally register your own `MODEL` refresh when the availability model version changes, and read `GET /api/v1/lineage/current` (or call `current_refresh`/`check_cohort` directly in-process) before trusting a `schedule_version` you did not just compute yourself.
+
+**Next:** `quant` should register a `MODEL` refresh the first time the availability model produces a version, and consult `check_cohort` before persisting `opponent_context` rows against a `schedule_version` it did not just observe as current. `data-engineer` should decide, when `schedule-density`/`schedule-context` are actually built, whether the whole-season fingerprint granularity here is sufficient or whether a finer-grained (per-team, per-week) version is needed — flagged above as unverified rather than assumed.
+
+---
+
+## 2026-08-17 — backend — PR #9 Postgres-only test isolation fix
+
+**Changed:** PR #9's Postgres CI job failed with `assert 'xhr' == 'cache-storage'` / `assert 'xhr' == 'manual-export'` in `test_bridge_payloads.py`. Checked first whether this branch caused it: the identical failure reproduces on the latest `main` push (PR #8, "Phase 4: schedule-context schema") — this was pre-existing, not introduced by the refresh-lineage work, and just hadn't blocked a merge before now.
+
+Root cause: `conftest.py`'s `client` fixture created the schema (`Base.metadata.create_all`) but never dropped it first. On SQLite, isolation happens for free because each test's `settings` fixture builds a URL from a unique per-test `tmp_path` — a fresh database file every time. `TEST_DATABASE_URL` (what CI's Postgres job sets) points every test at the *same* external database instead, so rows from an earlier `client`-based test in the same module persist into the next one. `test_bridge_payloads.py`'s cache-storage and manual-export tests each run an unfiltered `session.scalar(select(BridgePayload))` and got back a leftover `source="xhr"` row written earlier in the file by `test_payload_persists_exact_envelope_and_raw_diagnostic_fields`, instead of the row they had just inserted.
+
+Fixed by adding `Base.metadata.drop_all(...)` before `create_all` in the `client` fixture — the same guarantee the `database` fixture already gives `session`-based tests. Deliberately did not add a matching teardown drop: `test_readiness_degrades_when_the_database_is_unreachable` intentionally swaps `app.state.database` for an unreachable one mid-test, and a teardown drop against that engine raised instead of cleaning up when tried. Every test already drops before its own use, which is sufficient.
+
+**Now true:** PR #9's full CI is green, including both Postgres jobs (~2m20s–2m35s each). Full backend suite (432 tests), ruff, ruff format, and mypy strict all pass locally. Scope was kept to the isolation fix only — no changes to the lineage contract itself, no broader test-suite audit.
+
+**Could not verify:** Whether any other `client`-fixture test elsewhere in the suite was silently relying on the old, unisolated behavior (accumulating rows across tests) rather than merely being unaffected by it — none surfaced as a new failure locally or in CI, but that is absence of evidence rather than a proof of absence. Docker remains unavailable locally, so the fix's effect on Postgres was verified only through CI, not a local run against real Postgres.
+
+**Next:** No further action expected on this specific fix. If another Postgres-only failure surfaces in a `client`-based test elsewhere, the same class of bug (unfiltered query against a shared, un-isolated Postgres test database) is the first thing to check.
+
+---
+
+---
+
 ## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets
 
 **Changed:** The owner added an important operational consequence to the accepted weekly schedule decision: In-Season Tournament and All-Star-break periods are often sparse across the league, so schedule value is relative to both a team's normal weekly distribution and the league-wide period baseline. Updated ADR-012, the draft plan, and `trade-evaluator`'s backlog scope. Trade analysis must surface schedule-driven targets and high-value weeks, not reduce schedule to a generic rest-of-season adjustment.
