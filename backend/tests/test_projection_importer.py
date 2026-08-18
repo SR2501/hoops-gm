@@ -908,6 +908,50 @@ def test_manual_alias_promotes_an_otherwise_unmatched_player(
     assert projection.player_id == player.id
 
 
+def test_manual_alias_and_canonical_name_collision_requires_review(
+    session: Session,
+) -> None:
+    player = seed_player(
+        session,
+        nba_id=16,
+        name="Robert Williams III",
+        team_abbreviation="POR",
+        position="C",
+    )
+    alias_key = normalize_name("The Timelord").key
+    session.add(
+        PlayerExternalId(
+            player_id=player.id,
+            source=ExternalSource.MANUAL,
+            current_for_source=ExternalSource.MANUAL.value,
+            external_id=alias_key,
+            external_name="The Timelord",
+            normalized_name=alias_key,
+            confidence=1.0,
+            match_method=MatchMethod.MANUAL_OVERRIDE,
+            is_manual_override=True,
+            name_evidence=FieldEvidence.AGREE,
+        )
+    )
+    session.flush()
+
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(b"player_name,points_per_game\nRobert Williams III,10.0\nThe Timelord,10.0\n"),
+    )
+
+    assert outcome.identity_report.accepted == []
+    assert len(outcome.identity_report.needs_review) == 2
+    assert all(
+        resolution.reason.startswith("collision:")
+        for resolution in outcome.identity_report.needs_review
+    )
+    assert session.query(Projection).count() == 0
+
+
 def test_reimporting_identical_bytes_is_idempotent(seeded_players: Session) -> None:
     session = seeded_players
     csv_bytes = load_bytes("manual_sample.csv")

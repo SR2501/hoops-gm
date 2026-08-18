@@ -580,7 +580,61 @@ def resolve_projection_identities(
                     reason="manual crosswalk override",
                 )
             )
-    return report
+    return _reject_post_override_target_collisions(report)
+
+
+def _reject_post_override_target_collisions(
+    report: ResolutionReport,
+) -> ResolutionReport:
+    by_target: dict[str, list[Resolution]] = {}
+    for resolution in report.accepted:
+        if resolution.best is not None:
+            by_target.setdefault(resolution.best.target.key, []).append(resolution)
+
+    collisions = {
+        target_key: resolutions
+        for target_key, resolutions in by_target.items()
+        if len(resolutions) > 1
+    }
+    if not collisions:
+        return report
+
+    adjusted = ResolutionReport(
+        needs_review=list(report.needs_review),
+        unmatched=list(report.unmatched),
+    )
+    for resolution in report.accepted:
+        if resolution.best is None:
+            adjusted.needs_review.append(
+                replace(
+                    resolution,
+                    accepted=False,
+                    reason="accepted resolution has no target; resolve manually",
+                )
+            )
+            continue
+        competitors = collisions.get(resolution.best.target.key)
+        if competitors is None:
+            adjusted.accepted.append(resolution)
+            continue
+        other_names = [
+            candidate.source_record.raw_name
+            for candidate in competitors
+            if candidate is not resolution
+        ]
+        adjusted.needs_review.append(
+            replace(
+                resolution,
+                accepted=False,
+                reason=(
+                    f"collision: {len(competitors)} source records claim "
+                    f"{resolution.best.target.raw_name!r} — also "
+                    f"{', '.join(repr(name) for name in other_names[:3])}. "
+                    "Resolve manually"
+                ),
+            )
+        )
+    return adjusted
 
 
 def _apply_row(projection: Projection, row: ProjectionSourceRow) -> None:
