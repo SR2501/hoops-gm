@@ -12,9 +12,9 @@ does not re-implement matching.
 Two properties matter more than the write itself:
 
 * **content-addressed versioning** — a ``projection_imports`` row is keyed by
-  the SHA-256 of the file's bytes, so re-running the same file converges onto
-  the same import rather than minting a new "version" for identical content,
-  while an updated file from the same source creates a new one.
+  source, season and the SHA-256 of the file's bytes, so re-running the same
+  file converges onto the same import rather than minting a new "version" for
+  identical content, while an updated file or a new season creates a new one.
 * **idempotent row writes** — a ``projections`` row is upserted by
   ``(projection_import_id, player_id)``, so reprocessing one import (for
   example after the crosswalk gains a new player) converges rather than
@@ -106,14 +106,17 @@ def get_or_create_projection_import(
     """Fetch the import matching this exact file's bytes, or create it.
 
     Returns ``(row, created)``. ``created`` is ``False`` when a
-    byte-identical file was already imported for this source — the natural
-    key is ``(source_id, content_sha256)``, not a counter, so an accidental
-    re-run of the same download never mints a second "version" of nothing.
+    byte-identical file was already imported for this source and season — the
+    natural key is ``(source_id, season, content_sha256)``, not a counter, so
+    an accidental re-run of the same download never mints a second "version"
+    of nothing while the same bytes cannot leak an earlier season into a new
+    import.
     """
     checksum = _content_checksum(content)
     existing = session.scalar(
         select(ProjectionImport).where(
             ProjectionImport.source_id == source.id,
+            ProjectionImport.season == season,
             ProjectionImport.content_sha256 == checksum,
         )
     )

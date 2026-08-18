@@ -157,7 +157,10 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_projection_imports")),
         sa.UniqueConstraint(
-            "source_id", "content_sha256", name="uq_projection_imports_source_checksum"
+            "source_id",
+            "season",
+            "content_sha256",
+            name="uq_projection_imports_source_season_checksum",
         ),
     )
     op.create_index(

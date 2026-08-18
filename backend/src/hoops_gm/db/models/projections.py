@@ -102,11 +102,14 @@ class ProjectionSource(IntPk, TimestampMixin, Base):
 class ProjectionImport(IntPk, TimestampMixin, Base):
     """One versioned snapshot of a source's CSV, imported at a point in time.
 
-    Deliberately never overwritten in place. ``content_sha256`` is the
-    natural key a re-run converges on — the same byte-identical file always
-    resolves to the same import row — so a source publishing an *updated*
-    file creates a new row rather than mutating history out from under
-    whatever already blended the old one.
+    Deliberately never overwritten in place. ``(source_id, season,
+    content_sha256)`` is the natural key a re-run converges on — the same
+    byte-identical file for the same source and season resolves to the same
+    import row — so a source publishing an *updated* file creates a new row
+    rather than mutating history out from under whatever already blended the
+    old one. Season is part of the key because many CSVs do not embed it in
+    their bytes; reusing one file as a template for a later season must not
+    silently return the earlier season's import.
 
     Row counts are the import's own audit trail: ``row_count`` is every data
     row the file contained, and ``matched_count`` / ``needs_review_count`` /
@@ -121,7 +124,10 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     __tablename__ = "projection_imports"
     __table_args__ = (
         UniqueConstraint(
-            "source_id", "content_sha256", name="uq_projection_imports_source_checksum"
+            "source_id",
+            "season",
+            "content_sha256",
+            name="uq_projection_imports_source_season_checksum",
         ),
         Index("ix_projection_imports_source_season", "source_id", "season"),
         CheckConstraint("row_count >= 0", name="row_count_non_negative"),

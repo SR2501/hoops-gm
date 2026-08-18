@@ -370,6 +370,31 @@ def test_import_writes_projections_only_for_accepted_matches(seeded_players: Ses
     assert "Unmatched Player" in csv_report
 
 
+def test_ambiguous_player_is_reported_and_never_imported(session: Session) -> None:
+    seed_player(session, nba_id=10, name="Jordan Example", team_abbreviation="BOS", position="G")
+    seed_player(session, nba_id=11, name="Jordan Example", team_abbreviation="LAL", position="G")
+
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_text="player_name,points_per_game\nJordan Example,20.0\n",
+    )
+
+    assert outcome.identity_report.accepted == []
+    assert len(outcome.identity_report.needs_review) == 1
+    assert outcome.identity_report.needs_review[0].reason.startswith("ambiguous:")
+    assert outcome.projection_import.needs_review_count == 1
+    assert session.query(Projection).count() == 0
+    assert (
+        session.query(PlayerExternalId)
+        .filter(PlayerExternalId.source == ExternalSource.MANUAL)
+        .count()
+        == 0
+    )
+
+
 def test_reimporting_identical_bytes_is_idempotent(seeded_players: Session) -> None:
     session = seeded_players
     csv_text = load("manual_sample.csv")
@@ -397,6 +422,38 @@ def test_reimporting_identical_bytes_is_idempotent(seeded_players: Session) -> N
     assert len(imports) == 1
     projections = session.query(Projection).all()
     assert len(projections) == 3  # not duplicated by the second pass
+
+
+def test_identical_bytes_for_a_new_season_create_a_distinct_import(
+    seeded_players: Session,
+) -> None:
+    session = seeded_players
+    csv_text = load("manual_sample.csv")
+
+    first = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_text=csv_text,
+    )
+    second = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2027-28",
+        csv_text=csv_text,
+    )
+
+    assert second.import_created is True
+    assert first.projection_import.id != second.projection_import.id
+    assert second.projection_import.season == "2027-28"
+    assert {
+        projection.season
+        for projection in session.query(Projection).filter_by(
+            projection_import_id=second.projection_import.id
+        )
+    } == {"2027-28"}
 
 
 def test_an_updated_file_creates_a_new_versioned_import(seeded_players: Session) -> None:
