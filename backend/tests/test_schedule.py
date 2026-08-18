@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import check_cohort, current_refresh
+from hoops_gm.db.lineage import check_cohort, current_refresh, record_refresh
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
@@ -20,7 +20,6 @@ from hoops_gm.ingest.importers import import_schedule, import_teams
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     NbaTeamRecord,
-    ScheduledGameCount,
     build_schedule_density,
     parse_schedule,
     parse_teams,
@@ -127,13 +126,17 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     first = import_schedule(session, result.games)
     second = import_schedule(session, result.games)
     counts = scheduled_game_counts(session, league_id=league.id, season="2026-27")
+    refresh = current_refresh(session, RefreshArtifactType.SCHEDULE)
 
     assert first.created == 30
     assert second.updated == 30
+    assert refresh is not None
     assert session.scalars(select(TeamScheduleEntry)).all()
     assert len(counts) == len(team_ids)
     assert sum(row.games for row in counts) == 6
     assert {row.games for row in counts} == {0, 1}
+    assert {row.schedule_version for row in counts} == {refresh.version}
+    assert {row.schedule_refreshed_at for row in counts} == {refresh.refreshed_at}
 
 
 def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session: Any) -> None:
@@ -309,29 +312,63 @@ def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
         teams[1],
         season_type=SeasonType.PLAYOFFS,
     )
+    refreshed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        version="schedule-v1",
+        source="test",
+        season="2026-27",
+        refreshed_at=refreshed_at,
+    )
     session.flush()
 
     primary = playoff_scheduled_game_counts(session, league_id=leagues[0].id, season="2026-27")
 
-    assert primary == [
-        ScheduledGameCount(7, teams[0].id, 2),
-        ScheduledGameCount(7, teams[1].id, 1),
-        ScheduledGameCount(7, teams[2].id, 1),
-        ScheduledGameCount(7, teams[3].id, 0),
-        ScheduledGameCount(8, teams[0].id, 1),
-        ScheduledGameCount(8, teams[1].id, 2),
-        ScheduledGameCount(8, teams[2].id, 1),
-        ScheduledGameCount(8, teams[3].id, 0),
-        ScheduledGameCount(9, teams[0].id, 0),
-        ScheduledGameCount(9, teams[1].id, 0),
-        ScheduledGameCount(9, teams[2].id, 0),
-        ScheduledGameCount(9, teams[3].id, 0),
+    assert [(row.period_number, row.team_id, row.games) for row in primary] == [
+        (7, teams[0].id, 2),
+        (7, teams[1].id, 1),
+        (7, teams[2].id, 1),
+        (7, teams[3].id, 0),
+        (8, teams[0].id, 1),
+        (8, teams[1].id, 2),
+        (8, teams[2].id, 1),
+        (8, teams[3].id, 0),
+        (9, teams[0].id, 0),
+        (9, teams[1].id, 0),
+        (9, teams[2].id, 0),
+        (9, teams[3].id, 0),
     ]
+    assert {row.schedule_version for row in primary} == {"schedule-v1"}
+    assert {row.schedule_refreshed_at for row in primary} == {refreshed_at}
+    assert all(
+        row.schedule_refreshed_at.tzinfo is not None
+        and row.schedule_refreshed_at.utcoffset() is not None
+        for row in primary
+    )
     assert {
         row.period_number
         for row in playoff_scheduled_game_counts(session, league_id=leagues[1].id, season="2026-27")
     } == {20}
     assert playoff_scheduled_game_counts(session, league_id=leagues[2].id, season="2026-27") == []
+
+
+def test_scheduled_game_counts_fail_without_current_schedule_lineage(session: Session) -> None:
+    with pytest.raises(RuntimeError, match="no current schedule refresh"):
+        scheduled_game_counts(session, league_id=1, season="2026-27")
+
+
+def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session) -> None:
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        version="schedule-v1",
+        source="test",
+        season="2025-26",
+    )
+
+    with pytest.raises(RuntimeError, match="not '2026-27'"):
+        scheduled_game_counts(session, league_id=1, season="2026-27")
 
 
 def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:

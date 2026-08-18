@@ -2460,23 +2460,32 @@ report back to the reviewing session. Still not merged, not self-approved.
 complete scoring-period x active-NBA-team grid and added
 `playoff_scheduled_game_counts` as the typed playoff-only entry point. It reads
 the league-scoped `ScoringPeriod.is_playoff` flag and counts `team_schedule`
-rows inside the period's inclusive date boundaries. It does not create another
-week table or compute opponent quality, schedule strength, projections,
-availability, or recommendation policy.
+rows inside the period's inclusive date boundaries. Every returned row carries
+the current registered schedule version and timezone-aware refresh timestamp;
+the query fails rather than return unversioned facts when no matching-season
+schedule refresh exists. It does not create another week table or compute
+opponent quality, schedule strength, projections, availability, or
+recommendation policy.
 
 **Now true:** Draft and trade consumers can request an ordered row for every
 active NBA team in every flagged fantasy playoff scoring period, including
 explicit zero-game teams and wholly empty periods. Period boundaries are
 inclusive, schedule rows from other seasons and NBA season-type cohorts are
 excluded, another league's period flags cannot leak into the result, and a
-league with no flagged playoff periods returns an empty list.
+league with no flagged playoff periods returns an empty list. Every non-empty
+result is stamped from exactly one current schedule refresh cohort.
 
 **Could not verify:** The 2026-27 Fantrax league's actual playoff scoring periods
 have not been imported, so this verifies the query against explicit league
 fixtures rather than claiming which real dates or period numbers are playoffs.
 The six unresolved NBA Cup schedule games remain absent until the NBA assigns
 their teams, as recorded by `schedule-ingest`; counts will reflect the current
-schedule refresh until that source changes.
+schedule refresh until that source changes. The schedule refresh fingerprint
+versions `team_schedule`, not league settings: changing `ScoringPeriod`
+boundaries or `is_playoff` currently does not advance that version.
+`league-settings-ingest` must add settings/scoring-period lineage and cascade it
+to this grid before a consumer may claim the schedule version alone captures
+future rules changes.
 
 **Next:** `draft-recommender` and `trade-evaluator` should consume this raw count
 contract directly. `quant` owns the later Model-gated value-weighted

@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.models.enums import SeasonType
+from hoops_gm.db.lineage import current_refresh
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
@@ -52,6 +53,8 @@ class ScheduleParseResult:
 class ScheduledGameCount:
     """One team's observed game count inside one scoring period."""
 
+    schedule_version: str
+    schedule_refreshed_at: datetime
     period_number: int
     team_id: int
     games: int
@@ -300,6 +303,17 @@ def scheduled_game_counts(
     created.
     """
 
+    refresh = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    if refresh is None:
+        raise RuntimeError("no current schedule refresh is registered")
+    if refresh.season != season:
+        raise RuntimeError(
+            f"current schedule refresh is for season {refresh.season!r}, not {season!r}"
+        )
+    if refresh.refreshed_at.tzinfo is None or refresh.refreshed_at.utcoffset() is None:
+        raise RuntimeError("current schedule refresh timestamp is not timezone-aware")
+    refreshed_at_utc = refresh.refreshed_at.astimezone(UTC)
+
     statement: Select[tuple[int, int, int]] = (
         select(
             ScoringPeriod.period_number,
@@ -330,7 +344,13 @@ def scheduled_game_counts(
         statement = statement.where(ScoringPeriod.is_playoff.is_(True))
 
     return [
-        ScheduledGameCount(period_number, team_id, games)
+        ScheduledGameCount(
+            refresh.version,
+            refreshed_at_utc,
+            period_number,
+            team_id,
+            games,
+        )
         for period_number, team_id, games in session.execute(statement)
     ]
 
