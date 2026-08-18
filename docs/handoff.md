@@ -664,6 +664,40 @@ against the live-data JSON path in this task.
 **Next:** `data-engineer` should obtain a permitted recorded fixture or an
 approved source representation before implementing the schedule parser, then
 add an offline contract test and a loud live smoke test under the Adapter gate.
+
+---
+
+## 2026-08-17 — bridge — ADR-010 browser-side local pairing
+
+**Changed:** Added the explicit Tampermonkey **Pair hoops-gm bridge** menu
+command and its `GM_registerMenuCommand` grant. Invoking it fetches a
+loopback-only one-time pairing code without sending `X-Bridge-Secret`, displays
+the code in a browser alert, prompts the owner to paste it, and exchanges it in
+`X-Hoops-GM-Pairing-Code`. The returned secret is shape-validated and stored
+only through Tampermonkey storage; codes and secrets are never sent to the
+console. Pairing is never triggered during page load. Existing authenticated
+health, handshake, and payload transport dynamically read the stored secret, so
+capture behavior resumes after successful pairing without a reload.
+
+**Now true:** The transport has explicit unauthenticated pairing methods and
+does not send a bridge-secret header on either pairing request. Tests inject
+menu registration, prompt, alert, request, and storage dependencies; they cover
+manual-only execution, successful storage, invalid/used-code handling, and an
+invalid pairing response. The root and userscript READMEs document the exact
+owner flow and the need to rebuild **and reinstall/update** the generated script.
+
+**Verified:** `npm --prefix userscript test` passes (29 tests) and
+`npm --prefix userscript run build` succeeds. An independent `safety` review
+found no additional secret exposure or automatic trigger and confirmed this
+authentication pairing work is outside the action write path, so the Automation
+gate's dry-run transcript is not applicable.
+
+**Could not verify:** `python -m pytest backend/tests/test_bridge_pairing.py -q`
+could not start any test because the only available Python is 3.14 and the
+installed `pytest-asyncio` invokes Python 3.16-deprecated
+`asyncio.get_event_loop_policy()` under warnings-as-errors. No compatible
+project virtual environment/interpreter exists on this machine; the userscript
+contract tests do run.
 `quant` can use the eventual per-team schedule facts only after the parser
 reconciles the row count and time semantics; the 403 risk should remain tracked
 separately for live scoring.
@@ -745,3 +779,127 @@ Postgres-only fixture defect was also PR-caused and is closed.
 is unavailable; GitHub Actions supplied the cross-dialect verification.
 
 **Next:** No follow-up is required for these checks.
+## 2026-08-17 — architect — ADR-011: strength of schedule sequenced to Phase 5, not Phase 3/4
+
+**Changed:** The owner flagged that strength of schedule (SOS) is missing from the plan entirely, and that it can't be computed until team/player projections exist. Drafted ADR-011 to lock the scope split and sequencing before anyone conflates it with the `schedule-context`/`opponent_context` work already in flight in a sibling session — both consume `team_schedule` and are "about the schedule," but `opponent_context` is defensive quality conditioning `p(play)` (Phase 4, availability), while SOS is opponent quality weighted by fantasy *value* (Phase 5, valuation), and the latter cannot exist before a real valuation does without inventing a placeholder that gets thrown away later — the exact aggregate-contamination failure ADR-008 already names.
+
+Added `strength-of-schedule` to `docs/plan.md` Phase 5 and `docs/backlog.md` (depends on `schedule-context`, `gscore-engine`), and noted on `playoff-schedule`'s backlog entry that its Phase 3 pass is game-count-only — a value-weighted second pass happens later under `strength-of-schedule`, so it isn't silently "finished" twice under different names.
+
+**Now true:** SOS has a named backlog item, a stated dependency chain, and an explicit non-goal (do not build early on a placeholder value) that the sibling `schedule-context` session and future `quant` work can point to instead of re-deriving the boundary.
+
+**Could not verify:** Which SOS formulation (opponent record, per-category defensive rank, pace-adjusted, recency-weighted) actually predicts realized value — deliberately left unresolved in the ADR pending a backtest, per the Model gate.
+
+**Next:** Owner to accept or reject ADR-011. `quant` should treat `strength-of-schedule` as blocked until `gscore-engine` exists; no early work should assume a specific formulation.
+
+---
+
+## 2026-08-17 — architect — ADR-012: per-week game distribution as a draft/trade-facing view
+
+**Changed:** The owner flagged a third, distinct schedule concern: per-week game *count* distribution (front vs. back-loaded team schedules across the season) matters for draft and trade decisions independent of both `schedule-density` (calendar arithmetic) and `strength-of-schedule`/ADR-011 (opponent quality). Drafted ADR-012. Unlike SOS, this needs no valuation and no opponent judgment at all — it's a raw count already available the moment `schedule-ingest` lands — so unlike SOS it does NOT wait for Phase 5. The actual gap: nothing currently consumes it early enough. `schedule-ui` exists but is gated behind the full `availability-model` and framed as availability-adjusted, not raw draft-prep; `draft-recommender` and the auction items had no dependency on schedule data at all.
+
+Added `schedule-ingest` as a dependency of `draft-recommender` and extended `trade-evaluator`'s existing schedule-impact scope (it already depended on `schedule-ingest`) to explicitly cover per-week shape, not just fantasy-playoff-week strength, in `docs/backlog.md` and `docs/plan.md`.
+
+**Now true:** Three schedule concerns are now distinguished by name and phase rather than risking convergence into one under-specified "schedule stuff": `schedule-density` (Phase 3, calendar facts), `strength-of-schedule` (Phase 5, opponent-quality weighted, needs valuation), and per-week game-count distribution (available from Phase 3, feeds draft/trade directly, ADR-012). `draft-recommender` has a schedule dependency where it previously had none.
+
+**Could not verify:** Whether per-week game-count timing carries meaningful marginal fantasy value once `strength-of-schedule` exists, or whether it's dominated by it — the ADR's own reversal condition, deferred to `quant` on evidence rather than decided now.
+
+**Next:** Owner to accept or reject ADR-012. No implementation is scheduled yet — `draft-recommender` and `trade-evaluator` are both later-phase items; this only fixes the dependency graph so the work isn't skipped when their time comes.
+
+---
+
+## 2026-08-17 — owner, architect — ADR-011 and ADR-012 accepted; weekly schedule volume elevated
+
+**Changed:** The owner accepted ADR-011 (strength of schedule sequencing) and ADR-012 (per-week game distribution). The owner clarified that weekly game-count variance is not merely a marginal tiebreaker: a player can have two games in one H2H period and five in another, and for top players that volume difference can swing the matchup. ADR-012 now treats the weekly schedule profile as a first-class draft, trade, and weekly-management input while keeping it separate from long-run player valuation and from opponent-quality SOS.
+
+**Now true:** ADR-011 and ADR-012 are accepted. The schedule work has three explicit consumers with distinct meanings: calendar/density facts, value-weighted strength of schedule after projections, and weekly game-volume management. The plan and backlog now require the weekly profile to expose light/heavy H2H periods, including two-game/five-game weeks and front/back-loaded team schedules, rather than burying it as a tie-breaker.
+
+**Could not verify:** The exact decision threshold for when schedule fit should override a value difference in draft or trade recommendations. That is a product/model calibration question for `quant`; the raw weekly counts are facts, but the recommendation policy must be tested against held-out H2H outcomes.
+
+**Next:** `schedule-density` should preserve weekly counts as a stable, queryable output rather than recomputing them in UI code. Later `draft-recommender`, `trade-evaluator`, and weekly-management surfaces must consume the same schedule-grid contract; `quant` should calibrate recommendation thresholds instead of hard-coding a universal “two games is bad/five is good” rule.
+
+---
+
+## 2026-08-17 — owner — Local browser bridge paired
+
+**Changed:** The owner successfully completed the one-time Tampermonkey pairing
+command against the locally running backend.
+
+**Now true:** The userscript and backend share a locally provisioned bridge
+secret without putting it in source control or asking the owner to edit `.env`.
+The protected local secret file exists and the backend health endpoint remains
+available.
+
+**Could not verify:** No Fantrax payload has reached `bridge_payloads` yet; the
+table exists and currently contains zero rows. Pairing proves the authentication
+exchange, not read-only `/fxpa/req` capture or persistence.
+
+**Next:** With the paired script active, navigate normally between Fantrax
+Players, Roster, and League pages, then check that a captured payload appears
+in `bridge_payloads`.
+
+---
+
+## 2026-08-17 — owner, architect — Historical rules baseline and mock-data block
+
+**Changed:** Recorded the owner-provided 2025-26 Fantrax rules as
+`docs/league/2025-26-rules-baseline.md`, explicitly marked historical rather
+than current. Updated `blind-mocks` and R37 after the owner found no live mock
+site, including no auction mock lobby.
+
+**Now true:** The project has a concrete provisional baseline for 10-team,
+14-player, 9-cat, daily per-player-lock auction-league behavior, including a
+$200 auction budget and the historical waiver timing. The record exposes a
+material conflict: the Fantrax export says four weekly claims while written
+rules say three. The mock corpus is accurately marked externally blocked; no
+simulated clearing prices will be laundered into market evidence.
+
+**Could not verify:** Any of these settings for 2026-27, including league size,
+weekly pickup cap, waiver time, playoff dates, and auction clock. The current
+Fantrax settings remain the required source of truth. When mock lobbies will
+open, and whether a free AAV source exists, are also unknown.
+
+**Next:** `league-settings-ingest` must reconcile the current Fantrax settings
+against this baseline. Resume observation-only auction mocks as soon as a real
+lobby becomes available; until then, pursue published AAV sources without
+mixing them into production or availability layers.
+
+---
+
+## 2026-08-17 — bridge — page-world capture bridge for Chromium Tampermonkey
+
+**Changed:** Replaced capture auto-installation from Tampermonkey's isolated
+world with a minimal page-world observer. The observed zero-row result after a
+successful pairing is consistent with the original isolated-world
+`window.fetch`/`XMLHttpRequest` patches not affecting Fantrax's page-world
+globals in Brave and Edge. The new self-contained hook is injected with
+Tampermonkey `GM_addElement` (the CSP-safe path), observes only exact
+`fantrax.com`/`www.fantrax.com` `/fxpa/req` responses, and emits a narrow
+response-only `postMessage` record. The isolated-world receiver verifies
+same-window source, exact current origin, per-load channel, exact schema and
+primitive fields, repeats the exact endpoint filter, then uses the existing
+GM-privileged authenticated transport. No secret, backend address, request
+body, headers, cookies, overlay, action, or write code enters page world.
+Compatible managers without `GM_addElement` use a temporary-script fallback;
+if site CSP rejects it, capture warns rather than claiming success. Updated
+the userscript README with this root cause, CSP/execution-mode behavior, and
+an owner-run live check.
+
+**Now true:** Page-world fetch and XHR hooks, source/origin/channel/schema
+validation, malformed/cross-origin/lookalike event rejection, and response
+field minimization are unit tested. `npm --prefix userscript test` passes all
+32 tests and `npm --prefix userscript run build` succeeds. Forwarding remains
+entirely in Tampermonkey's isolated GM context, and the only added grant is
+`GM_addElement`.
+
+**Could not verify:** A real Brave/Edge/Tampermonkey page-world injection and
+payload persistence run has not been performed in this session. The owner
+must rebuild/update the script, reload the Fantrax tab, visit Players/Roster/
+League, and check `bridge_payloads`; this entry does not claim that live check
+has passed. The temporary inline-script fallback can be CSP-blocked by design,
+so a browser lacking `GM_addElement` must report its non-sensitive warning.
+
+**Next:** Owner repeats the documented live capture check and reports only
+row-count/result plus non-sensitive Tampermonkey warning text if it fails.
+Bridge should diagnose any remaining browser-specific injection behavior from
+that result; no write-path work is involved, so the Automation gate remains
+out of scope.

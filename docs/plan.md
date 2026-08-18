@@ -576,6 +576,7 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - `gscore-engine` — G-score absorbing both production and availability variance. Default for H2H.
 - `risk-adjusted-valuation` — Durability discount/premium; separate total-value and per-game-value views.
 - `punt-builds` — Punt-config modelling, recomputed rankings, comparison, fit-to-my-roster scoring.
+- `strength-of-schedule` — Per-team/per-week SOS weighted by opponent quality from `opponent_context`, expressed relative to league average. Deliberately sequenced here rather than Phase 3/4 because it needs a settled valuation to weight against (ADR-011). Feeds `draft-recommender`, `games-cap-tracker`, `playoff-schedule` (second pass) and draft-day `auction-values` using projected rather than known opponent quality.
 
 **Phase 6 — Live scorecard** · owner: `backend`, `frontend`
 - `live-poller` — `cdn.nba.com` poller, active only during live games, ~5s interval, with backoff.
@@ -590,7 +591,7 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 **Phase 8 — Draft** · owner: `quant`, `frontend`
 - `draft-format-abstraction` — Snake and auction as first-class formats alongside scoring profiles, so neither is a special case bolted onto the other.
 - `draft-tracker` — Live draft state for both formats, pick/nomination board, roster construction view.
-- `draft-recommender` — Snake: VOR against pick slot, ADP value and reach, positional scarcity, tier cliffs — with durability, shutdown and handcuff flags.
+- `draft-recommender` — Snake: VOR against pick slot, ADP value and reach, positional scarcity, tier cliffs — with durability, shutdown and handcuff flags. Per ADR-012, also exposes the first-class per-week game-count profile (including two-game/five-game weeks and front/back-loaded schedules) sourced directly from `schedule-ingest`, not hidden inside long-run valuation.
 - `auction-values` — Risk-adjusted G-score → dollar values via VOR scaled to the league budget pool.
 - `auction-inflation` — Live inflation tracking as money leaves the board; continuously restated prices for the remaining pool.
 - `auction-budget-manager` — Max bid net of the $1-per-unfilled-slot reserve, budget burn rate, and roster-construction shape.

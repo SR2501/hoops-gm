@@ -159,11 +159,11 @@ Userscript build pipeline, @match rules for fantrax.com, shared-secret handshake
 ## In progress
 
 
-### `blind-mocks` - Running blind mocks starting now
+### `blind-mocks` - Running blind mocks when auction lobbies open
 
-- [ ] **in_progress**
+- [ ] **blocked**
 
-OWNER ACTION, START IMMEDIATELY. Run auction mocks without the tool and capture each using docs/mocks/TEMPLATE.md. Not a degraded rehearsal - a different experiment with three properties that cannot be recovered later: it is the uncontaminated control group for R38 circularity, it is the counterfactual baseline for measuring whether the tool helps, and it captures 9-11 other managers bidding real dollars which is the AAV evidence R37 needs. Also gathers overlay requirements under real time pressure via the I-wish-I-knew-X notes. League configuration is mandatory on every capture (R39). Every mock run before 5 October is corpus that does not have to be gathered in the tightest window of the plan.
+EXTERNALLY BLOCKED 2026-08-17: the owner found no site currently offering live mocks, including auction mocks. Do not manufacture simulated clearing prices and call them market evidence. When auction lobbies open, run observation-only mocks without this tool and capture each using docs/mocks/TEMPLATE.md. They remain the uncontaminated control group for R38, the counterfactual baseline for measuring whether the tool helps, and the empirical AAV evidence R37 needs. League configuration is mandatory on every capture.
 
 
 ---
@@ -405,9 +405,9 @@ Snake and auction as first-class draft formats alongside scoring profiles. They 
 ### `draft-recommender` - Building the draft recommendation engine
 
 - [ ] **pending**
-- **Depends on:** `contingent-value`, `draft-format-abstraction`, `draft-tracker`, `playoff-schedule`, `punt-builds`, `shutdown-risk`
+- **Depends on:** `contingent-value`, `draft-format-abstraction`, `draft-tracker`, `playoff-schedule`, `punt-builds`, `schedule-ingest`, `shutdown-risk`
 
-DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for multi-format support and for ingesting snake mock corpora, but is no longer a draft-day deliverable. Snake-format recommendations: value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, with durability, shutdown and handcuff flags from the availability engine.
+DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for multi-format support and for ingesting snake mock corpora, but is no longer a draft-day deliverable. Snake-format recommendations: value over replacement against pick slot, ADP value and reach, positional scarcity, tier cliffs, with durability, shutdown and handcuff flags from the availability engine. Per ADR-012, also exposes per-week game-count distribution (from `schedule-ingest`, not a model) as a first-class schedule-volume input: two-game/five-game weeks, front/back-loaded schedules, and roster fit, distinct from `strength-of-schedule`'s opponent-quality weighting.
 
 
 ### `draft-simulator` - Building the mock draft simulator
@@ -607,7 +607,7 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
 - [ ] **pending**
 - **Depends on:** `schedule-density`
 
-Schedule strength and game counts for the fantasy playoff weeks specifically, surfaced during the draft and at the trade deadline rather than discovered in March.
+Game counts for the fantasy playoff weeks specifically, surfaced during the draft and at the trade deadline rather than discovered in March. This first pass is calendar fact only (game counts); a value-weighted second pass happens once `strength-of-schedule` exists in Phase 5 (ADR-011) — do not compute opponent-quality-weighted schedule strength here.
 
 
 ### `preseason-news-ingest` - Ingesting preseason availability news for draft day
@@ -730,6 +730,14 @@ Shutdown/tanking risk for the fantasy playoff weeks: team elimination probabilit
 Live value-mover dashboard: injury news lands, affected players are recomputed via the contingent value graph, and the UI surfaces who moved, why, and whether they are available in your league.
 
 
+### `strength-of-schedule` - Building strength of schedule, weighted by opponent quality
+
+- [ ] **pending**
+- **Depends on:** `schedule-context`, `gscore-engine`
+
+Per-team/per-week strength of schedule, weighting scheduled opponents by quality (via `opponent_context`'s per-category defensive profiles) and expressing the result relative to league average. Deliberately sequenced in Phase 5, not alongside `schedule-density`/`schedule-context` in Phase 3/4, because it needs a settled valuation to weight the schedule by (ADR-011) — building it earlier would mean weighting by a placeholder value that gets thrown away once real projections land. Feeds `draft-recommender`, gives `games-cap-tracker` and `playoff-schedule` a second, value-weighted pass beyond raw game counts, and (draft-day only) `auction-values`, using projected rather than known opponent quality since the season hasn't started.
+
+
 ### `streaming-engine` - Building the off-night streaming engine
 
 - [ ] **pending**
@@ -759,7 +767,7 @@ Test-enforced rule that no draft-critical decision is available in only one surf
 - [ ] **pending**
 - **Depends on:** `playoff-schedule`, `punt-builds`, `risk-adjusted-valuation`, `schedule-ingest`, `shutdown-risk`
 
-Multi-asset trade evaluation: category deltas, punt-build impact, schedule and fantasy-playoff-week impact, rest-of-season value, and durability/shutdown risk on both sides.
+Multi-asset trade evaluation: category deltas, punt-build impact, schedule and fantasy-playoff-week impact, rest-of-season value, and durability/shutdown risk on both sides. Per ADR-012, schedule impact explicitly includes the first-class per-week game-count shape (including two-game/five-game H2H periods and front/back-loaded weeks), not just fantasy-playoff-week strength.
 
 
 ### `trade-finder` - Building the trade finder
