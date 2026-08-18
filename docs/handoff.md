@@ -1563,3 +1563,54 @@ will retain the same CMS filename or PDF layout for 2026-27.
 **Next:** PR #13 remains read-only and must not be merged by this session.
 Review the post-rebase CI results, especially the Postgres migration job, then
 merge only through the normal PR review path.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13 re-rebased onto PR #10 (userscript auto-update); Postgres CI verified green
+
+**Changed:** `main` advanced again after the previous rebase, past the
+userscript auto-update PR (#10, `1c88325`), reopening conflicts on PR #13.
+Re-ran `git rebase origin/main`: the migration numbering from the prior
+rebase (`0006_injury_report.py` on `down_revision = "0005"`) needed no further
+change, since PR #10 touched only the bridge/backend/userscript surfaces
+(`api/routes/bridge.py`, new `api/routes/userscript.py`, `api/security.py`,
+`core/config.py`, the userscript package itself) with zero overlap against
+this branch's injury-report files. The only conflict was the same append-only
+`docs/handoff.md` collision as before, now against PR #10's entry instead of
+PR #9's; resolved identically by keeping both dated 2026-08-17 entries in
+full (PR #10's bridge/backend/safety entry first, then this branch's
+data-engineer entry), deleting only the conflict markers. Force-pushed with
+`--force-with-lease` and let the repository's own GitHub Actions CI run
+rather than approximating it locally.
+
+**Now true:** `gh pr view 13` reports `mergeStateStatus: CLEAN` and
+`mergeable: MERGEABLE` against current `main`. Both CI runs triggered by the
+push (the `push` event on the branch and the `pull_request` synchronize
+event) completed with `conclusion: success`, and critically this resolves the
+prior entry's open gap: **`Backend — the same suite against Postgres
+(ADR-001)` passed on GitHub's runner** (job `95712350451`, 2m40s), not just
+the SQLite-only local check this session could run. Every other required
+check also passed on both runs: Code gate — no secrets committed, Backend —
+lint/type-check/tests, Backend — migrations apply from empty, Frontend,
+Userscript, Model gate — backtests, and Adapter gate — recorded-fixture
+contract tests. `Adapter gate — live smoke` reported `skipping` on both runs
+(by design — it is allowed to fail loudly without blocking a merge, per
+`docs/governance/gates.md`; it did not fail here, it simply did not execute,
+consistent with how that job is gated in `ci.yml`) and did not affect
+`mergeStateStatus`.
+
+**Could not verify:** Why `Adapter gate — live smoke` shows `skipping` rather
+than actually running or explicitly being skipped with a stated reason in the
+job log — did not open the raw log for that job since it is documented as
+non-blocking either way, but a future session should confirm this is the
+job's designed conditional behavior (e.g. gated on a schedule/secret) rather
+than an unnoticed regression in the workflow trigger logic. Did not attempt a
+local Postgres run in this worktree (no `docker`/`psql`/`pg_ctl` on this
+machine); the Postgres verification here rests entirely on the GitHub-hosted
+runner's service container, which is the same authority CI merges are
+normally judged against.
+
+**Next:** PR #13 is CI-clean and mergeable as of this session; no further
+rebase should be needed unless `main` advances again before merge. This
+session made no write-path, automation, or scope changes beyond the rebase
+and the handoff-conflict resolution described above.
