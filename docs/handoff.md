@@ -5585,3 +5585,65 @@ fail-closed behavior, and migration/lineage integration before merge. The first
 real vendor CSV must be checked manually against `resolved_headers` and captured
 as a privacy-safe contract fixture before its vendor profile is treated as
 verified.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 independent-review remediation
+
+**Changed:** Reworked projection imports so reprocessing atomically reconciles
+all import-owned projections and source games-played assumptions to the current
+identity resolution. Accepted-to-ambiguous, accepted-to-unmatched, and
+player-A-to-player-B transitions now remove stale outputs rather than retaining
+plausible rows under an obsolete identity. Import identity now hashes the exact
+original bytes before an explicit UTF-8/UTF-8-BOM decode; byte-distinct BOM and
+newline forms remain distinct imports, while unsupported encodings fail before
+any database write. Parser profiles now enforce production schema signatures,
+reject duplicate normalized headers, all-null rows/files, non-finite numbers,
+and profile/source misattribution. Source/import creation recovers from a
+uniqueness conflict through a savepoint and reselect so concurrent identical
+imports converge. Synthetic vendor examples no longer carry
+`adapter_contract` markers or claims.
+
+Closed the accepted ADR-008 boundary in both schema and configuration:
+`Projection.raw_row` was removed from the ORM and migration, and custom profiles
+cannot map Rank, AAV, tier, composite/fantasy value, or expected-games aliases
+into identity, source GP, production, or percentage-fallback fields. These
+headers can only appear as ignored transient parse evidence. Exact source bytes
+belong at the raw-import/observation boundary: `ProjectionImport.content_sha256`
+addresses them and `ProjectionImport.raw_payload_ref` may point to durable raw
+storage; neither source bytes nor complete source rows are attached to a
+projection-layer quantity. `ProjectionSourceRow.raw_row` is transient
+adjudication evidence only.
+
+**Now true:** On head `10a3c04` plus the final profile-boundary correction,
+latest import output exactly equals latest accepted resolution, ambiguous
+players are never guessed, and stale automated crosswalk state cannot force a
+prior identity. Per-game production remains in `projections`; source-published
+games-played assumptions remain in the separate one-to-one
+`source_games_played_assumptions` table and are not fused into production.
+Terminal aggregates cannot enter either layer through a custom profile. Local
+Code-gate evidence is Ruff, formatting, strict mypy, 485 backend tests with 12
+live-smoke tests deselected, SQLite upgrade/check/downgrade, and the secret
+scan. GitHub runs `32144985211` and `32144991395` passed every configured
+blocking job, including both native Postgres migration/full-suite jobs. A
+focused read-only review verified the eight reported importer fixes; the
+subsequent ADR purity challenge found the custom-profile loophole described
+above, which is now covered by construction-time rejection regressions.
+
+**Could not verify:** The projection Adapter gate remains unmet. FantasyPros,
+Hashtag, and Basketball Monster fixtures are synthetic unit examples, not
+privacy-safe fixtures derived from real exports; therefore their live header
+aliases and source behavior remain unverified even though the repository's
+other recorded-fixture adapter tests pass. No projection-specific live smoke
+exists. Native Postgres evidence comes from GitHub CI because no local Postgres
+service was available. No independent reviewer has reviewed the final
+custom-profile correction or approved PR #12, and no claim of merge readiness
+supersedes that review.
+
+**Next:** Run the full Code and configured Adapter CI once more on the final
+commit, then give its head to an independent reviewer for focused verification
+of exact-output reconciliation, custom-profile ADR-008 enforcement, identity
+fail-closed behavior, and SQLite/Postgres parity. Keep `csv-importer` blocked
+until the first real vendor export is manually checked against
+`resolved_headers`, reduced to a privacy-safe recorded fixture, and paired with
+an offline contract test plus a loud live-smoke path.

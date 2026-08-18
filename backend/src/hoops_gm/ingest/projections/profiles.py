@@ -156,6 +156,30 @@ class ColumnProfile:
     verified: bool = False
 
     def __post_init__(self) -> None:
+        terminal_aliases = {normalize_header(alias) for alias in TERMINAL_HEADER_ALIASES}
+        mapped_aliases = {
+            "player name": self.name_aliases,
+            "team": self.team_aliases,
+            "position": self.position_aliases,
+            "games played": self.games_played_aliases,
+        }
+        mapped_aliases.update(
+            {f"production field {column.field}": column.aliases for column in self.stat_columns}
+        )
+        mapped_aliases.update(
+            {
+                f"percentage fallback {field}": aliases
+                for field, aliases in self.percentage_fallback_aliases.items()
+            }
+        )
+        for role, aliases in mapped_aliases.items():
+            forbidden = [alias for alias in aliases if normalize_header(alias) in terminal_aliases]
+            if forbidden:
+                raise ValueError(
+                    f"{self.display_name} profile maps terminal columns {forbidden} "
+                    f"as {role}; ADR-008 permits terminal columns only as ignored evidence"
+                )
+
         fields = [column.field for column in self.stat_columns]
         if len(fields) != len(set(fields)):
             raise ValueError(f"{self.display_name} profile maps a production field more than once")

@@ -157,6 +157,51 @@ def test_projection_schema_has_no_games_played_or_expected_games_column() -> Non
     }.isdisjoint(columns)
 
 
+@pytest.mark.parametrize(
+    ("profile_kwargs", "terminal_alias"),
+    [
+        (
+            {
+                "games_played_aliases": ("expected_games",),
+                "stat_columns": (StatColumn("points_per_game", ("points_per_game",)),),
+            },
+            "expected_games",
+        ),
+        (
+            {
+                "stat_columns": (StatColumn("points_per_game", ("fantasy_value",)),),
+            },
+            "fantasy_value",
+        ),
+        (
+            {
+                "stat_columns": (
+                    StatColumn(
+                        "assists_per_game",
+                        ("composite_value",),
+                        shape=ValueShape.SEASON_TOTAL,
+                    ),
+                ),
+            },
+            "composite_value",
+        ),
+    ],
+)
+def test_custom_profile_cannot_map_terminal_columns_into_earlier_layers(
+    profile_kwargs: dict[str, Any],
+    terminal_alias: str,
+) -> None:
+    with pytest.raises(ValueError, match="ADR-008") as exc_info:
+        ColumnProfile(
+            source=ExternalSource.MANUAL,
+            display_name="hostile custom profile",
+            name_aliases=("player_name",),
+            **profile_kwargs,
+        )
+
+    assert terminal_alias in str(exc_info.value)
+
+
 # --------------------------------------------------------------------------
 # Parser: happy path and per-game/season-total conversion
 # --------------------------------------------------------------------------
