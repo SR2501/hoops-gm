@@ -7,9 +7,19 @@ from typing import Any
 
 import pytest
 
+from hoops_gm.schedule_context import RELEASED_BLOWOUT_MODEL_VERSION, load_blowout_release
+from hoops_gm.schedule_context import release as release_registry
+
 pytestmark = pytest.mark.model_backtest
 
-EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "schedule_context_blowout_v1.json"
+EVIDENCE = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "hoops_gm"
+    / "schedule_context"
+    / "releases"
+    / "schedule_context_blowout_v1.json"
+)
 
 
 def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
@@ -18,6 +28,7 @@ def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
     backtest = final["backtest"]
 
     assert evidence["source"] == "nba_api:LeagueGameFinder"
+    assert evidence["season_type"] == "regular"
     assert final["training_season"] == "2024-25"
     assert final["held_out_season"] == "2025-26"
     assert date.fromisoformat(backtest["training_cutoff"]) < date.fromisoformat(
@@ -25,6 +36,22 @@ def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
     )
     assert backtest["held_out_examples"] == 1225
     assert sum(row["count"] for row in backtest["calibration_bins"]) == 1225
+    assert final["source_cohorts"]["training"] == {
+        "completed_games": 1225,
+        "fingerprint": "ea3f00ea22a4d703",
+        "first_game_date": "2024-10-22",
+        "first_game_id": "0022400061",
+        "last_game_date": "2025-04-13",
+        "last_game_id": "0022401200",
+    }
+    assert final["source_cohorts"]["held_out"] == {
+        "completed_games": 1225,
+        "fingerprint": "e992a314295c442a",
+        "first_game_date": "2025-10-21",
+        "first_game_id": "0022500001",
+        "last_game_date": "2026-04-12",
+        "last_game_id": "0022501200",
+    }
 
 
 def test_locked_blowout_model_beats_baseline_and_meets_calibration_limit() -> None:
@@ -55,3 +82,33 @@ def test_model_evidence_states_blind_spots() -> None:
     evidence: dict[str, Any] = json.loads(EVIDENCE.read_text(encoding="utf-8"))
 
     assert len(evidence["blind_spots"]) >= 4
+
+
+def test_production_release_loader_is_bound_to_the_gate_evidence() -> None:
+    evidence: dict[str, Any] = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    release = load_blowout_release()
+
+    assert release.evidence_version == evidence["evidence_version"]
+    assert release.model.version == evidence["final"]["model"]["version"]
+    assert (
+        release.training_source_fingerprint
+        == (evidence["final"]["source_cohorts"]["training"]["fingerprint"])
+    )
+    assert (
+        release.holdout_source_fingerprint
+        == (evidence["final"]["source_cohorts"]["held_out"]["fingerprint"])
+    )
+
+
+def test_production_release_loader_rejects_an_unpinned_artifact_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    filename, _digest = release_registry._RELEASE_FILES[RELEASED_BLOWOUT_MODEL_VERSION]
+    monkeypatch.setitem(
+        release_registry._RELEASE_FILES,
+        RELEASED_BLOWOUT_MODEL_VERSION,
+        (filename, "0" * 64),
+    )
+
+    with pytest.raises(RuntimeError, match="does not match its pinned digest"):
+        load_blowout_release()

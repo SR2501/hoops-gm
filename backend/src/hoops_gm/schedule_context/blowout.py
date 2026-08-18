@@ -68,6 +68,32 @@ class BlowoutBacktest:
     calibration_bins: tuple[CalibrationBin, ...]
 
 
+def blowout_model_version(
+    *,
+    source_version: str,
+    training_cutoff: date,
+    window_games: int,
+    minimum_history_games: int,
+    blowout_margin: int,
+    bin_edges: Sequence[float],
+    probabilities: Sequence[float],
+) -> str:
+    """Derive the immutable version from every fitted parameter and its source."""
+
+    return content_fingerprint(
+        [
+            "schedule-context-blowout-empirical-v1",
+            source_version,
+            training_cutoff.isoformat(),
+            str(window_games),
+            str(minimum_history_games),
+            str(blowout_margin),
+            ",".join(f"{edge:.8f}" for edge in bin_edges),
+            ",".join(f"{probability:.8f}" for probability in probabilities),
+        ]
+    )
+
+
 def pregame_examples(
     games: Sequence[GameResult],
     *,
@@ -148,17 +174,14 @@ def fit_blowout_model(
         (successes[index] + 1) / (counts[index] + 2) for index in range(len(counts))
     )
     overall_rate = sum(successes) / sum(counts)
-    version = content_fingerprint(
-        [
-            "schedule-context-blowout-empirical-v1",
-            source_version,
-            training_cutoff.isoformat(),
-            str(window_games),
-            str(minimum_history_games),
-            str(blowout_margin),
-            ",".join(f"{edge:.8f}" for edge in edges),
-            ",".join(f"{probability:.8f}" for probability in probabilities),
-        ]
+    version = blowout_model_version(
+        source_version=source_version,
+        training_cutoff=training_cutoff,
+        window_games=window_games,
+        minimum_history_games=minimum_history_games,
+        blowout_margin=blowout_margin,
+        bin_edges=edges,
+        probabilities=probabilities,
     )
     return BlowoutModel(
         training_cutoff=training_cutoff,

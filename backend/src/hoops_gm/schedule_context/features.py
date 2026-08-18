@@ -17,6 +17,7 @@ class ScheduleContextConfig:
     trailing_games: int = 15
     minimum_history_games: int = 5
     off_night_percentile: float = 0.25
+    minimum_opponent_coverage: float = 0.95
 
     def __post_init__(self) -> None:
         if self.trailing_games < 1:
@@ -25,6 +26,8 @@ class ScheduleContextConfig:
             raise ValueError("minimum_history_games must be in [1, trailing_games]")
         if not 0 < self.off_night_percentile < 1:
             raise ValueError("off_night_percentile must be between zero and one")
+        if not 0.95 <= self.minimum_opponent_coverage <= 1:
+            raise ValueError("minimum_opponent_coverage must be in [0.95, 1]")
 
     @property
     def off_night_model_version(self) -> str:
@@ -32,6 +35,7 @@ class ScheduleContextConfig:
             [
                 "off-night-empirical-midrank-v1",
                 f"{self.off_night_percentile:.8f}",
+                f"minimum-opponent-coverage:{self.minimum_opponent_coverage:.8f}",
             ]
         )
 
@@ -54,6 +58,11 @@ class TeamGameStats:
     steals: int
     blocks: int
     turnovers: int
+    seconds_played: int = 14_400
+
+    def __post_init__(self) -> None:
+        if self.seconds_played < 14_400 or (self.seconds_played - 14_400) % 1_500:
+            raise ValueError("team player-minutes must equal 240 plus 25 per overtime")
 
     @property
     def possessions(self) -> float:
@@ -70,6 +79,10 @@ class ContextGame:
     result: GameResult
     home_stats: TeamGameStats
     away_stats: TeamGameStats
+
+    def __post_init__(self) -> None:
+        if self.home_stats.seconds_played != self.away_stats.seconds_played:
+            raise ValueError("opponents must have equal complete team player-minutes")
 
     def stats_for(self, team_id: int) -> TeamGameStats:
         if team_id == self.result.home_team_id:
@@ -209,8 +222,18 @@ def build_opponent_profile(
             "features_as_of": fixture_date.isoformat(),
             "pace_formula": "mean(team trailing game pace, opponent trailing game pace)",
             "possession_formula": "FGA - OREB + TOV + 0.44 * FTA",
+            "pace_units": "raw estimated possessions per game; not normalized per 48 minutes",
+            "box_score_completeness": (
+                "each_team_player_seconds_equals_240_plus_25_per_overtime_v1"
+            ),
             "team_pace_game_ids": [game.result.game_id for game in team_history],
             "opponent_defence_game_ids": [game.result.game_id for game in opponent_history],
+            "team_pace_game_seconds": [
+                game.stats_for(team_id).seconds_played for game in team_history
+            ],
+            "opponent_defence_game_seconds": [
+                game.stats_for(opponent_team_id).seconds_played for game in opponent_history
+            ],
             "offseason_carryover": (
                 (fixture_date - max(game.result.game_date for game in opponent_history)).days > 60
             ),

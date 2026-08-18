@@ -2042,3 +2042,38 @@ local contention test.
 this PR must not merge or self-approve.
 
 ---
+
+## 2026-08-18 — quant — Close schedule-context release-integrity blockers
+
+**Changed:** Made the Model-gate evidence the packaged production release
+artifact instead of a test-only file. The production registry allowlists model
+`4809af29ed135f6f`, pins the artifact SHA-256, and independently derives the
+version from its training fingerprint and fitted parameters; publish/compute no
+longer accept arbitrary `BlowoutModel` objects. Reproduced the live backtest and
+added immutable training, validation, and held-out source fingerprints plus
+sample boundaries. Restricted v1 scoring/history to regular-season rows, added
+team player-minute completeness checks, staged all profiles before writes,
+enforced a version-bound 95% fixture-coverage floor, persisted the coverage
+audit in every output, and rejected naive `computed_at` values.
+
+**Now true:** The exact model that passed the gate is loadable from an installed
+wheel and an edited, self-relabelled, or locally fitted variant cannot become
+production lineage. A three-player subset, unequal/incomplete team minutes,
+systemically empty context, playoff history, weak caller-supplied coverage
+threshold, or host-local naive timestamp cannot silently produce a successful
+cohort. Final local gates pass: Ruff, format, strict mypy, 474 default backend
+tests, six dedicated `model_backtest` tests, secret scan, SQLite migration
+upgrade/check/downgrade, and a built-wheel resource check.
+
+**Could not verify:** Native PostgreSQL was not available locally, so advisory
+lock behavior and the migrated schema still rely on CI's Postgres job. The live
+reproduction confirms the currently returned NBA source fingerprints, but only
+a future re-run can demonstrate that an upstream score correction changes them.
+V1 has no automated online calibration monitor and cannot establish that the
+2024-25 training base rate remains current for 2026-27.
+
+**Next:** Independent reviewers should recheck the six blockers against the new
+exact HEAD. CI must pass Code and Model gates, including PostgreSQL, before this
+PR is eligible; it must not be merged or self-approved here.
+
+---

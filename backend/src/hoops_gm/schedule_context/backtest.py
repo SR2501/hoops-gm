@@ -89,15 +89,24 @@ def run_backtest() -> dict[str, object]:
     return {
         "evidence_version": "schedule-context-blowout-v1",
         "source": "nba_api:LeagueGameFinder",
+        "season_type": "regular",
         "selection": {
             "training_season": "2023-24",
             "validation_season": "2024-25",
+            "source_cohorts": {
+                "training": _source_metadata(by_season["2023-24"]),
+                "validation": _source_metadata(by_season["2024-25"]),
+            },
             "candidates": [asdict(candidate) for candidate in validation_candidates],
             "selected_bins": selected_bins,
         },
         "final": {
             "training_season": "2024-25",
             "held_out_season": "2025-26",
+            "source_cohorts": {
+                "training": _source_metadata(by_season["2024-25"]),
+                "held_out": _source_metadata(by_season["2025-26"]),
+            },
             "model": _jsonable(asdict(final_model)),
             "backtest": _backtest_dict(held_out),
         },
@@ -131,6 +140,20 @@ def _source_version(games: list[GameResult]) -> str:
         f"{game.away_team_id}:{game.home_score}:{game.away_score}"
         for game in sorted(games, key=lambda row: (row.game_date, row.game_id))
     )
+
+
+def _source_metadata(games: list[GameResult]) -> dict[str, object]:
+    ordered = sorted(games, key=lambda row: (row.game_date, row.game_id))
+    if not ordered:
+        raise ValueError("source cohort contains no completed regular-season games")
+    return {
+        "fingerprint": _source_version(ordered),
+        "completed_games": len(ordered),
+        "first_game_date": ordered[0].game_date.isoformat(),
+        "last_game_date": ordered[-1].game_date.isoformat(),
+        "first_game_id": ordered[0].game_id,
+        "last_game_id": ordered[-1].game_id,
+    }
 
 
 def _backtest_dict(report: BlowoutBacktest) -> dict[str, object]:

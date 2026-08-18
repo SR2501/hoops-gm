@@ -6,25 +6,31 @@ from typing import Any
 import pytest
 from sqlalchemy import func, select
 
-from hoops_gm.db.lineage import content_fingerprint, record_refresh
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.lineage import record_refresh
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam, Player
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.schedule_context import (
+    RELEASED_BLOWOUT_MODEL_VERSION,
     ContextGame,
     GameResult,
+    InsufficientContextCoverageError,
     ScheduleContextConfig,
     StaleContextCohortError,
     TeamGameStats,
+    UnreleasedBlowoutModelError,
     build_off_night_facts,
     build_opponent_profile,
     compute_schedule_context,
+    context_source_version,
     evaluate_blowout_model,
     fit_blowout_model,
+    load_blowout_release,
     publish_schedule_context_cohorts,
 )
+from hoops_gm.schedule_context.service import _sum_team_logs
 
 
 def _schedule_entry(identifier: int, game_id: int, game_date: date) -> TeamScheduleEntry:
@@ -112,6 +118,16 @@ def test_off_night_facts_count_unique_games_without_scoring_period_assumptions()
     assert facts[0].is_off_night is True
     assert facts[1].is_off_night is False
     assert facts[0].input_snapshot["game_ids"] == [10]
+
+
+def test_context_coverage_floor_is_fixed_and_versioned() -> None:
+    default = ScheduleContextConfig()
+    strict = ScheduleContextConfig(minimum_opponent_coverage=1.0)
+
+    assert default.minimum_opponent_coverage == 0.95
+    assert default.off_night_model_version != strict.off_night_model_version
+    with pytest.raises(ValueError, match=r"must be in \[0.95, 1\]"):
+        ScheduleContextConfig(minimum_opponent_coverage=0.94)
 
 
 def test_opponent_profile_keeps_ratio_makes_and_attempts_volume_weighted() -> None:
@@ -254,15 +270,19 @@ def _load_context_database(session: Any) -> tuple[list[GameResult], ScheduleCont
     session.flush()
     players = [
         Player(
-            full_name=f"Player {team.id}",
-            normalized_name=f"player{team.id}",
+            full_name=f"Player {team.id}-{player_index}",
+            normalized_name=f"player{team.id}-{player_index}",
             current_team_id=team.id,
         )
         for team in teams
+        for player_index in range(5)
     ]
     session.add_all(players)
     session.flush()
-    player_by_team = {player.current_team_id: player for player in players}
+    players_by_team = {
+        team.id: [player for player in players if player.current_team_id == team.id]
+        for team in teams
+    }
 
     results: list[GameResult] = []
     start = date(2025, 10, 1)
@@ -282,29 +302,31 @@ def _load_context_database(session: Any) -> tuple[list[GameResult], ScheduleCont
             session.add(game)
             session.flush()
             for team in (home, away):
-                session.add(
-                    PlayerGameLog(
-                        player_id=player_by_team[team.id].id,
-                        game_id=game.id,
-                        team_id=team.id,
-                        field_goals_made=40,
-                        field_goals_attempted=85,
-                        three_pointers_made=12,
-                        three_pointers_attempted=32,
-                        free_throws_made=18,
-                        free_throws_attempted=22,
-                        points=110,
-                        offensive_rebounds=10,
-                        defensive_rebounds=34,
-                        rebounds=44,
-                        assists=25,
-                        steals=7,
-                        blocks=5,
-                        turnovers=13,
-                        personal_fouls=18,
-                        plus_minus=0,
+                for player_index, player in enumerate(players_by_team[team.id]):
+                    session.add(
+                        PlayerGameLog(
+                            player_id=player.id,
+                            game_id=game.id,
+                            team_id=team.id,
+                            seconds_played=2_880,
+                            field_goals_made=8,
+                            field_goals_attempted=17,
+                            three_pointers_made=2 + int(player_index < 2),
+                            three_pointers_attempted=6,
+                            free_throws_made=3 + int(player_index < 3),
+                            free_throws_attempted=4 + int(player_index < 2),
+                            points=22,
+                            offensive_rebounds=2,
+                            defensive_rebounds=7,
+                            rebounds=9,
+                            assists=5,
+                            steals=1 + int(player_index < 2),
+                            blocks=1,
+                            turnovers=2 + int(player_index < 3),
+                            personal_fouls=3 + int(player_index < 3),
+                            plus_minus=0,
+                        )
                     )
-                )
             assert game.home_score is not None
             assert game.away_score is not None
             results.append(
@@ -367,23 +389,11 @@ def _publish_test_claim(
     games: list[GameResult],
     config: ScheduleContextConfig,
 ) -> tuple[Any, Any]:
-    training_source_version = content_fingerprint(
-        f"{game.game_id}:{game.game_date.isoformat()}:{game.home_team_id}:"
-        f"{game.away_team_id}:{game.home_score}:{game.away_score}"
-        for game in games
-    )
-    model = fit_blowout_model(
-        games,
-        training_cutoff=max(game.game_date for game in games),
-        source_version=training_source_version,
-        window_games=10,
-        minimum_history_games=3,
-        requested_bins=4,
-    )
+    del games
+    model = load_blowout_release().model
     claim = publish_schedule_context_cohorts(
         session,
         season="2026-27",
-        blowout_model=model,
         config=config,
         refreshed_at=datetime(2026, 8, 18, 12, tzinfo=UTC),
     )
@@ -392,30 +402,35 @@ def _publish_test_claim(
 
 def test_context_service_persists_explainable_versioned_outputs(session: Any) -> None:
     games, config = _load_context_database(session)
-    model, claim = _publish_test_claim(session, games, config)
+    _model, claim = _publish_test_claim(session, games, config)
 
     counts = compute_schedule_context(
         session,
         season="2026-27",
         claim=claim,
-        blowout_model=model,
         config=config,
     )
 
     assert counts.opponent_created == 4
+    assert counts.opponent_eligible == 4
+    assert counts.opponent_coverage == 1.0
     assert counts.slate_created == 1
     contexts = session.scalars(select(OpponentContext)).all()
     assert {row.source_version for row in contexts} == {claim.source_version}
     assert all(row.garbage_time_suppression is None for row in contexts)
     assert all(row.input_snapshot["features_as_of"] == "2026-10-20" for row in contexts)
+    assert all(
+        row.input_snapshot["opponent_context_coverage"]["coverage_ratio"] == 1.0 for row in contexts
+    )
     [slate] = session.scalars(select(OffNightSlate)).all()
     assert slate.streaming_window_score is None
     assert slate.source_version == claim.schedule_version
+    assert slate.input_snapshot["opponent_context_coverage"]["eligible_fixture_rows"] == 4
 
 
 def test_context_service_rejects_a_superseded_schedule_cohort(session: Any) -> None:
     games, config = _load_context_database(session)
-    model, claim = _publish_test_claim(session, games, config)
+    _model, claim = _publish_test_claim(session, games, config)
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
@@ -431,19 +446,17 @@ def test_context_service_rejects_a_superseded_schedule_cohort(session: Any) -> N
             session,
             season="2026-27",
             claim=claim,
-            blowout_model=model,
             config=config,
         )
 
 
 def test_context_service_rejects_changed_source_and_retains_old_rows(session: Any) -> None:
     games, config = _load_context_database(session)
-    model, claim = _publish_test_claim(session, games, config)
+    _model, claim = _publish_test_claim(session, games, config)
     compute_schedule_context(
         session,
         season="2026-27",
         claim=claim,
-        blowout_model=model,
         config=config,
     )
     old_count = session.scalar(select(func.count(OpponentContext.id)))
@@ -460,7 +473,6 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
             session,
             season="2026-27",
             claim=claim,
-            blowout_model=model,
             config=config,
         )
 
@@ -468,7 +480,6 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
     new_claim = publish_schedule_context_cohorts(
         session,
         season="2026-27",
-        blowout_model=model,
         config=config,
         refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
@@ -477,7 +488,6 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
         session,
         season="2026-27",
         claim=new_claim,
-        blowout_model=model,
         config=config,
     )
     assert session.scalar(select(func.count(OpponentContext.id))) == old_count + 4
@@ -485,7 +495,7 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
 
 def test_context_service_rejects_a_superseded_model_cohort(session: Any) -> None:
     games, config = _load_context_database(session)
-    model, claim = _publish_test_claim(session, games, config)
+    _model, claim = _publish_test_claim(session, games, config)
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.MODEL,
@@ -501,6 +511,106 @@ def test_context_service_rejects_a_superseded_model_cohort(session: Any) -> None
             session,
             season="2026-27",
             claim=claim,
-            blowout_model=model,
             config=config,
+        )
+
+
+def test_only_the_gate_passed_blowout_release_can_be_published(session: Any) -> None:
+    _games, config = _load_context_database(session)
+
+    with pytest.raises(UnreleasedBlowoutModelError, match="not in the production release registry"):
+        publish_schedule_context_cohorts(
+            session,
+            season="2026-27",
+            config=config,
+            blowout_model_version="locally-fitted-variant",
+        )
+
+    release = load_blowout_release(RELEASED_BLOWOUT_MODEL_VERSION)
+    assert release.model.version == RELEASED_BLOWOUT_MODEL_VERSION
+    assert release.model.source_version == release.training_source_fingerprint
+    assert release.holdout_source_fingerprint == "e992a314295c442a"
+
+
+def test_three_player_subset_is_not_a_complete_team_box_score() -> None:
+    logs = [
+        PlayerGameLog(
+            player_id=index,
+            game_id=1,
+            team_id=1,
+            seconds_played=4_800,
+            field_goals_made=8,
+            field_goals_attempted=17,
+            three_pointers_made=2,
+            free_throws_made=3,
+            free_throws_attempted=4,
+            points=22,
+            offensive_rebounds=2,
+            rebounds=9,
+            assists=5,
+            steals=1,
+            blocks=1,
+            turnovers=2,
+        )
+        for index in range(1, 4)
+    ]
+
+    with pytest.raises(ValueError, match="at least five plausible player-minute rows"):
+        _sum_team_logs(logs)
+
+
+def test_regular_season_source_fingerprint_excludes_playoff_rows(session: Any) -> None:
+    _games, _config = _load_context_database(session)
+    regular_version = context_source_version(session)
+    teams = session.scalars(select(NbaTeam).order_by(NbaTeam.id)).all()
+    session.add(
+        NbaGame(
+            season="2025-26",
+            season_type=SeasonType.PLAYOFFS,
+            nba_game_id="PLAYOFF-1",
+            game_date=date(2026, 4, 20),
+            home_team_id=teams[0].id,
+            away_team_id=teams[1].id,
+            home_score=120,
+            away_score=110,
+        )
+    )
+    session.flush()
+
+    assert context_source_version(session) == regular_version
+
+
+def test_context_run_fails_before_writes_when_box_score_coverage_is_empty(
+    session: Any,
+) -> None:
+    games, config = _load_context_database(session)
+    for log in session.scalars(select(PlayerGameLog)):
+        log.seconds_played = 1
+    session.flush()
+    model, claim = _publish_test_claim(session, games, config)
+
+    with pytest.raises(InsufficientContextCoverageError, match="0/4"):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim,
+            config=config,
+        )
+
+    assert model.version == RELEASED_BLOWOUT_MODEL_VERSION
+    assert session.scalar(select(func.count(OpponentContext.id))) == 0
+    assert session.scalar(select(func.count(OffNightSlate.id))) == 0
+
+
+def test_context_service_rejects_naive_computed_at(session: Any) -> None:
+    games, config = _load_context_database(session)
+    _model, claim = _publish_test_claim(session, games, config)
+
+    with pytest.raises(ValueError, match="computed_at must be timezone-aware"):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim,
+            config=config,
+            computed_at=datetime(2026, 8, 18, 12),
         )

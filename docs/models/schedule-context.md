@@ -41,14 +41,28 @@ For each team fixture, use only games before the fixture date:
 
 - expected pace is the mean of the team's and opponent's trailing 15-game pace;
 - possessions are estimated as `FGA - OREB + TOV + 0.44 * FTA`;
+- `pace_possessions` is that raw per-game possession estimate. It is **not**
+  normalized per 48 minutes, so overtime games contribute their observed longer
+  game length rather than being scaled back to regulation;
 - category defence is what the opponent allowed over its trailing 15 games,
   with counting categories normalized per 100 possessions;
 - FG and FT retain summed makes and attempts plus the derived rate. Bare
   percentages are never averaged.
 
-At least five prior complete games are required. Rows without enough strictly
-as-of history are reported as skipped, not filled from a league-average default.
-Every row stores the exact game IDs and feature cutoff in `input_snapshot`.
+Only regular-season games enter v1 because its calibration cohorts contain only
+regular-season games. A team-game box score is complete only when summed player
+seconds equal 240 minutes plus 25 minutes per overtime, both teams have equal
+totals, at least five players recorded positive minutes, and no player exceeds
+the inferred game duration. Missing fields or partial player coverage discard
+that historical game rather than fabricate a pace/defence total.
+
+At least five prior complete games are required. A run must produce context for
+at least 95% of its regular-season schedule rows and must produce at least one
+row; otherwise it raises before writing any slate or opponent output. Successful
+runs persist eligible, produced, skipped, threshold, and realized coverage in
+every output's `input_snapshot`. Rows without enough strictly as-of history are
+not filled from a league-average default. Every row stores the exact game IDs,
+team-minute totals, completeness rule, and feature cutoff.
 At the start of a season, the trailing window carries over the prior season
 rather than manufacturing a league-average fallback; `input_snapshot` marks
 `offseason_carryover = true` when the latest defensive-history game is more than
@@ -97,9 +111,16 @@ underpredicts by 7.3 percentage points, so consumers must show the probability
 rather than translate it into a confident garbage-time minutes penalty.
 
 The checked evidence is
-`backend/tests/model_evidence/schedule_context_blowout_v1.json`; the
+`backend/src/hoops_gm/schedule_context/releases/schedule_context_blowout_v1.json`.
+That is also the packaged production release artifact: publication accepts only
+its allowlisted model version (`4809af29ed135f6f`) and loads the parameters from
+that file. The registry pins the complete artifact's SHA-256 digest, and the
+loader independently derives the model version from its source fingerprint and
+every fitted parameter. Locally fitted, edited, or self-relabelled variants
+cannot be registered as production lineage. The
 `model_backtest` tests enforce its split, counts, baseline comparison, calibration
-limit, and pre-holdout model selection. Reproduce the live source run with:
+limit, pre-holdout model selection, production-loader binding, and source
+fingerprints. Reproduce the live source run with:
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path 'backend\src').Path
@@ -111,27 +132,51 @@ source or independently recreate the 3,676 source games. The command above is
 the reproducibility path, and a changed upstream result must produce a new
 evidence/model version rather than editing v1 in place.
 
+The final training cohort fingerprint is `ea3f00ea22a4d703` over 1,225 completed
+2024-25 games. The untouched evidence cohort fingerprint is
+`e992a314295c442a` over 1,225 completed 2025-26 games (2025-10-21 through
+2026-04-12). Selection training and validation cohorts are fingerprinted
+separately as well. These identities cover game ID, date, teams, and final score,
+so an upstream correction changes the evidence and requires a new release rather
+than silently preserving the old calibration claim.
+
 ## Provenance, history, and rejection rules
 
 Every persisted row binds to:
 
 - `schedule_version`: current `nba-schedule` refresh for that season;
 - `source_version`: the exact completed score/box-score observation fingerprint
-  used at scoring time (the schedule fingerprint for slate-only rows);
+  used at scoring time, including player seconds and only regular-season games
+  (the schedule fingerprint for slate-only rows);
 - `model_version`: blowout training/specification version, or the deterministic
   off-night derivation version.
 
-Lineage is keyed by artifact family and season. Publishing registers the source,
-blowout-model, and off-night derivation cohorts. Persistence rechecks all three
-inside its transaction, recomputes the source fingerprint, and holds row locks
-on the same lineage scopes that publishers lock until the caller commits or
-rolls back. Stale, unknown, or mismatched cohorts raise instead of writing.
+Lineage is keyed by artifact family and season. Publishing registers the source, blowout-model, and off-night derivation cohorts.
+Persistence rechecks all three inside its transaction, recomputes the source
+fingerprint, and holds the same transaction-level lineage locks that source
+writers and publishers acquire until the caller commits or rolls back. Stale,
+unknown, or mismatched cohorts raise instead of writing.
 Natural keys include all applicable versions, so a changed
 source/model/schedule creates history rather than overwriting prior context.
 
 The model version includes its training-source fingerprint separately from the
 scoring-time source version. This preserves the distinction between the data
 that fit the model and the observations used to score a future fixture.
+
+## Base-rate drift and monitoring limits
+
+The 2024-25 training blowout rate is 34.12%; that is not a permanent league
+constant. Pace, parity, officiating, schedule policy, and late-season incentives
+can shift the base rate even when the feature distribution appears similar.
+V1 has one held-out season and no automated online calibration monitor. The
+service records model, training, holdout, and scoring-source cohorts, but it does
+not detect a live calibration drift threshold or automatically recalibrate.
+
+Before releasing v1 for a later season, `quant` must re-run the time-ordered gate
+on a newly fingerprinted holdout and inspect both overall base-rate movement and
+per-bin calibration. Until enough current-season outcomes exist, consumers must
+show this as historical-context probability, not imply that monitoring has
+proved current-season calibration.
 
 ## What this cannot see
 
