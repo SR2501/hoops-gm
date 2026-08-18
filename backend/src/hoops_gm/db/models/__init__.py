@@ -49,6 +49,7 @@ from hoops_gm.db.models.league import (
     Transaction,
 )
 from hoops_gm.db.models.schedule import TeamScheduleEntry
+from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog, PlayerSeasonStat
 
 __all__ = [
@@ -72,6 +73,8 @@ __all__ = [
     "MatchupStatus",
     "NbaGame",
     "NbaTeam",
+    "OffNightSlate",
+    "OpponentContext",
     "ParticipationOutcome",
     "Player",
     "PlayerExternalId",

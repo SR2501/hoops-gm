@@ -1044,3 +1044,32 @@ entry so `backend/tests` cannot silently run against another worktree's code;
 until then, any agent running backend tests here should verify
 `hoops_gm.__file__` resolves inside their own worktree first.
 
+## 2026-08-18 — quant — Implemented schedule-context schema after schedule-ingest merge
+
+**Changed:** Rebased onto the current `main`, reviewed the merged
+`team_schedule` contract, and implemented the quant-owned Phase 4 context tables
+without touching the pure calendar arithmetic owned by `schedule_density`.
+`opponent_context` and `off_night_slates` were added via the ORM and Alembic
+migration, exported from the model package, and verified against the portability
+suite. The earlier schema issue was resolved by removing redundant `index=True`
+attributes and keeping only explicit `Index(...)` declarations so the model and
+migration agree.
+
+**Now true:** The repository now contains the explicit model-output tables for
+schedule context: per-game opponent environment and per-date light-slate
+classification. They stay separated from schedule facts and from production
+availability logic, matching the ADR-002 and ADR-007 framing for this phase.
+The portability checks for the new tables pass in the current backend test
+suite.
+
+**Could not verify:** No live backtest or calibration run was executed for the
+actual blowout-risk and off-night model; the current patch adds the schema, not a
+trained model or held-out evaluation. The chosen windows and thresholding remain
+design assumptions until real NBA data is observed. No Postgres or live NBA data
+run was performed in this change, so the only verified evidence is the schema and
+metadata checks in the repository’s SQLite portability suite.
+
+**Next:** `quant` should run the Phase-4 backtest once live `team_schedule` data
+and historical results are available, validating the pace/defence windows,
+blowout probability calibration, and off-night detection thresholds against a
+held-out sample before computing anything production-facing.

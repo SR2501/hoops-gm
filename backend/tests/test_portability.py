@@ -144,7 +144,7 @@ def test_every_model_is_registered_and_created(session: Session) -> None:
                 "transactions",
             },
         ),
-        ("schedule", {"team_schedule"}),
+        ("schedule", {"team_schedule", "opponent_context", "off_night_slates"}),
     ],
 )
 def test_phase_one_entity_groups_are_present(group: str, expected: set[str]) -> None:
@@ -208,6 +208,16 @@ def test_the_observed_participation_ledger_is_present() -> None:
         "'nobody was inactive' and 'the source stopped telling us' are different "
         "facts, and BoxScoreSummaryV2 erased the difference for a whole season"
     )
+
+
+def test_schedule_context_tables_are_present() -> None:
+    """The phase-4 quant context tables are now explicit model outputs."""
+    assert "opponent_context" in Base.metadata.tables
+    assert "off_night_slates" in Base.metadata.tables
+    context_columns = set(Base.metadata.tables["opponent_context"].columns.keys())
+    assert {"team_schedule_id", "model_version", "category_defence"}.issubset(context_columns)
+    slate_columns = set(Base.metadata.tables["off_night_slates"].columns.keys())
+    assert {"scheduled_game_count", "is_off_night", "model_version"}.issubset(slate_columns)
 
 
 def test_the_raw_bridge_payload_table_is_present() -> None:
