@@ -72,11 +72,22 @@ class Settings(BaseSettings):
     )
 
     # --- Secrets. Never committed; .env.example documents the shape. ---------
+    # Values loaded from the environment are SecretStr; pairing and startup
+    # recovery intentionally install the persisted value as a plain string.
     bridge_secret: SecretStr | None = None
     bridge_secret_path: Path = REPO_ROOT / "data" / "bridge_secret"
     fantrax_user_secret_id: SecretStr | None = None
     fantrax_league_id: str | None = None
     fantrax_cookie: SecretStr | None = None
+
+    # --- Userscript serving ---------------------------------------------------
+    # One-time Tampermonkey install and its @updateURL/@downloadURL auto-update
+    # target (ADR-010's follow-on: pairing already keeps the secret out of
+    # source control, and it must stay out of this build too). `npm run build`
+    # in userscript/ is what produces this file; it is gitignored and absent
+    # until then, which the serving route must report clearly rather than as a
+    # bare 404.
+    userscript_dist_path: Path = REPO_ROOT / "userscript" / "dist" / "hoops-gm.user.js"
 
     @field_validator("database_url")
     @classmethod

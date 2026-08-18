@@ -856,6 +856,89 @@ Fixed by adding `Base.metadata.drop_all(...)` before `create_all` in the `client
 
 ---
 
+## 2026-08-17 — bridge, backend, safety — Userscript 0.5.0 update and live capture path
+
+**Changed:** Replaced the "reinstall in Tampermonkey's editor after every
+rebuild" workflow with the auto-update path implied by ADR-010: `npm run
+build` in `userscript/` now reads `@version` from `package.json` (previously
+hardcoded separately in `build.mjs`, which had already drifted once) and
+stamps `@updateURL`/`@downloadURL` onto the built file, both pointing at a
+new loopback-only backend route, `GET /bridge/userscript.user.js`. That route
+lives unversioned next to `/health` (it's a static-file surface, not part of
+the `/api/v1` JSON contract), reads `userscript/dist/hoops-gm.user.js` fresh
+off disk on every request via a setting (`Settings.userscript_dist_path`, not
+a module-level constant, so tests can point it at a throwaway file), and
+returns a clear, actionable `404` (`X-Bridge-Error: userscript_build_missing`,
+`detail` naming the exact `npm install && npm run build` to run) when the
+file is absent — the failure mode the owner's live log actually hit. Response
+headers set `Cache-Control: no-store` so neither an intermediate cache nor
+Tampermonkey's own check can serve a stale build. Extracted the loopback-host
+check that bridge pairing already had into a shared `hoops_gm.api.security`
+module so this route and pairing share one definition of "local" rather than
+diverging. Integrated the verified bridge 0.5.0 live fixes: service-worker-
+hidden views now produce bounded, deduped `rendered-view` captures after
+initial settle, SPA navigation, and rate-limited visible DOM changes; the
+backend accepts that source; and bridge authentication normalizes both
+environment-loaded `SecretStr` values and runtime-paired plain strings before
+the same constant-time comparison.
+
+**Now true:** The one-time install step in `userscript/README.md` and the
+root `README.md` now targets `http://127.0.0.1:8000/bridge/userscript.user.js`
+directly (installable from that URL in the browser) instead of the generated
+file path, and is genuinely one-time going forward: a source change is now
+`npm run build` (after bumping `package.json`'s `version` — an unchanged
+version is invisible to Tampermonkey's own comparison, not merely slow) plus
+keeping the backend running, and Tampermonkey's own update check does the
+rest. New backend tests (`test_userscript_serving.py`) cover the missing-build
+404 with its exact detail text, a present build served with the right
+content-type/cache header, a non-loopback caller rejected with the
+`app`/`client` test fixtures deliberately bypassed (built via `create_app`
+directly with `environment="development"`, since the shared fixtures always
+force `environment="test"` to satisfy Starlette's synthetic `TestClient` host
+— that escape hatch meant this exact 403 branch, and pairing's equivalent
+branch, had zero prior coverage), and — the specific ADR-010 guarantee this
+task called for — that neither a configured `SecretStr` nor a runtime-paired
+plain-string `bridge_secret` appears in the served bytes. A new userscript test
+(`test/build.test.js`) runs the real `build.mjs` and asserts `@updateURL`/
+`@downloadURL` are present, identical, and loopback; freezes the legacy script
+identity, storage key, match/grant/connect/noframes permission surface; checks
+package/package-lock version agreement; and rejects hex-64 or base64url-43
+secret-shaped literals in the output. The complete userscript suite passes
+(63/63), the full backend suite passes against this worktree's explicitly
+pinned source (417/417, 12 deselected), and ruff check/format, strict mypy, and
+`check_no_secrets.py` are clean. A
+`userscript` CI job was added — there was none before, so these new tests
+would otherwise never run in CI; `test_ci_workflow.py`'s own coherence check
+still passes against the edited `ci.yml`. Live owner verification persisted
+successful automatic `rendered-view` rows for roster, players, and a paginated
+players view, plus a separate `manual-export` row; the synthetic test row was
+removed. The served script reported the frozen identity, version `0.5.0`, and
+matching loopback update/download URLs.
+
+**Could not verify:** The owner verified live capture and the served 0.5.0
+metadata, but not a complete background-update cycle from one installed
+version to a higher one; Tampermonkey's real update interval and prompt
+behaviour remain unmeasured. The Cache Storage watcher remains best-effort and
+was not needed for the successful live rendered-view path. Rendered-view
+capture forwards sanitized but otherwise broad league-page markup over
+loopback, including links and data attributes; it removes active elements and
+form state but does not redact every possible attribute token. No Postgres
+service was available for local validation, so issue #11's pre-existing test
+isolation failure remains separately tracked. This machine also has a stale
+editable install pointing at a sibling worktree: bare `python -m pytest` can
+silently test the wrong source, so all reported backend evidence explicitly
+prepended this worktree's `backend/src` to `PYTHONPATH`.
+
+**Next:** Owner should verify one real background update by bumping beyond
+0.5.0, rebuilding, and confirming Tampermonkey replaces the installed script
+without a manual reinstall. Independent `safety` review signed off this
+read-only capture loop after checking scope, clone-only DOM handling, timing
+and size bounds, secret containment, fail-safe transport failure, and the
+absence of clicks/submits/action execution. That precedent is narrow: the
+timer-driven pattern is safe only because it observes and posts to loopback;
+giving it any Fantrax action executor requires a new Automation-gate review,
+all write-path guardrails, and the owner-only first-live-action decision.
+
 ---
 
 ## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets

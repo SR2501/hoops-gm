@@ -47,10 +47,19 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `GET /health` | Liveness. Touches nothing. |
 | `GET /health/ready` | Readiness. Verifies the database answers. |
 | `GET /api/v1/meta` | Service metadata. |
+| `GET /bridge/userscript.user.js` | Loopback-only. Serves the built userscript for one-time install and Tampermonkey's `@updateURL`/`@downloadURL` auto-update checks. Unversioned, like `/health`: a static-file surface, not part of the `/api/v1` contract. Never contains a secret. |
 | `GET /api/v1/bridge/pairing` | Loopback-only, ten-minute one-time pairing code when no secret exists. |
 | `POST /api/v1/bridge/pair` | Loopback-only exchange of `X-Hoops-GM-Pairing-Code` for the bearer secret. |
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
+
+`GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
+from disk on every request — nothing is cached in the process, so a rebuild
+takes effect on the next Tampermonkey update check without restarting the
+backend. If that file does not exist yet (a fresh checkout, or `npm run
+build` was never run in `userscript/`), the route returns `404` with a
+`detail` field that says exactly what to run, rather than a bare 404 — see
+`userscript/README.md` for the full install/update workflow.
 
 ## Code gate
 
