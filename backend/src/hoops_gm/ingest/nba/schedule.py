@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.models.enums import SeasonType
 from hoops_gm.db.models.league import ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
@@ -62,6 +63,8 @@ class ScheduleDensityRecord:
 
     schedule_version: str
     schedule_refreshed_at: datetime
+    season: str
+    season_type: SeasonType
     team_id: int
     game_id: int
     game_date: date
@@ -96,6 +99,9 @@ def build_schedule_density(
         raise ValueError("schedule_version must not be empty")
     if schedule_refreshed_at.tzinfo is None or schedule_refreshed_at.utcoffset() is None:
         raise ValueError("schedule_refreshed_at must be timezone-aware")
+    cohorts = {(entry.season, entry.season_type) for entry in entries}
+    if len(cohorts) > 1:
+        raise ValueError("schedule density entries must belong to one season and season type")
 
     per_team: dict[int, list[TeamScheduleEntry]] = defaultdict(list)
     for entry in entries:
@@ -148,6 +154,8 @@ def build_schedule_density(
                 ScheduleDensityRecord(
                     schedule_version=schedule_version,
                     schedule_refreshed_at=refreshed_at_utc,
+                    season=entry.season,
+                    season_type=entry.season_type,
                     team_id=team_id,
                     game_id=entry.game_id,
                     game_date=entry.game_date,

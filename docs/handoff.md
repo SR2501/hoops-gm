@@ -1289,8 +1289,9 @@ rows. The logic computes back-to-back flags, `rest_days`, 3-in-4 / 4-in-5 /
 4-in-6 windows, opponent rest-day differential, and the current road-trip
 length/structure by walking each team's games in date order. An off-day does
 not end a consecutive-away-game run; the run ends at the next home game. The
-code stays in the ingest-data boundary and does not infer any scoring-model or
-risk judgment.
+builder rejects mixed season or season-type cohorts rather than silently using
+one season's prior game as another season's rest baseline. The code stays in the
+ingest-data boundary and does not infer any scoring-model or risk judgment.
 
 **Now true:** `team_schedule` alone is sufficient to derive the required density
 facts without consulting the availability model, opponent context, or any
@@ -1301,9 +1302,11 @@ supports the common `build_schedule_density` / `team_schedule_density` /
 `schedule_refreshed_at`; every density row preserves both values for downstream
 cohort checks. Tests pin the opponent-relative rest differential and a road trip
 that continues across an off-day rather than silently treating rest as a return
-home. Against the current `main`, the pinned backend Code gate passes Ruff,
-formatting, strict mypy, the secret scan, 441 default tests, all 8 schedule
-tests, and SQLite migration upgrade/check/downgrade.
+home, reject cross-season and cross-season-type input, and show the stamped
+version passing `check_cohort` as current while a mismatched version is stale.
+Against the current `main`, the pinned backend Code gate passes Ruff, formatting,
+strict mypy, the secret scan, 443 default tests, all 10 schedule tests, and
+SQLite migration upgrade/check/downgrade.
 
 **Could not verify:** No Postgres service or live NBA schedule request was
 available in this environment. The schedule records expose consecutive

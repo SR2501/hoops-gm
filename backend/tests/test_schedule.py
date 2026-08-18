@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
-from hoops_gm.db.lineage import current_refresh
+from hoops_gm.db.lineage import check_cohort, current_refresh
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
@@ -166,6 +166,34 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
     assert second_run.version == first_run.version
     assert second_run.refreshed_at >= first_run.refreshed_at
 
+    entries = session.scalars(
+        select(TeamScheduleEntry).where(
+            TeamScheduleEntry.season == "2026-27",
+            TeamScheduleEntry.season_type == SeasonType.REGULAR,
+        )
+    ).all()
+    density = build_schedule_density(
+        entries,
+        schedule_version=second_run.version,
+        schedule_refreshed_at=second_run.refreshed_at,
+    )
+
+    assert {row.schedule_version for row in density} == {second_run.version}
+    assert {row.schedule_refreshed_at for row in density} == {second_run.refreshed_at}
+    assert (
+        check_cohort(session, schedule_version=density[0].schedule_version)[0].status == "current"
+    )
+
+    stale_density = build_schedule_density(
+        entries,
+        schedule_version="stale-schedule-version",
+        schedule_refreshed_at=second_run.refreshed_at,
+    )
+    assert (
+        check_cohort(session, schedule_version=stale_density[0].schedule_version)[0].status
+        == "stale"
+    )
+
 
 def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:
     refreshed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -252,6 +280,9 @@ def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> N
 
     assert {row.schedule_version for row in density} == {"schedule-v1"}
     assert {row.schedule_refreshed_at for row in density} == {refreshed_at}
+    assert {row.season for row in density} == {"2026-27"}
+    assert {row.season_type for row in density} == {SeasonType.REGULAR}
+    assert by_date[date(2026, 10, 15)].rest_days_differential is None
     assert by_date[date(2026, 10, 16)].is_back_to_back is True
     assert by_date[date(2026, 10, 16)].rest_days == 0
     assert by_date[date(2026, 10, 16)].rest_days_differential == -1
@@ -281,4 +312,46 @@ def test_schedule_density_requires_refresh_lineage() -> None:
             [],
             schedule_version="schedule-v1",
             schedule_refreshed_at=datetime(2026, 8, 18, 12, 0),
+        )
+
+
+@pytest.mark.parametrize(
+    ("second_season", "second_season_type"),
+    [
+        ("2025-26", SeasonType.REGULAR),
+        ("2026-27", SeasonType.PLAYOFFS),
+    ],
+)
+def test_schedule_density_rejects_mixed_season_cohorts(
+    second_season: str,
+    second_season_type: SeasonType,
+) -> None:
+    rows = [
+        TeamScheduleEntry(
+            id=1,
+            team_id=42,
+            game_id=101,
+            opponent_team_id=2,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 15),
+            is_home=True,
+        ),
+        TeamScheduleEntry(
+            id=2,
+            team_id=42,
+            game_id=102,
+            opponent_team_id=3,
+            season=second_season,
+            season_type=second_season_type,
+            game_date=date(2026, 10, 16),
+            is_home=False,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="one season and season type"):
+        build_schedule_density(
+            rows,
+            schedule_version="schedule-v1",
+            schedule_refreshed_at=datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
         )
