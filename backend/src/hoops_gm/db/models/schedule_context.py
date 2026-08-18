@@ -27,12 +27,16 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     __tablename__ = "opponent_context"
     __table_args__ = (
         UniqueConstraint(
-            "team_schedule_id", "model_version", name="uq_opponent_context_schedule_version"
+            "team_schedule_id",
+            "model_version",
+            "schedule_version",
+            name="uq_opponent_context_schedule_version",
         ),
         Index("ix_opponent_context_game_date", "game_date"),
         Index("ix_opponent_context_team_schedule", "team_schedule_id"),
         Index("ix_opponent_context_team_date", "team_id", "game_date"),
         Index("ix_opponent_context_model_version", "model_version"),
+        Index("ix_opponent_context_schedule_version", "schedule_version"),
     )
 
     season: Mapped[str] = mapped_column(String(9))
@@ -52,6 +56,8 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     training_cutoff: Mapped[date | None] = mapped_column(Date, nullable=True)
     input_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     model_version: Mapped[str] = mapped_column(String(64))
+    schedule_version: Mapped[str] = mapped_column(String(64))
+    schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     team_schedule: Mapped[TeamScheduleEntry] = relationship()
@@ -67,9 +73,15 @@ class OffNightSlate(IntPk, TimestampMixin, Base):
 
     __tablename__ = "off_night_slates"
     __table_args__ = (
-        UniqueConstraint("slate_date", "model_version", name="uq_off_night_slates_date_version"),
+        UniqueConstraint(
+            "slate_date",
+            "model_version",
+            "schedule_version",
+            name="uq_off_night_slates_date_version",
+        ),
         Index("ix_off_night_slates_model_version", "model_version"),
         Index("ix_off_night_slates_slate_date", "slate_date"),
+        Index("ix_off_night_slates_schedule_version", "schedule_version"),
     )
 
     season: Mapped[str] = mapped_column(String(9))
@@ -82,6 +94,8 @@ class OffNightSlate(IntPk, TimestampMixin, Base):
     threshold_percentile: Mapped[float | None] = mapped_column(nullable=True)
     streaming_window_score: Mapped[float | None] = mapped_column(nullable=True)
     model_version: Mapped[str] = mapped_column(String(64))
+    schedule_version: Mapped[str] = mapped_column(String(64))
+    schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

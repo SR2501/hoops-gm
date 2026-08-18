@@ -1073,3 +1073,36 @@ metadata checks in the repository’s SQLite portability suite.
 and historical results are available, validating the pace/defence windows,
 blowout probability calibration, and off-night detection thresholds against a
 held-out sample before computing anything production-facing.
+
+---
+
+## 2026-08-17 — quant — Schedule-context freshness provenance
+
+**Changed:** Updated the schedule-context contract after acceptance of ADR-011
+and ADR-012. Both quant-owned output tables now carry an immutable
+`schedule_version` and `schedule_refreshed_at` alongside `model_version`,
+`computed_at`, and the input snapshot. The natural keys include
+`schedule_version`, retaining each model output against the schedule snapshot
+that produced it rather than overwriting it when the calendar refreshes. Added
+the missing model card with the required version-cohort, refresh, and Model-gate
+rules.
+
+**Now true:** A schedule-context consumer can require a single matching
+schedule/model version cohort and identify whether its context derives from a
+stale schedule refresh. Context must refresh at least weekly and after a
+schedule-version change. This keeps Phase 4 opponent context from mixing with
+newer schedule, projection, or future SOS outputs; the downstream component must
+reject a version mismatch or trigger recomputation, not silently combine rows.
+
+**Could not verify:** There are no downstream projection, SOS, or availability
+consumers yet, so the actual invalidation/recompute cascade cannot be exercised.
+`team_schedule` does not itself yet expose a schedule snapshot version; the
+future context computation must produce the persisted version from its ingest
+refresh provenance rather than inventing a value per row. No live or held-out
+model evaluation was run.
+
+**Next:** `quant` should make the availability model and Phase 5
+strength-of-schedule consumer require matching provenance cohorts when they are
+implemented. `data-engineer` should expose schedule-ingest refresh provenance
+for the context computation to record. The Model gate remains required before
+any decision-facing computation.

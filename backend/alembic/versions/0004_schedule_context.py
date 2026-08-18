@@ -37,6 +37,8 @@ def upgrade() -> None:
         sa.Column("training_cutoff", sa.Date(), nullable=True),
         sa.Column("input_snapshot", sa.JSON(), nullable=False),
         sa.Column("model_version", sa.String(length=64), nullable=False),
+        sa.Column("schedule_version", sa.String(length=64), nullable=False),
+        sa.Column("schedule_refreshed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("computed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "created_at",
@@ -68,11 +70,17 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_opponent_context")),
         sa.UniqueConstraint(
-            "team_schedule_id", "model_version", name="uq_opponent_context_schedule_version"
+            "team_schedule_id",
+            "model_version",
+            "schedule_version",
+            name="uq_opponent_context_schedule_version",
         ),
     )
     op.create_index("ix_opponent_context_game_date", "opponent_context", ["game_date"])
     op.create_index("ix_opponent_context_model_version", "opponent_context", ["model_version"])
+    op.create_index(
+        "ix_opponent_context_schedule_version", "opponent_context", ["schedule_version"]
+    )
     op.create_index("ix_opponent_context_team_date", "opponent_context", ["team_id", "game_date"])
     op.create_index("ix_opponent_context_team_schedule", "opponent_context", ["team_schedule_id"])
 
@@ -89,6 +97,8 @@ def upgrade() -> None:
         sa.Column("threshold_percentile", sa.Float(), nullable=True),
         sa.Column("streaming_window_score", sa.Float(), nullable=True),
         sa.Column("model_version", sa.String(length=64), nullable=False),
+        sa.Column("schedule_version", sa.String(length=64), nullable=False),
+        sa.Column("schedule_refreshed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("computed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "created_at",
@@ -103,17 +113,27 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_off_night_slates")),
-        sa.UniqueConstraint("slate_date", "model_version", name="uq_off_night_slates_date_version"),
+        sa.UniqueConstraint(
+            "slate_date",
+            "model_version",
+            "schedule_version",
+            name="uq_off_night_slates_date_version",
+        ),
     )
     op.create_index("ix_off_night_slates_model_version", "off_night_slates", ["model_version"])
+    op.create_index(
+        "ix_off_night_slates_schedule_version", "off_night_slates", ["schedule_version"]
+    )
     op.create_index("ix_off_night_slates_slate_date", "off_night_slates", ["slate_date"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_off_night_slates_schedule_version", table_name="off_night_slates")
     op.drop_index("ix_off_night_slates_slate_date", table_name="off_night_slates")
     op.drop_index("ix_off_night_slates_model_version", table_name="off_night_slates")
     op.drop_table("off_night_slates")
 
+    op.drop_index("ix_opponent_context_schedule_version", table_name="opponent_context")
     op.drop_index("ix_opponent_context_team_schedule", table_name="opponent_context")
     op.drop_index("ix_opponent_context_team_date", table_name="opponent_context")
     op.drop_index("ix_opponent_context_model_version", table_name="opponent_context")

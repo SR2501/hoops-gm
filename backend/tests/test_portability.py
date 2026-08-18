@@ -215,9 +215,21 @@ def test_schedule_context_tables_are_present() -> None:
     assert "opponent_context" in Base.metadata.tables
     assert "off_night_slates" in Base.metadata.tables
     context_columns = set(Base.metadata.tables["opponent_context"].columns.keys())
-    assert {"team_schedule_id", "model_version", "category_defence"}.issubset(context_columns)
+    assert {
+        "team_schedule_id",
+        "model_version",
+        "schedule_version",
+        "schedule_refreshed_at",
+        "category_defence",
+    }.issubset(context_columns)
     slate_columns = set(Base.metadata.tables["off_night_slates"].columns.keys())
-    assert {"scheduled_game_count", "is_off_night", "model_version"}.issubset(slate_columns)
+    assert {
+        "scheduled_game_count",
+        "is_off_night",
+        "model_version",
+        "schedule_version",
+        "schedule_refreshed_at",
+    }.issubset(slate_columns)
 
 
 def test_the_raw_bridge_payload_table_is_present() -> None:
