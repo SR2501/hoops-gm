@@ -41,6 +41,7 @@ from hoops_gm.schedule_context.release import (
 SCHEDULE_KEY = "nba-schedule"
 SOURCE_KEY = SCHEDULE_CONTEXT_SOURCE_KEY
 BLOWOUT_MODEL_KEY = "schedule-context-blowout"
+OPPONENT_DERIVATION_KEY = "schedule-context-opponent-derivation"
 OFF_NIGHT_MODEL_KEY = "schedule-context-off-night"
 
 _STAT_FIELDS = (
@@ -76,7 +77,8 @@ class InsufficientContextCoverageError(ValueError):
 class ContextCohortClaim:
     schedule_version: str
     source_version: str
-    opponent_model_version: str
+    opponent_derivation_version: str
+    blowout_model_version: str
     off_night_model_version: str
 
 
@@ -201,7 +203,6 @@ def publish_schedule_context_cohorts(
                 "each_team_player_seconds_equals_240_plus_25_per_overtime_v1"
             ),
             "observation_completeness": ("last_n_scored_regular_season_team_games_complete_v1"),
-            "observation_window_games": config.trailing_games,
         },
         refreshed_at=when,
     )
@@ -225,6 +226,20 @@ def publish_schedule_context_cohorts(
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.MODEL,
+        artifact_key=OPPONENT_DERIVATION_KEY,
+        version=config.opponent_derivation_version,
+        source="quant:opponent-context-descriptive-derivation",
+        season=season,
+        summary={
+            "trailing_games": config.trailing_games,
+            "minimum_history_games": config.minimum_history_games,
+            "minimum_opponent_coverage": config.minimum_opponent_coverage,
+        },
+        refreshed_at=when,
+    )
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.MODEL,
         artifact_key=OFF_NIGHT_MODEL_KEY,
         version=config.off_night_model_version,
         source="quant:off-night-descriptive-derivation",
@@ -235,7 +250,8 @@ def publish_schedule_context_cohorts(
     return ContextCohortClaim(
         schedule_version=schedule.version,
         source_version=source_version,
-        opponent_model_version=blowout_model.version,
+        opponent_derivation_version=config.opponent_derivation_version,
+        blowout_model_version=blowout_model.version,
         off_night_model_version=config.off_night_model_version,
     )
 
@@ -251,7 +267,7 @@ def compute_schedule_context(
     """Validate one cohort atomically, then retain versioned context history."""
 
     when = _utc_datetime(computed_at or datetime.now(UTC), field="computed_at")
-    release = load_blowout_release(claim.opponent_model_version)
+    release = load_blowout_release(claim.blowout_model_version)
     blowout_model = release.model
     _lock_claim_scopes(session, season=season)
     schedule_refresh = _require_current(
@@ -272,7 +288,14 @@ def compute_schedule_context(
         session,
         artifact_type=RefreshArtifactType.MODEL,
         artifact_key=BLOWOUT_MODEL_KEY,
-        version=claim.opponent_model_version,
+        version=claim.blowout_model_version,
+        season=season,
+    )
+    _require_current(
+        session,
+        artifact_type=RefreshArtifactType.MODEL,
+        artifact_key=OPPONENT_DERIVATION_KEY,
+        version=claim.opponent_derivation_version,
         season=season,
     )
     _require_current(
@@ -285,8 +308,10 @@ def compute_schedule_context(
     source_snapshot = _source_snapshot(session)
     if _snapshot_version(source_snapshot) != claim.source_version:
         raise StaleContextCohortError("context observations changed after source publication")
-    if blowout_model.version != claim.opponent_model_version:
+    if blowout_model.version != claim.blowout_model_version:
         raise StaleContextCohortError("supplied blowout model does not match its claim")
+    if config.opponent_derivation_version != claim.opponent_derivation_version:
+        raise StaleContextCohortError("opponent derivation does not match its claim")
     if config.off_night_model_version != claim.off_night_model_version:
         raise StaleContextCohortError("off-night derivation does not match its claim")
 
@@ -345,6 +370,7 @@ def _lock_claim_scopes(session: Session, *, season: str) -> None:
         (RefreshArtifactType.SCHEDULE, SCHEDULE_KEY, season),
         (RefreshArtifactType.SOURCE, SOURCE_KEY, None),
         (RefreshArtifactType.MODEL, BLOWOUT_MODEL_KEY, season),
+        (RefreshArtifactType.MODEL, OPPONENT_DERIVATION_KEY, season),
         (RefreshArtifactType.MODEL, OFF_NIGHT_MODEL_KEY, season),
     ):
         lock_refresh_scope(
@@ -423,7 +449,8 @@ def _write_opponents(
     existing = {
         (
             row.team_schedule_id,
-            row.model_version,
+            row.opponent_derivation_version,
+            row.blowout_model_version,
             row.schedule_version,
             row.source_version,
         ): row
@@ -432,7 +459,8 @@ def _write_opponents(
     for entry, profile in prepared_profiles:
         key = (
             entry.id,
-            claim.opponent_model_version,
+            claim.opponent_derivation_version,
+            claim.blowout_model_version,
             claim.schedule_version,
             claim.source_version,
         )
@@ -445,7 +473,8 @@ def _write_opponents(
                 team_id=entry.team_id,
                 opponent_team_id=entry.opponent_team_id,
                 is_home=entry.is_home,
-                model_version=claim.opponent_model_version,
+                opponent_derivation_version=claim.opponent_derivation_version,
+                blowout_model_version=claim.blowout_model_version,
                 schedule_version=claim.schedule_version,
                 source_version=claim.source_version,
                 schedule_refreshed_at=refreshed_at,
@@ -513,7 +542,13 @@ def _recheck_claim(
         (
             RefreshArtifactType.MODEL,
             BLOWOUT_MODEL_KEY,
-            claim.opponent_model_version,
+            claim.blowout_model_version,
+            season,
+        ),
+        (
+            RefreshArtifactType.MODEL,
+            OPPONENT_DERIVATION_KEY,
+            claim.opponent_derivation_version,
             season,
         ),
         (

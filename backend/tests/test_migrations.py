@@ -274,7 +274,10 @@ def test_0010_preserves_and_backfills_existing_provenance(
                 )
             ).all()
             context = connection.execute(
-                text("SELECT source_version, garbage_time_suppression FROM opponent_context")
+                text(
+                    "SELECT source_version, opponent_derivation_version, "
+                    "blowout_model_version, garbage_time_suppression FROM opponent_context"
+                )
             ).one()
             slate = connection.execute(
                 text("SELECT source_version, input_snapshot FROM off_night_slates")
@@ -284,7 +287,7 @@ def test_0010_preserves_and_backfills_existing_provenance(
             ("model", "default", "*"),
             ("schedule", "nba-schedule", "2026-27"),
         ]
-        assert context == ("legacy-unbound", 0.1)
+        assert context == ("legacy-unbound", "legacy-unbound", "model-v1", 0.1)
         assert slate[0] == "legacy-unbound"
         assert slate[1] in ({}, "{}")
 
@@ -296,11 +299,30 @@ def test_0010_preserves_and_backfills_existing_provenance(
             ("refresh_runs", "artifact_key"),
             ("refresh_runs", "season_key"),
             ("opponent_context", "source_version"),
+            ("opponent_context", "opponent_derivation_version"),
             ("off_night_slates", "source_version"),
             ("off_night_slates", "input_snapshot"),
         ):
             columns = {item["name"]: item for item in inspector.get_columns(table)}
             assert columns[column]["default"] is None
+
+        opponent_indexes = {index["name"] for index in inspector.get_indexes("opponent_context")}
+        assert {
+            "ix_opponent_context_derivation_version",
+            "ix_opponent_context_blowout_model_version",
+        } <= opponent_indexes
+        assert "ix_opponent_context_model_version" not in opponent_indexes
+        opponent_unique_keys = {
+            tuple(constraint["column_names"])
+            for constraint in inspector.get_unique_constraints("opponent_context")
+        }
+        assert (
+            "team_schedule_id",
+            "opponent_derivation_version",
+            "blowout_model_version",
+            "schedule_version",
+            "source_version",
+        ) in opponent_unique_keys
 
         with engine.begin() as connection:
             connection.execute(

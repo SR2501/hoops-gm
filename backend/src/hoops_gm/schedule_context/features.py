@@ -11,6 +11,17 @@ from hoops_gm.db.lineage import content_fingerprint
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.schedule_context.blowout import BlowoutModel, GameResult
 
+_OPPONENT_DERIVATION_SPEC = (
+    "opponent-context-derivation-v1",
+    "fixture-scope:regular-season-team-schedule-v1",
+    "history:strictly-before-fixture-last-n-scored-complete-games-v1",
+    "pace:mean-of-team-and-opponent-trailing-estimated-possessions-v1",
+    "possessions:fga-minus-oreb-plus-tov-plus-0.44-fta-v1",
+    "category-defence:opponent-allowed-counting-per-100-and-volume-ratios-v1",
+    "blowout-input:absolute-trailing-mean-margin-gap-v1",
+    "coverage:produced-fixture-rows-over-scheduled-fixture-rows-v1",
+)
+
 
 @dataclass(frozen=True)
 class ScheduleContextConfig:
@@ -35,6 +46,19 @@ class ScheduleContextConfig:
             [
                 "off-night-empirical-midrank-v1",
                 f"{self.off_night_percentile:.8f}",
+                f"trailing-games:{self.trailing_games}",
+                f"minimum-history-games:{self.minimum_history_games}",
+                f"minimum-opponent-coverage:{self.minimum_opponent_coverage:.8f}",
+            ]
+        )
+
+    @property
+    def opponent_derivation_version(self) -> str:
+        """Fingerprint the complete pace, defence, and coverage derivation."""
+
+        return content_fingerprint(
+            [
+                *_OPPONENT_DERIVATION_SPEC,
                 f"trailing-games:{self.trailing_games}",
                 f"minimum-history-games:{self.minimum_history_games}",
                 f"minimum-opponent-coverage:{self.minimum_opponent_coverage:.8f}",

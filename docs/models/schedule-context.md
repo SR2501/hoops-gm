@@ -158,27 +158,38 @@ than silently preserving the old calibration claim.
 
 ## Provenance, history, and rejection rules
 
-Every persisted row binds to:
+Every persisted opponent row binds to:
 
 - `schedule_version`: current `nba-schedule` refresh for that season;
 - `source_version`: the exact completed score/box-score observation fingerprint
   used at scoring time, including player seconds and only regular-season games
   for both opponent and slate rows; slate rows retain this source lineage because
   their persisted coverage audit is source-derived;
-- `model_version`: blowout training/specification version, or the deterministic
-  off-night derivation version.
+- `opponent_derivation_version`: the deterministic pace/category-defence
+  specification plus `trailing_games`, `minimum_history_games`, and the persisted
+  coverage threshold;
+- `blowout_model_version`: the separately pinned calibrated blowout release.
 
-Lineage is keyed by artifact family and season. Publishing registers the source, blowout-model, and off-night derivation cohorts.
-Persistence rechecks all three inside its transaction, recomputes the source
-fingerprint, and holds the same transaction-level lineage locks that source
-writers and publishers acquire until the caller commits or rolls back. Stale,
-unknown, or mismatched cohorts raise instead of writing.
-Natural keys include all applicable versions, so a changed
-source/model/schedule creates history rather than overwriting prior context.
+Off-night rows retain their own deterministic `model_version`; that version is
+not reused for opponent context. The derivation and calibrated-model dimensions
+stay separate so changing a descriptive history window does not claim a new
+blowout fit, and changing the blowout release does not relabel pace/defence math.
 
-The model version includes its training-source fingerprint separately from the
-scoring-time source version. This preserves the distinction between the data
-that fit the model and the observations used to score a future fixture.
+Lineage is keyed by artifact family and season. Publishing explicitly activates
+the source, opponent derivation, blowout-model, and off-night derivation cohorts.
+Persistence rechecks every claimed cohort inside its transaction, recomputes the
+source fingerprint, and holds the same transaction-level lineage locks that
+source writers and publishers acquire until the caller commits or rolls back.
+Stale, unknown, or mismatched cohorts raise instead of writing.
+Natural keys include all applicable versions, so changed source, opponent
+derivation, blowout model, or schedule cohorts create history rather than
+overwriting prior context. Consumers select the explicitly activated versions;
+they must not infer "current" with a maximum version string or reuse an older
+row whose derivation configuration differs.
+
+The blowout model version includes its training-source fingerprint separately
+from the scoring-time source version. This preserves the distinction between the
+data that fit the model and the observations used to score a future fixture.
 
 ## Base-rate drift and monitoring limits
 

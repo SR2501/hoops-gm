@@ -28,7 +28,8 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint(
             "team_schedule_id",
-            "model_version",
+            "opponent_derivation_version",
+            "blowout_model_version",
             "schedule_version",
             "source_version",
             name="uq_opponent_context_schedule_version",
@@ -47,7 +48,8 @@ class OpponentContext(IntPk, TimestampMixin, Base):
         Index("ix_opponent_context_game_date", "game_date"),
         Index("ix_opponent_context_team_schedule", "team_schedule_id"),
         Index("ix_opponent_context_team_date", "team_id", "game_date"),
-        Index("ix_opponent_context_model_version", "model_version"),
+        Index("ix_opponent_context_derivation_version", "opponent_derivation_version"),
+        Index("ix_opponent_context_blowout_model_version", "blowout_model_version"),
         Index("ix_opponent_context_schedule_version", "schedule_version"),
     )
 
@@ -67,7 +69,8 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     garbage_time_suppression: Mapped[float | None] = mapped_column(nullable=True)
     training_cutoff: Mapped[date | None] = mapped_column(Date, nullable=True)
     input_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
-    model_version: Mapped[str] = mapped_column(String(64))
+    opponent_derivation_version: Mapped[str] = mapped_column(String(64))
+    blowout_model_version: Mapped[str] = mapped_column(String(64))
     schedule_version: Mapped[str] = mapped_column(String(64))
     source_version: Mapped[str] = mapped_column(String(64))
     schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)

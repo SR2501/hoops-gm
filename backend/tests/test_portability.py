@@ -253,7 +253,8 @@ def test_schedule_context_tables_are_present() -> None:
     context_columns = set(context_table.columns.keys())
     assert {
         "team_schedule_id",
-        "model_version",
+        "opponent_derivation_version",
+        "blowout_model_version",
         "schedule_version",
         "source_version",
         "schedule_refreshed_at",
@@ -304,10 +305,15 @@ def test_schedule_context_tables_are_present() -> None:
     }
     assert (
         "team_schedule_id",
-        "model_version",
+        "opponent_derivation_version",
+        "blowout_model_version",
         "schedule_version",
         "source_version",
     ) in context_unique_keys
+    assert {
+        "ix_opponent_context_derivation_version",
+        "ix_opponent_context_blowout_model_version",
+    } <= {index.name for index in context_table.indexes}
     slate_unique_keys = {
         tuple(constraint.columns.keys())
         for constraint in slate_table.constraints

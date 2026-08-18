@@ -99,9 +99,24 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
+    op.add_column(
+        "opponent_context",
+        sa.Column(
+            "opponent_derivation_version",
+            sa.String(length=64),
+            server_default=sa.text("'legacy-unbound'"),
+            nullable=False,
+        ),
+    )
     with op.batch_alter_table("opponent_context", schema=None) as batch_op:
         batch_op.alter_column(
             "source_version",
+            existing_type=sa.String(length=64),
+            server_default=None,
+            existing_nullable=False,
+        )
+        batch_op.alter_column(
+            "opponent_derivation_version",
             existing_type=sa.String(length=64),
             server_default=None,
             existing_nullable=False,
@@ -112,10 +127,13 @@ def upgrade() -> None:
             nullable=True,
             existing_nullable=False,
         )
+        batch_op.drop_index("ix_opponent_context_model_version")
         batch_op.drop_constraint("uq_opponent_context_schedule_version", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_opponent_context_schedule_version",
-            ["team_schedule_id", "model_version", "schedule_version", "source_version"],
+        batch_op.alter_column(
+            "model_version",
+            new_column_name="blowout_model_version",
+            existing_type=sa.String(length=64),
+            existing_nullable=False,
         )
         batch_op.create_check_constraint(
             "blowout_probability_range",
@@ -136,6 +154,27 @@ def upgrade() -> None:
         batch_op.create_check_constraint(
             "different_opponent",
             "team_id <> opponent_team_id",
+        )
+    # Alembic's SQLite batch table does not expose a renamed column to indexes
+    # created in the same batch. Build lineage keys only after the rename lands.
+    with op.batch_alter_table("opponent_context", schema=None) as batch_op:
+        batch_op.create_unique_constraint(
+            "uq_opponent_context_schedule_version",
+            [
+                "team_schedule_id",
+                "opponent_derivation_version",
+                "blowout_model_version",
+                "schedule_version",
+                "source_version",
+            ],
+        )
+        batch_op.create_index(
+            "ix_opponent_context_derivation_version",
+            ["opponent_derivation_version"],
+        )
+        batch_op.create_index(
+            "ix_opponent_context_blowout_model_version",
+            ["blowout_model_version"],
         )
 
     op.add_column(
@@ -228,13 +267,16 @@ def _downgrade_blockers() -> list[str]:
         (
             "opponent context with 0010-only provenance",
             "SELECT COUNT(*) FROM opponent_context "
-            "WHERE source_version <> 'legacy-unbound' OR garbage_time_suppression IS NULL",
+            "WHERE source_version <> 'legacy-unbound' "
+            "OR opponent_derivation_version <> 'legacy-unbound' "
+            "OR garbage_time_suppression IS NULL",
         ),
         (
-            "opponent context that collides under the 0005 key",
+            "opponent context that collides under the 0009 key",
             "SELECT COUNT(*) FROM ("
             "SELECT 1 FROM opponent_context "
-            "GROUP BY team_schedule_id, model_version, schedule_version HAVING COUNT(*) > 1"
+            "GROUP BY team_schedule_id, blowout_model_version, schedule_version "
+            "HAVING COUNT(*) > 1"
             ") AS opponent_collisions",
         ),
         (
@@ -296,6 +338,8 @@ def downgrade() -> None:
         batch_op.drop_column("source_version")
 
     with op.batch_alter_table("opponent_context", schema=None) as batch_op:
+        batch_op.drop_index("ix_opponent_context_blowout_model_version")
+        batch_op.drop_index("ix_opponent_context_derivation_version")
         batch_op.drop_constraint(
             batch_op.f("ck_opponent_context_different_opponent"),
             type_="check",
@@ -317,9 +361,11 @@ def downgrade() -> None:
             type_="check",
         )
         batch_op.drop_constraint("uq_opponent_context_schedule_version", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_opponent_context_schedule_version",
-            ["team_schedule_id", "model_version", "schedule_version"],
+        batch_op.alter_column(
+            "blowout_model_version",
+            new_column_name="model_version",
+            existing_type=sa.String(length=64),
+            existing_nullable=False,
         )
         batch_op.alter_column(
             "garbage_time_suppression",
@@ -327,7 +373,17 @@ def downgrade() -> None:
             nullable=False,
             existing_nullable=True,
         )
+        batch_op.drop_column("opponent_derivation_version")
         batch_op.drop_column("source_version")
+    with op.batch_alter_table("opponent_context", schema=None) as batch_op:
+        batch_op.create_unique_constraint(
+            "uq_opponent_context_schedule_version",
+            ["team_schedule_id", "model_version", "schedule_version"],
+        )
+        batch_op.create_index(
+            "ix_opponent_context_model_version",
+            ["model_version"],
+        )
 
     with op.batch_alter_table("refresh_runs", schema=None) as batch_op:
         batch_op.drop_index("ix_refresh_runs_current")

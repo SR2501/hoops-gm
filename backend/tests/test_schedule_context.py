@@ -127,8 +127,11 @@ def test_context_coverage_floor_is_fixed_and_versioned() -> None:
     shorter_history = ScheduleContextConfig(trailing_games=14)
 
     assert default.minimum_opponent_coverage == 0.95
+    assert default.opponent_derivation_version != strict.opponent_derivation_version
+    assert default.opponent_derivation_version != shorter_history.opponent_derivation_version
     assert default.off_night_model_version != strict.off_night_model_version
     assert default.off_night_model_version != shorter_history.off_night_model_version
+    assert default.opponent_derivation_version != default.off_night_model_version
     with pytest.raises(ValueError, match=r"must be in \[0.95, 1\]"):
         ScheduleContextConfig(minimum_opponent_coverage=0.94)
 
@@ -420,6 +423,10 @@ def test_context_service_persists_explainable_versioned_outputs(session: Any) ->
     assert counts.slate_created == 1
     contexts = session.scalars(select(OpponentContext)).all()
     assert {row.source_version for row in contexts} == {claim.source_version}
+    assert {row.opponent_derivation_version for row in contexts} == {
+        claim.opponent_derivation_version
+    }
+    assert {row.blowout_model_version for row in contexts} == {claim.blowout_model_version}
     assert all(row.garbage_time_suppression is None for row in contexts)
     assert all(row.input_snapshot["features_as_of"] == "2026-10-20" for row in contexts)
     assert all(
@@ -552,6 +559,125 @@ def test_context_service_rejects_a_superseded_model_cohort(session: Any) -> None
             claim=claim,
             config=config,
         )
+
+
+def test_context_service_rejects_a_superseded_opponent_derivation_cohort(session: Any) -> None:
+    games, config = _load_context_database(session)
+    _model, claim = _publish_test_claim(session, games, config)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.MODEL,
+        artifact_key="schedule-context-opponent-derivation",
+        version="replacement-derivation",
+        source="test",
+        season="2026-27",
+        refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+
+    with pytest.raises(
+        StaleContextCohortError,
+        match="stale model:schedule-context-opponent-derivation",
+    ):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim,
+            config=config,
+        )
+
+
+def test_opponent_derivation_config_versions_retain_both_context_cohorts(session: Any) -> None:
+    games, config_10 = _load_context_database(session)
+    history = session.execute(
+        select(PlayerGameLog, NbaGame)
+        .join(NbaGame, NbaGame.id == PlayerGameLog.game_id)
+        .where(NbaGame.nba_game_id.like("H%"))
+    ).all()
+    for log, game in history:
+        if int(game.nba_game_id[1:3]) >= 25:
+            log.field_goals_attempted += 10
+    session.flush()
+
+    _model, claim_10 = _publish_test_claim(session, games, config_10)
+    first = compute_schedule_context(
+        session,
+        season="2026-27",
+        claim=claim_10,
+        config=config_10,
+        computed_at=datetime(2026, 8, 18, 13, tzinfo=UTC),
+    )
+
+    config_5 = ScheduleContextConfig(trailing_games=5, minimum_history_games=3)
+    claim_5 = publish_schedule_context_cohorts(
+        session,
+        season="2026-27",
+        config=config_5,
+        refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+    second = compute_schedule_context(
+        session,
+        season="2026-27",
+        claim=claim_5,
+        config=config_5,
+        computed_at=datetime(2026, 8, 19, 13, tzinfo=UTC),
+    )
+    with pytest.raises(
+        StaleContextCohortError,
+        match="stale model:schedule-context-opponent-derivation cohort",
+    ):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim_10,
+            config=config_10,
+        )
+    with pytest.raises(StaleContextCohortError, match="opponent derivation does not match"):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim_5,
+            config=config_10,
+        )
+
+    assert first.opponent_created == second.opponent_created == 4
+    assert claim_10.opponent_derivation_version == config_10.opponent_derivation_version
+    assert claim_5.opponent_derivation_version == config_5.opponent_derivation_version
+    assert claim_10.opponent_derivation_version != claim_5.opponent_derivation_version
+    assert claim_10.blowout_model_version == claim_5.blowout_model_version
+
+    contexts = session.scalars(
+        select(OpponentContext).order_by(
+            OpponentContext.opponent_derivation_version,
+            OpponentContext.team_schedule_id,
+        )
+    ).all()
+    assert len(contexts) == 8
+    by_derivation = {
+        version: [row for row in contexts if row.opponent_derivation_version == version]
+        for version in {
+            claim_10.opponent_derivation_version,
+            claim_5.opponent_derivation_version,
+        }
+    }
+    rows_10 = by_derivation[claim_10.opponent_derivation_version]
+    rows_5 = by_derivation[claim_5.opponent_derivation_version]
+    assert len(rows_10) == len(rows_5) == 4
+    assert {row.pace_window_games for row in rows_10} == {10}
+    assert {row.defence_window_games for row in rows_10} == {10}
+    assert {row.pace_window_games for row in rows_5} == {5}
+    assert {row.defence_window_games for row in rows_5} == {5}
+    assert {row.pace_possessions for row in rows_10} != {row.pace_possessions for row in rows_5}
+    assert {row.category_defence["normalization_possessions"] for row in rows_10} != {
+        row.category_defence["normalization_possessions"] for row in rows_5
+    }
+    assert {row.blowout_model_version for row in contexts} == {RELEASED_BLOWOUT_MODEL_VERSION}
+
+    slates = session.scalars(select(OffNightSlate)).all()
+    assert len(slates) == 2
+    assert {slate.model_version for slate in slates} == {
+        claim_10.off_night_model_version,
+        claim_5.off_night_model_version,
+    }
 
 
 def test_only_the_gate_passed_blowout_release_can_be_published(session: Any) -> None:

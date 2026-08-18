@@ -1,8 +1,8 @@
 """Refresh lineage: provenance for the version strings other tables carry.
 
-``opponent_context`` and ``off_night_slates`` (``schedule_context.py``) already
-stamp every row with ``model_version`` and ``schedule_version`` — the
-versioning seam the plan requires: every value carries its input versions.
+``opponent_context`` and ``off_night_slates`` (``schedule_context.py``) stamp
+every row with their derivation/model and schedule versions — the versioning
+seam the plan requires: every value carries its input versions.
 What was missing is a place those version strings come *from*: a registry of
 when a schedule, projection, or model was last (re)computed, so a downstream
 consumer can ask "is this the current cohort" instead of trusting whatever

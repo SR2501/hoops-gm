@@ -2171,3 +2171,39 @@ PostgreSQL and migrations to pass, and return the new head to both reviewers for
 focused recheck. Do not merge or self-approve from this session.
 
 ---
+
+## 2026-08-18 — quant, backend — Separate opponent derivation and blowout release lineage
+
+**Changed:** Closed the final reproducibility gap in opponent context. The old
+`OpponentContext.model_version` represented only the calibrated blowout release,
+so changing the descriptive pace/defence history window reused the same natural
+key and overwrote prior numeric rows. Opponent context now carries two explicit
+dimensions: `opponent_derivation_version`, a fingerprint of the complete
+pace/category-defence specification plus trailing window, minimum history, and
+coverage threshold; and `blowout_model_version`, the separately pinned calibrated
+release. Both have independent MODEL refresh keys, transaction locks, current
+activation checks, indexes, and positions in the opponent natural key.
+
+**Now true:** Publishing a configuration explicitly activates its opponent
+derivation cohort and its blowout release cohort; computation requires the exact
+claim and recomputed config fingerprint. No maximum-version or row-reuse
+heuristic selects current context. A regression computes `trailing_games = 10`,
+then explicitly publishes and computes `trailing_games = 5`: all eight opponent
+rows remain queryable (four per derivation), windows and pace/defence values
+differ, the blowout release stays identical, the superseded 10-game activation
+is rejected as stale, and a config/claim mismatch is rejected. Alembic remains
+revision `0010` over injury-report `0009`; its populated upgrade backfills
+`legacy-unbound` derivation lineage while preserving the old model value as
+`blowout_model_version`, and its downgrade refuses incompatible history.
+
+**Could not verify:** Native PostgreSQL was not available locally when this entry
+was written. GitHub's real PostgreSQL and migration jobs remain required on the
+new exact head. This is a provenance/persistence correction only; no blowout
+math, fitted parameter, evidence cohort, calibration result, or display-only
+posture changed.
+
+**Next:** Run cumulative Code and Model gates, SQLite lifecycle and built-wheel
+loading, force-push with lease, require exact-head GitHub/PostgreSQL green, and
+return the head for one narrow code recheck. Do not merge or self-approve.
+
+---
