@@ -39,15 +39,31 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
+    op.add_column(
+        "refresh_runs",
+        sa.Column(
+            "season_key",
+            sa.String(length=9),
+            server_default=sa.text("'*'"),
+            nullable=False,
+        ),
+    )
     op.execute(
         sa.text(
             "UPDATE refresh_runs SET artifact_key = 'nba-schedule' WHERE artifact_type = 'schedule'"
         )
     )
+    op.execute(sa.text("UPDATE refresh_runs SET season_key = season WHERE season IS NOT NULL"))
     with op.batch_alter_table("refresh_runs", schema=None) as batch_op:
         batch_op.alter_column(
             "artifact_key",
             existing_type=sa.String(length=64),
+            server_default=None,
+            existing_nullable=False,
+        )
+        batch_op.alter_column(
+            "season_key",
+            existing_type=sa.String(length=9),
             server_default=None,
             existing_nullable=False,
         )
@@ -62,8 +78,12 @@ def upgrade() -> None:
             _in_list("artifact_type", _REFRESH_ARTIFACT_TYPES_V2),
         )
         batch_op.create_unique_constraint(
-            "uq_refresh_runs_type_key_version",
-            ["artifact_type", "artifact_key", "version"],
+            "uq_refresh_runs_type_key_version_season",
+            ["artifact_type", "artifact_key", "version", "season_key"],
+        )
+        batch_op.create_check_constraint(
+            "season_key_matches_season",
+            "season_key = COALESCE(season, '*')",
         )
         batch_op.create_index(
             "ix_refresh_runs_current",
@@ -178,7 +198,69 @@ def upgrade() -> None:
         )
 
 
+def _downgrade_blockers() -> list[str]:
+    connection = op.get_bind()
+    checks = (
+        (
+            "source refresh lineage",
+            "SELECT COUNT(*) FROM refresh_runs WHERE artifact_type = 'source'",
+        ),
+        (
+            "keyed non-schedule lineage",
+            "SELECT COUNT(*) FROM refresh_runs "
+            "WHERE artifact_type <> 'schedule' AND artifact_key <> 'default'",
+        ),
+        (
+            "keyed schedule lineage outside nba-schedule",
+            "SELECT COUNT(*) FROM refresh_runs "
+            "WHERE artifact_type = 'schedule' AND artifact_key <> 'nba-schedule'",
+        ),
+        (
+            "lineage versions that collide under the 0005 key",
+            "SELECT COUNT(*) FROM ("
+            "SELECT 1 FROM refresh_runs GROUP BY artifact_type, version HAVING COUNT(*) > 1"
+            ") AS lineage_collisions",
+        ),
+        (
+            "opponent context with 0006-only provenance",
+            "SELECT COUNT(*) FROM opponent_context "
+            "WHERE source_version <> 'legacy-unbound' OR garbage_time_suppression IS NULL",
+        ),
+        (
+            "opponent context that collides under the 0005 key",
+            "SELECT COUNT(*) FROM ("
+            "SELECT 1 FROM opponent_context "
+            "GROUP BY team_schedule_id, model_version, schedule_version HAVING COUNT(*) > 1"
+            ") AS opponent_collisions",
+        ),
+        (
+            "off-night context with 0006-only provenance",
+            "SELECT COUNT(*) FROM off_night_slates WHERE source_version <> 'legacy-unbound'",
+        ),
+        (
+            "off-night context that collides under the 0005 key",
+            "SELECT COUNT(*) FROM ("
+            "SELECT 1 FROM off_night_slates "
+            "GROUP BY slate_date, model_version, schedule_version HAVING COUNT(*) > 1"
+            ") AS slate_collisions",
+        ),
+    )
+    return [
+        label
+        for label, statement in checks
+        if connection.scalar(sa.text(statement)) not in (None, 0)
+    ]
+
+
 def downgrade() -> None:
+    blockers = _downgrade_blockers()
+    if blockers:
+        joined = ", ".join(blockers)
+        raise RuntimeError(
+            "refusing lossy 0006 downgrade; archive or explicitly remove incompatible "
+            f"history first: {joined}"
+        )
+
     with op.batch_alter_table("off_night_slates", schema=None) as batch_op:
         batch_op.drop_constraint(
             batch_op.f("ck_off_night_slates_threshold_games_nonnegative"),
@@ -244,7 +326,14 @@ def downgrade() -> None:
 
     with op.batch_alter_table("refresh_runs", schema=None) as batch_op:
         batch_op.drop_index("ix_refresh_runs_current")
-        batch_op.drop_constraint("uq_refresh_runs_type_key_version", type_="unique")
+        batch_op.drop_constraint(
+            batch_op.f("ck_refresh_runs_season_key_matches_season"),
+            type_="check",
+        )
+        batch_op.drop_constraint(
+            "uq_refresh_runs_type_key_version_season",
+            type_="unique",
+        )
         batch_op.drop_constraint(
             batch_op.f("ck_refresh_runs_refresh_artifact_type"),
             type_="check",
@@ -261,4 +350,5 @@ def downgrade() -> None:
             "ix_refresh_runs_type_refreshed_at",
             ["artifact_type", "refreshed_at"],
         )
+        batch_op.drop_column("season_key")
         batch_op.drop_column("artifact_key")

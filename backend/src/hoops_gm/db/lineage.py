@@ -22,13 +22,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.session import acquire_transaction_lock
 
 CohortStatus = Literal["current", "stale", "unknown"]
+SCHEDULE_CONTEXT_SOURCE_KEY = "schedule-context-observations"
 
 
 class _SeasonNotSpecified:
@@ -69,24 +71,31 @@ def record_refresh(
 ) -> RefreshRun:
     """Register that an artifact was (re)computed at ``version``.
 
-    Idempotent by ``(artifact_type, artifact_key, version)``. The default key
-    preserves the original contract for existing callers. Does not commit;
-    callers manage their own transaction boundary (see ``db/session.py``).
+    Idempotent by ``(artifact_type, artifact_key, version, season)``. The
+    non-null ``season_key`` keeps unscoped rows unique on both SQLite and
+    Postgres. The default key preserves the original contract for existing
+    callers. Does not commit; callers manage their own transaction boundary.
     """
 
+    lock_refresh_scope(
+        session,
+        artifact_type=artifact_type,
+        artifact_key=artifact_key,
+        season=season,
+    )
     when = refreshed_at if refreshed_at is not None else datetime.now(UTC)
+    season_key = season if season is not None else "*"
     existing = session.scalar(
         select(RefreshRun).where(
             RefreshRun.artifact_type == artifact_type,
             RefreshRun.artifact_key == artifact_key,
             RefreshRun.version == version,
+            RefreshRun.season_key == season_key,
         )
     )
     if existing is not None:
         existing.refreshed_at = when
         existing.source = source
-        if season is not None:
-            existing.season = season
         if summary is not None:
             existing.summary = dict(summary)
         session.flush()
@@ -97,6 +106,7 @@ def record_refresh(
         artifact_key=artifact_key,
         version=version,
         season=season,
+        season_key=season_key,
         source=source,
         summary=dict(summary) if summary is not None else {},
         refreshed_at=when,
@@ -104,6 +114,38 @@ def record_refresh(
     session.add(run)
     session.flush()
     return run
+
+
+def lock_refresh_scope(
+    session: Session,
+    *,
+    artifact_type: RefreshArtifactType,
+    artifact_key: str,
+    season: str | None,
+) -> None:
+    """Serialize publishers and consumers of one exact lineage scope.
+
+    PostgreSQL holds a transaction-level advisory lock, including when no row
+    exists for a newly introduced scope. SQLite reserves its database-wide
+    writer through a no-op update. A producer must go through ``record_refresh``
+    and a strict consumer must call this before reading inputs; together those
+    rules prevent a cohort from advancing between a consumer's final check and
+    commit.
+    """
+
+    season_filter = RefreshRun.season.is_(None) if season is None else RefreshRun.season == season
+    filters = (
+        RefreshRun.artifact_type == artifact_type,
+        RefreshRun.artifact_key == artifact_key,
+        season_filter,
+    )
+    acquire_transaction_lock(
+        session,
+        scope_key=f"{artifact_type.value}\x00{artifact_key}\x00{season or '*'}",
+        write_reservation=(
+            update(RefreshRun).where(*filters).values(refreshed_at=RefreshRun.refreshed_at)
+        ),
+    )
 
 
 def current_refresh(
@@ -167,16 +209,20 @@ def check_cohort(
     schedule cohort).
     """
 
-    claims: tuple[tuple[RefreshArtifactType, str | None], ...] = (
-        (RefreshArtifactType.SCHEDULE, schedule_version),
-        (RefreshArtifactType.MODEL, model_version),
-        (RefreshArtifactType.PROJECTION, projection_version),
+    claims: tuple[tuple[RefreshArtifactType, str, str | None], ...] = (
+        (RefreshArtifactType.SCHEDULE, "nba-schedule", schedule_version),
+        (RefreshArtifactType.MODEL, "default", model_version),
+        (RefreshArtifactType.PROJECTION, "default", projection_version),
     )
     results: list[CohortCheck] = []
-    for artifact_type, claimed in claims:
+    for artifact_type, artifact_key, claimed in claims:
         if claimed is None:
             continue
-        current = current_refresh(session, artifact_type)
+        current = current_refresh(session, artifact_type, artifact_key=artifact_key)
+        # Rows registered before keyed lineage landed remain under ``default``.
+        # Read them only when no producer has published the keyed stream.
+        if current is None and artifact_key != "default":
+            current = current_refresh(session, artifact_type)
         if current is None:
             results.append(CohortCheck(artifact_type, claimed, "unknown", None, None))
         elif current.version == claimed:

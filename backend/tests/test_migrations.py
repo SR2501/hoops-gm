@@ -268,7 +268,10 @@ def test_0006_preserves_and_backfills_existing_provenance(
     try:
         with engine.connect() as connection:
             refresh_rows = connection.execute(
-                text("SELECT artifact_type, artifact_key FROM refresh_runs ORDER BY artifact_type")
+                text(
+                    "SELECT artifact_type, artifact_key, season_key "
+                    "FROM refresh_runs ORDER BY artifact_type"
+                )
             ).all()
             context = connection.execute(
                 text("SELECT source_version, garbage_time_suppression FROM opponent_context")
@@ -278,8 +281,8 @@ def test_0006_preserves_and_backfills_existing_provenance(
             ).one()
 
         assert [tuple(row) for row in refresh_rows] == [
-            ("model", "default"),
-            ("schedule", "nba-schedule"),
+            ("model", "default", "*"),
+            ("schedule", "nba-schedule", "2026-27"),
         ]
         assert context == ("legacy-unbound", 0.1)
         assert slate[0] == "legacy-unbound"
@@ -288,6 +291,7 @@ def test_0006_preserves_and_backfills_existing_provenance(
         inspector = inspect(engine)
         for table, column in (
             ("refresh_runs", "artifact_key"),
+            ("refresh_runs", "season_key"),
             ("opponent_context", "source_version"),
             ("off_night_slates", "source_version"),
             ("off_night_slates", "input_snapshot"),
@@ -307,6 +311,78 @@ def test_0006_preserves_and_backfills_existing_provenance(
             connection.execute(
                 text("UPDATE off_night_slates SET scheduled_game_count = -1 WHERE id = 1")
             )
+    finally:
+        engine.dispose()
+
+
+def test_0006_refuses_a_lossy_downgrade_before_altering_schema(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0006")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO refresh_runs "
+                    "(artifact_type, artifact_key, version, season, season_key, source, "
+                    "summary, refreshed_at, created_at, updated_at) VALUES "
+                    "('source', 'schedule-context-observations', 'source-v1', NULL, '*', "
+                    "'fixture', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="refusing lossy 0006 downgrade"):
+        command.downgrade(alembic_config, "0005")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            source_rows = connection.scalar(
+                text("SELECT COUNT(*) FROM refresh_runs WHERE artifact_type = 'source'")
+            )
+        assert revision == "0006"
+        assert source_rows == 1
+        assert "artifact_key" in {
+            column["name"] for column in inspect(engine).get_columns("refresh_runs")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_0006_refuses_to_discard_a_custom_schedule_scope(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0006")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO refresh_runs "
+                    "(artifact_type, artifact_key, version, season, season_key, source, "
+                    "summary, refreshed_at, created_at, updated_at) VALUES "
+                    "('schedule', 'alternate-feed', 'schedule-v1', '2026-27', '2026-27', "
+                    "'fixture', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="keyed schedule lineage outside nba-schedule"):
+        command.downgrade(alembic_config, "0005")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+        assert revision == "0006"
+        assert "artifact_key" in {
+            column["name"] for column in inspect(engine).get_columns("refresh_runs")
+        }
     finally:
         engine.dispose()
 

@@ -684,10 +684,16 @@ A small `refresh_runs` registry and `/api/v1/lineage` contract recording when a 
 
 ### `schedule-context` - Building opponent and slate context
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `nba-stats-ingest`, `schedule-ingest`
 
-Off-night light NBA slates (cheap streaming windows), opponent pace, per-category defensive profiles, and blowout likelihood (garbage-time minutes suppression).
+Versioned off-night slate percentiles, opponent pace, volume-correct
+per-category defensive profiles, and held-out-calibrated blowout likelihood.
+Descriptive schedule/box-score facts are separated from the decision-bearing
+probability. Every output binds schedule/source/model cohorts and rejects stale
+or mismatched currentness. Garbage-time minutes suppression remains null because
+blowout calibration alone does not validate its magnitude; it belongs to
+`reliability-metrics` once player-minutes evidence exists.
 
 
 ### `schedule-density` - Modelling schedule density

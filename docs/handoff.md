@@ -1957,3 +1957,88 @@ its Model gate; no schedule-context math, thresholding, playoff behavior, or
 schedule-density logic was added here.
 
 ---
+
+## 2026-08-18 — quant — Versioned schedule context and held-out blowout calibration
+
+**Changed:** Completed `schedule-context` without moving any pure calendar
+arithmetic out of the merged `schedule-density` contract. Added a quant-owned
+service that derives per-date slate counts and empirical light-slate percentiles
+directly from `team_schedule`, trailing pace from possession estimates, and
+volume-correct opponent category allowances (counting categories per 100
+possessions; FG/FT as summed makes and attempts). Added a simple empirical
+blowout-probability model based on strictly pre-game trailing point-margin gaps,
+plus transactional publication/persistence that binds each row to keyed
+schedule, scoring-source, and model cohorts. Stale schedule, changed source,
+superseded model, and unknown cohorts raise before writes; natural keys retain
+older source/model/schedule outputs. `streaming_window_score` and
+`garbage_time_suppression` remain null because no held-out evidence supports
+their magnitude.
+
+**Now true:** The descriptive/model boundary is executable rather than only
+documented. Off-night rows make no fantasy-period or playoff-date assumption,
+and opponent rows use only observations before each fixture with exact game IDs,
+feature cutoff, and offseason-carryover flag in `input_snapshot`. The blowout
+bin count was selected on a 2024–25 validation season after fitting 2023–24,
+then locked, refit on 2024–25, and evaluated once on untouched 2025–26:
+1,225 held-out games, Brier 0.23314 versus 0.23464 for the constant-rate
+baseline, and ECE 0.03229. The improvement is deliberately described as small;
+the highest-risk bin predicted 36.7% and realized 44.0%, so v1 is context for a
+human, not permission to alter minutes, values, or automated actions. The
+committed evidence and blind spots are in
+`backend/tests/model_evidence/schedule_context_blowout_v1.json`, the reproducible
+live run is `python -m hoops_gm.schedule_context.backtest`, and the model card is
+`docs/models/schedule-context.md`. Local gates pass: Ruff, format, strict mypy,
+458 default tests, four dedicated `model_backtest` tests, and SQLite migration
+upgrade/check/downgrade from empty.
+
+**Could not verify:** Native Postgres was not available locally, so CI remains
+the dialect check for revision `0006` and its enum/constraint rebuilds. The
+committed gate validates the evidence contract but does not recreate all 3,676
+source games offline; the live reproduction was run successfully against
+`nba_api:LeagueGameFinder` in this session, and a future source change must
+produce a new evidence/model version. No full production database containing
+multi-season player logs plus the complete 2026–27 schedule was available, so
+the persistence run is integration-tested on constructed rows rather than
+executed for every real fixture. The model cannot see trades, coaching/rotation
+changes, injuries, market spreads, front-office intent, or where a team spent an
+off-day. Opening-week pace/defence and margin windows carry prior-season form
+and are marked as such; they are especially fragile after offseason turnover.
+No downstream availability, reliability, streaming, projection, or
+strength-of-schedule consumer exists yet to exercise cohort rejection across a
+second module.
+
+**Next:** `reliability-metrics` may consume blowout probability only as visible
+context until it separately validates player-specific minutes suppression.
+`availability-model` and later `strength-of-schedule` consumers must pass the
+exact schedule/source/model versions they used and reject this service's stale
+cohort error rather than falling back. `frontend` may display off-night,
+pace/defence, and blowout evidence, but must not present the null suppression or
+streaming score as zero.
+
+---
+
+## 2026-08-18 — quant — Serialize schedule-context cohort publication
+
+**Changed:** Closed the last concurrency gap in schedule-context publication.
+The database seam now uses transaction-level PostgreSQL advisory locks, including
+for unpublished scopes, and an SQLite no-op update to reserve the writer before
+cohort validation. Schedule and scoring-observation importers acquire the same
+scopes before mutation, while context publication locks before fingerprinting its
+source snapshot. Migration `0006` now refuses any populated downgrade that would
+discard keyed/source lineage, context provenance, nullable suppression, or
+version history before altering the schema.
+
+**Now true:** Schedule/source/model currentness checks and context writes execute
+under one transaction whose refresh scopes cannot be concurrently superseded on
+either supported database. Final local gates pass against current `main`: Ruff,
+format, strict mypy, 466 default tests, four dedicated `model_backtest` tests,
+the secret scan, and SQLite migration upgrade/check/downgrade.
+
+**Could not verify:** Native PostgreSQL was not available locally. PostgreSQL's
+advisory-lock path remains covered by the required CI Postgres job rather than a
+local contention test.
+
+**Next:** CI must exercise the full suite and migration round trip on PostgreSQL;
+this PR must not merge or self-approve.
+
+---

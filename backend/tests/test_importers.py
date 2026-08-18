@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import SCHEDULE_CONTEXT_SOURCE_KEY
 from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
     DnpReason,
@@ -27,10 +28,12 @@ from hoops_gm.db.models.enums import (
     FieldEvidence,
     MatchMethod,
     ParticipationOutcome,
+    RefreshArtifactType,
 )
 from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity import IdentityResolver, ResolutionReport, ResolvableRecord
+from hoops_gm.ingest import importers
 from hoops_gm.ingest.fantrax_official import parse_player_ids
 from hoops_gm.ingest.importers import (
     import_box_scores,
@@ -56,6 +59,33 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 def load(name: str) -> Any:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_scoring_observation_importers_lock_the_shared_source_scope(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def capture_lock(_session: Session, **kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(importers, "lock_refresh_scope", capture_lock)
+
+    import_games(session, [])
+    import_box_scores(session, [])
+
+    assert calls == [
+        {
+            "artifact_type": RefreshArtifactType.SOURCE,
+            "artifact_key": SCHEDULE_CONTEXT_SOURCE_KEY,
+            "season": None,
+        },
+        {
+            "artifact_type": RefreshArtifactType.SOURCE,
+            "artifact_key": SCHEDULE_CONTEXT_SOURCE_KEY,
+            "season": None,
+        },
+    ]
 
 
 @pytest.fixture

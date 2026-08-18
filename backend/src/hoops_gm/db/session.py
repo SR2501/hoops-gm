@@ -11,14 +11,16 @@ downstream may branch on it.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.sql import Executable
 
 from hoops_gm.core.config import Settings
 
@@ -66,6 +68,31 @@ def create_db_engine(settings: Settings) -> Engine:
         enable_sqlite_foreign_keys(engine)
 
     return engine
+
+
+def acquire_transaction_lock(
+    session: Session,
+    *,
+    scope_key: str,
+    write_reservation: Executable,
+) -> None:
+    """Hold one logical scope until commit on both supported dialects.
+
+    PostgreSQL uses a transaction-level advisory lock so even a scope with no
+    lineage rows yet is serialized. SQLite needs a no-op UPDATE to acquire its
+    database-wide write reservation before validation. Keeping this choice here
+    preserves ADR-001's rule that downstream persistence code never branches on
+    a dialect.
+    """
+
+    bind = session.get_bind()
+    if bind.dialect.name == "sqlite":
+        session.execute(write_reservation)
+        return
+
+    digest = hashlib.sha256(scope_key.encode("utf-8")).digest()
+    advisory_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
+    session.execute(select(func.pg_advisory_xact_lock(advisory_key)))
 
 
 @dataclass(slots=True)

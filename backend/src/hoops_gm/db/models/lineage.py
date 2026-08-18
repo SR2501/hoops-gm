@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Index, String, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
@@ -39,11 +39,12 @@ from hoops_gm.db.models.enums import RefreshArtifactType
 class RefreshRun(IntPk, TimestampMixin, Base):
     """One registered refresh of a versioned artifact.
 
-    Idempotent by ``(artifact_type, artifact_key, version)``: re-registering
-    the same version touches ``refreshed_at`` and ``summary`` on the existing
-    row rather than creating a duplicate. History is retained; old versions
-    are never deleted. "What is current now" is the latest row for the
-    requested artifact type, key, and optional season — see
+    Idempotent by ``(artifact_type, artifact_key, version, season_key)``:
+    re-registering the same scoped version touches ``refreshed_at`` and
+    ``summary`` on the existing row rather than creating a duplicate. History
+    is retained; old versions and the same version in another season are never
+    deleted. "What is current now" is the latest row for the requested artifact
+    type, key, and optional season — see
     ``hoops_gm.db.lineage.current_refresh``.
     """
 
@@ -53,7 +54,12 @@ class RefreshRun(IntPk, TimestampMixin, Base):
             "artifact_type",
             "artifact_key",
             "version",
-            name="uq_refresh_runs_type_key_version",
+            "season_key",
+            name="uq_refresh_runs_type_key_version_season",
+        ),
+        CheckConstraint(
+            "season_key = COALESCE(season, '*')",
+            name="season_key_matches_season",
         ),
         Index(
             "ix_refresh_runs_current",
@@ -77,6 +83,8 @@ class RefreshRun(IntPk, TimestampMixin, Base):
     #: NBA season this refresh pertains to. Left null for artifacts that are
     #: not season-scoped.
     season: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    #: Non-null mirror used by the unique key because SQL permits repeated NULLs.
+    season_key: Mapped[str] = mapped_column(String(9))
     #: Free-text description of what produced this refresh — an adapter name,
     #: a training job identifier. Provenance, not a foreign key: the producer
     #: is not always a row in this database.
