@@ -388,10 +388,10 @@ The reasoning behind every overlay recommendation: full category math, punt-fit 
 
 ### `deadline-model` - Modelling the league deadline calendar
 
-- [ ] **pending**
+- [ ] **pending** (implementation complete; PR open awaiting independent review, not yet merged)
 - **Depends on:** `league-settings-ingest`, `schedule-ingest`
 
-Compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. A queryable calendar rather than ad-hoc arithmetic, so the notification engine and the UI read from one source.
+Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time — including when scoring periods themselves are unknown (no `[]` fallback), on out-of-order season/period bounds, and on duplicate period numbers; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. `trade_deadline.deadline_at`/`keepers.deadline_at` are validated offset-aware ISO 8601 at the ingest domain-type boundary, and the read endpoint is loopback-only (bridge-derived values, not a public dashboard fact). A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it. `LeagueDeadlineCalendar` is the authoritative source-truth calendar; the existing `ScoringPeriod` table is a separate, not-yet-built concern — see `scoring-period-projection`.
 
 
 ### `deployment` - Preparing deployment and the Postgres migration path
@@ -730,6 +730,14 @@ Games-per-week grid showing availability-adjusted expected games (scheduled game
 - **Depends on:** `frontend-skeleton`, `live-matchup-state`
 
 Live scorecard fed by SSE: category-by-category win/loss/margin, games remaining, and projected final with confidence bands derived from production and availability variance.
+
+
+### `scoring-period-projection` - Deriving `ScoringPeriod` from the active deadline calendar
+
+- [ ] **pending**
+- **Depends on:** `deadline-model`, `schedule-density`
+
+`LeagueDeadlineCalendar` (`deadline-model`) is the league's one authoritative, versioned source of scoring-period boundaries; `ScoringPeriod` (`db/models/league.py`) is a separate, older table with `Date`-only bounds and a non-null `is_playoff` default of `False` that cannot honestly represent "the source never said" — populating it directly from a settings snapshot would silently convert an explicit unknown into a confident `False`. This unit makes `ScoringPeriod` a derived, non-authoritative *projection* of the currently active `LeagueDeadlineCalendar` — never a second ingest target, never written from anywhere but that projection — computed only when the active calendar's scoring periods and playoff flags are actually known. Required for ADR-012's `scheduled_game_counts` (per-week game-count distribution), which joins on `ScoringPeriod`'s `Date` bounds against `TeamScheduleEntry.game_date`. The projection must convert each boundary's timezone-aware instant to `America/New_York` *before* calling `.date()`, not use UTC or the source's raw offset directly — the boundary and `game_date` must agree on a wall-clock day, or the projection double-counts or drops games at the DST transition and around a scoring period's midnight boundary.
 
 
 ### `scoring-profiles` - Abstracting scoring profiles for multi-format support

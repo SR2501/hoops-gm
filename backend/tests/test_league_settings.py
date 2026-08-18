@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -576,3 +577,45 @@ def test_production_ingest_merges_an_explicit_bridge_capture_atomically(
         bridge.source_payload_sha256,
     }
     assert snapshot.observed_at == bridge.observed_at
+
+
+# --------------------------------------------------------------------------
+# Deadline-instant validation (trade_deadline / keepers)
+# --------------------------------------------------------------------------
+#
+# These fields govern a real write action downstream (a trade lock, a keeper
+# cutoff), so an ambiguous or garbage instant is not a display-only nuisance.
+# Validating at construction time means every consumer -- official parsing,
+# bridge parsing, ``merge_settings``, and any hand-built document -- gets the
+# guarantee for free, rather than each caller re-checking it.
+
+
+def test_trade_deadline_rejects_a_naive_timestamp() -> None:
+    with pytest.raises(ValidationError, match="UTC offset"):
+        TradeDeadlineRules(deadline_at="2026-02-12T23:59:59")
+
+
+def test_trade_deadline_rejects_an_unparseable_timestamp() -> None:
+    with pytest.raises(ValidationError, match="ISO 8601"):
+        TradeDeadlineRules(deadline_at="not-a-timestamp")
+
+
+def test_trade_deadline_accepts_an_offset_aware_timestamp() -> None:
+    rules = TradeDeadlineRules(deadline_at="2026-02-12T23:59:59-05:00")
+    assert rules.deadline_at == "2026-02-12T23:59:59-05:00"
+
+
+def test_keeper_deadline_rejects_a_naive_timestamp() -> None:
+    with pytest.raises(ValidationError, match="UTC offset"):
+        KeeperRules(enabled=True, deadline_at="2026-02-12T23:59:59")
+
+
+def test_keeper_deadline_rejects_an_unparseable_timestamp() -> None:
+    with pytest.raises(ValidationError, match="ISO 8601"):
+        KeeperRules(enabled=True, deadline_at="not-a-timestamp")
+
+
+def test_keeper_deadline_of_none_is_still_allowed() -> None:
+    """``None`` means the source was never asked -- not a value to validate."""
+    rules = KeeperRules(enabled=False, deadline_at=None)
+    assert rules.deadline_at is None

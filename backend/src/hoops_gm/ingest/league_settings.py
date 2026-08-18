@@ -28,10 +28,29 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     ValidationError,
+    field_validator,
     model_validator,
 )
 
 from hoops_gm.ingest.errors import SourceContractError
+
+
+def _require_offset_aware_timestamp(value: str) -> str:
+    """Reject a deadline instant that is naive or unparseable.
+
+    A deadline that governs a real-money-adjacent write action (trade lock,
+    keeper cutoff) must be an unambiguous instant. A naive string is
+    ambiguous about *whose* clock it is on, and this module never guesses --
+    see the module docstring on not acquiring a plausible default.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"must be a valid ISO 8601 timestamp, got {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"must carry a UTC offset, got a naive timestamp {value!r}")
+    return value
+
 
 OFFICIAL_SOURCE = "fantrax_official"
 BRIDGE_SOURCE = "fantrax_bridge"
@@ -176,6 +195,11 @@ class TradeDeadlineRules(BaseModel):
 
     deadline_at: str
 
+    @field_validator("deadline_at")
+    @classmethod
+    def _deadline_at_is_offset_aware(cls, value: str) -> str:
+        return _require_offset_aware_timestamp(value)
+
 
 class PlayoffRules(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -190,6 +214,13 @@ class KeeperRules(BaseModel):
     max_keepers: StrictInt | None = Field(default=None, ge=0)
     deadline_at: str | None = None
     provider_options: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+    @field_validator("deadline_at")
+    @classmethod
+    def _deadline_at_is_offset_aware(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_offset_aware_timestamp(value)
 
 
 class LeagueSettingsDocument(BaseModel):
