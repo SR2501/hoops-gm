@@ -190,10 +190,10 @@ def test_absence_split_activation_migration_allows_recurring_fingerprints(
         engine.dispose()
 
 
-def test_0008_preserves_and_backfills_existing_provenance(
+def test_0009_preserves_and_backfills_existing_provenance(
     alembic_config: Config, migration_url: str
 ) -> None:
-    command.upgrade(alembic_config, "0007")
+    command.upgrade(alembic_config, "0008")
     engine = create_engine(migration_url)
     try:
         with engine.begin() as connection:
@@ -263,7 +263,7 @@ def test_0008_preserves_and_backfills_existing_provenance(
     finally:
         engine.dispose()
 
-    command.upgrade(alembic_config, "0008")
+    command.upgrade(alembic_config, "0009")
     engine = create_engine(migration_url)
     try:
         with engine.connect() as connection:
@@ -315,10 +315,10 @@ def test_0008_preserves_and_backfills_existing_provenance(
         engine.dispose()
 
 
-def test_0008_refuses_a_lossy_downgrade_before_altering_schema(
+def test_0009_refuses_a_lossy_downgrade_before_altering_schema(
     alembic_config: Config, migration_url: str
 ) -> None:
-    command.upgrade(alembic_config, "0008")
+    command.upgrade(alembic_config, "0009")
     engine = create_engine(migration_url)
     try:
         with engine.begin() as connection:
@@ -334,8 +334,8 @@ def test_0008_refuses_a_lossy_downgrade_before_altering_schema(
     finally:
         engine.dispose()
 
-    with pytest.raises(RuntimeError, match="refusing lossy 0008 downgrade"):
-        command.downgrade(alembic_config, "0007")
+    with pytest.raises(RuntimeError, match="refusing lossy 0009 downgrade"):
+        command.downgrade(alembic_config, "0008")
 
     engine = create_engine(migration_url)
     try:
@@ -344,7 +344,7 @@ def test_0008_refuses_a_lossy_downgrade_before_altering_schema(
             source_rows = connection.scalar(
                 text("SELECT COUNT(*) FROM refresh_runs WHERE artifact_type = 'source'")
             )
-        assert revision == "0008"
+        assert revision == "0009"
         assert source_rows == 1
         assert "artifact_key" in {
             column["name"] for column in inspect(engine).get_columns("refresh_runs")
@@ -353,10 +353,10 @@ def test_0008_refuses_a_lossy_downgrade_before_altering_schema(
         engine.dispose()
 
 
-def test_0008_refuses_to_discard_a_custom_schedule_scope(
+def test_0009_refuses_to_discard_a_custom_schedule_scope(
     alembic_config: Config, migration_url: str
 ) -> None:
-    command.upgrade(alembic_config, "0008")
+    command.upgrade(alembic_config, "0009")
     engine = create_engine(migration_url)
     try:
         with engine.begin() as connection:
@@ -373,13 +373,13 @@ def test_0008_refuses_to_discard_a_custom_schedule_scope(
         engine.dispose()
 
     with pytest.raises(RuntimeError, match="keyed schedule lineage outside nba-schedule"):
-        command.downgrade(alembic_config, "0007")
+        command.downgrade(alembic_config, "0008")
 
     engine = create_engine(migration_url)
     try:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        assert revision == "0008"
+        assert revision == "0009"
         assert "artifact_key" in {
             column["name"] for column in inspect(engine).get_columns("refresh_runs")
         }

@@ -1936,7 +1936,7 @@ merge or self-approve.
 `nba-schedule` key. Extended both schedule-context tables with a required
 `source_version`; added the off-night input snapshot, nullable uncalibrated
 garbage-time suppression, bounded probability/percentile checks, nonnegative
-count checks, and the team/opponent inequality. Alembic revision `0008`
+count checks, and the team/opponent inequality. Alembic revision `0009`
 preserves existing history and backfills explicit legacy provenance before
 removing its temporary server defaults.
 
@@ -1992,7 +1992,7 @@ live run is `python -m hoops_gm.schedule_context.backtest`, and the model card i
 upgrade/check/downgrade from empty.
 
 **Could not verify:** Native Postgres was not available locally, so CI remains
-the dialect check for revision `0008` and its enum/constraint rebuilds. The
+the dialect check for revision `0009` and its enum/constraint rebuilds. The
 committed gate validates the evidence contract but does not recreate all 3,676
 source games offline; the live reproduction was run successfully against
 `nba_api:LeagueGameFinder` in this session, and a future source change must
@@ -2024,7 +2024,7 @@ The database seam now uses transaction-level PostgreSQL advisory locks, includin
 for unpublished scopes, and an SQLite no-op update to reserve the writer before
 cohort validation. Schedule and scoring-observation importers acquire the same
 scopes before mutation, while context publication locks before fingerprinting its
-source snapshot. Migration `0008` now refuses any populated downgrade that would
+source snapshot. Migration `0009` now refuses any populated downgrade that would
 discard keyed/source lineage, context provenance, nullable suppression, or
 version history before altering the schema.
 
@@ -2075,5 +2075,28 @@ V1 has no automated online calibration monitor and cannot establish that the
 **Next:** Independent reviewers should recheck the six blockers against the new
 exact HEAD. CI must pass Code and Model gates, including PostgreSQL, before this
 PR is eligible; it must not be merged or self-approved here.
+
+---
+
+## 2026-08-18 — quant — Restack schedule-context provenance after league settings
+
+**Changed:** Rebased the complete schedule-context remediation onto league
+settings commit `2369d8f`, preserved both append-only handoff histories, and
+renumbered schedule-context provenance from revision `0008` to `0009` with
+`down_revision = "0008"`. No descriptive feature, released model, source
+fingerprint, completeness, coverage, timestamp, or cohort-lock behavior changed.
+
+**Now true:** Alembic has one linear head, `0009`, after league-settings `0008`.
+The cumulative local gates pass against the rebased tree: Ruff, format, strict
+mypy, 525 default backend tests, six dedicated `model_backtest` tests, secret
+scan, SQLite upgrade/check/downgrade, and the built-wheel release-resource check.
+
+**Could not verify:** GitHub's real PostgreSQL and migration jobs had not run on
+this exact restacked head when this repository entry was written. Local SQLite
+cannot prove PostgreSQL advisory-lock execution.
+
+**Next:** Require all exact-head GitHub checks, especially PostgreSQL and
+migrations, to pass and repeat the two focused reviews. Do not merge or
+self-approve from this session.
 
 ---
