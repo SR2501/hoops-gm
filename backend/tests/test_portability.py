@@ -319,6 +319,7 @@ def test_schedule_context_tables_are_present() -> None:
         "schedule_version",
         "source_version",
     ) in slate_unique_keys
+    assert "ix_off_night_slates_source_version" in {index.name for index in slate_table.indexes}
 
 
 def test_the_raw_bridge_payload_table_is_present() -> None:
