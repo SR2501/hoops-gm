@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from hoops_gm.db.lineage import current_refresh, lock_refresh_scope
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
-from hoops_gm.db.models.league import ScoringPeriod
+from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.nba.models import NbaGameRecord
@@ -302,6 +302,12 @@ def scheduled_game_counts(
     scoring-period calendar remains league-owned; no duplicate week table is
     created.
     """
+
+    league_season = session.scalar(select(League.season).where(League.id == league_id))
+    if league_season is None:
+        raise RuntimeError(f"league {league_id} does not exist")
+    if league_season != season:
+        raise RuntimeError(f"league {league_id} is for season {league_season!r}, not {season!r}")
 
     lock_refresh_scope(
         session,

@@ -360,14 +360,17 @@ def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
 
 
 def test_scheduled_game_counts_fail_without_current_schedule_lineage(session: Session) -> None:
+    league = _add_league(session)
+
     with pytest.raises(RuntimeError, match="no current schedule refresh"):
-        scheduled_game_counts(session, league_id=1, season="2026-27")
+        scheduled_game_counts(session, league_id=league.id, season="2026-27")
 
 
 def test_scheduled_game_counts_locks_the_exact_schedule_scope(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[RefreshArtifactType, str, str | None]] = []
+    league = _add_league(session)
 
     def capture_lock(
         target_session: Session,
@@ -394,11 +397,12 @@ def test_scheduled_game_counts_locks_the_exact_schedule_scope(
         season="2026-27",
     )
 
-    assert scheduled_game_counts(session, league_id=1, season="2026-27") == []
+    assert scheduled_game_counts(session, league_id=league.id, season="2026-27") == []
     assert calls == [(RefreshArtifactType.SCHEDULE, "nba-schedule", "2026-27")]
 
 
 def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session) -> None:
+    league = _add_league(session)
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
@@ -409,7 +413,22 @@ def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session
     )
 
     with pytest.raises(RuntimeError, match=r"no current schedule refresh.*'2026-27'"):
-        scheduled_game_counts(session, league_id=1, season="2026-27")
+        scheduled_game_counts(session, league_id=league.id, season="2026-27")
+
+
+def test_scheduled_game_counts_reject_a_season_outside_the_league(session: Session) -> None:
+    league = _add_league(session)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2025-26",
+    )
+
+    with pytest.raises(RuntimeError, match=r"league .* is for season '2026-27', not '2025-26'"):
+        scheduled_game_counts(session, league_id=league.id, season="2025-26")
 
 
 def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:
@@ -616,3 +635,15 @@ def _add_schedule_game(
             ),
         ]
     )
+
+
+def _add_league(session: Session, *, season: str = "2026-27") -> League:
+    league = League(
+        name=f"Test league {season}",
+        season=season,
+        scoring_type="h2h_categories",
+        draft_type="auction",
+    )
+    session.add(league)
+    session.flush()
+    return league
