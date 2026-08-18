@@ -2452,3 +2452,33 @@ checks for this push are observed, same as prior rounds.
 
 **Next:** Push, confirm exact head/CLEAN state and required-check status,
 report back to the reviewing session. Still not merged, not self-approved.
+---
+
+## 2026-08-18 — data-engineer — Fantasy playoff schedule game-count facts
+
+**Changed:** Extended the existing `scheduled_game_counts` query boundary into a
+complete scoring-period x active-NBA-team grid and added
+`playoff_scheduled_game_counts` as the typed playoff-only entry point. It reads
+the league-scoped `ScoringPeriod.is_playoff` flag and counts `team_schedule`
+rows inside the period's inclusive date boundaries. It does not create another
+week table or compute opponent quality, schedule strength, projections,
+availability, or recommendation policy.
+
+**Now true:** Draft and trade consumers can request an ordered row for every
+active NBA team in every flagged fantasy playoff scoring period, including
+explicit zero-game teams and wholly empty periods. Period boundaries are
+inclusive, schedule rows from other seasons and NBA season-type cohorts are
+excluded, another league's period flags cannot leak into the result, and a
+league with no flagged playoff periods returns an empty list.
+
+**Could not verify:** The 2026-27 Fantrax league's actual playoff scoring periods
+have not been imported, so this verifies the query against explicit league
+fixtures rather than claiming which real dates or period numbers are playoffs.
+The six unresolved NBA Cup schedule games remain absent until the NBA assigns
+their teams, as recorded by `schedule-ingest`; counts will reflect the current
+schedule refresh until that source changes.
+
+**Next:** `draft-recommender` and `trade-evaluator` should consume this raw count
+contract directly. `quant` owns the later Model-gated value-weighted
+`strength-of-schedule` pass from ADR-011 and must not fold it into this fact
+query.

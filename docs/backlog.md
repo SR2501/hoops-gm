@@ -612,10 +612,10 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
 
 ### `playoff-schedule` - Analysing fantasy playoff week schedules
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `schedule-density`
 
-Game counts for the fantasy playoff weeks specifically, surfaced during the draft and at the trade deadline rather than discovered in March. This first pass is calendar fact only (game counts); a value-weighted second pass happens once `strength-of-schedule` exists in Phase 5 (ADR-011) — do not compute opponent-quality-weighted schedule strength here.
+Game counts for the fantasy playoff weeks specifically, surfaced during the draft and at the trade deadline rather than discovered in March. `playoff_scheduled_game_counts` exposes a league-scoped, ordered scoring-period x active-NBA-team grid from `scoring_periods.is_playoff` and `team_schedule`, including explicit zero-game rows and no duplicate week table. This first pass is calendar fact only (game counts); a value-weighted second pass happens once `strength-of-schedule` exists in Phase 5 (ADR-011) — do not compute opponent-quality-weighted schedule strength here.
 
 
 ### `preseason-news-ingest` - Ingesting preseason availability news for draft day

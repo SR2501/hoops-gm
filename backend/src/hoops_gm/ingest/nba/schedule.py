@@ -13,13 +13,13 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.enums import SeasonType
+from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
-from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.nba.models import NbaGameRecord
 
@@ -287,29 +287,65 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
 
 
 def scheduled_game_counts(
-    session: Session, *, league_id: int, season: str
+    session: Session,
+    *,
+    league_id: int,
+    season: str,
+    playoff_only: bool = False,
 ) -> list[ScheduledGameCount]:
-    """Count schedule rows against ``scoring_periods``; no week table is created."""
+    """Return the complete active-team grid for the league's scoring periods.
+
+    Zero-game teams and periods are explicit rows rather than missing data. The
+    scoring-period calendar remains league-owned; no duplicate week table is
+    created.
+    """
 
     statement: Select[tuple[int, int, int]] = (
         select(
             ScoringPeriod.period_number,
-            TeamScheduleEntry.team_id,
+            NbaTeam.id,
             func.count(TeamScheduleEntry.id),
         )
-        .join(
+        .select_from(ScoringPeriod)
+        .join(NbaTeam, true())
+        .outerjoin(
             TeamScheduleEntry,
-            TeamScheduleEntry.game_date.between(ScoringPeriod.start_date, ScoringPeriod.end_date),
+            and_(
+                TeamScheduleEntry.team_id == NbaTeam.id,
+                TeamScheduleEntry.season == season,
+                TeamScheduleEntry.season_type == SeasonType.REGULAR,
+                TeamScheduleEntry.game_date.between(
+                    ScoringPeriod.start_date, ScoringPeriod.end_date
+                ),
+            ),
         )
-        .join(NbaGame, NbaGame.id == TeamScheduleEntry.game_id)
-        .where(ScoringPeriod.league_id == league_id, NbaGame.season == season)
-        .group_by(ScoringPeriod.period_number, TeamScheduleEntry.team_id)
-        .order_by(ScoringPeriod.period_number, TeamScheduleEntry.team_id)
+        .where(
+            ScoringPeriod.league_id == league_id,
+            NbaTeam.is_active.is_(True),
+        )
+        .group_by(ScoringPeriod.period_number, NbaTeam.id)
+        .order_by(ScoringPeriod.period_number, NbaTeam.id)
     )
+    if playoff_only:
+        statement = statement.where(ScoringPeriod.is_playoff.is_(True))
+
     return [
         ScheduledGameCount(period_number, team_id, games)
         for period_number, team_id, games in session.execute(statement)
     ]
+
+
+def playoff_scheduled_game_counts(
+    session: Session, *, league_id: int, season: str
+) -> list[ScheduledGameCount]:
+    """Return raw game counts only for this league's flagged playoff periods."""
+
+    return scheduled_game_counts(
+        session,
+        league_id=league_id,
+        season=season,
+        playoff_only=True,
+    )
 
 
 def _games_in_window(ordered: Sequence[TeamScheduleEntry], current_date: date, days: int) -> int:
