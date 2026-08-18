@@ -42,8 +42,7 @@ def test_schedule_fixture_resolves_games_and_reconciles_the_two_time_fields() ->
 def test_schedule_team_ids_and_tricodes_agree_with_static_team_source() -> None:
     result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
     static = {
-        team.nba_team_id: team.abbreviation
-        for team in parse_teams(load("nba_static_teams.json"))
+        team.nba_team_id: team.abbreviation for team in parse_teams(load("nba_static_teams.json"))
     }
 
     for record in result.games:
@@ -94,10 +93,7 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     }
     import_teams(
         session,
-        [
-            NbaTeamRecord(team_id, f"T{team_id}", f"Team {team_id}")
-            for team_id in sorted(team_ids)
-        ],
+        [NbaTeamRecord(team_id, f"T{team_id}", f"Team {team_id}") for team_id in sorted(team_ids)],
     )
     league = League(
         name="Test league",

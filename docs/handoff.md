@@ -685,3 +685,27 @@ separately for live scoring.
 
 **Next:** Refresh the schedule feed after the NBA Cup draw and import the six resolved games; `schedule-density` can consume the per-team rows and scoring-period count query.
 
+---
+
+## 2026-08-18 — data-engineer — PR #6 backend check investigation
+
+**Changed:** Investigated both failing `Backend — lint, type-check, tests` jobs
+(`95552756445` and `95552716208`) with `gh` logs. Both failures stopped at
+`ruff format --check .`; lint passed and type-check/tests were skipped. The
+failure was PR-caused: the new schedule parser and schedule tests were not
+formatted for the repository's Ruff version. Applied Ruff formatting only to
+`backend/src/hoops_gm/ingest/nba/schedule.py` and
+`backend/tests/test_schedule.py`.
+
+**Now true:** Both CI failures have the same root cause and the formatting
+diff is limited to those two PR files. Local Ruff format, lint and mypy pass;
+the schedule tests and the complete default backend suite pass with the
+repository's incompatible local `pytest-asyncio` plugin disabled.
+
+**Could not verify:** A post-fix GitHub Actions run was not available before
+this handoff entry; the local Python 3.14 plugin cannot run because it raises
+Python's `asyncio.get_event_loop_policy` deprecation as an error. That local
+environment issue is pre-existing and unrelated to the PR changes.
+
+**Next:** Push the formatting fix and rerun CI. No follow-up code change is
+needed for either original check.
