@@ -156,7 +156,12 @@ def parse_projection_csv(
     candidates: list[tuple[ProjectionSourceRow, bool]] = []  # (row, fatal)
 
     for row_number, raw in enumerate(reader, start=2):
-        raw_row = build_raw_row(fieldnames, raw)
+        try:
+            raw_row = build_raw_row(fieldnames, raw)
+        except ValueError as exc:
+            result.total_rows += 1
+            result.issues.append(RowIssue(row_number, None, str(exc), fatal=True))
+            continue
         if not any(value.strip() for value in raw_row.values()):
             continue  # a fully blank trailing line is not a data row at all
 
@@ -351,7 +356,18 @@ def _parse_stat_value(
             )
         )
         return None
-    return value / assumed_games_played
+    transformed = value / assumed_games_played
+    if not math.isfinite(transformed):
+        issues.append(
+            RowIssue(
+                row_number,
+                stat_column.field,
+                f"non-finite per-game value after converting column {header!r}",
+                fatal=True,
+            )
+        )
+        return _FATAL
+    return transformed
 
 
 def _enforce_percentage_decomposability(

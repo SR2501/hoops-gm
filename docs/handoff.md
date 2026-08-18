@@ -938,25 +938,6 @@ absence of clicks/submits/action execution. That precedent is narrow: the
 timer-driven pattern is safe only because it observes and posts to loopback;
 giving it any Fantrax action executor requires a new Automation-gate review,
 all write-path guardrails, and the owner-only first-live-action decision.
-## 2026-08-17 — quant — `csv-importer`: the generic projection CSV import boundary
-
-**Changed:** Built the Phase 5 `csv-importer` backlog item — the reusable import/normalisation/versioning boundary for per-game production projections, and nothing past it. Four new tables (`projection_sources`, `projection_imports`, `projections`, `source_games_played_assumptions`), migration `0006`, and a new `hoops_gm.ingest.projections` package: `profiles.py` (per-source column-mapping profiles for FantasyPros, Hashtag, Basketball Monster and a canonical-header `manual` profile), `parser.py` (pure, offline CSV validation — no database, no network), and `importer.py` (the DB-writing boundary).
-
-ADR-002 is structural, not just documented: `projections` holds only per-game rates (makes/attempts, never a bare percentage — CHECK constraints make "makes exceed attempts" inexpressible, the same "make it inexpressible" pattern `db/base.py` uses for enums), and a source's embedded games-played figure lives only in `source_games_played_assumptions`, a separate table 1:1 with a projection row, never a column read alongside a rate. Neither `expected-games` nor blending exist yet and nothing here anticipates their shape beyond the table split the plan already names.
-
-Identity resolution reuses the existing crosswalk rather than inventing a second one: `build_player_targets` builds `ResolvableRecord`s keyed by each canonical player's **NBA** external id (not the player's own primary key — `import_resolutions`'s `nba_links` lookup requires it, the same convention `backfill.build_crosswalk` uses for the Fantrax crosswalk), and `import_resolutions` (unmodified) writes the accepted matches to `player_external_ids` under the projection's own `ExternalSource`. Only accepted resolutions get a `projections` row; needs-review and unmatched rows surface through the existing `hoops_gm.identity.report` (`partition`/`render_summary`/`to_csv`) exactly as the Fantrax crosswalk does — no new report mechanism was built.
-
-Versioning is content-addressed over the original bytes: `projection_imports` is keyed by `(source_id, season, content_sha256)`, so re-running byte-identical content for one source and season converges while BOM/newline differences and a later season remain distinct. Reprocessing one import reconciles its output exactly: every owned projection and games-played assumption is removed and only currently accepted resolutions are rebuilt, while stale automated crosswalk links are superseded.
-
-Validation happens entirely in the pure parser: duplicate normalized headers, a missing profile signature, or a file with no usable production rows rejects the file; missing names, non-finite/unparsable numbers, an implausible games-played value (outside 0–100), and makes exceeding attempts reject their rows. Two rows sharing a normalised name within one file are both rejected. A percentage-only shooting column is a warning, not a fabricated rate. Original bytes are hashed before explicit UTF-8/UTF-8-BOM decoding. `Projection` stores no raw row: terminal Rank/AAV/composite/expected-games columns are identified and ignored under accepted ADR-008, while durable source evidence is referenced only from the raw-import boundary through `ProjectionImport.raw_payload_ref`.
-
-`test_portability.py`'s `test_later_phase_entity_groups_are_absent` previously asserted `projections` did not exist yet; updated to drop it from the not-yet set (and added `blend_profiles`, a plan.md table name for a later backlog item that the set had omitted) and added `test_csv_importer_tables_are_present` alongside the existing schedule-context presence test.
-
-**Now true:** The `csv-importer` implementation accepts `csv_bytes=...` and produces byte-versioned, exactly reconciled, ADR-002/ADR-008-separated rows with an identity-resolution report. The implementation is complete but the backlog item is blocked at the Adapter gate. No Model gate applies because this boundary ingests and normalises source data rather than producing a decision-bearing number.
-
-**Could not verify:** The FantasyPros, Hashtag and Basketball Monster column-mapping profiles are **best-effort guesses at common 9-cat export header conventions, not verified against a real downloaded file**. Their synthetic examples are ordinary unit tests and deliberately carry no `adapter_contract` marker. The projection Adapter gate is unmet until privacy-safe fixtures derived from real exports exist. The `manual` canonical-header profile carries no vendor claim and is the profile to reach for until a real source is checked by hand against `ProjectionParseResult.resolved_headers`.
-
-**Next:** `data-engineer` must replace intended vendor examples with privacy-safe fixtures derived from real exports and mark only those tests `adapter_contract`. `projection-blending` may consume `projections`/`source_games_played_assumptions` only after this gate is met; `expected-games` remains the sole future fusion seam under ADR-002.
 
 ---
 
@@ -2200,6 +2181,7 @@ available during the restack.
 **Next:** Require green migration-from-empty and full-suite Postgres CI at the
 new exact head, then repeat focused release review. Do not merge from the
 pre-restack review.
+
 ---
 
 ## 2026-08-18 — data-engineer — PR #13 rebased after refresh-lineage merge
@@ -5752,3 +5734,57 @@ live-smoke path exists. This entry is neither merge approval nor self-approval.
 Postgres jobs and every other blocking job to pass, then submit that exact head
 for independent focused review. Keep `csv-importer` blocked until real-derived
 privacy-safe vendor evidence satisfies the projection Adapter gate.
+
+---
+
+## 2026-08-17 — quant — `csv-importer`: the generic projection CSV import boundary
+
+**Changed:** Built the Phase 5 `csv-importer` backlog item — the reusable import/normalisation/versioning boundary for per-game production projections, and nothing past it. Four new tables (`projection_sources`, `projection_imports`, `projections`, `source_games_played_assumptions`), migration `0006`, and a new `hoops_gm.ingest.projections` package: `profiles.py` (per-source column-mapping profiles for FantasyPros, Hashtag, Basketball Monster and a canonical-header `manual` profile), `parser.py` (pure, offline CSV validation — no database, no network), and `importer.py` (the DB-writing boundary).
+
+ADR-002 is structural, not just documented: `projections` holds only per-game rates (makes/attempts, never a bare percentage — CHECK constraints make "makes exceed attempts" inexpressible, the same "make it inexpressible" pattern `db/base.py` uses for enums), and a source's embedded games-played figure lives only in `source_games_played_assumptions`, a separate table 1:1 with a projection row, never a column read alongside a rate. Neither `expected-games` nor blending exist yet and nothing here anticipates their shape beyond the table split the plan already names.
+
+Identity resolution reuses the existing crosswalk rather than inventing a second one: `build_player_targets` builds `ResolvableRecord`s keyed by each canonical player's **NBA** external id (not the player's own primary key — `import_resolutions`'s `nba_links` lookup requires it, the same convention `backfill.build_crosswalk` uses for the Fantrax crosswalk), and `import_resolutions` (unmodified) writes the accepted matches to `player_external_ids` under the projection's own `ExternalSource`. Only accepted resolutions get a `projections` row; needs-review and unmatched rows surface through the existing `hoops_gm.identity.report` (`partition`/`render_summary`/`to_csv`) exactly as the Fantrax crosswalk does — no new report mechanism was built.
+
+Versioning is content-addressed over the original bytes: `projection_imports` is keyed by `(source_id, season, content_sha256)`, so re-running byte-identical content for one source and season converges while BOM/newline differences and a later season remain distinct. Reprocessing one import reconciles its output exactly: every owned projection and games-played assumption is removed and only currently accepted resolutions are rebuilt, while stale automated crosswalk links are superseded.
+
+Validation happens entirely in the pure parser: duplicate normalized headers, a missing profile signature, or a file with no usable production rows rejects the file; missing names, non-finite/unparsable numbers, an implausible games-played value (outside 0–100), and makes exceeding attempts reject their rows. Two rows sharing a normalised name within one file are both rejected. A percentage-only shooting column is a warning, not a fabricated rate. Original bytes are hashed before explicit UTF-8/UTF-8-BOM decoding. `Projection` stores no raw row: terminal Rank/AAV/composite/expected-games columns are identified and ignored under accepted ADR-008, while durable source evidence is referenced only from the raw-import boundary through `ProjectionImport.raw_payload_ref`.
+
+`test_portability.py`'s `test_later_phase_entity_groups_are_absent` previously asserted `projections` did not exist yet; updated to drop it from the not-yet set (and added `blend_profiles`, a plan.md table name for a later backlog item that the set had omitted) and added `test_csv_importer_tables_are_present` alongside the existing schedule-context presence test.
+
+**Now true:** The `csv-importer` implementation accepts `csv_bytes=...` and produces byte-versioned, exactly reconciled, ADR-002/ADR-008-separated rows with an identity-resolution report. The implementation is complete but the backlog item is blocked at the Adapter gate. No Model gate applies because this boundary ingests and normalises source data rather than producing a decision-bearing number.
+
+**Could not verify:** The FantasyPros, Hashtag and Basketball Monster column-mapping profiles are **best-effort guesses at common 9-cat export header conventions, not verified against a real downloaded file**. Their synthetic examples are ordinary unit tests and deliberately carry no `adapter_contract` marker. The projection Adapter gate is unmet until privacy-safe fixtures derived from real exports exist. The `manual` canonical-header profile carries no vendor claim and is the profile to reach for until a real source is checked by hand against `ProjectionParseResult.resolved_headers`.
+
+**Next:** `data-engineer` must replace intended vendor examples with privacy-safe fixtures derived from real exports and mark only those tests `adapter_contract`. `projection-blending` may consume `projections`/`source_games_played_assumptions` only after this gate is met; `expected-games` remains the sole future fusion seam under ADR-002.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 exact-head review follow-up
+
+**Changed:** Closed three issues found by independent review of published head
+`3f93d2a`. A finite season total divided by a finite positive GP can still
+overflow, so the parser now checks the transformed per-game result with
+`math.isfinite` and rejects the row rather than emitting infinity. Rows with
+more cells than the header are now structurally rejected before any identity or
+production parsing; `csv.DictReader`'s overflow list can no longer be discarded
+while a shifted value is accepted. Restored `docs/handoff.md` to the exact
+merged-main prefix and moved the original importer entry to EOF, preserving the
+append-only rule.
+
+**Now true:** The full local gate passes after these changes: Ruff, formatting,
+strict mypy, all 586 default backend tests, all 106 existing real-derived
+Adapter contract tests, SQLite upgrade/check/downgrade through `0010`, and the
+tracked-file secret scan. Regression tests cover arithmetic overflow and extra
+CSV cells. All main-branch handoff content is byte-for-byte unchanged and every
+PR #12 entry follows it.
+
+**Could not verify:** The corrected head still requires fresh native Postgres
+and migration CI plus another exact-head independent review. Projection-specific
+Adapter readiness remains unmet because no privacy-safe real-derived vendor CSV
+fixture or projection live-smoke path exists; vendor profiles remain unverified
+and cannot import production. This is not merge approval.
+
+**Next:** Publish the correction, require every blocking job including both
+native Postgres runs to pass, and return the exact resulting head to the
+independent reviewer. Keep `csv-importer` blocked on real-derived vendor
+evidence regardless of Code-gate status.

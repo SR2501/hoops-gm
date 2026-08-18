@@ -369,6 +369,29 @@ def test_season_total_column_is_divided_by_games_played() -> None:
     assert result.rows[0].points_per_game == 20.0  # 1600 / 80
 
 
+def test_season_total_conversion_rejects_non_finite_result() -> None:
+    profile = ColumnProfile(
+        profile_id="season-total-test",
+        version="1",
+        source=MANUAL_PROFILE.source,
+        display_name="season-total test profile",
+        name_aliases=("player_name",),
+        games_played_aliases=("gp",),
+        stat_columns=(
+            StatColumn("points_per_game", ("points_total",), shape=ValueShape.SEASON_TOTAL),
+        ),
+    )
+    result = parse_projection_csv(
+        ("player_name,gp,points_total\nPlayer Alpha,0.1,1e308\nPlayer Beta,80,1600\n"),
+        profile,
+        season="2026-27",
+    )
+
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
+    assert result.rejected_count == 1
+    assert any("non-finite per-game value" in issue.message for issue in result.fatal_issues)
+
+
 def test_season_total_without_games_played_is_a_warning_not_a_fabrication() -> None:
     # Give only Beta a usable per-game value through a second recognized field
     # so the parser can return Alpha's row-level rejection instead of rejecting
@@ -416,6 +439,18 @@ def test_unparsable_number_rejects_only_its_row() -> None:
     assert len(result.rows) == 1
     assert result.rows[0].player_name == "Player Beta"
     assert any(issue.fatal and "unparsable" in issue.message for issue in result.issues)
+
+
+def test_extra_csv_fields_reject_row_instead_of_discarding_overflow() -> None:
+    result = parse_projection_csv(
+        ("player_name,points_per_game\nPlayer Alpha,1,234\nPlayer Beta,18\n"),
+        MANUAL_PROFILE,
+        season="2026-27",
+    )
+
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
+    assert result.rejected_count == 1
+    assert any("more fields than the CSV header" in issue.message for issue in result.fatal_issues)
 
 
 def test_games_played_outside_plausible_range_is_fatal() -> None:

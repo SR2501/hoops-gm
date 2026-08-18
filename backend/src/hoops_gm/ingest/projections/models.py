@@ -130,12 +130,15 @@ class ProjectionParseResult:
 def build_raw_row(fieldnames: list[str], values: dict[str, Any]) -> dict[str, str]:
     """Coerce a ``csv.DictReader`` row to transient parse evidence.
 
-    ``DictReader`` maps missing trailing columns to ``None`` and extra ones to
-    a list under ``None`` key (``restkey``); both are normalised to strings so
-    callers can inspect the source row during adjudication. It is deliberately
-    not persisted on ``Projection``: terminal Rank/AAV/composite fields may be
-    present in the same CSV and accepted ADR-008 forbids attaching them to the
-    projection layer. Durable raw evidence belongs behind
+    ``DictReader`` maps missing trailing columns to ``None``. Extra columns are
+    structurally invalid and must not be silently discarded: doing so can make
+    shifted values look like valid production, so this helper rejects the
+    ``None`` rest key before coercion. The row is deliberately not persisted on
+    ``Projection``: terminal Rank/AAV/composite fields may be present in the
+    same CSV and accepted ADR-008 forbids attaching them to the projection
+    layer. Durable raw evidence belongs behind
     ``ProjectionImport.raw_payload_ref``.
     """
+    if None in values:
+        raise ValueError("row has more fields than the CSV header")
     return {name: "" if values.get(name) is None else str(values.get(name)) for name in fieldnames}
