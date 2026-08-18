@@ -730,3 +730,18 @@ native Postgres suite cannot be reproduced here. CI must confirm the
 cross-dialect fix.
 
 **Next:** Push this test-data correction and rerun the full CI workflow.
+
+---
+
+## 2026-08-18 — data-engineer — PR #6 checks verified
+
+**Now true:** The final CI runs for commit `e26f0f6` passed both original
+backend checks, including lint, format, type-check and tests. The Postgres
+suite also passed after the fixture correction. The two original failures were
+PR-caused, shared the formatting root cause, and are closed; the subsequent
+Postgres-only fixture defect was also PR-caused and is closed.
+
+**Could not verify:** Native Postgres could not be run locally because Docker
+is unavailable; GitHub Actions supplied the cross-dialect verification.
+
+**Next:** No follow-up is required for these checks.
