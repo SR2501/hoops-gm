@@ -363,13 +363,23 @@ def test_csv_importer_tables_are_present() -> None:
     """
     assert {
         "projection_sources",
+        "projection_profile_versions",
         "projection_imports",
         "projections",
         "source_games_played_assumptions",
     } <= set(Base.metadata.tables)
 
     import_columns = set(Base.metadata.tables["projection_imports"].columns.keys())
-    assert {"content_sha256", "season", "row_count", "matched_count"}.issubset(import_columns)
+    assert {
+        "content_sha256",
+        "season",
+        "profile_id",
+        "profile_version",
+        "profile_verified",
+        "profile_lineage",
+        "row_count",
+        "matched_count",
+    }.issubset(import_columns)
 
     projection_columns = set(Base.metadata.tables["projections"].columns.keys())
     # Rates only (ADR-002) — no games-played or expected-games column belongs

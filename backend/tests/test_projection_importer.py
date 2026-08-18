@@ -20,11 +20,14 @@ vendor file — see the caveat in that module's docstring.
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.enums import ExternalSource, FieldEvidence, MatchMethod
@@ -32,9 +35,11 @@ from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.projections import (
     Projection,
     ProjectionImport,
+    ProjectionProfileVersion,
     ProjectionSource,
     SourceGamesPlayedAssumption,
 )
+from hoops_gm.db.session import Database
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.report import partition, render_summary, to_csv
 from hoops_gm.ingest.projections import (
@@ -48,7 +53,6 @@ from hoops_gm.ingest.projections import (
     ProjectionProfileError,
     StatColumn,
     ValueShape,
-    get_or_create_projection_import,
     get_or_create_projection_source,
     import_projection_csv,
     parse_projection_csv,
@@ -163,13 +167,25 @@ def test_projection_schema_has_no_games_played_or_expected_games_column() -> Non
         (
             {
                 "games_played_aliases": ("expected_games",),
-                "stat_columns": (StatColumn("points_per_game", ("points_per_game",)),),
+                "stat_columns": (
+                    StatColumn(
+                        "points_per_game",
+                        ("points_per_game",),
+                        ValueShape.PER_GAME,
+                    ),
+                ),
             },
             "expected_games",
         ),
         (
             {
-                "stat_columns": (StatColumn("points_per_game", ("fantasy_value",)),),
+                "stat_columns": (
+                    StatColumn(
+                        "points_per_game",
+                        ("fantasy_value",),
+                        ValueShape.PER_GAME,
+                    ),
+                ),
             },
             "fantasy_value",
         ),
@@ -193,6 +209,8 @@ def test_custom_profile_cannot_map_terminal_columns_into_earlier_layers(
 ) -> None:
     with pytest.raises(ValueError, match="ADR-008") as exc_info:
         ColumnProfile(
+            profile_id="hostile-custom",
+            version="1",
             source=ExternalSource.MANUAL,
             display_name="hostile custom profile",
             name_aliases=("player_name",),
@@ -200,6 +218,107 @@ def test_custom_profile_cannot_map_terminal_columns_into_earlier_layers(
         )
 
     assert terminal_alias in str(exc_info.value)
+
+
+def test_external_profile_cannot_claim_wildcard_season_verification() -> None:
+    with pytest.raises(ValueError, match="wildcard season verification"):
+        ColumnProfile(
+            profile_id="vendor-wildcard",
+            version="1",
+            source=ExternalSource.FANTASYPROS,
+            display_name="invalid vendor wildcard",
+            name_aliases=("Player",),
+            stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+            verified=True,
+            verified_seasons=("*",),
+            verification_evidence="one real export cannot verify every season",
+        )
+
+
+def test_manual_wildcard_profile_identity_cannot_be_forged(session: Session) -> None:
+    forged = ColumnProfile(
+        profile_id="manual-canonical",
+        version="1",
+        source=ExternalSource.MANUAL,
+        display_name="forged manual profile",
+        name_aliases=("Player",),
+        stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+        verified=True,
+        verified_seasons=("*",),
+        verification_evidence="caller assertion without canonical schema evidence",
+    )
+
+    with pytest.raises(ProjectionProfileError, match="not the committed registry profile"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Forged manual profile",
+            season="2026-27",
+            csv_bytes=b"Player,PTS\nPlayer Alpha,1694\n",
+            profile=forged,
+        )
+
+    assert session.query(ProjectionImport).count() == 0
+    assert session.query(Projection).count() == 0
+
+
+def test_verified_profile_requires_nonblank_evidence() -> None:
+    with pytest.raises(ValueError, match="without season scope and evidence"):
+        ColumnProfile(
+            profile_id="blank-evidence",
+            version="1",
+            source=ExternalSource.MANUAL,
+            display_name="blank evidence",
+            name_aliases=("player_name",),
+            stat_columns=(
+                StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
+            ),
+            verified=True,
+            verified_seasons=("2026-27",),
+            verification_evidence="   ",
+        )
+
+
+def test_identity_anchor_namespace_cannot_be_used_for_projection_csvs() -> None:
+    with pytest.raises(ValueError, match="not an isolated projection-provider namespace"):
+        ColumnProfile(
+            profile_id="forged-nba-projection",
+            version="1",
+            source=ExternalSource.NBA,
+            display_name="invalid NBA projection",
+            name_aliases=("player_name",),
+            stat_columns=(
+                StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
+            ),
+            verified=True,
+            verified_seasons=("2026-27",),
+            verification_evidence="not relevant because the namespace is forbidden",
+        )
+
+
+def test_projection_source_helper_rejects_identity_anchor_namespace(
+    session: Session,
+) -> None:
+    with pytest.raises(ProjectionProfileError, match="identity-anchor namespace"):
+        get_or_create_projection_source(
+            session,
+            source=ExternalSource.NBA,
+            display_name="invalid NBA projection source",
+        )
+
+
+def test_projection_source_database_constraint_rejects_identity_anchor_namespace(
+    session: Session,
+) -> None:
+    session.add(
+        ProjectionSource(
+            source=ExternalSource.NBA,
+            display_name="invalid NBA projection source",
+        )
+    )
+    with pytest.raises(IntegrityError) as exc_info:
+        session.flush()
+    assert "projection_provider_namespace" in str(exc_info.value)
 
 
 # --------------------------------------------------------------------------
@@ -233,6 +352,8 @@ def test_season_total_column_is_divided_by_games_played() -> None:
     the whole module exists to prevent.
     """
     profile = ColumnProfile(
+        profile_id="season-total-test",
+        version="1",
         source=MANUAL_PROFILE.source,
         display_name="season-total test profile",
         name_aliases=("player_name",),
@@ -253,12 +374,14 @@ def test_season_total_without_games_played_is_a_warning_not_a_fabrication() -> N
     # so the parser can return Alpha's row-level rejection instead of rejecting
     # the whole file.
     profile = ColumnProfile(
+        profile_id="season-total-test",
+        version="1",
         source=MANUAL_PROFILE.source,
         display_name="season-total test profile",
         name_aliases=("player_name",),
         stat_columns=(
             StatColumn("points_per_game", ("points_total",), shape=ValueShape.SEASON_TOTAL),
-            StatColumn("assists_per_game", ("assists_per_game",)),
+            StatColumn("assists_per_game", ("assists_per_game",), ValueShape.PER_GAME),
         ),
     )
     csv_text = "player_name,points_total,assists_per_game\nPlayer Alpha,1600,\nPlayer Beta,,5.0\n"
@@ -350,6 +473,54 @@ def test_vendor_profile_requires_its_production_signature() -> None:
         parse_projection_csv(csv_text, FANTASYPROS_PROFILE, season="2026-27")
 
 
+def test_unverified_vendor_shape_cannot_import_season_totals_as_rates(
+    session: Session,
+) -> None:
+    csv_bytes = b"Player,Team,GP,PTS,REB,AST\nPlayer Alpha,BOS,70,1694,560,350\n"
+
+    with pytest.raises(ProjectionProfileError, match="not verified"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.FANTASYPROS,
+            display_name="Unverified FantasyPros example",
+            season="2026-27",
+            csv_bytes=csv_bytes,
+        )
+
+    assert session.query(ProjectionSource).count() == 0
+    assert session.query(ProjectionImport).count() == 0
+    assert session.query(Projection).count() == 0
+
+
+def test_self_attested_custom_profile_cannot_enter_production(
+    session: Session,
+) -> None:
+    self_attested = ColumnProfile(
+        profile_id="fantasypros-self-attested",
+        version="1",
+        source=ExternalSource.FANTASYPROS,
+        display_name="self-attested FantasyPros",
+        name_aliases=("Player",),
+        stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+        verified=True,
+        verified_seasons=("2026-27",),
+        verification_evidence="caller says this is real",
+    )
+
+    with pytest.raises(ProjectionProfileError, match="not the committed registry profile"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.FANTASYPROS,
+            display_name="Self-attested profile",
+            season="2026-27",
+            csv_bytes=b"Player,PTS\nPlayer Alpha,1694\n",
+            profile=self_attested,
+        )
+
+    assert session.query(ProjectionImport).count() == 0
+    assert session.query(Projection).count() == 0
+
+
 def test_file_with_no_production_headers_is_rejected() -> None:
     csv_text = "player_name,rank,aav\nPlayer Alpha,1,55\n"
     with pytest.raises(ProjectionProfileError, match="no recognized production columns"):
@@ -384,6 +555,90 @@ def test_non_finite_production_stat_is_rejected(value: str) -> None:
 
     assert [row.player_name for row in result.rows] == ["Player Beta"]
     assert result.rejected_count == 1
+
+
+def test_makes_plus_percentage_without_attempts_excludes_the_ratio_field() -> None:
+    profile = ColumnProfile(
+        profile_id="ratio-decomposition-test",
+        version="1",
+        source=ExternalSource.MANUAL,
+        display_name="ratio decomposition test",
+        name_aliases=("player_name",),
+        stat_columns=(
+            StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
+            StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
+            StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
+        ),
+        percentage_fallback_aliases={"field_goals_made_per_game": ("fg%",)},
+    )
+
+    result = parse_projection_csv(
+        "player_name,pts,fgm,fg%\nPlayer Alpha,20.0,8.0,50.0\n",
+        profile,
+        season="2026-27",
+    )
+
+    assert len(result.rows) == 1
+    row = result.rows[0]
+    assert row.points_per_game == 20.0
+    assert row.field_goals_made_per_game is None
+    assert row.field_goals_attempted_per_game is None
+    assert any("incomplete field goal volume pair" in issue.message for issue in result.warnings)
+
+
+def test_percentage_exclusion_is_persisted_in_import_lineage(
+    seeded_players: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ColumnProfile(
+        profile_id="verified-ratio-evidence",
+        version="1",
+        source=ExternalSource.MANUAL,
+        display_name="verified ratio evidence",
+        name_aliases=("player_name",),
+        stat_columns=(
+            StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
+            StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
+            StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
+        ),
+        percentage_fallback_aliases={"field_goals_made_per_game": ("fg%",)},
+        verified=True,
+        verified_seasons=("2026-27",),
+        verification_evidence="recorded fixture fixture://ratio-evidence-v1",
+    )
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.PROFILES_BY_SOURCE",
+        {ExternalSource.MANUAL: profile},
+    )
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Verified ratio evidence",
+        season="2026-27",
+        csv_bytes=b"player_name,pts,fgm,fg%\nPlayer Alpha,20.0,8.0,50.0\n",
+        profile=profile,
+        raw_payload_ref="fixture://ratio-evidence-v1",
+    )
+
+    lineage = outcome.projection_import.profile_lineage
+    assert lineage["resolved_percentage_headers"] == {"field_goals_made_per_game": "fg%"}
+    field_transforms = lineage["field_transforms"]
+    assert isinstance(field_transforms, dict)
+    assert field_transforms["field_goals_made_per_game__percentage_observation"] == {
+        "source_header": "fg%",
+        "source_unit": "percentage",
+        "output_unit": None,
+        "transform": "not_imported",
+        "reason": "percentage categories require explicit makes and attempts",
+        "required_volume_fields": [
+            "field_goals_made_per_game",
+            "field_goals_attempted_per_game",
+        ],
+    }
+    projection = seeded_players.query(Projection).one()
+    assert projection.points_per_game == 20.0
+    assert projection.field_goals_made_per_game is None
+    assert projection.field_goals_attempted_per_game is None
 
 
 # --------------------------------------------------------------------------
@@ -506,6 +761,153 @@ def test_ambiguous_player_is_reported_and_never_imported(session: Session) -> No
     )
 
 
+def test_conflicting_manual_crosswalk_never_redirects_an_accepted_target(
+    session: Session,
+) -> None:
+    accepted_player = seed_player(
+        session,
+        nba_id=12,
+        name="Manual Conflict",
+        team_abbreviation="BOS",
+        position="G",
+    )
+    manual_player = seed_player(
+        session,
+        nba_id=13,
+        name="Different Manual Player",
+        team_abbreviation="LAL",
+        position="F",
+    )
+    external_id = normalize_name("Manual Conflict").key
+    session.add(
+        PlayerExternalId(
+            player_id=manual_player.id,
+            source=ExternalSource.MANUAL,
+            current_for_source=ExternalSource.MANUAL.value,
+            external_id=external_id,
+            external_name="Manual Conflict",
+            normalized_name=external_id,
+            confidence=1.0,
+            match_method=MatchMethod.MANUAL_OVERRIDE,
+            is_manual_override=True,
+            name_evidence=FieldEvidence.AGREE,
+        )
+    )
+    session.flush()
+
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(b"player_name,team,position,points_per_game\nManual Conflict,BOS,G,20.0\n"),
+    )
+
+    assert outcome.identity_report.accepted == []
+    assert len(outcome.identity_report.needs_review) == 1
+    assert "manual crosswalk conflict" in outcome.identity_report.needs_review[0].reason
+    assert session.query(Projection).count() == 0
+    manual_link = session.scalar(
+        select(PlayerExternalId).where(
+            PlayerExternalId.source == ExternalSource.MANUAL,
+            PlayerExternalId.external_id == external_id,
+        )
+    )
+    assert manual_link is not None
+    assert manual_link.player_id == manual_player.id
+    assert manual_link.player_id != accepted_player.id
+
+
+def test_manual_alias_incumbent_does_not_block_the_accepted_projection(
+    session: Session,
+) -> None:
+    accepted_player = seed_player(
+        session,
+        nba_id=14,
+        name="Accepted Player",
+        team_abbreviation="BOS",
+        position="G",
+    )
+    session.add(
+        PlayerExternalId(
+            player_id=accepted_player.id,
+            source=ExternalSource.MANUAL,
+            current_for_source=ExternalSource.MANUAL.value,
+            external_id="legacy-alias",
+            external_name="Legacy Alias",
+            normalized_name=normalize_name("Legacy Alias").key,
+            confidence=1.0,
+            match_method=MatchMethod.MANUAL_OVERRIDE,
+            is_manual_override=True,
+            name_evidence=FieldEvidence.AGREE,
+        )
+    )
+    session.flush()
+
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(b"player_name,team,position,points_per_game\nAccepted Player,BOS,G,20.0\n"),
+    )
+
+    assert len(outcome.identity_report.accepted) == 1
+    assert outcome.identity_report.needs_review == []
+    projection = session.query(Projection).one()
+    assert projection.player_id == accepted_player.id
+    manual_links = (
+        session.query(PlayerExternalId)
+        .filter(PlayerExternalId.source == ExternalSource.MANUAL)
+        .all()
+    )
+    assert len(manual_links) == 1
+    assert manual_links[0].external_id == "legacy-alias"
+    assert manual_links[0].is_manual_override is True
+
+
+def test_manual_alias_promotes_an_otherwise_unmatched_player(
+    session: Session,
+) -> None:
+    player = seed_player(
+        session,
+        nba_id=15,
+        name="Robert Williams III",
+        team_abbreviation="POR",
+        position="C",
+    )
+    alias_key = normalize_name("The Timelord").key
+    session.add(
+        PlayerExternalId(
+            player_id=player.id,
+            source=ExternalSource.MANUAL,
+            current_for_source=ExternalSource.MANUAL.value,
+            external_id=alias_key,
+            external_name="The Timelord",
+            normalized_name=alias_key,
+            confidence=1.0,
+            match_method=MatchMethod.MANUAL_OVERRIDE,
+            is_manual_override=True,
+            name_evidence=FieldEvidence.AGREE,
+        )
+    )
+    session.flush()
+
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=b"player_name,points_per_game\nThe Timelord,10.0\n",
+    )
+
+    assert len(outcome.identity_report.accepted) == 1
+    assert outcome.identity_report.accepted[0].reason == "manual crosswalk override"
+    assert outcome.identity_report.unmatched == []
+    projection = session.query(Projection).one()
+    assert projection.player_id == player.id
+
+
 def test_reimporting_identical_bytes_is_idempotent(seeded_players: Session) -> None:
     session = seeded_players
     csv_bytes = load_bytes("manual_sample.csv")
@@ -612,6 +1014,121 @@ def test_an_updated_file_creates_a_new_versioned_import(seeded_players: Session)
     )
     assert old_alpha.points_per_game == 24.2  # history is untouched
     assert new_alpha.points_per_game == 25.0
+
+
+def test_profile_lineage_is_immutable_and_versioned(
+    seeded_players: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = seeded_players
+    csv_bytes = b"player_name,GP,PTS\nPlayer Alpha,70,1694\n"
+
+    def profile(version: str, aliases: tuple[str, ...]) -> ColumnProfile:
+        return ColumnProfile(
+            profile_id="manual-season-total-evidence",
+            version=version,
+            source=ExternalSource.MANUAL,
+            display_name="verified season-total fixture",
+            name_aliases=("player_name",),
+            games_played_aliases=("GP",),
+            stat_columns=(StatColumn("points_per_game", aliases, ValueShape.SEASON_TOTAL),),
+            verified=True,
+            verified_seasons=("2026-27",),
+            verification_evidence="recorded fixture fixture://season-total-v1",
+        )
+
+    profile_v1 = profile("1", ("PTS",))
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.PROFILES_BY_SOURCE",
+        {ExternalSource.MANUAL: profile_v1},
+    )
+    first = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Verified custom source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+        profile=profile_v1,
+        raw_payload_ref="fixture://season-total-v1",
+    )
+    original_lineage = dict(first.projection_import.profile_lineage)
+    field_transforms = original_lineage["field_transforms"]
+    assert isinstance(field_transforms, dict)
+    transform = field_transforms["points_per_game"]
+    assert transform == {
+        "source_header": "PTS",
+        "source_unit": "season_total",
+        "output_unit": "per_game",
+        "transform": "divide_by_assumed_games_played",
+    }
+    assert session.query(Projection).one().points_per_game == pytest.approx(24.2)
+
+    changed_bytes = csv_bytes.replace(b"1694", b"1700")
+    changed_v1 = profile("1", ("PTS", "Points"))
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.PROFILES_BY_SOURCE",
+        {ExternalSource.MANUAL: changed_v1},
+    )
+    with pytest.raises(ProjectionProfileError, match="changed without a version bump"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Verified custom source",
+            season="2026-27",
+            csv_bytes=changed_bytes,
+            profile=changed_v1,
+        )
+
+    profile_v2 = profile("2", ("PTS", "Points"))
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.PROFILES_BY_SOURCE",
+        {ExternalSource.MANUAL: profile_v2},
+    )
+    second = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Verified custom source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+        profile=profile_v2,
+    )
+
+    assert second.import_created is True
+    assert second.projection_import.id != first.projection_import.id
+    assert first.projection_import.profile_lineage == original_lineage
+    assert first.projection_import.profile_version == "1"
+    assert second.projection_import.profile_version == "2"
+    assert first.projection_import.profile_definition_sha256 != (
+        second.projection_import.profile_definition_sha256
+    )
+    assert session.query(ProjectionImport).count() == 2
+    assert session.query(ProjectionProfileVersion).count() == 2
+
+
+def test_database_rejects_incomplete_percentage_volume_pair(
+    session: Session,
+) -> None:
+    seed_player(session, nba_id=19, name="Pair Violation")
+    incomplete_player = seed_player(session, nba_id=20, name="Incomplete Pair")
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=b"player_name,points_per_game\nPair Violation,20.0\n",
+    )
+    session.add(
+        Projection(
+            projection_import_id=outcome.projection_import.id,
+            player_id=incomplete_player.id,
+            season="2026-27",
+            field_goals_made_per_game=8.0,
+        )
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        session.flush()
+    assert "fg_volume_pair_complete" in str(exc_info.value)
 
 
 def test_reprocessing_accepted_to_ambiguous_removes_all_owned_output(session: Session) -> None:
@@ -802,44 +1319,46 @@ def test_profile_source_must_match_declared_source(session: Session) -> None:
     assert session.query(ProjectionSource).count() == 0
 
 
-def test_duplicate_conflict_reselects_the_winning_import(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+def test_concurrent_identical_imports_converge_without_duplicate_outputs(
+    database: Database,
 ) -> None:
-    source = get_or_create_projection_source(
-        session,
-        source=ExternalSource.MANUAL,
-        display_name="Manual test source",
-    )
-    content_sha256 = hashlib.sha256(b"same bytes").hexdigest()
-    winner, created = get_or_create_projection_import(
-        session,
-        source=source,
-        season="2026-27",
-        content_sha256=content_sha256,
-    )
-    assert created is True
+    setup = database.session_factory()
+    seed_player(setup, nba_id=50, name="Concurrent Player", team_abbreviation="BOS")
+    setup.commit()
+    setup.close()
 
-    real_scalar = session.scalar
-    calls = 0
+    barrier = Barrier(2)
+    csv_bytes = b"player_name,team,points_per_game\nConcurrent Player,BOS,20.0\n"
 
-    def stale_once(statement: Any) -> Any:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return None
-        return real_scalar(statement)
+    def run_import() -> tuple[int, int]:
+        worker_session = database.session_factory()
+        try:
+            barrier.wait()
+            outcome = import_projection_csv(
+                worker_session,
+                source=ExternalSource.MANUAL,
+                display_name="Manual test source",
+                season="2026-27",
+                csv_bytes=csv_bytes,
+            )
+            worker_session.commit()
+            return outcome.projection_import.id, outcome.counts.created
+        finally:
+            worker_session.rollback()
+            worker_session.close()
 
-    monkeypatch.setattr(session, "scalar", stale_once)
-    converged, created = get_or_create_projection_import(
-        session,
-        source=source,
-        season="2026-27",
-        content_sha256=content_sha256,
-    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: run_import(), range(2)))
 
-    assert created is False
-    assert converged.id == winner.id
-    assert session.query(ProjectionImport).count() == 1
+    verification = database.session_factory()
+    try:
+        assert len({import_id for import_id, _ in results}) == 1
+        assert sorted(created for _, created in results) == [0, 1]
+        assert verification.query(ProjectionImport).count() == 1
+        assert verification.query(Projection).count() == 1
+        assert verification.query(ProjectionProfileVersion).count() == 1
+    finally:
+        verification.close()
 
 
 def test_terminal_columns_are_ignored_and_never_persisted(

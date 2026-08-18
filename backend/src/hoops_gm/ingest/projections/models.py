@@ -100,6 +100,10 @@ class ProjectionParseResult:
     #: ignored under ADR-008. Values remain only in the transient raw row; no
     #: projection-layer model persists them.
     ignored_terminal_headers: list[str] = field(default_factory=list)
+    #: Percentage observations that cannot themselves enter a projection.
+    #: Kept separate from ``resolved_headers`` because they do not resolve to
+    #: a stored canonical rate; lineage records their explicit exclusion.
+    resolved_percentage_headers: dict[str, str] = field(default_factory=dict)
     #: Every data row the file contained, including rejected ones.
     total_rows: int = 0
 

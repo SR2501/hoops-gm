@@ -51,6 +51,11 @@ _EPSILON = 1e-6
 #: regular-season schedule length.
 _MAX_PLAUSIBLE_GAMES = 100.0
 
+_PERCENTAGE_CATEGORY_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("field_goals_made_per_game", "field_goals_attempted_per_game", "field goal"),
+    ("free_throws_made_per_game", "free_throws_attempted_per_game", "free throw"),
+)
+
 
 class ProjectionProfileError(ValueError):
     """The file's headers do not match the profile at all.
@@ -144,6 +149,7 @@ def parse_projection_csv(
     ]
     result = ProjectionParseResult(
         resolved_headers=resolved_headers,
+        resolved_percentage_headers=percentage_headers,
         ignored_terminal_headers=ignored_terminal_headers,
     )
 
@@ -221,7 +227,7 @@ def parse_projection_csv(
             else:
                 values[stat_column.field] = parsed
 
-        _check_percentage_fallbacks(
+        _enforce_percentage_decomposability(
             values=values,
             percentage_headers=percentage_headers,
             raw=raw,
@@ -348,7 +354,7 @@ def _parse_stat_value(
     return value / assumed_games_played
 
 
-def _check_percentage_fallbacks(
+def _enforce_percentage_decomposability(
     *,
     values: dict[str, float | None],
     percentage_headers: dict[str, str],
@@ -356,18 +362,42 @@ def _check_percentage_fallbacks(
     row_number: int,
     issues: list[RowIssue],
 ) -> None:
-    """Warn when a made-value is missing but the source gave a bare percentage.
+    """Exclude percentage-category volume unless makes and attempts coexist.
 
-    A percentage without volume cannot be decomposed into makes and attempts
-    — that is exactly the "percentage categories are volume-weighted impact"
-    trap (AGENTS.md) — so the field stays ``None`` and the CSV's raw
-    percentage is left visible only in ``raw_row``, never coerced into a rate
-    it is not.
+    A lone make/attempt value is not enough to reconstruct volume-weighted
+    percentage impact. A percentage plus one component could derive the other,
+    but no built-in profile currently declares that transformation, so both
+    components are excluded rather than success-shaping a partial ratio.
     """
-    for made_field, header in percentage_headers.items():
-        if values.get(made_field) is not None:
+    for made_field, attempted_field, label in _PERCENTAGE_CATEGORY_PAIRS:
+        made = values.get(made_field)
+        attempted = values.get(attempted_field)
+        header = percentage_headers.get(made_field)
+        raw_pct = (raw.get(header) or "").strip() if header else ""
+
+        if made is not None and attempted is not None:
             continue
-        raw_pct = (raw.get(header) or "").strip()
+
+        if made is not None or attempted is not None:
+            values[made_field] = None
+            values[attempted_field] = None
+            percentage_context = (
+                f"; {header}={raw_pct!r} was present but no derivation is declared"
+                if raw_pct
+                else ""
+            )
+            issues.append(
+                RowIssue(
+                    row_number,
+                    made_field,
+                    f"incomplete {label} volume pair; both makes and attempts are required "
+                    f"for a decomposable percentage category, so both were excluded"
+                    f"{percentage_context}",
+                    fatal=False,
+                )
+            )
+            continue
+
         if not raw_pct:
             continue
         issues.append(

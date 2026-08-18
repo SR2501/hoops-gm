@@ -45,6 +45,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
+    Boolean,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -73,7 +75,13 @@ class ProjectionSource(IntPk, TimestampMixin, Base):
     """
 
     __tablename__ = "projection_sources"
-    __table_args__ = (UniqueConstraint("source", name="uq_projection_sources_source"),)
+    __table_args__ = (
+        UniqueConstraint("source", name="uq_projection_sources_source"),
+        CheckConstraint(
+            "source IN ('fantasypros', 'hashtag', 'basketball_monster', 'darko', 'manual')",
+            name="projection_provider_namespace",
+        ),
+    )
 
     source: Mapped[ExternalSource] = mapped_column(
         portable_enum(ExternalSource, "external_source"), index=True
@@ -93,22 +101,50 @@ class ProjectionSource(IntPk, TimestampMixin, Base):
     imports: Mapped[list[ProjectionImport]] = relationship(
         back_populates="source_row", cascade="all, delete-orphan"
     )
+    profile_versions: Mapped[list[ProjectionProfileVersion]] = relationship(
+        back_populates="source_row", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<ProjectionSource {self.source}>"
+
+
+class ProjectionProfileVersion(IntPk, TimestampMixin, Base):
+    """One immutable, evidence-backed interpretation of a source CSV."""
+
+    __tablename__ = "projection_profile_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "profile_id",
+            "profile_version",
+            name="uq_projection_profile_versions_identity",
+        ),
+    )
+
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("projection_sources.id", ondelete="CASCADE"), index=True
+    )
+    profile_id: Mapped[str] = mapped_column(String(128))
+    profile_version: Mapped[str] = mapped_column(String(64))
+    verified: Mapped[bool] = mapped_column(Boolean)
+    verified_seasons: Mapped[list[str]] = mapped_column(JSON)
+    verification_evidence: Mapped[str] = mapped_column(Text)
+    definition_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    definition: Mapped[dict[str, object]] = mapped_column(JSON)
+
+    source_row: Mapped[ProjectionSource] = relationship(back_populates="profile_versions")
+    imports: Mapped[list[ProjectionImport]] = relationship(back_populates="profile_version_row")
 
 
 class ProjectionImport(IntPk, TimestampMixin, Base):
     """One versioned snapshot of a source's CSV, imported at a point in time.
 
     Deliberately never overwritten in place. ``(source_id, season,
-    content_sha256)`` is the natural key a re-run converges on — the same
-    byte-identical file for the same source and season resolves to the same
-    import row — so a source publishing an *updated* file creates a new row
-    rather than mutating history out from under whatever already blended the
-    old one. Season is part of the key because many CSVs do not embed it in
-    their bytes; reusing one file as a template for a later season must not
-    silently return the earlier season's import.
+    content_sha256, profile_id, profile_version)`` is the natural key a re-run
+    converges on. The same bytes under a new profile version create a new
+    import rather than rewriting what an older mapping meant. Season is part
+    of the key because many CSVs do not embed it in their bytes.
 
     Row counts are the import's own audit trail: ``row_count`` is every data
     row the file contained, and ``matched_count`` / ``needs_review_count`` /
@@ -126,7 +162,8 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
             "source_id",
             "season",
             "content_sha256",
-            name="uq_projection_imports_source_season_checksum",
+            "profile_version_id",
+            name="uq_projection_imports_identity",
         ),
         Index("ix_projection_imports_source_season", "source_id", "season"),
         CheckConstraint("row_count >= 0", name="row_count_non_negative"),
@@ -139,6 +176,14 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     source_id: Mapped[int] = mapped_column(
         ForeignKey("projection_sources.id", ondelete="CASCADE"), index=True
     )
+    profile_version_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "projection_profile_versions.id",
+            name="fk_projection_imports_profile_version",
+            ondelete="RESTRICT",
+        ),
+        index=True,
+    )
     season: Mapped[str] = mapped_column(String(9), index=True)
     #: Logical import time. Distinct from ``created_at``/``updated_at`` (row
     #: bookkeeping) so a caller replaying an older capture can state when the
@@ -146,6 +191,14 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     #: draws between ``fetched_at`` and row timestamps.
     imported_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    profile_id: Mapped[str] = mapped_column(String(128))
+    profile_version: Mapped[str] = mapped_column(String(64))
+    profile_verified: Mapped[bool] = mapped_column(Boolean)
+    profile_definition_sha256: Mapped[str] = mapped_column(String(64))
+    #: Immutable parsing recipe for this import: resolved source headers,
+    #: source units, output units, and every field-level transformation.
+    #: Stored on the raw-import boundary, not on individual projection values.
+    profile_lineage: Mapped[dict[str, object]] = mapped_column(JSON)
     original_filename: Mapped[str | None] = mapped_column(String(255))
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     matched_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -165,6 +218,7 @@ class ProjectionImport(IntPk, TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     source_row: Mapped[ProjectionSource] = relationship(back_populates="imports")
+    profile_version_row: Mapped[ProjectionProfileVersion] = relationship(back_populates="imports")
     projections: Mapped[list[Projection]] = relationship(
         back_populates="projection_import", cascade="all, delete-orphan"
     )
@@ -197,6 +251,13 @@ class Projection(IntPk, TimestampMixin, Base):
             name="fg_made_within_attempted",
         ),
         CheckConstraint(
+            "(field_goals_made_per_game IS NULL AND "
+            "field_goals_attempted_per_game IS NULL) OR "
+            "(field_goals_made_per_game IS NOT NULL AND "
+            "field_goals_attempted_per_game IS NOT NULL)",
+            name="fg_volume_pair_complete",
+        ),
+        CheckConstraint(
             "three_pointers_made_per_game IS NULL OR three_pointers_attempted_per_game IS NULL "
             "OR three_pointers_made_per_game <= three_pointers_attempted_per_game + 0.001",
             name="fg3_made_within_attempted",
@@ -205,6 +266,13 @@ class Projection(IntPk, TimestampMixin, Base):
             "free_throws_made_per_game IS NULL OR free_throws_attempted_per_game IS NULL "
             "OR free_throws_made_per_game <= free_throws_attempted_per_game + 0.001",
             name="ft_made_within_attempted",
+        ),
+        CheckConstraint(
+            "(free_throws_made_per_game IS NULL AND "
+            "free_throws_attempted_per_game IS NULL) OR "
+            "(free_throws_made_per_game IS NOT NULL AND "
+            "free_throws_attempted_per_game IS NOT NULL)",
+            name="ft_volume_pair_complete",
         ),
     )
 

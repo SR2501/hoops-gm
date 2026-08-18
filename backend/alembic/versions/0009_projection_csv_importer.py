@@ -1,19 +1,21 @@
 """Phase 5: csv-importer — projection import/normalisation/versioning boundary
 
-Four new tables, no changes to existing ones, so this is a straightforward
+Five new tables, no changes to existing ones, so this is a straightforward
 ``create_table`` migration rather than the batch-rebuild gymnastics 0002
 needed for an in-place ALTER. Autogenerate handled it cleanly, the same as
 0004.
 
-``projection_sources`` / ``projection_imports`` / ``projections`` /
+``projection_sources`` / ``projection_profile_versions`` /
+``projection_imports`` / ``projections`` /
 ``source_games_played_assumptions`` implement only the ``csv-importer``
 backlog item: a versioned, idempotent import of per-game production rates,
-with each source's embedded games-played assumption captured separately
-(ADR-002). Blending, the baseline model and ``expected-games`` fusion are
-later backlog items and are not part of this revision.
+with immutable profile recipes and each source's embedded games-played
+assumption captured separately (ADR-002). Blending, the baseline model and
+``expected-games`` fusion are later backlog items and are not part of this
+revision.
 
-Revision ID: 0006
-Revises: 0005
+Revision ID: 0009
+Revises: 0008
 Create Date: 2026-08-17
 """
 
@@ -24,8 +26,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006"
-down_revision: str | None = "0005"
+revision: str = "0009"
+down_revision: str | None = "0008"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -52,6 +54,10 @@ def upgrade() -> None:
                 length=48,
             ),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "source IN ('fantasypros', 'hashtag', 'basketball_monster', 'darko', 'manual')",
+            name=op.f("ck_projection_sources_projection_provider_namespace"),
         ),
         sa.Column("display_name", sa.String(length=128), nullable=False),
         sa.Column(
@@ -91,11 +97,67 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "projection_profile_versions",
+        sa.Column("source_id", sa.Integer(), nullable=False),
+        sa.Column("profile_id", sa.String(length=128), nullable=False),
+        sa.Column("profile_version", sa.String(length=64), nullable=False),
+        sa.Column("verified", sa.Boolean(), nullable=False),
+        sa.Column("verified_seasons", sa.JSON(), nullable=False),
+        sa.Column("verification_evidence", sa.Text(), nullable=False),
+        sa.Column("definition_sha256", sa.String(length=64), nullable=False),
+        sa.Column("definition", sa.JSON(), nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["source_id"],
+            ["projection_sources.id"],
+            name=op.f("fk_projection_profile_versions_source_id_projection_sources"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_projection_profile_versions")),
+        sa.UniqueConstraint(
+            "source_id",
+            "profile_id",
+            "profile_version",
+            name="uq_projection_profile_versions_identity",
+        ),
+    )
+    op.create_index(
+        op.f("ix_projection_profile_versions_definition_sha256"),
+        "projection_profile_versions",
+        ["definition_sha256"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_projection_profile_versions_source_id"),
+        "projection_profile_versions",
+        ["source_id"],
+        unique=False,
+    )
+
+    op.create_table(
         "projection_imports",
         sa.Column("source_id", sa.Integer(), nullable=False),
+        sa.Column("profile_version_id", sa.Integer(), nullable=False),
         sa.Column("season", sa.String(length=9), nullable=False),
         sa.Column("imported_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("content_sha256", sa.String(length=64), nullable=False),
+        sa.Column("profile_id", sa.String(length=128), nullable=False),
+        sa.Column("profile_version", sa.String(length=64), nullable=False),
+        sa.Column("profile_verified", sa.Boolean(), nullable=False),
+        sa.Column("profile_definition_sha256", sa.String(length=64), nullable=False),
+        sa.Column("profile_lineage", sa.JSON(), nullable=False),
         sa.Column("original_filename", sa.String(length=255), nullable=True),
         sa.Column("row_count", sa.Integer(), nullable=False),
         sa.Column("matched_count", sa.Integer(), nullable=False),
@@ -150,6 +212,12 @@ def upgrade() -> None:
             name=op.f("ck_projection_imports_unmatched_count_non_negative"),
         ),
         sa.ForeignKeyConstraint(
+            ["profile_version_id"],
+            ["projection_profile_versions.id"],
+            name="fk_projection_imports_profile_version",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
             ["source_id"],
             ["projection_sources.id"],
             name=op.f("fk_projection_imports_source_id_projection_sources"),
@@ -160,13 +228,20 @@ def upgrade() -> None:
             "source_id",
             "season",
             "content_sha256",
-            name="uq_projection_imports_source_season_checksum",
+            "profile_version_id",
+            name="uq_projection_imports_identity",
         ),
     )
     op.create_index(
         op.f("ix_projection_imports_content_sha256"),
         "projection_imports",
         ["content_sha256"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_projection_imports_profile_version_id"),
+        "projection_imports",
+        ["profile_version_id"],
         unique=False,
     )
     op.create_index(
@@ -225,9 +300,23 @@ def upgrade() -> None:
             name=op.f("ck_projections_fg_made_within_attempted"),
         ),
         sa.CheckConstraint(
+            "(field_goals_made_per_game IS NULL AND "
+            "field_goals_attempted_per_game IS NULL) OR "
+            "(field_goals_made_per_game IS NOT NULL AND "
+            "field_goals_attempted_per_game IS NOT NULL)",
+            name=op.f("ck_projections_fg_volume_pair_complete"),
+        ),
+        sa.CheckConstraint(
             "free_throws_made_per_game IS NULL OR free_throws_attempted_per_game IS NULL "
             "OR free_throws_made_per_game <= free_throws_attempted_per_game + 0.001",
             name=op.f("ck_projections_ft_made_within_attempted"),
+        ),
+        sa.CheckConstraint(
+            "(free_throws_made_per_game IS NULL AND "
+            "free_throws_attempted_per_game IS NULL) OR "
+            "(free_throws_made_per_game IS NOT NULL AND "
+            "free_throws_attempted_per_game IS NOT NULL)",
+            name=op.f("ck_projections_ft_volume_pair_complete"),
         ),
         sa.CheckConstraint(
             "three_pointers_made_per_game IS NULL OR three_pointers_attempted_per_game IS NULL "
@@ -310,8 +399,19 @@ def downgrade() -> None:
     op.drop_index("ix_projection_imports_source_season", table_name="projection_imports")
     op.drop_index(op.f("ix_projection_imports_source_id"), table_name="projection_imports")
     op.drop_index(op.f("ix_projection_imports_season"), table_name="projection_imports")
+    op.drop_index(op.f("ix_projection_imports_profile_version_id"), table_name="projection_imports")
     op.drop_index(op.f("ix_projection_imports_content_sha256"), table_name="projection_imports")
     op.drop_table("projection_imports")
+
+    op.drop_index(
+        op.f("ix_projection_profile_versions_source_id"),
+        table_name="projection_profile_versions",
+    )
+    op.drop_index(
+        op.f("ix_projection_profile_versions_definition_sha256"),
+        table_name="projection_profile_versions",
+    )
+    op.drop_table("projection_profile_versions")
 
     op.drop_index(op.f("ix_projection_sources_source"), table_name="projection_sources")
     op.drop_table("projection_sources")

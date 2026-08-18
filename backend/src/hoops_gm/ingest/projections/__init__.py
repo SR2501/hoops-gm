@@ -18,10 +18,8 @@ from hoops_gm.ingest.projections.importer import (
     ProjectionEncodingError,
     ProjectionImportOutcome,
     build_player_targets,
-    get_or_create_projection_import,
     get_or_create_projection_source,
     import_projection_csv,
-    import_projection_rows,
     resolve_projection_identities,
 )
 from hoops_gm.ingest.projections.models import (
@@ -59,10 +57,8 @@ __all__ = [
     "StatColumn",
     "ValueShape",
     "build_player_targets",
-    "get_or_create_projection_import",
     "get_or_create_projection_source",
     "import_projection_csv",
-    "import_projection_rows",
     "parse_projection_csv",
     "resolve_projection_identities",
 ]

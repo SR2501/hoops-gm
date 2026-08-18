@@ -5,7 +5,7 @@ Identity, Stats, League and Schedule. Phase 2 adds the *observed* part of
 Availability — ``player_participation``, the ledger of who took part in what.
 Phase 3/4 add schedule context (``opponent_context``, ``off_night_slates``).
 Phase 5 adds the ``csv-importer`` slice of Projections — ``projection_sources``,
-``projection_imports``, ``projections`` (per-game rates) and
+``projection_profile_versions``, ``projection_imports``, ``projections`` (per-game rates) and
 ``source_games_played_assumptions``. Blending, the baseline model and
 ``expected-games`` fusion are not implemented here; they consume this table
 and belong to their own backlog items. The modelled parts of Availability
@@ -67,6 +67,7 @@ from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.projections import (
     Projection,
     ProjectionImport,
+    ProjectionProfileVersion,
     ProjectionSource,
     SourceGamesPlayedAssumption,
 )
@@ -112,6 +113,7 @@ __all__ = [
     "PlayerStatus",
     "Projection",
     "ProjectionImport",
+    "ProjectionProfileVersion",
     "ProjectionSource",
     "RefreshArtifactType",
     "RefreshRun",

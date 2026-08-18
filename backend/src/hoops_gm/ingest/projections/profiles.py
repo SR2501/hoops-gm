@@ -28,8 +28,10 @@ the profile to reach for whenever a vendor mapping has not been confirmed.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 
 from hoops_gm.db.models.enums import ExternalSource
 
@@ -40,6 +42,7 @@ __all__ = [
     "HASHTAG_PROFILE",
     "MANUAL_PROFILE",
     "PROFILES_BY_SOURCE",
+    "PROJECTION_IMPORT_SOURCES",
     "TERMINAL_HEADER_ALIASES",
     "ColumnProfile",
     "StatColumn",
@@ -72,7 +75,9 @@ class StatColumn:
     #: case-insensitive and tolerant of surrounding whitespace and
     #: underscore/space variance (:func:`normalize_header`).
     aliases: tuple[str, ...]
-    shape: ValueShape = ValueShape.PER_GAME
+    #: Explicit source unit. There is deliberately no default: an ambiguous
+    #: header such as ``PTS`` cannot become a per-game rate by omission.
+    shape: ValueShape
 
 
 #: Every per-game rate field a projection row can carry. Mirrors the columns
@@ -128,11 +133,23 @@ TERMINAL_HEADER_ALIASES: tuple[str, ...] = (
     "expected_games",
 )
 
+PROJECTION_IMPORT_SOURCES: frozenset[ExternalSource] = frozenset(
+    {
+        ExternalSource.FANTASYPROS,
+        ExternalSource.HASHTAG,
+        ExternalSource.BASKETBALL_MONSTER,
+        ExternalSource.DARKO,
+        ExternalSource.MANUAL,
+    }
+)
+
 
 @dataclass(frozen=True)
 class ColumnProfile:
     """A source's CSV shape: which headers mean what, and how they're scaled."""
 
+    profile_id: str
+    version: str
     source: ExternalSource
     display_name: str
     name_aliases: tuple[str, ...]
@@ -154,8 +171,36 @@ class ColumnProfile:
     #: Whether this mapping has been checked against a real downloaded file.
     #: ``False`` for every vendor profile below; see the module docstring.
     verified: bool = False
+    #: Exact seasons covered by the evidence. ``"*"`` is reserved for the
+    #: owner-controlled canonical manual schema, whose units are encoded in its
+    #: column names rather than inferred from an external export.
+    verified_seasons: tuple[str, ...] = ()
+    verification_evidence: str | None = None
 
     def __post_init__(self) -> None:
+        if not self.profile_id.strip() or not self.version.strip():
+            raise ValueError("projection profiles require a non-empty identifier and version")
+        if self.source not in PROJECTION_IMPORT_SOURCES:
+            raise ValueError(
+                f"{self.source.value} is not an isolated projection-provider namespace"
+            )
+        if self.verified and (
+            not self.verified_seasons
+            or not self.verification_evidence
+            or not self.verification_evidence.strip()
+        ):
+            raise ValueError(
+                f"{self.display_name} marks itself verified without season scope and evidence"
+            )
+        if not self.verified and self.verified_seasons:
+            raise ValueError(f"{self.display_name} declares verified seasons while verified=False")
+        if "*" in self.verified_seasons and not (
+            self.source is ExternalSource.MANUAL and self.profile_id == "manual-canonical"
+        ):
+            raise ValueError(
+                "wildcard season verification is reserved for the manual-canonical profile"
+            )
+
         terminal_aliases = {normalize_header(alias) for alias in TERMINAL_HEADER_ALIASES}
         mapped_aliases = {
             "player name": self.name_aliases,
@@ -229,6 +274,8 @@ def resolve_header(fieldnames: list[str], aliases: tuple[str, ...]) -> str | Non
 # --------------------------------------------------------------------------
 
 MANUAL_PROFILE = ColumnProfile(
+    profile_id="manual-canonical",
+    version="1",
     source=ExternalSource.MANUAL,
     display_name="Manual / generic",
     name_aliases=("player_name", "player", "name"),
@@ -236,12 +283,19 @@ MANUAL_PROFILE = ColumnProfile(
     position_aliases=("position", "pos"),
     games_played_aliases=("games_played", "gp"),
     stat_columns=tuple(
-        StatColumn(field=canonical, aliases=(canonical,)) for canonical in CANONICAL_STAT_FIELDS
+        StatColumn(field=canonical, aliases=(canonical,), shape=ValueShape.PER_GAME)
+        for canonical in CANONICAL_STAT_FIELDS
     ),
     verified=True,
+    verified_seasons=("*",),
+    verification_evidence=(
+        "owner-controlled hoops-gm canonical schema v1; per-game units are explicit in headers"
+    ),
 )
 
 FANTASYPROS_PROFILE = ColumnProfile(
+    profile_id="fantasypros-unverified-example",
+    version="1",
     source=ExternalSource.FANTASYPROS,
     display_name="FantasyPros",
     name_aliases=("player", "player name"),
@@ -249,14 +303,14 @@ FANTASYPROS_PROFILE = ColumnProfile(
     position_aliases=("pos", "position"),
     games_played_aliases=("gp", "games played"),
     stat_columns=(
-        StatColumn("minutes_per_game", ("min", "mpg", "minutes")),
-        StatColumn("points_per_game", ("pts",)),
-        StatColumn("rebounds_per_game", ("treb", "reb", "rebounds")),
-        StatColumn("assists_per_game", ("ast",)),
-        StatColumn("steals_per_game", ("st", "stl")),
-        StatColumn("blocks_per_game", ("blk",)),
-        StatColumn("turnovers_per_game", ("to", "tov")),
-        StatColumn("three_pointers_made_per_game", ("3pm",)),
+        StatColumn("minutes_per_game", ("min", "mpg", "minutes"), ValueShape.PER_GAME),
+        StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
+        StatColumn("rebounds_per_game", ("treb", "reb", "rebounds"), ValueShape.PER_GAME),
+        StatColumn("assists_per_game", ("ast",), ValueShape.PER_GAME),
+        StatColumn("steals_per_game", ("st", "stl"), ValueShape.PER_GAME),
+        StatColumn("blocks_per_game", ("blk",), ValueShape.PER_GAME),
+        StatColumn("turnovers_per_game", ("to", "tov"), ValueShape.PER_GAME),
+        StatColumn("three_pointers_made_per_game", ("3pm",), ValueShape.PER_GAME),
     ),
     required_production_fields=(
         "points_per_game",
@@ -274,6 +328,8 @@ FANTASYPROS_PROFILE = ColumnProfile(
 )
 
 HASHTAG_PROFILE = ColumnProfile(
+    profile_id="hashtag-unverified-example",
+    version="1",
     source=ExternalSource.HASHTAG,
     display_name="Hashtag Basketball",
     name_aliases=("player", "name"),
@@ -281,21 +337,21 @@ HASHTAG_PROFILE = ColumnProfile(
     position_aliases=("pos", "position"),
     games_played_aliases=("gp", "games"),
     stat_columns=(
-        StatColumn("minutes_per_game", ("mpg", "min")),
-        StatColumn("points_per_game", ("pts",)),
-        StatColumn("offensive_rebounds_per_game", ("oreb", "orb")),
-        StatColumn("defensive_rebounds_per_game", ("dreb", "drb")),
-        StatColumn("rebounds_per_game", ("reb", "trb")),
-        StatColumn("assists_per_game", ("ast",)),
-        StatColumn("steals_per_game", ("stl", "st")),
-        StatColumn("blocks_per_game", ("blk",)),
-        StatColumn("turnovers_per_game", ("to", "tov")),
-        StatColumn("field_goals_made_per_game", ("fgm",)),
-        StatColumn("field_goals_attempted_per_game", ("fga",)),
-        StatColumn("three_pointers_made_per_game", ("3pm", "3ptm")),
-        StatColumn("three_pointers_attempted_per_game", ("3pa", "3pta")),
-        StatColumn("free_throws_made_per_game", ("ftm",)),
-        StatColumn("free_throws_attempted_per_game", ("fta",)),
+        StatColumn("minutes_per_game", ("mpg", "min"), ValueShape.PER_GAME),
+        StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
+        StatColumn("offensive_rebounds_per_game", ("oreb", "orb"), ValueShape.PER_GAME),
+        StatColumn("defensive_rebounds_per_game", ("dreb", "drb"), ValueShape.PER_GAME),
+        StatColumn("rebounds_per_game", ("reb", "trb"), ValueShape.PER_GAME),
+        StatColumn("assists_per_game", ("ast",), ValueShape.PER_GAME),
+        StatColumn("steals_per_game", ("stl", "st"), ValueShape.PER_GAME),
+        StatColumn("blocks_per_game", ("blk",), ValueShape.PER_GAME),
+        StatColumn("turnovers_per_game", ("to", "tov"), ValueShape.PER_GAME),
+        StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
+        StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
+        StatColumn("three_pointers_made_per_game", ("3pm", "3ptm"), ValueShape.PER_GAME),
+        StatColumn("three_pointers_attempted_per_game", ("3pa", "3pta"), ValueShape.PER_GAME),
+        StatColumn("free_throws_made_per_game", ("ftm",), ValueShape.PER_GAME),
+        StatColumn("free_throws_attempted_per_game", ("fta",), ValueShape.PER_GAME),
     ),
     required_production_fields=(
         "points_per_game",
@@ -310,6 +366,8 @@ HASHTAG_PROFILE = ColumnProfile(
 )
 
 BASKETBALL_MONSTER_PROFILE = ColumnProfile(
+    profile_id="basketball-monster-unverified-example",
+    version="1",
     source=ExternalSource.BASKETBALL_MONSTER,
     display_name="Basketball Monster",
     name_aliases=("player", "name"),
@@ -317,19 +375,19 @@ BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     position_aliases=("pos", "position"),
     games_played_aliases=("gp", "g"),
     stat_columns=(
-        StatColumn("minutes_per_game", ("min", "mpg")),
-        StatColumn("points_per_game", ("pts",)),
-        StatColumn("rebounds_per_game", ("reb", "trb")),
-        StatColumn("assists_per_game", ("ast",)),
-        StatColumn("steals_per_game", ("stl",)),
-        StatColumn("blocks_per_game", ("blk",)),
-        StatColumn("turnovers_per_game", ("to", "tov")),
-        StatColumn("field_goals_made_per_game", ("fgm",)),
-        StatColumn("field_goals_attempted_per_game", ("fga",)),
-        StatColumn("three_pointers_made_per_game", ("3pm",)),
-        StatColumn("three_pointers_attempted_per_game", ("3pa",)),
-        StatColumn("free_throws_made_per_game", ("ftm",)),
-        StatColumn("free_throws_attempted_per_game", ("fta",)),
+        StatColumn("minutes_per_game", ("min", "mpg"), ValueShape.PER_GAME),
+        StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
+        StatColumn("rebounds_per_game", ("reb", "trb"), ValueShape.PER_GAME),
+        StatColumn("assists_per_game", ("ast",), ValueShape.PER_GAME),
+        StatColumn("steals_per_game", ("stl",), ValueShape.PER_GAME),
+        StatColumn("blocks_per_game", ("blk",), ValueShape.PER_GAME),
+        StatColumn("turnovers_per_game", ("to", "tov"), ValueShape.PER_GAME),
+        StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
+        StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
+        StatColumn("three_pointers_made_per_game", ("3pm",), ValueShape.PER_GAME),
+        StatColumn("three_pointers_attempted_per_game", ("3pa",), ValueShape.PER_GAME),
+        StatColumn("free_throws_made_per_game", ("ftm",), ValueShape.PER_GAME),
+        StatColumn("free_throws_attempted_per_game", ("fta",), ValueShape.PER_GAME),
     ),
     required_production_fields=(
         "points_per_game",
@@ -343,9 +401,11 @@ BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     verified=False,
 )
 
-PROFILES_BY_SOURCE: dict[ExternalSource, ColumnProfile] = {
-    ExternalSource.MANUAL: MANUAL_PROFILE,
-    ExternalSource.FANTASYPROS: FANTASYPROS_PROFILE,
-    ExternalSource.HASHTAG: HASHTAG_PROFILE,
-    ExternalSource.BASKETBALL_MONSTER: BASKETBALL_MONSTER_PROFILE,
-}
+PROFILES_BY_SOURCE: Mapping[ExternalSource, ColumnProfile] = MappingProxyType(
+    {
+        ExternalSource.MANUAL: MANUAL_PROFILE,
+        ExternalSource.FANTASYPROS: FANTASYPROS_PROFILE,
+        ExternalSource.HASHTAG: HASHTAG_PROFILE,
+        ExternalSource.BASKETBALL_MONSTER: BASKETBALL_MONSTER_PROFILE,
+    }
+)
