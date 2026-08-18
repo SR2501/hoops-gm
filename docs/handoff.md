@@ -2225,6 +2225,108 @@ count checks, and the team/opponent inequality. Alembic revision `0009`
 preserves existing history and backfills explicit legacy provenance before
 removing its temporary server defaults.
 
+---
+
+## 2026-08-18 — quant — `scoring-profiles`: third remediation round (A→B→A dead-end, schema v2 backfill, category-shape drift, evidence path)
+
+**Changed:** Five findings from an independent review at
+`4565f65877032884b39b17e54cd6b3fc3b8649d9` (PR #22), all fixed:
+
+1. **A→B→A dead-end.** `build_scoring_profile`'s reuse query previously
+   matched an existing profile by `(league_id, name)` plus a content
+   fingerprint alone, so a stale row from an old snapshot could be "reused"
+   even though it still cited that old snapshot's now-non-current FK —
+   activation then correctly rejected it, and no later derive could ever
+   escape. Fixed by adding `settings_snapshot_id == settings_snapshot.id` to
+   the reuse query itself: only a profile already derived from the *exact*
+   current snapshot row can ever be returned as a dedupe hit. A new snapshot
+   row with content identical to an old one now always mints a new,
+   immediately activatable profile version citing the current snapshot —
+   A→B→A yields a genuine v3, not a resurrection of v1. Rewrote the A→B→A
+   test to assert this (new id/version, correct snapshot FK, activatable)
+   instead of claiming row reuse across snapshots, which this design
+   deliberately no longer does (see `profiles.py`'s updated docstrings for
+   why: reusing an old row's *identity* across snapshots would silently
+   rewrite which snapshot every historical activation record points at).
+2. **Schema v1 → v2 backward compatibility.** `LeagueSettingsDocument`
+   gained two required fields (`scoring_type`, `scoring_categories`) in the
+   prior round without bumping its own `schema_version`, so every
+   pre-existing `league_settings_snapshots.settings` blob became unreadable
+   — breaking `import_league_settings`'s re-ingest dedupe and
+   `derive_deadline_calendar`'s current-snapshot read, both of which call
+   `LeagueSettingsDocument.model_validate()` on a stored blob. Bumped
+   `SCHEMA_VERSION` to `2`, added a `MIGRATION_SOURCE = "schema_migration"`
+   evidence source distinct from `fantrax_official`/`fantrax_bridge`, and
+   extended migration `0012` (still the provisional slot — see below) to
+   backfill every existing snapshot row: both new fields become an explicit
+   *absent* observation evidenced as `schema_migration` (never a real
+   source, since nothing was actually observed for that row), built from
+   that row's own provenance (payload hash, observed-at instant), not one
+   placeholder reused everywhere. `downgrade()` refuses with a loud
+   `RuntimeError` if any row carries genuine post-migration
+   `fantrax_official`/`fantrax_bridge` scoring evidence (real data would be
+   silently discarded), and only cleanly reverts rows whose evidence is
+   entirely migration-sourced. Three new regression tests in
+   `test_migrations.py` prove: the backfilled shape and evidence are
+   correct; a real `import_league_settings` call against the migrated row
+   succeeds (creating a new version rather than raising, since a
+   `schema_migration`-sourced absent observation is evidentially distinct
+   from a fresh `fantrax_official`-sourced one — by design, not a bug: the
+   migrated row honestly means "we never asked", not "the source confirmed
+   nothing"); the downgrade refusal fires on genuine evidence; and a clean
+   downgrade succeeds on a purely-synthesized row.
+3. **Category-config shape drift.** `parse_scoring_category_configs`
+   previously `continue`d past a non-dict `scoringCategorySettings` entry, a
+   non-list `configs`, a non-dict `config`, or a non-dict `scoringCategory` —
+   letting one malformed entry among nine silently produce eight
+   valid-looking categories instead of a loud failure. All four now raise
+   `SourceContractError` with an indexed, descriptive message. Four new
+   regression tests in `test_scoring_profiles.py` exercise each level
+   through the real `parse_official_league_settings` seam.
+4. **`scoring_type` evidence `source_path`.** Previously hardcoded to the
+   nested `$.scoringSystem.type` path regardless of which field actually
+   won under official-priority precedence (a top-level `scoringType` wins
+   when present). Refactored `parse_scoring_type_raw` to delegate to a new
+   `_scoring_type_with_source_path()` helper returning both the value and
+   the winning path; `_parse_scoring_type` now cites the correct one. Two
+   new tests cover both precedence outcomes (nested-only, and top-level
+   winning over a losing nested value) and assert the evidence path matches.
+5. **Doc correction.** `docs/adapters/fantrax-official.md` previously said
+   `configs[*].position` is "read but not carried" into the domain document
+   — it is not read at all. Corrected.
+
+**Now true:** Full local Code gate green: `ruff check .`, `ruff format
+--check .`, bare `mypy` (matching CI's whole-project invocation, not just
+`mypy src`) clean across 108 source files, full `pytest -q` (all backend
+tests, SQLite) green including the three new migration-lifecycle tests and
+the five new scoring-profile regression tests. Migration `0012`'s
+`upgrade()`/`downgrade()` round-trip verified on SQLite with populated data
+in both directions (backfill-then-read, and both downgrade outcomes).
+
+**Could not verify:** Postgres CI (no local Postgres in this environment;
+relies on GitHub Actions' Postgres job, not yet observed for this exact
+push). **Migration slot collision:** PR #21 (`sr2501-historical-injury-
+backfill`) independently also claims revision `0012`/`down_revision 0011`
+(its own commit history references this explicitly), and its GitHub state
+was observed as `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`, fully green
+CI, having already been through multiple independent-review rounds — i.e.
+plausibly closer to merge-ready than this round's fresh, not-yet-reviewed
+head. `origin/main` is still `0ff417a` (unchanged since PR #20), so neither
+PR has actually landed `0012` yet and the slot remains formally open to
+whichever merges first, per the standing instruction — this was not
+resolved unilaterally here (deciding which PR is "more merge-ready" is a
+merge-queue coordination call, not this session's to make), and is reported
+back to the coordinating session rather than acted on. Whichever PR merges
+second will need another restack/renumber to whatever slot is open at that
+point. GitHub CI status for this exact push (beyond local gates) not yet
+observed.
+
+**Next:** Push this head, wait for CI (Postgres included), then two fresh
+independent focused reviews (code correctness/layer-purity, and
+quant/statistical semantics) against this new diff. Report the collision
+above to the coordinating "Autonomous merge queue" session explicitly. Not
+merged, not self-approved.
+
 **Now true:** Refresh streams can reuse version labels without colliding across
 artifact keys, callers can distinguish an omitted season filter from an
 explicit unscoped (`NULL`) season, and changed descriptive sources create new

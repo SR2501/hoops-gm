@@ -54,9 +54,16 @@ def _require_offset_aware_timestamp(value: str) -> str:
 
 OFFICIAL_SOURCE = "fantrax_official"
 BRIDGE_SOURCE = "fantrax_bridge"
-SCHEMA_VERSION: Literal[1] = 1
+#: A field whose evidence was synthesized by a schema migration, not observed
+#: from either live source -- see ``0012_scoring_profile_lineage.py``'s
+#: legacy-snapshot backfill. Never used by parsing code; only by that
+#: migration, to label its own synthesized absence honestly rather than
+#: borrowing ``OFFICIAL_SOURCE``/``BRIDGE_SOURCE`` for evidence nobody
+#: actually gathered.
+MIGRATION_SOURCE = "schema_migration"
+SCHEMA_VERSION: Literal[2] = 2
 
-SettingSource = Literal["fantrax_official", "fantrax_bridge"]
+SettingSource = Literal["fantrax_official", "fantrax_bridge", "schema_migration"]
 EvidenceStatus = Literal["observed", "absent"]
 LineupLockType = Literal["per_player_tipoff", "daily", "weekly"]
 ClaimMechanism = Literal["priority", "faab"]
@@ -277,11 +284,25 @@ class ScoringCategoriesRules(BaseModel):
 
 
 class LeagueSettingsDocument(BaseModel):
-    """Versioned normalized settings; rules are data, not algorithm branches."""
+    """Versioned normalized settings; rules are data, not algorithm branches.
+
+    ``schema_version`` bumped 1 -> 2 when ``scoring_type``/``scoring_categories``
+    became required fields (the `scoring-profiles` backlog unit). Both stay
+    strictly required here -- no lenient default, no before-validator leniency
+    -- because a pre-existing ``league_settings_snapshots`` row captured under
+    schema 1 has neither key at all, and this module's own fail-closed
+    philosophy says a reader must not paper over that with an assumed value.
+    Instead, ``0012_scoring_profile_lineage.py`` rewrites every such row once,
+    at migration time, adding both fields as an explicit *absent* observation
+    (evidenced as ``schema_migration``, never ``fantrax_official`` or
+    ``fantrax_bridge`` -- nothing was actually observed for that row) before
+    any code -- old or new -- ever reads it again. See that migration's
+    docstring for the backfill/downgrade contract.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     source_league_id: str = Field(min_length=1, max_length=64)
     source_season_year: int = Field(ge=2000, le=2100)
     source_start_date: str
@@ -921,11 +942,17 @@ def parse_scoring_category_configs(
 
     Returns ``None`` when no such shape is present at all -- an absent
     observation, exactly like every other concern in this module. Once the
-    shape *is* present, a category missing its stable ``code``, its
-    ``shortName`` abbreviation, or a numeric ``weight`` fails closed with
+    shape *is* present, every level of it fails closed with
     :class:`SourceContractError` rather than being silently dropped: a
+    non-dict entry in ``scoringCategorySettings``, a non-list ``configs``, a
+    non-dict ``config`` or ``scoringCategory``, or a category missing its
+    stable ``code``, its ``shortName`` abbreviation, or a numeric ``weight``.
+    An earlier version of this parser skipped the first four of those with a
+    bare ``continue``, which let one malformed entry among nine silently
+    produce eight valid-looking categories instead of a loud failure -- a
     scoring profile missing one category (or unable to verify its weight) is
-    a wrong valuation later with no way to detect it after the fact.
+    a wrong valuation later with no way to detect it after the fact, and that
+    is exactly as true for a malformed shape as for a missing field.
 
     Only this rich, verified shape is handled. An earlier version of the
     adapter also speculatively handled a flat top-level ``scoringCategories``
@@ -945,18 +972,40 @@ def parse_scoring_category_configs(
         return None
 
     raw: list[RawScoringCategory] = []
-    for group in rich_settings:
+    for group_index, group in enumerate(rich_settings):
         if not isinstance(group, dict):
-            continue
+            raise SourceContractError(
+                f"scoringSystem.scoringCategorySettings[{group_index}] must be an "
+                f"object, got {type(group).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
         configs = group.get("configs")
         if not isinstance(configs, list):
-            continue
-        for config in configs:
+            raise SourceContractError(
+                f"scoringSystem.scoringCategorySettings[{group_index}].configs "
+                f"must be a list, got {type(configs).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        for config_index, config in enumerate(configs):
             if not isinstance(config, dict):
-                continue
+                raise SourceContractError(
+                    f"scoringSystem.scoringCategorySettings[{group_index}]"
+                    f".configs[{config_index}] must be an object, got "
+                    f"{type(config).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
             category = config.get("scoringCategory")
             if not isinstance(category, dict):
-                continue
+                raise SourceContractError(
+                    f"scoringSystem.scoringCategorySettings[{group_index}]"
+                    f".configs[{config_index}].scoringCategory must be an object, "
+                    f"got {type(category).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
             code = category.get("code")
             if not isinstance(code, str) or not code:
                 raise SourceContractError(
@@ -991,21 +1040,35 @@ def parse_scoring_category_configs(
     return raw
 
 
+def _scoring_type_with_source_path(payload: dict[object, object]) -> tuple[str, str] | None:
+    """Resolve the scoring-format discriminator and which field it came from.
+
+    Fantrax exposes this in two shapes: a top-level ``scoringType`` (preferred
+    when present) or nested inside ``scoringSystem.type``. The evidence
+    attached by ``_parse_scoring_type`` must name whichever field actually won
+    under that precedence -- ``$.scoringType`` or ``$.scoringSystem.type`` --
+    not always the nested path regardless of which one supplied the value.
+    """
+
+    scoring_type = payload.get("scoringType")
+    if isinstance(scoring_type, str) and scoring_type:
+        return scoring_type, "$.scoringType"
+    scoring_system = payload.get("scoringSystem")
+    if isinstance(scoring_system, dict):
+        nested = scoring_system.get("type")
+        if isinstance(nested, str) and nested:
+            return nested, "$.scoringSystem.type"
+    return None
+
+
 def parse_scoring_type_raw(payload: dict[object, object]) -> str | None:
     """The scoring-format discriminator, verbatim -- a top-level ``scoringType``
     if present, else ``scoringSystem.type``. Never normalized here; see
     ``ScoringFormatRules``.
     """
 
-    scoring_type = payload.get("scoringType")
-    if isinstance(scoring_type, str) and scoring_type:
-        return scoring_type
-    scoring_system = payload.get("scoringSystem")
-    if isinstance(scoring_system, dict):
-        nested = scoring_system.get("type")
-        if isinstance(nested, str) and nested:
-            return nested
-    return None
+    resolved = _scoring_type_with_source_path(payload)
+    return resolved[0] if resolved is not None else None
 
 
 def _parse_scoring_categories(
@@ -1056,12 +1119,13 @@ def _parse_scoring_type(
     *,
     capture_ref: str,
 ) -> SourcedSetting[ScoringFormatRules]:
-    raw_type = parse_scoring_type_raw(payload)
-    if raw_type is None:
+    resolved = _scoring_type_with_source_path(payload)
+    if resolved is None:
         return _absent(capture_ref)
+    raw_type, source_path = resolved
     return SourcedSetting(
         value=ScoringFormatRules(raw_type=raw_type),
-        evidence=(_observed("$.scoringSystem.type", capture_ref),),
+        evidence=(_observed(source_path, capture_ref),),
     )
 
 

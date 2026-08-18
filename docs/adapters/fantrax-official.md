@@ -93,9 +93,9 @@ Two things in the same payload are deliberately **not** modeled:
   `scoringCategorySettings` already supplies with more evidence.
 - `configs[*].position` — every observed row is `{"code": "DEFAULT", ...}`.
   This league has no position-conditioned category weighting to represent, so
-  the field is read but not carried into the domain document; a league that
-  actually used it would need a deliberate design decision, not a silent
-  default.
+  the field is **not** read or carried into the domain document at all; a
+  league that actually used it would need a deliberate design decision to
+  parse and store it, not a silent default.
 
 **The `HEAD_TO_HEAD_ROTI_MULTI_WIN` → `ScoringType.H2H_EACH_CATEGORY` mapping
 is reasoned evidence, not a confirmed one-to-one contract.** The "H2H" and

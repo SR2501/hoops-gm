@@ -47,15 +47,22 @@ retried, previewed or abandoned) separate from profile *activation* (which
 changes what every subsequent read sees), and is what makes A → B → A
 re-activation a plain, non-special-cased repeat of the same call.
 
-**Idempotent by content, not merely by snapshot id.** Deriving from a
-snapshot whose canonical rules content (scoring type, ordered categories,
-their directions/kinds/ratio components/weights, and the settings document's
-own content hash) exactly matches an existing profile's content returns that
-existing profile rather than creating an indistinguishable new version -- see
-:func:`build_scoring_profile`. This is what makes re-running derivation after
-a snapshot re-ingest that changed nothing a no-op, and what makes A -> B -> A
-reuse (rather than needlessly re-mint) version A's row when a later
-snapshot's content happens to match it again.
+**Idempotent by content, scoped to the same snapshot row.** Deriving twice
+from the *same* settings-snapshot row is a no-op: the second call returns the
+first call's profile rather than creating an indistinguishable new version --
+see :func:`build_scoring_profile`. Deriving from a *different* snapshot row
+whose canonical rules content happens to match an earlier profile's content
+(scoring type, ordered categories, their directions/kinds/ratio
+components/weights, and the settings document's own content hash) does
+**not** reuse that earlier row -- it always mints a new, distinct profile
+version, because the earlier row cites a snapshot that is no longer current
+and :func:`activate_scoring_profile_version` correctly refuses to activate a
+profile whose cited snapshot has been superseded. Reusing it across snapshots
+would produce a profile that can never be activated again, an unescapable
+dead end for exactly the A -> B -> A case this idempotency exists to serve.
+So A -> B -> A produces three distinct, successively activatable profile
+versions -- the third sharing its category/scoring-type content with the
+first, but citing the third (current) snapshot, not the first snapshot's row.
 """
 
 from __future__ import annotations
@@ -301,8 +308,13 @@ def _profile_fingerprint(
     capture refs -- see ``LeagueSettingsDocument.configuration_json``). Two
     different snapshot *rows* -- different ids, different raw capture
     metadata -- can still fingerprint identically here if their normalized
-    rules content matches, which is exactly what makes cross-snapshot A -> B
-    -> A content reuse (rather than needless re-minting) possible.
+    rules content matches.
+
+    That equality is used only as a *consistency* check, never as a reuse
+    key across snapshot rows on its own -- see ``build_scoring_profile``'s
+    docstring for why a same-content match against a different (superseded)
+    snapshot row must still mint a new, distinct profile version rather than
+    returning the old row.
     """
 
     parts = [scoring_type.value, settings_content_sha256]
@@ -371,14 +383,27 @@ def build_scoring_profile(
     * The document's scoring-format discriminator has no verified mapping --
       see :func:`_map_scoring_type`.
 
-    If an existing profile for ``(league, name)`` already has the exact same
-    canonical content (scoring type, category ordering/codes/directions/
-    kinds/ratio components/weights, and settings-document content hash) as
-    what this derivation would produce, that existing profile is returned
-    unchanged rather than creating an indistinguishable new version -- see
-    the module docstring's "idempotent by content" note. This also covers
-    A -> B -> A: reactivating a superseded version whose content matches a
-    newer snapshot reuses that version rather than minting a fresh one.
+    If an existing profile for ``(league, name)`` was already derived from
+    this *exact* ``settings_snapshot`` row (same id) and still has the same
+    canonical content that row would produce, that existing profile is
+    returned unchanged rather than creating an indistinguishable new
+    version -- a plain re-run against unchanged settings is a no-op. That is
+    the only case reused: a same-content match against a *different*
+    snapshot row (even a byte-identical, canonicalized-content match) always
+    mints a new profile version instead, because reusing the old row would
+    leave it citing a superseded ``settings_snapshot_id`` --
+    ``activate_scoring_profile_version`` correctly refuses to activate a
+    profile whose snapshot is no longer current, so returning the old row
+    would silently produce a profile that can never be activated again. A
+    fresh version citing the new (current) snapshot has no such problem, and
+    still shares its predecessor's content -- concretely, deriving from A,
+    then B, then a snapshot whose rules content matches A again (A -> B -> A)
+    produces three distinct, successively activatable profile versions, the
+    third sharing its category/scoring-type content with the first. Repointing
+    an existing row's ``settings_snapshot_id`` instead was considered and
+    rejected: it would rewrite that row's historical lineage, silently
+    changing what "this profile was derived from settings snapshot N" meant
+    for a row that already existed before N was current.
     """
 
     if settings_snapshot.league_id != league.id:
@@ -413,6 +438,7 @@ def build_scoring_profile(
         select(LeagueScoringProfile).where(
             LeagueScoringProfile.league_id == league.id,
             LeagueScoringProfile.name == name,
+            LeagueScoringProfile.settings_snapshot_id == settings_snapshot.id,
         )
     ).all()
     for existing in existing_profiles:

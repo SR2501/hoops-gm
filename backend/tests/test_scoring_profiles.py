@@ -249,6 +249,97 @@ def test_missing_scoring_categories_is_rejected(session: Session) -> None:
     assert session.query(LeagueScoringProfile).count() == 0
 
 
+# --------------------------------------------------------------------------
+# Category config shape drift: every malformed level must fail loudly
+# --------------------------------------------------------------------------
+
+
+def _base_payload() -> dict[str, object]:
+    return {"seasonYear": 2026, "startDate": "2026-10-20", "endDate": "2027-03-14"}
+
+
+def test_a_non_dict_scoring_category_settings_group_fails_closed() -> None:
+    """One malformed group must not silently vanish among the valid ones.
+
+    An earlier version of this parser ``continue``d past a non-dict group,
+    which would let this exact payload -- one garbage entry alongside a
+    perfectly good category -- silently produce a one-category profile
+    instead of raising. A missing category is a wrong valuation with no way
+    to detect it after the fact, which is exactly why this must be loud.
+    """
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [
+            "not-a-dict",
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            },
+        ],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringCategorySettings\[0\] must be an object"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-group"
+        )
+
+
+def test_a_non_list_configs_value_fails_closed() -> None:
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [{"configs": "not-a-list"}],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringCategorySettings\[0\]\.configs must be a list"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-configs"
+        )
+
+
+def test_a_non_dict_config_entry_fails_closed() -> None:
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [{"configs": ["not-a-dict"]}],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringCategorySettings\[0\]\.configs\[0\] must be an object"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-config"
+        )
+
+
+def test_a_non_dict_scoring_category_value_fails_closed() -> None:
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [
+            {"configs": [{"scoringCategory": "not-a-dict", "weight": 1.0}]}
+        ],
+    }
+
+    with pytest.raises(SourceContractError, match=r"scoringCategory must be an object"):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-category"
+        )
+
+
 def test_map_source_categories_is_pure_and_reusable() -> None:
     """The mapping function has no session dependency -- it is pure evidence mapping."""
     definitions = map_source_categories(_NINE_CAT_SOURCE_CATEGORIES)
@@ -324,6 +415,80 @@ def test_missing_scoring_type_is_rejected(session: Session) -> None:
         build_scoring_profile(session, league=league, settings_snapshot=snapshot)
 
     assert session.query(LeagueScoringProfile).count() == 0
+
+
+# --------------------------------------------------------------------------
+# scoring_type evidence source_path: must name whichever field actually won
+# --------------------------------------------------------------------------
+
+
+def test_scoring_type_evidence_cites_the_nested_path_when_only_nested_is_present() -> None:
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    document = parse_official_league_settings(
+        payload, source_league_id="league-1", capture_ref="test-fixture:nested-type"
+    )
+
+    assert document.scoring_type.value is not None
+    assert document.scoring_type.value.raw_type == _VERIFIED_SCORING_TYPE
+    [evidence] = document.scoring_type.evidence
+    assert evidence.source_path == "$.scoringSystem.type"
+
+
+def test_scoring_type_evidence_cites_the_top_level_path_when_it_wins() -> None:
+    """Official priority: a top-level ``scoringType`` wins over the nested field.
+
+    Never observed live -- ``scoringSystem.type`` is the only shape this
+    adapter has actually captured -- but the parser accepts a top-level
+    ``scoringType`` too under official-source precedence rules, and its
+    evidence must honestly cite the field that actually won rather than
+    always assuming the nested one.
+    """
+    payload = _base_payload()
+    payload["scoringType"] = _VERIFIED_SCORING_TYPE
+    payload["scoringSystem"] = {
+        "type": "SOME_OTHER_FORMAT_THAT_MUST_LOSE",
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    document = parse_official_league_settings(
+        payload, source_league_id="league-1", capture_ref="test-fixture:top-level-type"
+    )
+
+    assert document.scoring_type.value is not None
+    assert document.scoring_type.value.raw_type == _VERIFIED_SCORING_TYPE
+    [evidence] = document.scoring_type.evidence
+    assert evidence.source_path == "$.scoringType"
 
 
 # --------------------------------------------------------------------------
@@ -434,13 +599,21 @@ def test_rederiving_from_an_unchanged_snapshot_returns_the_existing_profile(
     assert session.query(LeagueScoringProfile).count() == 1
 
 
-def test_a_to_b_to_a_content_reuse_across_different_snapshot_rows(session: Session) -> None:
-    """Deriving from a *new* snapshot whose content matches an old one reuses it.
+def test_a_to_b_to_a_content_match_across_snapshot_rows_mints_a_new_activatable_version(
+    session: Session,
+) -> None:
+    """Deriving from a *new* snapshot whose content matches an old one mints a
+    new version rather than reusing the old row.
 
     v1 (the full 9-cat content, call it C) and v3 (content byte-identical to
     C in normalized form, but a distinct snapshot row with different capture
-    evidence) must produce the *same* profile version; v2 (different content
-    C', a single-category league) must not.
+    evidence) must produce *distinct* profile versions sharing the same
+    category/scoring-type content; v2 (different content C', a
+    single-category league) is a third, unrelated version. Reusing profile_a's
+    row for v3 would leave it citing the now-superseded v1 snapshot, which
+    ``activate_scoring_profile_version`` correctly refuses to activate --
+    an unescapable A -> B -> A dead end. Minting a new version citing v3 (the
+    current snapshot) has no such problem, and is provably activatable below.
     """
     league = _league(session)
 
@@ -463,8 +636,27 @@ def test_a_to_b_to_a_content_reuse_across_different_snapshot_rows(session: Sessi
     v3 = _settings_snapshot(session, league.id, version=3)
     profile_c = build_scoring_profile(session, league=league, settings_snapshot=v3)
 
-    assert profile_c.id == profile_a.id
-    assert session.query(LeagueScoringProfile).count() == 2
+    assert profile_c.id != profile_a.id
+    assert profile_c.version == 3
+    assert profile_c.settings_snapshot_id == v3.id
+    assert session.query(LeagueScoringProfile).count() == 3
+
+    # Same content as profile_a (scoring type and every category's key,
+    # direction, kind and ratio components), but citing the current snapshot.
+    assert profile_c.scoring_type == profile_a.scoring_type
+
+    def _content(profile: LeagueScoringProfile) -> list[tuple[str, int, CategoryKind]]:
+        ordered = sorted(profile.categories, key=lambda c: c.display_order)
+        return [(c.key, c.direction, c.kind) for c in ordered]
+
+    assert _content(profile_c) == _content(profile_a)
+
+    # And, unlike profile_a (now stale against v3), profile_c is activatable.
+    activated = activate_scoring_profile_version(session, profile_c)
+    assert activated.id == profile_c.id
+    assert _active_id(session, league.id) == profile_c.id
+    with pytest.raises(ValueError, match="stale"):
+        activate_scoring_profile_version(session, profile_a)
 
 
 # --------------------------------------------------------------------------
