@@ -72,7 +72,7 @@ Everything binds to `127.0.0.1`. Nothing is exposed to the network — see
 |---|---|
 | [`backend/`](backend/) | FastAPI service, SQLAlchemy models, Alembic migrations |
 | [`frontend/`](frontend/) | React + TypeScript dashboard |
-| [`userscript/`](userscript/) | Reserved for the Tampermonkey bridge (Phase 8) |
+| [`userscript/`](userscript/) | Tampermonkey bridge: local pairing and read-only Fantrax capture |
 
 ## Working on this
 
@@ -91,6 +91,29 @@ Start with **[`AGENTS.md`](AGENTS.md)**, then **[`docs/handoff.md`](docs/handoff
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI enforcing the Code gate, with the Adapter and Model gates already wired |
 
 Nothing important lives only in a chat transcript. If it is worth returning to, it is in this repository.
+
+### Pairing the browser bridge
+
+After starting the loopback backend and installing the built userscript, open a
+matching Fantrax league page. In Tampermonkey's menu choose **Pair hoops-gm
+bridge**. The command displays the local backend's one-time 12-character code,
+then asks you to paste it back to confirm. It stores the returned bearer secret
+only in Tampermonkey storage; do not add it to source control or browser-page
+storage.
+
+For userscript source changes, run `npm run build` in `userscript/`, then
+reinstall `userscript/dist/hoops-gm.user.js` or update the script in
+Tampermonkey's editor. Building alone does not update the already-installed
+script. Reload the Fantrax tab after updating: capture uses a CSP-safe,
+page-world response observer because isolated-world `fetch`/`XMLHttpRequest`
+patches do not intercept Fantrax's SPA requests in Chromium Tampermonkey.
+Then visit Players, Roster, and League normally and confirm a new
+`bridge_payloads` row. Some `/fxpa/req` traffic is issued by Fantrax's own
+service worker rather than page script, which no page-world hook can observe;
+if `bridge_payloads` stays empty, use Tampermonkey's **hoops-gm: capture
+current Fantrax view** menu command as a guaranteed, owner-triggered fallback.
+See [`userscript/README.md`](userscript/README.md) for
+the non-sensitive live-test and troubleshooting procedure.
 
 ## Notes
 

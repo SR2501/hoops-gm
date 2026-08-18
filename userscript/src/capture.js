@@ -14,6 +14,8 @@
   // infrastructure and is read here, never written to.
 
   const ENVELOPE_SCHEMA = "hoops-gm.bridge-payload.v1";
+  const PAGE_EVENT_SCHEMA = "hoops-gm.page-capture.v1";
+  const PAGE_EVENT_TYPE = "hoops-gm.bridge.page-capture.v1";
   const FXPA_REQ_PATHNAME = "/fxpa/req";
   const FANTRAX_HOSTS = new Set(["fantrax.com", "www.fantrax.com"]);
   // Fixed, not derived from window.location: capture is only ever installed
@@ -24,13 +26,43 @@
   /**
    * @typedef {Object} BridgePayloadEnvelope
    * @property {string} schema
-   * @property {"fetch"|"xhr"} source
+   * @property {"fetch"|"xhr"|"cache-storage"|"manual-export"} source
    * @property {string} capturedAt ISO-8601 timestamp
    * @property {{method: string, url: string}} request
    * @property {{status: number|null, ok: boolean, contentType: string|null}} response
    * @property {{raw: string, json: unknown|null, parseError: string|null}} body
    * @property {string} dedupeKey
    */
+
+  // Root cause of the zero-row capture reported against a paired, healthy
+  // backend: DevTools shows the relevant /fxpa/req calls initiated by
+  // Fantrax's own service worker (fx-sw.js), not by page script. A
+  // service worker executes in its own global scope, entirely separate
+  // from `window` -- there is no supported browser API, and no
+  // Tampermonkey grant, that lets a userscript observe or instrument another
+  // origin-scoped script's *internal* `self.fetch()` calls or the response
+  // it produces without ever handing it to the page. Monkey-patching
+  // `window.fetch`/`XMLHttpRequest` (above and in `installPageWorldHook`)
+  // only ever sees requests page script itself issues, so it structurally
+  // cannot see a service-worker-originated call. This is a platform
+  // boundary, not a bug in the patch.
+  //
+  // Two read-only, best-effort paths remain, plus one guaranteed manual
+  // fallback:
+  //  1. Cache Storage (`window.caches`) is a *per-origin* store shared by
+  //     both `window` and the service worker -- if fx-sw.js persists
+  //     responses there (a common Workbox pattern), a page script can
+  //     legitimately enumerate and read them. See `startCacheStorageWatcher`
+  //     below. This is opportunistic: it depends entirely on Fantrax's own
+  //     implementation and is unverified against the live site.
+  //  2. IndexedDB is the same idea but was not implemented here: its schema
+  //     would have to be reverse-engineered per Fantrax version and is far
+  //     more likely to drift silently than Cache Storage's simple
+  //     Request/Response shape. Left as a documented option, not code.
+  //  3. `captureManual`/`captureManualSnapshot` (isolated world, below) is
+  //     the guaranteed fallback: an explicit, owner-triggered Tampermonkey
+  //     menu command that exports whatever is already rendered on the page
+  //     at that moment, independent of which layer produced it.
 
   /**
    * True only for the exact Fantrax internal RPC endpoint this bridge is
@@ -200,7 +232,35 @@
       return installXHRCapture({ win, handleCaptured, logger });
     }
 
-    return { handleCaptured, installFetch, installXHR, dedupe };
+    /**
+     * The guaranteed fallback path (see `captureManualSnapshot`). Unlike
+     * `handleCaptured`, this deliberately bypasses `shouldCapture` -- the
+     * owner is exporting whatever is on screen, not an `/fxpa/req` response,
+     * so the URL is the current Fantrax page, not the RPC endpoint. Every
+     * other step (typed envelope, dedupe, non-throwing forward) is identical
+     * so this reuses the same `bridge_payloads` storage and replay tooling.
+     */
+    function captureManual({ url, contentType, raw }) {
+      try {
+        const envelope = buildEnvelope({
+          source: "manual-export",
+          url,
+          method: "GET",
+          status: null,
+          ok: true,
+          contentType: contentType || null,
+          raw,
+          capturedAtMs: now(),
+        });
+        forward(envelope);
+        return true;
+      } catch (err) {
+        safeWarn(logger, `hoops-gm bridge: manual capture failed (${err && err.message})`);
+        return false;
+      }
+    }
+
+    return { handleCaptured, installFetch, installXHR, captureManual, dedupe };
   }
 
   /**
@@ -309,8 +369,475 @@
     };
   }
 
+  function generateChannel(random = globalThis.crypto) {
+    const bytes = new Uint8Array(16);
+    if (!random || typeof random.getRandomValues !== "function") {
+      // The channel is a correlation value, never an authentication secret.
+      // A deterministic fallback keeps a missing Web Crypto API from breaking
+      // page capture, while the bridge secret remains Tampermonkey-only.
+      return `fallback-${Date.now()}-${Math.random()}`;
+    }
+    random.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  /**
+   * This function is stringified and executed in the page's MAIN world. Keep
+   * it self-contained: it has no GM APIs, no bridge secret, and no reference
+   * to the isolated userscript. It observes only the response fields emitted
+   * below, then sends them to the isolated world with postMessage.
+   */
+  function installPageWorldHook(channel, eventType) {
+    "use strict";
+    const schema = "hoops-gm.page-capture.v1";
+    const pathname = "/fxpa/req";
+    const hosts = new Set(["fantrax.com", "www.fantrax.com"]);
+    const marker = "__hoopsGmPageCaptureV1Installed";
+    const existing = window[marker];
+    if (existing && existing.channels && typeof existing.channels.add === "function") {
+      existing.channels.add(channel);
+      return;
+    }
+    const channels = new Set([channel]);
+    window[marker] = { channels };
+
+    function matches(url) {
+      if (typeof url !== "string" || url.length === 0) {
+        return false;
+      }
+      try {
+        const parsed = new URL(url, window.location.href);
+        return hosts.has(parsed.hostname.toLowerCase()) && parsed.pathname === pathname;
+      } catch {
+        return false;
+      }
+    }
+
+    function publish(details) {
+      try {
+        for (const activeChannel of channels) {
+          window.postMessage(
+            {
+              schema,
+              channel: activeChannel,
+              source: details.source,
+              url: details.url,
+              method: details.method || "GET",
+              status: typeof details.status === "number" ? details.status : null,
+              ok: Boolean(details.ok),
+              contentType: details.contentType || null,
+              raw: typeof details.raw === "string" ? details.raw : "",
+            },
+            window.location.origin
+          );
+        }
+      } catch {
+        // Capture is strictly observational; never throw into Fantrax.
+      }
+    }
+
+    if (typeof window.fetch === "function") {
+      const originalFetch = window.fetch;
+      window.fetch = function hoopsGmPageFetch(input, init) {
+        return originalFetch.call(this, input, init).then((response) => {
+          try {
+            const url = typeof input === "string" ? input : (input && input.url) || "";
+            const method = (init && init.method) || (input && input.method) || "GET";
+            if (matches(url) && response && typeof response.clone === "function") {
+              response.clone().text().then(
+                (raw) => publish({
+                  source: "fetch",
+                  url,
+                  method,
+                  status: response.status,
+                  ok: response.ok,
+                  contentType: response.headers && typeof response.headers.get === "function"
+                    ? response.headers.get("content-type")
+                    : null,
+                  raw,
+                }),
+                () => {}
+              );
+            }
+          } catch {
+            // Keep the page's real response untouched.
+          }
+          return response;
+        });
+      };
+    }
+
+    if (typeof window.XMLHttpRequest === "function") {
+      const OriginalXHR = window.XMLHttpRequest;
+      function PageCaptureXHR(...args) {
+        const xhr = new OriginalXHR(...args);
+        let method = "GET";
+        let url = "";
+        const originalOpen = xhr.open.bind(xhr);
+        xhr.open = function hoopsGmPageOpen(nextMethod, nextUrl, ...rest) {
+          method = nextMethod;
+          url = nextUrl;
+          return originalOpen(nextMethod, nextUrl, ...rest);
+        };
+        xhr.addEventListener("load", () => {
+          try {
+            if (matches(url)) {
+              publish({
+                source: "xhr",
+                url,
+                method,
+                status: xhr.status,
+                ok: xhr.status >= 200 && xhr.status < 300,
+                contentType: typeof xhr.getResponseHeader === "function"
+                  ? xhr.getResponseHeader("content-type")
+                  : null,
+                raw: xhr.responseText,
+              });
+            }
+          } catch {
+            // Keep the page's own XHR event handling untouched.
+          }
+        });
+        return xhr;
+      }
+      PageCaptureXHR.prototype = OriginalXHR.prototype;
+      window.XMLHttpRequest = PageCaptureXHR;
+    }
+
+    // Best-effort, read-only: some /fxpa/req calls are initiated by
+    // Fantrax's own service worker rather than page script, so the
+    // fetch/XHR patches above never see them (a service worker runs in a
+    // separate global scope no page script can instrument). Cache Storage
+    // is the one place both worlds can legitimately meet: it is a per-origin
+    // store, so if the service worker persists a response there, this page
+    // script can read the same entry no differently than reading any other
+    // origin-scoped browser storage. This is opportunistic and depends
+    // entirely on Fantrax's own implementation -- it may find nothing, and
+    // that is an expected, non-error outcome, not a bug.
+    if (
+      !window[marker].cacheWatcherStarted &&
+      typeof window.caches === "object" &&
+      window.caches &&
+      typeof window.caches.keys === "function" &&
+      typeof window.setInterval === "function"
+    ) {
+      window[marker].cacheWatcherStarted = true;
+
+      const pollCacheStorage = () => {
+        // A hidden tab is already timer-throttled by the browser; skipping
+        // explicitly keeps this from ever being the thing that competes for
+        // a throttled tick during a draft.
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+          return;
+        }
+        Promise.resolve()
+          .then(() => window.caches.keys())
+          .then((cacheNames) =>
+            Promise.all(
+              (cacheNames || []).map((name) =>
+                window.caches
+                  .open(name)
+                  .then((cache) => cache.keys().then((requests) => ({ cache, requests })))
+                  .then(({ cache, requests }) =>
+                    Promise.all(
+                      requests
+                        .filter((request) => matches(request && request.url))
+                        .map((request) =>
+                          cache
+                            .match(request, { ignoreMethod: true })
+                            .then((response) => {
+                              if (!response || typeof response.clone !== "function") {
+                                return undefined;
+                              }
+                              return response
+                                .clone()
+                                .text()
+                                .then((raw) =>
+                                  publish({
+                                    source: "cache-storage",
+                                    url: request.url,
+                                    method: request.method || "GET",
+                                    status: response.status,
+                                    ok: response.ok,
+                                    contentType:
+                                      response.headers && typeof response.headers.get === "function"
+                                        ? response.headers.get("content-type")
+                                        : null,
+                                    raw,
+                                  })
+                                )
+                                .catch(() => {});
+                            })
+                            .catch(() => {})
+                        )
+                    )
+                  )
+                  .catch(() => {})
+              )
+            )
+          )
+          .catch(() => {
+            // Cache Storage inspection is opportunistic; never throw into Fantrax.
+          });
+      };
+      pollCacheStorage();
+      window[marker].cacheWatcherIntervalId = window.setInterval(pollCacheStorage, 5000);
+    }
+  }
+
+  function createPageWorldHookSource(channel) {
+    return `;(${installPageWorldHook.toString()})(${JSON.stringify(channel)}, ${JSON.stringify(PAGE_EVENT_TYPE)});`;
+  }
+
+  // Sources the page-world hook may legitimately postMessage. "manual-export"
+  // is deliberately excluded: it never travels over this channel, since it
+  // is produced directly in the isolated world (see `captureManualSnapshot`)
+  // and is not scoped to the `/fxpa/req` URL filter this receiver re-applies.
+  const PAGE_EVENT_SOURCES = new Set(["fetch", "xhr", "cache-storage"]);
+
+  function pageEventDetails(event, { channel, origin, source } = {}) {
+    if (!event || event.source !== source || event.origin !== origin) {
+      return null;
+    }
+    const data = event.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return null;
+    }
+    if (
+      data.schema !== PAGE_EVENT_SCHEMA ||
+      data.channel !== channel ||
+      !PAGE_EVENT_SOURCES.has(data.source) ||
+      typeof data.url !== "string" ||
+      typeof data.method !== "string" ||
+      (data.status !== null && (!Number.isInteger(data.status) || data.status < 0)) ||
+      typeof data.ok !== "boolean" ||
+      (data.contentType !== null && typeof data.contentType !== "string") ||
+      typeof data.raw !== "string"
+    ) {
+      return null;
+    }
+    if (!shouldCapture(data.url)) {
+      return null;
+    }
+    return {
+      source: data.source,
+      url: data.url,
+      method: data.method,
+      status: data.status,
+      ok: data.ok,
+      contentType: data.contentType,
+      raw: data.raw,
+    };
+  }
+
+  /**
+   * Installs the isolated-world receiver first, then injects the hook into the
+   * page's MAIN world. GM_addElement is Tampermonkey's CSP-safe script
+   * injection path. The plain DOM fallback exists for compatible execution
+   * modes, but may be rejected by a site CSP and reports that failure instead
+   * of pretending capture is active.
+   */
+  function installPageWorldBridge({
+    capture,
+    win = typeof window !== "undefined" ? window : undefined,
+    doc = typeof document !== "undefined" ? document : undefined,
+    addElement = typeof GM_addElement === "function" ? GM_addElement : undefined,
+    channel = generateChannel(),
+    logger = console,
+  } = {}) {
+    if (!capture || !win || !doc || !win.location || typeof win.addEventListener !== "function") {
+      return { installed: false, uninstall: () => {} };
+    }
+    const origin = win.location.origin;
+    const onMessage = (event) => {
+      const details = pageEventDetails(event, { channel, origin, source: win });
+      if (details) {
+        capture.handleCaptured(details);
+      }
+    };
+    win.addEventListener("message", onMessage, false);
+    const source = createPageWorldHookSource(channel);
+    let injected = false;
+    try {
+      if (typeof addElement === "function") {
+        const result = addElement(doc.documentElement || doc.head, "script", { textContent: source });
+        injected = true;
+        if (result && typeof result.catch === "function") {
+          result.catch(() => safeWarn(logger, "hoops-gm bridge: page-world hook injection was rejected"));
+        }
+      } else if (typeof doc.createElement === "function") {
+        const script = doc.createElement("script");
+        script.textContent = source;
+        const parent = doc.documentElement || doc.head;
+        if (!parent || typeof parent.appendChild !== "function") {
+          throw new Error("document has no script injection target");
+        }
+        parent.appendChild(script);
+        if (typeof script.remove === "function") {
+          script.remove();
+        }
+        injected = true;
+      }
+    } catch (err) {
+      safeWarn(logger, `hoops-gm bridge: page-world hook injection failed (${err && err.message})`);
+    }
+    return {
+      installed: injected,
+      channel,
+      uninstall: () => win.removeEventListener("message", onMessage, false),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Guaranteed fallback: explicit, owner-triggered manual export
+  // ---------------------------------------------------------------------------
+  //
+  // This runs entirely in Tampermonkey's isolated world, which shares the
+  // live DOM with the page (DOM access is not a CSP-restricted operation --
+  // only script/resource loading is). It never depends on which layer
+  // produced a response, so it works even when both the fetch/XHR patch and
+  // the Cache Storage watcher find nothing. It captures a clone of already
+  // -rendered content the owner is looking at; it never triggers a new
+  // request and never touches Fantrax's own state.
+
+  const DOM_SNAPSHOT_MAX_CHARS = 500000;
+  // Checked in order; the first exposed and non-empty value wins. These are
+  // common SSR/state-container globals across frameworks, checked
+  // opportunistically -- Fantrax exposing none of them is an expected,
+  // non-error outcome, and the DOM snapshot below is still taken.
+  const APP_STATE_GLOBALS = ["__NEXT_DATA__", "__NUXT__", "__INITIAL_STATE__", "__APOLLO_STATE__"];
+  // Tried in order; the first element found is snapshotted. `body` is the
+  // guaranteed last resort so the export always has *something* rather than
+  // silently finding nothing on an unfamiliar page layout.
+  const SNAPSHOT_ROOT_SELECTORS = ["main", "#root", "#app", "body"];
+
+  /**
+   * Best-effort read of a framework's exposed client-side state object.
+   * Never throws: a hostile or throwing getter on `win` must not break the
+   * manual export.
+   */
+  function readExposedAppState(win) {
+    for (const key of APP_STATE_GLOBALS) {
+      try {
+        const value = win[key];
+        if (value !== undefined && value !== null) {
+          const json = JSON.stringify(value);
+          if (typeof json === "string" && json.length > 0) {
+            return { key, json };
+          }
+        }
+      } catch {
+        // A throwing getter must not break the manual export; try the next.
+      }
+    }
+    return null;
+  }
+
+  function selectSnapshotRoot(doc) {
+    for (const selector of SNAPSHOT_ROOT_SELECTORS) {
+      try {
+        const element = doc.querySelector(selector);
+        if (element) {
+          return element;
+        }
+      } catch {
+        // An invalid selector in an unfamiliar DOM must not abort the export.
+      }
+    }
+    return doc.documentElement || null;
+  }
+
+  /**
+   * Clones the selected root (never touches the live DOM) and strips
+   * `<script>`/`<style>`/`<noscript>` so no inline script content or
+   * stylesheet text is forwarded -- only rendered markup and its visible
+   * text/attribute content. Bounded so one export cannot send an unbounded
+   * payload.
+   */
+  function buildDomSnapshotHtml(doc) {
+    const root = selectSnapshotRoot(doc);
+    if (!root || typeof root.cloneNode !== "function") {
+      return "";
+    }
+    const clone = root.cloneNode(true);
+    if (typeof clone.querySelectorAll === "function") {
+      for (const node of Array.from(clone.querySelectorAll("script, style, noscript"))) {
+        if (typeof node.remove === "function") {
+          node.remove();
+        }
+      }
+    }
+    const html = typeof clone.outerHTML === "string" ? clone.outerHTML : "";
+    return html.length > DOM_SNAPSHOT_MAX_CHARS
+      ? `${html.slice(0, DOM_SNAPSHOT_MAX_CHARS)}\n<!-- hoops-gm bridge: truncated at ${DOM_SNAPSHOT_MAX_CHARS} chars -->`
+      : html;
+  }
+
+  /**
+   * The owner-triggered manual export. Prefers an exposed app-state object
+   * (structured JSON, easier to parse later) and falls back to a DOM
+   * snapshot of the page's main content. Returns `{ captured, reason }`
+   * rather than throwing so a menu command handler can report the outcome.
+   */
+  function captureManualSnapshot({
+    capture,
+    win = typeof window !== "undefined" ? window : undefined,
+    doc = typeof document !== "undefined" ? document : undefined,
+    logger = console,
+  } = {}) {
+    if (!capture || typeof capture.captureManual !== "function" || !win || !doc || !win.location) {
+      return { captured: false, reason: "manual capture is not available in this context" };
+    }
+    try {
+      const appState = readExposedAppState(win);
+      const html = appState ? "" : buildDomSnapshotHtml(doc);
+      const raw = appState ? appState.json : html;
+      if (!raw) {
+        return { captured: false, reason: "no exportable content found on this page" };
+      }
+      const ok = capture.captureManual({
+        url: win.location.href,
+        contentType: appState ? "application/json" : "text/html",
+        raw,
+      });
+      return ok
+        ? { captured: true, reason: appState ? `app-state:${appState.key}` : "dom-snapshot" }
+        : { captured: false, reason: "capture failed while building the envelope" };
+    } catch (err) {
+      safeWarn(logger, `hoops-gm bridge: manual capture failed (${err && err.message})`);
+      return { captured: false, reason: "unexpected error" };
+    }
+  }
+
+  /**
+   * Registers the Tampermonkey menu command for the manual export. Dependency
+   * -injected so it is testable without a browser or Tampermonkey.
+   */
+  function installManualCaptureMenu({ registerMenuCommand, capture, win, doc, alert, logger = console } = {}) {
+    if (typeof registerMenuCommand !== "function" || !capture) {
+      return false;
+    }
+    registerMenuCommand("hoops-gm: capture current Fantrax view", () => {
+      const result = captureManualSnapshot({ capture, win, doc, logger });
+      if (typeof alert === "function") {
+        try {
+          alert(
+            result.captured
+              ? "hoops-gm bridge: captured the current page for later review."
+              : `hoops-gm bridge: nothing captured (${result.reason}).`
+          );
+        } catch {
+          // A broken alert must never propagate into the page.
+        }
+      }
+    });
+    return true;
+  }
+
   const capture = {
     ENVELOPE_SCHEMA,
+    PAGE_EVENT_SCHEMA,
+    PAGE_EVENT_TYPE,
     FXPA_REQ_PATHNAME,
     shouldCapture,
     normalizeBody,
@@ -318,17 +845,31 @@
     computeDedupeKey,
     createDedupeCache,
     createCapture,
+    createPageWorldHookSource,
+    generateChannel,
+    installPageWorldBridge,
+    pageEventDetails,
+    readExposedAppState,
+    selectSnapshotRoot,
+    buildDomSnapshotHtml,
+    captureManualSnapshot,
+    installManualCaptureMenu,
   };
   globalThis.HoopsGmCapture = capture;
 
-  // Auto-install only in a real page context, and only once the transport
-  // foundation from userscript.js has set itself up. Guarded the same way
-  // userscript.js guards its own auto-install, so loading this file in a
-  // non-browser context (including these tests) never installs anything.
+  // Auto-install only in a real page context. The capture receiver stays in
+  // Tampermonkey's isolated world so forwarding remains GM-privileged; only
+  // the narrow response observer is injected into Fantrax's page world.
   if (typeof window !== "undefined" && typeof globalThis.HoopsGmTransport !== "undefined") {
     const installed = createCapture({ transport: globalThis.HoopsGmTransport });
-    installed.installFetch(window);
-    installed.installXHR(window);
+    installed.pageBridge = installPageWorldBridge({ capture: installed, win: window, doc: document });
     capture.instance = installed;
+    installManualCaptureMenu({
+      registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,
+      capture: installed,
+      win: window,
+      doc: document,
+      alert: typeof globalThis.alert === "function" ? globalThis.alert : undefined,
+    });
   }
 })();

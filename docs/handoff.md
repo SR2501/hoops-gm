@@ -915,3 +915,132 @@ row-count/result plus non-sensitive Tampermonkey warning text if it fails.
 Bridge should diagnose any remaining browser-specific injection behavior from
 that result; no write-path work is involved, so the Automation gate remains
 out of scope.
+
+---
+
+## 2026-08-17 — bridge — service-worker-owned `/fxpa/req` traffic: Cache Storage watcher + guaranteed manual export
+
+**Changed:** The owner's live check (previous entry) found the page-world
+fetch/XHR hook still healthy-but-empty: DevTools traced the relevant
+`/fxpa/req` calls to an initiator of `fx-sw.js` — Fantrax's own service
+worker, not page script. A service worker executes in its own global scope,
+which no page-injected script (Tampermonkey isolated or MAIN-world) can
+instrument; `window.fetch`/`XMLHttpRequest` patching can only ever see
+requests page script itself issues, so it structurally cannot see one the
+service worker issues on its own. This is a platform boundary, not a bug in
+the existing hook, and I did not attempt to fake otherwise (e.g. unregistering
+Fantrax's service worker or registering a competing one for the same scope
+was considered and rejected: both would alter Fantrax's own behavior, which
+is out of scope for a strictly observational bridge).
+
+Implemented two additions in `userscript/src/capture.js`, both reusing the
+existing `bridge_payloads` envelope contract:
+
+1. **Cache Storage watcher (best-effort, automatic).** The page-world hook
+   now also polls `window.caches` every 5 seconds while the tab is visible
+   (skipping entirely when `document.visibilityState === "hidden"`, so it
+   never competes with Fantrax's own already-throttled background-tab
+   polling), matching entries against the same exact `/fxpa/req` filter with
+   `{ignoreMethod: true}` so a cached `POST` entry is still found, and
+   publishing any match as `source: "cache-storage"` over the same
+   `postMessage` channel as `fetch`/`xhr`. This is opportunistic: it depends
+   entirely on whether Fantrax's service worker persists responses in Cache
+   Storage (a common Workbox pattern), which is **not yet verified against
+   the live site**. IndexedDB is the same idea in principle but was
+   deliberately left unimplemented — its schema would have to be
+   reverse-engineered per Fantrax version, a much likelier source of silent
+   drift than Cache Storage's simple Request/Response shape.
+2. **Manual export (guaranteed, owner-triggered).** A new Tampermonkey menu
+   command, "hoops-gm: capture current Fantrax view", runs entirely in the
+   isolated world (DOM access is not CSP-restricted) and exports whatever is
+   already rendered: it prefers an exposed client-state global
+   (`__NEXT_DATA__`, `__NUXT__`, `__INITIAL_STATE__`, `__APOLLO_STATE__`, in
+   that order) as structured JSON, else clones the page's main content region
+   (`main`, `#root`, `#app`, `body`), strips `<script>`/`<style>`/`<noscript>`
+   from the clone, and forwards the result (bounded to 500,000 chars) tagged
+   `source: "manual-export"`. This never depends on which layer produced the
+   underlying data, so it is the one path guaranteed to work regardless of
+   `fx-sw.js`'s behavior. `createCapture().captureManual` deliberately
+   bypasses the `/fxpa/req` URL filter, since a manual export's `request.url`
+   is the current Fantrax page, not the RPC endpoint.
+
+Extended the backend contract minimally so both new sources persist:
+`BridgeRequest.source` in `backend/src/hoops_gm/api/routes/bridge.py` is now
+`Literal["fetch", "xhr", "cache-storage", "manual-export"]` (was
+`Literal["fetch", "xhr"]`). No migration was needed — `bridge_payloads.source`
+is a plain `Text` column with no database-level CHECK constraint. This is a
+narrow extension of an existing contract, in the same spirit as the handshake
+path having been built ahead of its backend route; `backend` should still
+review the enum choice.
+
+This is capture (read) work only: no DOM mutation, no write request to
+Fantrax, and no action executor code, so the Automation gate does not apply
+and no `safety` sign-off was sought for it — same framing as the prior
+page-world-hook entry.
+
+**Now true:** `npm --prefix userscript test` passes 47 tests (32 previous +
+15 new): the Cache Storage watcher (matching entries, the hidden-tab skip,
+and never throwing when `caches.keys()` rejects), `pageEventDetails` accepting
+`cache-storage` while still rejecting `manual-export` over the page channel
+(it never travels that way), `captureManual` bypassing the URL filter,
+`buildDomSnapshotHtml`/`selectSnapshotRoot`/`readExposedAppState` (stripping,
+truncation, fallback order, throwing-getter survival), `captureManualSnapshot`
+preferring app state over DOM and reporting failure without throwing, and
+`installManualCaptureMenu` wiring/no-op-without-a-register-function.
+`npm --prefix userscript run build` succeeds; userscript version bumped to
+0.3.0. `userscript/README.md` documents the root cause, both new paths, and an
+explicit "Customer workflow: manual export" section with exact owner steps;
+the root `README.md`'s bridge section points to the same fallback.
+
+Backend: added `test_payload_accepts_cache_storage_source_for_service_worker_owned_traffic`,
+`test_payload_accepts_manual_export_source_with_no_response_status`, and
+`test_payload_rejects_an_unknown_source` to
+`backend/tests/test_bridge_payloads.py`. The full backend suite
+(`backend/tests`) passes with these changes.
+
+**Could not verify:** Whether Fantrax's service worker actually uses Cache
+Storage for `/fxpa/req` — the watcher is unverified against the live site and
+may find nothing, which the docs state explicitly rather than implying the
+capture gap is definitely closed. Whether Fantrax exposes any of the checked
+`__NEXT_DATA__`/`__NUXT__`/`__INITIAL_STATE__`/`__APOLLO_STATE__` globals is
+also unverified; the DOM-snapshot path is the one guaranteed to produce
+*something*. No live browser run of either new path has been performed in
+this session; the owner must repeat the live capture check and, if
+`bridge_payloads` is still empty for the automatic paths, use the new manual
+export menu command and report only the row's `source`/`contentType`, never
+its `body_raw` content if it might contain identifying league data beyond
+what's already expected.
+
+**Environment finding, unrelated to this change's correctness but blocking
+verification of it and any other backend gate on this machine:** running
+`python -m pytest backend/tests/...` in this worktree by default imports a
+**different** worktree's `hoops_gm` package. A user-site editable install
+(`_editable_impl_hoops_gm_backend.pth`) points at
+`C:\Users\steverones\copilot-worktrees\hoops-gm\sr2501-curly-telegram\backend\src`,
+which shadows this worktree's `backend/src` on `sys.path` for any bare
+`import hoops_gm`. Concretely: `python -c "import hoops_gm; print(hoops_gm.__file__)"`
+resolved to that other worktree, and this session's new `Literal["fetch",
+"xhr", "cache-storage", "manual-export"]` was invisible until tests were run
+with `PYTHONPATH=<this worktree>/backend/src` prepended, which is what all
+test runs recorded above actually used. Without that override, backend tests
+silently exercise **stale code from a sibling session's checkout** rather than
+this worktree's source — a correctness risk for any agent trusting a green
+`pytest` run here without checking `hoops_gm.__file__` first. This is on top
+of the previously-reported `pytest-asyncio`/Python 3.14
+`get_event_loop_policy()` deprecation-as-error, which was also worked around
+here with `-W ignore::DeprecationWarning -o filterwarnings=` for verification
+purposes only — neither workaround was made permanent in any config file, so
+a plain `pytest` invocation on this machine still fails exactly as previously
+documented.
+
+**Next:** Owner repeats the live capture check with the rebuilt script; if
+`bridge_payloads` is still empty, invoke the manual export menu command once
+and report only its outcome (row count, `source`, `contentType`) rather than
+contents. Separately and not specific to bridge: someone with machine access
+should either fix the stale editable install (point it at the correct
+worktree, or uninstall it if it belongs to a finished session) or add an
+explicit `PYTHONPATH`/`pytest.ini`/`tool.pytest.ini_options` `pythonpath`
+entry so `backend/tests` cannot silently run against another worktree's code;
+until then, any agent running backend tests here should verify
+`hoops_gm.__file__` resolves inside their own worktree first.
+

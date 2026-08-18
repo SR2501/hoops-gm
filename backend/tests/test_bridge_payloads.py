@@ -73,6 +73,73 @@ def test_payload_persists_exact_envelope_and_raw_diagnostic_fields(
         assert row.request_method == "POST"
 
 
+def test_payload_accepts_cache_storage_source_for_service_worker_owned_traffic(
+    app: FastAPI, client: TestClient
+) -> None:
+    """/fxpa/req calls initiated by fx-sw.js never reach page fetch/XHR
+
+    patching; Cache Storage is a per-origin store the page can legitimately
+    read alongside the service worker, so it is a distinct, lower-confidence
+    capture source rather than "fetch" or "xhr".
+    """
+    _auth(app)
+    envelope = {
+        **_envelope(),
+        "source": "cache-storage",
+        "request": {"method": "post", "url": "https://www.fantrax.com/fxpa/req"},
+        "response": {"status": 200, "ok": True, "contentType": "application/json"},
+        "body": {"raw": '{"picks":[1,2,3]}', "json": {"picks": [1, 2, 3]}, "parseError": None},
+    }
+    response = client.post(
+        "/api/v1/bridge/payloads", json=envelope, headers={"X-Bridge-Secret": SECRET}
+    )
+    assert response.status_code == 201
+
+    with app.state.database.session() as session:
+        row = session.scalar(select(BridgePayload))
+        assert row is not None
+        assert row.source == "cache-storage"
+
+
+def test_payload_accepts_manual_export_source_with_no_response_status(
+    app: FastAPI, client: TestClient
+) -> None:
+    """The guaranteed owner-triggered fallback has no HTTP response of its
+
+    own -- it exports whatever is already rendered on the page -- so
+    ``response.status`` is legitimately ``null`` rather than an HTTP code.
+    """
+    _auth(app)
+    envelope = {
+        **_envelope(),
+        "source": "manual-export",
+        "request": {"method": "GET", "url": "https://www.fantrax.com/fantasy/league/abc/draft"},
+        "response": {"status": None, "ok": True, "contentType": "text/html"},
+        "body": {"raw": "<div>draft board</div>", "json": None, "parseError": "Unexpected token <"},
+    }
+    response = client.post(
+        "/api/v1/bridge/payloads", json=envelope, headers={"X-Bridge-Secret": SECRET}
+    )
+    assert response.status_code == 201
+
+    with app.state.database.session() as session:
+        row = session.scalar(select(BridgePayload))
+        assert row is not None
+        assert row.source == "manual-export"
+        assert row.response_status is None
+        assert row.request_url == "https://www.fantrax.com/fantasy/league/abc/draft"
+
+
+def test_payload_rejects_an_unknown_source(app: FastAPI, client: TestClient) -> None:
+    _auth(app)
+    envelope = {**_envelope(), "source": "service-worker-direct"}
+    response = client.post(
+        "/api/v1/bridge/payloads", json=envelope, headers={"X-Bridge-Secret": SECRET}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+
+
 def test_payload_rejects_malformed_json_inside_the_envelope(
     app: FastAPI, client: TestClient
 ) -> None:

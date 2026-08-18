@@ -43,7 +43,12 @@ class BridgeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_name: Literal["hoops-gm.bridge-payload.v1"] = Field(alias="schema")
-    source: Literal["fetch", "xhr"]
+    # "cache-storage" and "manual-export" cover /fxpa/req traffic issued by
+    # Fantrax's own service worker (fx-sw.js), which page-world fetch/XHR
+    # patching structurally cannot observe -- see userscript/README.md
+    # "Root cause" and docs/handoff.md 2026-08-17 (bridge, service-worker
+    # capture gap) for why "fetch"/"xhr" alone stopped being sufficient.
+    source: Literal["fetch", "xhr", "cache-storage", "manual-export"]
     captured_at: AwareDatetime = Field(alias="capturedAt")
     request: BridgeRequestDetails
     response: BridgeResponseDetails
