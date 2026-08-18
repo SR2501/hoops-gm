@@ -2200,7 +2200,6 @@ available during the restack.
 **Next:** Require green migration-from-empty and full-suite Postgres CI at the
 new exact head, then repeat focused release review. Do not merge from the
 pre-restack review.
-
 ---
 
 ## 2026-08-18 — data-engineer — PR #13 rebased after refresh-lineage merge
@@ -5323,7 +5322,6 @@ evidence under new source fingerprints. Before this independent PR merges, a
 fresh quant reviewer must inspect its exact head; downstream consumers must keep
 observed participation, production consistency, and future availability/value
 models separate.
-
 ---
 
 ## 2026-08-19 — architect — Projection experiment sequestration protocol
@@ -5528,3 +5526,57 @@ where the retained gitignored operational state is available.
 **Next:** Repeat independent exact-head data/evidence and code review after this
 correction; do not publish the branch until both approve the canonical
 fingerprint semantics.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 projection-importer integration repair
+
+**Changed:** Rebased the generic projection CSV importer onto `origin/main`
+through `8fb26a7`, preserving PR #9's refresh registry and Postgres fixture
+isolation, PR #10's userscript update path, PR #16's autonomous-delivery policy
+and accepted ADR-008, and PR #7's schedule-density handoff. Advanced the
+importer migration from the conflicting revision `0005` to the single-head
+revision `0006` after refresh lineage. Tightened projection-import identity from
+`(source_id, content_sha256)` to `(source_id, season, content_sha256)`: a CSV
+often does not carry its season in its bytes, so reusing identical content for
+a later season previously returned the earlier import and stamped new rows with
+the wrong season. Added end-to-end tests proving that cross-season imports stay
+distinct and that two indistinguishable canonical players produce a
+`needs_review` result with no projection or crosswalk write.
+
+Diagnosed rather than assumed the old Postgres failures. Both red PR #12 jobs
+failed only because `client`-fixture rows leaked between tests on the shared
+Postgres database (`xhr` was read instead of the just-written `cache-storage` or
+`manual-export` row). The rebased PR #9 `drop_all`/`create_all` isolation fixes
+that mechanism. On the final rebased head, both native Postgres jobs passed,
+including migrations from empty, `alembic check`, downgrade, and the full test
+suite.
+
+**Now true:** The importer has one migration head, remains reusable across its
+four source profiles, and preserves source/season/content lineage without
+collapsing seasons. ADR-002 and accepted ADR-008 remain structural:
+`projections` contains per-game production rates only; source games-played
+assumptions remain in their own one-to-one table; rankings, AAV, composite
+values and expected-games outputs are not accepted by this boundary. Ambiguous
+identities are reported for human adjudication and never guessed. Local gates
+passed Ruff, formatting, strict mypy, 460 default backend tests, 71 offline
+adapter-contract tests, SQLite upgrade/check/downgrade, the secret scan,
+frontend lint/type-check/12 tests/build, and userscript 63 tests/build. The
+final GitHub runs `32141211883` and `32141218621` are green across every
+blocking Code and Adapter job, including native Postgres.
+
+**Could not verify:** The FantasyPros, Hashtag and Basketball Monster mappings
+still have only synthetic, non-published fixtures because the real exports are
+authenticated or paid; their exact live header aliases remain unverified. The
+manual canonical profile is the only verified import shape. No
+projection-specific live smoke exists, and CI correctly skipped the repository's
+network live-smoke job on this PR event. Docker/Postgres is unavailable on this
+machine, so native Postgres evidence comes from CI rather than a local service.
+No independent reviewer has approved PR #12 yet; green gates do not satisfy the
+repository's autonomous-delivery policy by themselves.
+
+**Next:** An independent reviewer should verify the layer boundary, identity
+fail-closed behavior, and migration/lineage integration before merge. The first
+real vendor CSV must be checked manually against `resolved_headers` and captured
+as a privacy-safe contract fixture before its vendor profile is treated as
+verified.
