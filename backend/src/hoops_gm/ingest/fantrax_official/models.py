@@ -94,13 +94,27 @@ class FantraxScoringCategory:
     """A scoring category as the league defines it.
 
     Retained verbatim. The plan's nine-category vocabulary is our own; whether
-    Fantrax agrees with it is a mapping question that belongs in this adapter,
-    and the mapping can only be written against what the league really returns.
+    Fantrax agrees with it is a mapping question that belongs in
+    ``hoops_gm.scoring.profiles``, and the mapping can only be written against
+    what the league really returns.
+
+    ``code`` (e.g. ``"INDIVIDUAL_ASSISTS"``) is Fantrax's own stable
+    per-category identifier and the only field ``scoring.profiles`` trusts as
+    a cross-payload mapping anchor. It is deliberately a separate field from
+    Fantrax's numeric ``id`` -- an earlier version of this parser conflated
+    the two (preferring whichever was present, which was always the numeric
+    id), which made the resulting value useless as a stable anchor.
+    ``abbreviation``/``name`` are display/evidence only. ``weight`` is
+    Fantrax's own per-category scoring weight (always ``1.0`` in every H2H
+    category league observed so far); it is a distinct concept from this
+    project's own points-league ``point_value`` and is not applied to
+    anything downstream until non-unit weighted categories are designed.
     """
 
-    key: str
+    code: str
     name: str | None = None
     abbreviation: str | None = None
+    weight: float | None = None
 
 
 @dataclass(frozen=True)
