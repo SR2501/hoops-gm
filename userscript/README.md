@@ -18,9 +18,20 @@ Phase 10 automation are separate, later work.
 2. Install Tampermonkey and enable developer mode if the browser asks for it.
 3. Run `npm install` and `npm run build` in this directory.
 4. With the backend running, open
-   `http://127.0.0.1:8000/bridge/userscript.user.js` in the same browser and
-   install it in Tampermonkey. This is a one-time step — see "Updating"
-   below for why you should not need to repeat it.
+   `http://127.0.0.1:8000/bridge/userscript.user.js` **in the specific
+   browser where Tampermonkey is installed** and install it there. This is
+   a one-time step — see "Updating" below for why you should not need to
+   repeat it. Do this by hand, in that browser's address bar: any script,
+   shell command, or automated tool that "opens" a URL generically (`start
+   <url>` on Windows, `open <url>` on macOS, a link click routed through the
+   OS) resolves through your **OS-registered default browser handler**, not
+   necessarily the browser Tampermonkey and the paired secret actually live
+   in. If Tampermonkey lives in a non-default browser (this project has
+   tested Brave and Edge; neither has to be the OS default), that kind of
+   automation opens the wrong browser entirely, with no error — you just
+   end up looking at the file in a browser with no Tampermonkey, no
+   pairing, and no installed script, exactly as if this step never
+   happened.
 5. Open a Fantrax URL matching `https://www.fantrax.com/fantasy/league/*`.
 
 In Tampermonkey's extension menu, choose **Pair hoops-gm bridge**. The command
@@ -49,7 +60,10 @@ prompts to update in place when it changes:
    erroring visibly.
 3. Trigger Tampermonkey's check manually (its dashboard has a "Check for
    userscript updates" action) or wait for its own schedule, then approve the
-   update prompt when it appears.
+   update prompt when it appears. Do this from Tampermonkey's own dashboard
+   in the browser where it's installed — that dashboard is already inside
+   the right browser, so this step doesn't have the same wrong-browser risk
+   as opening the install URL by hand (see the note in **Install** above).
 
 This means step 4 in **Install** above is a true one-time action for source
 changes going forward: rebuilding is enough, without reopening Tampermonkey's

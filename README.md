@@ -109,9 +109,16 @@ storage.
 2. **Start the backend** (`python -m hoops_gm` from `backend/`, or `docker
    compose up`) so it can serve that file.
 3. **Install once:** with the backend running, open
-   `http://127.0.0.1:8000/bridge/userscript.user.js` in the browser and
-   install it in Tampermonkey. If this 404s, the backend is up but the build
-   from step 1 hasn't happened yet — the response says so directly.
+   `http://127.0.0.1:8000/bridge/userscript.user.js` **by hand, in the
+   specific browser where Tampermonkey is installed** and install it there.
+   If this 404s, the backend is up but the build from step 1 hasn't happened
+   yet — the response says so directly. Don't automate this step with a
+   generic "open this URL" command (a script, `start <url>`, a link click):
+   that resolves through your OS-registered default browser, which is not
+   necessarily where Tampermonkey and the paired secret live — it can silently
+   open the wrong browser instead of erroring. Tampermonkey does not have to
+   be your system default browser at all (this project has tested Brave and
+   Edge, either way).
 4. **Update after any source change:** bump the `version` field in
    `userscript/package.json`, run `npm run build` again, and keep the backend
    running. The installed script's `@updateURL`/`@downloadURL` both point back
