@@ -195,7 +195,14 @@ def build_scoring_profile(
       applied to scoring-profile derivation specifically.
     * ``source_categories`` contains an abbreviation this vocabulary cannot
       map, or a duplicate after mapping -- see :func:`map_source_categories`.
+    * ``source_categories`` is empty. A profile with no categories is the
+      degenerate case of "missing a category" -- all of them -- and is
+      exactly as unweightable as a single missing one; it must not be
+      creatable, let alone activatable.
     """
+
+    if not source_categories:
+        raise ValueError("cannot build a scoring profile with no scoring categories")
 
     if settings_snapshot.league_id != league.id:
         raise ValueError(

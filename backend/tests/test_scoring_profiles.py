@@ -134,6 +134,19 @@ def test_unsupported_category_is_rejected(session: Session) -> None:
     assert session.query(LeagueScoringProfile).count() == 0
 
 
+def test_an_empty_category_list_is_rejected(session: Session) -> None:
+    """Zero categories is the degenerate case of "missing a category" -- all of them."""
+    league = _league(session)
+    snapshot = _settings_snapshot(session, league.id)
+
+    with pytest.raises(ValueError, match="no scoring categories"):
+        build_scoring_profile(
+            session, league=league, settings_snapshot=snapshot, source_categories=[]
+        )
+
+    assert session.query(LeagueScoringProfile).count() == 0
+
+
 def test_map_source_categories_is_pure_and_reusable() -> None:
     """The mapping function has no session dependency -- it is pure evidence mapping."""
     definitions = map_source_categories(_NINE_CAT_SOURCE_CATEGORIES)
