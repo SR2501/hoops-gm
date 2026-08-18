@@ -1824,3 +1824,43 @@ to keep the probe from going quiet for long season stretches.
 follow-up is expected from this session absent further review feedback; did
 not merge or self-approve.
 
+---
+
+## 2026-08-18 — data-engineer — PR #13 re-rebased onto PR #17/#18 (absence-splits, league-settings); migration renumbered 0006 → 0009
+
+**Changed:** `main` advanced again, past two migration-bearing PRs
+(`#17` absence-splits, revisions `0006`–`0007`; `#18` league-settings
+snapshots, revision `0008`) that both landed on the same `0006` revision id
+this branch's injury-report migration already claimed — an unavoidable
+collision, since both were authored independently against the same prior
+head (`0005`). Rebased onto `origin/main`; the only textual conflicts were
+the same recurring append-only `docs/handoff.md` collision (resolved
+identically, keeping every dated entry) and import-ordering conflicts in
+`importers.py` (both sides added new alphabetically-ordered imports at the
+same location — merged to keep all of both: `datetime`/`date`,
+`InjuryReportEntry`/`League`/`LeagueSettingsSnapshot`, and
+`InjuryReportEntryRecord`/`LeagueSettingsDocument`). Renamed
+`0006_injury_report.py` to `0009_injury_report.py` and changed
+`revision = "0009"` / `down_revision = "0008"` to sit after the new head.
+
+**Now true:** Alembic has one linear chain: `0001 -> 0002 -> 0003 -> 0004 ->
+0005 -> 0006_absence_splits -> 0007_absence_split_activations ->
+0008_league_settings_snapshots -> 0009_injury_report`. A fresh SQLite
+database upgrades through every revision, `alembic check` reports no new
+operations, and downgrade to base succeeds cleanly. Full local Code gate
+green: ruff lint/format, mypy strict (91 source files, up from 84 — this
+rebase pulled in the absence-splits and league-settings modules), full
+default pytest suite, and the injury-report live smoke tests run separately
+(3 passed, 1 skipped — the dynamic probe, correctly, for the same reason as
+before). No adapter, fixture, importer, read-only boundary, or automation
+scope was removed or widened by this rebase; only the migration number and
+merged import lines changed outside of `docs/handoff.md`.
+
+**Could not verify:** Native Postgres was not available locally, so
+`0008 -> 0009` was exercised from empty on SQLite only in this pass; the
+repository's Postgres CI job remains the cross-dialect authority after the
+push.
+
+**Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
+merge or self-approve.
+
