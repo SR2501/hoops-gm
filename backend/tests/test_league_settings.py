@@ -284,6 +284,10 @@ def test_rule_drift_after_the_fifth_array_item_is_not_ignored() -> None:
             "rosterInfo": _official_payload()["rosterInfo"],
             "scoringPeriods": [{"number": 1, "startDate": "2026-10-20"}],
         },
+        {
+            "rosterInfo": _official_payload()["rosterInfo"],
+            "scoringPeriods": [None],
+        },
     ],
 )
 def test_malformed_present_fields_fail_instead_of_becoming_unknown(
@@ -295,6 +299,198 @@ def test_malformed_present_fields_fail_instead_of_becoming_unknown(
             source_league_id="league-1",
             capture_ref="sha256:abc",
         )
+
+
+@pytest.mark.parametrize("field", ["rosterInfo", "scoringPeriods"])
+def test_explicit_null_top_level_settings_are_contract_errors(field: str) -> None:
+    payload = _official_payload()
+    payload[field] = None
+
+    with pytest.raises(SourceContractError, match=field):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:null-top-level",
+        )
+
+
+def test_genuinely_missing_top_level_settings_remain_absent_evidence() -> None:
+    payload = _official_payload()
+    del payload["rosterInfo"]
+    del payload["scoringPeriods"]
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:missing-top-level",
+    )
+
+    assert settings.roster_limits.value is None
+    assert settings.scoring_periods.value is None
+    assert settings.playoffs.value is None
+    assert all(
+        evidence.status == "absent"
+        for setting in (
+            settings.roster_limits,
+            settings.scoring_periods,
+            settings.playoffs,
+        )
+        for evidence in setting.evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "positionConstraints",
+        "maxTotalPlayers",
+        "maxTotalActivePlayers",
+        "maxTotalReservePlayers",
+    ],
+)
+def test_explicit_null_roster_fields_are_contract_errors(field: str) -> None:
+    payload = _official_payload()
+    roster = payload["rosterInfo"]
+    assert isinstance(roster, dict)
+    roster[field] = None
+
+    with pytest.raises(SourceContractError, match=rf"rosterInfo\.{field}"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:null-roster-field",
+        )
+
+
+@pytest.mark.parametrize("value", [None, [], {"maxActive": None}])
+def test_malformed_roster_position_constraints_fail_closed(value: object) -> None:
+    payload = _official_payload()
+    roster = payload["rosterInfo"]
+    assert isinstance(roster, dict)
+    positions = roster["positionConstraints"]
+    assert isinstance(positions, dict)
+    if isinstance(value, dict):
+        positions["G"] = value
+    else:
+        roster["positionConstraints"] = value
+
+    with pytest.raises(SourceContractError):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:malformed-roster-inner",
+        )
+
+
+@pytest.mark.parametrize(
+    ("alternate_key", "alternate_value", "expected_path"),
+    [
+        ("period", None, r"scoringPeriods\[0\]\.period"),
+        ("period", [], r"scoringPeriods\[0\]\.period"),
+        ("start", None, r"scoringPeriods\[0\]\.start"),
+        ("start", {}, r"scoringPeriods\[0\]\.start"),
+        ("end", None, r"scoringPeriods\[0\]\.end"),
+        ("end", [], r"scoringPeriods\[0\]\.end"),
+    ],
+)
+def test_valid_preferred_period_field_cannot_bypass_malformed_alternate(
+    alternate_key: str,
+    alternate_value: object,
+    expected_path: str,
+) -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    first = periods[0]
+    assert isinstance(first, dict)
+    first[alternate_key] = alternate_value
+
+    with pytest.raises(SourceContractError, match=expected_path):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:null-period-alternate",
+        )
+
+
+@pytest.mark.parametrize(("marker", "value"), [("isPlayoff", None), ("isPlayoff", "yes")])
+def test_present_malformed_playoff_markers_fail_closed(marker: str, value: object) -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    first = periods[0]
+    assert isinstance(first, dict)
+    first[marker] = value
+
+    with pytest.raises(SourceContractError, match=r"scoringPeriods\[0\]\.isPlayoff"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:malformed-playoff-marker",
+        )
+
+
+def test_valid_preferred_playoff_marker_cannot_bypass_null_alternate() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    first = periods[0]
+    assert isinstance(first, dict)
+    first["isPlayoff"] = True
+    first["playoff"] = None
+
+    with pytest.raises(SourceContractError, match=r"scoringPeriods\[0\]\.playoff"):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:null-playoff-alternate",
+        )
+
+
+def test_preferred_period_aliases_win_after_all_candidates_validate() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    first = periods[0]
+    assert isinstance(first, dict)
+    first.update(
+        {
+            "period": 99,
+            "start": "2099-01-01T00:00:00Z",
+            "end": "2099-01-07T23:59:59Z",
+        }
+    )
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:valid-period-aliases",
+    )
+
+    assert settings.scoring_periods.value is not None
+    parsed = settings.scoring_periods.value.periods[0]
+    assert parsed.period_number == 1
+    assert parsed.start_at == "2026-10-20T00:00:00-04:00"
+    assert parsed.end_at == "2026-10-25T23:59:59-04:00"
+
+
+def test_preferred_playoff_alias_wins_after_both_candidates_validate() -> None:
+    payload = _official_payload()
+    periods = payload["scoringPeriods"]
+    assert isinstance(periods, list)
+    first, second = periods
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    first.update({"isPlayoff": False, "playoff": True})
+    second["isPlayoff"] = True
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:valid-playoff-aliases",
+    )
+
+    assert settings.playoffs.value == PlayoffRules(period_numbers=(2,))
 
 
 def _bridge_unknown[ValueT]() -> SourcedSetting[ValueT]:
