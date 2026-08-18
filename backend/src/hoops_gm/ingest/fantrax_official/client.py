@@ -16,9 +16,10 @@ Retry
     see :mod:`hoops_gm.ingest.errors` for why.
 
 Authentication
-    ``getPlayerIds`` and ``getAdp`` need none — verified. ``getLeagueInfo`` and
-    ``getDraftPicks`` need a ``leagueId``, and private leagues additionally
-    need a ``userSecretId``.
+    ``getPlayerIds`` and ``getAdp`` need none — verified. ``getLeagueInfo`` needs
+    a ``leagueId``; the target private league returned its settings without a
+    ``userSecretId`` on 2026-08-18. A secret remains optional for endpoints or
+    leagues that reject the unauthenticated request.
 
 When the source is down
     A timeout, a connection error or a 5xx becomes ``SourceUnavailable`` and is
@@ -39,11 +40,12 @@ When the source returns garbage
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from hoops_gm.ingest.errors import (
@@ -163,8 +165,19 @@ class FantraxOfficialClient:
     def get_league_info(
         self, league_id: str, *, max_age: timedelta | None = None
     ) -> FantraxLeagueInfo:
-        payload = self.fetch_json("getLeagueInfo", self._league_params(league_id), max_age=max_age)
-        return parse_league_info(payload, league_id=league_id)
+        payload, payload_sha256, observed_at = self._fetch_json_with_metadata(
+            "getLeagueInfo",
+            self._league_params(league_id),
+            max_age=max_age,
+        )
+        capture_ref = f"{SOURCE}:getLeagueInfo:sha256:{payload_sha256}"
+        return parse_league_info(
+            payload,
+            league_id=league_id,
+            capture_ref=capture_ref,
+            source_payload_sha256=payload_sha256,
+            source_observed_at=observed_at,
+        )
 
     def get_draft_picks(
         self, league_id: str, *, max_age: timedelta | None = None
@@ -182,6 +195,17 @@ class FantraxOfficialClient:
         max_age: timedelta | None = None,
     ) -> Any:
         """Fetch and decode, preferring a recent capture over a live request."""
+        payload, _, _ = self._fetch_json_with_metadata(endpoint, params, max_age=max_age)
+        return payload
+
+    def _fetch_json_with_metadata(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        *,
+        max_age: timedelta | None = None,
+    ) -> tuple[Any, str, datetime]:
+        """Fetch and decode while retaining exact raw-response provenance."""
         window = DEFAULT_MAX_AGE if max_age is None else max_age
 
         if self.store is not None:
@@ -189,26 +213,36 @@ class FantraxOfficialClient:
                 source=SOURCE, endpoint=endpoint, params=params, max_age=window
             )
             if cached is not None:
-                return self._decode(cached.read_bytes(), endpoint=endpoint)
+                body = cached.read_bytes()
+                return (
+                    self._decode(body, endpoint=endpoint),
+                    cached.sha256(),
+                    cached.fetched_at,
+                )
 
         body, status, content_type = call_with_retry(
             lambda: self._request(endpoint, params),
             policy=self.retry_policy,
         )
+        observed_at = datetime.now(UTC)
 
+        payload_sha256 = hashlib.sha256(body).hexdigest()
         if self.store is not None:
             # Captured before decoding: a body that fails to parse is exactly
             # the body worth still having afterwards.
-            self.store.put(
+            capture = self.store.put(
                 source=SOURCE,
                 endpoint=endpoint,
                 params=params,
                 body=body,
                 http_status=status,
                 content_type=content_type,
+                fetched_at=observed_at,
             )
+            payload_sha256 = capture.sha256()
+            observed_at = capture.fetched_at
 
-        return self._decode(body, endpoint=endpoint)
+        return self._decode(body, endpoint=endpoint), payload_sha256, observed_at
 
     def _league_params(self, league_id: str) -> dict[str, Any]:
         params: dict[str, Any] = {"leagueId": league_id}

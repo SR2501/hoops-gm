@@ -426,6 +426,72 @@ def test_the_evidence_default_is_pessimistic_in_a_migrated_database(
     )
 
 
+def test_a_migrated_league_settings_snapshot_enforces_its_check_constraints(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The version and payload-hash CHECKs, asserted behaviourally on a real migration.
+
+    Reflection would only prove the CHECK's text exists; this proves its
+    effect, and through raw SQL so it bypasses any Python-side validation the
+    ORM might otherwise be doing on the app's behalf.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO leagues (id, name, season, scoring_type, draft_type, "
+                    "is_active, created_at, updated_at) VALUES (1, 'Test League', "
+                    "'2026-27', 'h2h_categories', 'unknown', true, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                )
+            )
+
+        valid_sha256 = "a" * 64
+        insert = text(
+            "INSERT INTO league_settings_snapshots (league_id, version, schema_version, "
+            "settings, source_summary, source_payload_sha256, observed_at, created_at, "
+            "updated_at) VALUES (1, :version, 'v1', :settings, :source_summary, :sha256, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+        with engine.begin() as connection:
+            connection.execute(
+                insert,
+                {
+                    "version": 1,
+                    "settings": '{"trade_deadline": null}',
+                    "source_summary": "{}",
+                    "sha256": valid_sha256,
+                },
+            )
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                insert,
+                {
+                    "version": 0,
+                    "settings": "{}",
+                    "source_summary": "{}",
+                    "sha256": valid_sha256,
+                },
+            )
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                insert,
+                {
+                    "version": 2,
+                    "settings": "{}",
+                    "source_summary": "{}",
+                    "sha256": "too-short",
+                },
+            )
+    finally:
+        engine.dispose()
+
+
 def test_models_and_migrations_agree(alembic_config: Config, migration_url: str) -> None:
     """Fails on any model change that has no migration behind it."""
     command.upgrade(alembic_config, "head")

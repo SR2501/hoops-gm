@@ -25,6 +25,7 @@ identifier format load-bearing.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from hoops_gm.identity.names import NON_PLAYER_POSITIONS, normalize_team_abbreviation
@@ -39,6 +40,7 @@ from hoops_gm.ingest.fantrax_official.models import (
     FantraxScoringCategory,
     FantraxTeamEntity,
 )
+from hoops_gm.ingest.league_settings import parse_official_league_settings
 
 SOURCE = "fantrax_official"
 
@@ -228,44 +230,83 @@ _LEAGUE_INFO_KNOWN_KEYS = frozenset(
         "teams",
         "scoringCategories",
         "scoringSystem",
+        "draftSettings",
+        "endDate",
+        "leagueHistoryId",
+        "matchups",
+        "playerInfo",
+        "poolSettings",
+        "rosterInfo",
+        "rosterPeriods",
+        "scoringPeriods",
+        "seasonYear",
+        "startDate",
+        "teamInfo",
     }
 )
 
 
-def parse_league_info(payload: Any, *, league_id: str | None = None) -> FantraxLeagueInfo:
+def parse_league_info(
+    payload: Any,
+    *,
+    league_id: str | None = None,
+    capture_ref: str | None = None,
+    source_payload_sha256: str | None = None,
+    source_observed_at: datetime | None = None,
+) -> FantraxLeagueInfo:
     """Parse ``getLeagueInfo``.
 
-    **This parser has never been run against a real payload.** ``getLeagueInfo``
-    requires a ``leagueId``, and no league credentials existed when it was
-    written; the only live response obtained was the missing-parameter error
-    envelope, which :func:`raise_for_error_envelope` handles and which *is*
-    covered by a contract test.
-
-    So it is written defensively — every field optional, alternative key
-    spellings accepted, unrecognised keys surfaced on ``unmapped_keys`` — and
-    it must be re-checked against a real league before anything depends on it.
-    Recorded in ``docs/handoff.md``.
+    The current shape is pinned to a sanitized successful response captured from
+    the target league on 2026-08-18. The source returned that private league's
+    data for a request containing only its non-secret ``leagueId``.
     """
     endpoint = "getLeagueInfo"
     raise_for_error_envelope(payload, endpoint=endpoint)
     body = _require(payload, dict, endpoint=endpoint)
+    resolved_league_id = str(body.get("leagueId") or league_id or "")
+    if not resolved_league_id:
+        raise SourceContractError(
+            "successful payload did not identify a league",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    if capture_ref is None:
+        suffix = source_payload_sha256 or "digest-unavailable"
+        capture_ref = f"{SOURCE}:{endpoint}:sha256:{suffix}"
 
     raw_teams = body.get("fantasyTeams")
-    if not isinstance(raw_teams, list):
-        raw_teams = body.get("teams") if isinstance(body.get("teams"), list) else []
+    if isinstance(raw_teams, list):
+        team_items = [(None, item) for item in raw_teams]
+    elif isinstance(body.get("teams"), list):
+        team_items = [(None, item) for item in body["teams"]]
+    elif isinstance(body.get("teamInfo"), dict):
+        team_items = list(body["teamInfo"].items())
+    else:
+        team_items = []
 
     teams = [
         FantraxLeagueTeam(
-            team_id=str(t.get("id") or t.get("teamId") or ""),
+            team_id=str(t.get("id") or t.get("teamId") or key or ""),
             name=str(t.get("name") or t.get("teamName") or ""),
             short_name=_optional_str(t.get("shortName")),
             owner_name=_optional_str(t.get("ownerName") or t.get("owner")),
         )
-        for t in raw_teams
+        for key, t in team_items
         if isinstance(t, dict)
     ]
 
     raw_categories = body.get("scoringCategories")
+    scoring_system = body.get("scoringSystem")
+    if not isinstance(raw_categories, list) and isinstance(scoring_system, dict):
+        rich_settings = scoring_system.get("scoringCategorySettings")
+        if isinstance(rich_settings, list):
+            raw_categories = [
+                config.get("scoringCategory")
+                for group in rich_settings
+                if isinstance(group, dict) and isinstance(group.get("configs"), list)
+                for config in group["configs"]
+                if isinstance(config, dict) and isinstance(config.get("scoringCategory"), dict)
+            ]
     categories: list[FantraxScoringCategory] = []
     if isinstance(raw_categories, list):
         for c in raw_categories:
@@ -282,18 +323,31 @@ def parse_league_info(payload: Any, *, league_id: str | None = None) -> FantraxL
             elif isinstance(c, str):
                 categories.append(FantraxScoringCategory(key=c))
 
+    roster_info = body.get("rosterInfo")
     roster_size = body.get("rosterSize")
+    if roster_size is None and isinstance(roster_info, dict):
+        roster_size = roster_info.get("maxTotalPlayers")
+    scoring_type = body.get("scoringType")
+    if scoring_type is None and isinstance(scoring_system, dict):
+        scoring_type = scoring_system.get("type")
     return FantraxLeagueInfo(
-        league_id=str(body.get("leagueId") or league_id or ""),
+        league_id=resolved_league_id,
         league_name=_optional_str(body.get("leagueName")),
         sport=_optional_str(body.get("sport")),
-        scoring_type=_optional_str(body.get("scoringType")),
+        scoring_type=_optional_str(scoring_type),
         draft_type=_optional_str(body.get("draftType")),
         roster_size=int(roster_size)
         if isinstance(roster_size, int | str) and str(roster_size).isdigit()
         else None,
+        source_payload_sha256=source_payload_sha256,
+        source_observed_at=source_observed_at,
         teams=teams,
         scoring_categories=categories,
+        settings=parse_official_league_settings(
+            body,
+            source_league_id=resolved_league_id,
+            capture_ref=capture_ref,
+        ),
         unmapped_keys=tuple(sorted(set(body) - _LEAGUE_INFO_KNOWN_KEYS)),
     )
 

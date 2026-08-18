@@ -27,6 +27,8 @@ red smoke test teaches people to ignore red smoke tests.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from hoops_gm.identity import IdentityResolver, ResolvableRecord
@@ -163,6 +165,32 @@ class TestFantraxOfficialIsAlive:
         with pytest.raises(SourceRejected) as caught:
             parse_league_info(fantrax.fetch_json("getLeagueInfo", {}, max_age=NO_CACHE))
         assert "leagueId" in str(caught.value)
+
+    def test_configured_league_settings_shape_has_not_drifted(
+        self, fantrax: FantraxOfficialClient
+    ) -> None:
+        """FAILS IF: official settings moved, disappeared, or became ambiguous."""
+        league_id = os.environ.get("HOOPS_GM_FANTRAX_LEAGUE_ID")
+        if not league_id:
+            if os.environ.get("CI"):
+                pytest.fail(
+                    "CI must configure HOOPS_GM_FANTRAX_LEAGUE_ID; "
+                    "otherwise league-settings drift is never exercised"
+                )
+            pytest.skip("set HOOPS_GM_FANTRAX_LEAGUE_ID to smoke-test league settings")
+
+        result = fantrax.get_league_info(league_id, max_age=NO_CACHE)
+        assert result.settings is not None
+        assert result.settings.source_season_year >= 2025
+        assert result.settings.roster_limits.value is not None
+        assert result.settings.scoring_periods.value
+        assert not result.unmapped_keys, (
+            f"getLeagueInfo added unhandled top-level fields: {result.unmapped_keys}"
+        )
+        assert not result.settings.unmapped_rule_paths, (
+            "getLeagueInfo now exposes an unhandled rule-shaped path: "
+            f"{result.settings.unmapped_rule_paths}"
+        )
 
 
 # ==========================================================================

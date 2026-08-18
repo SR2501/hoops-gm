@@ -271,6 +271,10 @@ jobs:
   live-smoke:
     name: Adapter gate — live smoke (must fail loudly, cannot block a merge)
     runs-on: ubuntu-latest
+    env:
+      # Repository variable rather than source: the owner classifies leagueId
+      # as non-secret, but it retrieves identity-bearing private-league data.
+      HOOPS_GM_FANTRAX_LEAGUE_ID: ${{ vars.HOOPS_GM_FANTRAX_LEAGUE_ID }}
     # Never on push or pull_request: a third party's outage must not look like
     # a broken change. That is what stops this blocking a merge — structurally,
     # because it does not run on the events a merge depends on.

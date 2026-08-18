@@ -1,7 +1,7 @@
 # Adapter — Fantrax official API (`/fxea/general/`)
 
-**Status:** working. `getPlayerIds` and `getAdp` verified live 2026-08-17.
-`getLeagueInfo` and `getDraftPicks` **parsers are unverified** — see below.
+**Status:** working. `getPlayerIds` and `getAdp` verified live 2026-08-17;
+`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` remains unverified.
 
 Base URL: `https://www.fantrax.com/fxea/general`
 Code: `backend/src/hoops_gm/ingest/fantrax_official/`
@@ -36,6 +36,68 @@ A client that trusts `response.ok` hands that envelope to a parser as though it
 were data. Every parser calls `raise_for_error_envelope` before parsing
 anything, and the result is a `SourceRejected` — not retryable, because the
 request is wrong and repeating it is rude.
+
+### `getLeagueInfo` exposes only part of the rules boundary
+
+Verified against the target private league with one low-frequency request
+containing only its non-secret `leagueId`. No `userSecretId` was needed. The
+response described the historical 2025–26 league (`seasonYear: 2025`), not the
+future 2026–27 configuration.
+
+The response supplied roster totals and position constraints, roster-period
+boundaries, scoring-period boundaries, scoring categories, draft type, matchups,
+and season dates. It supplied **no fields naming or encoding**:
+
+- lineup-lock type;
+- waiver period, processing time, priority or FAAB;
+- games-played caps;
+- IR slot count or eligibility;
+- trade deadline;
+- playoff periods or flags;
+- keeper rules.
+
+Those values are explicit unknowns in
+`hoops_gm.ingest.league_settings.LeagueSettingsDocument`. They are not inferred
+from roster-period timing, reserve capacity, matchups, draft type, or the
+historical 2025–26 rules baseline. The existing read-only bridge may later fill
+an official unknown, but cannot override an official observation.
+
+The persisted boundary is `league_settings_snapshots`: immutable versions of
+the validated document with per-concern evidence, source-payload hash, and
+observation time. Import rejects a document whose `seasonYear` does not match
+the target `League.season`; the observed 2025 payload therefore cannot be
+attached to a 2026–27 league.
+
+### Bridge fallback is explicit and offline
+
+The official ingest command accepts `--bridge-capture PATH` for one
+operator-selected JSON file. It never captures a page, reads the bridge
+database, authenticates, or polls. The file contract is versioned and rejects
+unknown fields:
+
+```json
+{
+  "schema_version": 1,
+  "league_id": "<same Fantrax leagueId>",
+  "season_year": 2025,
+  "start_date": "2025-10-21",
+  "end_date": "2026-03-15",
+  "observed_at": "2026-08-18T13:00:00Z",
+  "settings": {
+    "lineup_lock": {"lock_type": "per_player_tipoff"},
+    "roster_limits": {
+      "injured_reserve": 3,
+      "injured_reserve_eligibility": ["IR", "IR+"]
+    }
+  }
+}
+```
+
+Omitted settings are recorded as bridge-absent. Merge requires exact league id,
+season year, start date, and end date equality. Official values win field by
+field; bridge values can fill only official unknowns. The merged snapshot
+records both exact payload digests and the later source observation time. Any
+validation or scope failure occurs before the database insert.
 
 ### `limit=N` returns N−1 rows
 
@@ -119,16 +181,33 @@ is exactly the response still available afterwards.
 
 ---
 
+## Fixtures and live smoke
+
+The successful fixture removes identity-bearing sections (`leagueName`,
+`leagueHistoryId`, `teamInfo`, `playerInfo`, and `matchups`) whole. No retained
+source value is edited. Its manifest records the original payload hash, size,
+top-level keys, and exact removed sections.
+
+Refresh that fixture deliberately with:
+
+```bash
+HOOPS_GM_FANTRAX_LEAGUE_ID=... \
+python -m hoops_gm.ingest.record_fixtures fantrax-league-settings
+```
+
+The matching live smoke bypasses cache when
+`HOOPS_GM_FANTRAX_LEAGUE_ID` is configured and fails on malformed required
+fields or newly appearing, unhandled rule-shaped paths.
+
+---
+
 ## Not verified
 
-**`getLeagueInfo` and `getDraftPicks` parsers have never seen a real payload.**
-Both require a `leagueId`, and no league credentials existed when they were
-written. The only live response obtained from either was the missing-parameter
-error envelope — which *is* covered by a contract test, because it is a real
-captured response.
+**The final 2026–27 settings are not available yet.** The source returned the
+2025–26 season and cannot verify future rule changes. Re-ingest after Fantrax
+rolls the league forward; until then, downstream 2026–27 consumers must treat
+every setting as unavailable rather than reuse the historical snapshot.
 
-The parsers are therefore written defensively: every field optional,
-alternative key spellings accepted, and unrecognised keys surfaced on
-`unmapped_keys` rather than dropped, because a league setting we silently
-ignore is a setting the draft engine gets wrong. **Re-check both against a real
-league before anything depends on them.**
+**`getDraftPicks` has not seen a successful real payload.** Its parser remains
+defensive and must be checked against both snake and auction responses before
+anything depends on it.

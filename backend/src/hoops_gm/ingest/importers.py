@@ -12,8 +12,10 @@ everything and reload", which would throw away manual identity overrides.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,10 +31,13 @@ from hoops_gm.db.models.enums import (
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.db.models.league import League
+from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.resolver import Resolution
+from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
     GameParticipation,
     NbaGameRecord,
@@ -56,6 +61,90 @@ class ImportCounts:
     def __str__(self) -> str:
         base = f"{self.created} created, {self.updated} updated, {self.skipped} skipped"
         return f"{base}, {self.superseded} superseded" if self.superseded else base
+
+
+# --------------------------------------------------------------------------
+# League settings
+# --------------------------------------------------------------------------
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def import_league_settings(
+    session: Session,
+    *,
+    league: League,
+    document: LeagueSettingsDocument,
+    source_payload_sha256: str,
+    observed_at: datetime,
+) -> ImportCounts:
+    """Persist a new immutable settings version, or skip an identical document."""
+    if league.fantrax_league_id is None:
+        raise ValueError(
+            "target league must be linked to a Fantrax league id before settings import"
+        )
+    if league.fantrax_league_id != document.source_league_id:
+        raise ValueError(
+            "league settings identity mismatch: "
+            f"source leagueId={document.source_league_id!r}, "
+            f"target leagueId={league.fantrax_league_id!r}"
+        )
+    expected_season = f"{document.source_season_year}-{str(document.source_season_year + 1)[-2:]}"
+    if league.season != expected_season:
+        raise ValueError(
+            "league settings season mismatch: "
+            f"source seasonYear={document.source_season_year} means {expected_season}, "
+            f"target league is {league.season}"
+        )
+    if not _SHA256_RE.fullmatch(source_payload_sha256):
+        raise ValueError("source_payload_sha256 must be a lowercase SHA-256 hex digest")
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("observed_at must be timezone-aware")
+    if document.unmapped_rule_paths:
+        raise ValueError(
+            "cannot persist settings with unhandled rule-shaped paths: "
+            f"{document.unmapped_rule_paths}"
+        )
+
+    serialized = document.model_dump(mode="json")
+    existing = list(
+        session.scalars(
+            select(LeagueSettingsSnapshot)
+            .where(LeagueSettingsSnapshot.league_id == league.id)
+            .order_by(LeagueSettingsSnapshot.version)
+        )
+    )
+    if existing:
+        prior = LeagueSettingsDocument.model_validate(existing[-1].settings)
+        if prior.content_sha256() == document.content_sha256():
+            return ImportCounts(skipped=1)
+
+    sourced_fields = (
+        "lineup_lock",
+        "waivers",
+        "games_caps",
+        "roster_limits",
+        "scoring_periods",
+        "trade_deadline",
+        "playoffs",
+        "keepers",
+    )
+    source_summary = {field: serialized[field]["evidence"] for field in sourced_fields}
+    next_version = existing[-1].version + 1 if existing else 1
+    session.add(
+        LeagueSettingsSnapshot(
+            league_id=league.id,
+            version=next_version,
+            schema_version=str(document.schema_version),
+            settings=serialized,
+            source_summary=source_summary,
+            source_payload_sha256=source_payload_sha256,
+            observed_at=observed_at,
+        )
+    )
+    session.flush()
+    return ImportCounts(created=1)
 
 
 # --------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**18 done - 1 in progress - 77 pending - 96 total**
+**19 done - 1 in progress - 76 pending - 96 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -97,6 +97,14 @@ AGENTS.md as the single entry point (roster, rules, gates). docs/governance/owne
 - **Depends on:** `repo-create`
 
 Create docs/handoff.md as an append-only log. Seed with current state, locked decisions, and the first entry. Every agent finishing work appends: what changed, what is now true, what it could not verify and why (mandatory field), and who is next.
+
+
+### `league-settings-ingest` - Ingesting full league settings and rules
+
+- [x] **done**
+- **Depends on:** `db-foundation`, `fantrax-official-adapter`
+
+Versioned, source-attributed settings snapshots covering lineup locks, waivers, games caps, roster/IR limits, scoring periods, trade deadlines, playoffs, and keeper rules. Verified live that official `getLeagueInfo` supplies roster and scoring-period configuration but omits the other rule families; omissions remain explicit unknowns and may be filled only by lower-priority read-only bridge evidence. Historical 2025-26 values never default 2026-27 rules, and a season-coherence guard rejects importing the observed 2025 payload into a 2026-27 league.
 
 
 ### `nba-stats-ingest` - Ingesting NBA stats via nba_api
@@ -480,14 +488,6 @@ Empirical conversion of report status to actual play rate, segmented by team, pl
 - **Depends on:** `db-foundation`, `projection-blending`
 
 ADR-008 / R41. Every stored quantity records which layer it belongs to (observation, projection, availability, valuation, terminal). A test rejects any flow from a higher layer into a lower one - make it inexpressible rather than merely documented, the same pattern used for the Postgres seam. Specifically: no ranking, AAV or composite value may be an input to any earlier layer at any weight. External aggregates may only appear on the comparison side of model-vs-market, never in a blend.
-
-
-### `league-settings-ingest` - Ingesting full league settings and rules
-
-- [ ] **pending**
-- **Depends on:** `db-foundation`, `fantrax-official-adapter`
-
-Prerequisite for all timing intelligence. Model lineup lock type (per-player at tipoff vs daily vs weekly), waiver period and processing time, claim mechanism (priority vs FAAB and budget), games-played caps (per week, per position, per season), roster limits including IR eligibility, scoring period boundaries, trade deadline, playoff weeks and keeper rules. VERIFY FIRST (R43): getLeagueInfo is confirmed to return scoring settings and league config, but whether it carries the timing fields is assumed not verified. Check the live endpoint; the bridge is the fallback for anything missing.
 
 
 ### `lineup-autoset` - Implementing scheduled lineup auto-set

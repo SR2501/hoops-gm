@@ -30,6 +30,56 @@
     "source": "fantrax_official",
     "trimmed": false
   },
+  "fantrax_getleagueinfo_settings_sanitized.json": {
+    "byte_size": 24351,
+    "captured_at": "2026-08-18T13:02:01.532463+00:00",
+    "endpoint": "getLeagueInfo",
+    "note": "Identity-bearing sections were removed whole. No retained source value was edited. The endpoint succeeded without userSecretId.",
+    "original_byte_size": 106773,
+    "original_sha256": "722b95c7bbecde2950aea9fea0ccc24519311248ee79a1320fe07455d718ae54",
+    "original_top_level_keys": [
+      "draftSettings",
+      "draftType",
+      "endDate",
+      "leagueHistoryId",
+      "leagueName",
+      "matchups",
+      "playerInfo",
+      "poolSettings",
+      "rosterInfo",
+      "rosterPeriods",
+      "scoringPeriods",
+      "scoringSystem",
+      "seasonYear",
+      "startDate",
+      "teamInfo"
+    ],
+    "params": {
+      "leagueId": "<redacted-non-secret-league-id>"
+    },
+    "removed_sections": [
+      "leagueHistoryId",
+      "leagueName",
+      "matchups",
+      "playerInfo",
+      "teamInfo"
+    ],
+    "retained_sections": [
+      "draftSettings",
+      "draftType",
+      "endDate",
+      "poolSettings",
+      "rosterInfo",
+      "rosterPeriods",
+      "scoringPeriods",
+      "scoringSystem",
+      "seasonYear",
+      "startDate"
+    ],
+    "source": "fantrax_official",
+    "sanitized": true,
+    "trimmed": false
+  },
   "fantrax_getplayerids_nba.json": {
     "byte_size": 347998,
     "captured_at": "2026-08-17T13:30:20.067667+00:00",
@@ -125,15 +175,6 @@
     "source": "nba_stats",
     "trimmed": true
   },
-  "nba_static_teams.json": {
-    "byte_size": 5692,
-    "captured_at": "2026-08-17T13:30:49.853794+00:00",
-    "endpoint": "static.teams",
-    "note": "Packaged with nba_api; no network call.",
-    "params": {},
-    "source": "nba_stats",
-    "trimmed": false
-  },
   "nba_scheduleleaguev2_2026_27.json": {
     "byte_size": 7795,
     "captured_at": "2026-08-17T19:00:10.010000+00:00",
@@ -158,5 +199,14 @@
     },
     "source": "nba_stats",
     "trimmed": true
+  },
+  "nba_static_teams.json": {
+    "byte_size": 5692,
+    "captured_at": "2026-08-17T13:30:49.853794+00:00",
+    "endpoint": "static.teams",
+    "note": "Packaged with nba_api; no network call.",
+    "params": {},
+    "source": "nba_stats",
+    "trimmed": false
   }
 }

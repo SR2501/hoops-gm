@@ -1370,3 +1370,135 @@ production model.
 `contingent-value`, but must first define temporal held-out validation and a
 model card; no stock-watch, waiver, draft, lineup, or trade recommendation
 should read raw absence deltas directly.
+---
+
+## 2026-08-18 - data-engineer - Versioned league-settings ingestion
+
+**Changed:** Verified the target private league's official `getLeagueInfo`
+response with one low-frequency request containing only its non-secret
+`leagueId`; no `userSecretId`, cookie, private adapter, bridge polling, or write
+path was used. Added `LeagueSettingsDocument` schema version 1, covering lineup
+locks, waivers, games caps, roster/IR limits, scoring-period boundaries, trade
+deadline, playoffs, and keepers. Every concern carries source evidence even
+when absent. Official observations have priority; bridge evidence may fill only
+missing nested fields, and only when league id, season year, and season
+boundaries match exactly.
+
+The live response is the **2025-26** league (`seasonYear: 2025`, 2025-10-21
+through 2026-03-15). It exposes roster totals/position constraints and 21
+scoring-period boundaries. It exposes no lineup-lock, waiver/claim/FAAB,
+games-cap, IR-specific, trade-deadline, playoff-marker, or keeper fields. Those
+remain explicit unknowns; no value is read from
+`docs/league/2025-26-rules-baseline.md`. `import_league_settings` requires the
+linked Fantrax league id and matching source season, so this payload cannot be
+attached to a 2026-27 `League`.
+
+Migration `0006` adds immutable `league_settings_snapshots` with document
+version, schema version, evidence summary, exact raw-response SHA-256, and the
+capture's actual observation time. Idempotency compares only the latest
+snapshot's normalized values and semantic provenance, excluding capture-specific
+hashes; repeated observations are skipped, source changes and A-to-B-to-A
+reversions create new versions. The operator command is
+`python -m hoops_gm.ingest.backfill league-settings LOCAL_LEAGUE_ID
+FANTRAX_LEAGUE_ID` and deliberately constructs a credentials-free official
+client.
+
+**Adapter evidence:** Committed
+`fantrax_getleagueinfo_settings_sanitized.json`. `leagueName`,
+`leagueHistoryId`, `teamInfo`, `playerInfo`, and `matchups` were removed whole;
+no retained source value was edited. The manifest records the original 106,773
+bytes, SHA-256
+`722b95c7bbecde2950aea9fea0ccc24519311248ee79a1320fe07455d718ae54`,
+source capture time, original top-level keys, and removed sections. The
+recorder bypasses cache. Offline contract tests pin the verified fields and
+explicit omissions. The live smoke bypasses cache, rejects top-level or nested
+rule drift, scans every array item, and receives the league id through an
+out-of-source GitHub Actions repository variable.
+
+**Now true:** R43 is closed on evidence: official `getLeagueInfo` does not carry
+the timing fields. The Code and Adapter gates pass on the rebased branch:
+Ruff, format, strict mypy, secret scan, 477 default tests, 75 offline adapter
+contract tests, all 13 live smoke tests, and SQLite migration
+upgrade/check/downgrade. Independent review reported no remaining significant
+issues after fixes for identity binding, cross-season fallback, raw provenance,
+freshness, drift coverage, nested fallback, semantic idempotency, provenance
+changes, and settings reversions.
+
+**Could not verify:** Fantrax has not rolled this league to 2026-27, so no final
+2026-27 rule can be claimed yet. The missing rule families could not be
+corroborated from the bridge because no new bridge capture was requested and
+the existing rendered-view contents were deliberately not inspected. No local
+Postgres service was available; the migration was exercised on SQLite and the
+repository's Postgres CI remains the cross-dialect check. `getDraftPicks`
+remains unverified against a successful live snake or auction response.
+
+**Next:** Re-run the credentials-free settings ingest after Fantrax exposes the
+2026-27 season. Use the existing read-only bridge only for official unknowns,
+without widening access or polling, and keep the 2025-26 snapshot historical.
+
+---
+
+## 2026-08-18 - data-engineer - Bridge fallback integration correction
+
+**Changed:** Closed an integration gap found by exact-head release review. The
+first implementation had a correct `merge_settings` library function but no
+production path that called it; bridge fallback existed only in tests, while
+the operator command imported the official document directly. Added a
+versioned, strict `BridgeLeagueSettingsPayload` contract and
+`load_bridge_league_settings_capture`. The `league-settings` operator command
+now accepts one explicit `--bridge-capture PATH`, validates the file's exact
+league id, season year, start/end boundaries, timezone-aware observation time,
+and typed rule values, merges it with official settings, and imports the result
+in the same database transaction.
+
+**Now true:** Bridge fallback is honestly reachable without any new Fantrax
+access. The code does not inspect the bridge database, capture a page,
+authenticate, or poll; an operator must deliberately supply an already
+captured JSON file. Official values win at nested-field granularity, bridge
+values fill only official unknowns, and the snapshot provenance combines both
+exact payload digests and uses the later observation time. An end-to-end
+production-entry regression proves official roster total 14 survives a bridge
+value of 99 while bridge-only lineup-lock and IR values are persisted with
+both sources' evidence.
+
+**Could not verify:** No real bridge settings capture was supplied, and the
+existing rendered-view contents remain deliberately uninspected. The committed
+regression uses a synthetic file conforming to the new handoff contract, so the
+first real operator-created capture may expose vocabulary that requires a
+schema-versioned adapter change. No access or ToS claim changed.
+
+**Next:** When an official unknown is needed, export only that evidence from
+the existing read-only bridge into the documented JSON contract and pass it
+explicitly. Do not make bridge capture automatic.
+
+---
+
+## 2026-08-18 - data-engineer - Restack after absence-splits migrations
+
+**Changed:** Rebased the league-settings branch onto main commit `5f75968`,
+which added absence-splits revisions `0006` and `0007`. Renumbered the
+league-settings migration from its former historical revision `0006` to
+revision `0008` and changed its parent from `0005` to `0007`. The earlier
+handoff entry remains unchanged because `0006` was accurate when originally
+written; this entry records the effective revision after restacking.
+
+The rebase conflicted only in this append-only handoff. Resolution retained the
+complete quant `Descriptive teammate absence splits` entry from main first,
+then retained both complete data-engineer league-settings entries, separated by
+their original section boundaries. No production bridge-seam code changed
+relative to pre-restack commit `e8c0ee4`.
+
+**Now true:** Alembic reports exactly one head, `0008`, with the linear chain
+`0005 -> 0006 -> 0007 -> 0008`. SQLite upgrade from empty, `alembic check`, and
+downgrade to base pass. The rebased Code and Adapter gates pass locally: Ruff,
+format, strict mypy, secret scan, 494 default tests, 75 recorded-fixture
+contract tests, and all 13 live smoke tests.
+
+**Could not verify:** No local Postgres service was available. The rebased
+exact head still requires the repository's Postgres CI job and focused release
+review before merge. No 2026-27 settings or real bridge settings capture became
+available during the restack.
+
+**Next:** Require green migration-from-empty and full-suite Postgres CI at the
+new exact head, then repeat focused release review. Do not merge from the
+pre-restack review.
