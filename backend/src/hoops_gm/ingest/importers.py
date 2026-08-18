@@ -27,6 +27,7 @@ from hoops_gm.db.models.enums import (
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.resolver import Resolution
@@ -37,6 +38,7 @@ from hoops_gm.ingest.nba.models import (
     NbaTeamRecord,
     PlayerBoxScoreRecord,
 )
+from hoops_gm.ingest.nba.schedule import ScheduleGameRecord
 
 
 @dataclass
@@ -337,6 +339,52 @@ def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCo
         if record.home_score is not None and record.away_score is not None:
             game.status = GameStatus.FINAL
 
+    session.flush()
+    return counts
+
+
+def import_schedule(session: Session, records: Sequence[ScheduleGameRecord]) -> ImportCounts:
+    """Write resolved games and their two per-team schedule rows idempotently."""
+    counts = import_games(session, [record.game for record in records])
+    teams = {team.nba_team_id: team.id for team in session.scalars(select(NbaTeam))}
+    games = {game.nba_game_id: game for game in session.scalars(select(NbaGame))}
+    existing = {
+        (entry.game_id, entry.team_id): entry
+        for entry in session.scalars(select(TeamScheduleEntry))
+    }
+
+    for record in records:
+        game = games.get(record.game.nba_game_id)
+        home_id = teams.get(record.home_nba_team_id)
+        away_id = teams.get(record.away_nba_team_id)
+        if game is None or home_id is None or away_id is None:
+            counts.skipped += 1
+            continue
+        for team_id, opponent_id, is_home in (
+            (home_id, away_id, True),
+            (away_id, home_id, False),
+        ):
+            entry = existing.get((game.id, team_id))
+            if entry is None:
+                session.add(
+                    TeamScheduleEntry(
+                        season=record.game.season,
+                        season_type=SeasonType.REGULAR,
+                        game_id=game.id,
+                        team_id=team_id,
+                        opponent_team_id=opponent_id,
+                        game_date=record.game.game_date,
+                        is_home=is_home,
+                    )
+                )
+                counts.created += 1
+            else:
+                entry.season = record.game.season
+                entry.season_type = SeasonType.REGULAR
+                entry.opponent_team_id = opponent_id
+                entry.game_date = record.game.game_date
+                entry.is_home = is_home
+                counts.updated += 1
     session.flush()
     return counts
 

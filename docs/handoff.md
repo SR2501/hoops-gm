@@ -667,3 +667,21 @@ add an offline contract test and a loud live smoke test under the Adapter gate.
 `quant` can use the eventual per-team schedule facts only after the parser
 reconciles the row count and time semantics; the 403 risk should remain tracked
 separately for live scoring.
+
+---
+
+## 2026-08-17 — data-engineer — Schedule ingest uses NBA API schedule feed
+
+**Changed:** Added the `ScheduleLeagueV2` adapter, recorded fixture and offline contract tests, plus an idempotent importer for `nba_games` and the existing `team_schedule` table. Schedule counts are queried by joining `team_schedule.game_date` to `scoring_periods`; no second week-definition table was introduced. The parser treats `gameDateTimeUTC` as the instant and reconciles the source's `gameDateTimeEst` wall-clock field through `America/New_York`, including an October and March fixture.
+
+**Now true:**
+- The NBA API schedule endpoint is the primary source. Its live 2026-27 response contains 1,206 regular-season entries: 1,200 resolved games and six NBA Cup games whose teams are still `TBD`; the parser reports those IDs instead of inventing team assignments.
+- The resolved feed covers all 30 NBA team IDs and 80 currently assigned games per team. The 1,200 resolved-game count corroborates the previously inspected official PDF, while the PDF remains provenance only.
+- Re-running schedule import converges on the natural keys `(game_id, team_id)`. The schedule table remains a per-team fact view; tipoff is canonical on the related `nba_games` row.
+
+**Could not verify:**
+- The PDF's `LOCAL` versus `ET` columns were not parsed or treated as authoritative. The NBA API's sibling UTC/EST fields were reconciled independently, but a separate venue-local-time source has not been established.
+- The six TBD Cup assignments cannot be loaded into the current foreign-key schema until the NBA publishes their teams; the importer currently ingests every resolved game and exposes the unresolved IDs.
+
+**Next:** Refresh the schedule feed after the NBA Cup draw and import the six resolved games; `schedule-density` can consume the per-team rows and scoring-period count query.
+
