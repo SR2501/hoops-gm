@@ -2910,3 +2910,46 @@ schedule version alone captures future rules changes.
 contract directly. `quant` owns the later Model-gated value-weighted
 `strength-of-schedule` pass from ADR-011 and must not fold it into this fact
 query.
+
+## 2026-08-18 — quant — `scoring-profiles`: explicit-null and precedence-vs-validation fixes (PR #22, round 5)
+
+**Changed:** The immediately preceding "snapshot-authoritative lineage rework"
+entry's own correction round (present-but-wrong-*type* values in
+`parse_scoring_category_configs`/`_scoring_type_with_source_path` raising
+instead of being read as absent) left one gap: `payload.get(key) is None`
+cannot distinguish a key that is genuinely missing from a key present with an
+explicit JSON `null` value -- both produce Python `None` from `.get()`. All
+four affected checks (`scoringSystem`, `scoringSystem.scoringCategorySettings`,
+top-level `scoringType`, nested `scoringSystem.type`) now use membership
+(`"key" in payload`) to decide absence, and only then inspect the value's
+shape -- so a present `null` now raises `SourceContractError` exactly like any
+other malformed shape, rather than silently degrading to an official 'absent'
+observation. Separately, `_scoring_type_with_source_path` validated the
+top-level `scoringType` and, only if that failed or was absent, the nested
+`scoringSystem.type` -- so a valid top-level value returned immediately
+without ever inspecting a simultaneously present but malformed nested value.
+It now validates both present candidates unconditionally first (raising on
+whichever is malformed) and applies top-level-wins precedence only to select
+between two already-valid candidates.
+
+**Now true:** `null` is evidence of a real, if invalid, upstream value and is
+treated identically to any other malformed shape across all four fields.
+Top-level/nested precedence for the scoring-format discriminator can only
+choose which valid value is authoritative; it can no longer be used to smuggle
+an unvalidated, malformed alternate field past the parser because the
+preferred field happened to already be fine. Six new regression tests exercise
+this through the production `parse_official_league_settings` seam: explicit
+`null` for each of the four fields, plus two "valid top-level scoringType with
+a malformed-or-null nested scoringSystem.type" cases that assert the raise is
+not bypassed by precedence.
+
+**Could not verify:** No live Fantrax capture is known to actually return an
+explicit JSON `null` for any of these four fields -- this closes a category of
+possible-but-unobserved malformed evidence the same way the wrong-type case
+already committed to, not a defect seen in a real payload. The scoring-type
+precedence rule itself (top-level wins over nested) remains inferred from
+adapter code, not an explicit statement from Fantrax documentation.
+
+**Next:** None outstanding for this ingestion path; `quant` still owns the
+later Model-gated valuation work that consumes `ScoringCategoriesRules`, which
+is unaffected by this parser-only fix.

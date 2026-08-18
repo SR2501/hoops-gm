@@ -943,10 +943,15 @@ def parse_scoring_category_configs(
     Returns ``None`` only when the key is genuinely absent -- ``scoringSystem``
     itself missing from the payload, or ``scoringCategorySettings`` missing
     from an otherwise-present ``scoringSystem`` -- exactly like every other
-    concern in this module. A key that *is* present but the wrong shape is
-    not the same observation as a missing key: it is malformed evidence, not
-    silence, and reserving ``None``/absent for the latter only is what keeps
-    "we never asked" distinguishable from "the source sent us garbage".
+    concern in this module. A key that *is* present but the wrong shape, or
+    present with an explicit JSON ``null``, is not the same observation as a
+    missing key: it is malformed evidence, not silence, and reserving
+    ``None``/absent for a genuinely missing key only is what keeps "we never
+    asked" distinguishable from "the source sent us garbage" or "the source
+    told us nothing is there" (which, for a source that is nominally required
+    to report scoring rules, is itself a contract violation, not silence).
+    Membership (``in``) is checked before shape, never ``value is None``,
+    specifically so a present ``null`` cannot be misread as an absent key.
     Every level of this therefore fails closed with :class:`SourceContractError`
     rather than being silently treated as absent or dropped: a non-dict
     ``scoringSystem``, a non-list ``scoringCategorySettings``, a non-dict
@@ -955,10 +960,11 @@ def parse_scoring_category_configs(
     ``code``, its ``shortName`` abbreviation, or a numeric ``weight``. An
     earlier version of this parser skipped several of those with a bare
     ``continue`` (or, for the two outer containers, silently returned
-    ``None`` as if the key had never been sent at all) -- a scoring profile
-    missing one category (or unable to verify its weight) is a wrong
-    valuation later with no way to detect it after the fact, and that is
-    exactly as true for a malformed shape as for a missing field.
+    ``None`` as if the key had never been sent at all, including when the
+    key was present but explicitly ``null``) -- a scoring profile missing
+    one category (or unable to verify its weight) is a wrong valuation later
+    with no way to detect it after the fact, and that is exactly as true for
+    a malformed shape as for a missing field.
 
     Only this rich, verified shape is handled. An earlier version of the
     adapter also speculatively handled a flat top-level ``scoringCategories``
@@ -970,18 +976,18 @@ def parse_scoring_category_configs(
     than kept "just in case"; see docs/adapters/fantrax-official.md.
     """
 
-    scoring_system = payload.get("scoringSystem")
-    if scoring_system is None:
+    if "scoringSystem" not in payload:
         return None
+    scoring_system = payload["scoringSystem"]
     if not isinstance(scoring_system, dict):
         raise SourceContractError(
             f"scoringSystem must be an object, got {type(scoring_system).__name__}",
             source=OFFICIAL_SOURCE,
             endpoint="getLeagueInfo",
         )
-    rich_settings = scoring_system.get("scoringCategorySettings")
-    if rich_settings is None:
+    if "scoringCategorySettings" not in scoring_system:
         return None
+    rich_settings = scoring_system["scoringCategorySettings"]
     if not isinstance(rich_settings, list):
         raise SourceContractError(
             "scoringSystem.scoringCategorySettings must be a list, got "
@@ -1068,42 +1074,57 @@ def _scoring_type_with_source_path(payload: dict[object, object]) -> tuple[str, 
     under that precedence -- ``$.scoringType`` or ``$.scoringSystem.type`` --
     not always the nested path regardless of which one supplied the value.
 
-    ``None`` is returned only when both keys are genuinely absent. A key that
-    *is* present but not a non-empty string is malformed evidence, not
-    silence -- it must not fall through to the other path, or be swallowed as
-    if the source had simply never sent it, so each present-but-wrong-shaped
-    field fails closed with :class:`SourceContractError` instead.
+    ``None`` is returned only when both keys are genuinely absent (checked by
+    membership, never ``value is None``, so a key present with an explicit
+    JSON ``null`` is never misread as an absent key). A key that *is* present
+    -- including as ``null`` -- but not a non-empty string is malformed
+    evidence, not silence: it must not fall through to the other path, or be
+    swallowed as if the source had simply never sent it, so each
+    present-but-wrong-shaped field fails closed with
+    :class:`SourceContractError` instead.
+
+    Both candidates are validated *before* precedence is applied: a valid
+    top-level ``scoringType`` must not short-circuit past a simultaneously
+    present but malformed nested ``scoringSystem.type`` -- precedence decides
+    which valid value wins, it must never decide which candidate gets
+    validated at all.
     """
 
-    scoring_type = payload.get("scoringType")
-    if scoring_type is not None:
+    top_level_value: str | None = None
+    if "scoringType" in payload:
+        scoring_type = payload["scoringType"]
         if not isinstance(scoring_type, str) or not scoring_type:
             raise SourceContractError(
                 f"scoringType must be a non-empty string, got {type(scoring_type).__name__}",
                 source=OFFICIAL_SOURCE,
                 endpoint="getLeagueInfo",
             )
-        return scoring_type, "$.scoringType"
+        top_level_value = scoring_type
 
-    scoring_system = payload.get("scoringSystem")
-    if scoring_system is None:
-        return None
-    if not isinstance(scoring_system, dict):
-        raise SourceContractError(
-            f"scoringSystem must be an object, got {type(scoring_system).__name__}",
-            source=OFFICIAL_SOURCE,
-            endpoint="getLeagueInfo",
-        )
-    nested = scoring_system.get("type")
-    if nested is None:
-        return None
-    if not isinstance(nested, str) or not nested:
-        raise SourceContractError(
-            f"scoringSystem.type must be a non-empty string, got {type(nested).__name__}",
-            source=OFFICIAL_SOURCE,
-            endpoint="getLeagueInfo",
-        )
-    return nested, "$.scoringSystem.type"
+    nested_value: str | None = None
+    if "scoringSystem" in payload:
+        scoring_system = payload["scoringSystem"]
+        if not isinstance(scoring_system, dict):
+            raise SourceContractError(
+                f"scoringSystem must be an object, got {type(scoring_system).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        if "type" in scoring_system:
+            nested = scoring_system["type"]
+            if not isinstance(nested, str) or not nested:
+                raise SourceContractError(
+                    f"scoringSystem.type must be a non-empty string, got {type(nested).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            nested_value = nested
+
+    if top_level_value is not None:
+        return top_level_value, "$.scoringType"
+    if nested_value is not None:
+        return nested_value, "$.scoringSystem.type"
+    return None
 
 
 def parse_scoring_type_raw(payload: dict[object, object]) -> str | None:

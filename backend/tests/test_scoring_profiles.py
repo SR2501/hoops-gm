@@ -382,6 +382,41 @@ def test_a_non_list_scoring_category_settings_fails_closed_rather_than_absent() 
         )
 
 
+def test_explicit_null_scoring_system_fails_closed_rather_than_absent() -> None:
+    """An explicit JSON ``null`` for ``scoringSystem`` must not be read as absent.
+
+    ``payload.get("scoringSystem") is None`` is true both when the key is
+    genuinely missing and when Fantrax sent the key with an explicit JSON
+    ``null`` value -- those are not the same observation. A present ``null``
+    means the source said something, and that something was invalid; only a
+    key that never appears in the payload at all may resolve to an absent
+    evidence observation.
+    """
+    payload = _base_payload()
+    payload["scoringSystem"] = None
+
+    with pytest.raises(SourceContractError, match=r"scoringSystem must be an object"):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:null-system"
+        )
+
+
+def test_explicit_null_scoring_category_settings_fails_closed_rather_than_absent() -> None:
+    """An explicit JSON ``null`` for ``scoringCategorySettings`` must not be read as absent."""
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": None,
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.scoringCategorySettings must be a list"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:null-settings"
+        )
+
+
 def test_map_source_categories_is_pure_and_reusable() -> None:
     """The mapping function has no session dependency -- it is pure evidence mapping."""
     definitions = map_source_categories(_NINE_CAT_SOURCE_CATEGORIES)
@@ -596,6 +631,137 @@ def test_nested_scoring_type_present_but_non_string_fails_closed() -> None:
     ):
         parse_official_league_settings(
             payload, source_league_id="league-1", capture_ref="test-fixture:bad-nested-type"
+        )
+
+
+def test_explicit_null_top_level_scoring_type_fails_closed() -> None:
+    """An explicit JSON ``null`` for top-level ``scoringType`` must not be read as absent."""
+    payload = _base_payload()
+    payload["scoringType"] = None
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(SourceContractError, match=r"scoringType must be a non-empty string"):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:null-top-level-type"
+        )
+
+
+def test_explicit_null_nested_scoring_type_fails_closed() -> None:
+    """An explicit JSON ``null`` for ``scoringSystem.type`` must not be read as absent."""
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": None,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.type must be a non-empty string"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:null-nested-type"
+        )
+
+
+def test_valid_top_level_scoring_type_does_not_bypass_malformed_nested_type() -> None:
+    """Top-level-wins precedence must select among *validated* values, not skip validation.
+
+    An earlier version of this parser returned as soon as a valid top-level
+    ``scoringType`` was found, without ever inspecting ``scoringSystem.type``
+    -- so a malformed nested value simply went unchecked whenever the
+    top-level path happened to already be valid. Precedence must only decide
+    which already-valid candidate wins; it must never be used to exempt the
+    losing candidate from validation, or a genuinely malformed nested value
+    could ride along unnoticed on the back of an unrelated, valid top-level
+    field.
+    """
+    payload = _base_payload()
+    payload["scoringType"] = _VERIFIED_SCORING_TYPE
+    payload["scoringSystem"] = {
+        "type": 12345,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.type must be a non-empty string"
+    ):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="test-fixture:top-level-wins-malformed-nested",
+        )
+
+
+def test_valid_top_level_scoring_type_does_not_bypass_null_nested_type() -> None:
+    """Same as above, for an explicit JSON ``null`` nested value rather than a wrong type."""
+    payload = _base_payload()
+    payload["scoringType"] = _VERIFIED_SCORING_TYPE
+    payload["scoringSystem"] = {
+        "type": None,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.type must be a non-empty string"
+    ):
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="test-fixture:top-level-wins-null-nested",
         )
 
 
