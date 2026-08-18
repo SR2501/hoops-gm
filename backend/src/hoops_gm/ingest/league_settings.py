@@ -62,6 +62,7 @@ BRIDGE_SOURCE = "fantrax_bridge"
 #: actually gathered.
 MIGRATION_SOURCE = "schema_migration"
 SCHEMA_VERSION: Literal[2] = 2
+_MISSING = object()
 
 SettingSource = Literal["fantrax_official", "fantrax_bridge", "schema_migration"]
 EvidenceStatus = Literal["observed", "absent"]
@@ -540,8 +541,15 @@ def parse_official_league_settings(
             endpoint=endpoint,
         )
 
-    roster_limits = _parse_roster_limits(payload.get("rosterInfo"), capture_ref=capture_ref)
-    scoring_periods = _parse_scoring_periods(payload.get("scoringPeriods"), capture_ref=capture_ref)
+    roster_limits = _parse_roster_limits(
+        payload.get("rosterInfo", _MISSING),
+        capture_ref=capture_ref,
+    )
+    raw_scoring_periods = payload.get("scoringPeriods", _MISSING)
+    scoring_periods = _parse_scoring_periods(
+        raw_scoring_periods,
+        capture_ref=capture_ref,
+    )
     scoring_type = _parse_scoring_type(payload, capture_ref=capture_ref)
     scoring_categories = _parse_scoring_categories(payload, capture_ref=capture_ref)
     return LeagueSettingsDocument(
@@ -555,7 +563,7 @@ def parse_official_league_settings(
         roster_limits=roster_limits,
         scoring_periods=scoring_periods,
         trade_deadline=_absent(capture_ref),
-        playoffs=_parse_playoff_periods(payload.get("scoringPeriods"), capture_ref=capture_ref),
+        playoffs=_parse_playoff_periods(raw_scoring_periods, capture_ref=capture_ref),
         keepers=_absent(capture_ref),
         scoring_type=scoring_type,
         scoring_categories=scoring_categories,
@@ -768,7 +776,7 @@ def _parse_roster_limits(
     *,
     capture_ref: str,
 ) -> SourcedSetting[RosterLimits]:
-    if value is None:
+    if value is _MISSING:
         return _absent(capture_ref)
     if not isinstance(value, dict):
         raise SourceContractError(
@@ -778,8 +786,8 @@ def _parse_roster_limits(
         )
 
     positions: dict[str, int] = {}
-    raw_positions = value.get("positionConstraints")
-    if raw_positions is not None:
+    if "positionConstraints" in value:
+        raw_positions = value["positionConstraints"]
         if not isinstance(raw_positions, dict):
             raise SourceContractError(
                 "rosterInfo.positionConstraints must be an object",
@@ -793,22 +801,27 @@ def _parse_roster_limits(
                     source=OFFICIAL_SOURCE,
                     endpoint="getLeagueInfo",
                 )
-            maximum = _optional_non_negative_int(
-                constraint.get("maxActive"),
-                path=f"rosterInfo.positionConstraints.{code}.maxActive",
-            )
-            if maximum is not None:
-                positions[code] = maximum
+            if "maxActive" in constraint:
+                positions[code] = _required_non_negative_int(
+                    constraint["maxActive"],
+                    path=f"rosterInfo.positionConstraints.{code}.maxActive",
+                )
 
     parsed = RosterLimits(
-        total=_optional_non_negative_int(
-            value.get("maxTotalPlayers"), path="rosterInfo.maxTotalPlayers"
+        total=_optional_non_negative_field(
+            value,
+            key="maxTotalPlayers",
+            path="rosterInfo.maxTotalPlayers",
         ),
-        active=_optional_non_negative_int(
-            value.get("maxTotalActivePlayers"), path="rosterInfo.maxTotalActivePlayers"
+        active=_optional_non_negative_field(
+            value,
+            key="maxTotalActivePlayers",
+            path="rosterInfo.maxTotalActivePlayers",
         ),
-        reserve=_optional_non_negative_int(
-            value.get("maxTotalReservePlayers"), path="rosterInfo.maxTotalReservePlayers"
+        reserve=_optional_non_negative_field(
+            value,
+            key="maxTotalReservePlayers",
+            path="rosterInfo.maxTotalReservePlayers",
         ),
         position_active=positions,
     )
@@ -823,7 +836,7 @@ def _parse_scoring_periods(
     *,
     capture_ref: str,
 ) -> SourcedSetting[ScoringPeriodRules]:
-    if value is None:
+    if value is _MISSING:
         return _absent(capture_ref)
     if not isinstance(value, list) or not value:
         raise SourceContractError(
@@ -840,17 +853,23 @@ def _parse_scoring_periods(
                 source=OFFICIAL_SOURCE,
                 endpoint="getLeagueInfo",
             )
-        number = _required_positive_int(
-            item.get("number", item.get("period")),
-            path=f"scoringPeriods[{index}].number",
+        number = _positive_int_candidate(
+            item,
+            primary_key="number",
+            alternate_key="period",
+            path=f"scoringPeriods[{index}]",
         )
-        start_at = _required_str(
-            item.get("startDate", item.get("start")),
-            path=f"scoringPeriods[{index}].startDate",
+        start_at = _string_candidate(
+            item,
+            primary_key="startDate",
+            alternate_key="start",
+            path=f"scoringPeriods[{index}]",
         )
-        end_at = _required_str(
-            item.get("endDate", item.get("end")),
-            path=f"scoringPeriods[{index}].endDate",
+        end_at = _string_candidate(
+            item,
+            primary_key="endDate",
+            alternate_key="end",
+            path=f"scoringPeriods[{index}]",
         )
         periods.append(
             ScoringPeriodBoundary(
@@ -878,29 +897,40 @@ def _parse_playoff_periods(
     *,
     capture_ref: str,
 ) -> SourcedSetting[PlayoffRules]:
-    if not isinstance(value, list):
+    if value is _MISSING:
         return _absent(capture_ref)
+    if not isinstance(value, list):
+        raise SourceContractError(
+            "scoringPeriods must be a non-empty array",
+            source=OFFICIAL_SOURCE,
+            endpoint="getLeagueInfo",
+        )
 
     periods: list[int] = []
     saw_marker = False
     for index, item in enumerate(value):
         if not isinstance(item, dict):
-            continue
-        marker = item.get("isPlayoff", item.get("playoff"))
-        if marker is None:
-            continue
-        if not isinstance(marker, bool):
             raise SourceContractError(
-                f"scoringPeriods[{index}] playoff marker must be boolean",
+                f"scoringPeriods[{index}] must be an object",
                 source=OFFICIAL_SOURCE,
                 endpoint="getLeagueInfo",
             )
+        marker_present, marker = _boolean_candidate(
+            item,
+            primary_key="isPlayoff",
+            alternate_key="playoff",
+            path=f"scoringPeriods[{index}]",
+        )
+        if not marker_present:
+            continue
         saw_marker = True
         if marker:
             periods.append(
-                _required_positive_int(
-                    item.get("number", item.get("period")),
-                    path=f"scoringPeriods[{index}].number",
+                _positive_int_candidate(
+                    item,
+                    primary_key="number",
+                    alternate_key="period",
+                    path=f"scoringPeriods[{index}]",
                 )
             )
 
@@ -1280,6 +1310,24 @@ def _optional_non_negative_int(value: object, *, path: str) -> int | None:
     return parsed
 
 
+def _required_non_negative_int(value: object, *, path: str) -> int:
+    parsed = _optional_non_negative_int(value, path=path)
+    if parsed is None:
+        _contract_error(path, "must be a non-negative integer")
+    return parsed
+
+
+def _optional_non_negative_field(
+    value: dict[object, object],
+    *,
+    key: str,
+    path: str,
+) -> int | None:
+    if key not in value:
+        return None
+    return _required_non_negative_int(value[key], path=path)
+
+
 def _required_positive_int(value: object, *, path: str) -> int:
     parsed = _optional_non_negative_int(value, path=path)
     if parsed is None or parsed < 1:
@@ -1287,10 +1335,79 @@ def _required_positive_int(value: object, *, path: str) -> int:
     return parsed
 
 
+def _positive_int_candidate(
+    value: dict[object, object],
+    *,
+    primary_key: str,
+    alternate_key: str,
+    path: str,
+) -> int:
+    primary: int | None = None
+    alternate: int | None = None
+    if primary_key in value:
+        primary = _required_positive_int(value[primary_key], path=f"{path}.{primary_key}")
+    if alternate_key in value:
+        alternate = _required_positive_int(
+            value[alternate_key],
+            path=f"{path}.{alternate_key}",
+        )
+    if primary is not None:
+        return primary
+    if alternate is not None:
+        return alternate
+    _contract_error(f"{path}.{primary_key}", "must be a positive integer")
+
+
 def _required_str(value: object, *, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         _contract_error(path, "must be a non-empty string")
     return value
+
+
+def _string_candidate(
+    value: dict[object, object],
+    *,
+    primary_key: str,
+    alternate_key: str,
+    path: str,
+) -> str:
+    primary: str | None = None
+    alternate: str | None = None
+    if primary_key in value:
+        primary = _required_str(value[primary_key], path=f"{path}.{primary_key}")
+    if alternate_key in value:
+        alternate = _required_str(value[alternate_key], path=f"{path}.{alternate_key}")
+    if primary is not None:
+        return primary
+    if alternate is not None:
+        return alternate
+    _contract_error(f"{path}.{primary_key}", "must be a non-empty string")
+
+
+def _boolean_candidate(
+    value: dict[object, object],
+    *,
+    primary_key: str,
+    alternate_key: str,
+    path: str,
+) -> tuple[bool, bool]:
+    primary: bool | None = None
+    alternate: bool | None = None
+    if primary_key in value:
+        raw_primary = value[primary_key]
+        if not isinstance(raw_primary, bool):
+            _contract_error(f"{path}.{primary_key}", "must be boolean")
+        primary = raw_primary
+    if alternate_key in value:
+        raw_alternate = value[alternate_key]
+        if not isinstance(raw_alternate, bool):
+            _contract_error(f"{path}.{alternate_key}", "must be boolean")
+        alternate = raw_alternate
+    if primary is not None:
+        return True, primary
+    if alternate is not None:
+        return True, alternate
+    return False, False
 
 
 def _contract_error(path: str, message: str) -> Never:

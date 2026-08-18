@@ -2953,3 +2953,36 @@ adapter code, not an explicit statement from Fantrax documentation.
 **Next:** None outstanding for this ingestion path; `quant` still owns the
 later Model-gated valuation work that consumes `ScoringCategoriesRules`, which
 is unaffected by this parser-only fix.
+
+---
+
+## 2026-08-18 — data-engineer — League-settings null evidence fidelity
+
+**Changed:** Corrected the remaining official `getLeagueInfo` evidence-fidelity
+paths in `ingest/league_settings.py`. `rosterInfo`, `scoringPeriods`, roster
+subfields, scoring-period aliases, and playoff-marker aliases now distinguish a
+genuinely missing key from a present JSON `null`: only the former can produce
+absent evidence, while `null` and every wrong-shaped present value raise
+`SourceContractError`. When both supported aliases are present
+(`number`/`period`, `startDate`/`start`, `endDate`/`end`, or
+`isPlayoff`/`playoff`), both are validated before the preferred alias is chosen.
+Focused production-seam regressions cover null and malformed outer/inner shapes,
+missing-key absence, malformed-alternate bypass attempts, and valid precedence.
+The directly related official-adapter documentation now states this contract.
+
+**Now true:** A valid preferred roster/scoring-period/playoff value can no longer
+hide malformed alternate evidence, and a present `null` can no longer be
+persisted as though Fantrax supplied no evidence. The full backend Code gate,
+the complete recorded-fixture Adapter contract suite, and the repository secret
+scan pass locally; no schema or migration changed.
+
+**Could not verify:** The recorded live fixture contains no explicit `null` in
+these fields and uses the preferred scoring-period names, so the new null and
+alias-combination cases are synthetic contract regressions through the
+production parser rather than claims about a currently observed Fantrax payload.
+No live API request was made because this change does not require refreshing the
+recorded fixture and the Adapter gate keeps live smoke separate and non-blocking.
+
+**Next:** Re-ingest deliberately if a future live capture introduces either
+supported alias or a new playoff marker; contract drift must be investigated
+rather than normalized into absent evidence.

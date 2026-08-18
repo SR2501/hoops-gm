@@ -62,6 +62,14 @@ from roster-period timing, reserve capacity, matchups, draft type, or the
 historical 2025–26 rules baseline. The existing read-only bridge may later fill
 an official unknown, but cannot override an official observation.
 
+For the roster and scoring-period fields the parser reserves absent evidence for
+a genuinely missing JSON key. A present `null`, wrong-shaped container, malformed
+period/position entry, or malformed alias is a `SourceContractError`. Where a
+payload supplies both supported aliases (`number`/`period`, `startDate`/`start`,
+`endDate`/`end`, or `isPlayoff`/`playoff`), both are validated before the
+preferred field wins; valid preferred evidence cannot hide malformed alternate
+evidence.
+
 The persisted boundary is `league_settings_snapshots`: immutable versions of
 the validated document with per-concern evidence, source-payload hash, and
 observation time. Import rejects a document whose `seasonYear` does not match
