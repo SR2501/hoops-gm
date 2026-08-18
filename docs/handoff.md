@@ -1044,3 +1044,93 @@ entry so `backend/tests` cannot silently run against another worktree's code;
 until then, any agent running backend tests here should verify
 `hoops_gm.__file__` resolves inside their own worktree first.
 
+## 2026-08-18 — quant — Implemented schedule-context schema after schedule-ingest merge
+
+**Changed:** Rebased onto the current `main`, reviewed the merged
+`team_schedule` contract, and implemented the quant-owned Phase 4 context tables
+without touching the pure calendar arithmetic owned by `schedule_density`.
+`opponent_context` and `off_night_slates` were added via the ORM and Alembic
+migration, exported from the model package, and verified against the portability
+suite. The earlier schema issue was resolved by removing redundant `index=True`
+attributes and keeping only explicit `Index(...)` declarations so the model and
+migration agree.
+
+**Now true:** The repository now contains the explicit model-output tables for
+schedule context: per-game opponent environment and per-date light-slate
+classification. They stay separated from schedule facts and from production
+availability logic, matching the ADR-002 and ADR-007 framing for this phase.
+The portability checks for the new tables pass in the current backend test
+suite.
+
+**Could not verify:** No live backtest or calibration run was executed for the
+actual blowout-risk and off-night model; the current patch adds the schema, not a
+trained model or held-out evaluation. The chosen windows and thresholding remain
+design assumptions until real NBA data is observed. No Postgres or live NBA data
+run was performed in this change, so the only verified evidence is the schema and
+metadata checks in the repository’s SQLite portability suite.
+
+**Next:** `quant` should run the Phase-4 backtest once live `team_schedule` data
+and historical results are available, validating the pace/defence windows,
+blowout probability calibration, and off-night detection thresholds against a
+held-out sample before computing anything production-facing.
+
+---
+
+## 2026-08-17 — quant — Schedule-context freshness provenance
+
+**Changed:** Updated the schedule-context contract after acceptance of ADR-011
+and ADR-012. Both quant-owned output tables now carry an immutable
+`schedule_version` and `schedule_refreshed_at` alongside `model_version`,
+`computed_at`, and the input snapshot. The natural keys include
+`schedule_version`, retaining each model output against the schedule snapshot
+that produced it rather than overwriting it when the calendar refreshes. Added
+the missing model card with the required version-cohort, refresh, and Model-gate
+rules.
+
+**Now true:** A schedule-context consumer can require a single matching
+schedule/model version cohort and identify whether its context derives from a
+stale schedule refresh. Context must refresh at least weekly and after a
+schedule-version change. This keeps Phase 4 opponent context from mixing with
+newer schedule, projection, or future SOS outputs; the downstream component must
+reject a version mismatch or trigger recomputation, not silently combine rows.
+
+**Could not verify:** There are no downstream projection, SOS, or availability
+consumers yet, so the actual invalidation/recompute cascade cannot be exercised.
+`team_schedule` does not itself yet expose a schedule snapshot version; the
+future context computation must produce the persisted version from its ingest
+refresh provenance rather than inventing a value per row. No live or held-out
+model evaluation was run.
+
+**Next:** `quant` should make the availability model and Phase 5
+strength-of-schedule consumer require matching provenance cohorts when they are
+implemented. `data-engineer` should expose schedule-ingest refresh provenance
+for the context computation to record. The Model gate remains required before
+any decision-facing computation.
+
+---
+
+## 2026-08-17 — backend — Fix schedule-context Code-gate failure
+
+**Changed:** Classified both failed PR #8 Backend Code-gate jobs as
+PR-caused: each failed only
+`tests/test_schema.py::test_no_table_anywhere_stores_a_percentage` after
+`off_night_slates` introduced `light_slate_percentile` and
+`threshold_percentile`. Added those two fields to the test's explicit
+allowlist with the required explanation: they are schedule-distribution
+percentiles, not fantasy shooting ratios, so no volume denominator is lost.
+
+**Now true:** The R9 guard still rejects percentage-shaped columns by default,
+while permitting only the two non-ratio percentile fields introduced by this
+schedule-context change. Local verification used this worktree's
+`backend/src` explicitly and passed `ruff check .`, `ruff format --check .`,
+`mypy`, and `pytest` (410 passed, 12 deselected).
+
+**Could not verify:** The local interpreter is Python 3.14 whereas CI uses
+Python 3.12, and its pre-existing `pytest-asyncio` deprecation must still be
+suppressed for the local full suite; no Postgres service was available locally.
+The CI failure itself was reproduced before the correction and was a
+deterministic assertion failure, not transient infrastructure.
+
+**Next:** Push the correction and re-run the two failed Backend Code-gate
+checks on PR #8; both should pass if the Ubuntu/Python 3.12 environment
+matches its prior successful lint and type-check steps.
