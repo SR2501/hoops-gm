@@ -15,7 +15,7 @@ RELEASED_BLOWOUT_MODEL_VERSION = "4809af29ed135f6f"
 _RELEASE_FILES = {
     RELEASED_BLOWOUT_MODEL_VERSION: (
         "schedule_context_blowout_v1.json",
-        "41e835c5fb7779a82044bb694ce24db77161e8d041d71e09a4c41d77e41f9b14",
+        "160c729a78b415ce387bfa67233a6dcf7d6e4a70552f2eb1156c219504919afe",
     ),
 }
 
@@ -33,6 +33,12 @@ class BlowoutRelease:
     held_out_examples: int
 
 
+def _decode_release_artifact(raw_artifact: bytes) -> tuple[dict[str, Any], str]:
+    payload: dict[str, Any] = json.loads(raw_artifact)
+    canonical_artifact = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return payload, sha256(canonical_artifact).hexdigest()
+
+
 def load_blowout_release(
     model_version: str = RELEASED_BLOWOUT_MODEL_VERSION,
 ) -> BlowoutRelease:
@@ -46,9 +52,9 @@ def load_blowout_release(
     filename, expected_digest = release_file
     resource = files("hoops_gm.schedule_context.releases").joinpath(filename)
     raw_artifact = resource.read_bytes()
-    if sha256(raw_artifact).hexdigest() != expected_digest:
+    payload, actual_digest = _decode_release_artifact(raw_artifact)
+    if actual_digest != expected_digest:
         raise RuntimeError("packaged blowout release artifact does not match its pinned digest")
-    payload: dict[str, Any] = json.loads(raw_artifact)
     final = payload["final"]
     raw_model = final["model"]
     model = BlowoutModel(

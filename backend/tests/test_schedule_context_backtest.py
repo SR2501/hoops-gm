@@ -112,3 +112,13 @@ def test_production_release_loader_rejects_an_unpinned_artifact_digest(
 
     with pytest.raises(RuntimeError, match="does not match its pinned digest"):
         load_blowout_release()
+
+
+def test_release_digest_is_independent_of_json_line_endings() -> None:
+    lf_artifact = EVIDENCE.read_bytes().replace(b"\r\n", b"\n")
+    crlf_artifact = lf_artifact.replace(b"\n", b"\r\n")
+
+    _lf_payload, lf_digest = release_registry._decode_release_artifact(lf_artifact)
+    _crlf_payload, crlf_digest = release_registry._decode_release_artifact(crlf_artifact)
+
+    assert lf_digest == crlf_digest

@@ -2100,3 +2100,30 @@ migrations, to pass and repeat the two focused reviews. Do not merge or
 self-approve from this session.
 
 ---
+
+## 2026-08-18 — quant — Canonicalize the packaged release digest
+
+**Changed:** Exact-head Linux CI exposed that the release registry hashed the
+JSON artifact's raw bytes, so Git's CRLF/LF checkout normalization made the
+Windows-gated artifact fail its Linux digest check. The registry now hashes the
+parsed artifact in canonical sorted, compact JSON form and pins that content
+identity. Added a regression proving LF and CRLF encodings produce the same
+release digest.
+
+**Now true:** The production loader still rejects changed Model-gate evidence,
+but line-ending-only checkout differences no longer change the verified
+identity. Final local gates pass: Ruff, format, strict mypy, 526 default backend
+tests, seven dedicated `model_backtest` tests, secret scan, SQLite
+upgrade/check/downgrade with one `0009` head, and loading release
+`4809af29ed135f6f` directly from the newly built wheel.
+
+**Could not verify:** GitHub's Linux and PostgreSQL jobs had not rerun against
+this correction when this entry was written. Canonical serialization removes
+the observed platform-dependent mechanism; exact-head CI remains the required
+independent verification.
+
+**Next:** Push with force-with-lease against the reviewed remote head and require
+every exact-head GitHub check, including real PostgreSQL and migrations, to pass.
+Do not merge or self-approve from this session.
+
+---
