@@ -32,7 +32,7 @@
   },
   "fantrax_getleagueinfo_settings_sanitized.json": {
     "byte_size": 24351,
-    "captured_at": "2026-08-18T13:06:23.300587+00:00",
+    "captured_at": "2026-08-18T13:02:01.532463+00:00",
     "endpoint": "getLeagueInfo",
     "note": "Identity-bearing sections were removed whole. No retained source value was edited. The endpoint succeeded without userSecretId.",
     "original_byte_size": 106773,

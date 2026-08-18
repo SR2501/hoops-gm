@@ -9,6 +9,7 @@ tested by waiting is a limiter nobody tests.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 import urllib.error
@@ -598,21 +599,50 @@ class TestFantraxTransport:
         self,
     ) -> None:
         seen: list[str] = []
+        body = (
+            b'{"seasonYear": 2025, "startDate": "2025-10-21", '
+            b'"endDate": "2026-03-15", "rosterInfo": {"maxTotalPlayers": 14}, '
+            b'"scoringPeriods": [{"number": 1, "startDate": "2025-10-21", '
+            b'"endDate": "2025-10-26"}]}'
+        )
 
         def opener(request: Any, timeout: float) -> FakeResponse:
             seen.append(request.full_url)
-            return FakeResponse(
-                b'{"seasonYear": 2025, "startDate": "2025-10-21", '
-                b'"endDate": "2026-03-15", "rosterInfo": {"maxTotalPlayers": 14}, '
-                b'"scoringPeriods": [{"number": 1, "startDate": "2025-10-21", '
-                b'"endDate": "2025-10-26"}]}'
-            )
+            return FakeResponse(body)
 
         result = self._client(opener).get_league_info("non-secret-id")
 
         assert result.settings is not None
+        assert result.source_payload_sha256 == hashlib.sha256(body).hexdigest()
+        assert result.source_observed_at is not None
+        assert result.source_observed_at.tzinfo is not None
         assert "leagueId=non-secret-id" in seen[0]
         assert "userSecretId" not in seen[0]
+
+    def test_cached_league_info_preserves_the_capture_timestamp(self, tmp_path: Path) -> None:
+        store = RawPayloadStore(tmp_path)
+        observed_at = datetime.now(UTC) - timedelta(minutes=5)
+        body = (
+            b'{"seasonYear": 2025, "startDate": "2025-10-21", '
+            b'"endDate": "2026-03-15", "rosterInfo": {"maxTotalPlayers": 14}, '
+            b'"scoringPeriods": [{"number": 1, "startDate": "2025-10-21", '
+            b'"endDate": "2025-10-26"}]}'
+        )
+        store.put(
+            source="fantrax_official",
+            endpoint="getLeagueInfo",
+            params={"leagueId": "non-secret-id"},
+            body=body,
+            fetched_at=observed_at,
+        )
+
+        def must_not_request(_request: Any, timeout: float) -> FakeResponse:
+            raise AssertionError("fresh capture should be used")
+
+        result = self._client(must_not_request, store=store).get_league_info("non-secret-id")
+
+        assert result.source_observed_at == observed_at
+        assert result.source_payload_sha256 == hashlib.sha256(body).hexdigest()
 
 
 # ==========================================================================

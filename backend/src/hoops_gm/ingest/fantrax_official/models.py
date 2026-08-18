@@ -8,6 +8,7 @@ the Adapter gate is that the contract test is offline and instant.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 
@@ -112,7 +113,8 @@ class FantraxLeagueInfo:
     scoring_type: str | None
     draft_type: str | None
     roster_size: int | None
-    source_payload_sha256: str
+    source_payload_sha256: str | None
+    source_observed_at: datetime | None
     teams: list[FantraxLeagueTeam] = field(default_factory=list)
     scoring_categories: list[FantraxScoringCategory] = field(default_factory=list)
     settings: LeagueSettingsDocument | None = None

@@ -60,7 +60,11 @@ def _official_payload() -> dict[str, object]:
 
 
 def test_official_fields_are_known_and_absent_fields_stay_unknown() -> None:
-    settings = parse_official_league_settings(_official_payload(), capture_ref="sha256:abc")
+    settings = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
 
     assert settings.roster_limits.value == RosterLimits(
         total=14,
@@ -81,7 +85,11 @@ def test_official_fields_are_known_and_absent_fields_stay_unknown() -> None:
 
 
 def test_no_ir_limit_is_inferred_from_the_total_reserve_limit() -> None:
-    settings = parse_official_league_settings(_official_payload(), capture_ref="sha256:abc")
+    settings = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
 
     assert settings.roster_limits.value is not None
     assert settings.roster_limits.value.reserve == 4
@@ -90,7 +98,11 @@ def test_no_ir_limit_is_inferred_from_the_total_reserve_limit() -> None:
 
 
 def test_bridge_fills_only_an_official_unknown() -> None:
-    official = parse_official_league_settings(_official_payload(), capture_ref="sha256:abc")
+    official = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
     bridge_evidence = (
         SettingEvidence(
             source=BRIDGE_SOURCE,
@@ -100,6 +112,7 @@ def test_bridge_fills_only_an_official_unknown() -> None:
         ),
     )
     bridge = LeagueSettingsDocument(
+        source_league_id="league-1",
         source_season_year=2025,
         source_start_date="2025-10-21",
         source_end_date="2026-03-15",
@@ -110,7 +123,11 @@ def test_bridge_fills_only_an_official_unknown() -> None:
         waivers=_bridge_unknown(),
         games_caps=_bridge_unknown(),
         roster_limits=SourcedSetting(
-            value=RosterLimits(total=99),
+            value=RosterLimits(
+                total=99,
+                injured_reserve=3,
+                injured_reserve_eligibility=("IR", "IR+"),
+            ),
             evidence=bridge_evidence,
         ),
         scoring_periods=_bridge_unknown(),
@@ -126,16 +143,49 @@ def test_bridge_fills_only_an_official_unknown() -> None:
         "fantrax_official",
         "fantrax_bridge",
     }
-    assert merged.roster_limits == official.roster_limits
+    assert merged.roster_limits.value is not None
+    assert merged.roster_limits.value.total == 14
+    assert merged.roster_limits.value.injured_reserve == 3
+    assert merged.roster_limits.value.injured_reserve_eligibility == ("IR", "IR+")
+    assert {item.source for item in merged.roster_limits.evidence} == {
+        "fantrax_official",
+        "fantrax_bridge",
+    }
+
+
+def test_bridge_cannot_fill_rules_across_league_seasons() -> None:
+    official = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official",
+    )
+    historical_bridge = official.model_copy(
+        update={
+            "source_season_year": 2024,
+            "source_start_date": "2024-10-22",
+            "source_end_date": "2025-03-16",
+        }
+    )
+
+    with pytest.raises(ValueError, match="different league-season boundaries"):
+        merge_settings(official, historical_bridge)
 
 
 def test_content_hash_changes_when_configuration_changes() -> None:
-    before = parse_official_league_settings(_official_payload(), capture_ref="sha256:abc")
+    before = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
     changed_payload = _official_payload()
     roster = changed_payload["rosterInfo"]
     assert isinstance(roster, dict)
     roster["maxTotalPlayers"] = 15
-    after = parse_official_league_settings(changed_payload, capture_ref="sha256:abc")
+    after = parse_official_league_settings(
+        changed_payload,
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
 
     assert before.content_sha256() != after.content_sha256()
 
@@ -144,9 +194,28 @@ def test_rule_shaped_unmapped_keys_are_loud_diagnostics() -> None:
     payload = _official_payload()
     payload["waiverSettings"] = {"mode": "priority"}
 
-    settings = parse_official_league_settings(payload, capture_ref="sha256:abc")
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
 
     assert settings.unmapped_rule_paths == ("$.waiverSettings",)
+
+
+def test_rule_drift_after_the_fifth_array_item_is_not_ignored() -> None:
+    payload = _official_payload()
+    payload["providerMetadata"] = [{"safe": index} for index in range(5)] + [
+        {"waiverSettings": {"mode": "priority"}}
+    ]
+
+    settings = parse_official_league_settings(
+        payload,
+        source_league_id="league-1",
+        capture_ref="sha256:abc",
+    )
+
+    assert settings.unmapped_rule_paths == ("$.providerMetadata[*].waiverSettings",)
 
 
 @pytest.mark.parametrize(
@@ -164,7 +233,11 @@ def test_malformed_present_fields_fail_instead_of_becoming_unknown(
     payload: dict[str, object],
 ) -> None:
     with pytest.raises(SourceContractError):
-        parse_official_league_settings(payload, capture_ref="sha256:abc")
+        parse_official_league_settings(
+            payload,
+            source_league_id="league-1",
+            capture_ref="sha256:abc",
+        )
 
 
 def _bridge_unknown[ValueT]() -> SourcedSetting[ValueT]:
@@ -196,12 +269,44 @@ _SUPPORTED_TYPES = (
 def test_import_rejects_a_source_season_that_does_not_match_the_league(
     session: Session,
 ) -> None:
-    league = League(name="Future league", season="2026-27")
+    league = League(
+        name="Future league",
+        season="2026-27",
+        fantrax_league_id="league-1",
+    )
     session.add(league)
     session.flush()
-    document = parse_official_league_settings(_official_payload(), capture_ref="fixture:official")
+    document = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official",
+    )
 
     with pytest.raises(ValueError, match="source seasonYear=2025 means 2025-26"):
+        import_league_settings(
+            session,
+            league=league,
+            document=document,
+            source_payload_sha256="a" * 64,
+            observed_at=datetime(2026, 8, 18, tzinfo=UTC),
+        )
+
+
+def test_import_rejects_settings_from_another_fantrax_league(session: Session) -> None:
+    league = League(
+        name="Target league",
+        season="2025-26",
+        fantrax_league_id="league-2",
+    )
+    session.add(league)
+    session.flush()
+    document = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official",
+    )
+
+    with pytest.raises(ValueError, match="identity mismatch"):
         import_league_settings(
             session,
             league=league,
@@ -214,10 +319,18 @@ def test_import_rejects_a_source_season_that_does_not_match_the_league(
 def test_import_is_versioned_idempotent_and_preserves_source_evidence(
     session: Session,
 ) -> None:
-    league = League(name="Historical league", season="2025-26")
+    league = League(
+        name="Historical league",
+        season="2025-26",
+        fantrax_league_id="league-1",
+    )
     session.add(league)
     session.flush()
-    document = parse_official_league_settings(_official_payload(), capture_ref="fixture:official")
+    document = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official",
+    )
 
     first = import_league_settings(
         session,
@@ -226,12 +339,17 @@ def test_import_is_versioned_idempotent_and_preserves_source_evidence(
         source_payload_sha256="a" * 64,
         observed_at=datetime(2026, 8, 18, tzinfo=UTC),
     )
+    same_rules_new_observation = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official-new-capture",
+    )
     duplicate = import_league_settings(
         session,
         league=league,
-        document=document,
-        source_payload_sha256="a" * 64,
-        observed_at=datetime(2026, 8, 18, tzinfo=UTC),
+        document=same_rules_new_observation,
+        source_payload_sha256="b" * 64,
+        observed_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
     changed = document.model_copy(
         update={
@@ -251,8 +369,15 @@ def test_import_is_versioned_idempotent_and_preserves_source_evidence(
         session,
         league=league,
         document=changed,
-        source_payload_sha256="b" * 64,
-        observed_at=datetime(2026, 8, 19, tzinfo=UTC),
+        source_payload_sha256="c" * 64,
+        observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    reverted = import_league_settings(
+        session,
+        league=league,
+        document=same_rules_new_observation,
+        source_payload_sha256="d" * 64,
+        observed_at=datetime(2026, 8, 21, tzinfo=UTC),
     )
 
     snapshots = list(
@@ -261,7 +386,8 @@ def test_import_is_versioned_idempotent_and_preserves_source_evidence(
     assert first.created == 1
     assert duplicate.skipped == 1
     assert second.created == 1
-    assert [snapshot.version for snapshot in snapshots] == [1, 2]
+    assert reverted.created == 1
+    assert [snapshot.version for snapshot in snapshots] == [1, 2, 3]
     first_deadline = snapshots[0].settings["trade_deadline"]
     second_deadline = snapshots[1].settings["trade_deadline"]
     games_cap_source = snapshots[0].source_summary["games_caps"]
@@ -272,4 +398,57 @@ def test_import_is_versioned_idempotent_and_preserves_source_evidence(
     assert isinstance(games_cap_source[0], dict)
     assert first_deadline["value"] is None
     assert second_deadline["value"]["deadline_at"] == "2026-02-12T23:59:59-0500"
+    reverted_deadline = snapshots[2].settings["trade_deadline"]
+    assert isinstance(reverted_deadline, dict)
+    assert reverted_deadline["value"] is None
     assert games_cap_source[0]["status"] == "absent"
+
+
+def test_import_versions_a_change_in_semantic_provenance(session: Session) -> None:
+    league = League(
+        name="Historical league",
+        season="2025-26",
+        fantrax_league_id="league-1",
+    )
+    session.add(league)
+    session.flush()
+    official = parse_official_league_settings(
+        _official_payload(),
+        source_league_id="league-1",
+        capture_ref="fixture:official",
+    )
+    assert official.roster_limits.value is not None
+    bridge_only = official.model_copy(
+        update={
+            "roster_limits": SourcedSetting(
+                value=official.roster_limits.value,
+                evidence=(
+                    SettingEvidence(
+                        source=BRIDGE_SOURCE,
+                        status="observed",
+                        source_path="League Rules > Rosters",
+                        capture_ref="fixture:bridge",
+                    ),
+                ),
+            )
+        }
+    )
+
+    first = import_league_settings(
+        session,
+        league=league,
+        document=bridge_only,
+        source_payload_sha256="a" * 64,
+        observed_at=datetime(2026, 8, 18, tzinfo=UTC),
+    )
+    second = import_league_settings(
+        session,
+        league=league,
+        document=official,
+        source_payload_sha256="b" * 64,
+        observed_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+
+    assert first.created == 1
+    assert second.created == 1
+    assert session.query(LeagueSettingsSnapshot).count() == 2

@@ -1370,3 +1370,68 @@ production model.
 `contingent-value`, but must first define temporal held-out validation and a
 model card; no stock-watch, waiver, draft, lineup, or trade recommendation
 should read raw absence deltas directly.
+---
+
+## 2026-08-18 - data-engineer - Versioned league-settings ingestion
+
+**Changed:** Verified the target private league's official `getLeagueInfo`
+response with one low-frequency request containing only its non-secret
+`leagueId`; no `userSecretId`, cookie, private adapter, bridge polling, or write
+path was used. Added `LeagueSettingsDocument` schema version 1, covering lineup
+locks, waivers, games caps, roster/IR limits, scoring-period boundaries, trade
+deadline, playoffs, and keepers. Every concern carries source evidence even
+when absent. Official observations have priority; bridge evidence may fill only
+missing nested fields, and only when league id, season year, and season
+boundaries match exactly.
+
+The live response is the **2025-26** league (`seasonYear: 2025`, 2025-10-21
+through 2026-03-15). It exposes roster totals/position constraints and 21
+scoring-period boundaries. It exposes no lineup-lock, waiver/claim/FAAB,
+games-cap, IR-specific, trade-deadline, playoff-marker, or keeper fields. Those
+remain explicit unknowns; no value is read from
+`docs/league/2025-26-rules-baseline.md`. `import_league_settings` requires the
+linked Fantrax league id and matching source season, so this payload cannot be
+attached to a 2026-27 `League`.
+
+Migration `0006` adds immutable `league_settings_snapshots` with document
+version, schema version, evidence summary, exact raw-response SHA-256, and the
+capture's actual observation time. Idempotency compares only the latest
+snapshot's normalized values and semantic provenance, excluding capture-specific
+hashes; repeated observations are skipped, source changes and A-to-B-to-A
+reversions create new versions. The operator command is
+`python -m hoops_gm.ingest.backfill league-settings LOCAL_LEAGUE_ID
+FANTRAX_LEAGUE_ID` and deliberately constructs a credentials-free official
+client.
+
+**Adapter evidence:** Committed
+`fantrax_getleagueinfo_settings_sanitized.json`. `leagueName`,
+`leagueHistoryId`, `teamInfo`, `playerInfo`, and `matchups` were removed whole;
+no retained source value was edited. The manifest records the original 106,773
+bytes, SHA-256
+`722b95c7bbecde2950aea9fea0ccc24519311248ee79a1320fe07455d718ae54`,
+source capture time, original top-level keys, and removed sections. The
+recorder bypasses cache. Offline contract tests pin the verified fields and
+explicit omissions. The live smoke bypasses cache, rejects top-level or nested
+rule drift, scans every array item, and receives the league id through an
+out-of-source GitHub Actions repository variable.
+
+**Now true:** R43 is closed on evidence: official `getLeagueInfo` does not carry
+the timing fields. The Code and Adapter gates pass on the rebased branch:
+Ruff, format, strict mypy, secret scan, 477 default tests, 75 offline adapter
+contract tests, all 13 live smoke tests, and SQLite migration
+upgrade/check/downgrade. Independent review reported no remaining significant
+issues after fixes for identity binding, cross-season fallback, raw provenance,
+freshness, drift coverage, nested fallback, semantic idempotency, provenance
+changes, and settings reversions.
+
+**Could not verify:** Fantrax has not rolled this league to 2026-27, so no final
+2026-27 rule can be claimed yet. The missing rule families could not be
+corroborated from the bridge because no new bridge capture was requested and
+the existing rendered-view contents were deliberately not inspected. No local
+Postgres service was available; the migration was exercised on SQLite and the
+repository's Postgres CI remains the cross-dialect check. `getDraftPicks`
+remains unverified against a successful live snake or auction response.
+
+**Next:** Re-run the credentials-free settings ingest after Fantrax exposes the
+2026-27 season. Use the existing read-only bridge only for official unknowns,
+without widening access or polling, and keep the 2025-26 snapshot historical.

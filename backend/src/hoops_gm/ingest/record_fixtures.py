@@ -194,7 +194,7 @@ def record_fantrax_league_settings() -> None:
     store = RawPayloadStore(Path("data/raw"))
     client = FantraxOfficialClient(store=store)
     params = {"leagueId": league_id}
-    payload = client.fetch_json("getLeagueInfo", params)
+    payload = client.fetch_json("getLeagueInfo", params, max_age=_never())
     if not isinstance(payload, dict):
         raise TypeError("getLeagueInfo fixture source must be a JSON object")
 
@@ -207,6 +207,7 @@ def record_fantrax_league_settings() -> None:
         "fantrax_getleagueinfo_settings_sanitized.json",
         _sanitize_league_settings(payload),
         meta={
+            "captured_at": capture.fetched_at.isoformat(),
             "source": "fantrax_official",
             "endpoint": "getLeagueInfo",
             "params": {"leagueId": "<redacted-non-secret-league-id>"},

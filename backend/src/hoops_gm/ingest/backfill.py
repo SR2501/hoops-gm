@@ -31,7 +31,6 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -117,15 +116,26 @@ def ingest_official_league_settings(
     fantrax_league_id: str,
 ) -> ImportCounts:
     """Fetch and persist one official snapshot; season mismatch fails loudly."""
+    if league.fantrax_league_id is None:
+        raise ValueError("target league must be linked to Fantrax before settings ingest")
+    if league.fantrax_league_id != fantrax_league_id:
+        raise ValueError(
+            "requested Fantrax league does not match target league: "
+            f"requested={fantrax_league_id!r}, linked={league.fantrax_league_id!r}"
+        )
     info = fantrax.get_league_info(fantrax_league_id)
     if info.settings is None:
         raise RuntimeError("getLeagueInfo parser returned no settings document")
+    if info.source_payload_sha256 is None:
+        raise RuntimeError("getLeagueInfo transport returned no raw payload digest")
+    if info.source_observed_at is None:
+        raise RuntimeError("getLeagueInfo transport returned no observation timestamp")
     return import_league_settings(
         session,
         league=league,
         document=info.settings,
         source_payload_sha256=info.source_payload_sha256,
-        observed_at=datetime.now(UTC),
+        observed_at=info.source_observed_at,
     )
 
 

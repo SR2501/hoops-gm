@@ -80,6 +80,16 @@ def import_league_settings(
     observed_at: datetime,
 ) -> ImportCounts:
     """Persist a new immutable settings version, or skip an identical document."""
+    if league.fantrax_league_id is None:
+        raise ValueError(
+            "target league must be linked to a Fantrax league id before settings import"
+        )
+    if league.fantrax_league_id != document.source_league_id:
+        raise ValueError(
+            "league settings identity mismatch: "
+            f"source leagueId={document.source_league_id!r}, "
+            f"target leagueId={league.fantrax_league_id!r}"
+        )
     expected_season = f"{document.source_season_year}-{str(document.source_season_year + 1)[-2:]}"
     if league.season != expected_season:
         raise ValueError(
@@ -91,6 +101,11 @@ def import_league_settings(
         raise ValueError("source_payload_sha256 must be a lowercase SHA-256 hex digest")
     if observed_at.tzinfo is None or observed_at.utcoffset() is None:
         raise ValueError("observed_at must be timezone-aware")
+    if document.unmapped_rule_paths:
+        raise ValueError(
+            "cannot persist settings with unhandled rule-shaped paths: "
+            f"{document.unmapped_rule_paths}"
+        )
 
     serialized = document.model_dump(mode="json")
     existing = list(
@@ -100,8 +115,10 @@ def import_league_settings(
             .order_by(LeagueSettingsSnapshot.version)
         )
     )
-    if any(snapshot.settings == serialized for snapshot in existing):
-        return ImportCounts(skipped=1)
+    if existing:
+        prior = LeagueSettingsDocument.model_validate(existing[-1].settings)
+        if prior.content_sha256() == document.content_sha256():
+            return ImportCounts(skipped=1)
 
     sourced_fields = (
         "lineup_lock",

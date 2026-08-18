@@ -25,8 +25,7 @@ identifier format load-bearing.
 
 from __future__ import annotations
 
-import hashlib
-import json
+from datetime import datetime
 from typing import Any
 
 from hoops_gm.identity.names import NON_PLAYER_POSITIONS, normalize_team_abbreviation
@@ -252,6 +251,8 @@ def parse_league_info(
     *,
     league_id: str | None = None,
     capture_ref: str | None = None,
+    source_payload_sha256: str | None = None,
+    source_observed_at: datetime | None = None,
 ) -> FantraxLeagueInfo:
     """Parse ``getLeagueInfo``.
 
@@ -262,10 +263,16 @@ def parse_league_info(
     endpoint = "getLeagueInfo"
     raise_for_error_envelope(payload, endpoint=endpoint)
     body = _require(payload, dict, endpoint=endpoint)
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    payload_sha256 = hashlib.sha256(canonical).hexdigest()
+    resolved_league_id = str(body.get("leagueId") or league_id or "")
+    if not resolved_league_id:
+        raise SourceContractError(
+            "successful payload did not identify a league",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
     if capture_ref is None:
-        capture_ref = f"{SOURCE}:{endpoint}:sha256:{payload_sha256}"
+        suffix = source_payload_sha256 or "digest-unavailable"
+        capture_ref = f"{SOURCE}:{endpoint}:sha256:{suffix}"
 
     raw_teams = body.get("fantasyTeams")
     if isinstance(raw_teams, list):
@@ -324,7 +331,7 @@ def parse_league_info(
     if scoring_type is None and isinstance(scoring_system, dict):
         scoring_type = scoring_system.get("type")
     return FantraxLeagueInfo(
-        league_id=str(body.get("leagueId") or league_id or ""),
+        league_id=resolved_league_id,
         league_name=_optional_str(body.get("leagueName")),
         sport=_optional_str(body.get("sport")),
         scoring_type=_optional_str(scoring_type),
@@ -332,10 +339,15 @@ def parse_league_info(
         roster_size=int(roster_size)
         if isinstance(roster_size, int | str) and str(roster_size).isdigit()
         else None,
-        source_payload_sha256=payload_sha256,
+        source_payload_sha256=source_payload_sha256,
+        source_observed_at=source_observed_at,
         teams=teams,
         scoring_categories=categories,
-        settings=parse_official_league_settings(body, capture_ref=capture_ref),
+        settings=parse_official_league_settings(
+            body,
+            source_league_id=resolved_league_id,
+            capture_ref=capture_ref,
+        ),
         unmapped_keys=tuple(sorted(set(body) - _LEAGUE_INFO_KNOWN_KEYS)),
     )
 

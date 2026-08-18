@@ -186,6 +186,7 @@ class LeagueSettingsDocument(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     schema_version: Literal[1] = SCHEMA_VERSION
+    source_league_id: str = Field(min_length=1, max_length=64)
     source_season_year: int = Field(ge=2000, le=2100)
     source_start_date: str
     source_end_date: str
@@ -202,13 +203,58 @@ class LeagueSettingsDocument(BaseModel):
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
+    def configuration_json(self) -> str:
+        """Canonical rule content, excluding observation-specific evidence."""
+        serialized = self.model_dump(mode="json")
+
+        def setting(name: str) -> dict[str, object]:
+            sourced = serialized[name]
+            evidence = sorted(
+                (
+                    {
+                        "source": item["source"],
+                        "status": item["status"],
+                        "source_path": item["source_path"],
+                    }
+                    for item in sourced["evidence"]
+                ),
+                key=lambda item: (
+                    str(item["source"]),
+                    str(item["status"]),
+                    str(item["source_path"]),
+                ),
+            )
+            return {
+                "value": sourced["value"],
+                "evidence": evidence,
+            }
+
+        configuration = {
+            "schema_version": serialized["schema_version"],
+            "source_league_id": serialized["source_league_id"],
+            "source_season_year": serialized["source_season_year"],
+            "source_start_date": serialized["source_start_date"],
+            "source_end_date": serialized["source_end_date"],
+            "lineup_lock": setting("lineup_lock"),
+            "waivers": setting("waivers"),
+            "games_caps": setting("games_caps"),
+            "roster_limits": setting("roster_limits"),
+            "scoring_periods": setting("scoring_periods"),
+            "trade_deadline": setting("trade_deadline"),
+            "playoffs": setting("playoffs"),
+            "keepers": setting("keepers"),
+            "unmapped_rule_paths": serialized["unmapped_rule_paths"],
+        }
+        return json.dumps(configuration, sort_keys=True, separators=(",", ":"))
+
     def content_sha256(self) -> str:
-        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+        return hashlib.sha256(self.configuration_json().encode("utf-8")).hexdigest()
 
 
 def parse_official_league_settings(
     payload: object,
     *,
+    source_league_id: str,
     capture_ref: str,
 ) -> LeagueSettingsDocument:
     """Normalize the settings ``getLeagueInfo`` actually exposes.
@@ -230,6 +276,7 @@ def parse_official_league_settings(
     roster_limits = _parse_roster_limits(payload.get("rosterInfo"), capture_ref=capture_ref)
     scoring_periods = _parse_scoring_periods(payload.get("scoringPeriods"), capture_ref=capture_ref)
     return LeagueSettingsDocument(
+        source_league_id=source_league_id,
         source_season_year=_required_positive_int(payload.get("seasonYear"), path="seasonYear"),
         source_start_date=_required_str(payload.get("startDate"), path="startDate"),
         source_end_date=_required_str(payload.get("endDate"), path="endDate"),
@@ -253,35 +300,169 @@ def merge_settings(
 
     if bridge is None:
         return official
-
-    def choose[ValueT](
-        primary: SourcedSetting[ValueT],
-        fallback: SourcedSetting[ValueT],
-    ) -> SourcedSetting[ValueT]:
-        if primary.is_known:
-            return primary
-        if fallback.is_known:
-            return SourcedSetting(
-                value=fallback.value,
-                evidence=primary.evidence + fallback.evidence,
-            )
-        return SourcedSetting(value=None, evidence=primary.evidence + fallback.evidence)
+    official_identity = (
+        official.source_league_id,
+        official.source_season_year,
+        official.source_start_date,
+        official.source_end_date,
+    )
+    bridge_identity = (
+        bridge.source_league_id,
+        bridge.source_season_year,
+        bridge.source_start_date,
+        bridge.source_end_date,
+    )
+    if official_identity != bridge_identity:
+        raise ValueError(
+            "cannot merge league settings from different league-season boundaries: "
+            f"official={official_identity!r}, bridge={bridge_identity!r}"
+        )
 
     return LeagueSettingsDocument(
+        source_league_id=official.source_league_id,
         source_season_year=official.source_season_year,
         source_start_date=official.source_start_date,
         source_end_date=official.source_end_date,
-        lineup_lock=choose(official.lineup_lock, bridge.lineup_lock),
-        waivers=choose(official.waivers, bridge.waivers),
-        games_caps=choose(official.games_caps, bridge.games_caps),
-        roster_limits=choose(official.roster_limits, bridge.roster_limits),
-        scoring_periods=choose(official.scoring_periods, bridge.scoring_periods),
-        trade_deadline=choose(official.trade_deadline, bridge.trade_deadline),
-        playoffs=choose(official.playoffs, bridge.playoffs),
-        keepers=choose(official.keepers, bridge.keepers),
+        lineup_lock=_choose_setting(official.lineup_lock, bridge.lineup_lock),
+        waivers=_merge_waivers(official.waivers, bridge.waivers),
+        games_caps=_merge_games_caps(official.games_caps, bridge.games_caps),
+        roster_limits=_merge_roster_limits(
+            official.roster_limits,
+            bridge.roster_limits,
+        ),
+        scoring_periods=_choose_setting(
+            official.scoring_periods,
+            bridge.scoring_periods,
+        ),
+        trade_deadline=_choose_setting(
+            official.trade_deadline,
+            bridge.trade_deadline,
+        ),
+        playoffs=_choose_setting(official.playoffs, bridge.playoffs),
+        keepers=_merge_keepers(official.keepers, bridge.keepers),
         unmapped_rule_paths=tuple(
             sorted({*official.unmapped_rule_paths, *bridge.unmapped_rule_paths})
         ),
+    )
+
+
+def _merge_roster_limits(
+    primary: SourcedSetting[RosterLimits],
+    fallback: SourcedSetting[RosterLimits],
+) -> SourcedSetting[RosterLimits]:
+    if primary.value is None or fallback.value is None:
+        return _choose_setting(primary, fallback)
+    merged = RosterLimits(
+        total=primary.value.total if primary.value.total is not None else fallback.value.total,
+        active=primary.value.active if primary.value.active is not None else fallback.value.active,
+        reserve=primary.value.reserve
+        if primary.value.reserve is not None
+        else fallback.value.reserve,
+        injured_reserve=primary.value.injured_reserve
+        if primary.value.injured_reserve is not None
+        else fallback.value.injured_reserve,
+        position_active={
+            **fallback.value.position_active,
+            **primary.value.position_active,
+        },
+        injured_reserve_eligibility=primary.value.injured_reserve_eligibility
+        if primary.value.injured_reserve_eligibility is not None
+        else fallback.value.injured_reserve_eligibility,
+    )
+    return _merged_setting(primary, fallback, merged)
+
+
+def _merge_waivers(
+    primary: SourcedSetting[WaiverRules],
+    fallback: SourcedSetting[WaiverRules],
+) -> SourcedSetting[WaiverRules]:
+    if primary.value is None or fallback.value is None:
+        return _choose_setting(primary, fallback)
+    mechanism = (
+        primary.value.claim_mechanism
+        if primary.value.claim_mechanism is not None
+        else fallback.value.claim_mechanism
+    )
+    faab_budget = primary.value.faab_budget
+    if faab_budget is None and mechanism == "faab":
+        faab_budget = fallback.value.faab_budget
+    merged = WaiverRules(
+        period_days=primary.value.period_days
+        if primary.value.period_days is not None
+        else fallback.value.period_days,
+        processing_time_local=primary.value.processing_time_local
+        if primary.value.processing_time_local is not None
+        else fallback.value.processing_time_local,
+        timezone=primary.value.timezone
+        if primary.value.timezone is not None
+        else fallback.value.timezone,
+        claim_mechanism=mechanism,
+        faab_budget=faab_budget,
+    )
+    return _merged_setting(primary, fallback, merged)
+
+
+def _merge_games_caps(
+    primary: SourcedSetting[GamesCapRules],
+    fallback: SourcedSetting[GamesCapRules],
+) -> SourcedSetting[GamesCapRules]:
+    if primary.value is None or fallback.value is None:
+        return _choose_setting(primary, fallback)
+    keyed = {(cap.scope, cap.position): cap for cap in fallback.value.caps}
+    keyed.update({(cap.scope, cap.position): cap for cap in primary.value.caps})
+    merged = GamesCapRules(caps=tuple(keyed.values()))
+    return _merged_setting(primary, fallback, merged)
+
+
+def _merge_keepers(
+    primary: SourcedSetting[KeeperRules],
+    fallback: SourcedSetting[KeeperRules],
+) -> SourcedSetting[KeeperRules]:
+    if primary.value is None or fallback.value is None:
+        return _choose_setting(primary, fallback)
+    merged = KeeperRules(
+        enabled=primary.value.enabled,
+        max_keepers=primary.value.max_keepers
+        if primary.value.max_keepers is not None
+        else fallback.value.max_keepers,
+        deadline_at=primary.value.deadline_at
+        if primary.value.deadline_at is not None
+        else fallback.value.deadline_at,
+        provider_options={
+            **fallback.value.provider_options,
+            **primary.value.provider_options,
+        },
+    )
+    return _merged_setting(primary, fallback, merged)
+
+
+def _choose_setting[ValueT](
+    primary: SourcedSetting[ValueT],
+    fallback: SourcedSetting[ValueT],
+) -> SourcedSetting[ValueT]:
+    if primary.is_known:
+        return primary
+    if fallback.is_known:
+        return SourcedSetting(
+            value=fallback.value,
+            evidence=primary.evidence + fallback.evidence,
+        )
+    return SourcedSetting(
+        value=None,
+        evidence=primary.evidence + fallback.evidence,
+    )
+
+
+def _merged_setting[ValueT](
+    primary: SourcedSetting[ValueT],
+    fallback: SourcedSetting[ValueT],
+    merged: ValueT,
+) -> SourcedSetting[ValueT]:
+    if merged == primary.value:
+        return primary
+    return SourcedSetting(
+        value=merged,
+        evidence=primary.evidence + fallback.evidence,
     )
 
 
@@ -481,7 +662,7 @@ def _find_unmapped_rule_paths(payload: dict[object, object]) -> tuple[str, ...]:
                 if len(path.split(".")) < 5:
                     visit(child, child_path)
         elif isinstance(value, list) and len(path.split(".")) < 5:
-            for child in value[:5]:
+            for child in value:
                 visit(child, f"{path}[*]")
 
     visit(payload, "$")
