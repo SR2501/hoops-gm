@@ -9,8 +9,10 @@ from __future__ import annotations
 from hoops_gm.scoring.profiles import (
     NINE_CATEGORY_DEFINITIONS,
     CategoryDefinition,
+    NonUnitCategoryWeightError,
     SourceCategory,
     UnsupportedCategoryError,
+    UnsupportedScoringFormatError,
     activate_scoring_profile_version,
     build_scoring_profile,
     current_scoring_profile,
@@ -20,8 +22,10 @@ from hoops_gm.scoring.profiles import (
 __all__ = [
     "NINE_CATEGORY_DEFINITIONS",
     "CategoryDefinition",
+    "NonUnitCategoryWeightError",
     "SourceCategory",
     "UnsupportedCategoryError",
+    "UnsupportedScoringFormatError",
     "activate_scoring_profile_version",
     "build_scoring_profile",
     "current_scoring_profile",
