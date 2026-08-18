@@ -513,6 +513,7 @@ def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameR
         record_refresh(
             session,
             artifact_type=RefreshArtifactType.SCHEDULE,
+            artifact_key="nba-schedule",
             version=version,
             source="nba_api:ScheduleLeagueV2",
             season=season,

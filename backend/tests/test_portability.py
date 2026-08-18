@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 
 import pytest
+from sqlalchemy import CheckConstraint, UniqueConstraint, inspect, text
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import DefaultClause
 
@@ -249,22 +249,76 @@ def test_schedule_context_tables_are_present() -> None:
     """The phase-4 quant context tables are now explicit model outputs."""
     assert "opponent_context" in Base.metadata.tables
     assert "off_night_slates" in Base.metadata.tables
-    context_columns = set(Base.metadata.tables["opponent_context"].columns.keys())
+    context_table = Base.metadata.tables["opponent_context"]
+    context_columns = set(context_table.columns.keys())
     assert {
         "team_schedule_id",
         "model_version",
         "schedule_version",
+        "source_version",
         "schedule_refreshed_at",
         "category_defence",
     }.issubset(context_columns)
-    slate_columns = set(Base.metadata.tables["off_night_slates"].columns.keys())
+    slate_table = Base.metadata.tables["off_night_slates"]
+    slate_columns = set(slate_table.columns.keys())
     assert {
         "scheduled_game_count",
         "is_off_night",
         "model_version",
         "schedule_version",
+        "source_version",
         "schedule_refreshed_at",
+        "input_snapshot",
     }.issubset(slate_columns)
+
+    context_checks = {
+        constraint.name
+        for constraint in context_table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert {
+        "ck_opponent_context_blowout_probability_range",
+        "ck_opponent_context_garbage_suppression_nonnegative",
+        "ck_opponent_context_pace_window_nonnegative",
+        "ck_opponent_context_defence_window_nonnegative",
+        "ck_opponent_context_different_opponent",
+    } <= context_checks
+
+    slate_checks = {
+        constraint.name
+        for constraint in slate_table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert {
+        "ck_off_night_slates_light_slate_percentile_range",
+        "ck_off_night_slates_threshold_percentile_range",
+        "ck_off_night_slates_scheduled_games_nonnegative",
+        "ck_off_night_slates_scheduled_teams_nonnegative",
+        "ck_off_night_slates_threshold_games_nonnegative",
+    } <= slate_checks
+
+    context_unique_keys = {
+        tuple(constraint.columns.keys())
+        for constraint in context_table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert (
+        "team_schedule_id",
+        "model_version",
+        "schedule_version",
+        "source_version",
+    ) in context_unique_keys
+    slate_unique_keys = {
+        tuple(constraint.columns.keys())
+        for constraint in slate_table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert (
+        "slate_date",
+        "model_version",
+        "schedule_version",
+        "source_version",
+    ) in slate_unique_keys
 
 
 def test_the_raw_bridge_payload_table_is_present() -> None:

@@ -37,27 +37,39 @@ from hoops_gm.db.models.enums import RefreshArtifactType
 
 
 class RefreshRun(IntPk, TimestampMixin, Base):
-    """One registered refresh of a schedule, projection, or model artifact.
+    """One registered refresh of a versioned artifact.
 
-    Idempotent by ``(artifact_type, version)``: re-registering the same
-    version — a schedule re-import that converges on identical facts, a model
-    redeploy under an unchanged version tag — touches ``refreshed_at`` and
-    ``summary`` on the existing row rather than creating a duplicate. History
-    is retained; old versions are never deleted, so "what was current on date
-    X" stays answerable. "What is current now" is simply the row with the
-    latest ``refreshed_at`` for that artifact type — see
+    Idempotent by ``(artifact_type, artifact_key, version)``: re-registering
+    the same version touches ``refreshed_at`` and ``summary`` on the existing
+    row rather than creating a duplicate. History is retained; old versions
+    are never deleted. "What is current now" is the latest row for the
+    requested artifact type, key, and optional season — see
     ``hoops_gm.db.lineage.current_refresh``.
     """
 
     __tablename__ = "refresh_runs"
     __table_args__ = (
-        UniqueConstraint("artifact_type", "version", name="uq_refresh_runs_type_version"),
-        Index("ix_refresh_runs_type_refreshed_at", "artifact_type", "refreshed_at"),
+        UniqueConstraint(
+            "artifact_type",
+            "artifact_key",
+            "version",
+            name="uq_refresh_runs_type_key_version",
+        ),
+        Index(
+            "ix_refresh_runs_current",
+            "artifact_type",
+            "artifact_key",
+            "season",
+            "refreshed_at",
+        ),
     )
 
     artifact_type: Mapped[RefreshArtifactType] = mapped_column(
         portable_enum(RefreshArtifactType, "refresh_artifact_type")
     )
+    #: Stable producer-defined identity within an artifact type. The default
+    #: preserves the original one-stream-per-type contract.
+    artifact_key: Mapped[str] = mapped_column(String(64), default="default")
     #: Opaque version label, matched byte-for-byte against the same string a
     #: consumer stamps on its own rows (e.g. ``opponent_context.schedule_version``).
     #: This registry never interprets it.
@@ -71,9 +83,12 @@ class RefreshRun(IntPk, TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(255))
     #: Counts and other refresh metadata the producer finds useful to record
     #: (rows created/updated, row counts). Never load-bearing for the cohort
-    #: check itself — only ``artifact_type``, ``version`` and ``refreshed_at`` are.
+    #: check itself — only the artifact scope, version, and refresh time are.
     summary: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"<RefreshRun {self.artifact_type}={self.version} at={self.refreshed_at}>"
+        return (
+            f"<RefreshRun {self.artifact_type}:{self.artifact_key}="
+            f"{self.version} at={self.refreshed_at}>"
+        )

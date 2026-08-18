@@ -66,12 +66,13 @@ def test_record_refresh_creates_a_row(session: Any) -> None:
 
     assert run.id is not None
     assert run.artifact_type == RefreshArtifactType.SCHEDULE
+    assert run.artifact_key == "default"
     assert run.version == "abc123"
     assert run.season == "2026-27"
     assert run.summary == {"team_schedule_rows": 30}
 
 
-def test_record_refresh_is_idempotent_by_type_and_version(session: Any) -> None:
+def test_record_refresh_is_idempotent_by_type_key_and_version(session: Any) -> None:
     first = record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
@@ -87,7 +88,9 @@ def test_record_refresh_is_idempotent_by_type_and_version(session: Any) -> None:
         summary={"team_schedule_rows": 30},
     )
 
-    assert first.id == second.id, "the same (artifact_type, version) must not duplicate"
+    assert first.id == second.id, (
+        "the same (artifact_type, artifact_key, version) must not duplicate"
+    )
     assert second.source == "second-run", "re-registering touches the row rather than no-op"
     rows = session.query(RefreshRun).all()
     assert len(rows) == 1
@@ -99,6 +102,41 @@ def test_record_refresh_opens_a_new_row_for_a_different_version(session: Any) ->
 
     rows = session.query(RefreshRun).all()
     assert len(rows) == 2
+
+
+def test_record_refresh_separates_artifact_keys(session: Any) -> None:
+    first = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key="nba-schedule",
+        version="v1",
+        source="s",
+    )
+    second = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key="injury-report",
+        version="v1",
+        source="s",
+    )
+
+    assert first.id != second.id
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SOURCE,
+            artifact_key="nba-schedule",
+        )
+        == first
+    )
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SOURCE,
+            artifact_key="injury-report",
+        )
+        == second
+    )
 
 
 def test_current_refresh_returns_none_when_nothing_registered(session: Any) -> None:
@@ -133,6 +171,45 @@ def test_current_refresh_is_scoped_to_its_own_artifact_type(session: Any) -> Non
 
     assert current_refresh(session, RefreshArtifactType.MODEL) is None
     assert current_refresh(session, RefreshArtifactType.PROJECTION) is None
+
+
+def test_current_refresh_can_scope_by_key_and_season_including_null(session: Any) -> None:
+    now = datetime.now(UTC)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key="nba-schedule",
+        version="unscoped",
+        source="s",
+        refreshed_at=now,
+    )
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key="nba-schedule",
+        version="2026",
+        season="2026-27",
+        source="s",
+        refreshed_at=now + timedelta(seconds=1),
+    )
+
+    unscoped = current_refresh(
+        session,
+        RefreshArtifactType.SOURCE,
+        artifact_key="nba-schedule",
+        season=None,
+    )
+    scoped = current_refresh(
+        session,
+        RefreshArtifactType.SOURCE,
+        artifact_key="nba-schedule",
+        season="2026-27",
+    )
+
+    assert unscoped is not None
+    assert unscoped.version == "unscoped"
+    assert scoped is not None
+    assert scoped.version == "2026"
 
 
 # --------------------------------------------------------------------------

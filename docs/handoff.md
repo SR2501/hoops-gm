@@ -1927,3 +1927,33 @@ not tested beyond the one real 2026-27 shape measured here.
 **Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
 merge or self-approve.
 
+---
+
+## 2026-08-18 — backend — Schedule-context schema provenance extension
+
+**Changed:** Added keyed, season-scopeable refresh lineage with a portable
+`source` artifact type, and registered NBA schedule cohorts under the stable
+`nba-schedule` key. Extended both schedule-context tables with a required
+`source_version`; added the off-night input snapshot, nullable uncalibrated
+garbage-time suppression, bounded probability/percentile checks, nonnegative
+count checks, and the team/opponent inequality. Alembic revision `0006`
+preserves existing history and backfills explicit legacy provenance before
+removing its temporary server defaults.
+
+**Now true:** Refresh streams can reuse version labels without colliding across
+artifact keys, callers can distinguish an omitted season filter from an
+explicit unscoped (`NULL`) season, and changed descriptive sources create new
+schedule-context history rather than overwriting an existing natural key.
+
+**Could not verify:** Native Postgres was not available locally. The migration
+and its legacy-row backfill were exercised on SQLite, and the existing CI
+Postgres migration job remains the required dialect verification. Downgrading
+after writing `source` refresh rows, duplicate legacy keys, or null
+garbage-time values will correctly refuse lossy conversion rather than delete
+or invent data.
+
+**Next:** The quant-owned computation may populate these contracts only after
+its Model gate; no schedule-context math, thresholding, playoff behavior, or
+schedule-density logic was added here.
+
+---

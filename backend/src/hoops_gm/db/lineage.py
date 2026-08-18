@@ -31,6 +31,13 @@ from hoops_gm.db.models.lineage import RefreshRun
 CohortStatus = Literal["current", "stale", "unknown"]
 
 
+class _SeasonNotSpecified:
+    pass
+
+
+_SEASON_NOT_SPECIFIED = _SeasonNotSpecified()
+
+
 def content_fingerprint(parts: Iterable[str]) -> str:
     """A short, deterministic fingerprint over an ordered sequence of strings.
 
@@ -53,6 +60,7 @@ def record_refresh(
     session: Session,
     *,
     artifact_type: RefreshArtifactType,
+    artifact_key: str = "default",
     version: str,
     source: str,
     season: str | None = None,
@@ -61,18 +69,16 @@ def record_refresh(
 ) -> RefreshRun:
     """Register that an artifact was (re)computed at ``version``.
 
-    Idempotent by ``(artifact_type, version)``: a repeat registration of the
-    same version touches ``refreshed_at``/``source``/``summary`` on the
-    existing row rather than duplicating it, so a schedule re-import that
-    converges on identical facts still moves "current" forward in time
-    without inventing a new cohort. Does not commit; callers already manage
-    their own transaction boundary (see ``db/session.py``).
+    Idempotent by ``(artifact_type, artifact_key, version)``. The default key
+    preserves the original contract for existing callers. Does not commit;
+    callers manage their own transaction boundary (see ``db/session.py``).
     """
 
     when = refreshed_at if refreshed_at is not None else datetime.now(UTC)
     existing = session.scalar(
         select(RefreshRun).where(
             RefreshRun.artifact_type == artifact_type,
+            RefreshRun.artifact_key == artifact_key,
             RefreshRun.version == version,
         )
     )
@@ -88,6 +94,7 @@ def record_refresh(
 
     run = RefreshRun(
         artifact_type=artifact_type,
+        artifact_key=artifact_key,
         version=version,
         season=season,
         source=source,
@@ -99,18 +106,31 @@ def record_refresh(
     return run
 
 
-def current_refresh(session: Session, artifact_type: RefreshArtifactType) -> RefreshRun | None:
-    """The most recently refreshed row for one artifact type, or ``None``.
+def current_refresh(
+    session: Session,
+    artifact_type: RefreshArtifactType,
+    *,
+    artifact_key: str = "default",
+    season: str | _SeasonNotSpecified | None = _SEASON_NOT_SPECIFIED,
+) -> RefreshRun | None:
+    """The latest row for one artifact type/key and optional season.
 
     ``None`` means no producer has ever registered a refresh for this
-    artifact type — a caller claiming a version against it is unverifiable,
-    not merely stale, and ``check_cohort`` reports that distinction as
-    ``"unknown"`` rather than silently treating it as a match or a mismatch.
+    scope. Omitting ``season`` searches all seasons; passing ``None`` matches
+    only unscoped rows.
     """
 
+    filters = [
+        RefreshRun.artifact_type == artifact_type,
+        RefreshRun.artifact_key == artifact_key,
+    ]
+    if not isinstance(season, _SeasonNotSpecified):
+        filters.append(
+            RefreshRun.season.is_(None) if season is None else RefreshRun.season == season
+        )
     return session.scalar(
         select(RefreshRun)
-        .where(RefreshRun.artifact_type == artifact_type)
+        .where(*filters)
         .order_by(RefreshRun.refreshed_at.desc(), RefreshRun.id.desc())
         .limit(1)
     )
