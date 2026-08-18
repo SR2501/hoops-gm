@@ -1614,3 +1614,88 @@ normally judged against.
 rebase should be needed unless `main` advances again before merge. This
 session made no write-path, automation, or scope changes beyond the rebase
 and the handoff-conflict resolution described above.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: fixed 4 blocking findings from independent review
+
+**Changed:** Independent review blocked PR #13 on four findings; fixed all
+four with regression tests, then rebased again onto `main` (which had
+advanced twice more, past PR #16 and PR #7). (1) `parser.py` was persisting
+the caller's *requested* `report_timestamp` on every entry rather than the
+PDF's own masthead instant. Because that field is part of
+`injury_report_entries`'s natural key, and the legacy hourly-filename era
+truncates a request to the hour while the masthead check tolerates 45
+minutes of drift from it, two different in-tolerance requests for the same
+PDF could each fabricate their own history row. `_verify_masthead` now
+returns the masthead's own parsed instant (converted to UTC), and every
+entry — and the returned `InjuryReportParseResult` itself — is stamped with
+that canonical value, never the request argument. (2) `importers.py`
+resolved which matchup tricode was "this" row's team from order-of-
+appearance across the imported batch — a real defect: importing a partial
+subset of a report (e.g. only the home team's rows, because the away team's
+report had not been filed yet) or a reordered sequence let appearance order
+disagree with the report's actual away-then-home structure and resolve a
+team to its opponent. Replaced it with direct `team_raw -> nba_teams.name`
+matching (the same "City Nickname" string `import_teams` already populates
+from the stats API's own `full_name`), cross-verified against the row's own
+matchup tricode pair — a resolution that needs no other row for context and
+so cannot be fooled by import order or a partial batch. (3) A nonempty row
+naming no player and no status, whose Reason was not the `NOT YET SUBMITTED`
+marker, was silently `continue`-d past instead of raising. Fixed to raise
+`SourceContractError`. Fixing this immediately surfaced a genuine,
+previously-hidden defect in the real committed fixture: `Toppin, Obi`'s
+wrapped, two-line Reason splits across a page break (`"...Stress"` on page
+2, `"Fracture"` alone at the top of page 3), and that orphaned continuation
+was being silently dropped, truncating the real reason. Added a narrowly-
+scoped exception — only the first row-segment of a page after the first,
+with every column but Reason blank — that reattaches the continuation to
+the preceding entry instead of raising or dropping it. (4) Added a second
+live-smoke probe against the active 15-minute-granularity filename era
+(`2026-01-15 17:30`, the convention 2026-27 will actually use), distinct
+from the existing legacy-era probe, with documented rotation/failure
+behavior in the test's own docstring; it remains `live_smoke`-marked
+(visible on demand, never part of the blocking Code/Adapter gate).
+
+**Now true:** All four fixes have dedicated regression tests: masthead
+canonicalization proven by parsing the same fixture PDF with two different
+in-tolerance request instants and asserting both the parse result and an
+idempotent import converge on one canonical timestamp and one row set; team
+resolution proven by a partial-subset case (only the home team's row
+present) and a reordered-entries case, both asserting the correct team
+survives rather than swapping to its opponent; the loud raise proven by
+exercising the full `parse_injury_report_pdf` entry point (not a private
+helper) against a synthetic pdfplumber-page double with a monkeypatched
+`pdfplumber.open`; and the page-break reattachment proven directly against
+the real fixture, asserting `Toppin, Obi`'s reason now reads
+`"Injury/Illness - Right Foot; Stress Fracture"` in full. `docs/adapters/
+nba-injury-report.md` was updated to describe all of the above, including
+the corrected team-resolution rationale (the order-of-appearance claim it
+previously documented was itself part of the defect). Rebased cleanly onto
+current `main` (past PR #16's docs-only ADR-008/governance commit and PR
+#7's `schedule-density` work, neither of which touches any injury-report
+file); the only conflict was the same append-only `docs/handoff.md`
+collision as both prior rebases, resolved identically by keeping every
+dated entry in full. Local Code gate green: ruff lint/format, mypy strict
+(84 source files), full default pytest suite, and the 3
+`TestInjuryReportIsAlive` live smoke tests run separately against the real
+source (including the new active-era probe). Pushed with
+`--force-with-lease`; both GitHub Actions CI runs (`push` and `pull_request`
+synchronize) completed `success`, including `Backend — the same suite
+against Postgres (ADR-001)`. `gh pr view 13` reports `mergeStateStatus:
+CLEAN`, `mergeable: MERGEABLE`.
+
+**Could not verify:** Whether a third, still-undiscovered malformed-row
+shape exists elsewhere in the real report that the new loud-raise would
+also need a reattachment exception for — only the one page-break case
+surfaced by the committed fixture was found and handled; a different capture
+could still expose another shape the raise correctly flags as unexpected
+review-worthy behavior rather than something this fix silently papers over.
+Did not re-verify `Adapter gate — live smoke`'s `skipping` conclusion in this
+pass (open from the prior entry); still believed non-blocking by design, not
+re-inspected further here.
+
+**Next:** PR #13 is CI-clean and mergeable as of this session. Did not merge
+and did not self-approve, per instructions; the branch awaits an independent
+reviewer's confirmation that these four fixes actually close the findings
+they were raised against.
