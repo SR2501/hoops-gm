@@ -66,6 +66,8 @@
     }
 
     return {
+      backendOrigin: origin,
+      isPaired: () => getSecret(storage) !== null,
       secretKey: SECRET_KEY,
       storeSecret: (secret) => storage.set(SECRET_KEY, secret),
       healthCheck: () => authenticatedSend("GET", "/health"),

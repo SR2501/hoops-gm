@@ -55,6 +55,7 @@ def test_payload_persists_exact_envelope_and_raw_diagnostic_fields(
     app: FastAPI, client: TestClient
 ) -> None:
     _auth(app)
+    assert isinstance(app.state.settings.bridge_secret, SecretStr)
     raw = json.dumps(_envelope(), separators=(",", ":"))
     response = client.post(
         "/api/v1/bridge/payloads",
@@ -71,6 +72,35 @@ def test_payload_persists_exact_envelope_and_raw_diagnostic_fields(
         assert row.body_parse_error == "Unexpected token <"
         assert row.body_json is None
         assert row.request_method == "POST"
+
+
+def test_runtime_paired_secret_authenticates_and_persists_payload(
+    app: FastAPI, client: TestClient
+) -> None:
+    pairing_response = client.get("/api/v1/bridge/pairing")
+    assert pairing_response.status_code == 200
+
+    pair_response = client.post(
+        "/api/v1/bridge/pair",
+        headers={"X-Hoops-GM-Pairing-Code": pairing_response.json()["code"]},
+    )
+    assert pair_response.status_code == 200
+    runtime_secret = pair_response.json()["bridgeSecret"]
+    assert isinstance(runtime_secret, str)
+    assert isinstance(app.state.settings.bridge_secret, str)
+
+    response = client.post(
+        "/api/v1/bridge/payloads",
+        json=_envelope(),
+        headers={"X-Bridge-Secret": runtime_secret},
+    )
+    assert response.status_code == 201
+
+    with app.state.database.session() as session:
+        row = session.scalar(select(BridgePayload))
+        assert row is not None
+        assert row.id == response.json()["id"]
+        assert row.dedupe_key == _envelope()["dedupeKey"]
 
 
 def test_payload_accepts_cache_storage_source_for_service_worker_owned_traffic(
@@ -128,6 +158,37 @@ def test_payload_accepts_manual_export_source_with_no_response_status(
         assert row.source == "manual-export"
         assert row.response_status is None
         assert row.request_url == "https://www.fantrax.com/fantasy/league/abc/draft"
+
+
+def test_payload_accepts_automatic_rendered_view_source(app: FastAPI, client: TestClient) -> None:
+    """The automatic service-worker fallback is not mislabelled as raw RPC."""
+
+    _auth(app)
+    envelope = {
+        **_envelope(),
+        "source": "rendered-view",
+        "request": {
+            "method": "GET",
+            "url": "https://www.fantrax.com/fantasy/league/abc/players",
+        },
+        "response": {"status": None, "ok": True, "contentType": "text/html"},
+        "body": {
+            "raw": "<main>rendered players</main>",
+            "json": None,
+            "parseError": "Unexpected token <",
+        },
+    }
+    response = client.post(
+        "/api/v1/bridge/payloads", json=envelope, headers={"X-Bridge-Secret": SECRET}
+    )
+    assert response.status_code == 201
+
+    with app.state.database.session() as session:
+        row = session.scalar(select(BridgePayload))
+        assert row is not None
+        assert row.source == "rendered-view"
+        assert row.response_status is None
+        assert row.body_raw == "<main>rendered players</main>"
 
 
 def test_payload_rejects_an_unknown_source(app: FastAPI, client: TestClient) -> None:

@@ -61,6 +61,28 @@ test("shouldCapture rejects paths that merely look similar or are unrelated", as
   assert.equal(capture.shouldCapture("not a url"), false);
 });
 
+test("isFantraxLeaguePage accepts only scoped HTTPS league pages", async () => {
+  const capture = await loadCapture();
+  assert.equal(
+    capture.isFantraxLeaguePage("https://www.fantrax.com/fantasy/league/abc/draft"),
+    true
+  );
+  assert.equal(
+    capture.isFantraxLeaguePage("https://fantrax.com/fantasy/league/abc?view=players"),
+    true
+  );
+  assert.equal(capture.isFantraxLeaguePage("https://www.fantrax.com/fantasy/league/"), false);
+  assert.equal(capture.isFantraxLeaguePage("https://www.fantrax.com/fantasy/home"), false);
+  assert.equal(
+    capture.isFantraxLeaguePage("http://www.fantrax.com/fantasy/league/abc"),
+    false
+  );
+  assert.equal(
+    capture.isFantraxLeaguePage("https://example.test/fantasy/league/abc"),
+    false
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Normalization: malformed / non-JSON bodies
 // ---------------------------------------------------------------------------
@@ -264,6 +286,41 @@ test("a failing transport.sendPayload does not throw or reject unhandled", async
 
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /failed to forward captured payload/);
+});
+
+test("a failed delivery may retry on a later event without an internal retry loop", async () => {
+  const capture = await loadCapture();
+  let attempts = 0;
+  let backendAvailable = false;
+  const transport = {
+    sendPayload: async () => {
+      attempts += 1;
+      if (!backendAvailable) {
+        throw new Error("backend unreachable");
+      }
+    },
+  };
+  const instance = capture.createCapture({
+    transport,
+    logger: { warn: () => {} },
+  });
+  const details = {
+    source: "fetch",
+    url: "/fxpa/req",
+    method: "GET",
+    status: 200,
+    ok: true,
+    raw: "{}",
+  };
+
+  instance.handleCaptured(details);
+  await flushMicrotasks();
+  assert.equal(attempts, 1);
+
+  backendAvailable = true;
+  instance.handleCaptured(details);
+  await flushMicrotasks();
+  assert.equal(attempts, 2);
 });
 
 test("handleCaptured swallows an internal error instead of throwing into the page", async () => {
@@ -673,7 +730,7 @@ test("page-world hook Cache Storage watcher never throws when caches.keys() reje
   assert.equal(published.length, 0);
 });
 
-test("pageEventDetails accepts a cache-storage source and still rejects an unknown source", async () => {
+test("pageEventDetails accepts cache storage but rejects isolated-world snapshot sources", async () => {
   const capture = await loadCapture();
   const win = makeMessageWindow();
   const base = {
@@ -698,11 +755,54 @@ test("pageEventDetails accepts a cache-storage source and still rejects an unkno
     { channel: "chan", origin: win.location.origin, source: win }
   );
   assert.equal(rejected, null, "manual-export never travels over the page postMessage channel");
+
+  const renderedView = capture.pageEventDetails(
+    { source: win, origin: win.location.origin, data: { ...base, source: "rendered-view" } },
+    { channel: "chan", origin: win.location.origin, source: win }
+  );
+  assert.equal(renderedView, null, "rendered-view never travels over the page postMessage channel");
 });
 
 // ---------------------------------------------------------------------------
-// captureManual: the guaranteed, owner-triggered fallback
+// Rendered-view and manual fallback envelopes
 // ---------------------------------------------------------------------------
+
+test("captureRenderedView is league-scoped, deduped, and carries no request data", async () => {
+  const capture = await loadCapture();
+  const sent = [];
+  const instance = capture.createCapture({
+    transport: { sendPayload: async (envelope) => sent.push(envelope) },
+    now: () => 1700000000000,
+  });
+  const details = {
+    url: "https://www.fantrax.com/fantasy/league/abc/draft",
+    raw: "<main>draft board</main>",
+  };
+
+  assert.equal(instance.captureRenderedView(details), true);
+  assert.equal(instance.captureRenderedView(details), true);
+  assert.equal(
+    instance.captureRenderedView({
+      url: "https://example.test/fantasy/league/abc",
+      raw: details.raw,
+    }),
+    false
+  );
+  await flushMicrotasks();
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].source, "rendered-view");
+  assert.deepEqual(toPlain(sent[0].request), {
+    method: "GET",
+    url: details.url,
+  });
+  assert.equal(sent[0].response.status, null);
+  assert.equal(sent[0].response.contentType, "text/html");
+  assert.equal(sent[0].body.raw, details.raw);
+  assert.equal("headers" in sent[0], false);
+  assert.equal("body" in sent[0].request, false);
+  assert.doesNotMatch(JSON.stringify(sent[0]), /cookie/i);
+});
 
 test("createCapture().captureManual bypasses the /fxpa/req URL filter and forwards a manual-export envelope", async () => {
   const capture = await loadCapture();
@@ -762,6 +862,63 @@ function makeCloneableRoot() {
   };
 }
 
+function makeDynamicRoot(readContent) {
+  return {
+    cloneNode() {
+      return {
+        querySelectorAll: () => [],
+        get outerHTML() {
+          return `<main>${readContent()}</main>`;
+        },
+      };
+    },
+  };
+}
+
+function makeFakeClock() {
+  let current = 0;
+  let nextId = 1;
+  const timeouts = new Map();
+  const intervals = new Map();
+  return {
+    now: () => current,
+    setTimeout(fn, delay) {
+      const id = nextId++;
+      timeouts.set(id, { due: current + Math.max(0, delay), fn });
+      return id;
+    },
+    clearTimeout(id) {
+      timeouts.delete(id);
+    },
+    setInterval(fn, delay) {
+      const id = nextId++;
+      intervals.set(id, { fn, delay });
+      return id;
+    },
+    clearInterval(id) {
+      intervals.delete(id);
+    },
+    advance(ms) {
+      const target = current + ms;
+      while (true) {
+        const next = Array.from(timeouts.entries())
+          .filter(([, task]) => task.due <= target)
+          .sort((left, right) => left[1].due - right[1].due)[0];
+        if (!next) {
+          break;
+        }
+        const [id, task] = next;
+        timeouts.delete(id);
+        current = task.due;
+        task.fn();
+      }
+      current = target;
+    },
+    pendingTimeouts: () => timeouts.size,
+    pendingIntervals: () => intervals.size,
+  };
+}
+
 test("buildDomSnapshotHtml strips script/style/noscript but keeps rendered content", async () => {
   const capture = await loadCapture();
   const doc = { querySelector: (selector) => (selector === "main" ? makeCloneableRoot() : null) };
@@ -784,6 +941,36 @@ test("buildDomSnapshotHtml truncates output past the size bound", async () => {
   const html = capture.buildDomSnapshotHtml(doc);
   assert.ok(html.length < huge.length + 200);
   assert.match(html, /truncated/);
+});
+
+test("buildDomSnapshotHtml sanitizes only the detached clone's form state", async () => {
+  const capture = await loadCapture();
+  let liveRootTouched = false;
+  const attributes = new Set(["value", "checked", "selected"]);
+  const textarea = { tagName: "TEXTAREA", textContent: "typed private text" };
+  const input = {
+    tagName: "INPUT",
+    removeAttribute: (name) => attributes.delete(name),
+  };
+  textarea.removeAttribute = (name) => attributes.delete(name);
+  const liveRoot = {
+    querySelectorAll: () => {
+      liveRootTouched = true;
+      return [];
+    },
+    cloneNode: () => ({
+      querySelectorAll: (selector) =>
+        selector === "input, textarea, select, option" ? [input, textarea] : [],
+      get outerHTML() {
+        return `<main data-attrs="${Array.from(attributes).join(",")}"><textarea>${textarea.textContent}</textarea></main>`;
+      },
+    }),
+  };
+  const doc = { querySelector: (selector) => (selector === "main" ? liveRoot : null) };
+
+  const html = capture.buildDomSnapshotHtml(doc);
+  assert.equal(liveRootTouched, false, "the live Fantrax root must never be queried or changed");
+  assert.doesNotMatch(html, /value|checked|selected|typed private text/);
 });
 
 test("selectSnapshotRoot tries main, #root, #app, body in order and falls back to documentElement", async () => {
@@ -811,6 +998,284 @@ test("readExposedAppState prefers the first present global and survives a throwi
   assert.equal(found.json, JSON.stringify({ league: "abc" }));
 
   assert.equal(capture.readExposedAppState({}), null);
+});
+
+test("automatic rendered-view snapshot stays visible, league-scoped, bounded, and DOM-only", async () => {
+  const capture = await loadCapture();
+  const captured = [];
+  const root = makeDynamicRoot(() => "x".repeat(200));
+  const doc = {
+    visibilityState: "visible",
+    querySelector: (selector) => (selector === "main" ? root : null),
+  };
+  Object.defineProperty(doc, "cookie", {
+    get() {
+      throw new Error("automatic capture must never read cookies");
+    },
+  });
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+  };
+  const instance = {
+    captureRenderedView: (details) => {
+      captured.push(details);
+      return true;
+    },
+  };
+
+  const result = capture.captureRenderedViewSnapshot({
+    capture: instance,
+    win,
+    doc,
+    maxChars: 50,
+  });
+  assert.equal(result.captured, true);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].url, win.location.href);
+  assert.match(captured[0].raw, /truncated at 50 chars/);
+
+  doc.visibilityState = "hidden";
+  assert.equal(
+    capture.captureRenderedViewSnapshot({ capture: instance, win, doc }).captured,
+    false
+  );
+  win.location.href = "https://example.test/fantasy/league/abc";
+  doc.visibilityState = "visible";
+  assert.equal(
+    capture.captureRenderedViewSnapshot({ capture: instance, win, doc }).captured,
+    false
+  );
+  const frameWindow = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" },
+    top: {},
+  };
+  assert.equal(
+    capture.captureRenderedViewSnapshot({
+      capture: instance,
+      win: frameWindow,
+      doc,
+    }).captured,
+    false
+  );
+  assert.equal(captured.length, 1);
+});
+
+test("automatic watcher captures initial settle, rate-limited mutations, and SPA navigation", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const sent = [];
+  let view = "initial";
+  let observerCallback;
+  let observerDisconnected = false;
+  let observedOptions;
+  class FakeMutationObserver {
+    constructor(callback) {
+      observerCallback = callback;
+    }
+    observe(_target, options) {
+      observedOptions = options;
+    }
+    disconnect() {
+      observerDisconnected = true;
+    }
+  }
+  const root = makeDynamicRoot(() => view);
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/players" },
+    addEventListener: (name, handler) => windowListeners.set(name, handler),
+    removeEventListener: (name) => windowListeners.delete(name),
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: (selector) => (selector === "main" ? root : null),
+    addEventListener: (name, handler) => documentListeners.set(name, handler),
+    removeEventListener: (name) => documentListeners.delete(name),
+  };
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async (envelope) => sent.push(envelope),
+  };
+  const instance = capture.createCapture({ transport, now: clock.now });
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: instance,
+    transport,
+    win,
+    doc,
+    MutationObserverCtor: FakeMutationObserver,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 100,
+    maxSettleMs: 500,
+    navigationMinIntervalMs: 50,
+    mutationMinIntervalMs: 1000,
+    locationPollMs: 250,
+  });
+
+  assert.equal(watcher.installed, true);
+  assert.deepEqual(toPlain(observedOptions), { childList: true, subtree: true });
+  assert.equal(clock.pendingIntervals(), 1);
+  clock.advance(99);
+  await flushMicrotasks();
+  assert.equal(sent.length, 0);
+  clock.advance(1);
+  await flushMicrotasks();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].source, "rendered-view");
+  assert.match(sent[0].body.raw, /initial/);
+
+  view = "settled mutation";
+  observerCallback();
+  clock.advance(999);
+  await flushMicrotasks();
+  assert.equal(sent.length, 1, "same-view DOM churn is limited to one attempt per interval");
+  clock.advance(1);
+  await flushMicrotasks();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].body.raw, /settled mutation/);
+
+  view = "draft route";
+  win.location.href = "https://www.fantrax.com/fantasy/league/abc/draft";
+  watcher.checkContext();
+  clock.advance(99);
+  await flushMicrotasks();
+  assert.equal(sent.length, 2);
+  clock.advance(1);
+  await flushMicrotasks();
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].request.url, win.location.href);
+  assert.match(sent[2].body.raw, /draft route/);
+
+  watcher.uninstall();
+  assert.equal(observerDisconnected, true);
+  assert.equal(clock.pendingTimeouts(), 0);
+  assert.equal(clock.pendingIntervals(), 0);
+  assert.equal(windowListeners.size, 0);
+});
+
+test("automatic watcher waits for document-start DOMContentLoaded before initial capture", async () => {
+  const capture = await loadCapture();
+  const clock = makeFakeClock();
+  const sent = [];
+  const listeners = new Map();
+  const root = makeDynamicRoot(() => "ready league view");
+  const win = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/players" },
+  };
+  const doc = {
+    readyState: "loading",
+    visibilityState: "visible",
+    documentElement: null,
+    querySelector: (selector) => (selector === "main" && doc.documentElement ? root : null),
+    addEventListener: (name, handler) => listeners.set(name, handler),
+    removeEventListener: (name) => listeners.delete(name),
+  };
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => true,
+    sendPayload: async (envelope) => sent.push(envelope),
+  };
+  const instance = capture.createCapture({ transport, now: clock.now });
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: instance,
+    transport,
+    win,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 25,
+    maxSettleMs: 25,
+    navigationMinIntervalMs: 0,
+  });
+  assert.equal(watcher.installed, true);
+  assert.equal(clock.pendingTimeouts(), 0);
+  assert.equal(typeof listeners.get("DOMContentLoaded"), "function");
+
+  doc.readyState = "complete";
+  doc.documentElement = root;
+  listeners.get("DOMContentLoaded")();
+  clock.advance(25);
+  await flushMicrotasks();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body.raw, /ready league view/);
+  watcher.uninstall();
+});
+
+test("automatic watcher requires the exact local transport and waits for pairing", async () => {
+  const capture = await loadCapture();
+  const root = makeDynamicRoot(() => "players");
+  const baseWindow = {
+    location: { href: "https://www.fantrax.com/fantasy/league/abc/players" },
+  };
+  const doc = {
+    readyState: "complete",
+    visibilityState: "visible",
+    documentElement: root,
+    querySelector: () => root,
+  };
+  assert.equal(
+    capture.hasPairedLocalTransport({
+      backendOrigin: "https://collector.example",
+      isPaired: () => true,
+    }),
+    false
+  );
+  assert.equal(
+    capture.installAutomaticRenderedViewCapture({
+      capture: { captureRenderedView: () => true },
+      transport: {
+        backendOrigin: "https://collector.example",
+        isPaired: () => true,
+      },
+      win: baseWindow,
+      doc,
+    }).installed,
+    false
+  );
+
+  const clock = makeFakeClock();
+  const sent = [];
+  let paired = false;
+  const transport = {
+    backendOrigin: "http://127.0.0.1:8000",
+    isPaired: () => paired,
+    sendPayload: async (envelope) => sent.push(envelope),
+  };
+  const instance = capture.createCapture({ transport, now: clock.now });
+  const watcher = capture.installAutomaticRenderedViewCapture({
+    capture: instance,
+    transport,
+    win: baseWindow,
+    doc,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+    setIntervalFn: clock.setInterval,
+    clearIntervalFn: clock.clearInterval,
+    settleMs: 10,
+    maxSettleMs: 10,
+    navigationMinIntervalMs: 0,
+    mutationMinIntervalMs: 100,
+  });
+  assert.equal(watcher.installed, true);
+  assert.equal(clock.pendingTimeouts(), 0);
+
+  paired = true;
+  watcher.checkContext();
+  clock.advance(10);
+  await flushMicrotasks();
+  assert.equal(sent.length, 1);
+  watcher.uninstall();
 });
 
 test("captureManualSnapshot prefers exposed app state over a DOM snapshot", async () => {
