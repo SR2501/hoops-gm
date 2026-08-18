@@ -21,10 +21,9 @@ test("build metadata carries the loopback update/download URL and version", asyn
 
   assert.match(built, /^\/\/ ==UserScript==/);
   assert.match(built, /\/\/ ==\/UserScript==\n\n/);
-  assert.match(
-    built,
-    new RegExp(`// @version\\s+${packageJson.version.replace(/\./g, "\\.")}\\b`)
-  );
+  const versionMatch = built.match(/\/\/ @version\s+(\S+)/);
+  assert.ok(versionMatch, "@version is present");
+  assert.equal(versionMatch[1], packageJson.version);
 
   const updateUrlMatch = built.match(/\/\/ @updateURL\s+(\S+)/);
   const downloadUrlMatch = built.match(/\/\/ @downloadURL\s+(\S+)/);
