@@ -1699,3 +1699,66 @@ re-inspected further here.
 and did not self-approve, per instructions; the branch awaits an independent
 reviewer's confirmation that these four fixes actually close the findings
 they were raised against.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: current-season dynamic live-smoke probe (MEDIUM finding)
+
+**Changed:** Focused re-review confirmed the four core fixes but held one
+MEDIUM Adapter-gate finding: the new "active-era" live smoke probe added to
+close finding 4 still used a fixed, permanently archived January 2026
+timestamp. An archived URL survives a filename-format rotation by
+construction — the CDN keeps serving the exact bytes it always served for
+that historical path — so it can never detect the NBA introducing a
+*third* filename convention or PDF layout for 2026-27. Added
+`select_recent_report_candidate` (`test_injury_report.py`, offline,
+unit-tested, no `live_smoke` marker) and a new
+`TestInjuryReportCurrentSeasonIsAlive` live test
+(`test_live_smoke.py`) built on it, rather than a fixed archive. The
+candidate is grounded in an independently defensible fact, not a calendar
+guess: `SEASON_2026_27_START = date(2026, 10, 20)`, the actual first
+`gameDate` in the already-recorded, really-captured `ScheduleLeagueV2`
+fixture (`nba_scheduleleaguev2_2026_27.json`). Only within that season's
+window (through a documented 240-day span covering the regular season and
+playoffs) does the function return a candidate — yesterday-evening-ET, the
+report's own documented publication window — clamped so opening day never
+probes a "yesterday" before the season existed. Outside that window it
+returns `None`, and the live test explicitly `pytest.skip`s with the reason
+spelled out, rather than either a noisy off-season red failure or the
+failure mode the review specifically called out: silently treating an
+expected 403/404 as evidence the adapter still works. When in season, a
+403/404 or parse failure on the chosen candidate is a real, unswallowed test
+failure — the whole point of picking a timestamp a report is actually
+expected to exist for. Exactly one candidate, therefore at most one HTTP
+request, per run. The archived legacy and 15-minute-era probes from finding
+4 are unchanged and still run alongside this one.
+
+**Now true:** Six new offline unit tests in `test_injury_report.py` pin the
+selection logic directly: naive-`now` rejection, `None` before the season
+starts (exercised against the real current date, 2026-08-18, which *is*
+before the season), `None` long after the season span, the ordinary
+in-season case, the opening-day clamp, and a non-Eastern-aware `now`
+(UTC) converting correctly. Ran the live test directly today: it
+`pytest.skip`s with the exact off-season message, confirming the guard
+behaves as designed against the real current date rather than only in
+unit tests. `docs/adapters/nba-injury-report.md` gained a "Live smoke
+coverage" section stating plainly what the dynamic probe can detect (URL/
+layout drift for a *current* request) and cannot (which specific format
+era is active, or "source broke" vs. "no game that day" any more precisely
+than the 240-day approximation allows). Full local Code gate green: ruff
+lint/format (one file needed `ruff format` after adding the new tests, now
+clean), mypy strict (84 source files), full default pytest suite, and the
+injury-report live smoke tests run separately (3 passed, 1 skipped — the
+new current-season probe, correctly, since today is off-season).
+
+**Could not verify:** Whether the dynamic probe actually executes (rather
+than skips) once the 2026-27 season starts — by construction, that cannot
+be observed until October 2026. The 240-day season span is an approximation
+extrapolated from typical regular-season-plus-playoffs length, not a
+captured end-of-season date; no fixture yet records when the 2026-27 season
+actually concludes, so a future session should tighten this once one does.
+
+**Next:** PR #13 awaits the independent reviewer's focused re-review of
+this fix. This closes the last outstanding finding raised so far; no other
+follow-up is expected from this session absent further review feedback.
+

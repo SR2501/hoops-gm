@@ -8,7 +8,7 @@ marker for two teams whose report had not been filed as of this capture.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
@@ -585,3 +585,119 @@ def test_import_does_not_swap_teams_when_entries_are_out_of_report_order(session
     rows = {r.player_name_raw: r for r in session.scalars(select(InjuryReportEntry)).all()}
     assert rows["Lopez, Brook"].team_id == teams[1610612749]  # Milwaukee Bucks stays Bucks
     assert rows["Murray, Keegan"].team_id == teams[1610612758]  # Sacramento Kings stays Kings
+
+
+# ==========================================================================
+# Current-season live-smoke candidate selection
+#
+# The selection logic itself is unit-tested here, offline, as part of the
+# default suite (this module carries no `live_smoke` marker). The actual
+# live HTTP fetch that uses it lives in
+# `test_live_smoke.py::TestInjuryReportCurrentSeasonIsAlive`, which imports
+# `select_recent_report_candidate` from this module rather than duplicating
+# it, so the exact logic proven here offline is what runs live.
+# ==========================================================================
+
+#: The earliest confirmed game date of the 2026-27 season -- taken directly
+#: from the real captured `ScheduleLeagueV2` response recorded as
+#: `nba_scheduleleaguev2_2026_27.json` (see `hoops_gm.ingest.record_fixtures`),
+#: not a calendar guess about when an NBA season "usually" starts. This is
+#: the independently defensible ground truth the current-season live smoke
+#: probe needs, so that an off-season day produces a documented, deliberate
+#: skip rather than either a noisy 403/404 "failure" against a source with
+#: nothing to report, or -- the failure mode this whole probe exists to
+#: avoid -- silently treating that same 403/404 as evidence the adapter
+#: still works.
+SEASON_2026_27_START = date(2026, 10, 20)
+
+#: How long after the season start a request is still plausibly "in
+#: season" for this probe's purposes: long enough to span the regular
+#: season and playoffs (roughly October through mid-June), short enough
+#: that running this code long after the season actually ended is not
+#: mistaken for a live one. This is an approximation, not a captured end
+#: date -- no fixture yet records the season's actual final game -- and is
+#: documented here explicitly rather than left implicit.
+SEASON_SPAN = timedelta(days=240)
+
+
+def select_recent_report_candidate(now: datetime) -> datetime | None:
+    """Pick a recent, in-season evening report timestamp to probe live.
+
+    Returns ``None`` -- deliberately, rather than fabricating a timestamp
+    nothing grounds -- when ``now`` falls outside the known 2026-27 season
+    window (``SEASON_2026_27_START`` through ``SEASON_2026_27_START +
+    SEASON_SPAN``). A caller that gets ``None`` back should skip the live
+    probe entirely rather than either failing noisily against a source with
+    nothing to report that day, or silently treating a 403/404 as evidence
+    the adapter still works -- the same class of false-positive this project
+    already avoided once by folding both codes into one explicit
+    ``ReportNotAvailable``.
+
+    When ``now`` is in season, returns the evening *before* ``now``'s own
+    date at 17:30 ET: solidly inside the report's documented "evening
+    before tip-off, updated through game day" publication window
+    (``docs/adapters/nba-injury-report.md``) regardless of what time of day
+    ``now`` itself is, and clamped so it is never earlier than the season's
+    own start -- on opening day itself, "yesterday" has no report to find.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_eastern = now.astimezone(EASTERN)
+    season_start = datetime.combine(SEASON_2026_27_START, time(0, 0), tzinfo=EASTERN)
+    season_end = season_start + SEASON_SPAN
+    if not (season_start <= now_eastern <= season_end):
+        return None
+    candidate_date = max((now_eastern - timedelta(days=1)).date(), SEASON_2026_27_START)
+    return datetime.combine(candidate_date, time(17, 30), tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_rejects_a_naive_now() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        select_recent_report_candidate(datetime(2027, 1, 15, 12, 0))
+
+
+def test_select_recent_report_candidate_returns_none_before_the_season_starts() -> None:
+    """FAILS IF the off-season guard stops recognising the pre-season period.
+
+    Without this guard, the current-season live smoke probe would attempt a
+    fetch on every off-season day and either fail noisily against a source
+    that has published nothing yet, or -- worse -- treat that expected
+    403/404 as if it proved the adapter still works.
+    """
+    before_season = datetime(2026, 8, 18, 12, 0, tzinfo=EASTERN)
+    assert select_recent_report_candidate(before_season) is None
+
+
+def test_select_recent_report_candidate_returns_none_long_after_the_season_span() -> None:
+    """FAILS IF the probe keeps firing long after the season is presumed over."""
+    long_after = datetime.combine(
+        SEASON_2026_27_START + SEASON_SPAN + timedelta(days=30), time(12, 0), tzinfo=EASTERN
+    )
+    assert select_recent_report_candidate(long_after) is None
+
+
+def test_select_recent_report_candidate_returns_yesterday_evening_when_in_season() -> None:
+    mid_season = datetime(2027, 1, 15, 9, 0, tzinfo=EASTERN)
+    candidate = select_recent_report_candidate(mid_season)
+    assert candidate == datetime(2027, 1, 14, 17, 30, tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_clamps_to_season_start_on_opening_day() -> None:
+    """FAILS IF opening day resolves to a "yesterday" that predates the season.
+
+    The day the season opens, there is no game -- and no report -- the day
+    before it; the candidate must clamp forward to the season's own start
+    rather than probing a date guaranteed to have nothing published.
+    """
+    opening_day = datetime.combine(SEASON_2026_27_START, time(9, 0), tzinfo=EASTERN)
+    candidate = select_recent_report_candidate(opening_day)
+    assert candidate == datetime.combine(SEASON_2026_27_START, time(17, 30), tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_accepts_a_non_eastern_aware_now() -> None:
+    """FAILS IF the function assumes its caller already converted to Eastern."""
+    from datetime import UTC
+
+    mid_season_utc = datetime(2027, 1, 15, 14, 0, tzinfo=UTC)  # 09:00 ET
+    candidate = select_recent_report_candidate(mid_season_utc)
+    assert candidate == datetime(2027, 1, 14, 17, 30, tzinfo=EASTERN)

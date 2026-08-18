@@ -38,6 +38,7 @@ from hoops_gm.ingest.injury_report import (
     InjuryReportClient,
     ReportNotAvailable,
     parse_injury_report_pdf,
+    report_url,
 )
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
@@ -53,12 +54,18 @@ from hoops_gm.ingest.record_fixtures import (
     FIXTURE_STATS_SEASON,
 )
 
+# The runtime candidate-selection logic for the current-season probe below is
+# defined and unit-tested offline in `test_injury_report.py` (no `live_smoke`
+# marker there), and imported here rather than duplicated so the exact logic
+# proven offline is what this live test actually runs.
+from test_injury_report import SEASON_2026_27_START, SEASON_SPAN, select_recent_report_candidate
+
 pytestmark = pytest.mark.live_smoke
 
 #: Live calls bypass the cache entirely. A smoke test served from a capture is
 #: a contract test wearing a disguise, and would report the source as healthy
 #: long after it stopped answering.
-from datetime import datetime, timedelta  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
@@ -449,3 +456,68 @@ class TestInjuryReportIsAlive:
         off_season = datetime(2025, 8, 15, 17, 0, tzinfo=_EASTERN)
         with pytest.raises(ReportNotAvailable):
             injury_report.fetch(off_season, max_age=NO_CACHE)
+
+
+class TestInjuryReportCurrentSeasonIsAlive:
+    """A bounded, runtime-selected probe against whichever report should
+    exist *right now*, rather than a fixed archived timestamp.
+
+    Both probes above pin two already-*retired* filename eras against
+    permanently archived PDFs. Archived URLs survive a format rotation by
+    construction -- the CDN keeps serving the exact bytes it always served
+    for that historical path -- so neither one can ever detect the NBA
+    introducing a *third* filename convention or PDF column layout for
+    2026-27. Only a request built from "now", at test-run time, has any
+    chance of being served by whatever the source actually looks like today.
+
+    **What this can detect:** the CDN URL pattern or PDF column layout
+    breaking for a *current*, in-season request -- the one shape of drift
+    the two archived probes above structurally cannot see.
+
+    **What this cannot detect:** anything about a specific past or future
+    format era; it makes no claim about when the 2025-12-22 boundary or any
+    future one falls, and it is not a substitute for the archived legacy and
+    15-minute probes above, which are the only ones that pin those two eras
+    specifically to a fixed, reproducible instant. It also cannot
+    distinguish "the source broke" from "there happened to be no game that
+    specific day" any more precisely than the season-window guard in
+    ``select_recent_report_candidate`` does -- see that function's own
+    docstring in ``test_injury_report.py`` for exactly what ground truth
+    that guard rests on.
+
+    **Bounded by construction:** exactly one candidate timestamp, therefore
+    at most one HTTP request, per run -- never a scan across multiple days.
+    """
+
+    def test_a_recently_expected_report_is_reachable_and_parses(self) -> None:
+        """FAILS IF: the source or its layout has drifted for a live, current request.
+
+        Skips (does not fail) outside the known 2026-27 season window
+        (``SEASON_2026_27_START`` through ``+ SEASON_SPAN`` in
+        ``test_injury_report.py``) rather than either producing a noisy
+        red result against a source with nothing to report yet, or --
+        the failure mode this whole probe exists to avoid -- silently
+        treating an expected off-season 403/404 as if it proved the
+        adapter still works. A 403/404 encountered *in* that window is not
+        caught here: it is a real failure, because the candidate was
+        deliberately chosen (yesterday evening ET, the report's documented
+        publication window) to be a timestamp a report is actually expected
+        to exist for.
+        """
+        candidate = select_recent_report_candidate(datetime.now(tz=UTC))
+        if candidate is None:
+            pytest.skip(
+                "current date is outside the known 2026-27 season window "
+                f"({SEASON_2026_27_START} + {SEASON_SPAN.days}d) established by the "
+                "recorded ScheduleLeagueV2 fixture; no report is expected to exist, "
+                "so this probe is skipped rather than producing a noisy off-season "
+                "failure or silently treating a 403/404 as success. The candidate-"
+                "selection logic itself is proven offline by "
+                "test_injury_report.py::test_select_recent_report_candidate_*."
+            )
+        client = InjuryReportClient()
+        body = client.fetch(candidate, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body, report_timestamp=candidate, source_url=report_url(candidate)
+        )
+        assert len(result.entries) > 0, f"no entries parsed from the report for {candidate}"
