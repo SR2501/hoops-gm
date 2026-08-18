@@ -599,49 +599,60 @@ def test_import_does_not_swap_teams_when_entries_are_out_of_report_order(session
 # `select_recent_report_candidate` from this module rather than duplicating
 # it, so the exact logic proven here offline is what runs live.
 #
-# Redesigned after a second focused review found two real defects in a
-# calendar-only version of this logic: (1) clamping "yesterday" forward to
-# a fixed season-start date could select a timestamp later *today*, i.e. in
+# Redesigned twice after two focused reviews found real defects:
+#
+# Round 1 (calendar-only version): (1) clamping "yesterday" forward to a
+# fixed season-start date could select a timestamp later *today*, i.e. in
 # the future relative to "now", guaranteeing a false-red 404; (2) treating
 # every "yesterday" as a game day ignored that the real NBA calendar has
-# routine no-game dates (the All-Star break, scattered rest days, gaps
-# beyond the recorded regular-season schedule) on which a 403/404 is the
-# *correct* response, not source drift. Both are fixed by never inventing a
-# candidate date: a candidate is only ever a date this project has actually
-# recorded the league schedule reporting as a real game day, and it is only
-# ever used once its own evening has actually passed relative to "now".
+# routine no-game dates (the All-Star break, scattered rest days) on which a
+# 403/404 is the *correct* response, not source drift. Fixed by never
+# inventing a candidate date: a candidate is only ever a date this project
+# has actually recorded the league schedule reporting as a real game day,
+# used only once its own evening has passed.
+#
+# Round 2 (three-sparse-anchor version): grounding candidates in
+# `nba_scheduleleaguev2_2026_27.json`'s three deliberately-sparse kept dates
+# (chosen for schedule-density/timezone test coverage, not for this purpose)
+# left gaps up to ~100 days between anchors and up to 45 days of allowed
+# staleness -- so for most of the season this "dynamic" probe would either
+# skip for weeks or reuse a candidate old enough that it stopped meaningfully
+# checking anything "current". Fixed by deriving a full, dates-only calendar
+# fixture from the real live schedule response (below) and tightening
+# `FRESHNESS_WINDOW` to match its actual, measured gaps.
 # ==========================================================================
 
-SCHEDULE_FIXTURE_PATH = FIXTURES / "nba_scheduleleaguev2_2026_27.json"
+GAME_DATES_FIXTURE_PATH = FIXTURES / "nba_scheduleleaguev2_2026_27_gamedates.json"
 
 #: How stale the most recent independently-confirmed game date may be before
-#: it stops counting as "current enough" for this probe's purpose. Long
-#: enough that a session run a few weeks after the last date the committed
-#: schedule fixture happens to record does not spuriously skip; short enough
-#: that a months-old anchor is not silently mistaken for a current one --
-#: which would make this "dynamic" probe just a slower-moving version of the
-#: fixed-archive probes it was added to stop being. When every known date is
-#: this stale, the honest answer is to skip and ask for the fixture to be
-#: refreshed with a more recent recorded game date, not to keep reusing an
-#: old one indefinitely.
-FRESHNESS_WINDOW = timedelta(days=45)
+#: it stops counting as "current enough" for this probe's purpose. Sized
+#: from the actual 2026-27 regular-season calendar in
+#: `nba_scheduleleaguev2_2026_27_gamedates.json`: the largest gap between two
+#: consecutive kept dates is 7 days (2027-02-18 -> 2027-02-25, the All-Star
+#: break), so 10 comfortably covers every real gap in that fixture with a
+#: few days of buffer, while staying "short" -- not the weeks-long window an
+#: earlier, sparser fixture needed. When every known date is this stale, the
+#: honest answer is to skip and ask for the fixture to be refreshed with a
+#: more recent recorded game date, not to keep reusing an old one
+#: indefinitely.
+FRESHNESS_WINDOW = timedelta(days=10)
 
 
 def known_game_dates_from_schedule_fixture() -> list[date]:
     """Game dates this project has actually recorded the league playing.
 
-    Reads `leagueSchedule.gameDates[].gameDate` directly from the committed
-    `nba_scheduleleaguev2_2026_27.json` fixture -- the real captured
-    `ScheduleLeagueV2` response `schedule-ingest` already recorded and
-    contract-tests against (`test_schedule.py`) -- rather than assuming any
-    particular calendar date has a game. A date not in this list is not
-    known to have a game, and this selector must never guess that it does.
+    Reads the `game_dates` array directly from the committed
+    `nba_scheduleleaguev2_2026_27_gamedates.json` fixture -- a compact,
+    dates-only calendar derived from the real, live `ScheduleLeagueV2`
+    response for the 2026-27 season (173 total `gameDates`; the 13
+    preseason-only dates are excluded, since the injury-report adapter is
+    out of scope before the season's first game, R40) -- rather than
+    assuming any particular calendar date has a game. A date not in this
+    list is not known to have a game, and this selector must never guess
+    that it does.
     """
-    payload = json.loads(SCHEDULE_FIXTURE_PATH.read_text())
-    return sorted(
-        datetime.strptime(entry["gameDate"].split(" ")[0], "%m/%d/%Y").date()
-        for entry in payload["leagueSchedule"]["gameDates"]
-    )
+    payload = json.loads(GAME_DATES_FIXTURE_PATH.read_text())
+    return sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in payload["game_dates"])
 
 
 def select_recent_report_candidate(
@@ -777,14 +788,81 @@ def test_select_recent_report_candidate_accepts_a_non_eastern_aware_now() -> Non
 def test_known_game_dates_from_schedule_fixture_reads_the_real_recorded_dates() -> None:
     """FAILS IF the fixture-reading helper stops matching the committed fixture.
 
-    Pins the exact three dates the trimmed, real `ScheduleLeagueV2` capture
-    records (`docs/adapters/README.md` / `manifest.json`): the season
-    opener, an NBA Cup date, and an October/March time-zone-transition
-    sample. `select_recent_report_candidate`'s default grounding is only as
+    Pins the shape of the real, live-captured 2026-27 regular-season
+    calendar in `nba_scheduleleaguev2_2026_27_gamedates.json`: 160 dates
+    from the season opener through the last recorded regular-season date,
+    the 13 preseason-only dates excluded (out of scope per R40,
+    `docs/backlog.md`), and no gap wider than the All-Star break.
+    `select_recent_report_candidate`'s default grounding is only as
     defensible as this list actually being read correctly.
     """
-    assert known_game_dates_from_schedule_fixture() == [
-        date(2026, 10, 20),
-        date(2026, 12, 4),
-        date(2027, 3, 14),
-    ]
+    dates = known_game_dates_from_schedule_fixture()
+    assert len(dates) == 160
+    assert dates[0] == date(2026, 10, 20)
+    assert dates[-1] == date(2027, 4, 11)
+    assert date(2026, 10, 3) not in dates  # preseason-only, excluded
+    gaps = [(dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)]
+    assert max(gaps) == 7  # the All-Star break, 2027-02-18 -> 2027-02-25
+
+
+def test_select_recent_report_candidate_has_no_blind_interval_between_december_and_march() -> None:
+    """FAILS IF the December-to-March blind interval this probe used to have reappears.
+
+    A real limitation found in a third focused review: grounding candidates
+    in the three deliberately-sparse anchor dates kept in
+    `nba_scheduleleaguev2_2026_27.json` (chosen for schedule-density/
+    timezone test coverage, not for this purpose) left roughly 100 days
+    between the December and March anchors during which no candidate was
+    both published and within the old 45-day freshness window for most of
+    that span. The full regular-season calendar fixture closes that gap
+    entirely -- every probe date below must find an eligible, bounded-age
+    candidate.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    for probe_date in (date(2026, 12, 20), date(2027, 1, 15), date(2027, 2, 1), date(2027, 3, 1)):
+        now = datetime.combine(probe_date, time(12, 0), tzinfo=EASTERN)
+        candidate = select_recent_report_candidate(now, known_game_dates=known)
+        assert candidate is not None, f"no eligible candidate found for {probe_date}"
+        age_days = (probe_date - candidate.date()).days
+        assert age_days <= FRESHNESS_WINDOW.days, (
+            f"{probe_date}: candidate {candidate.date()} is {age_days} days stale"
+        )
+
+
+def test_select_recent_report_candidate_age_stays_bounded_across_the_entire_season() -> None:
+    """FAILS IF any day in the real 2026-27 calendar -- including the
+    All-Star break, Christmas, and every other recorded gap -- produces no
+    eligible candidate, or one older than `FRESHNESS_WINDOW` allows.
+
+    Walks every calendar day from the day after the season's first game
+    through its last recorded game, against the real, committed dates-only
+    fixture rather than a synthetic list, so this proves the actual
+    committed calendar -- not just the selection mechanism in the abstract.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    probe_date = known[0] + timedelta(days=1)
+    last_day = known[-1]
+    while probe_date <= last_day:
+        now = datetime.combine(probe_date, time(12, 0), tzinfo=EASTERN)  # before any evening
+        candidate = select_recent_report_candidate(now, known_game_dates=known)
+        assert candidate is not None, f"no eligible candidate on {probe_date}"
+        age_days = (probe_date - candidate.date()).days
+        assert age_days <= FRESHNESS_WINDOW.days, (
+            f"{probe_date}: candidate {candidate.date()} is {age_days} days stale"
+        )
+        probe_date += timedelta(days=1)
+
+
+def test_select_recent_report_candidate_skips_well_after_the_season_ends() -> None:
+    """FAILS IF the probe keeps reusing the season's last recorded date indefinitely.
+
+    Well past `FRESHNESS_WINDOW` after the last date the real fixture
+    records, this must skip rather than silently treating a long-stale
+    archived date as evidence of anything current -- the same failure mode
+    the fixed-archive probes above were replaced to avoid.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    long_after = datetime.combine(
+        known[-1] + FRESHNESS_WINDOW + timedelta(days=5), time(12, 0), tzinfo=EASTERN
+    )
+    assert select_recent_report_candidate(long_after, known_game_dates=known) is None

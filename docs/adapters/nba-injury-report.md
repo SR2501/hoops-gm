@@ -251,8 +251,7 @@ so it has an actual chance of being served by whatever the source looks like
 today rather than what it looked like when these tests were written.
 `select_recent_report_candidate` (`test_injury_report.py`, unit-tested
 offline) is the guard that makes this safe to run unattended — redesigned
-once already after a second focused review found two real defects in a
-first, calendar-only version:
+twice after two rounds of focused review found real defects:
 
 1. **Never a future timestamp.** An earlier version clamped "yesterday"
    forward to a fixed season-start date on opening day itself, which could
@@ -262,21 +261,31 @@ first, calendar-only version:
    must be strictly before "now", never equal to or after it.
 2. **Never an assumed game day.** The same earlier version treated every
    "yesterday" as a game day, which silently mistook a routine no-game date
-   (the All-Star break, a scattered rest day, a gap beyond the recorded
-   regular-season schedule) for source drift — a 403/404 on a genuine
-   no-game date is the *correct* response, not a bug. Fixed: a candidate is
-   only ever built from a date `known_game_dates_from_schedule_fixture`
-   reads directly from the real, committed `nba_scheduleleaguev2_2026_27.json`
-   capture (the actual `leagueSchedule.gameDates[].gameDate` values,
-   currently `2026-10-20`, `2026-12-04`, `2027-03-14`) — never a calendar
-   guess. A date this project has not independently confirmed as a game day
-   is never used.
+   (the All-Star break, a scattered rest day) for source drift — a 403/404
+   on a genuine no-game date is the *correct* response, not a bug. Fixed: a
+   candidate is only ever built from a date this project has independently
+   confirmed had a real game — never a calendar guess.
+3. **Never a coarse, sparse anchor set.** The first game-backed version
+   grounded candidates in `nba_scheduleleaguev2_2026_27.json`'s three
+   deliberately-sparse kept dates (chosen for schedule-density/timezone test
+   coverage, not for this purpose), leaving a roughly 100-day gap between the
+   December and March anchors during which the probe would either go blind
+   for weeks or reuse a 45-day-stale candidate that no longer meaningfully
+   proved anything current. Fixed by deriving
+   `nba_scheduleleaguev2_2026_27_gamedates.json` — a compact, **dates-only**
+   calendar (no game objects, team/player identities, or box scores) built
+   from the real, live `ScheduleLeagueV2` response for the full season: all
+   173 recorded `gameDates`, with the 13 preseason-only dates excluded (the
+   injury-report adapter is out of scope before the season's first game,
+   R40) — leaving 160 real regular-season dates, October 20 through April
+   11, whose largest gap is 7 days (the All-Star break). `FRESHNESS_WINDOW`
+   tightened from 45 days to **10**, sized directly from that measured
+   7-day maximum plus a small buffer, rather than a guess.
 
 Both guards compose into one rule: among the known game dates, only the
-**most recent one that is both already-published (`< now`) and within a
-45-day `FRESHNESS_WINDOW`** is eligible. If none qualify — before the
-season starts, in a gap between recorded anchors wider than 45 days, or on
-a known game date before its own evening has arrived — `None` comes back
+**most recent one that is both already-published (`< now`) and within the
+10-day `FRESHNESS_WINDOW`** is eligible. If none qualify — before the season
+starts, or well after the season's last recorded date — `None` comes back
 and the live test explicitly `pytest.skip`s with the reason spelled out,
 rather than producing a noisy failure or silently treating an expected
 403/404 as success. When a candidate *is* returned, a 403/404 or parse
@@ -287,7 +296,8 @@ one HTTP request, per run.
 
 **What the dynamic probe can detect:** the CDN URL pattern or PDF column
 layout breaking for a current, game-backed, already-published request — the
-one drift shape the two archived probes structurally cannot see.
+one drift shape the two archived probes structurally cannot see — at any
+point across the real regular season, not just three sparse dates.
 
 **What it cannot detect:** which specific format era is in effect, or
 anything about a fixed historical instant (that is what the archived probes
@@ -295,11 +305,9 @@ are for, and this is not a substitute for either); nor, beyond what the
 known-game-dates + freshness guard already rules out, can it distinguish
 every possible "the source broke" from every possible "there happened to be
 no game that day" — it only ever probes a date this project has actually
-recorded as a real game day, so it says nothing about any other date. The
-freshness window also means the probe goes quiet (skips) for stretches
-between the sparse anchors the trimmed fixture happens to record — a real
-limitation, documented rather than hidden, that would shrink if the fixture
-recorded more game dates.
+recorded as a real game day, so it says nothing about any other date. It
+also cannot detect anything for a 2027-28 (or later) season without the
+dates-only fixture being refreshed for that season's calendar.
 
 ---
 

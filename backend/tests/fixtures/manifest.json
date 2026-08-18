@@ -211,6 +211,24 @@
     "source": "nba_stats",
     "trimmed": true
   },
+  "nba_scheduleleaguev2_2026_27_gamedates.json": {
+    "byte_size": 4117,
+    "captured_at": "2026-08-18T15:30:41.393565+00:00",
+    "endpoint": "ScheduleLeagueV2",
+    "kept_rows_per_result_set": {
+      "gameDates": 160
+    },
+    "note": "A dates-only calendar, not a trimmed slice of game objects like nba_scheduleleaguev2_2026_27.json above: every gameDate is kept, but each is reduced to just its date string, with no game/team/player identities. Built for the injury-report current-season live-smoke probe (test_live_smoke.py::TestInjuryReportCurrentSeasonIsAlive) to select a recent, independently game-backed candidate date without guessing a calendar date has a game -- the three sparse anchors in nba_scheduleleaguev2_2026_27.json produced gaps up to ~100 days, far too coarse for that purpose. The 13 preseason-only dates (every game that day labelled gameLabel == 'Preseason') are deliberately excluded: the injury-report adapter is out of scope before the season's first game (R40, docs/backlog.md). The largest gap among the 160 kept regular-season dates is 7 days (2027-02-18 -> 2027-02-25, the All-Star break).",
+    "original_row_counts": {
+      "gameDates": 173
+    },
+    "params": {
+      "league_id": "00",
+      "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
   "nba_static_teams.json": {
     "byte_size": 5692,
     "captured_at": "2026-08-17T13:30:49.853794+00:00",

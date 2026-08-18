@@ -1864,3 +1864,66 @@ push.
 **Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
 merge or self-approve.
 
+---
+
+## 2026-08-18 — data-engineer — PR #13: dates-only 2026-27 calendar fixture closes the Dec→Mar blind interval
+
+**Changed:** A third focused review at the exact HEAD accepted the future-
+timestamp and unconfirmed-game-day fixes but found the remaining anchor set
+too coarse: `nba_scheduleleaguev2_2026_27.json`'s three deliberately-sparse
+kept dates (chosen for schedule-density/timezone test coverage, not for
+this purpose) produced up to a 54-day midseason skip, up to 100-day
+detection latency, and never covered anything after 2027-03-14 — and since
+archived CDN URLs stay live indefinitely, an up-to-45-day-old candidate
+barely improved on the fixed-archive probes this whole redesign exists to
+get past. Fetched the real, live `ScheduleLeagueV2` response for the
+2026-27 season directly via `NbaStatsClient.schedule_league` (the same
+adapter method `schedule-ingest` already uses) — confirmed all 173
+`gameDates` the existing fixture's manifest note already claimed — and
+derived a new, compact **dates-only** fixture,
+`nba_scheduleleaguev2_2026_27_gamedates.json`: every `gameDate`'s date
+string, no game objects, team/player identities, or box scores, with the
+13 preseason-only dates (every game that day labelled `gameLabel ==
+"Preseason"`) excluded, since the injury-report adapter is out of scope
+before the season's first game (R40, `docs/backlog.md`). 160 real
+regular-season dates remain, 2026-10-20 through 2027-04-11, whose largest
+gap is 7 days (the All-Star break, 2027-02-18 → 2027-02-25). Registered it
+in `tests/fixtures/manifest.json` following the existing trimmed-fixture
+schema, with a note explaining the derivation and preseason exclusion.
+`known_game_dates_from_schedule_fixture` now reads this new fixture instead
+of the old three-date one (which is untouched and still serves
+`test_schedule.py`). Tightened `FRESHNESS_WINDOW` from 45 to **10 days** —
+sized directly from the measured 7-day maximum gap plus a small buffer,
+not a guess.
+
+**Now true:** Three new offline unit tests in `test_injury_report.py` prove
+exactly what was asked: the December-to-March blind interval is gone (four
+probe dates spanning that old gap all now find an eligible, bounded-age
+candidate); candidate age stays within `FRESHNESS_WINDOW` for *every*
+calendar day across the entire real season (a day-by-day walk from the
+season opener through the last recorded date, including the All-Star break
+and every other real gap, against the actual committed fixture rather than
+a synthetic list); and a run well past the season's last recorded date
+skips rather than reusing a stale archive. The existing fixture-reading
+test was rewritten to pin the new fixture's actual shape (160 dates, first/
+last, preseason exclusion, 7-day max gap) instead of the old three dates.
+Ran the live test directly today: it still `pytest.skip`s (correctly —
+today, 2026-08-18, precedes every 2026-27 date), now citing the 10-day
+window. Full local Code gate green: ruff lint/format, mypy strict (91
+source files), full default pytest suite (fixture-manifest contract tests
+included), and the injury-report live smoke tests run separately (3
+passed, 1 skipped for the updated reason).
+
+**Could not verify:** Whether the live `NbaStatsClient.schedule_league`
+fetch used to derive this fixture will keep returning the same 173
+`gameDates` if re-run later (the NBA can and does revise its own published
+schedule); this fixture is therefore a point-in-time capture like every
+other one in `manifest.json`, not a live source of truth, and a future
+session refreshing it should re-derive rather than hand-edit it. Whether
+10 days remains the right freshness threshold for a future season's
+calendar (a longer All-Star break, a lockout-shortened season, etc.) was
+not tested beyond the one real 2026-27 shape measured here.
+
+**Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
+merge or self-approve.
+
