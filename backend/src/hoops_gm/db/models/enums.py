@@ -226,6 +226,21 @@ class TransactionType(enum.StrEnum):
     OTHER = "other"
 
 
+class RefreshArtifactType(enum.StrEnum):
+    """The broad lineage domains a refresh can be registered against.
+
+    Deliberately three coarse values, not a taxonomy of every model or feed
+    that will ever exist. ``schedule`` is ``data-engineer``'s ingest facts,
+    ``projection`` and ``model`` are ``quant``'s later Phase 5 outputs. This is
+    the cohort key downstream consumers compare a claimed version against; it
+    is not, and must not become, a place to encode what a version *means*.
+    """
+
+    SCHEDULE = "schedule"
+    PROJECTION = "projection"
+    MODEL = "model"
+
+
 class StatScope(enum.StrEnum):
     """Whether a season-stats row is for one team or the season total.
 
