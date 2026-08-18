@@ -667,3 +667,81 @@ add an offline contract test and a loud live smoke test under the Adapter gate.
 `quant` can use the eventual per-team schedule facts only after the parser
 reconciles the row count and time semantics; the 403 risk should remain tracked
 separately for live scoring.
+
+---
+
+## 2026-08-17 — data-engineer — Schedule ingest uses NBA API schedule feed
+
+**Changed:** Added the `ScheduleLeagueV2` adapter, recorded fixture and offline contract tests, plus an idempotent importer for `nba_games` and the existing `team_schedule` table. Schedule counts are queried by joining `team_schedule.game_date` to `scoring_periods`; no second week-definition table was introduced. The parser treats `gameDateTimeUTC` as the instant and reconciles the source's `gameDateTimeEst` wall-clock field through `America/New_York`, including an October and March fixture.
+
+**Now true:**
+- The NBA API schedule endpoint is the primary source. Its live 2026-27 response contains 1,206 regular-season entries: 1,200 resolved games and six NBA Cup games whose teams are still `TBD`; the parser reports those IDs instead of inventing team assignments.
+- The resolved feed covers all 30 NBA team IDs and 80 currently assigned games per team. The 1,200 resolved-game count corroborates the previously inspected official PDF, while the PDF remains provenance only.
+- Re-running schedule import converges on the natural keys `(game_id, team_id)`. The schedule table remains a per-team fact view; tipoff is canonical on the related `nba_games` row.
+
+**Could not verify:**
+- The PDF's `LOCAL` versus `ET` columns were not parsed or treated as authoritative. The NBA API's sibling UTC/EST fields were reconciled independently, but a separate venue-local-time source has not been established.
+- The six TBD Cup assignments cannot be loaded into the current foreign-key schema until the NBA publishes their teams; the importer currently ingests every resolved game and exposes the unresolved IDs.
+
+**Next:** Refresh the schedule feed after the NBA Cup draw and import the six resolved games; `schedule-density` can consume the per-team rows and scoring-period count query.
+
+---
+
+## 2026-08-18 — data-engineer — PR #6 backend check investigation
+
+**Changed:** Investigated both failing `Backend — lint, type-check, tests` jobs
+(`95552756445` and `95552716208`) with `gh` logs. Both failures stopped at
+`ruff format --check .`; lint passed and type-check/tests were skipped. The
+failure was PR-caused: the new schedule parser and schedule tests were not
+formatted for the repository's Ruff version. Applied Ruff formatting only to
+`backend/src/hoops_gm/ingest/nba/schedule.py` and
+`backend/tests/test_schedule.py`.
+
+**Now true:** Both CI failures have the same root cause and the formatting
+diff is limited to those two PR files. Local Ruff format, lint and mypy pass;
+the schedule tests and the complete default backend suite pass with the
+repository's incompatible local `pytest-asyncio` plugin disabled.
+
+**Could not verify:** A post-fix GitHub Actions run was not available before
+this handoff entry; the local Python 3.14 plugin cannot run because it raises
+Python's `asyncio.get_event_loop_policy` deprecation as an error. That local
+environment issue is pre-existing and unrelated to the PR changes.
+
+**Next:** Push the formatting fix and rerun CI. No follow-up code change is
+needed for either original check.
+
+---
+
+## 2026-08-18 — data-engineer — PR #6 Postgres portability follow-up
+
+**Changed:** The post-format CI run passed the original backend check
+(`95553580175`) but exposed one Postgres-only failure in the new schedule
+test. Its synthetic abbreviations (`T` plus the full NBA numeric ID) exceeded
+the existing `nba_teams.abbreviation` `VARCHAR(8)` contract; SQLite did not
+enforce that length. Changed only the test fixture to generate unique,
+eight-character abbreviations.
+
+**Now true:** The schedule test passes locally, and Ruff format, lint and mypy
+remain green. The original two failing checks are fixed; the Postgres failure
+was PR-caused by the test data and is addressed in the follow-up commit.
+
+**Could not verify:** Docker is unavailable in the local environment, so the
+native Postgres suite cannot be reproduced here. CI must confirm the
+cross-dialect fix.
+
+**Next:** Push this test-data correction and rerun the full CI workflow.
+
+---
+
+## 2026-08-18 — data-engineer — PR #6 checks verified
+
+**Now true:** The final CI runs for commit `e26f0f6` passed both original
+backend checks, including lint, format, type-check and tests. The Postgres
+suite also passed after the fixture correction. The two original failures were
+PR-caused, shared the formatting root cause, and are closed; the subsequent
+Postgres-only fixture defect was also PR-caused and is closed.
+
+**Could not verify:** Native Postgres could not be run locally because Docker
+is unavailable; GitHub Actions supplied the cross-dialect verification.
+
+**Next:** No follow-up is required for these checks.

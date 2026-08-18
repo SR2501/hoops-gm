@@ -1,0 +1,252 @@
+{
+  "meta": {
+    "version": 1,
+    "request": "http://nba.cloud/league/00/2026-27/scheduleleaguev2?Format=json",
+    "time": "2026-08-17T19:00:10.01Z"
+  },
+  "leagueSchedule": {
+    "seasonYear": "2026-27",
+    "leagueId": "00",
+    "gameDates": [
+      {
+        "gameDate": "10/20/2026 00:00:00",
+        "games": [
+          {
+            "gameId": "0022600001",
+            "gameDateTimeEst": "2026-10-20T15:00:00Z",
+            "gameDateTimeUTC": "2026-10-20T19:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612765,
+              "teamName": "Pistons",
+              "teamCity": "Detroit",
+              "teamTricode": "DET"
+            },
+            "awayTeam": {
+              "teamId": 1610612738,
+              "teamName": "Celtics",
+              "teamCity": "Boston",
+              "teamTricode": "BOS"
+            }
+          },
+          {
+            "gameId": "0022600002",
+            "gameDateTimeEst": "2026-10-20T19:00:00Z",
+            "gameDateTimeUTC": "2026-10-20T23:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612752,
+              "teamName": "Knicks",
+              "teamCity": "New York",
+              "teamTricode": "NYK"
+            },
+            "awayTeam": {
+              "teamId": 1610612755,
+              "teamName": "76ers",
+              "teamCity": "Philadelphia",
+              "teamTricode": "PHI"
+            }
+          },
+          {
+            "gameId": "0022600003",
+            "gameDateTimeEst": "2026-10-20T21:30:00Z",
+            "gameDateTimeUTC": "2026-10-21T01:30:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612759,
+              "teamName": "Spurs",
+              "teamCity": "San Antonio",
+              "teamTricode": "SAS"
+            },
+            "awayTeam": {
+              "teamId": 1610612760,
+              "teamName": "Thunder",
+              "teamCity": "Oklahoma City",
+              "teamTricode": "OKC"
+            }
+          }
+        ]
+      },
+      {
+        "gameDate": "12/04/2026 00:00:00",
+        "games": [
+          {
+            "gameId": "0022601201",
+            "gameDateTimeEst": "2026-12-04T00:00:00Z",
+            "gameDateTimeUTC": "2026-12-04T05:00:00Z",
+            "gameLabel": "Emirates NBA Cup",
+            "homeTeam": {
+              "teamId": 0,
+              "teamName": null,
+              "teamCity": null,
+              "teamTricode": null
+            },
+            "awayTeam": {
+              "teamId": 0,
+              "teamName": null,
+              "teamCity": null,
+              "teamTricode": null
+            }
+          },
+          {
+            "gameId": "0022601202",
+            "gameDateTimeEst": "2026-12-04T00:00:00Z",
+            "gameDateTimeUTC": "2026-12-04T05:00:00Z",
+            "gameLabel": "Emirates NBA Cup",
+            "homeTeam": {
+              "teamId": 0,
+              "teamName": null,
+              "teamCity": null,
+              "teamTricode": null
+            },
+            "awayTeam": {
+              "teamId": 0,
+              "teamName": null,
+              "teamCity": null,
+              "teamTricode": null
+            }
+          }
+        ]
+      },
+      {
+        "gameDate": "03/14/2027 00:00:00",
+        "games": [
+          {
+            "gameId": "0022600976",
+            "gameDateTimeEst": "2027-03-14T12:00:00Z",
+            "gameDateTimeUTC": "2027-03-14T16:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612752,
+              "teamName": "Knicks",
+              "teamCity": "New York",
+              "teamTricode": "NYK"
+            },
+            "awayTeam": {
+              "teamId": 1610612738,
+              "teamName": "Celtics",
+              "teamCity": "Boston",
+              "teamTricode": "BOS"
+            }
+          },
+          {
+            "gameId": "0022600977",
+            "gameDateTimeEst": "2027-03-14T14:30:00Z",
+            "gameDateTimeUTC": "2027-03-14T18:30:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612760,
+              "teamName": "Thunder",
+              "teamCity": "Oklahoma City",
+              "teamTricode": "OKC"
+            },
+            "awayTeam": {
+              "teamId": 1610612759,
+              "teamName": "Spurs",
+              "teamCity": "San Antonio",
+              "teamTricode": "SAS"
+            }
+          },
+          {
+            "gameId": "0022600978",
+            "gameDateTimeEst": "2027-03-14T17:00:00Z",
+            "gameDateTimeUTC": "2027-03-14T21:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612761,
+              "teamName": "Raptors",
+              "teamCity": "Toronto",
+              "teamTricode": "TOR"
+            },
+            "awayTeam": {
+              "teamId": 1610612765,
+              "teamName": "Pistons",
+              "teamCity": "Detroit",
+              "teamTricode": "DET"
+            }
+          },
+          {
+            "gameId": "0022600979",
+            "gameDateTimeEst": "2027-03-14T18:00:00Z",
+            "gameDateTimeUTC": "2027-03-14T22:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612758,
+              "teamName": "Kings",
+              "teamCity": "Sacramento",
+              "teamTricode": "SAC"
+            },
+            "awayTeam": {
+              "teamId": 1610612739,
+              "teamName": "Cavaliers",
+              "teamCity": "Cleveland",
+              "teamTricode": "CLE"
+            }
+          },
+          {
+            "gameId": "0022600980",
+            "gameDateTimeEst": "2027-03-14T19:30:00Z",
+            "gameDateTimeUTC": "2027-03-14T23:30:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612743,
+              "teamName": "Nuggets",
+              "teamCity": "Denver",
+              "teamTricode": "DEN"
+            },
+            "awayTeam": {
+              "teamId": 1610612748,
+              "teamName": "Heat",
+              "teamCity": "Miami",
+              "teamTricode": "MIA"
+            }
+          },
+          {
+            "gameId": "0022600981",
+            "gameDateTimeEst": "2027-03-14T20:00:00Z",
+            "gameDateTimeUTC": "2027-03-15T00:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612750,
+              "teamName": "Timberwolves",
+              "teamCity": "Minnesota",
+              "teamTricode": "MIN"
+            },
+            "awayTeam": {
+              "teamId": 1610612764,
+              "teamName": "Wizards",
+              "teamCity": "Washington",
+              "teamTricode": "WAS"
+            }
+          },
+          {
+            "gameId": "0022600982",
+            "gameDateTimeEst": "2027-03-14T22:00:00Z",
+            "gameDateTimeUTC": "2027-03-15T02:00:00Z",
+            "gameLabel": "",
+            "homeTeam": {
+              "teamId": 1610612747,
+              "teamName": "Lakers",
+              "teamCity": "Los Angeles",
+              "teamTricode": "LAL"
+            },
+            "awayTeam": {
+              "teamId": 1610612744,
+              "teamName": "Warriors",
+              "teamCity": "Golden State",
+              "teamTricode": "GSW"
+            }
+          }
+        ]
+      }
+    ],
+    "weeks": [
+      {
+        "weekNumber": 1,
+        "weekName": "Week 1",
+        "startDate": "2026-10-20T00:00:00Z",
+        "endDate": "2026-10-25T00:00:00Z"
+      }
+    ]
+  }
+}

@@ -144,6 +144,14 @@ class NbaStatsClient:
             max_age=SEASON_MAX_AGE if max_age is None else max_age,
         )
 
+    def schedule_league(self, *, season: str, max_age: timedelta | None = None) -> Any:
+        """Fetch the official season schedule, including future games."""
+        return self.fetch(
+            "ScheduleLeagueV2",
+            {"league_id": "00", "season": season},
+            max_age=SEASON_MAX_AGE if max_age is None else max_age,
+        )
+
     def box_score_traditional(self, game_id: str, *, max_age: timedelta | None = None) -> Any:
         return self.fetch(
             "BoxScoreTraditionalV3",
@@ -259,12 +267,14 @@ def _default_endpoint_factory(endpoint: str, **kwargs: Any) -> Any:
         commonallplayers,
         leaguegamefinder,
         playergamelogs,
+        scheduleleaguev2,
     )
 
     factories: dict[str, Callable[..., Any]] = {
         "CommonAllPlayers": commonallplayers.CommonAllPlayers,
         "LeagueGameFinder": leaguegamefinder.LeagueGameFinder,
         "PlayerGameLogs": playergamelogs.PlayerGameLogs,
+        "ScheduleLeagueV2": scheduleleaguev2.ScheduleLeagueV2,
         "BoxScoreTraditionalV3": boxscoretraditionalv3.BoxScoreTraditionalV3,
         "BoxScoreSummaryV3": boxscoresummaryv3.BoxScoreSummaryV3,
     }

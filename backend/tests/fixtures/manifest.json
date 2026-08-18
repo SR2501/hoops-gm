@@ -133,5 +133,30 @@
     "params": {},
     "source": "nba_stats",
     "trimmed": false
+  },
+  "nba_scheduleleaguev2_2026_27.json": {
+    "byte_size": 7795,
+    "captured_at": "2026-08-17T19:00:10.010000+00:00",
+    "endpoint": "ScheduleLeagueV2",
+    "kept_dates": [
+      "10/20/2026",
+      "12/04/2026",
+      "03/14/2027"
+    ],
+    "kept_rows_per_result_set": {
+      "gameDates": 3,
+      "games": 12
+    },
+    "note": "Recorded slice preserves resolved games, two unresolved NBA Cup games, and October/March time-zone transitions. Source has 1,206 regular-season entries: 1,200 resolved games plus six TBD games.",
+    "original_row_counts": {
+      "gameDates": 173,
+      "games": 1271
+    },
+    "params": {
+      "league_id": "00",
+      "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": true
   }
 }

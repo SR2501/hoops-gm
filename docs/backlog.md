@@ -684,7 +684,7 @@ Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `nba-stats-ingest`
 
 Season schedule ingestion, fantasy week definitions, and per-week scheduled game counts per team. Foundation for schedule density and the availability model.

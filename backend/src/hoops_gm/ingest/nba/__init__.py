@@ -33,6 +33,13 @@ from hoops_gm.ingest.nba.parsers import (
     parse_player_game_logs,
     parse_teams,
 )
+from hoops_gm.ingest.nba.schedule import (
+    ScheduledGameCount,
+    ScheduleGameRecord,
+    ScheduleParseResult,
+    parse_schedule,
+    scheduled_game_counts,
+)
 
 __all__ = [
     "COMPLETED_GAME_MAX_AGE",
@@ -47,6 +54,9 @@ __all__ = [
     "ParticipationOutcome",
     "PlayerBoxScoreRecord",
     "PlayerParticipationRecord",
+    "ScheduleGameRecord",
+    "ScheduleParseResult",
+    "ScheduledGameCount",
     "combine_game_participation",
     "parse_box_score_summary_v3",
     "parse_box_score_traditional_v3",
@@ -55,5 +65,7 @@ __all__ = [
     "parse_minutes_to_seconds",
     "parse_participation_comment",
     "parse_player_game_logs",
+    "parse_schedule",
     "parse_teams",
+    "scheduled_game_counts",
 ]
