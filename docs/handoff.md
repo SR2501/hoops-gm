@@ -1470,3 +1470,35 @@ schema-versioned adapter change. No access or ToS claim changed.
 **Next:** When an official unknown is needed, export only that evidence from
 the existing read-only bridge into the documented JSON contract and pass it
 explicitly. Do not make bridge capture automatic.
+
+---
+
+## 2026-08-18 - data-engineer - Restack after absence-splits migrations
+
+**Changed:** Rebased the league-settings branch onto main commit `5f75968`,
+which added absence-splits revisions `0006` and `0007`. Renumbered the
+league-settings migration from its former historical revision `0006` to
+revision `0008` and changed its parent from `0005` to `0007`. The earlier
+handoff entry remains unchanged because `0006` was accurate when originally
+written; this entry records the effective revision after restacking.
+
+The rebase conflicted only in this append-only handoff. Resolution retained the
+complete quant `Descriptive teammate absence splits` entry from main first,
+then retained both complete data-engineer league-settings entries, separated by
+their original section boundaries. No production bridge-seam code changed
+relative to pre-restack commit `e8c0ee4`.
+
+**Now true:** Alembic reports exactly one head, `0008`, with the linear chain
+`0005 -> 0006 -> 0007 -> 0008`. SQLite upgrade from empty, `alembic check`, and
+downgrade to base pass. The rebased Code and Adapter gates pass locally: Ruff,
+format, strict mypy, secret scan, 494 default tests, 75 recorded-fixture
+contract tests, and all 13 live smoke tests.
+
+**Could not verify:** No local Postgres service was available. The rebased
+exact head still requires the repository's Postgres CI job and focused release
+review before merge. No 2026-27 settings or real bridge settings capture became
+available during the restack.
+
+**Next:** Require green migration-from-empty and full-suite Postgres CI at the
+new exact head, then repeat focused release review. Do not merge from the
+pre-restack review.
