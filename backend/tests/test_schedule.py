@@ -7,11 +7,14 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import check_cohort, current_refresh
+from hoops_gm.db.lineage import check_cohort, current_refresh, lock_refresh_scope, record_refresh
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
+from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
+from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_schedule, import_teams
 from hoops_gm.ingest.nba import (
@@ -20,6 +23,7 @@ from hoops_gm.ingest.nba import (
     build_schedule_density,
     parse_schedule,
     parse_teams,
+    playoff_scheduled_game_counts,
     scheduled_game_counts,
 )
 
@@ -122,12 +126,22 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     first = import_schedule(session, result.games)
     second = import_schedule(session, result.games)
     counts = scheduled_game_counts(session, league_id=league.id, season="2026-27")
+    refresh = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season="2026-27",
+    )
 
     assert first.created == 30
     assert second.updated == 30
+    assert refresh is not None
     assert session.scalars(select(TeamScheduleEntry)).all()
-    assert len(counts) == 6
-    assert {row.games for row in counts} == {1}
+    assert len(counts) == len(team_ids)
+    assert sum(row.games for row in counts) == 6
+    assert {row.games for row in counts} == {0, 1}
+    assert {row.schedule_version for row in counts} == {refresh.version}
+    assert {row.schedule_refreshed_at for row in counts} == {refresh.refreshed_at}
 
 
 def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session: Any) -> None:
@@ -203,6 +217,218 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
         check_cohort(session, schedule_version=stale_density[0].schedule_version)[0].status
         == "stale"
     )
+
+
+def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
+    session: Session,
+) -> None:
+    teams = [
+        NbaTeam(nba_team_id=1, abbreviation="ONE", name="One"),
+        NbaTeam(nba_team_id=2, abbreviation="TWO", name="Two"),
+        NbaTeam(nba_team_id=3, abbreviation="THREE", name="Three"),
+        NbaTeam(nba_team_id=4, abbreviation="FOUR", name="Four"),
+    ]
+    leagues = [
+        League(
+            name="Primary",
+            season="2026-27",
+            scoring_type="h2h_categories",
+            draft_type="auction",
+        ),
+        League(
+            name="Other",
+            season="2026-27",
+            scoring_type="h2h_categories",
+            draft_type="auction",
+        ),
+        League(
+            name="No playoffs",
+            season="2026-27",
+            scoring_type="h2h_categories",
+            draft_type="auction",
+        ),
+    ]
+    session.add_all([*teams, *leagues])
+    session.flush()
+    session.add_all(
+        [
+            ScoringPeriod(
+                league_id=leagues[0].id,
+                period_number=7,
+                start_date=date(2027, 3, 1),
+                end_date=date(2027, 3, 7),
+                is_playoff=True,
+            ),
+            ScoringPeriod(
+                league_id=leagues[0].id,
+                period_number=8,
+                start_date=date(2027, 3, 8),
+                end_date=date(2027, 3, 14),
+                is_playoff=True,
+            ),
+            ScoringPeriod(
+                league_id=leagues[0].id,
+                period_number=9,
+                start_date=date(2027, 3, 22),
+                end_date=date(2027, 3, 28),
+                is_playoff=True,
+            ),
+            ScoringPeriod(
+                league_id=leagues[0].id,
+                period_number=6,
+                start_date=date(2027, 2, 22),
+                end_date=date(2027, 2, 28),
+                is_playoff=False,
+            ),
+            ScoringPeriod(
+                league_id=leagues[1].id,
+                period_number=20,
+                start_date=date(2027, 3, 8),
+                end_date=date(2027, 3, 14),
+                is_playoff=True,
+            ),
+            ScoringPeriod(
+                league_id=leagues[2].id,
+                period_number=1,
+                start_date=date(2027, 3, 1),
+                end_date=date(2027, 3, 7),
+                is_playoff=False,
+            ),
+        ]
+    )
+    _add_schedule_game(session, 101, date(2027, 3, 1), teams[0], teams[1])
+    _add_schedule_game(session, 102, date(2027, 3, 7), teams[0], teams[2])
+    _add_schedule_game(session, 103, date(2027, 3, 8), teams[1], teams[2])
+    _add_schedule_game(session, 104, date(2027, 3, 14), teams[0], teams[1])
+    _add_schedule_game(session, 105, date(2027, 3, 15), teams[0], teams[1])
+    _add_schedule_game(
+        session,
+        106,
+        date(2027, 3, 1),
+        teams[0],
+        teams[1],
+        season="2025-26",
+    )
+    _add_schedule_game(
+        session,
+        107,
+        date(2027, 3, 1),
+        teams[0],
+        teams[1],
+        season_type=SeasonType.PLAYOFFS,
+    )
+    refreshed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2026-27",
+        refreshed_at=refreshed_at,
+    )
+    session.flush()
+
+    primary = playoff_scheduled_game_counts(session, league_id=leagues[0].id, season="2026-27")
+
+    assert [(row.period_number, row.team_id, row.games) for row in primary] == [
+        (7, teams[0].id, 2),
+        (7, teams[1].id, 1),
+        (7, teams[2].id, 1),
+        (7, teams[3].id, 0),
+        (8, teams[0].id, 1),
+        (8, teams[1].id, 2),
+        (8, teams[2].id, 1),
+        (8, teams[3].id, 0),
+        (9, teams[0].id, 0),
+        (9, teams[1].id, 0),
+        (9, teams[2].id, 0),
+        (9, teams[3].id, 0),
+    ]
+    assert {row.schedule_version for row in primary} == {"schedule-v1"}
+    assert {row.schedule_refreshed_at for row in primary} == {refreshed_at}
+    assert all(
+        row.schedule_refreshed_at.tzinfo is not None
+        and row.schedule_refreshed_at.utcoffset() is not None
+        for row in primary
+    )
+    assert {
+        row.period_number
+        for row in playoff_scheduled_game_counts(session, league_id=leagues[1].id, season="2026-27")
+    } == {20}
+    assert playoff_scheduled_game_counts(session, league_id=leagues[2].id, season="2026-27") == []
+
+
+def test_scheduled_game_counts_fail_without_current_schedule_lineage(session: Session) -> None:
+    league = _add_league(session)
+
+    with pytest.raises(RuntimeError, match="no current schedule refresh"):
+        scheduled_game_counts(session, league_id=league.id, season="2026-27")
+
+
+def test_scheduled_game_counts_locks_the_exact_schedule_scope(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[RefreshArtifactType, str, str | None]] = []
+    league = _add_league(session)
+
+    def capture_lock(
+        target_session: Session,
+        *,
+        artifact_type: RefreshArtifactType,
+        artifact_key: str,
+        season: str | None,
+    ) -> None:
+        calls.append((artifact_type, artifact_key, season))
+        lock_refresh_scope(
+            target_session,
+            artifact_type=artifact_type,
+            artifact_key=artifact_key,
+            season=season,
+        )
+
+    monkeypatch.setattr("hoops_gm.ingest.nba.schedule.lock_refresh_scope", capture_lock)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2026-27",
+    )
+
+    assert scheduled_game_counts(session, league_id=league.id, season="2026-27") == []
+    assert calls == [(RefreshArtifactType.SCHEDULE, "nba-schedule", "2026-27")]
+
+
+def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session) -> None:
+    league = _add_league(session)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2025-26",
+    )
+
+    with pytest.raises(RuntimeError, match=r"no current schedule refresh.*'2026-27'"):
+        scheduled_game_counts(session, league_id=league.id, season="2026-27")
+
+
+def test_scheduled_game_counts_reject_a_season_outside_the_league(session: Session) -> None:
+    league = _add_league(session)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2025-26",
+    )
+
+    with pytest.raises(RuntimeError, match=r"league .* is for season '2026-27', not '2025-26'"):
+        scheduled_game_counts(session, league_id=league.id, season="2025-26")
 
 
 def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:
@@ -365,3 +591,59 @@ def test_schedule_density_rejects_mixed_season_cohorts(
             schedule_version="schedule-v1",
             schedule_refreshed_at=datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
         )
+
+
+def _add_schedule_game(
+    session: Session,
+    number: int,
+    game_date: date,
+    home: NbaTeam,
+    away: NbaTeam,
+    *,
+    season: str = "2026-27",
+    season_type: SeasonType = SeasonType.REGULAR,
+) -> None:
+    game = NbaGame(
+        nba_game_id=str(number),
+        season=season,
+        season_type=season_type,
+        game_date=game_date,
+        home_team_id=home.id,
+        away_team_id=away.id,
+    )
+    session.add(game)
+    session.flush()
+    session.add_all(
+        [
+            TeamScheduleEntry(
+                game_id=game.id,
+                team_id=home.id,
+                opponent_team_id=away.id,
+                season=season,
+                season_type=season_type,
+                game_date=game_date,
+                is_home=True,
+            ),
+            TeamScheduleEntry(
+                game_id=game.id,
+                team_id=away.id,
+                opponent_team_id=home.id,
+                season=season,
+                season_type=season_type,
+                game_date=game_date,
+                is_home=False,
+            ),
+        ]
+    )
+
+
+def _add_league(session: Session, *, season: str = "2026-27") -> League:
+    league = League(
+        name=f"Test league {season}",
+        season=season,
+        scoring_type="h2h_categories",
+        draft_type="auction",
+    )
+    session.add(league)
+    session.flush()
+    return league
