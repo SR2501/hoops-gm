@@ -819,6 +819,18 @@ Added `schedule-ingest` as a dependency of `draft-recommender` and extended `tra
 
 ---
 
+## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets
+
+**Changed:** The owner added an important operational consequence to the accepted weekly schedule decision: In-Season Tournament and All-Star-break periods are often sparse across the league, so schedule value is relative to both a team's normal weekly distribution and the league-wide period baseline. Updated ADR-012, the draft plan, and `trade-evaluator`'s backlog scope. Trade analysis must surface schedule-driven targets and high-value weeks, not reduce schedule to a generic rest-of-season adjustment.
+
+**Now true:** The shared schedule-grid contract must label or make detectable sparse league-wide periods, including tournament and All-Star-break weeks, and expose per-player/per-team counts against both baselines. A player with an unusually high count in a sparse period can be materially more valuable for that H2H matchup; a low-count player can become a trade target or liability even when their rest-of-season value is unchanged.
+
+**Could not verify:** The exact sparse-period thresholds and which scoring periods the league's Fantrax configuration will use; these require the imported `scoring_periods` and league settings rather than calendar assumptions.
+
+**Next:** `schedule-density` should preserve the raw weekly counts and event-date facts needed to derive these comparisons. `trade-evaluator` and weekly-management surfaces should consume the same contract and calibrate target thresholds on observed H2H outcomes.
+
+---
+
 ## 2026-08-17 — owner — Local browser bridge paired
 
 **Changed:** The owner successfully completed the one-time Tampermonkey pairing

@@ -33,3 +33,9 @@ This is raw count data, not a model — no Model gate, just the Adapter gate `sc
 ## What would flip this
 
 If held-out H2H analysis shows weekly game-count timing has negligible fantasy value even for elite players, reduce it to an informational display rather than an active recommendation signal. It must not be removed merely because it is not a projection input; its weekly management value is a separate question.
+
+## Amendments
+
+### 2026-08-17 — Sparse league-wide weeks and trade targeting
+
+The schedule grid must identify sparse periods caused by league-wide calendar events, especially the In-Season Tournament and All-Star break. These weeks can have fewer games across the league, so a player's raw scheduled-game count must be shown both against that team's normal distribution and against the league-wide period baseline. Trade evaluation must use this information to identify schedule-driven targets and avoid treating a high-value week as an ordinary period. A trade can be attractive because it improves a specific sparse or high-volume H2H period even when rest-of-season totals barely change.
