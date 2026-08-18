@@ -2473,7 +2473,9 @@ explicit zero-game teams and wholly empty periods. Period boundaries are
 inclusive, schedule rows from other seasons and NBA season-type cohorts are
 excluded, another league's period flags cannot leak into the result, and a
 league with no flagged playoff periods returns an empty list. Every non-empty
-result is stamped from exactly one current schedule refresh cohort.
+result is stamped from exactly one current schedule refresh cohort. The query
+holds that cohort's keyed, season-scoped lineage lock while reading both the
+refresh stamp and schedule rows, so a concurrent refresh cannot mix cohorts.
 
 **Could not verify:** The 2026-27 Fantrax league's actual playoff scoring periods
 have not been imported, so this verifies the query against explicit league

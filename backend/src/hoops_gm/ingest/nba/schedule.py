@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import current_refresh
+from hoops_gm.db.lineage import current_refresh, lock_refresh_scope
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import ScoringPeriod
@@ -303,6 +303,12 @@ def scheduled_game_counts(
     created.
     """
 
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season=season,
+    )
     refresh = current_refresh(
         session,
         RefreshArtifactType.SCHEDULE,

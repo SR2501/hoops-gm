@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import check_cohort, current_refresh, record_refresh
+from hoops_gm.db.lineage import check_cohort, current_refresh, lock_refresh_scope, record_refresh
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
@@ -362,6 +362,40 @@ def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
 def test_scheduled_game_counts_fail_without_current_schedule_lineage(session: Session) -> None:
     with pytest.raises(RuntimeError, match="no current schedule refresh"):
         scheduled_game_counts(session, league_id=1, season="2026-27")
+
+
+def test_scheduled_game_counts_locks_the_exact_schedule_scope(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[RefreshArtifactType, str, str | None]] = []
+
+    def capture_lock(
+        target_session: Session,
+        *,
+        artifact_type: RefreshArtifactType,
+        artifact_key: str,
+        season: str | None,
+    ) -> None:
+        calls.append((artifact_type, artifact_key, season))
+        lock_refresh_scope(
+            target_session,
+            artifact_type=artifact_type,
+            artifact_key=artifact_key,
+            season=season,
+        )
+
+    monkeypatch.setattr("hoops_gm.ingest.nba.schedule.lock_refresh_scope", capture_lock)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version="schedule-v1",
+        source="test",
+        season="2026-27",
+    )
+
+    assert scheduled_game_counts(session, league_id=1, season="2026-27") == []
+    assert calls == [(RefreshArtifactType.SCHEDULE, "nba-schedule", "2026-27")]
 
 
 def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session) -> None:
