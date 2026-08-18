@@ -83,10 +83,15 @@ def derive_deadline_calendar(
     """Join the league's current settings snapshot with its current schedule refresh.
 
     Fails closed with :class:`DeadlineCalendarLineageError` when either
-    lineage is missing, or when the settings snapshot's own league/season
-    identity does not match ``league``. Idempotent by exact lineage: calling
-    this again while both the settings snapshot and the schedule refresh are
-    unchanged returns the existing row rather than creating a duplicate.
+    lineage is missing, when the settings snapshot's own league/season
+    identity does not match ``league``, when the season's own date ordering
+    or scoring-period boundaries are malformed, or when scoring periods are
+    unknown -- a calendar without known scoring-period boundaries has no
+    usable calendar content, so this raises before any row is written rather
+    than persisting an empty ``[]`` that would read as "confidently zero
+    periods". Idempotent by exact lineage: calling this again while both the
+    settings snapshot and the schedule refresh are unchanged returns the
+    existing row rather than creating a duplicate.
     """
     when = derived_at if derived_at is not None else datetime.now(UTC)
     if when.tzinfo is None or when.utcoffset() is None:
@@ -127,6 +132,11 @@ def derive_deadline_calendar(
 
     season_start_date = _require_plain_date(document.source_start_date, path="source_start_date")
     season_end_date = _require_plain_date(document.source_end_date, path="source_end_date")
+    if season_end_date < season_start_date:
+        raise DeadlineCalendarLineageError(
+            f"season_end_date ({season_end_date.isoformat()}) is before "
+            f"season_start_date ({season_start_date.isoformat()})"
+        )
     scoring_periods = _scoring_periods(document)
     unsupported_rules = _unsupported_rules(document)
 
@@ -281,7 +291,15 @@ def _require_aware(value: str, *, path: str) -> datetime:
 
 def _scoring_periods(document: LeagueSettingsDocument) -> list[dict[str, object]]:
     if not document.scoring_periods.is_known:
-        return []
+        # A calendar's entire reason to exist is scoring-period boundaries;
+        # returning ``[]`` here would silently turn "the source was never
+        # asked" into "there are confidently zero periods". Fail closed
+        # before any row is written instead.
+        raise DeadlineCalendarLineageError(
+            "scoring_periods is unknown for this settings snapshot; a deadline "
+            "calendar without known scoring-period boundaries has no usable "
+            "calendar content"
+        )
     rules = document.scoring_periods.value
     assert rules is not None  # is_known guarantees this
 
@@ -289,14 +307,26 @@ def _scoring_periods(document: LeagueSettingsDocument) -> list[dict[str, object]
     if document.playoffs.is_known and document.playoffs.value is not None:
         playoff_numbers = set(document.playoffs.value.period_numbers)
 
+    seen_period_numbers: set[int] = set()
     periods: list[dict[str, object]] = []
     for boundary in sorted(rules.periods, key=lambda p: p.period_number):
+        if boundary.period_number in seen_period_numbers:
+            raise DeadlineCalendarLineageError(
+                f"duplicate scoring_periods period_number {boundary.period_number}"
+            )
+        seen_period_numbers.add(boundary.period_number)
+
         start_at = _require_aware(
             boundary.start_at, path=f"scoring_periods[{boundary.period_number}].start_at"
         )
         end_at = _require_aware(
             boundary.end_at, path=f"scoring_periods[{boundary.period_number}].end_at"
         )
+        if end_at <= start_at:
+            raise DeadlineCalendarLineageError(
+                f"scoring_periods[{boundary.period_number}] end_at "
+                f"({end_at.isoformat()}) must be after start_at ({start_at.isoformat()})"
+            )
         is_playoff = (
             boundary.period_number in playoff_numbers if playoff_numbers is not None else None
         )

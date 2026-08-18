@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hoops_gm.app import create_app
 from hoops_gm.calendar.deadline_calendar import (
     DeadlineCalendarLineageError,
     DeadlineCalendarStaleActivationError,
@@ -28,6 +30,7 @@ from hoops_gm.calendar.deadline_calendar import (
     current_deadline_calendar,
     derive_deadline_calendar,
 )
+from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
 from hoops_gm.db.lineage import record_refresh
 from hoops_gm.db.models import League, LeagueDeadlineCalendar, LeagueSettingsSnapshot
@@ -38,6 +41,8 @@ from hoops_gm.ingest.league_settings import (
     OFFICIAL_SOURCE,
     LeagueSettingsDocument,
     PlayoffRules,
+    ScoringPeriodBoundary,
+    ScoringPeriodRules,
     SettingEvidence,
     SourcedSetting,
     TradeDeadlineRules,
@@ -118,6 +123,27 @@ def _known_playoffs(period_numbers: tuple[int, ...]) -> SourcedSetting[PlayoffRu
                 source=OFFICIAL_SOURCE,
                 status="observed",
                 source_path="$.scoringPeriods[*].isPlayoffs",
+                capture_ref="sha256:abc",
+            ),
+        ),
+    )
+
+
+def _known_scoring_periods(
+    *periods: tuple[int, str, str],
+) -> SourcedSetting[ScoringPeriodRules]:
+    return SourcedSetting(
+        value=ScoringPeriodRules(
+            periods=tuple(
+                ScoringPeriodBoundary(period_number=number, start_at=start_at, end_at=end_at)
+                for number, start_at, end_at in periods
+            )
+        ),
+        evidence=(
+            SettingEvidence(
+                source=OFFICIAL_SOURCE,
+                status="observed",
+                source_path="$.scoringPeriods",
                 capture_ref="sha256:abc",
             ),
         ),
@@ -328,6 +354,87 @@ def test_deriving_fails_closed_on_a_season_mismatch(session: Session) -> None:
 
     with pytest.raises(DeadlineCalendarLineageError, match="identity mismatch"):
         derive_deadline_calendar(session, league)
+
+
+def test_deriving_fails_closed_when_official_scoring_periods_are_omitted(
+    session: Session,
+) -> None:
+    """A production-realistic gap: the official ``getLeagueInfo`` response
+    simply never included ``scoringPeriods`` (a normal, non-error absence at
+    the parsing layer -- see ``_parse_scoring_periods``). A calendar derived
+    from that has no scoring-period boundaries to expose, so it must raise
+    rather than silently persist ``[]`` as if zero periods were confirmed.
+    """
+    league = _league(session)
+    payload = _official_payload()
+    del payload["scoringPeriods"]
+    document = parse_official_league_settings(
+        payload, source_league_id="league-1", capture_ref="sha256:abc"
+    )
+    assert document.scoring_periods.is_known is False
+    _write_settings(session, league, document)
+    _register_schedule(session)
+
+    with pytest.raises(DeadlineCalendarLineageError, match="scoring_periods is unknown"):
+        derive_deadline_calendar(session, league)
+
+    assert session.query(LeagueDeadlineCalendar).count() == 0
+
+
+def test_deriving_fails_closed_when_season_end_precedes_start(session: Session) -> None:
+    league = _league(session)
+    _write_settings(
+        session,
+        league,
+        _document(source_start_date="2026-03-15", source_end_date="2025-10-21"),
+    )
+    _register_schedule(session)
+
+    with pytest.raises(DeadlineCalendarLineageError, match="season_end_date"):
+        derive_deadline_calendar(session, league)
+
+    assert session.query(LeagueDeadlineCalendar).count() == 0
+
+
+def test_deriving_fails_closed_on_duplicate_scoring_period_numbers(session: Session) -> None:
+    league = _league(session)
+    _write_settings(
+        session,
+        league,
+        _document(
+            scoring_periods=_known_scoring_periods(
+                (1, "2026-10-20T00:00:00-04:00", "2026-10-25T23:59:59-04:00"),
+                (1, "2026-10-26T00:00:00-04:00", "2026-11-01T23:59:59-04:00"),
+            )
+        ),
+    )
+    _register_schedule(session)
+
+    with pytest.raises(DeadlineCalendarLineageError, match="duplicate scoring_periods"):
+        derive_deadline_calendar(session, league)
+
+    assert session.query(LeagueDeadlineCalendar).count() == 0
+
+
+def test_deriving_fails_closed_when_a_scoring_period_end_does_not_follow_its_start(
+    session: Session,
+) -> None:
+    league = _league(session)
+    _write_settings(
+        session,
+        league,
+        _document(
+            scoring_periods=_known_scoring_periods(
+                (1, "2026-10-20T00:00:00-04:00", "2026-10-20T00:00:00-04:00"),
+            )
+        ),
+    )
+    _register_schedule(session)
+
+    with pytest.raises(DeadlineCalendarLineageError, match="must be after start_at"):
+        derive_deadline_calendar(session, league)
+
+    assert session.query(LeagueDeadlineCalendar).count() == 0
 
 
 def test_season_bounds_are_taken_verbatim_from_settings(session: Session) -> None:
@@ -605,3 +712,32 @@ def test_deadline_calendar_contract_is_advertised_in_openapi(client: TestClient)
     paths = client.get("/openapi.json").json()["paths"]
 
     assert "/api/v1/leagues/{league_id}/deadline-calendar/current" in paths
+
+
+def test_current_deadline_calendar_endpoint_rejects_a_non_loopback_caller(
+    tmp_path: Path,
+) -> None:
+    """A real client is exempted only by an actual loopback address; the
+    ``environment == "test"`` escape hatch every other test in this file
+    relies on (via the default ``app``/``client`` fixtures) exists purely
+    because Starlette's ``TestClient`` reports a synthetic ``testclient``
+    host. This test proves the guard itself, not the escape hatch, by using
+    a non-``test`` environment the way ``test_userscript_serving.py`` does.
+    """
+    settings = Settings(
+        environment="development",
+        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+        bridge_secret_path=tmp_path / "bridge_secret",
+        _env_file=None,
+    )
+    app = create_app(settings)
+    with TestClient(app) as non_local_client:
+        Base.metadata.create_all(app.state.database.engine)
+        with app.state.database.session() as session:
+            league = _league(session)
+            league_id = league.id
+
+        response = non_local_client.get(f"/api/v1/leagues/{league_id}/deadline-calendar/current")
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "deadline_calendar_local_only"

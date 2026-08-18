@@ -12,10 +12,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from hoops_gm.api.deps import SessionDep
+from hoops_gm.api.security import require_loopback_host
 from hoops_gm.calendar.deadline_calendar import current_deadline_calendar
 from hoops_gm.db.models.league import League
 
@@ -60,7 +61,19 @@ class DeadlineCalendarResponse(BaseModel):
     response_model=DeadlineCalendarResponse,
     summary="The league's current activated deadline calendar",
 )
-def get_current_deadline_calendar(league_id: int, session: SessionDep) -> DeadlineCalendarResponse:
+def get_current_deadline_calendar(
+    league_id: int, session: SessionDep, request: Request
+) -> DeadlineCalendarResponse:
+    # This response carries bridge-derived rule values verbatim, including
+    # ``source_path``/``capture_ref`` provenance (see ``unsupported_rules``
+    # below) -- unlike ``lineage.py``'s summary-only reads, that is not safe
+    # to hand to an arbitrary caller. No bridge secret is required: this is
+    # an ordinary dashboard read, not a bridge write.
+    require_loopback_host(
+        request,
+        error_code="deadline_calendar_local_only",
+        detail="The deadline calendar is only served to the local machine.",
+    )
     league = session.get(League, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail=f"no league {league_id}")
