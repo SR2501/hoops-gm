@@ -1507,7 +1507,7 @@ had already scaffolded `league_scoring_profiles`/`league_scoring_categories`
 (unique `(league_id, name, version)`, ratio components + box-score vocabulary
 CHECKs, percentage-keys-must-be-ratio CHECK) but nothing derived, activated,
 or attributed a profile to a league's rules -- the tables were unused by every
-other module. Added two schema changes (migration `0010`): a required
+other module. Added two schema changes (migration `0011`): a required
 `settings_snapshot_id` FK to `league_settings_snapshots`, so every profile is
 provably derived from a specific version of that league's rules; and
 `active_league_id`, a nullable self-FK to `leagues` that mirrors `league_id`
@@ -1612,7 +1612,14 @@ handling here rather than special-casing them inside whatever consumes a
 profile -- the `scoring_type` column and per-category `direction`/`kind`
 fields already generalize past H2H categories. Valuation, draft
 recommendation, and UI consumption of a scoring profile remain fully
-out of scope of this unit, by design.
+out of scope of this unit, by design. PR #22 opened against `main`. `main`
+advanced to `ffd838c` (PR #19, versioned schedule context) between the first
+push and PR review, which also added a migration numbered `0010`; this
+unit's migration was renumbered `0011` (`down_revision` repointed at the
+newly-merged `0010`) after a clean rebase, and the full suite (576 passed, 17
+deselected), ruff, ruff format, mypy strict, and a from-empty
+`alembic upgrade head` were all re-verified green at the new head. Awaiting
+independent review; not merged or self-approved.
 
 ---
 
