@@ -1316,3 +1316,48 @@ made from these numbers yet.
 
 **Next:** `quant` can consume these density facts once the schedule facts are in
 place; no extra schedule-context work should be folded into this Phase 3 item.
+
+---
+
+## 2026-08-18 — quant — Descriptive teammate absence splits
+
+**Changed:** Implemented `absence-splits` as versioned descriptive evidence
+rather than a decision-bearing model. `compute_absence_splits` now compares a
+beneficiary's observed game-log production when a teammate played versus when
+the teammate did not play. Explicit participation outcomes remain direct
+evidence. A missing row becomes an inferred absence only after crossing a final
+team-schedule game with a same-team membership segment bounded by observed rows
+on both sides; pre-boundary, post-boundary, team-change, and explicit-unknown
+gaps remain unknown. Added the `absence_splits` table and migration, exact source
+row and membership-boundary provenance, current schedule-cohort lineage,
+append-only input fingerprints, sample-size and uncertainty fields, a safe
+latest-cohort selector, denominator-aware shooting summaries, and focused tests.
+The contract and blind spots are documented in
+`docs/availability/absence-splits.md`.
+
+**Now true:** R35's warning is enforced in executable logic rather than left as
+a comment: no unbounded missing row can enter an absence split. Every persisted
+row identifies itself as `data_layer=observations` and
+`claim_type=descriptive`, with database CHECK constraints preventing those
+claims from drifting. Makes and attempts remain reconstructable, sparse groups
+state whether variance is estimable, stale schedule cohorts are excluded by the
+current selector, and no output claims causality or recommendation value. The
+Model gate does not apply to this descriptive artifact; it does apply to the
+future `contingent-value` model that turns this evidence into a decision-bearing
+quantity.
+
+**Could not verify:** No real multi-season NBA backfill is present in this
+worktree, so sample-size distributions, the proportion of explicit versus
+bounded-inferred absences, and the practical frequency of contradictory source
+rows remain unmeasured. No Postgres service was available locally. The
+membership segments deliberately cannot see exact transaction times or roster
+membership outside observed bounds, and the splits cannot separate teammate
+absence from coaching, matchup, lineup, or role changes. Schedule-density facts
+from the newly merged Phase 3 contract are intentionally not consumed because
+this artifact is an unadjusted historical description, not an availability or
+production model.
+
+**Next:** `quant` may use these rows as candidate features for
+`contingent-value`, but must first define temporal held-out validation and a
+model card; no stock-watch, waiver, draft, lineup, or trade recommendation
+should read raw absence deltas directly.

@@ -24,16 +24,18 @@ opening night while ``BoxScoreSummaryV3`` returned the real ones.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from hoops_gm.db.base import Base, IntPk, TimestampMixin, portable_enum
+from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
 from hoops_gm.db.models.enums import (
     DnpReason,
     ExternalSource,
     ParticipationOutcome,
+    SeasonType,
 )
 
 if TYPE_CHECKING:
@@ -90,3 +92,96 @@ class PlayerParticipation(IntPk, TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<PlayerParticipation player={self.player_id} game={self.game_id} {self.outcome}>"
+
+
+class AbsenceSplit(IntPk, TimestampMixin, Base):
+    """Descriptive teammate production evidence for games with/without a player.
+
+    This is deliberately an observation-layer aggregate, not a causal estimate
+    and not a recommendation. ``provenance`` retains every source row and the
+    bounded membership observations that permitted an otherwise missing row to
+    be classified as an absence.
+    """
+
+    __tablename__ = "absence_splits"
+    __table_args__ = (
+        UniqueConstraint(
+            "beneficiary_player_id",
+            "absent_player_id",
+            "team_id",
+            "season",
+            "season_type",
+            "evidence_version",
+            "input_fingerprint",
+            name="uq_absence_splits_pair_evidence",
+        ),
+        CheckConstraint(
+            "beneficiary_player_id <> absent_player_id",
+            name="distinct_players",
+        ),
+        CheckConstraint("games_with > 0", name="games_with_positive"),
+        CheckConstraint("games_without > 0", name="games_without_positive"),
+        CheckConstraint(
+            "explicit_absence_games + inferred_absence_games = games_without",
+            name="absence_provenance_counts_match",
+        ),
+        CheckConstraint("data_layer = 'observations'", name="observation_layer_only"),
+        CheckConstraint("claim_type = 'descriptive'", name="descriptive_claim_only"),
+        Index(
+            "ix_absence_splits_absent_season",
+            "absent_player_id",
+            "season",
+        ),
+        Index(
+            "ix_absence_splits_beneficiary_season",
+            "beneficiary_player_id",
+            "season",
+        ),
+        Index("ix_absence_splits_team_season", "team_id", "season"),
+        Index("ix_absence_splits_evidence_version", "evidence_version"),
+        Index("ix_absence_splits_schedule_version", "schedule_version"),
+    )
+
+    beneficiary_player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    absent_player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("nba_teams.id"))
+    season: Mapped[str] = mapped_column(String(9))
+    season_type: Mapped[SeasonType] = mapped_column(portable_enum(SeasonType, "season_type"))
+
+    games_with: Mapped[int] = mapped_column()
+    games_without: Mapped[int] = mapped_column()
+    explicit_absence_games: Mapped[int] = mapped_column()
+    inferred_absence_games: Mapped[int] = mapped_column()
+    excluded_unknown_games: Mapped[int] = mapped_column(default=0)
+
+    #: Each payload keeps totals, per-game summaries, sample dispersion and
+    #: denominator-aware shooting rates. Percentages are never persisted as
+    #: standalone columns; makes and attempts remain reconstructable.
+    production_with: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    production_without: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    descriptive_deltas: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    uncertainty: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    provenance: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+
+    data_layer: Mapped[str] = mapped_column(
+        String(32), default="observations", server_default="observations"
+    )
+    claim_type: Mapped[str] = mapped_column(
+        String(32), default="descriptive", server_default="descriptive"
+    )
+    membership_method: Mapped[str] = mapped_column(String(64))
+    evidence_version: Mapped[str] = mapped_column(String(64))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    schedule_version: Mapped[str] = mapped_column(String(64))
+    schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    beneficiary: Mapped[Player] = relationship(foreign_keys=[beneficiary_player_id])
+    absent_player: Mapped[Player] = relationship(foreign_keys=[absent_player_id])
+    team: Mapped[NbaTeam] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<AbsenceSplit beneficiary={self.beneficiary_player_id} "
+            f"absent={self.absent_player_id} season={self.season}>"
+        )

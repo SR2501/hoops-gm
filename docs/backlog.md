@@ -205,10 +205,18 @@ AUCTION CRITICAL (R37, track A). Import published AAV from whatever sources the 
 
 ### `absence-splits` - Computing with/without absence splits
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `participation-ledger`
 
-Historical production splits per player pairing when a teammate is absent, validated against actual absence games rather than assumed.
+Historical production splits per player pairing when a teammate is absent.
+Implemented as descriptive observation-layer evidence, not a causal or
+decision-bearing model. Explicit non-play rows are retained as direct evidence;
+a missing row counts as absent only inside a same-team membership segment
+bounded by observed rows and crossed with a final scheduled game (R35).
+Provenance, sample sizes, excluded unknowns, uncertainty, schedule lineage, and
+volume-aware makes/attempts are persisted. Sparse splits never become
+recommendations here; `contingent-value` must pass the Model gate before using
+them in a decision.
 
 
 ### `action-protocol` - Defining the automation action protocol

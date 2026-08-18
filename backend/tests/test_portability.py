@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
+from sqlalchemy.schema import DefaultClause
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import NAMING_CONVENTION, Base
@@ -179,7 +180,6 @@ def test_later_phase_entity_groups_are_absent() -> None:
         "availability_predictions",
         "reliability_metrics",
         "shutdown_risk",
-        "absence_splits",
         "usage_redistribution",
         "stock_movements",
         "projections",
@@ -208,6 +208,29 @@ def test_the_observed_participation_ledger_is_present() -> None:
         "'nobody was inactive' and 'the source stopped telling us' are different "
         "facts, and BoxScoreSummaryV2 erased the difference for a whole season"
     )
+
+
+def test_absence_splits_are_descriptive_observation_evidence() -> None:
+    table = Base.metadata.tables["absence_splits"]
+    columns = set(table.columns.keys())
+
+    assert {
+        "games_with",
+        "games_without",
+        "explicit_absence_games",
+        "inferred_absence_games",
+        "provenance",
+        "uncertainty",
+        "evidence_version",
+        "input_fingerprint",
+        "schedule_version",
+    } <= columns
+    data_layer_default = table.c.data_layer.server_default
+    claim_type_default = table.c.claim_type.server_default
+    assert isinstance(data_layer_default, DefaultClause)
+    assert isinstance(claim_type_default, DefaultClause)
+    assert data_layer_default.arg == "observations"
+    assert claim_type_default.arg == "descriptive"
 
 
 def test_schedule_context_tables_are_present() -> None:
