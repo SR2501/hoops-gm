@@ -14,6 +14,14 @@ configs and blend profiles that arrive later — they follow this pattern.
 to be averaged; it is made-over-attempted, and its fantasy impact is weighted by
 volume. Recording the component stat keys here is what lets the valuation engine
 do that correctly instead of averaging percentages (risk R9).
+
+**`scoring-profiles` (docs/backlog.md)** adds the derivation and activation
+discipline on top of the two decisions above: ``hoops_gm.scoring.profiles``
+owns turning a league's raw scoring-category evidence and its current
+``LeagueSettingsSnapshot`` into rows here, and enforces "at most one active
+profile per league" as a database constraint (``active_league_id``) rather
+than an application convention. See that module and ``LeagueScoringProfile``'s
+docstring for the mechanism.
 """
 
 from __future__ import annotations
@@ -77,8 +85,14 @@ class League(IntPk, TimestampMixin, Base):
     auction_budget: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     is_active: Mapped[bool] = mapped_column(default=True)
 
+    #: ``foreign_keys`` is required here: ``league_scoring_profiles`` carries
+    #: two FKs to ``leagues.id`` (``league_id`` and the activation sentinel
+    #: ``active_league_id``), and without disambiguation SQLAlchemy cannot
+    #: tell which one this collection should join on.
     scoring_profiles: Mapped[list[LeagueScoringProfile]] = relationship(
-        back_populates="league", cascade="all, delete-orphan"
+        back_populates="league",
+        cascade="all, delete-orphan",
+        foreign_keys="LeagueScoringProfile.league_id",
     )
     fantasy_teams: Mapped[list[FantasyTeam]] = relationship(
         back_populates="league", cascade="all, delete-orphan"
@@ -106,12 +120,39 @@ class LeagueScoringProfile(IntPk, TimestampMixin, Base):
     Do not update a profile in place. Insert the next version and repoint.
     Anything that stores a computed number takes a foreign key here, which is
     how "what settings produced this valuation" stays answerable.
+
+    ``settings_snapshot_id`` is the league-rules lineage: the
+    ``LeagueSettingsSnapshot`` version that was current when this profile was
+    derived. It answers "what else was true about the league's rules at the
+    moment this scoring profile was built" and is what
+    ``hoops_gm.scoring.profiles`` refuses to skip -- see that module for the
+    stale-settings rejection this column exists to make checkable.
+
+    **At most one active profile per league, enforced by the database, not by
+    convention.** ``active_league_id`` mirrors ``league_id`` while this row is
+    the league's current profile, and is ``NULL`` otherwise. A bare
+    ``UniqueConstraint`` on this single nullable column is what makes "only one
+    active row per league" a guarantee: SQL treats every ``NULL`` as distinct,
+    so any number of superseded (inactive) versions may coexist, while at most
+    one row can ever carry a given non-null league id here. This is
+    deliberately not a partial/filtered unique index (``WHERE is_active``):
+    that requires a dialect-specific keyword
+    (``sqlite_where``/``postgresql_where``) that this codebase's own
+    portability tests forbid (``test_portability.py``), so the nullable-sentinel
+    column is the portable substitute. ``is_active`` is a derived Python
+    property over it, not a stored column, so there is only ever one fact to
+    keep consistent.
     """
 
     __tablename__ = "league_scoring_profiles"
     __table_args__ = (
         UniqueConstraint("league_id", "name", "version", name="uq_league_scoring_profiles_ver"),
         CheckConstraint("version >= 1", name="version_positive"),
+        UniqueConstraint("active_league_id", name="uq_league_scoring_profiles_one_active"),
+        CheckConstraint(
+            "active_league_id IS NULL OR active_league_id = league_id",
+            name="active_league_id_matches_league",
+        ),
     )
 
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), index=True)
@@ -120,13 +161,41 @@ class LeagueScoringProfile(IntPk, TimestampMixin, Base):
     scoring_type: Mapped[ScoringType] = mapped_column(
         portable_enum(ScoringType, "scoring_type"), default=ScoringType.H2H_CATEGORIES
     )
-    is_active: Mapped[bool] = mapped_column(default=True, index=True)
+    #: The league-settings version this profile was derived from. Not
+    #: nullable: a scoring profile with no rules lineage cannot answer "why
+    #: does this league score this way", which is exactly the provenance gap
+    #: ADR-004's source tiering exists to close elsewhere. No ``ondelete`` is
+    #: given deliberately: the default (reject) behaviour is what "a cited
+    #: settings snapshot cannot be deleted out from under a profile" means.
+    settings_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "league_settings_snapshots.id",
+            # Explicit, shortened name: the naming-convention default
+            # ("fk_league_scoring_profiles_settings_snapshot_id_league_settings_snapshots")
+            # is 73 characters and Postgres silently truncates past 63,
+            # which test_portability.py's identifier-length check catches.
+            name="fk_league_scoring_profiles_settings_snapshot_id",
+        ),
+        index=True,
+    )
+    #: See the class docstring: non-null and equal to ``league_id`` exactly
+    #: while this row is the league's active profile, ``NULL`` otherwise.
+    active_league_id: Mapped[int | None] = mapped_column(
+        ForeignKey("leagues.id", ondelete="CASCADE")
+    )
     source_note: Mapped[str | None] = mapped_column(Text)
 
-    league: Mapped[League] = relationship(back_populates="scoring_profiles")
+    league: Mapped[League] = relationship(
+        back_populates="scoring_profiles", foreign_keys="LeagueScoringProfile.league_id"
+    )
+    settings_snapshot: Mapped[LeagueSettingsSnapshot] = relationship()
     categories: Mapped[list[LeagueScoringCategory]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"
     )
+
+    @property
+    def is_active(self) -> bool:
+        return self.active_league_id is not None
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<LeagueScoringProfile {self.name!r} v{self.version}>"

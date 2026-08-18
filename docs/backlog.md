@@ -742,10 +742,10 @@ Live scorecard fed by SSE: category-by-category win/loss/margin, games remaining
 
 ### `scoring-profiles` - Abstracting scoring profiles for multi-format support
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `db-foundation`, `league-settings-ingest`
 
-Scoring-profile abstraction so points and roto formats can slot in later without rewriting the valuation engine. H2H 9-cat is the first concrete profile.
+Scoring-profile abstraction so points and roto formats can slot in later without rewriting the valuation engine. H2H 9-cat is the first concrete profile. Implemented: `league_scoring_profiles`/`league_scoring_categories` (already scaffolded in `db-foundation`) gained `settings_snapshot_id` (source attribution to a `LeagueSettingsSnapshot` version) and `active_league_id` (a nullable, uniquely-constrained self-FK replacing the old `is_active` boolean, enforcing "at most one active profile per league" as a database constraint with no dialect branching -- see `db/models/league.py`, migration `0010`). `hoops_gm.scoring.profiles` derives a profile from a league's current settings snapshot plus its raw scoring-category evidence, mapping only the nine abbreviations actually observed live (AST, BLK, PTS, REB, ST, 3PTM, TO, FG%, FT%) and raising `UnsupportedCategoryError` (fail closed) on anything else; percentage categories are stored as made/attempted component pairs, never a raw percentage. Activation (`activate_scoring_profile_version`) is a separate, explicit, two-phase deactivate-then-activate step supporting A -> B -> A re-activation with no special case. No rankings/AAV/market evidence enter this layer (ADR-008); no projection, availability or valuation math is computed here (ADR-002 stays intact -- this is configuration, not production or `p(play)`). Model gate does not apply: nothing decision-bearing is computed or backtested, only Code gate. See `docs/handoff.md` for the full entry.
 
 
 ### `shutdown-risk` - Modelling late-season shutdown risk

@@ -7,7 +7,8 @@ it produces a confident, wrong number several phases later.
 
 from __future__ import annotations
 
-from datetime import date
+import hashlib
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -22,6 +23,7 @@ from hoops_gm.db.models import (
     League,
     LeagueScoringCategory,
     LeagueScoringProfile,
+    LeagueSettingsSnapshot,
     MatchMethod,
     Matchup,
     MatchupCategoryResult,
@@ -52,11 +54,38 @@ def _player(session: Session, name: str = "Jayson Tatum") -> Player:
     return player
 
 
+def _settings_snapshot(
+    session: Session, league_id: int, version: int = 1
+) -> LeagueSettingsSnapshot:
+    """Minimal valid snapshot, for tests that only need a lineage anchor."""
+    snapshot = LeagueSettingsSnapshot(
+        league_id=league_id,
+        version=version,
+        schema_version="2026-27.v1",
+        settings={
+            "lineup_lock": None,
+            "waivers": None,
+            "games_caps": None,
+            "roster": None,
+            "trade_deadline": None,
+            "playoff_periods": None,
+            "keeper_rules": None,
+        },
+        source_summary={},
+        source_payload_sha256=hashlib.sha256(f"payload-{league_id}-{version}".encode()).hexdigest(),
+        observed_at=datetime(2026, 8, 17, tzinfo=UTC),
+    )
+    session.add(snapshot)
+    session.flush()
+    return snapshot
+
+
 def _profile(session: Session) -> LeagueScoringProfile:
     league = League(name="Test League", season="2026-27")
     session.add(league)
     session.flush()
-    profile = LeagueScoringProfile(league_id=league.id)
+    snapshot = _settings_snapshot(session, league.id)
+    profile = LeagueScoringProfile(league_id=league.id, settings_snapshot_id=snapshot.id)
     session.add(profile)
     session.flush()
     return profile
@@ -548,16 +577,29 @@ def test_scoring_profiles_are_versioned(session: Session) -> None:
     league = League(name="Test League", season="2026-27")
     session.add(league)
     session.flush()
+    snapshot = _settings_snapshot(session, league.id)
 
-    session.add(LeagueScoringProfile(league_id=league.id, name="default", version=1))
+    session.add(
+        LeagueScoringProfile(
+            league_id=league.id, name="default", version=1, settings_snapshot_id=snapshot.id
+        )
+    )
     session.flush()
 
-    session.add(LeagueScoringProfile(league_id=league.id, name="default", version=2))
+    session.add(
+        LeagueScoringProfile(
+            league_id=league.id, name="default", version=2, settings_snapshot_id=snapshot.id
+        )
+    )
     session.flush()
 
     assert {profile.version for profile in league.scoring_profiles} == {1, 2}
 
-    session.add(LeagueScoringProfile(league_id=league.id, name="default", version=2))
+    session.add(
+        LeagueScoringProfile(
+            league_id=league.id, name="default", version=2, settings_snapshot_id=snapshot.id
+        )
+    )
     with pytest.raises(IntegrityError):
         session.flush()
 
@@ -630,7 +672,8 @@ def test_a_nine_category_profile_is_expressible(session: Session) -> None:
     league = League(name="Test League", season="2026-27")
     session.add(league)
     session.flush()
-    profile = LeagueScoringProfile(league_id=league.id)
+    snapshot = _settings_snapshot(session, league.id)
+    profile = LeagueScoringProfile(league_id=league.id, settings_snapshot_id=snapshot.id)
     session.add(profile)
     session.flush()
 
