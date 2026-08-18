@@ -2,7 +2,7 @@
 
 from hoops_gm.availability.absence_splits import (
     ABSENCE_SPLIT_EVIDENCE_VERSION,
-    BOUNDED_MEMBERSHIP_METHOD,
+    DIRECT_EVIDENCE_METHOD,
     AbsenceSplitInputError,
     AbsenceSplitRun,
     compute_absence_splits,
@@ -11,7 +11,7 @@ from hoops_gm.availability.absence_splits import (
 
 __all__ = [
     "ABSENCE_SPLIT_EVIDENCE_VERSION",
-    "BOUNDED_MEMBERSHIP_METHOD",
+    "DIRECT_EVIDENCE_METHOD",
     "AbsenceSplitInputError",
     "AbsenceSplitRun",
     "compute_absence_splits",

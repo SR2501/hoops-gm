@@ -1,4 +1,4 @@
-"""Descriptive teammate absence evidence and its R35 fail-closed boundary."""
+"""Direct-evidence teammate splits and their fail-closed R35 boundary."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from hoops_gm.availability import (
 from hoops_gm.db.lineage import record_refresh
 from hoops_gm.db.models import (
     AbsenceSplit,
+    AbsenceSplitComputationRun,
     DnpReason,
     ExternalSource,
     GameStatus,
@@ -34,15 +35,12 @@ from hoops_gm.db.models import (
 SEASON = "2025-26"
 
 
-def _teams(session: Session) -> tuple[NbaTeam, NbaTeam, NbaTeam]:
-    teams = (
-        NbaTeam(nba_team_id=1, abbreviation="AAA", name="Alpha"),
-        NbaTeam(nba_team_id=2, abbreviation="BBB", name="Beta"),
-        NbaTeam(nba_team_id=3, abbreviation="OPP", name="Opponent"),
-    )
-    session.add_all(teams)
+def _teams(session: Session) -> tuple[NbaTeam, NbaTeam]:
+    team = NbaTeam(nba_team_id=1, abbreviation="AAA", name="Alpha")
+    opponent = NbaTeam(nba_team_id=2, abbreviation="OPP", name="Opponent")
+    session.add_all([team, opponent])
     session.flush()
-    return teams
+    return team, opponent
 
 
 def _player(session: Session, name: str) -> Player:
@@ -84,6 +82,26 @@ def _game(
     )
     session.flush()
     return game
+
+
+def _games(
+    session: Session,
+    team: NbaTeam,
+    opponent: NbaTeam,
+    count: int,
+    *,
+    start: date = date(2025, 10, 20),
+) -> list[NbaGame]:
+    return [
+        _game(
+            session,
+            number=index,
+            game_date=start + timedelta(days=index),
+            team=team,
+            opponent=opponent,
+        )
+        for index in range(1, count + 1)
+    ]
 
 
 def _register_schedule(session: Session, version: str = "schedule-test-v1") -> None:
@@ -156,21 +174,21 @@ def _dict(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def test_computes_explicit_and_bounded_inferred_absence_evidence(session: Session) -> None:
-    team, _, opponent = _teams(session)
+def _pair(
+    result_rows: tuple[AbsenceSplit, ...], beneficiary: Player, absent: Player
+) -> AbsenceSplit:
+    return next(
+        split
+        for split in result_rows
+        if split.beneficiary_player_id == beneficiary.id and split.absent_player_id == absent.id
+    )
+
+
+def test_computes_only_directly_observed_non_play_evidence(session: Session) -> None:
+    team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
     absent = _player(session, "Absent teammate")
-    start = date(2025, 10, 20)
-    games = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team,
-            opponent=opponent,
-        )
-        for index in range(1, 5)
-    ]
+    games = _games(session, team, opponent, 4)
     _register_schedule(session)
 
     _log(session, player=absent, game=games[0], team=team, points=20)
@@ -181,10 +199,14 @@ def test_computes_explicit_and_bounded_inferred_absence_evidence(session: Sessio
         team=team,
         outcome=ParticipationOutcome.DID_NOT_PLAY,
     )
-    # games[2] has no row for the absent player. It is inferable only because
-    # games[0]/games[3] bound a same-team observed membership segment.
+    _participation(
+        session,
+        player=absent,
+        game=games[2],
+        team=team,
+        outcome=ParticipationOutcome.INACTIVE,
+    )
     _log(session, player=absent, game=games[3], team=team, points=22)
-
     for game, points, made, attempted in zip(
         games,
         (10, 30, 40, 20),
@@ -203,18 +225,15 @@ def test_computes_explicit_and_bounded_inferred_absence_evidence(session: Sessio
         )
 
     result = compute_absence_splits(session, season=SEASON)
-    row = next(
-        split
-        for split in result.rows
-        if split.beneficiary_player_id == beneficiary.id and split.absent_player_id == absent.id
-    )
+    row = _pair(result.rows, beneficiary, absent)
 
+    assert result.computation_run.result_count == 1
     assert row.games_with == 2
     assert row.games_without == 2
-    assert row.explicit_absence_games == 1
-    assert row.inferred_absence_games == 1
+    assert row.observed_absence_games == 2
     assert row.data_layer == "observations"
     assert row.claim_type == "descriptive"
+    assert row.provenance["missing_rows_classified"] == 0
 
     with_counting = _dict(_dict(row.production_with)["counting"])
     without_counting = _dict(_dict(row.production_without)["counting"])
@@ -224,124 +243,50 @@ def test_computes_explicit_and_bounded_inferred_absence_evidence(session: Sessio
     assert point_delta["without_minus_with_per_game"] == 20.0
     assert point_delta["delta_standard_error"] == pytest.approx(50**0.5)
 
-    # 1/1 and 9/10 aggregate to 10/11. Averaging the two game percentages
-    # would produce .95 and discard the attempt volume.
     with_shooting = _dict(_dict(row.production_with)["shooting"])
     free_throws = _dict(with_shooting["free_throws"])
     assert free_throws["made"] == 10
     assert free_throws["attempted"] == 11
     assert free_throws["aggregate_rate"] == pytest.approx(10 / 11)
 
-    provenance = _dict(row.provenance)
-    without_samples = cast(list[dict[str, object]], provenance["without_samples"])
-    assert {sample["condition"] for sample in without_samples} == {
-        "without_explicit",
-        "without_inferred",
+    without_samples = cast(list[dict[str, object]], row.provenance["without_samples"])
+    assert {sample["condition"] for sample in without_samples} == {"without_observed"}
+    assert {_dict(sample["target_evidence"])["kind"] for sample in without_samples} == {
+        "participation"
     }
-    inferred = next(
-        sample for sample in without_samples if sample["condition"] == "without_inferred"
-    )
-    assert _dict(inferred["target_evidence"])["kind"] == "missing_within_bounded_membership"
-    assert row.uncertainty["causal_effect"] is False
-    assert row.uncertainty["recommendation"] is False
 
 
-def test_missing_rows_outside_observed_membership_bounds_are_not_absences(
+def test_long_missing_window_between_same_team_observations_is_never_absence(
     session: Session,
 ) -> None:
-    team, _, opponent = _teams(session)
+    """Bracketing Team A rows do not prove continuous roster membership or feed completeness."""
+
+    team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
-    absent = _player(session, "Bounded teammate")
-    start = date(2025, 11, 1)
-    games = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team,
-            opponent=opponent,
-        )
-        for index in range(1, 7)
-    ]
+    teammate = _player(session, "Left and later returned")
+    games = _games(session, team, opponent, 10)
     _register_schedule(session)
 
-    _log(session, player=absent, game=games[1], team=team, points=10)
-    _log(session, player=absent, game=games[4], team=team, points=11)
-    for index, game in enumerate(games):
-        _log(session, player=beneficiary, game=game, team=team, points=20 + index)
-
-    row = next(
-        split
-        for split in compute_absence_splits(session, season=SEASON).rows
-        if split.beneficiary_player_id == beneficiary.id and split.absent_player_id == absent.id
-    )
-
-    assert row.games_with == 2
-    assert row.games_without == 2
-    provenance = _dict(row.provenance)
-    all_samples = cast(list[dict[str, object]], provenance["with_samples"]) + cast(
-        list[dict[str, object]], provenance["without_samples"]
-    )
-    sampled_game_ids = {sample["game_id"] for sample in all_samples}
-    assert games[0].id not in sampled_game_ids
-    assert games[5].id not in sampled_game_ids
-
-
-def test_team_changes_break_membership_segments_instead_of_inventing_absences(
-    session: Session,
-) -> None:
-    team_a, team_b, opponent = _teams(session)
-    beneficiary = _player(session, "Beneficiary")
-    traded = _player(session, "Traded teammate")
-    start = date(2025, 12, 1)
-    games_a = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team_a,
-            opponent=opponent,
-        )
-        for index in (1, 2, 4, 5)
-    ]
-    game_b = _game(
-        session,
-        number=3,
-        game_date=start + timedelta(days=3),
-        team=team_b,
-        opponent=opponent,
-    )
-    _register_schedule(session)
-
-    _log(session, player=traded, game=games_a[0], team=team_a, points=10)
-    _log(session, player=traded, game=game_b, team=team_b, points=10)
-    _log(session, player=traded, game=games_a[-1], team=team_a, points=10)
-    for game in games_a:
-        _log(session, player=beneficiary, game=game, team=team_a, points=20)
+    _log(session, player=teammate, game=games[0], team=team, points=10)
+    _log(session, player=teammate, game=games[-1], team=team, points=10)
+    for game in games:
+        _log(session, player=beneficiary, game=game, team=team, points=20)
 
     result = compute_absence_splits(session, season=SEASON)
 
     assert not any(
-        row.beneficiary_player_id == beneficiary.id and row.absent_player_id == traded.id
+        row.beneficiary_player_id == beneficiary.id and row.absent_player_id == teammate.id
         for row in result.rows
     )
+    assert result.computation_run.result_count == 0
+    assert latest_absence_splits(session, season=SEASON) == ()
 
 
-def test_unknown_participation_is_excluded_not_coerced_to_absence(session: Session) -> None:
-    team, _, opponent = _teams(session)
+def test_explicit_unknown_is_provenance_not_a_schedule_coverage_claim(session: Session) -> None:
+    team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
     absent = _player(session, "Unknown teammate")
-    start = date(2026, 1, 1)
-    games = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team,
-            opponent=opponent,
-        )
-        for index in range(1, 5)
-    ]
+    games = _games(session, team, opponent, 4, start=date(2026, 1, 1))
     _register_schedule(session)
     _log(session, player=absent, game=games[0], team=team, points=10)
     _participation(
@@ -362,16 +307,16 @@ def test_unknown_participation_is_excluded_not_coerced_to_absence(session: Sessi
     for game in games:
         _log(session, player=beneficiary, game=game, team=team, points=20)
 
-    row = next(
-        split
-        for split in compute_absence_splits(session, season=SEASON).rows
-        if split.beneficiary_player_id == beneficiary.id and split.absent_player_id == absent.id
+    row = _pair(
+        compute_absence_splits(session, season=SEASON).rows,
+        beneficiary,
+        absent,
     )
 
     assert row.games_without == 1
-    assert row.explicit_absence_games == 1
-    assert row.inferred_absence_games == 0
-    assert row.excluded_unknown_games == 1
+    assert row.observed_absence_games == 1
+    assert row.provenance["explicit_unknown_game_ids"] == [games[1].id]
+    assert not hasattr(row, "excluded_unknown_games")
     assert row.uncertainty["sample_sizes"] == {"with": 2, "without": 1}
     assert row.uncertainty["variance_estimable"] == {"with": True, "without": False}
 
@@ -379,22 +324,19 @@ def test_unknown_participation_is_excluded_not_coerced_to_absence(session: Sessi
 def test_unknown_participation_does_not_override_a_game_log_that_proves_play(
     session: Session,
 ) -> None:
-    team, _, opponent = _teams(session)
+    team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
     teammate = _player(session, "Observed teammate")
-    start = date(2026, 1, 10)
-    games = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team,
-            opponent=opponent,
-        )
-        for index in range(1, 4)
-    ]
+    games = _games(session, team, opponent, 3, start=date(2026, 1, 10))
     _register_schedule(session)
     _log(session, player=teammate, game=games[0], team=team, points=10)
+    _participation(
+        session,
+        player=teammate,
+        game=games[1],
+        team=team,
+        outcome=ParticipationOutcome.INACTIVE,
+    )
     _log(session, player=teammate, game=games[2], team=team, points=10)
     _participation(
         session,
@@ -406,29 +348,66 @@ def test_unknown_participation_does_not_override_a_game_log_that_proves_play(
     for game in games:
         _log(session, player=beneficiary, game=game, team=team, points=20)
 
-    row = next(
-        split
-        for split in compute_absence_splits(session, season=SEASON).rows
-        if split.beneficiary_player_id == beneficiary.id and split.absent_player_id == teammate.id
+    row = _pair(
+        compute_absence_splits(session, season=SEASON).rows,
+        beneficiary,
+        teammate,
     )
 
-    assert row.games_with == 2
     with_samples = cast(list[dict[str, object]], row.provenance["with_samples"])
     last_target = _dict(with_samples[-1]["target_evidence"])
     assert last_target["kind"] == "player_game_log"
     assert last_target["participation_outcome"] == ParticipationOutcome.UNKNOWN.value
 
 
-def test_conflicting_play_and_non_play_evidence_fails_loudly(session: Session) -> None:
-    team, _, opponent = _teams(session)
-    player = _player(session, "Contradiction")
-    game = _game(
-        session,
-        number=1,
-        game_date=date(2026, 2, 1),
-        team=team,
-        opponent=opponent,
+def test_shooting_uncertainty_does_not_treat_clustered_attempts_as_independent(
+    session: Session,
+) -> None:
+    team, opponent = _teams(session)
+    beneficiary = _player(session, "Clustered shooter")
+    absent = _player(session, "Absent teammate")
+    games = _games(session, team, opponent, 4, start=date(2026, 2, 1))
+    _register_schedule(session)
+    _log(session, player=absent, game=games[0], team=team, points=10)
+    _log(session, player=absent, game=games[1], team=team, points=10)
+    for game in games[2:]:
+        _participation(
+            session,
+            player=absent,
+            game=game,
+            team=team,
+            outcome=ParticipationOutcome.INACTIVE,
+        )
+    for game, made in zip(games, (10, 0, 5, 5), strict=True):
+        _log(
+            session,
+            player=beneficiary,
+            game=game,
+            team=team,
+            points=20,
+            free_throws_made=made,
+            free_throws_attempted=10,
+        )
+
+    row = _pair(
+        compute_absence_splits(session, season=SEASON).rows,
+        beneficiary,
+        absent,
     )
+    with_ft = _dict(_dict(_dict(row.production_with)["shooting"])["free_throws"])
+
+    assert with_ft["aggregate_rate"] == 0.5
+    assert with_ft["observed_games"] == 2
+    assert with_ft["interval"] is None
+    assert "wilson_95_interval" not in with_ft
+    assert "shot_level_standard_error" not in with_ft
+    assert "cluster within games" in cast(str, with_ft["interval_reason"])
+
+
+def test_conflicting_play_and_non_play_evidence_fails_loudly(session: Session) -> None:
+    team, opponent = _teams(session)
+    player = _player(session, "Contradiction")
+    game = _games(session, team, opponent, 1, start=date(2026, 3, 1))[0]
     _register_schedule(session)
     _log(session, player=player, game=game, team=team, points=10)
     _participation(
@@ -443,39 +422,30 @@ def test_conflicting_play_and_non_play_evidence_fails_loudly(session: Session) -
         compute_absence_splits(session, season=SEASON)
 
 
-def test_schedule_lineage_is_required_before_missing_rows_are_examined(session: Session) -> None:
-    team, _, opponent = _teams(session)
-    _game(
-        session,
-        number=1,
-        game_date=date(2026, 3, 1),
-        team=team,
-        opponent=opponent,
-    )
+def test_schedule_lineage_is_required_before_computation(session: Session) -> None:
+    team, opponent = _teams(session)
+    _games(session, team, opponent, 1, start=date(2026, 3, 10))
 
     with pytest.raises(AbsenceSplitInputError, match="schedule refresh"):
         compute_absence_splits(session, season=SEASON)
 
 
-def test_same_inputs_reuse_the_persisted_evidence_and_changed_inputs_version_it(
+def test_same_inputs_reuse_complete_run_and_changed_inputs_create_a_new_run(
     session: Session,
 ) -> None:
-    team, _, opponent = _teams(session)
+    team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
     absent = _player(session, "Absent teammate")
-    start = date(2026, 4, 1)
-    games = [
-        _game(
-            session,
-            number=index,
-            game_date=start + timedelta(days=index),
-            team=team,
-            opponent=opponent,
-        )
-        for index in range(1, 4)
-    ]
+    games = _games(session, team, opponent, 3, start=date(2026, 4, 1))
     _register_schedule(session)
     _log(session, player=absent, game=games[0], team=team, points=10)
+    _participation(
+        session,
+        player=absent,
+        game=games[1],
+        team=team,
+        outcome=ParticipationOutcome.INACTIVE,
+    )
     _log(session, player=absent, game=games[2], team=team, points=10)
     beneficiary_logs = [
         _log(session, player=beneficiary, game=game, team=team, points=points)
@@ -487,12 +457,14 @@ def test_same_inputs_reuse_the_persisted_evidence_and_changed_inputs_version_it(
     assert first.created >= 1
     assert second.created == 0
     assert second.reused == first.created
+    assert second.computation_run.id == first.computation_run.id
 
     beneficiary_logs[1].points = 25
     session.flush()
     third = compute_absence_splits(session, season=SEASON)
 
-    assert third.created >= 1
+    assert third.computation_run.id != first.computation_run.id
+    assert len(session.scalars(select(AbsenceSplitComputationRun)).all()) == 2
     pair_rows = session.scalars(
         select(AbsenceSplit).where(
             AbsenceSplit.beneficiary_player_id == beneficiary.id,
@@ -500,11 +472,42 @@ def test_same_inputs_reuse_the_persisted_evidence_and_changed_inputs_version_it(
         )
     ).all()
     assert len(pair_rows) == 2
-    assert len({row.input_fingerprint for row in pair_rows}) == 2
-    [latest] = [
-        row
-        for row in latest_absence_splits(session, season=SEASON)
-        if row.beneficiary_player_id == beneficiary.id and row.absent_player_id == absent.id
-    ]
+    latest = _pair(latest_absence_splits(session, season=SEASON), beneficiary, absent)
     latest_without = _dict(_dict(latest.production_without)["counting"])
     assert _dict(latest_without["points"])["per_game"] == 25.0
+
+
+def test_empty_recomputation_supersedes_obsolete_pair_rows(session: Session) -> None:
+    team, opponent = _teams(session)
+    beneficiary = _player(session, "Beneficiary")
+    absent = _player(session, "Corrected teammate")
+    games = _games(session, team, opponent, 3, start=date(2026, 5, 1))
+    _register_schedule(session)
+    _log(session, player=absent, game=games[0], team=team, points=10)
+    corrected = _participation(
+        session,
+        player=absent,
+        game=games[1],
+        team=team,
+        outcome=ParticipationOutcome.INACTIVE,
+    )
+    _log(session, player=absent, game=games[2], team=team, points=10)
+    for game in games:
+        _log(session, player=beneficiary, game=game, team=team, points=20)
+
+    first = compute_absence_splits(session, season=SEASON)
+    assert _pair(first.rows, beneficiary, absent).games_without == 1
+
+    corrected.outcome = ParticipationOutcome.PLAYED
+    _log(session, player=absent, game=games[1], team=team, points=10)
+    session.flush()
+    second = compute_absence_splits(session, season=SEASON)
+
+    assert second.computation_run.id != first.computation_run.id
+    assert second.computation_run.result_count == 0
+    assert second.rows == ()
+    assert latest_absence_splits(session, season=SEASON) == ()
+    assert (
+        session.scalar(select(AbsenceSplit).where(AbsenceSplit.run_id == first.computation_run.id))
+        is not None
+    )

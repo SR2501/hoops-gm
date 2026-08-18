@@ -94,26 +94,67 @@ class PlayerParticipation(IntPk, TimestampMixin, Base):
         return f"<PlayerParticipation player={self.player_id} game={self.game_id} {self.outcome}>"
 
 
-class AbsenceSplit(IntPk, TimestampMixin, Base):
-    """Descriptive teammate production evidence for games with/without a player.
+class AbsenceSplitComputationRun(IntPk, TimestampMixin, Base):
+    """One complete successful absence-split computation, including empty ones."""
 
-    This is deliberately an observation-layer aggregate, not a causal estimate
-    and not a recommendation. ``provenance`` retains every source row and the
-    bounded membership observations that permitted an otherwise missing row to
-    be classified as an absence.
-    """
+    __tablename__ = "absence_split_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "season",
+            "season_type",
+            "evidence_version",
+            "schedule_version",
+            "input_fingerprint",
+            name="uq_absence_split_runs_input",
+        ),
+        CheckConstraint("result_count >= 0", name="result_count_non_negative"),
+        CheckConstraint(
+            "skipped_one_sided_pairs >= 0",
+            name="skipped_pairs_non_negative",
+        ),
+        Index(
+            "ix_absence_split_runs_current",
+            "season",
+            "season_type",
+            "evidence_version",
+            "schedule_version",
+            "id",
+        ),
+    )
+
+    season: Mapped[str] = mapped_column(String(9))
+    season_type: Mapped[SeasonType] = mapped_column(portable_enum(SeasonType, "season_type"))
+    evidence_version: Mapped[str] = mapped_column(String(64))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    schedule_version: Mapped[str] = mapped_column(String(64))
+    schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    result_count: Mapped[int] = mapped_column(default=0)
+    skipped_one_sided_pairs: Mapped[int] = mapped_column(default=0)
+
+    splits: Mapped[list[AbsenceSplit]] = relationship(
+        back_populates="computation_run",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"<AbsenceSplitComputationRun season={self.season} "
+            f"version={self.evidence_version} results={self.result_count}>"
+        )
+
+
+class AbsenceSplit(IntPk, TimestampMixin, Base):
+    """Descriptive teammate production evidence from direct observations only."""
 
     __tablename__ = "absence_splits"
     __table_args__ = (
         UniqueConstraint(
+            "run_id",
             "beneficiary_player_id",
             "absent_player_id",
             "team_id",
-            "season",
-            "season_type",
-            "evidence_version",
-            "input_fingerprint",
-            name="uq_absence_splits_pair_evidence",
+            name="uq_absence_splits_run_pair",
         ),
         CheckConstraint(
             "beneficiary_player_id <> absent_player_id",
@@ -121,38 +162,23 @@ class AbsenceSplit(IntPk, TimestampMixin, Base):
         ),
         CheckConstraint("games_with > 0", name="games_with_positive"),
         CheckConstraint("games_without > 0", name="games_without_positive"),
-        CheckConstraint(
-            "explicit_absence_games + inferred_absence_games = games_without",
-            name="absence_provenance_counts_match",
-        ),
+        CheckConstraint("observed_absence_games = games_without", name="all_absences_observed"),
         CheckConstraint("data_layer = 'observations'", name="observation_layer_only"),
         CheckConstraint("claim_type = 'descriptive'", name="descriptive_claim_only"),
-        Index(
-            "ix_absence_splits_absent_season",
-            "absent_player_id",
-            "season",
-        ),
-        Index(
-            "ix_absence_splits_beneficiary_season",
-            "beneficiary_player_id",
-            "season",
-        ),
-        Index("ix_absence_splits_team_season", "team_id", "season"),
-        Index("ix_absence_splits_evidence_version", "evidence_version"),
-        Index("ix_absence_splits_schedule_version", "schedule_version"),
+        Index("ix_absence_splits_absent_player", "absent_player_id"),
+        Index("ix_absence_splits_beneficiary_player", "beneficiary_player_id"),
+        Index("ix_absence_splits_run", "run_id"),
+        Index("ix_absence_splits_team", "team_id"),
     )
 
+    run_id: Mapped[int] = mapped_column(ForeignKey("absence_split_runs.id", ondelete="CASCADE"))
     beneficiary_player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
     absent_player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
     team_id: Mapped[int] = mapped_column(ForeignKey("nba_teams.id"))
-    season: Mapped[str] = mapped_column(String(9))
-    season_type: Mapped[SeasonType] = mapped_column(portable_enum(SeasonType, "season_type"))
 
     games_with: Mapped[int] = mapped_column()
     games_without: Mapped[int] = mapped_column()
-    explicit_absence_games: Mapped[int] = mapped_column()
-    inferred_absence_games: Mapped[int] = mapped_column()
-    excluded_unknown_games: Mapped[int] = mapped_column(default=0)
+    observed_absence_games: Mapped[int] = mapped_column()
 
     #: Each payload keeps totals, per-game summaries, sample dispersion and
     #: denominator-aware shooting rates. Percentages are never persisted as
@@ -169,13 +195,8 @@ class AbsenceSplit(IntPk, TimestampMixin, Base):
     claim_type: Mapped[str] = mapped_column(
         String(32), default="descriptive", server_default="descriptive"
     )
-    membership_method: Mapped[str] = mapped_column(String(64))
-    evidence_version: Mapped[str] = mapped_column(String(64))
-    input_fingerprint: Mapped[str] = mapped_column(String(64))
-    schedule_version: Mapped[str] = mapped_column(String(64))
-    schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
+    computation_run: Mapped[AbsenceSplitComputationRun] = relationship(back_populates="splits")
     beneficiary: Mapped[Player] = relationship(foreign_keys=[beneficiary_player_id])
     absent_player: Mapped[Player] = relationship(foreign_keys=[absent_player_id])
     team: Mapped[NbaTeam] = relationship()
@@ -183,5 +204,5 @@ class AbsenceSplit(IntPk, TimestampMixin, Base):
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
             f"<AbsenceSplit beneficiary={self.beneficiary_player_id} "
-            f"absent={self.absent_player_id} season={self.season}>"
+            f"absent={self.absent_player_id} run={self.run_id}>"
         )

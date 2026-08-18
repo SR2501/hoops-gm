@@ -211,20 +211,32 @@ def test_the_observed_participation_ledger_is_present() -> None:
 
 
 def test_absence_splits_are_descriptive_observation_evidence() -> None:
+    run_table = Base.metadata.tables["absence_split_runs"]
     table = Base.metadata.tables["absence_splits"]
     columns = set(table.columns.keys())
 
     assert {
-        "games_with",
-        "games_without",
-        "explicit_absence_games",
-        "inferred_absence_games",
-        "provenance",
-        "uncertainty",
+        "season",
+        "season_type",
         "evidence_version",
         "input_fingerprint",
         "schedule_version",
+        "result_count",
+        "skipped_one_sided_pairs",
+    } <= set(run_table.columns.keys())
+    assert {
+        "run_id",
+        "games_with",
+        "games_without",
+        "observed_absence_games",
+        "provenance",
+        "uncertainty",
     } <= columns
+    assert {
+        "inferred_absence_games",
+        "excluded_unknown_games",
+        "membership_method",
+    }.isdisjoint(columns)
     data_layer_default = table.c.data_layer.server_default
     claim_type_default = table.c.claim_type.server_default
     assert isinstance(data_layer_default, DefaultClause)
