@@ -1,7 +1,7 @@
 """Extend schedule-context provenance and keyed refresh lineage.
 
-Revision ID: 0006
-Revises: 0005
+Revision ID: 0008
+Revises: 0007
 Create Date: 2026-08-18
 """
 
@@ -12,8 +12,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006"
-down_revision: str | None = "0005"
+revision: str = "0008"
+down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -29,7 +29,7 @@ def _in_list(column: str, values: Sequence[str]) -> str:
 def upgrade() -> None:
     # A temporary server default lets this remain a single safe ALTER on populated
     # databases. Existing schedule lineage gets its explicit stable key before the
-    # default is removed; every other pre-0006 stream retains the legacy default key.
+    # default is removed; every other pre-0008 stream retains the legacy default key.
     op.add_column(
         "refresh_runs",
         sa.Column(
@@ -222,7 +222,7 @@ def _downgrade_blockers() -> list[str]:
             ") AS lineage_collisions",
         ),
         (
-            "opponent context with 0006-only provenance",
+            "opponent context with 0008-only provenance",
             "SELECT COUNT(*) FROM opponent_context "
             "WHERE source_version <> 'legacy-unbound' OR garbage_time_suppression IS NULL",
         ),
@@ -234,7 +234,7 @@ def _downgrade_blockers() -> list[str]:
             ") AS opponent_collisions",
         ),
         (
-            "off-night context with 0006-only provenance",
+            "off-night context with 0008-only provenance",
             "SELECT COUNT(*) FROM off_night_slates WHERE source_version <> 'legacy-unbound'",
         ),
         (
@@ -257,7 +257,7 @@ def downgrade() -> None:
     if blockers:
         joined = ", ".join(blockers)
         raise RuntimeError(
-            "refusing lossy 0006 downgrade; archive or explicitly remove incompatible "
+            "refusing lossy 0008 downgrade; archive or explicitly remove incompatible "
             f"history first: {joined}"
         )
 

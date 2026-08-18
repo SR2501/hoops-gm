@@ -1936,7 +1936,7 @@ merge or self-approve.
 `nba-schedule` key. Extended both schedule-context tables with a required
 `source_version`; added the off-night input snapshot, nullable uncalibrated
 garbage-time suppression, bounded probability/percentile checks, nonnegative
-count checks, and the team/opponent inequality. Alembic revision `0006`
+count checks, and the team/opponent inequality. Alembic revision `0008`
 preserves existing history and backfills explicit legacy provenance before
 removing its temporary server defaults.
 
@@ -1992,7 +1992,7 @@ live run is `python -m hoops_gm.schedule_context.backtest`, and the model card i
 upgrade/check/downgrade from empty.
 
 **Could not verify:** Native Postgres was not available locally, so CI remains
-the dialect check for revision `0006` and its enum/constraint rebuilds. The
+the dialect check for revision `0008` and its enum/constraint rebuilds. The
 committed gate validates the evidence contract but does not recreate all 3,676
 source games offline; the live reproduction was run successfully against
 `nba_api:LeagueGameFinder` in this session, and a future source change must
@@ -2024,7 +2024,7 @@ The database seam now uses transaction-level PostgreSQL advisory locks, includin
 for unpublished scopes, and an SQLite no-op update to reserve the writer before
 cohort validation. Schedule and scoring-observation importers acquire the same
 scopes before mutation, while context publication locks before fingerprinting its
-source snapshot. Migration `0006` now refuses any populated downgrade that would
+source snapshot. Migration `0008` now refuses any populated downgrade that would
 discard keyed/source lineage, context provenance, nullable suppression, or
 version history before altering the schema.
 
@@ -2061,7 +2061,7 @@ wheel and an edited, self-relabelled, or locally fitted variant cannot become
 production lineage. A three-player subset, unequal/incomplete team minutes,
 systemically empty context, playoff history, weak caller-supplied coverage
 threshold, or host-local naive timestamp cannot silently produce a successful
-cohort. Final local gates pass: Ruff, format, strict mypy, 474 default backend
+cohort. Final local gates pass: Ruff, format, strict mypy, 487 default backend
 tests, six dedicated `model_backtest` tests, secret scan, SQLite migration
 upgrade/check/downgrade, and a built-wheel resource check.
 
