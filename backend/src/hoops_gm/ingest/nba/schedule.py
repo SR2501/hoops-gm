@@ -7,9 +7,10 @@ counts them inside the league's existing scoring periods.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, func, select
@@ -53,6 +54,106 @@ class ScheduledGameCount:
     period_number: int
     team_id: int
     games: int
+
+
+@dataclass(frozen=True)
+class ScheduleDensityRecord:
+    """Pure calendar facts for one team game from ``team_schedule``."""
+
+    team_id: int
+    game_id: int
+    game_date: date
+    is_back_to_back: bool
+    rest_days: int | None
+    games_in_4_days: int
+    is_3_in_4: bool
+    games_in_5_days: int
+    is_4_in_5: bool
+    games_in_6_days: int
+    is_4_in_6: bool
+    road_trip_length: int
+    road_trip_structure: tuple[str, ...]
+
+
+def build_schedule_density(
+    entries: Sequence[TeamScheduleEntry],
+) -> list[ScheduleDensityRecord]:
+    """Compute the calendar facts that pure schedule-density is allowed to know.
+
+    The function is intentionally derived only from ``team_schedule`` rows for a
+    single team: dates, home/away flags, and the order of the games. It never
+    infers modelling judgments like "light slate" or risk.
+    """
+
+    per_team: dict[int, list[TeamScheduleEntry]] = defaultdict(list)
+    for entry in entries:
+        per_team[entry.team_id].append(entry)
+
+    density_rows: list[ScheduleDensityRecord] = []
+    for team_id in sorted(per_team):
+        ordered = sorted(
+            per_team[team_id],
+            key=lambda entry: (entry.game_date, entry.game_id or 0),
+        )
+        current_trip: list[TeamScheduleEntry] = []
+        previous: TeamScheduleEntry | None = None
+
+        for entry in ordered:
+            if previous is not None:
+                rest_days = (entry.game_date - previous.game_date).days - 1
+                is_back_to_back = rest_days == 0
+            else:
+                rest_days = None
+                is_back_to_back = False
+
+            games_in_4_days = _games_in_window(ordered, entry.game_date, 4)
+            games_in_5_days = _games_in_window(ordered, entry.game_date, 5)
+            games_in_6_days = _games_in_window(ordered, entry.game_date, 6)
+
+            if entry.is_home:
+                road_trip_length = 0
+                road_trip_structure: tuple[str, ...] = ()
+                current_trip = []
+            else:
+                if previous is None or previous.is_home or (entry.game_date - previous.game_date).days > 1:
+                    current_trip = [entry]
+                else:
+                    current_trip.append(entry)
+                road_trip_length = len(current_trip)
+                road_trip_structure = tuple("A" for _ in current_trip)
+
+            density_rows.append(
+                ScheduleDensityRecord(
+                    team_id=team_id,
+                    game_id=entry.game_id,
+                    game_date=entry.game_date,
+                    is_back_to_back=is_back_to_back,
+                    rest_days=rest_days,
+                    games_in_4_days=games_in_4_days,
+                    is_3_in_4=games_in_4_days >= 3,
+                    games_in_5_days=games_in_5_days,
+                    is_4_in_5=games_in_5_days >= 4,
+                    games_in_6_days=games_in_6_days,
+                    is_4_in_6=games_in_6_days >= 4,
+                    road_trip_length=road_trip_length,
+                    road_trip_structure=road_trip_structure,
+                )
+            )
+            previous = entry
+
+    return density_rows
+
+
+def team_schedule_density(entries: Sequence[TeamScheduleEntry]) -> list[ScheduleDensityRecord]:
+    return build_schedule_density(entries)
+
+
+def schedule_density(entries: Sequence[TeamScheduleEntry]) -> list[ScheduleDensityRecord]:
+    return build_schedule_density(entries)
+
+
+def compute_schedule_density(entries: Sequence[TeamScheduleEntry]) -> list[ScheduleDensityRecord]:
+    return build_schedule_density(entries)
 
 
 def parse_schedule(payload: Mapping[str, object], *, season: str) -> ScheduleParseResult:
@@ -151,6 +252,13 @@ def scheduled_game_counts(
     ]
 
 
+def _games_in_window(
+    ordered: Sequence[TeamScheduleEntry], current_date: date, days: int
+) -> int:
+    start = current_date - timedelta(days=days - 1)
+    return sum(1 for entry in ordered if start <= entry.game_date <= current_date)
+
+
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> tuple[int, str]:
     value = raw_game.get(key)
     if not isinstance(value, Mapping):
@@ -177,7 +285,9 @@ def _parse_utc(raw_game: Mapping[str, object], key: str, game_id: str) -> dateti
     return parsed.astimezone(UTC)
 
 
-def _parse_eastern_wall_clock(raw_game: Mapping[str, object], key: str, game_id: str) -> datetime:
+def _parse_eastern_wall_clock(
+    raw_game: Mapping[str, object], key: str, game_id: str
+) -> datetime:
     value = _required_text(raw_game, key)
     try:
         parsed = datetime.fromisoformat(value.replace("Z", ""))

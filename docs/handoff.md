@@ -1278,3 +1278,28 @@ completed. This documentation PR must not merge until both approve it.
 **Next:** An independent reviewer should confirm that the delivery authority is
 bounded exactly as stated and that ADR-008 was changed only in status metadata
 and the decision index.
+
+---
+
+## 2026-08-18 — data-engineer — `schedule-density` from `team_schedule` only
+
+**Changed:** Added pure calendar-arithmetic density helpers in
+`backend/src/hoops_gm/ingest/nba/schedule.py` built only from `team_schedule`
+rows. The logic computes back-to-back flags, `rest_days`, 3-in-4 / 4-in-5 /
+4-in-6 windows, and the current road-trip length/structure by walking the
+team's games in date order. The code stays in the ingest-data boundary and does
+not infer any scoring-model or risk judgment.
+
+**Now true:** `team_schedule` alone is sufficient to derive the required density
+facts without consulting the availability model, opponent context, or any
+non-schedule source. The helper exports a stable `ScheduleDensityRecord` and
+supports the common `build_schedule_density` / `team_schedule_density` /
+`schedule_density` call patterns.
+
+**Could not verify:** The targeted schedule tests pass locally on SQLite, but
+Docker/Postgres is not available in this environment, so the cross-dialect
+validation remains a CI follow-up. No downstream availability-model claims are
+made from these numbers yet.
+**Next:** `quant` can consume these density facts once the schedule facts are in
+place; no extra schedule-context work should be folded into this Phase 3 item.
+place; no extra schedule-context work should be folded into this Phase 3 item.

@@ -684,7 +684,7 @@ Off-night light NBA slates (cheap streaming windows), opponent pace, per-categor
 
 ### `schedule-density` - Modelling schedule density
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `schedule-ingest`
 
 Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-trip length and structure. Direct input to the availability model.

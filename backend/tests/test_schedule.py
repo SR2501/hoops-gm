@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from hoops_gm.db.lineage import current_refresh
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.ingest.errors import SourceContractError
@@ -17,6 +17,7 @@ from hoops_gm.ingest.importers import import_schedule, import_teams
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     NbaTeamRecord,
+    build_schedule_density,
     parse_schedule,
     parse_teams,
     scheduled_game_counts,
@@ -164,3 +165,73 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
     assert second_run.id == first_run.id, "identical facts must not open a new cohort"
     assert second_run.version == first_run.version
     assert second_run.refreshed_at >= first_run.refreshed_at
+
+
+def test_schedule_density_uses_team_schedule_only_for_calendar_arithmetic() -> None:
+    rows = [
+        TeamScheduleEntry(
+            id=1,
+            team_id=42,
+            game_id=101,
+            opponent_team_id=2,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 15),
+            is_home=True,
+        ),
+        TeamScheduleEntry(
+            id=2,
+            team_id=42,
+            game_id=102,
+            opponent_team_id=3,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 16),
+            is_home=False,
+        ),
+        TeamScheduleEntry(
+            id=3,
+            team_id=42,
+            game_id=103,
+            opponent_team_id=4,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 17),
+            is_home=False,
+        ),
+        TeamScheduleEntry(
+            id=4,
+            team_id=42,
+            game_id=104,
+            opponent_team_id=5,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 18),
+            is_home=False,
+        ),
+        TeamScheduleEntry(
+            id=5,
+            team_id=42,
+            game_id=105,
+            opponent_team_id=6,
+            season="2026-27",
+            season_type=SeasonType.REGULAR,
+            game_date=date(2026, 10, 19),
+            is_home=True,
+        ),
+    ]
+
+    density = build_schedule_density(rows)
+    by_date = {row.game_date: row for row in density}
+
+    assert by_date[date(2026, 10, 16)].is_back_to_back is True
+    assert by_date[date(2026, 10, 16)].rest_days == 0
+    assert by_date[date(2026, 10, 17)].games_in_4_days == 3
+    assert by_date[date(2026, 10, 17)].is_3_in_4 is True
+    assert by_date[date(2026, 10, 18)].games_in_5_days == 4
+    assert by_date[date(2026, 10, 18)].is_4_in_5 is True
+    assert by_date[date(2026, 10, 18)].games_in_6_days == 4
+    assert by_date[date(2026, 10, 18)].is_4_in_6 is True
+    assert by_date[date(2026, 10, 18)].road_trip_length == 3
+    assert by_date[date(2026, 10, 18)].road_trip_structure == ("A", "A", "A")
+    assert by_date[date(2026, 10, 19)].road_trip_length == 0
