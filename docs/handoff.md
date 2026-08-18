@@ -919,7 +919,16 @@ served URL, bump the version, rebuild, and confirm Tampermonkey's own update
 prompt actually fires without any manual reinstall. No write-path or
 automation code was touched — this is entirely a serving/build concern — so
 the Automation gate does not apply here; only the Code gate does, and it
-passed.
+passed. Note: PR #10's CI run (against this change) also surfaced a
+pre-existing, unrelated failure in the `Backend — the same suite against
+Postgres (ADR-001)` job — confirmed identical on `main` before this change
+(run `32093129045`), so not caused or fixed here. Root cause and a suggested
+fix are filed as issue #11: `test_bridge_payloads.py` reads back "the" row
+with an unqualified `select(BridgePayload)`, and on Postgres the `client`
+fixture never drops tables between tests (unlike `database`/`session`, which
+do), so a later test's unqualified query can read an earlier test's row
+instead of its own. Invisible on SQLite because that fixture gives each test
+its own `tmp_path` database file regardless.
 
 ---
 
