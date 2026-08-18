@@ -14,7 +14,11 @@ silently never gets a migration.
 """
 
 from hoops_gm.db.base import Base
-from hoops_gm.db.models.availability import PlayerParticipation
+from hoops_gm.db.models.availability import (
+    AbsenceSplit,
+    AbsenceSplitComputationRun,
+    PlayerParticipation,
+)
 from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.enums import (
     CategoryKind,
@@ -55,6 +59,8 @@ from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog, PlayerSeasonStat
 
 __all__ = [
+    "AbsenceSplit",
+    "AbsenceSplitComputationRun",
     "Base",
     "BridgePayload",
     "CategoryKind",

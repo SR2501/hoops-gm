@@ -1316,3 +1316,57 @@ made from these numbers yet.
 
 **Next:** `quant` can consume these density facts once the schedule facts are in
 place; no extra schedule-context work should be folded into this Phase 3 item.
+
+---
+
+## 2026-08-18 — quant — Descriptive teammate absence splits
+
+**Changed:** Implemented `absence-splits` as versioned descriptive evidence
+rather than a decision-bearing model. `compute_absence_splits` now compares a
+beneficiary's observed game-log production when a teammate played versus when
+the teammate had an explicit observed non-play participation row. The first
+implementation inferred absence inside gaps bounded by same-team observations.
+**Independent review disproved that claim before merge:** bracketing
+observations do not prove continuous roster membership, and roster membership
+alone would not prove that an upsert-only participation ingest returned a
+complete game payload. No missing row is now classified. Added complete
+`absence_split_runs` cohorts (including zero-result runs), exact source
+provenance, current schedule lineage, complete-input fingerprints, sample-size
+and uncertainty fields, a latest-run selector, denominator-aware shooting
+summaries without attempt-independence intervals, and focused regressions. The
+contract and blind spots are documented in
+`docs/availability/absence-splits.md`.
+
+**Now true:** R35 fails closed: no missing row of any kind can enter an absence
+split. Full absences remain invisible until authoritative roster intervals and
+per-game ingestion-completeness evidence both exist. Every persisted row
+identifies itself as `data_layer=observations` and
+`claim_type=descriptive`, with database CHECK constraints preventing those
+claims from drifting. Makes and attempts remain reconstructable, sparse groups
+state whether variance is estimable, and percentage intervals are omitted
+rather than treating clustered shot attempts as independent. Every successful
+computation persists a run even when no pair remains; the current selector reads
+only the newest run, so corrected input can remove an obsolete pair without
+deleting its audit history. Every successful computation creates a fresh
+activation even if its fingerprint matches an older run, preserving A-to-B-to-A
+ordering. Cohorts are fully validated before activation, so a caught input error
+cannot install an empty latest run. No output claims causality or recommendation value.
+The Model gate does not apply to this descriptive artifact; it does apply to
+the future `contingent-value` model that turns this evidence into a
+decision-bearing quantity.
+
+**Could not verify:** No real multi-season NBA backfill is present in this
+worktree, so sample-size distributions and the practical frequency of
+contradictory source rows remain unmeasured. No Postgres service was available
+locally. Full absences represented by missing rows are deliberately not counted,
+so the evidence undercovers the exact long-injury cases R35 warns about rather
+than fabricating labels from silence. The splits cannot separate teammate
+absence from coaching, matchup, lineup, or role changes. Schedule-density facts
+from the newly merged Phase 3 contract are intentionally not consumed because
+this artifact is an unadjusted historical description, not an availability or
+production model.
+
+**Next:** `quant` may use these rows as candidate features for
+`contingent-value`, but must first define temporal held-out validation and a
+model card; no stock-watch, waiver, draft, lineup, or trade recommendation
+should read raw absence deltas directly.
