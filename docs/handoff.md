@@ -840,6 +840,24 @@ Explicitly out of scope, by design: this does **not** implement SOS convergence 
 
 ---
 
+## 2026-08-17 — backend — PR #9 Postgres-only test isolation fix
+
+**Changed:** PR #9's Postgres CI job failed with `assert 'xhr' == 'cache-storage'` / `assert 'xhr' == 'manual-export'` in `test_bridge_payloads.py`. Checked first whether this branch caused it: the identical failure reproduces on the latest `main` push (PR #8, "Phase 4: schedule-context schema") — this was pre-existing, not introduced by the refresh-lineage work, and just hadn't blocked a merge before now.
+
+Root cause: `conftest.py`'s `client` fixture created the schema (`Base.metadata.create_all`) but never dropped it first. On SQLite, isolation happens for free because each test's `settings` fixture builds a URL from a unique per-test `tmp_path` — a fresh database file every time. `TEST_DATABASE_URL` (what CI's Postgres job sets) points every test at the *same* external database instead, so rows from an earlier `client`-based test in the same module persist into the next one. `test_bridge_payloads.py`'s cache-storage and manual-export tests each run an unfiltered `session.scalar(select(BridgePayload))` and got back a leftover `source="xhr"` row written earlier in the file by `test_payload_persists_exact_envelope_and_raw_diagnostic_fields`, instead of the row they had just inserted.
+
+Fixed by adding `Base.metadata.drop_all(...)` before `create_all` in the `client` fixture — the same guarantee the `database` fixture already gives `session`-based tests. Deliberately did not add a matching teardown drop: `test_readiness_degrades_when_the_database_is_unreachable` intentionally swaps `app.state.database` for an unreachable one mid-test, and a teardown drop against that engine raised instead of cleaning up when tried. Every test already drops before its own use, which is sufficient.
+
+**Now true:** PR #9's full CI is green, including both Postgres jobs (~2m20s–2m35s each). Full backend suite (432 tests), ruff, ruff format, and mypy strict all pass locally. Scope was kept to the isolation fix only — no changes to the lineage contract itself, no broader test-suite audit.
+
+**Could not verify:** Whether any other `client`-fixture test elsewhere in the suite was silently relying on the old, unisolated behavior (accumulating rows across tests) rather than merely being unaffected by it — none surfaced as a new failure locally or in CI, but that is absence of evidence rather than a proof of absence. Docker remains unavailable locally, so the fix's effect on Postgres was verified only through CI, not a local run against real Postgres.
+
+**Next:** No further action expected on this specific fix. If another Postgres-only failure surfaces in a `client`-based test elsewhere, the same class of bug (unfiltered query against a shared, un-isolated Postgres test database) is the first thing to check.
+
+---
+
+---
+
 ## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets
 
 **Changed:** The owner added an important operational consequence to the accepted weekly schedule decision: In-Season Tournament and All-Star-break periods are often sparse across the league, so schedule value is relative to both a team's normal weekly distribution and the league-wide period baseline. Updated ADR-012, the draft plan, and `trade-evaluator`'s backlog scope. Trade analysis must surface schedule-driven targets and high-value weeks, not reduce schedule to a generic rest-of-season adjustment.
