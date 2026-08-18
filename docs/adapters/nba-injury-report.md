@@ -73,6 +73,42 @@ line is drawn beneath it either. Its own `"Page"` token (searched for in the
 bottom 20% of the page) is used to clip the final row before it swallows
 footer text into the `Team` / `Player Name` columns.
 
+### A wrapped Reason can also split across a page break
+
+Found while fixing a real defect from independent review (a nonempty,
+unrecognised row was previously silently dropped instead of raising — see
+below): a wrapped, two-line `Reason` does not always fit inside one page.
+Verified against the real captured 2025-11-01 05:30 PM report: `Toppin,
+Obi`'s row is the last one on page 2, and the second physical line of his
+Reason (`"Fracture"`, completing `"Injury/Illness - Right Foot; Stress
+Fracture"`) renders *below* page 2's own bottom margin — it reappears alone
+at the very top of page 3, with every other column (`Game Date` through
+`Current Status`) blank. Per-page parsing cannot see across the page
+boundary, so before this fix that orphaned continuation text was silently
+dropped by the same blanket `continue` that used to swallow every
+unrecognised blank-name/blank-status row, quietly truncating the real Reason
+from `"...Stress Fracture"` to `"...Stress"`.
+
+The fix recognises this one specific shape — the *first* row-segment of any
+page after the first, with every column but `Reason` blank and that `Reason`
+text not the `NOT YET SUBMITTED` marker — and reattaches it to the
+immediately preceding entry's `reason_raw` rather than raising or dropping
+it. This shape is deliberately narrow (it requires literally every other
+column blank) so it cannot be confused with a genuinely new row that merely
+inherits forward-filled `Game Date`/`Game Time`/`Matchup`/`Team` values,
+which always still carries its own `Player Name`.
+
+### An unrecognised nonempty row raises loudly, never drops silently
+
+A row that names no player and has no status, and whose `Reason` is not the
+`NOT YET SUBMITTED` marker and not the page-break continuation shape above,
+has no legitimate place in this report's structure. It now raises
+`SourceContractError` instead of being silently skipped — a real defect from
+independent review: silently dropping such a row is indistinguishable from
+ordinary blank filler and would hide exactly the kind of unnoticed
+PDF-extraction drift (a mis-detected row boundary, a shifted column, a new
+marker phrase) the Adapter gate exists to surface loudly.
+
 ### `"NOT YET SUBMITTED"` is not a player status
 
 Two teams in the captured 2025-11-01 report (San Antonio, the Lakers) — and
@@ -133,15 +169,41 @@ category of failure the schedule adapter's `gameEt`/`gameTimeUTC`
 reconciliation exists to catch, applied to a document instead of a JSON
 field.
 
+### The persisted timestamp is the masthead's, never the request's
+
+A real defect found in independent review: the legacy hourly-filename era
+truncates every request to the hour (`report_url()`), and the masthead
+tolerance above accepts up to 45 minutes of drift from that truncated
+request — so two different requested instants (e.g. `17:12` and `17:41`) can
+both resolve to the identical PDF and identical masthead (`17:30`). Because
+`report_timestamp` is part of `injury_report_entries`'s natural key
+(`report_timestamp, team_raw, player_name_raw`), persisting the *request*
+instant on each import would let each of those different requests create its
+own row for what is really one report capture — manufacturing false status
+history for `injury-status-conversion` to (wrongly) learn from. Fixed:
+`parse_injury_report_pdf` returns (and stamps every entry with) the
+masthead's own parsed instant, converted to UTC, never the caller's
+`report_timestamp` argument — that argument is now only ever a request hint
+used for the tolerance check above.
+
 ---
 
 ## Resolution: team, game and player are best-effort, never guessed
 
-* **Team** resolves from the `Matchup` tricode (`"SAC@MIL"`), not the
-  free-text `Team` column, because the tricode is an exact match against
-  `nba_teams.abbreviation`. Which tricode belongs to *this* row is derived
-  from team order of appearance within the matchup block — the away team's
-  roster is always listed first, verified against the real capture.
+* **Team** resolves ``team_raw`` (e.g. `"Sacramento Kings"`), the report's
+  own free-text `Team` column, directly against `nba_teams.name` — the same
+  "City Nickname" string `import_teams` populates from the stats API's own
+  `full_name`. That match is then cross-verified against the row's own
+  `Matchup` tricode pair (`"SAC@MIL"`): the resolved team's abbreviation must
+  be one of the two, or the row is left unresolved. Earlier drafts inferred
+  which tricode was "this" row's team from order of appearance within the
+  matchup block (away always listed first in a full report) — a real defect
+  found in independent review: a caller importing a partial subset of a
+  report (e.g. only one team's rows because the other team's report had not
+  been filed yet) or a re-ordered sequence sees appearance order disagree
+  with the report's actual away-then-home structure, resolving a team to its
+  opponent. Name+tricode verification needs no other row for context and
+  cannot be fooled by import order or a partial batch.
 * **Game** resolves from the two tricodes plus `game_date` against
   already-ingested `nba_games` rows. `NULL` if the game has not been
   ingested yet.

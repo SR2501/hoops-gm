@@ -369,8 +369,19 @@ class TestInjuryReportIsAlive:
     #: A real evening-before report from the 2025-26 season, permanently
     #: archived on the CDN. Distinct from the committed contract-test fixture
     #: timestamp so this test proves live reachability rather than replaying
-    #: the same capture the offline test already checked.
+    #: the same capture the offline test already checked. This instant sits
+    #: in the **legacy, hourly** filename era (before 2025-12-22 ET) --
+    #: ``client.report_url`` truncates it to the hour before building the URL.
     _KNOWN_GOOD_TIMESTAMP = datetime(2025, 12, 1, 13, 0, tzinfo=_EASTERN)
+
+    #: A real evening-before report in the **current, 15-minute-granularity**
+    #: filename era (on/after 2025-12-22 ET) -- the convention every request
+    #: for 2026-27 actually uses. The legacy-era probe above exercises a
+    #: retired code path (the hour-truncation branch of ``report_url``) and
+    #: cannot, by construction, detect a regression specific to this one.
+    #: Verified live 2026-08-17: ``2026-01-15 17:30`` resolves to
+    #: ``Injury-Report_2026-01-15_05_30PM.pdf``.
+    _KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP = datetime(2026, 1, 15, 17, 30, tzinfo=_EASTERN)
 
     def test_a_known_historical_report_is_still_reachable_and_parses(
         self, injury_report: InjuryReportClient
@@ -390,6 +401,39 @@ class TestInjuryReportIsAlive:
             "Injury-Report_2025-12-01_01PM.pdf",
         )
         assert len(result.entries) > 0, "a real evening-before report had zero entries"
+
+    def test_a_known_active_era_report_is_still_reachable_and_parses(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: the current 15-minute-granularity filename convention --
+        the one every 2026-27 request actually uses -- stops resolving, or
+        the PDF's column layout changed for a report requested past the
+        2025-12-22 format boundary.
+
+        This is deliberately a second, separate probe from the legacy-era one
+        above rather than a replacement for it: ``report_url`` branches on
+        the era boundary, so the legacy probe only exercises the
+        hour-truncating branch and cannot detect drift specific to this,
+        the active branch. **Rotation and failure behaviour**: the NBA has
+        changed this filename format once already, without any announcement
+        found (see ``docs/adapters/nba-injury-report.md``), and could rotate
+        to a third convention with the same silence for 2026-27. This test
+        does not, and cannot, protect against that in advance -- it exists
+        to fail loudly the day it happens, distinctly from the legacy probe,
+        so the specific era that broke is legible from which test went red.
+        It is marked ``live_smoke`` like every test in this module: visible
+        on every deliberate `pytest -m live_smoke` run, but never part of the
+        blocking Code/Adapter gate on a pull request (a third party's outage
+        must not turn a correct change red).
+        """
+        body = injury_report.fetch(self._KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body,
+            report_timestamp=self._KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP,
+            source_url="https://ak-static.cms.nba.com/referee/injury/"
+            "Injury-Report_2026-01-15_05_30PM.pdf",
+        )
+        assert len(result.entries) > 0, "a real active-era report had zero entries"
 
     def test_a_timestamp_with_no_published_report_is_reported_as_unavailable(
         self, injury_report: InjuryReportClient

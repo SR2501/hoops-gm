@@ -674,17 +674,29 @@ def import_injury_report_entries(
     timestamp is part of the key rather than a mere column.
 
     ``team_id``, ``game_id`` and ``player_id`` are resolved best-effort and
-    left ``NULL`` on any ambiguity, never guessed. Team and game resolve from
-    the report's own tricode ``matchup_raw`` (e.g. ``"SAC@MIL"``) rather than
-    from the free-text ``team_raw`` column, because the tricode is an exact,
-    unambiguous match against ``nba_teams.abbreviation`` while a full team
-    name is not. Which of the two tricodes is *this* row's team is derived
-    from team order of appearance within the matchup block: the away team's
-    roster is always listed first in the report, verified against a real
-    2025-11-01 capture.
+    left ``NULL`` on any ambiguity, never guessed. Team resolves the report's
+    own free-text ``team_raw`` (e.g. ``"Sacramento Kings"``) directly against
+    ``nba_teams.name``, which ``import_teams`` populates from the exact same
+    "City Nickname" string the stats API's own ``full_name`` field uses — an
+    unambiguous match that needs no other row for context. That resolution is
+    then cross-verified against the matchup's own tricode pair
+    (``matchup_raw``, e.g. ``"SAC@MIL"``): the resolved team's abbreviation
+    must be one of the two, or the row is left unresolved. This deliberately
+    does **not** infer which tricode is "this" row's team from the order rows
+    happen to appear in the ``entries`` sequence — a caller importing a
+    partial subset of a report (e.g. only one team's rows because the other
+    team's report had not been filed yet) or a re-ordered sequence would
+    otherwise see appearance order disagree with the report's actual
+    away-then-home structure and resolve a team to its opponent. Game
+    resolves from the same verified tricode pair.
     """
     counts = ImportCounts()
-    teams_by_abbr = {t.abbreviation: t.id for t in session.scalars(select(NbaTeam))}
+    teams = list(session.scalars(select(NbaTeam)))
+    teams_by_abbr = {t.abbreviation: t.id for t in teams}
+    team_abbr_by_id = {t.id: t.abbreviation for t in teams}
+    teams_by_name: dict[str, list[int]] = {}
+    for t in teams:
+        teams_by_name.setdefault(t.name, []).append(t.id)
     games_by_key = {
         (g.home_team_id, g.away_team_id, g.game_date): g.id
         for g in session.scalars(select(NbaGame))
@@ -700,17 +712,8 @@ def import_injury_report_entries(
         for row in session.scalars(select(InjuryReportEntry))
     }
 
-    # First appearance order of each distinct team within a matchup decides
-    # which tricode is "this" team's: the report always lists the away
-    # team's roster before the home team's.
-    matchup_team_order: dict[str, list[str]] = {}
     for record in entries:
-        seen = matchup_team_order.setdefault(record.matchup_raw, [])
-        if record.team_raw and record.team_raw not in seen:
-            seen.append(record.team_raw)
-
-    for record in entries:
-        team_id = _resolve_team_id(record, matchup_team_order, teams_by_abbr)
+        team_id = _resolve_team_id(record, teams_by_name, team_abbr_by_id)
         game_id = _resolve_game_id(record, teams_by_abbr, games_by_key)
         player_id = _resolve_player_id(record, team_id, player_team, players_by_norm)
 
@@ -754,17 +757,28 @@ def _matchup_tricodes(matchup_raw: str) -> tuple[str, str] | None:
 
 def _resolve_team_id(
     record: InjuryReportEntryRecord,
-    matchup_team_order: dict[str, list[str]],
-    teams_by_abbr: dict[str, int],
+    teams_by_name: dict[str, list[int]],
+    team_abbr_by_id: dict[int, str],
 ) -> int | None:
+    """Resolve ``team_raw`` to a team, verified against the matchup tricode.
+
+    Matches the report's free-text ``team_raw`` (e.g. ``"Sacramento Kings"``)
+    directly against ``nba_teams.name`` — a name+city string, not an
+    order-dependent heuristic — then cross-checks that the resolved team's
+    own abbreviation is actually one of the two tricodes in ``matchup_raw``.
+    Left ``NULL`` if the name does not match exactly one team, or if the
+    matched team is not part of this row's own matchup: either case means the
+    row's evidence disagrees with itself, and a guess would be worse than no
+    link at all.
+    """
+    candidates = teams_by_name.get(record.team_raw, [])
+    if len(candidates) != 1:
+        return None
+    team_id = candidates[0]
     tricodes = _matchup_tricodes(record.matchup_raw)
-    order = matchup_team_order.get(record.matchup_raw, [])
-    if tricodes is None or record.team_raw not in order:
+    if tricodes is None or team_abbr_by_id.get(team_id) not in tricodes:
         return None
-    slot = order.index(record.team_raw)  # 0 = away, 1 = home
-    if slot >= len(tricodes):
-        return None
-    return teams_by_abbr.get(tricodes[slot])
+    return team_id
 
 
 def _resolve_game_id(

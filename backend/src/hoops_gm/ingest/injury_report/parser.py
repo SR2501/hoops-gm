@@ -40,6 +40,7 @@ final row before it swallows footer text into the Team/Player Name columns.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
 from typing import Any, Final
@@ -103,10 +104,18 @@ def parse_injury_report_pdf(
 ) -> InjuryReportParseResult:
     """Parse one captured PDF into typed entries.
 
-    ``report_timestamp`` must be timezone-aware; it is cross-checked against
-    the PDF's own "Injury Report: MM/DD/YY HH:MM (AM|PM)" masthead so that a
-    caller cannot silently attribute one report's content to another
-    timestamp's row (e.g. a stale cache key).
+    ``report_timestamp`` must be timezone-aware; it is a request hint, cross-
+    checked against the PDF's own "Injury Report: MM/DD/YY HH:MM (AM|PM)"
+    masthead so that a caller cannot silently attribute one report's content
+    to another timestamp's row (e.g. a stale cache key). The returned
+    :class:`~hoops_gm.ingest.injury_report.models.InjuryReportParseResult`
+    (and every entry within it) is stamped with the **masthead's own
+    instant**, not this argument: the masthead check tolerates up to 45
+    minutes of drift, and the legacy hourly-filename era truncates the
+    request to the hour before it ever reaches this function, so two
+    different requested instants routinely resolve to the same PDF. Using the
+    request instant as the natural-key timestamp would let each such request
+    manufacture its own history row for what is really one report capture.
     """
     if report_timestamp.tzinfo is None:
         raise ValueError("report_timestamp must be timezone-aware")
@@ -123,7 +132,17 @@ def parse_injury_report_pdf(
         with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
             if not pdf.pages:
                 raise _contract("PDF has no pages")
-            _verify_masthead(pdf.pages[0], report_timestamp)
+            # The caller's requested timestamp is only ever a cache key or a
+            # best guess at which file to fetch (`report_url` truncates a
+            # legacy-era request to the hour, and the masthead-tolerance check
+            # below deliberately accepts up to 45 minutes of drift from it).
+            # Two different requested instants can resolve to the identical
+            # PDF and therefore the identical masthead. Persisting the raw
+            # request instant as `report_timestamp` would let each one create
+            # its own natural-key row for what is actually one report
+            # capture, manufacturing false history. The canonical instant is
+            # always the PDF's own masthead, never the request.
+            canonical_timestamp = _verify_masthead(pdf.pages[0], report_timestamp)
             col_bounds = _find_column_bounds(pdf.pages[0])
 
             game_date = ""
@@ -132,7 +151,7 @@ def parse_injury_report_pdf(
             team = ""
             entries: list[InjuryReportEntryRecord] = []
 
-            for page in pdf.pages:
+            for page_index, page in enumerate(pdf.pages):
                 row_tops = _find_row_bounds(page, col_bounds)
                 if not row_tops:
                     raise _contract(f"page {page.page_number} has no row ruling lines")
@@ -156,6 +175,39 @@ def parse_injury_report_pdf(
                     if [c.lower() for c in row[:3]] == ["game date", "game time", "matchup"]:
                         continue  # the header row itself, re-detected on the data grid
 
+                    # A page break can split a wrapped, multi-line Reason: the
+                    # row's own ruling line is the last thing drawn on the
+                    # previous page, but the report renders the remainder of
+                    # that Reason at the very top of *this* page -- above
+                    # this page's own first ruling line (`i == 0`) -- with
+                    # every other column blank. Verified against the real
+                    # 2025-11-01 capture: "Toppin, Obi"'s Reason
+                    # ("Injury/Illness - Right Foot; Stress") continues with
+                    # "Fracture" alone at the top of the next page, and
+                    # nothing on the previous page's own last row-segment
+                    # (bounded by that page's bottom margin) captures it —
+                    # the text physically sits below where that page's crop
+                    # ends. Reattaching it to the entry it belongs to is the
+                    # only way to keep the raw evidence complete rather than
+                    # silently truncating it or raising on what is, here,
+                    # genuine (if awkward) report structure. This is
+                    # distinguished from any other unrecognised row by
+                    # requiring literally every other column blank, a shape
+                    # no other row produces.
+                    if (
+                        page_index > 0
+                        and i == 0
+                        and not any(row[:6])
+                        and row[6]
+                        and row[6].strip().lower() != _NOT_YET_SUBMITTED
+                        and entries
+                    ):
+                        previous = entries[-1]
+                        entries[-1] = replace(
+                            previous, reason_raw=f"{previous.reason_raw} {row[6]}".strip()
+                        )
+                        continue
+
                     if row[0]:
                         game_date = row[0]
                     if row[1]:
@@ -170,7 +222,7 @@ def parse_injury_report_pdf(
                         if reason_raw.strip().lower() == _NOT_YET_SUBMITTED:
                             entries.append(
                                 InjuryReportEntryRecord(
-                                    report_timestamp=report_timestamp,
+                                    report_timestamp=canonical_timestamp,
                                     game_date=_parse_game_date(game_date),
                                     game_time_raw=game_time,
                                     matchup_raw=matchup,
@@ -182,15 +234,27 @@ def parse_injury_report_pdf(
                                 )
                             )
                             continue
-                        # An empty data row with no recognisable marker. Rows are
-                        # only ever blank filler between the header and the
-                        # first entry, already screened out above by the
-                        # "all empty" check; anything else here is unexpected.
-                        continue
+                        # A nonempty row (already past the "all cells blank"
+                        # filter above) that names no player, has no status,
+                        # and whose Reason text is not the one recognised
+                        # "NOT YET SUBMITTED" marker. There is no legitimate
+                        # report structure that produces this: every real row
+                        # either names a player+status or is the marker row.
+                        # Silently dropping it would hide exactly the kind of
+                        # PDF-extraction drift this parser exists to catch
+                        # loudly (a mis-detected row boundary, a shifted
+                        # column, a new marker phrase) behind what looks like
+                        # ordinary blank filler.
+                        raise _contract(
+                            f"page {page.page_number} has a row with no player name or "
+                            f"status and Reason {reason_raw!r} is not "
+                            f"{_NOT_YET_SUBMITTED!r}; this is not blank filler and may be "
+                            "PDF extraction drift"
+                        )
 
                     entries.append(
                         InjuryReportEntryRecord(
-                            report_timestamp=report_timestamp,
+                            report_timestamp=canonical_timestamp,
                             game_date=_parse_game_date(game_date),
                             game_time_raw=game_time,
                             matchup_raw=matchup,
@@ -211,12 +275,24 @@ def parse_injury_report_pdf(
         ) from exc
 
     return InjuryReportParseResult(
-        report_timestamp=report_timestamp, source_url=source_url, entries=tuple(entries)
+        report_timestamp=canonical_timestamp, source_url=source_url, entries=tuple(entries)
     )
 
 
-def _verify_masthead(page: Any, report_timestamp: datetime) -> None:
-    """Confirm the PDF's own masthead names the timestamp it was requested for."""
+def _verify_masthead(page: Any, report_timestamp: datetime) -> datetime:
+    """Confirm the PDF's own masthead names the timestamp it was requested for.
+
+    Returns the masthead's own instant (timezone-aware, in UTC) — the
+    canonical ``report_timestamp`` every entry from this capture is stamped
+    with. The caller's ``report_timestamp`` argument is only ever a request
+    hint: legacy-era URLs truncate it to the hour (see
+    ``client.report_url``), and this function itself tolerates up to 45
+    minutes of drift between the request and the masthead. Two different
+    request instants that both resolve to the same PDF must produce the same
+    canonical timestamp, or the natural key on ``injury_report_entries``
+    would treat one real report capture as multiple, fabricating history that
+    never happened.
+    """
     # Restricted to the top of the page: the masthead is always the first
     # thing printed, and without this bound a Game Date value from the data
     # grid below (which matches the same date pattern) could be mistaken for
@@ -256,6 +332,7 @@ def _verify_masthead(page: Any, report_timestamp: datetime) -> None:
             f"{requested_eastern.isoformat()} was requested; a stale or mismatched "
             "capture is being read"
         )
+    return masthead_eastern.astimezone(UTC)
 
 
 def _find_column_bounds(page: Any) -> list[float]:

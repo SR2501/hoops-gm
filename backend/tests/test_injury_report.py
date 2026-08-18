@@ -28,6 +28,7 @@ from hoops_gm.ingest.injury_report import (
     parse_injury_report_pdf,
     report_url,
 )
+from hoops_gm.ingest.injury_report.models import InjuryReportEntryRecord
 from hoops_gm.ingest.nba.models import NbaTeamRecord
 
 pytestmark = pytest.mark.adapter_contract
@@ -86,6 +87,26 @@ def test_parses_every_matchup_and_a_wrapped_multiline_reason() -> None:
     assert murray.matchup_raw == "SAC@MIL"
 
 
+def test_a_reason_wrapped_across_a_page_break_is_reattached_not_truncated() -> None:
+    """FAILS IF the tail of a page-spanning wrapped Reason goes missing again.
+
+    Found while fixing the "silently skip an unrecognised row" defect
+    (independent review, blocking finding 3): "Toppin, Obi"'s row is the
+    last one on page 2, and its Reason wraps to a second physical line that
+    the report renders past page 2's own bottom margin -- it reappears at
+    the very top of page 3, alone, with every other column blank. Before
+    this fix that orphaned continuation was silently dropped (the same
+    `continue` the new loud-raise now replaces for genuinely unrecognised
+    rows), truncating the real reason from "...Stress Fracture" to
+    "...Stress". It must now be reattached to the entry it belongs to.
+    """
+    result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
+    )
+    toppin = next(e for e in result.entries if e.player_name_raw == "Toppin, Obi")
+    assert toppin.reason_raw == "Injury/Illness - Right Foot; Stress Fracture"
+
+
 def test_not_yet_submitted_rows_are_present_but_excluded_from_player_entries() -> None:
     result = parse_injury_report_pdf(
         load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
@@ -122,6 +143,70 @@ def test_the_report_timestamp_is_cross_checked_against_the_pdf_masthead() -> Non
             report_timestamp=wrong_timestamp,
             source_url="https://example.invalid/fixture",
         )
+
+
+def test_parse_result_is_stamped_with_the_masthead_instant_not_the_request_instant() -> None:
+    """FAILS IF the parser starts persisting the caller's request instant.
+
+    ``report_timestamp`` is only ever a request hint: the masthead check
+    tolerates up to 45 minutes of drift from it, and the legacy hourly-
+    filename era (``client.report_url``) truncates a request to the hour
+    before this function ever sees it. Two different in-tolerance requests
+    for the same PDF (here, 20 minutes on either side of the real 5:30 PM
+    masthead) must therefore resolve to the identical canonical timestamp —
+    the masthead's own instant — not to each request's own, different one.
+    """
+    early = REPORT_TIMESTAMP - timedelta(minutes=20)
+    late = REPORT_TIMESTAMP + timedelta(minutes=20)
+    assert early != late  # the bug this guards against needs them distinct
+
+    early_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=early, source_url="https://example.invalid/fixture"
+    )
+    late_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=late, source_url="https://example.invalid/fixture"
+    )
+
+    assert early_result.report_timestamp == late_result.report_timestamp
+    assert early_result.report_timestamp == REPORT_TIMESTAMP
+    assert all(e.report_timestamp == REPORT_TIMESTAMP for e in early_result.entries)
+    assert all(e.report_timestamp == REPORT_TIMESTAMP for e in late_result.entries)
+
+
+def test_import_converges_two_nearby_legacy_requests_into_one_history_row(session: Any) -> None:
+    """FAILS IF nearby legacy-era request instants create false history.
+
+    Before the masthead-canonicalization fix, two callers requesting "the
+    report near 5:30pm" at 20 minutes early and 20 minutes late both fetched
+    the identical legacy-era PDF but each stamped its own request instant as
+    ``report_timestamp`` — and because that field is part of
+    ``injury_report_entries``'s natural key, each import created its own
+    duplicate row set for what was really one report capture. Both requests
+    must now converge on a single set of rows keyed by the masthead's own
+    instant.
+    """
+    early = REPORT_TIMESTAMP - timedelta(minutes=20)
+    late = REPORT_TIMESTAMP + timedelta(minutes=20)
+    early_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=early, source_url="https://example.invalid/fixture-early"
+    )
+    late_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=late, source_url="https://example.invalid/fixture-late"
+    )
+
+    first = import_injury_report_entries(
+        session, early_result.entries, source_url=early_result.source_url
+    )
+    second = import_injury_report_entries(
+        session, late_result.entries, source_url=late_result.source_url
+    )
+
+    assert first.created == len(early_result.entries)
+    assert second.created == 0
+    assert second.updated == len(late_result.entries)
+
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == len(early_result.entries)
 
 
 def test_parser_rejects_a_naive_report_timestamp() -> None:
@@ -176,6 +261,117 @@ def test_parser_rejects_an_unrecognised_status_value() -> None:
 
     with pytest.raises(SourceContractError, match="unrecognised Current Status"):
         _parse_status("Rehabbing")
+
+
+class _FakeCroppedPage:
+    """A ``page.within_bbox(...)`` double: just the words inside the crop."""
+
+    def __init__(self, words: list[dict[str, Any]]) -> None:
+        self._words = words
+
+    def extract_words(self, x_tolerance: float = 1.5) -> list[dict[str, Any]]:
+        return self._words
+
+
+class _FakeBadRowPage:
+    """A synthetic page producing exactly one malformed data row: no player
+    name, no status, and a Reason that is not the NOT YET SUBMITTED marker.
+
+    Built from real word/edge geometry rather than mangled PDF bytes (the
+    real fixture's content stream is compressed, so a byte substitution does
+    not reliably change what renders) -- the same approach
+    ``test_parser_rejects_a_document_with_a_different_column_layout`` already
+    uses for ``_find_column_bounds``, extended here to drive the *entire*
+    parser end to end so the raise is proven at the public entry point, not
+    just in an internal helper.
+    """
+
+    page_number = 1
+    height = 800.0
+    width = 800.0
+
+    def __init__(self) -> None:
+        # "Injury Report: 11/01/25 5:30 PM" -- matches REPORT_TIMESTAMP.
+        masthead: list[dict[str, Any]] = [
+            {"text": "11/01/25", "x0": 10.0, "x1": 60.0, "top": 5.0},
+            {"text": "5:30", "x0": 70.0, "x1": 90.0, "top": 5.0},
+            {"text": "PM", "x0": 95.0, "x1": 110.0, "top": 5.0},
+        ]
+        # The seven-column header, positioned so word-gap grouping produces
+        # exactly `parser.HEADER_LABELS`.
+        header: list[dict[str, Any]] = [
+            {"text": "Game", "x0": 0.0, "x1": 30.0, "top": 100.0},
+            {"text": "Date", "x0": 32.0, "x1": 55.0, "top": 100.0},
+            {"text": "Game", "x0": 100.0, "x1": 130.0, "top": 100.0},
+            {"text": "Time", "x0": 132.0, "x1": 155.0, "top": 100.0},
+            {"text": "Matchup", "x0": 200.0, "x1": 240.0, "top": 100.0},
+            {"text": "Team", "x0": 280.0, "x1": 310.0, "top": 100.0},
+            {"text": "Player", "x0": 400.0, "x1": 430.0, "top": 100.0},
+            {"text": "Name", "x0": 432.0, "x1": 455.0, "top": 100.0},
+            {"text": "Current", "x0": 560.0, "x1": 600.0, "top": 100.0},
+            {"text": "Status", "x0": 602.0, "x1": 630.0, "top": 100.0},
+            {"text": "Reason", "x0": 700.0, "x1": 740.0, "top": 100.0},
+        ]
+        # The one malformed data row: a Game Date re-print and a Reason, but
+        # no Player Name, no Current Status -- and the Reason text is not the
+        # recognised "NOT YET SUBMITTED" marker.
+        bad_row: list[dict[str, Any]] = [
+            {"text": "11/01/2025", "x0": 0.0, "x1": 60.0, "top": 230.0},
+            {"text": "SomethingWeird", "x0": 700.0, "x1": 750.0, "top": 230.0},
+        ]
+        self._all_words: list[dict[str, Any]] = masthead + header + bad_row
+        # One row-boundary ruling line under the Player Name column
+        # (x0 == that column's derived left edge), producing exactly one row
+        # split so the bad row lands in its own segment.
+        self.edges: list[dict[str, Any]] = [{"orientation": "h", "x0": 396.0, "top": 250.0}]
+
+    def extract_words(self, x_tolerance: float = 1.5) -> list[dict[str, Any]]:
+        return self._all_words
+
+    def within_bbox(self, bbox: tuple[float, float, float, float]) -> _FakeCroppedPage:
+        x0, y0, x1, y1 = bbox
+        words = [w for w in self._all_words if x0 <= w["x0"] < x1 and y0 <= w["top"] < y1]
+        return _FakeCroppedPage(words)
+
+
+class _FakePdfDocument:
+    def __init__(self, pages: list[Any]) -> None:
+        self.pages = pages
+
+    def __enter__(self) -> _FakePdfDocument:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+def test_parser_raises_on_a_nonempty_row_with_no_player_status_or_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FAILS IF a malformed nonempty row is silently dropped instead of raising.
+
+    A row that names no player and no status, and whose Reason text is not
+    the recognised "NOT YET SUBMITTED" marker, has no legitimate place in the
+    report's structure -- every real row either names a player+status or is
+    that one marker. Before this fix such a row was silently ``continue``-d
+    past, indistinguishable from ordinary blank filler; that would hide
+    exactly the kind of unnoticed PDF-extraction drift (a mis-detected row
+    boundary, a shifted column, a new marker phrase) the Adapter gate exists
+    to surface loudly. Exercises the full ``parse_injury_report_pdf`` entry
+    point end to end against a synthetic page, not a directly-called private
+    helper.
+    """
+    import pdfplumber
+
+    page = _FakeBadRowPage()
+    monkeypatch.setattr(pdfplumber, "open", lambda *_a, **_kw: _FakePdfDocument([page]))
+
+    with pytest.raises(SourceContractError, match="no player name or status"):
+        parse_injury_report_pdf(
+            b"%PDF-fake",
+            report_timestamp=REPORT_TIMESTAMP,
+            source_url="https://example.invalid/fixture",
+        )
 
 
 # ==========================================================================
@@ -301,3 +497,91 @@ def test_import_never_guesses_a_player_id_for_an_ambiguous_normalized_name(sessi
     import_injury_report_entries(session, [murray], source_url="https://example.invalid/fixture")
     row = session.scalars(select(InjuryReportEntry)).one()
     assert row.player_id is None
+
+
+def _seed_sac_at_mil_teams(session: Any) -> dict[int, int]:
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(1610612758, "SAC", "Sacramento Kings"),
+            NbaTeamRecord(1610612749, "MIL", "Milwaukee Bucks"),
+        ],
+    )
+    session.flush()
+    return {t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))}
+
+
+def test_import_resolves_the_home_team_from_a_partial_subset_containing_only_it(
+    session: Any,
+) -> None:
+    """FAILS IF a partial subset misdirects a team to its opponent.
+
+    A real defect found in independent review: resolving which tricode is
+    "this" row's team from order-of-appearance within the imported batch
+    means a caller importing only one team's rows (e.g. because the other
+    team's report had not been filed yet) sees that lone team treated as
+    whichever tricode happened to appear first -- here, that would wrongly
+    resolve the home Bucks to the away Kings' tricode. Team resolution must
+    not depend on any other row being present in the same import call.
+    """
+    teams = _seed_sac_at_mil_teams(session)
+
+    home_only = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Milwaukee Bucks",
+        player_name_raw="Lopez, Brook",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Rest",
+    )
+
+    import_injury_report_entries(session, [home_only], source_url="https://example.invalid/fixture")
+    row = session.scalars(select(InjuryReportEntry)).one()
+    assert row.team_id == teams[1610612749]  # Milwaukee Bucks (home), not swapped to Sacramento
+
+
+def test_import_does_not_swap_teams_when_entries_are_out_of_report_order(session: Any) -> None:
+    """FAILS IF team resolution depends on which row of a matchup is imported first.
+
+    The report always lists the away team's rows before the home team's, but
+    nothing about the natural key or this importer should depend on that.
+    Feeding the home team's entry before the away team's -- the reverse of
+    the report's own order -- must still resolve each row to its own team,
+    not swap them.
+    """
+    teams = _seed_sac_at_mil_teams(session)
+
+    home_entry = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Milwaukee Bucks",
+        player_name_raw="Lopez, Brook",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Rest",
+    )
+    away_entry = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Injury/Illness - Left Thumb",
+    )
+
+    # Home listed first, away second -- the reverse of the report's own order.
+    import_injury_report_entries(
+        session, [home_entry, away_entry], source_url="https://example.invalid/fixture"
+    )
+
+    rows = {r.player_name_raw: r for r in session.scalars(select(InjuryReportEntry)).all()}
+    assert rows["Lopez, Brook"].team_id == teams[1610612749]  # Milwaukee Bucks stays Bucks
+    assert rows["Murray, Keegan"].team_id == teams[1610612758]  # Sacramento Kings stays Kings
