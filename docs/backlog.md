@@ -388,10 +388,10 @@ The reasoning behind every overlay recommendation: full category math, punt-fit 
 
 ### `deadline-model` - Modelling the league deadline calendar
 
-- [ ] **pending**
+- [ ] **pending** (implementation complete; PR open awaiting independent review, not yet merged)
 - **Depends on:** `league-settings-ingest`, `schedule-ingest`
 
-Compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. A queryable calendar rather than ad-hoc arithmetic, so the notification engine and the UI read from one source.
+Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it.
 
 
 ### `deployment` - Preparing deployment and the Postgres migration path

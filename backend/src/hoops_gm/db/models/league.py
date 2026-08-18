@@ -47,6 +47,7 @@ from hoops_gm.db.models.enums import (
 from hoops_gm.db.models.stats import stat_key_sql_list
 
 if TYPE_CHECKING:
+    from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
     from hoops_gm.db.models.identity import Player
     from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 
@@ -89,6 +90,9 @@ class League(IntPk, TimestampMixin, Base):
         back_populates="league", cascade="all, delete-orphan"
     )
     settings_snapshots: Mapped[list[LeagueSettingsSnapshot]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+    deadline_calendars: Mapped[list[LeagueDeadlineCalendar]] = relationship(
         back_populates="league", cascade="all, delete-orphan"
     )
 

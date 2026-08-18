@@ -20,6 +20,7 @@ from hoops_gm.db.models.availability import (
     PlayerParticipation,
 )
 from hoops_gm.db.models.bridge import BridgePayload
+from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.enums import (
     CategoryKind,
     CategoryOutcome,
@@ -78,6 +79,7 @@ __all__ = [
     "InjuryReportEntry",
     "InjuryReportStatus",
     "League",
+    "LeagueDeadlineCalendar",
     "LeagueScoringCategory",
     "LeagueScoringProfile",
     "LeagueSettingsSnapshot",

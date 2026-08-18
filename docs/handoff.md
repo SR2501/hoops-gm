@@ -2207,3 +2207,115 @@ loading, force-push with lease, require exact-head GitHub/PostgreSQL green, and
 return the head for one narrow code recheck. Do not merge or self-approve.
 
 ---
+
+## 2026-08-18 — backend — `deadline-model`: the smallest honest calendar contract
+
+**Changed:** Implemented `deadline-model` against merged `league-settings-ingest`
+and `schedule-ingest`. `league-settings-ingest`'s own handoff entry already
+established, against the live `getLeagueInfo` response, that Fantrax's official
+source supplies only roster limits and scoring-period boundaries — lineup lock,
+waivers, trade deadline, playoffs, and keeper rules are absent from every source
+observed so far and can only become known through the existing bridge capture.
+Computing "every future deadline" as originally scoped would therefore mean
+inventing five of the seven concerns the backlog item names. Built the smallest
+contract that is still honest instead.
+
+Migration `0011` adds `league_deadline_calendars`: one immutable, versioned row
+per league joining an exact `LeagueSettingsSnapshot` with an exact schedule
+refresh cohort (`hoops_gm.db.lineage`'s `RefreshRun`, `artifact_type=SCHEDULE`).
+`hoops_gm.calendar.deadline_calendar.derive_deadline_calendar` fails closed with
+`DeadlineCalendarLineageError` when either lineage is missing or the settings
+snapshot's own league/season identity does not match the target league — never
+falls back to `docs/league/2025-26-rules-baseline.md` or any other historical
+value. It is idempotent by exact lineage (re-deriving unchanged lineage returns
+the existing row) and opens the next `version` only when either input has
+actually moved. `season_start_date`/`season_end_date` and each scoring period's
+`start_at`/`end_at` are parsed with `_require_aware`, which rejects a naive
+timestamp outright (`ValueError` on missing `tzinfo`) rather than assuming UTC
+or local time — real enforcement this module adds, since
+`ScoringPeriodBoundary.start_at`/`end_at` are plain, unvalidated strings at the
+ingestion boundary. `is_playoff` is `None`, never `False`, for any scoring
+period when the settings document's own `playoffs` field is unknown; an
+All-Star-style combined week (a 14-day span in the test fixture, versus the
+usual 7) passes through unchanged since nothing in this module assumes a
+uniform cadence. `unsupported_rules` is a verbatim copy of `lineup_lock`,
+`waivers`, `trade_deadline`, `keepers`, and `playoffs` as their own
+`{value, evidence}` pairs from the settings document — this table adds no
+second override seam of its own.
+
+`activate_deadline_calendar` re-validates lineage currency at activation time,
+separately from derivation-time validation: it fails closed with
+`DeadlineCalendarStaleActivationError` if the settings snapshot or schedule
+refresh a calendar version was built from is no longer each source's current
+state, so a stale version can never be silently reinstated as "current."
+Genuine A→B→A cycling is still fully supported (verified in
+`test_a_to_b_to_a_activation_cycle`) by deriving again once the schedule
+lineage has actually reverted to prior content, then reactivating. Fixed one
+real bug this same test caught: SQLAlchemy batched the "clear the old current
+row" and "set the new current row" updates into a single `executemany`, and
+when the new row's primary key sorted before the old row's the batch briefly
+gave two rows the same `current_for_league` marker mid-flush, tripping the
+unique constraint even though the end state was valid — the clearing update is
+now flushed on its own before the new one is set.
+
+Deliberately did **not** touch `db/models/league.py`'s existing `ScoringPeriod`
+table. Its `start_date`/`end_date` are plain `Date` columns and its
+`is_playoff` defaults to `False` (not nullable) — populating it with
+timezone-aware instants and an honest three-state playoff flag would be a
+wider, riskier change to an already-shipped table outside this item's scope.
+The new `scoring_periods` JSON field is not a second competing calendar: it is
+a versioned pass-through of the settings document's own already-JSON
+`scoring_periods`, exactly as `LeagueSettingsSnapshot.settings` already stores
+it. This is a defensible but debatable call — `architect` or a reviewer may
+reasonably push back and ask for `ScoringPeriod` to be populated from this same
+join instead of leaving it a dead table.
+
+A read-only `GET /api/v1/leagues/{league_id}/deadline-calendar/current` mirrors
+`lineage.py`'s style: 404 when the league does not exist, 404 when no calendar
+has been activated, 200 with the full contract (including `unsupported_rules`)
+otherwise. It performs no derivation or activation itself — those stay internal
+operations a producer calls inside its own transaction.
+
+**Now true:** `league_deadline_calendars` exists, migrated, and portable —
+`test_portability.py` passes, including the Postgres identifier-length check
+(the auto-generated FK constraint name for `settings_snapshot_id` overflowed
+63 characters and needed an explicit shorter name in both the model and the
+migration). 28 new tests in `test_deadline_calendar.py` cover: table/constraint
+registration (version uniqueness, current-marker uniqueness, the
+`current_marker_matches_league` and `season_dates_ordered` CHECKs,
+cascade-on-league-delete, cascade-on-settings-snapshot-delete); every fail-closed
+derivation path (missing settings, missing schedule, season/league identity
+mismatch, naive scoring-period timestamp); idempotent re-derivation and
+version-opening on new lineage; DST-crossing and combined-week boundary
+pass-through; playoff-flag-as-`None`-when-unknown and
+populated-when-known; bridge-supplied `trade_deadline` flowing through
+unaltered; the full A→B→A activation cycle with fail-closed reactivation in
+between; activation failing closed when settings lineage has moved on; and the
+HTTP contract (404s, 200 shape, OpenAPI advertisement). Full local Code gate
+green: ruff check, ruff format, mypy strict (96 source files including tests,
+`strict = true` per `pyproject.toml`), and the full default backend suite (553
+passed).
+
+**Could not verify:** Whether the suite actually ran against Postgres in this
+session — `TEST_DATABASE_URL` was not set in this environment, so
+`test_portability.py`'s static-analysis checks (constraint names, enum CHECKs,
+JSON-column dialect handling) ran, but no live Postgres connection exercised
+`0011`'s upgrade/downgrade the way CI's Postgres job does; that remains the
+cross-dialect check of record. Whether `architect` or an independent reviewer
+agrees with leaving `ScoringPeriod` unpopulated rather than widening it to carry
+this same join — argued above, not settled. Whether a bridge capture will ever
+actually supply `lineup_lock`/`waivers`/`trade_deadline`/`keepers`/`playoffs`
+for this league; nothing here changes that, it only guarantees the calendar
+carries whichever of those become known without reconstructing the join logic.
+Whether `notification-engine` or `lineup-optimizer`, both of which depend on
+`deadline-model` in `docs/backlog.md`, can actually be built against
+`unsupported_rules` staying largely unknown — that dependency's real
+usefulness rests on the open bridge-capture gap, not on anything this PR
+controls.
+
+**Next:** PR open, not merged or self-approved, awaiting independent review per
+governance (`backend` owns the persistence/API boundary this item lives in;
+architecture-level pushback on the `ScoringPeriod` decision should route to
+`architect`). Whoever picks up `notification-engine` or `lineup-optimizer`
+should read `unsupported_rules` as evidence of absence, not silently treat a
+`None` value as "no deadline this season."
