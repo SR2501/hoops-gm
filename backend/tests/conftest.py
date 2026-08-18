@@ -120,8 +120,29 @@ def app(settings: Settings) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI, settings: Settings) -> Iterator[TestClient]:
-    """Client with the schema created, since lifespan builds its own Database."""
+    """Client with the schema created, since lifespan builds its own Database.
+
+    Drops first, for the same reason ``database`` does: on SQLite each test
+    gets its own file from a per-test ``tmp_path``, so isolation is automatic,
+    but ``TEST_DATABASE_URL`` points every test at the *same* external
+    Postgres database. Without dropping here, rows written by an earlier
+    ``client``-based test in the same module persist into the next one, and
+    an unfiltered ``select(...)`` can silently return someone else's row
+    instead of the one the test just created — as
+    ``test_bridge_payloads.py``'s cache-storage and manual-export tests did,
+    reading back a `source` of ``"xhr"`` left over from an earlier test in the
+    same file. Passing locally against SQLite the whole time is exactly the
+    kind of dialect-only failure ADR-001's Postgres seam exists to catch.
+
+    No matching teardown drop: a test is free to swap ``app.state.database``
+    for an intentionally unreachable one (``test_readiness_degrades_when_the_
+    database_is_unreachable`` does exactly that), and a teardown drop against
+    whatever engine happens to be installed at that point would raise instead
+    of cleaning up. Every test already drops before its own use, which is
+    sufficient for isolation.
+    """
     with TestClient(app) as test_client:
+        Base.metadata.drop_all(app.state.database.engine)
         Base.metadata.create_all(app.state.database.engine)
         yield test_client
 
