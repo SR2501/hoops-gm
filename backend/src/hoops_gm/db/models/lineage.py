@@ -1,8 +1,8 @@
 """Refresh lineage: provenance for the version strings other tables carry.
 
-``opponent_context`` and ``off_night_slates`` (``schedule_context.py``) already
-stamp every row with ``model_version`` and ``schedule_version`` — the
-versioning seam the plan requires: every value carries its input versions.
+``opponent_context`` and ``off_night_slates`` (``schedule_context.py``) stamp
+every row with their derivation/model and schedule versions — the versioning
+seam the plan requires: every value carries its input versions.
 What was missing is a place those version strings come *from*: a registry of
 when a schedule, projection, or model was last (re)computed, so a downstream
 consumer can ask "is this the current cohort" instead of trusting whatever
@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Index, String, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
@@ -37,27 +37,45 @@ from hoops_gm.db.models.enums import RefreshArtifactType
 
 
 class RefreshRun(IntPk, TimestampMixin, Base):
-    """One registered refresh of a schedule, projection, or model artifact.
+    """One registered refresh of a versioned artifact.
 
-    Idempotent by ``(artifact_type, version)``: re-registering the same
-    version — a schedule re-import that converges on identical facts, a model
-    redeploy under an unchanged version tag — touches ``refreshed_at`` and
+    Idempotent by ``(artifact_type, artifact_key, version, season_key)``:
+    re-registering the same scoped version touches ``refreshed_at`` and
     ``summary`` on the existing row rather than creating a duplicate. History
-    is retained; old versions are never deleted, so "what was current on date
-    X" stays answerable. "What is current now" is simply the row with the
-    latest ``refreshed_at`` for that artifact type — see
+    is retained; old versions and the same version in another season are never
+    deleted. "What is current now" is the latest row for the requested artifact
+    type, key, and optional season — see
     ``hoops_gm.db.lineage.current_refresh``.
     """
 
     __tablename__ = "refresh_runs"
     __table_args__ = (
-        UniqueConstraint("artifact_type", "version", name="uq_refresh_runs_type_version"),
-        Index("ix_refresh_runs_type_refreshed_at", "artifact_type", "refreshed_at"),
+        UniqueConstraint(
+            "artifact_type",
+            "artifact_key",
+            "version",
+            "season_key",
+            name="uq_refresh_runs_type_key_version_season",
+        ),
+        CheckConstraint(
+            "season_key = COALESCE(season, '*')",
+            name="season_key_matches_season",
+        ),
+        Index(
+            "ix_refresh_runs_current",
+            "artifact_type",
+            "artifact_key",
+            "season",
+            "refreshed_at",
+        ),
     )
 
     artifact_type: Mapped[RefreshArtifactType] = mapped_column(
         portable_enum(RefreshArtifactType, "refresh_artifact_type")
     )
+    #: Stable producer-defined identity within an artifact type. The default
+    #: preserves the original one-stream-per-type contract.
+    artifact_key: Mapped[str] = mapped_column(String(64), default="default")
     #: Opaque version label, matched byte-for-byte against the same string a
     #: consumer stamps on its own rows (e.g. ``opponent_context.schedule_version``).
     #: This registry never interprets it.
@@ -65,15 +83,20 @@ class RefreshRun(IntPk, TimestampMixin, Base):
     #: NBA season this refresh pertains to. Left null for artifacts that are
     #: not season-scoped.
     season: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    #: Non-null mirror used by the unique key because SQL permits repeated NULLs.
+    season_key: Mapped[str] = mapped_column(String(9))
     #: Free-text description of what produced this refresh — an adapter name,
     #: a training job identifier. Provenance, not a foreign key: the producer
     #: is not always a row in this database.
     source: Mapped[str] = mapped_column(String(255))
     #: Counts and other refresh metadata the producer finds useful to record
     #: (rows created/updated, row counts). Never load-bearing for the cohort
-    #: check itself — only ``artifact_type``, ``version`` and ``refreshed_at`` are.
+    #: check itself — only the artifact scope, version, and refresh time are.
     summary: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"<RefreshRun {self.artifact_type}={self.version} at={self.refreshed_at}>"
+        return (
+            f"<RefreshRun {self.artifact_type}:{self.artifact_key}="
+            f"{self.version} at={self.refreshed_at}>"
+        )

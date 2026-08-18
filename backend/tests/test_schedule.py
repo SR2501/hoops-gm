@@ -153,13 +153,23 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
     )
 
     import_schedule(session, result.games)
-    first_run = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    first_run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season="2026-27",
+    )
     assert first_run is not None
     assert first_run.season == "2026-27"
     assert first_run.summary["team_schedule_rows"] == 20
 
     import_schedule(session, result.games)
-    second_run = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    second_run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season="2026-27",
+    )
     assert second_run is not None
 
     assert second_run.id == first_run.id, "identical facts must not open a new cohort"

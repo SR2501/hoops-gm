@@ -1927,3 +1927,283 @@ not tested beyond the one real 2026-27 shape measured here.
 **Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
 merge or self-approve.
 
+---
+
+## 2026-08-18 — backend — Schedule-context schema provenance extension
+
+**Changed:** Added keyed, season-scopeable refresh lineage with a portable
+`source` artifact type, and registered NBA schedule cohorts under the stable
+`nba-schedule` key. Extended both schedule-context tables with a required
+`source_version`; added the off-night input snapshot, nullable uncalibrated
+garbage-time suppression, bounded probability/percentile checks, nonnegative
+count checks, and the team/opponent inequality. Alembic revision `0009`
+preserves existing history and backfills explicit legacy provenance before
+removing its temporary server defaults.
+
+**Now true:** Refresh streams can reuse version labels without colliding across
+artifact keys, callers can distinguish an omitted season filter from an
+explicit unscoped (`NULL`) season, and changed descriptive sources create new
+schedule-context history rather than overwriting an existing natural key.
+
+**Could not verify:** Native Postgres was not available locally. The migration
+and its legacy-row backfill were exercised on SQLite, and the existing CI
+Postgres migration job remains the required dialect verification. Downgrading
+after writing `source` refresh rows, duplicate legacy keys, or null
+garbage-time values will correctly refuse lossy conversion rather than delete
+or invent data.
+
+**Next:** The quant-owned computation may populate these contracts only after
+its Model gate; no schedule-context math, thresholding, playoff behavior, or
+schedule-density logic was added here.
+
+---
+
+## 2026-08-18 — quant — Versioned schedule context and held-out blowout calibration
+
+**Changed:** Completed `schedule-context` without moving any pure calendar
+arithmetic out of the merged `schedule-density` contract. Added a quant-owned
+service that derives per-date slate counts and empirical light-slate percentiles
+directly from `team_schedule`, trailing pace from possession estimates, and
+volume-correct opponent category allowances (counting categories per 100
+possessions; FG/FT as summed makes and attempts). Added a simple empirical
+blowout-probability model based on strictly pre-game trailing point-margin gaps,
+plus transactional publication/persistence that binds each row to keyed
+schedule, scoring-source, and model cohorts. Stale schedule, changed source,
+superseded model, and unknown cohorts raise before writes; natural keys retain
+older source/model/schedule outputs. `streaming_window_score` and
+`garbage_time_suppression` remain null because no held-out evidence supports
+their magnitude.
+
+**Now true:** The descriptive/model boundary is executable rather than only
+documented. Off-night rows make no fantasy-period or playoff-date assumption,
+and opponent rows use only observations before each fixture with exact game IDs,
+feature cutoff, and offseason-carryover flag in `input_snapshot`. The blowout
+bin count was selected on a 2024–25 validation season after fitting 2023–24,
+then locked, refit on 2024–25, and evaluated once on untouched 2025–26:
+1,225 held-out games, Brier 0.23314 versus 0.23464 for the constant-rate
+baseline, and ECE 0.03229. The improvement is deliberately described as small;
+the highest-risk bin predicted 36.7% and realized 44.0%, so v1 is context for a
+human, not permission to alter minutes, values, or automated actions. The
+committed evidence and blind spots are in
+`backend/tests/model_evidence/schedule_context_blowout_v1.json`, the reproducible
+live run is `python -m hoops_gm.schedule_context.backtest`, and the model card is
+`docs/models/schedule-context.md`. Local gates pass: Ruff, format, strict mypy,
+458 default tests, four dedicated `model_backtest` tests, and SQLite migration
+upgrade/check/downgrade from empty.
+
+**Could not verify:** Native Postgres was not available locally, so CI remains
+the dialect check for revision `0009` and its enum/constraint rebuilds. The
+committed gate validates the evidence contract but does not recreate all 3,676
+source games offline; the live reproduction was run successfully against
+`nba_api:LeagueGameFinder` in this session, and a future source change must
+produce a new evidence/model version. No full production database containing
+multi-season player logs plus the complete 2026–27 schedule was available, so
+the persistence run is integration-tested on constructed rows rather than
+executed for every real fixture. The model cannot see trades, coaching/rotation
+changes, injuries, market spreads, front-office intent, or where a team spent an
+off-day. Opening-week pace/defence and margin windows carry prior-season form
+and are marked as such; they are especially fragile after offseason turnover.
+No downstream availability, reliability, streaming, projection, or
+strength-of-schedule consumer exists yet to exercise cohort rejection across a
+second module.
+
+**Next:** `reliability-metrics` may consume blowout probability only as visible
+context until it separately validates player-specific minutes suppression.
+`availability-model` and later `strength-of-schedule` consumers must pass the
+exact schedule/source/model versions they used and reject this service's stale
+cohort error rather than falling back. `frontend` may display off-night,
+pace/defence, and blowout evidence, but must not present the null suppression or
+streaming score as zero.
+
+---
+
+## 2026-08-18 — quant — Serialize schedule-context cohort publication
+
+**Changed:** Closed the last concurrency gap in schedule-context publication.
+The database seam now uses transaction-level PostgreSQL advisory locks, including
+for unpublished scopes, and an SQLite no-op update to reserve the writer before
+cohort validation. Schedule and scoring-observation importers acquire the same
+scopes before mutation, while context publication locks before fingerprinting its
+source snapshot. Migration `0009` now refuses any populated downgrade that would
+discard keyed/source lineage, context provenance, nullable suppression, or
+version history before altering the schema.
+
+**Now true:** Schedule/source/model currentness checks and context writes execute
+under one transaction whose refresh scopes cannot be concurrently superseded on
+either supported database. Final local gates pass against current `main`: Ruff,
+format, strict mypy, 466 default tests, four dedicated `model_backtest` tests,
+the secret scan, and SQLite migration upgrade/check/downgrade.
+
+**Could not verify:** Native PostgreSQL was not available locally. PostgreSQL's
+advisory-lock path remains covered by the required CI Postgres job rather than a
+local contention test.
+
+**Next:** CI must exercise the full suite and migration round trip on PostgreSQL;
+this PR must not merge or self-approve.
+
+---
+
+## 2026-08-18 — quant — Close schedule-context release-integrity blockers
+
+**Changed:** Made the Model-gate evidence the packaged production release
+artifact instead of a test-only file. The production registry allowlists model
+`4809af29ed135f6f`, pins the artifact SHA-256, and independently derives the
+version from its training fingerprint and fitted parameters; publish/compute no
+longer accept arbitrary `BlowoutModel` objects. Reproduced the live backtest and
+added immutable training, validation, and held-out source fingerprints plus
+sample boundaries. Restricted v1 scoring/history to regular-season rows, added
+team player-minute completeness checks, staged all profiles before writes,
+enforced a version-bound 95% fixture-coverage floor, persisted the coverage
+audit in every output, and rejected naive `computed_at` values.
+
+**Now true:** The exact model that passed the gate is loadable from an installed
+wheel and an edited, self-relabelled, or locally fitted variant cannot become
+production lineage. A three-player subset, unequal/incomplete team minutes,
+systemically empty context, playoff history, weak caller-supplied coverage
+threshold, or host-local naive timestamp cannot silently produce a successful
+cohort. Final local gates pass: Ruff, format, strict mypy, 487 default backend
+tests, six dedicated `model_backtest` tests, secret scan, SQLite migration
+upgrade/check/downgrade, and a built-wheel resource check.
+
+**Could not verify:** Native PostgreSQL was not available locally, so advisory
+lock behavior and the migrated schema still rely on CI's Postgres job. The live
+reproduction confirms the currently returned NBA source fingerprints, but only
+a future re-run can demonstrate that an upstream score correction changes them.
+V1 has no automated online calibration monitor and cannot establish that the
+2024-25 training base rate remains current for 2026-27.
+
+**Next:** Independent reviewers should recheck the six blockers against the new
+exact HEAD. CI must pass Code and Model gates, including PostgreSQL, before this
+PR is eligible; it must not be merged or self-approved here.
+
+---
+
+## 2026-08-18 — quant — Restack schedule-context provenance after league settings
+
+**Changed:** Rebased the complete schedule-context remediation onto league
+settings commit `2369d8f`, preserved both append-only handoff histories, and
+renumbered schedule-context provenance from revision `0008` to `0009` with
+`down_revision = "0008"`. No descriptive feature, released model, source
+fingerprint, completeness, coverage, timestamp, or cohort-lock behavior changed.
+
+**Now true:** Alembic has one linear head, `0009`, after league-settings `0008`.
+The cumulative local gates pass against the rebased tree: Ruff, format, strict
+mypy, 525 default backend tests, six dedicated `model_backtest` tests, secret
+scan, SQLite upgrade/check/downgrade, and the built-wheel release-resource check.
+
+**Could not verify:** GitHub's real PostgreSQL and migration jobs had not run on
+this exact restacked head when this repository entry was written. Local SQLite
+cannot prove PostgreSQL advisory-lock execution.
+
+**Next:** Require all exact-head GitHub checks, especially PostgreSQL and
+migrations, to pass and repeat the two focused reviews. Do not merge or
+self-approve from this session.
+
+---
+
+## 2026-08-18 — quant — Canonicalize the packaged release digest
+
+**Changed:** Exact-head Linux CI exposed that the release registry hashed the
+JSON artifact's raw bytes, so Git's CRLF/LF checkout normalization made the
+Windows-gated artifact fail its Linux digest check. The registry now hashes the
+parsed artifact in canonical sorted, compact JSON form and pins that content
+identity. Added a regression proving LF and CRLF encodings produce the same
+release digest.
+
+**Now true:** The production loader still rejects changed Model-gate evidence,
+but line-ending-only checkout differences no longer change the verified
+identity. Final local gates pass: Ruff, format, strict mypy, 526 default backend
+tests, seven dedicated `model_backtest` tests, secret scan, SQLite
+upgrade/check/downgrade with one `0009` head, and loading release
+`4809af29ed135f6f` directly from the newly built wheel.
+
+**Could not verify:** GitHub's Linux and PostgreSQL jobs had not rerun against
+this correction when this entry was written. Canonical serialization removes
+the observed platform-dependent mechanism; exact-head CI remains the required
+independent verification.
+
+**Next:** Push with force-with-lease against the reviewed remote head and require
+every exact-head GitHub check, including real PostgreSQL and migrations, to pass.
+Do not merge or self-approve from this session.
+
+---
+
+## 2026-08-18 — quant, backend — Close final schedule-context history gaps and restack after injury reports
+
+**Changed:** Rebased PR #19 onto injury-report main commit `875d40e`, preserved
+both sides of the append-only handoff conflict, and restacked schedule-context
+provenance as Alembic `0010` with `down_revision = "0009"`. Off-night slates now
+stamp `claim.source_version`; source version is part of their natural key and
+indexed, so two scoring-source cohorts retain two independently valid coverage
+audits instead of overwriting one row. Pace/defence history now audits the last N
+**scored** regular-season games for each team/fixture against complete team box
+scores. Any incomplete member raises before slate or opponent writes, rather
+than letting `_team_history` backfill from arbitrarily old valid games.
+
+**Now true:** Successful opponent rows persist exact scored/complete game IDs,
+latest scored/complete dates, and recency days for both teams. Every opponent and
+slate row also persists an aggregate observation-completeness audit alongside
+fixture coverage. The off-night derivation version includes the history window
+and minimum history because those settings affect its persisted coverage audit.
+Regressions invalidate the recent 15 of 30 team games and prove zero writes, keep
+the 95% fixture-coverage failure, and prove two slate source histories survive.
+The model card now explains the 1,146 examples from 1,225 training games (79
+cold-start drops), all 1,225 carryover holdout examples, fit/serve offseason
+asymmetry, statistically significant top-bin underprediction, canonical-JSON
+SHA-256 pinning, and display-only 2026-27 posture. It also corrects the earlier
+handoff's `3,676` source-game total to the artifact-backed `3,680` without
+rewriting that historical entry.
+
+Local cumulative gates pass on the rebased tree: Ruff, format, strict mypy, 558
+default backend tests including seven `model_backtest` tests, 12 frontend tests
+plus lint/type-check/build, 63 userscript tests plus build, secret scan, SQLite
+upgrade/check/downgrade through the single `0010` head, and loading release
+`4809af29ed135f6f` from a newly built wheel.
+
+**Could not verify:** Native PostgreSQL remains unavailable locally. GitHub's
+real PostgreSQL, migration, and cumulative CI jobs had not run against this
+exact remediation when this entry was written. V1 still has no online drift
+monitor; serving it as 2026-27 display context does not establish current-season
+calibration.
+
+**Next:** Force-push with lease, require every exact-head GitHub check including
+PostgreSQL and migrations to pass, and return the new head to both reviewers for
+focused recheck. Do not merge or self-approve from this session.
+
+---
+
+## 2026-08-18 — quant, backend — Separate opponent derivation and blowout release lineage
+
+**Changed:** Closed the final reproducibility gap in opponent context. The old
+`OpponentContext.model_version` represented only the calibrated blowout release,
+so changing the descriptive pace/defence history window reused the same natural
+key and overwrote prior numeric rows. Opponent context now carries two explicit
+dimensions: `opponent_derivation_version`, a fingerprint of the complete
+pace/category-defence specification plus trailing window, minimum history, and
+coverage threshold; and `blowout_model_version`, the separately pinned calibrated
+release. Both have independent MODEL refresh keys, transaction locks, current
+activation checks, indexes, and positions in the opponent natural key.
+
+**Now true:** Publishing a configuration explicitly activates its opponent
+derivation cohort and its blowout release cohort; computation requires the exact
+claim and recomputed config fingerprint. No maximum-version or row-reuse
+heuristic selects current context. A regression computes `trailing_games = 10`,
+then explicitly publishes and computes `trailing_games = 5`: all eight opponent
+rows remain queryable (four per derivation), windows and pace/defence values
+differ, the blowout release stays identical, the superseded 10-game activation
+is rejected as stale, and a config/claim mismatch is rejected. Alembic remains
+revision `0010` over injury-report `0009`; its populated upgrade backfills
+`legacy-unbound` derivation lineage while preserving the old model value as
+`blowout_model_version`, and its downgrade refuses incompatible history.
+
+**Could not verify:** Native PostgreSQL was not available locally when this entry
+was written. GitHub's real PostgreSQL and migration jobs remain required on the
+new exact head. This is a provenance/persistence correction only; no blowout
+math, fitted parameter, evidence cohort, calibration result, or display-only
+posture changed.
+
+**Next:** Run cumulative Code and Model gates, SQLite lifecycle and built-wheel
+loading, force-push with lease, require exact-head GitHub/PostgreSQL green, and
+return the head for one narrow code recheck. Do not merge or self-approve.
+
+---

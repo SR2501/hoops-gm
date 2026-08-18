@@ -190,6 +190,228 @@ def test_absence_split_activation_migration_allows_recurring_fingerprints(
         engine.dispose()
 
 
+def test_0010_preserves_and_backfills_existing_provenance(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0008")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO nba_teams "
+                    "(id, nba_team_id, abbreviation, name, is_active, created_at, updated_at) "
+                    "VALUES "
+                    "(1, 1, 'AAA', 'Alpha', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    "(2, 2, 'BBB', 'Beta', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO nba_games "
+                    "(id, season, season_type, nba_game_id, game_date, status, "
+                    "home_team_id, away_team_id, created_at, updated_at) "
+                    "VALUES (1, '2026-27', 'regular', 'game-1', '2026-10-20', "
+                    "'scheduled', 1, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO team_schedule "
+                    "(id, season, season_type, game_id, team_id, opponent_team_id, "
+                    "game_date, is_home, created_at, updated_at) "
+                    "VALUES (1, '2026-27', 'regular', 1, 1, 2, '2026-10-20', true, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO opponent_context "
+                    "(id, season, game_date, team_schedule_id, team_id, opponent_team_id, "
+                    "is_home, pace_possessions, pace_window_games, category_defence, "
+                    "defence_window_games, blowout_probability, garbage_time_suppression, "
+                    "input_snapshot, model_version, schedule_version, schedule_refreshed_at, "
+                    "computed_at, created_at, updated_at) "
+                    "VALUES (1, '2026-27', '2026-10-20', 1, 1, 2, true, 100.0, 10, '{}', "
+                    "10, 0.25, 0.1, '{}', 'model-v1', 'schedule-v1', CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO off_night_slates "
+                    "(id, season, slate_date, scheduled_game_count, scheduled_team_count, "
+                    "is_off_night, light_slate_percentile, threshold_games, "
+                    "threshold_percentile, model_version, schedule_version, "
+                    "schedule_refreshed_at, computed_at, created_at, updated_at) "
+                    "VALUES (1, '2026-27', '2026-10-20', 1, 2, true, 0.1, 3, 0.2, "
+                    "'model-v1', 'schedule-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO refresh_runs "
+                    "(id, artifact_type, version, season, source, summary, refreshed_at, "
+                    "created_at, updated_at) VALUES "
+                    "(1, 'schedule', 'schedule-v1', '2026-27', 'legacy', '{}', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    "(2, 'model', 'model-v1', NULL, 'legacy', '{}', CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "0010")
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection:
+            refresh_rows = connection.execute(
+                text(
+                    "SELECT artifact_type, artifact_key, season_key "
+                    "FROM refresh_runs ORDER BY artifact_type"
+                )
+            ).all()
+            context = connection.execute(
+                text(
+                    "SELECT source_version, opponent_derivation_version, "
+                    "blowout_model_version, garbage_time_suppression FROM opponent_context"
+                )
+            ).one()
+            slate = connection.execute(
+                text("SELECT source_version, input_snapshot FROM off_night_slates")
+            ).one()
+
+        assert [tuple(row) for row in refresh_rows] == [
+            ("model", "default", "*"),
+            ("schedule", "nba-schedule", "2026-27"),
+        ]
+        assert context == ("legacy-unbound", "legacy-unbound", "model-v1", 0.1)
+        assert slate[0] == "legacy-unbound"
+        assert slate[1] in ({}, "{}")
+
+        inspector = inspect(engine)
+        assert "ix_off_night_slates_source_version" in {
+            index["name"] for index in inspector.get_indexes("off_night_slates")
+        }
+        for table, column in (
+            ("refresh_runs", "artifact_key"),
+            ("refresh_runs", "season_key"),
+            ("opponent_context", "source_version"),
+            ("opponent_context", "opponent_derivation_version"),
+            ("off_night_slates", "source_version"),
+            ("off_night_slates", "input_snapshot"),
+        ):
+            columns = {item["name"]: item for item in inspector.get_columns(table)}
+            assert columns[column]["default"] is None
+
+        opponent_indexes = {index["name"] for index in inspector.get_indexes("opponent_context")}
+        assert {
+            "ix_opponent_context_derivation_version",
+            "ix_opponent_context_blowout_model_version",
+        } <= opponent_indexes
+        assert "ix_opponent_context_model_version" not in opponent_indexes
+        opponent_unique_keys = {
+            tuple(constraint["column_names"])
+            for constraint in inspector.get_unique_constraints("opponent_context")
+        }
+        assert (
+            "team_schedule_id",
+            "opponent_derivation_version",
+            "blowout_model_version",
+            "schedule_version",
+            "source_version",
+        ) in opponent_unique_keys
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE opponent_context SET garbage_time_suppression = NULL WHERE id = 1")
+            )
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text("UPDATE opponent_context SET blowout_probability = 1.1 WHERE id = 1")
+            )
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text("UPDATE off_night_slates SET scheduled_game_count = -1 WHERE id = 1")
+            )
+    finally:
+        engine.dispose()
+
+
+def test_0010_refuses_a_lossy_downgrade_before_altering_schema(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0010")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO refresh_runs "
+                    "(artifact_type, artifact_key, version, season, season_key, source, "
+                    "summary, refreshed_at, created_at, updated_at) VALUES "
+                    "('source', 'schedule-context-observations', 'source-v1', NULL, '*', "
+                    "'fixture', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="refusing lossy 0010 downgrade"):
+        command.downgrade(alembic_config, "0009")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+            source_rows = connection.scalar(
+                text("SELECT COUNT(*) FROM refresh_runs WHERE artifact_type = 'source'")
+            )
+        assert revision == "0010"
+        assert source_rows == 1
+        assert "artifact_key" in {
+            column["name"] for column in inspect(engine).get_columns("refresh_runs")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_0010_refuses_to_discard_a_custom_schedule_scope(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0010")
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO refresh_runs "
+                    "(artifact_type, artifact_key, version, season, season_key, source, "
+                    "summary, refreshed_at, created_at, updated_at) VALUES "
+                    "('schedule', 'alternate-feed', 'schedule-v1', '2026-27', '2026-27', "
+                    "'fixture', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="keyed schedule lineage outside nba-schedule"):
+        command.downgrade(alembic_config, "0009")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+        assert revision == "0010"
+        assert "artifact_key" in {
+            column["name"] for column in inspect(engine).get_columns("refresh_runs")
+        }
+    finally:
+        engine.dispose()
+
+
 def test_the_migration_creates_the_enum_check_constraints(
     alembic_config: Config, migration_url: str
 ) -> None:

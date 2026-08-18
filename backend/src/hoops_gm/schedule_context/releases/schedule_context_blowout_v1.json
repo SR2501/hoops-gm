@@ -1,0 +1,128 @@
+{
+  "blind_spots": [
+    "future injuries and late scratches",
+    "lineup and rotation changes",
+    "trades and coaching changes",
+    "market spreads and front-office intent"
+  ],
+  "evidence_version": "schedule-context-blowout-v1",
+  "final": {
+    "backtest": {
+      "baseline_brier_score": 0.23464324329733724,
+      "brier_score": 0.23314302543934243,
+      "calibration_bins": [
+        {
+          "count": 453,
+          "observed_rate": 0.3443708609271523,
+          "predicted_probability": 0.328125
+        },
+        {
+          "count": 352,
+          "observed_rate": 0.32670454545454547,
+          "predicted_probability": 0.3307291666666667
+        },
+        {
+          "count": 420,
+          "observed_rate": 0.44047619047619047,
+          "predicted_probability": 0.3671875
+        }
+      ],
+      "expected_calibration_error": 0.032291666666666656,
+      "held_out_end": "2026-04-12",
+      "held_out_examples": 1225,
+      "held_out_start": "2025-10-21",
+      "training_cutoff": "2025-06-30",
+      "training_examples": 1146
+    },
+    "held_out_season": "2025-26",
+    "model": {
+      "bin_edges": [
+        4.7333333333333325,
+        9.799999999999999
+      ],
+      "blowout_margin": 15,
+      "minimum_history_games": 5,
+      "probabilities": [
+        0.328125,
+        0.3307291666666667,
+        0.3671875
+      ],
+      "source_version": "ea3f00ea22a4d703",
+      "training_blowout_rate": 0.3411867364746946,
+      "training_cutoff": "2025-06-30",
+      "training_examples": 1146,
+      "version": "4809af29ed135f6f",
+      "window_games": 15
+    },
+    "source_cohorts": {
+      "held_out": {
+        "completed_games": 1225,
+        "fingerprint": "e992a314295c442a",
+        "first_game_date": "2025-10-21",
+        "first_game_id": "0022500001",
+        "last_game_date": "2026-04-12",
+        "last_game_id": "0022501200"
+      },
+      "training": {
+        "completed_games": 1225,
+        "fingerprint": "ea3f00ea22a4d703",
+        "first_game_date": "2024-10-22",
+        "first_game_id": "0022400061",
+        "last_game_date": "2025-04-13",
+        "last_game_id": "0022401200"
+      }
+    },
+    "training_season": "2024-25"
+  },
+  "season_type": "regular",
+  "selection": {
+    "candidates": [
+      {
+        "baseline_brier_score": 0.22442176236954892,
+        "bin_count": 3,
+        "brier_score": 0.22380601941490805,
+        "expected_calibration_error": 0.018755027769805192
+      },
+      {
+        "baseline_brier_score": 0.22442176236954892,
+        "bin_count": 4,
+        "brier_score": 0.22421303987087268,
+        "expected_calibration_error": 0.027242202357616464
+      },
+      {
+        "baseline_brier_score": 0.22442176236954892,
+        "bin_count": 5,
+        "brier_score": 0.22466945399968308,
+        "expected_calibration_error": 0.03572802074182161
+      },
+      {
+        "baseline_brier_score": 0.22442176236954892,
+        "bin_count": 6,
+        "brier_score": 0.22579606259318952,
+        "expected_calibration_error": 0.057265779235149
+      }
+    ],
+    "selected_bins": 3,
+    "source_cohorts": {
+      "training": {
+        "completed_games": 1230,
+        "fingerprint": "a42d42cc7e8507df",
+        "first_game_date": "2023-10-24",
+        "first_game_id": "0022300061",
+        "last_game_date": "2024-04-14",
+        "last_game_id": "0022301200"
+      },
+      "validation": {
+        "completed_games": 1225,
+        "fingerprint": "ea3f00ea22a4d703",
+        "first_game_date": "2024-10-22",
+        "first_game_id": "0022400061",
+        "last_game_date": "2025-04-13",
+        "last_game_id": "0022401200"
+      }
+    },
+    "training_season": "2023-24",
+    "validation_season": "2024-25"
+  },
+  "source": "nba_api:LeagueGameFinder"
+}

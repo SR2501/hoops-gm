@@ -253,16 +253,18 @@ class TransactionType(enum.StrEnum):
 class RefreshArtifactType(enum.StrEnum):
     """The broad lineage domains a refresh can be registered against.
 
-    Deliberately three coarse values, not a taxonomy of every model or feed
-    that will ever exist. ``schedule`` is ``data-engineer``'s ingest facts,
-    ``projection`` and ``model`` are ``quant``'s later Phase 5 outputs. This is
-    the cohort key downstream consumers compare a claimed version against; it
-    is not, and must not become, a place to encode what a version *means*.
+    Deliberately four coarse values, not a taxonomy of every model or feed
+    that will ever exist. ``schedule`` is the resolved NBA calendar,
+    ``source`` identifies other upstream snapshots, and ``projection`` and
+    ``model`` are quant outputs. This is the cohort key downstream consumers
+    compare a claimed version against; it is not, and must not become, a place
+    to encode what a version *means*.
     """
 
     SCHEDULE = "schedule"
     PROJECTION = "projection"
     MODEL = "model"
+    SOURCE = "source"
 
 
 class StatScope(enum.StrEnum):

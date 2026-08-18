@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Date, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, Date, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime
@@ -28,14 +28,28 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint(
             "team_schedule_id",
-            "model_version",
+            "opponent_derivation_version",
+            "blowout_model_version",
             "schedule_version",
+            "source_version",
             name="uq_opponent_context_schedule_version",
         ),
+        CheckConstraint(
+            "blowout_probability >= 0 AND blowout_probability <= 1",
+            name="blowout_probability_range",
+        ),
+        CheckConstraint(
+            "garbage_time_suppression IS NULL OR garbage_time_suppression >= 0",
+            name="garbage_suppression_nonnegative",
+        ),
+        CheckConstraint("pace_window_games >= 0", name="pace_window_nonnegative"),
+        CheckConstraint("defence_window_games >= 0", name="defence_window_nonnegative"),
+        CheckConstraint("team_id <> opponent_team_id", name="different_opponent"),
         Index("ix_opponent_context_game_date", "game_date"),
         Index("ix_opponent_context_team_schedule", "team_schedule_id"),
         Index("ix_opponent_context_team_date", "team_id", "game_date"),
-        Index("ix_opponent_context_model_version", "model_version"),
+        Index("ix_opponent_context_derivation_version", "opponent_derivation_version"),
+        Index("ix_opponent_context_blowout_model_version", "blowout_model_version"),
         Index("ix_opponent_context_schedule_version", "schedule_version"),
     )
 
@@ -52,11 +66,13 @@ class OpponentContext(IntPk, TimestampMixin, Base):
     category_defence: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     defence_window_games: Mapped[int] = mapped_column()
     blowout_probability: Mapped[float] = mapped_column()
-    garbage_time_suppression: Mapped[float] = mapped_column()
+    garbage_time_suppression: Mapped[float | None] = mapped_column(nullable=True)
     training_cutoff: Mapped[date | None] = mapped_column(Date, nullable=True)
     input_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
-    model_version: Mapped[str] = mapped_column(String(64))
+    opponent_derivation_version: Mapped[str] = mapped_column(String(64))
+    blowout_model_version: Mapped[str] = mapped_column(String(64))
     schedule_version: Mapped[str] = mapped_column(String(64))
+    source_version: Mapped[str] = mapped_column(String(64))
     schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
@@ -77,11 +93,29 @@ class OffNightSlate(IntPk, TimestampMixin, Base):
             "slate_date",
             "model_version",
             "schedule_version",
+            "source_version",
             name="uq_off_night_slates_date_version",
+        ),
+        CheckConstraint(
+            "light_slate_percentile IS NULL OR "
+            "(light_slate_percentile >= 0 AND light_slate_percentile <= 1)",
+            name="light_slate_percentile_range",
+        ),
+        CheckConstraint(
+            "threshold_percentile IS NULL OR "
+            "(threshold_percentile >= 0 AND threshold_percentile <= 1)",
+            name="threshold_percentile_range",
+        ),
+        CheckConstraint("scheduled_game_count >= 0", name="scheduled_games_nonnegative"),
+        CheckConstraint("scheduled_team_count >= 0", name="scheduled_teams_nonnegative"),
+        CheckConstraint(
+            "threshold_games IS NULL OR threshold_games >= 0",
+            name="threshold_games_nonnegative",
         ),
         Index("ix_off_night_slates_model_version", "model_version"),
         Index("ix_off_night_slates_slate_date", "slate_date"),
         Index("ix_off_night_slates_schedule_version", "schedule_version"),
+        Index("ix_off_night_slates_source_version", "source_version"),
     )
 
     season: Mapped[str] = mapped_column(String(9))
@@ -93,8 +127,10 @@ class OffNightSlate(IntPk, TimestampMixin, Base):
     threshold_games: Mapped[int | None] = mapped_column(nullable=True)
     threshold_percentile: Mapped[float | None] = mapped_column(nullable=True)
     streaming_window_score: Mapped[float | None] = mapped_column(nullable=True)
+    input_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     model_version: Mapped[str] = mapped_column(String(64))
     schedule_version: Mapped[str] = mapped_column(String(64))
+    source_version: Mapped[str] = mapped_column(String(64))
     schedule_refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 

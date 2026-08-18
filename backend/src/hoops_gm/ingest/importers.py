@@ -20,7 +20,12 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import content_fingerprint, record_refresh
+from hoops_gm.db.lineage import (
+    SCHEDULE_CONTEXT_SOURCE_KEY,
+    content_fingerprint,
+    lock_refresh_scope,
+    record_refresh,
+)
 from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
     ExternalSource,
@@ -396,6 +401,12 @@ def import_resolutions(
 
 
 def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCounts:
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key=SCHEDULE_CONTEXT_SOURCE_KEY,
+        season=None,
+    )
     counts = ImportCounts()
     teams = {t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))}
     existing = {g.nba_game_id: g for g in session.scalars(select(NbaGame))}
@@ -438,6 +449,13 @@ def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCo
 
 def import_schedule(session: Session, records: Sequence[ScheduleGameRecord]) -> ImportCounts:
     """Write resolved games and their two per-team schedule rows idempotently."""
+    for season in sorted({record.game.season for record in records}):
+        lock_refresh_scope(
+            session,
+            artifact_type=RefreshArtifactType.SCHEDULE,
+            artifact_key="nba-schedule",
+            season=season,
+        )
     counts = import_games(session, [record.game for record in records])
     teams = {team.nba_team_id: team.id for team in session.scalars(select(NbaTeam))}
     games = {game.nba_game_id: game for game in session.scalars(select(NbaGame))}
@@ -513,6 +531,7 @@ def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameR
         record_refresh(
             session,
             artifact_type=RefreshArtifactType.SCHEDULE,
+            artifact_key="nba-schedule",
             version=version,
             source="nba_api:ScheduleLeagueV2",
             season=season,
@@ -521,6 +540,12 @@ def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameR
 
 
 def import_box_scores(session: Session, records: Sequence[PlayerBoxScoreRecord]) -> ImportCounts:
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key=SCHEDULE_CONTEXT_SOURCE_KEY,
+        season=None,
+    )
     counts = ImportCounts()
     maps = LookupMaps.load(session)
     games, players, teams = maps.games, maps.players, maps.teams
