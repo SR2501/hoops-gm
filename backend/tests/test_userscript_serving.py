@@ -75,6 +75,25 @@ def test_served_bytes_never_contain_the_configured_bridge_secret(
     assert secret not in response.text
 
 
+def test_served_bytes_never_contain_the_runtime_paired_bridge_secret(
+    app: FastAPI, client: TestClient, tmp_path: Path
+) -> None:
+    secret = "runtime-paired-bridge-value"
+    dist_path = tmp_path / "hoops-gm.user.js"
+    dist_path.write_text("// ==UserScript==\n// no secret lives in a build\n// ==/UserScript==\n")
+    app.state.settings = app.state.settings.model_copy(
+        update={
+            "userscript_dist_path": dist_path,
+            "bridge_secret": secret,
+        }
+    )
+
+    response = client.get(USERSCRIPT_URL)
+
+    assert response.status_code == 200
+    assert secret not in response.text
+
+
 def test_rejects_a_non_loopback_caller(tmp_path: Path) -> None:
     dist_path = tmp_path / "hoops-gm.user.js"
     dist_path.write_text("// ==UserScript==\n// ==/UserScript==\n")

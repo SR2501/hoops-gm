@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     )
 
     # --- Secrets. Never committed; .env.example documents the shape. ---------
+    # Values loaded from the environment are SecretStr; pairing and startup
+    # recovery intentionally install the persisted value as a plain string.
     bridge_secret: SecretStr | None = None
     bridge_secret_path: Path = REPO_ROOT / "data" / "bridge_secret"
     fantrax_user_secret_id: SecretStr | None = None

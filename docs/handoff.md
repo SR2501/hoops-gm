@@ -856,7 +856,7 @@ Fixed by adding `Base.metadata.drop_all(...)` before `create_all` in the `client
 
 ---
 
-## 2026-08-17 — bridge — Userscript auto-update path (one-time install, no bridge secret in served bytes)
+## 2026-08-17 — bridge, backend, safety — Userscript 0.5.0 update and live capture path
 
 **Changed:** Replaced the "reinstall in Tampermonkey's editor after every
 rebuild" workflow with the auto-update path implied by ADR-010: `npm run
@@ -875,7 +875,12 @@ headers set `Cache-Control: no-store` so neither an intermediate cache nor
 Tampermonkey's own check can serve a stale build. Extracted the loopback-host
 check that bridge pairing already had into a shared `hoops_gm.api.security`
 module so this route and pairing share one definition of "local" rather than
-diverging.
+diverging. Integrated the verified bridge 0.5.0 live fixes: service-worker-
+hidden views now produce bounded, deduped `rendered-view` captures after
+initial settle, SPA navigation, and rate-limited visible DOM changes; the
+backend accepts that source; and bridge authentication normalizes both
+environment-loaded `SecretStr` values and runtime-paired plain strings before
+the same constant-time comparison.
 
 **Now true:** The one-time install step in `userscript/README.md` and the
 root `README.md` now targets `http://127.0.0.1:8000/bridge/userscript.user.js`
@@ -892,43 +897,47 @@ directly with `environment="development"`, since the shared fixtures always
 force `environment="test"` to satisfy Starlette's synthetic `TestClient` host
 — that escape hatch meant this exact 403 branch, and pairing's equivalent
 branch, had zero prior coverage), and — the specific ADR-010 guarantee this
-task called for — that a configured `bridge_secret` never appears in the
-served bytes even when one exists. A new userscript test
+task called for — that neither a configured `SecretStr` nor a runtime-paired
+plain-string `bridge_secret` appears in the served bytes. A new userscript test
 (`test/build.test.js`) runs the real `build.mjs` and asserts `@updateURL`/
-`@downloadURL` are present, identical, and loopback, and that no hex-64 or
-base64url-43 secret-shaped literal (the two accepted stored-secret shapes)
-appears anywhere in the build output. Both suites pass locally (48/48
-userscript, full backend suite, ruff/mypy/`check_no_secrets.py` clean), and a
+`@downloadURL` are present, identical, and loopback; freezes the legacy script
+identity, storage key, match/grant/connect/noframes permission surface; checks
+package/package-lock version agreement; and rejects hex-64 or base64url-43
+secret-shaped literals in the output. The complete userscript suite passes
+(63/63), the full backend suite passes against this worktree's explicitly
+pinned source (417/417, 12 deselected), and ruff check/format, strict mypy, and
+`check_no_secrets.py` are clean. A
 `userscript` CI job was added — there was none before, so these new tests
 would otherwise never run in CI; `test_ci_workflow.py`'s own coherence check
-still passes against the edited `ci.yml`.
+still passes against the edited `ci.yml`. Live owner verification persisted
+successful automatic `rendered-view` rows for roster, players, and a paginated
+players view, plus a separate `manual-export` row; the synthetic test row was
+removed. The served script reported the frozen identity, version `0.5.0`, and
+matching loopback update/download URLs.
 
-**Could not verify:** No real Tampermonkey install was exercised in this
-session — the route was checked with `curl`/pytest only, not a live browser
-picking up an actual update prompt. The 43-character base64url check in
-`build.test.js` originally false-positived on an unrelated comment divider
-line of dashes (the character class also matches `-`); fixed by requiring
-both a letter and a digit in the run, but has not been proven against a real
-accidentally-embedded secret beyond the unit test's synthetic case. Whether
-Tampermonkey's background update-check interval is frequent enough in
-practice to feel "automatic" to the owner (versus needing the dashboard's
-manual "Check for updates" most of the time) is unmeasured.
+**Could not verify:** The owner verified live capture and the served 0.5.0
+metadata, but not a complete background-update cycle from one installed
+version to a higher one; Tampermonkey's real update interval and prompt
+behaviour remain unmeasured. The Cache Storage watcher remains best-effort and
+was not needed for the successful live rendered-view path. Rendered-view
+capture forwards sanitized but otherwise broad league-page markup over
+loopback, including links and data attributes; it removes active elements and
+form state but does not redact every possible attribute token. No Postgres
+service was available for local validation, so issue #11's pre-existing test
+isolation failure remains separately tracked. This machine also has a stale
+editable install pointing at a sibling worktree: bare `python -m pytest` can
+silently test the wrong source, so all reported backend evidence explicitly
+prepended this worktree's `backend/src` to `PYTHONPATH`.
 
-**Next:** Owner should do one real end-to-end pass: build, install from the
-served URL, bump the version, rebuild, and confirm Tampermonkey's own update
-prompt actually fires without any manual reinstall. No write-path or
-automation code was touched — this is entirely a serving/build concern — so
-the Automation gate does not apply here; only the Code gate does, and it
-passed. Note: PR #10's CI run (against this change) also surfaced a
-pre-existing, unrelated failure in the `Backend — the same suite against
-Postgres (ADR-001)` job — confirmed identical on `main` before this change
-(run `32093129045`), so not caused or fixed here. Root cause and a suggested
-fix are filed as issue #11: `test_bridge_payloads.py` reads back "the" row
-with an unqualified `select(BridgePayload)`, and on Postgres the `client`
-fixture never drops tables between tests (unlike `database`/`session`, which
-do), so a later test's unqualified query can read an earlier test's row
-instead of its own. Invisible on SQLite because that fixture gives each test
-its own `tmp_path` database file regardless.
+**Next:** Owner should verify one real background update by bumping beyond
+0.5.0, rebuilding, and confirming Tampermonkey replaces the installed script
+without a manual reinstall. Independent `safety` review signed off this
+read-only capture loop after checking scope, clone-only DOM handling, timing
+and size bounds, secret containment, fail-safe transport failure, and the
+absence of clicks/submits/action execution. That precedent is narrow: the
+timer-driven pattern is safe only because it observes and posts to loopback;
+giving it any Fantrax action executor requires a new Automation-gate review,
+all write-path guardrails, and the owner-only first-live-action decision.
 
 ---
 

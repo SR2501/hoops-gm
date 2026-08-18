@@ -1,7 +1,7 @@
 {
   "name": "hoops-gm-userscript",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Tampermonkey bridge foundation for hoops-gm",
   "type": "module",
   "scripts": {
@@ -9,4 +9,3 @@
     "test": "node --test"
   }
 }
-

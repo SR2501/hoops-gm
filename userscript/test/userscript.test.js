@@ -29,6 +29,44 @@ test("does not generate a bridge secret before manual pairing", async () => {
   assert.equal(values.size, 0);
 });
 
+test("keeps the version 0.2.0 secret under the unchanged GM storage key", async () => {
+  const legacySecret = "a".repeat(64);
+  const reads = [];
+  const writes = [];
+  const bridge = await loadBridge();
+  const storage = {
+    get: (key) => {
+      reads.push(key);
+      return legacySecret;
+    },
+    set: (key, value) => writes.push([key, value]),
+  };
+
+  assert.equal(bridge.getSecret(storage), legacySecret);
+  assert.deepEqual(reads, ["hoops-gm.bridge-secret"]);
+  assert.deepEqual(writes, [], "an in-place update must not rotate the paired secret");
+});
+
+test("transport exposes only local origin and paired state, never the secret value", async () => {
+  const bridge = await loadBridge();
+  let stored = "";
+  const transport = bridge.createTransport({
+    storage: {
+      get: () => stored,
+      set: (_key, value) => {
+        stored = value;
+      },
+    },
+    request: () => {},
+  });
+
+  assert.equal(transport.backendOrigin, "http://127.0.0.1:8000");
+  assert.equal(transport.isPaired(), false);
+  transport.storeSecret("a".repeat(64));
+  assert.equal(transport.isPaired(), true);
+  assert.equal("secret" in transport, false);
+});
+
 test("health check sends the stored secret and parses the response", async () => {
   let requestOptions;
   const bridge = await loadBridge({

@@ -7,7 +7,7 @@ import secrets
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from hoops_gm.api.deps import SessionDep, SettingsDep
 from hoops_gm.api.security import require_loopback_host
@@ -44,12 +44,11 @@ class BridgeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_name: Literal["hoops-gm.bridge-payload.v1"] = Field(alias="schema")
-    # "cache-storage" and "manual-export" cover /fxpa/req traffic issued by
-    # Fantrax's own service worker (fx-sw.js), which page-world fetch/XHR
-    # patching structurally cannot observe -- see userscript/README.md
-    # "Root cause" and docs/handoff.md 2026-08-17 (bridge, service-worker
-    # capture gap) for why "fetch"/"xhr" alone stopped being sufficient.
-    source: Literal["fetch", "xhr", "cache-storage", "manual-export"]
+    # "cache-storage", "rendered-view", and "manual-export" cover /fxpa/req
+    # traffic issued by Fantrax's own service worker (fx-sw.js), which
+    # page-world fetch/XHR patching structurally cannot observe. A rendered
+    # view is deliberately labelled separately from a raw response.
+    source: Literal["fetch", "xhr", "cache-storage", "rendered-view", "manual-export"]
     captured_at: AwareDatetime = Field(alias="capturedAt")
     request: BridgeRequestDetails
     response: BridgeResponseDetails
@@ -90,13 +89,22 @@ class BridgePayloadResponse(BaseModel):
     status: Literal["stored"] = "stored"
 
 
+def _bridge_secret_value(configured_secret: SecretStr | str | None) -> str | None:
+    """Normalize the two intentional active-secret representations."""
+    if configured_secret is None:
+        return None
+    if isinstance(configured_secret, SecretStr):
+        return configured_secret.get_secret_value()
+    return configured_secret
+
+
 def require_bridge_secret(
     settings: SettingsDep,
     bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
 ) -> None:
     """Authenticate both bridge operations without putting the secret in logs."""
-    configured_secret = settings.bridge_secret
-    if configured_secret is None or not configured_secret.get_secret_value():
+    configured_secret = _bridge_secret_value(settings.bridge_secret)
+    if not configured_secret:
         raise HTTPException(
             status_code=503,
             detail="Bridge authentication is not configured.",
@@ -108,7 +116,7 @@ def require_bridge_secret(
             detail="Bridge secret is required.",
             headers={"X-Bridge-Error": "bridge_secret_missing"},
         )
-    if not secrets.compare_digest(bridge_secret, configured_secret.get_secret_value()):
+    if not secrets.compare_digest(bridge_secret, configured_secret):
         raise HTTPException(
             status_code=401,
             detail="Bridge secret is incorrect.",

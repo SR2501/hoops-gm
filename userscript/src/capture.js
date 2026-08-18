@@ -7,17 +7,30 @@
   // throws into page code: every capture path is wrapped so a bug here can
   // at most silently drop one capture, never break Fantrax's own UI.
   //
-  // It captures RESPONSES only. Outgoing request bodies and all headers
-  // (cookie, auth, or otherwise) are never read or forwarded -- only the
-  // method, URL, response status/ok, response Content-Type, and response
-  // body are captured. See ADR-004: /fxpa/req is undocumented internal
-  // infrastructure and is read here, never written to.
+  // Network observation captures RESPONSES only. The lower-confidence
+  // rendered-view fallback captures a sanitized clone of already-rendered
+  // HTML and labels it separately. Outgoing request bodies and all headers
+  // (cookie, auth, or otherwise) are never read or forwarded. See ADR-004:
+  // /fxpa/req is undocumented internal infrastructure and is read here,
+  // never written to.
 
   const ENVELOPE_SCHEMA = "hoops-gm.bridge-payload.v1";
   const PAGE_EVENT_SCHEMA = "hoops-gm.page-capture.v1";
   const PAGE_EVENT_TYPE = "hoops-gm.bridge.page-capture.v1";
   const FXPA_REQ_PATHNAME = "/fxpa/req";
   const FANTRAX_HOSTS = new Set(["fantrax.com", "www.fantrax.com"]);
+  const FANTRAX_LEAGUE_PATH_PREFIX = "/fantasy/league/";
+  const LOCAL_BACKEND_ORIGIN = "http://127.0.0.1:8000";
+  // Automatic rendered-view snapshots are a lower-confidence fallback for
+  // service-worker-private responses. Keep them bounded and deliberately
+  // slow: navigation gets a prompt settled snapshot, while ordinary DOM
+  // churn can produce at most one new attempt per minute.
+  const AUTO_SNAPSHOT_MAX_CHARS = 250000;
+  const AUTO_SNAPSHOT_SETTLE_MS = 2000;
+  const AUTO_SNAPSHOT_MAX_SETTLE_MS = 10000;
+  const AUTO_SNAPSHOT_NAV_MIN_INTERVAL_MS = 5000;
+  const AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS = 60000;
+  const AUTO_SNAPSHOT_LOCATION_POLL_MS = 1000;
   // Fixed, not derived from window.location: capture is only ever installed
   // on pages matching the userscript's own narrow @match rule, and a fixed
   // base keeps filtering deterministic and testable outside a browser.
@@ -26,7 +39,7 @@
   /**
    * @typedef {Object} BridgePayloadEnvelope
    * @property {string} schema
-   * @property {"fetch"|"xhr"|"cache-storage"|"manual-export"} source
+   * @property {"fetch"|"xhr"|"cache-storage"|"rendered-view"|"manual-export"} source
    * @property {string} capturedAt ISO-8601 timestamp
    * @property {{method: string, url: string}} request
    * @property {{status: number|null, ok: boolean, contentType: string|null}} response
@@ -47,7 +60,7 @@
   // cannot see a service-worker-originated call. This is a platform
   // boundary, not a bug in the patch.
   //
-  // Two read-only, best-effort paths remain, plus one guaranteed manual
+  // Three read-only, best-effort paths remain, plus one guaranteed manual
   // fallback:
   //  1. Cache Storage (`window.caches`) is a *per-origin* store shared by
   //     both `window` and the service worker -- if fx-sw.js persists
@@ -55,11 +68,15 @@
   //     legitimately enumerate and read them. See `startCacheStorageWatcher`
   //     below. This is opportunistic: it depends entirely on Fantrax's own
   //     implementation and is unverified against the live site.
-  //  2. IndexedDB is the same idea but was not implemented here: its schema
+  //  2. A bounded rendered-view snapshot in the isolated world runs after
+  //     initial load, SPA navigation, and settled DOM changes. It does not
+  //     claim to be the missing raw response; it records the already-rendered
+  //     evidence automatically with an explicit lower-confidence source.
+  //  3. IndexedDB is the same idea but was not implemented here: its schema
   //     would have to be reverse-engineered per Fantrax version and is far
   //     more likely to drift silently than Cache Storage's simple
   //     Request/Response shape. Left as a documented option, not code.
-  //  3. `captureManual`/`captureManualSnapshot` (isolated world, below) is
+  //  4. `captureManual`/`captureManualSnapshot` (isolated world, below) is
   //     the guaranteed fallback: an explicit, owner-triggered Tampermonkey
   //     menu command that exports whatever is already rendered on the page
   //     at that moment, independent of which layer produced it.
@@ -81,6 +98,37 @@
       return false;
     }
     return FANTRAX_HOSTS.has(parsed.hostname.toLowerCase()) && parsed.pathname === FXPA_REQ_PATHNAME;
+  }
+
+  /**
+   * Automatic rendered-view capture is narrower than the userscript metadata
+   * alone: it runs only on HTTPS Fantrax league pages with a concrete league
+   * path. This check is repeated at capture time so an SPA navigation cannot
+   * silently widen the scope after the document-start install.
+   */
+  function isFantraxLeaguePage(url) {
+    if (typeof url !== "string" || url.length === 0) {
+      return false;
+    }
+    try {
+      const parsed = new URL(url, CAPTURE_BASE);
+      return (
+        parsed.protocol === "https:" &&
+        FANTRAX_HOSTS.has(parsed.hostname.toLowerCase()) &&
+        parsed.pathname.startsWith(FANTRAX_LEAGUE_PATH_PREFIX) &&
+        parsed.pathname.length > FANTRAX_LEAGUE_PATH_PREFIX.length
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function isTopLevelWindow(win) {
+    try {
+      return Boolean(win) && (!win.top || win.top === win);
+    } catch {
+      return false;
+    }
   }
 
   /** 32-bit FNV-1a. Not cryptographic -- only used to collapse duplicate captures. */
@@ -167,6 +215,9 @@
       clear() {
         seenKeys.clear();
       },
+      forget(key) {
+        seenKeys.delete(key);
+      },
     };
   }
 
@@ -205,6 +256,12 @@
       Promise.resolve()
         .then(() => transport.sendPayload(envelope))
         .catch(() => {
+          // A failed local delivery is not a successful duplicate. Forget the
+          // key so a later naturally scheduled capture may try again; there is
+          // deliberately no immediate retry loop or burst.
+          if (typeof dedupe.forget === "function") {
+            dedupe.forget(envelope.dedupeKey);
+          }
           safeWarn(
             logger,
             `hoops-gm bridge: failed to forward captured payload (${envelope.request.method} ${envelope.request.url})`
@@ -232,18 +289,10 @@
       return installXHRCapture({ win, handleCaptured, logger });
     }
 
-    /**
-     * The guaranteed fallback path (see `captureManualSnapshot`). Unlike
-     * `handleCaptured`, this deliberately bypasses `shouldCapture` -- the
-     * owner is exporting whatever is on screen, not an `/fxpa/req` response,
-     * so the URL is the current Fantrax page, not the RPC endpoint. Every
-     * other step (typed envelope, dedupe, non-throwing forward) is identical
-     * so this reuses the same `bridge_payloads` storage and replay tooling.
-     */
-    function captureManual({ url, contentType, raw }) {
+    function capturePageSnapshot({ source, url, contentType, raw }) {
       try {
         const envelope = buildEnvelope({
-          source: "manual-export",
+          source,
           url,
           method: "GET",
           status: null,
@@ -255,12 +304,45 @@
         forward(envelope);
         return true;
       } catch (err) {
-        safeWarn(logger, `hoops-gm bridge: manual capture failed (${err && err.message})`);
+        safeWarn(logger, `hoops-gm bridge: page snapshot failed (${err && err.message})`);
         return false;
       }
     }
 
-    return { handleCaptured, installFetch, installXHR, captureManual, dedupe };
+    /**
+     * The guaranteed owner-triggered fallback (see `captureManualSnapshot`).
+     * It deliberately bypasses `shouldCapture`: the URL is the current
+     * Fantrax page, not the internal RPC endpoint.
+     */
+    function captureManual({ url, contentType, raw }) {
+      return capturePageSnapshot({ source: "manual-export", url, contentType, raw });
+    }
+
+    /**
+     * Lower-confidence automatic fallback. It has the same typed envelope,
+     * raw preservation and dedupe as every other source, but repeats the
+     * league-page scope check before forwarding.
+     */
+    function captureRenderedView({ url, raw }) {
+      if (!isFantraxLeaguePage(url) || typeof raw !== "string" || raw.length === 0) {
+        return false;
+      }
+      return capturePageSnapshot({
+        source: "rendered-view",
+        url,
+        contentType: "text/html",
+        raw,
+      });
+    }
+
+    return {
+      handleCaptured,
+      installFetch,
+      installXHR,
+      captureManual,
+      captureRenderedView,
+      dedupe,
+    };
   }
 
   /**
@@ -589,10 +671,10 @@
     return `;(${installPageWorldHook.toString()})(${JSON.stringify(channel)}, ${JSON.stringify(PAGE_EVENT_TYPE)});`;
   }
 
-  // Sources the page-world hook may legitimately postMessage. "manual-export"
-  // is deliberately excluded: it never travels over this channel, since it
-  // is produced directly in the isolated world (see `captureManualSnapshot`)
-  // and is not scoped to the `/fxpa/req` URL filter this receiver re-applies.
+  // Sources the page-world hook may legitimately postMessage. "rendered-view"
+  // and "manual-export" are deliberately excluded: both are produced directly
+  // in the isolated world and are not scoped to the `/fxpa/req` URL filter
+  // this receiver re-applies.
   const PAGE_EVENT_SOURCES = new Set(["fetch", "xhr", "cache-storage"]);
 
   function pageEventDetails(event, { channel, origin, source } = {}) {
@@ -689,7 +771,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Guaranteed fallback: explicit, owner-triggered manual export
+  // Rendered-view fallbacks: automatic (bounded) and explicit manual export
   // ---------------------------------------------------------------------------
   //
   // This runs entirely in Tampermonkey's isolated world, which shares the
@@ -754,7 +836,7 @@
    * text/attribute content. Bounded so one export cannot send an unbounded
    * payload.
    */
-  function buildDomSnapshotHtml(doc) {
+  function buildDomSnapshotHtml(doc, { maxChars = DOM_SNAPSHOT_MAX_CHARS } = {}) {
     const root = selectSnapshotRoot(doc);
     if (!root || typeof root.cloneNode !== "function") {
       return "";
@@ -766,11 +848,359 @@
           node.remove();
         }
       }
+      // Never carry form-control state into an automatic or manual snapshot.
+      // Only the detached clone is changed; the live Fantrax DOM is untouched.
+      // These values are not request bodies, but stripping them structurally
+      // prevents a typed search/chat value from becoming one by accident.
+      for (const node of Array.from(
+        clone.querySelectorAll("input, textarea, select, option")
+      )) {
+        if (typeof node.removeAttribute === "function") {
+          for (const attribute of ["value", "checked", "selected"]) {
+            node.removeAttribute(attribute);
+          }
+        }
+        if (
+          typeof node.tagName === "string" &&
+          node.tagName.toLowerCase() === "textarea" &&
+          "textContent" in node
+        ) {
+          node.textContent = "";
+        }
+      }
     }
     const html = typeof clone.outerHTML === "string" ? clone.outerHTML : "";
-    return html.length > DOM_SNAPSHOT_MAX_CHARS
-      ? `${html.slice(0, DOM_SNAPSHOT_MAX_CHARS)}\n<!-- hoops-gm bridge: truncated at ${DOM_SNAPSHOT_MAX_CHARS} chars -->`
+    const limit = Number.isSafeInteger(maxChars) && maxChars > 0
+      ? maxChars
+      : DOM_SNAPSHOT_MAX_CHARS;
+    return html.length > limit
+      ? `${html.slice(0, limit)}\n<!-- hoops-gm bridge: truncated at ${limit} chars -->`
       : html;
+  }
+
+  /**
+   * The auto path intentionally captures rendered HTML only. It never reads
+   * framework state, request objects, headers, cookies, local/session storage,
+   * or service-worker internals. The selected root is cloned and sanitized by
+   * `buildDomSnapshotHtml`; no live page node is changed.
+   */
+  function captureRenderedViewSnapshot({
+    capture,
+    win = typeof window !== "undefined" ? window : undefined,
+    doc = typeof document !== "undefined" ? document : undefined,
+    logger = console,
+    maxChars = AUTO_SNAPSHOT_MAX_CHARS,
+  } = {}) {
+    if (
+      !capture ||
+      typeof capture.captureRenderedView !== "function" ||
+      !win ||
+      !doc ||
+      !win.location ||
+      !isTopLevelWindow(win) ||
+      !isFantraxLeaguePage(win.location.href)
+    ) {
+      return { captured: false, reason: "automatic rendered-view capture is out of scope" };
+    }
+    if (doc.visibilityState === "hidden") {
+      return { captured: false, reason: "page is hidden" };
+    }
+    try {
+      const html = buildDomSnapshotHtml(doc, { maxChars });
+      if (!html) {
+        return { captured: false, reason: "no exportable content found on this page" };
+      }
+      const ok = capture.captureRenderedView({ url: win.location.href, raw: html });
+      return ok
+        ? { captured: true, reason: "rendered-view" }
+        : { captured: false, reason: "capture rejected the rendered view" };
+    } catch (err) {
+      safeWarn(
+        logger,
+        `hoops-gm bridge: automatic rendered-view capture failed (${err && err.message})`
+      );
+      return { captured: false, reason: "unexpected error" };
+    }
+  }
+
+  /**
+   * True only for the real paired transport created by userscript.js. Exact
+   * origin equality is deliberate: automatic broad DOM capture must never be
+   * enabled for a dependency-injected remote transport.
+   */
+  function hasPairedLocalTransport(transport) {
+    if (
+      !transport ||
+      transport.backendOrigin !== LOCAL_BACKEND_ORIGIN ||
+      typeof transport.isPaired !== "function"
+    ) {
+      return false;
+    }
+    try {
+      return transport.isPaired() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Installs a read-only rendered-view watcher in Tampermonkey's isolated
+   * world. It snapshots after DOM settle on initial load, SPA URL changes, and
+   * later settled child-list changes. A navigation may capture at most once
+   * per 5 seconds; ordinary DOM churn at most once per minute. Exact-body
+   * dedupe in createCapture is an independent second bound.
+   */
+  function installAutomaticRenderedViewCapture({
+    capture,
+    transport,
+    win = typeof window !== "undefined" ? window : undefined,
+    doc = typeof document !== "undefined" ? document : undefined,
+    MutationObserverCtor,
+    now = () => Date.now(),
+    setTimeoutFn,
+    clearTimeoutFn,
+    setIntervalFn,
+    clearIntervalFn,
+    settleMs = AUTO_SNAPSHOT_SETTLE_MS,
+    maxSettleMs = AUTO_SNAPSHOT_MAX_SETTLE_MS,
+    navigationMinIntervalMs = AUTO_SNAPSHOT_NAV_MIN_INTERVAL_MS,
+    mutationMinIntervalMs = AUTO_SNAPSHOT_MUTATION_MIN_INTERVAL_MS,
+    locationPollMs = AUTO_SNAPSHOT_LOCATION_POLL_MS,
+    logger = console,
+  } = {}) {
+    const notInstalled = { installed: false, uninstall: () => {} };
+    if (
+      !capture ||
+      typeof capture.captureRenderedView !== "function" ||
+      !transport ||
+      transport.backendOrigin !== LOCAL_BACKEND_ORIGIN ||
+      !win ||
+      !doc ||
+      !win.location ||
+      !isTopLevelWindow(win) ||
+      !isFantraxLeaguePage(win.location.href)
+    ) {
+      return notInstalled;
+    }
+
+    const scheduleTimeout =
+      setTimeoutFn ||
+      (typeof win.setTimeout === "function" ? win.setTimeout.bind(win) : undefined);
+    const cancelTimeout =
+      clearTimeoutFn ||
+      (typeof win.clearTimeout === "function" ? win.clearTimeout.bind(win) : undefined);
+    const scheduleInterval =
+      setIntervalFn ||
+      (typeof win.setInterval === "function" ? win.setInterval.bind(win) : undefined);
+    const cancelInterval =
+      clearIntervalFn ||
+      (typeof win.clearInterval === "function" ? win.clearInterval.bind(win) : undefined);
+    if (typeof scheduleTimeout !== "function" || typeof cancelTimeout !== "function") {
+      return notInstalled;
+    }
+
+    const observerType =
+      MutationObserverCtor ||
+      (typeof win.MutationObserver === "function" ? win.MutationObserver : undefined);
+    const settleDelay = Math.max(0, Number(settleMs) || 0);
+    const settleDeadlineDelay = Math.max(settleDelay, Number(maxSettleMs) || settleDelay);
+    const navigationInterval = Math.max(0, Number(navigationMinIntervalMs) || 0);
+    const mutationInterval = Math.max(
+      navigationInterval,
+      Number(mutationMinIntervalMs) || navigationInterval
+    );
+    const pollInterval = Math.max(250, Number(locationPollMs) || 1000);
+
+    let stopped = false;
+    let timeoutId = null;
+    let intervalId = null;
+    let observer = null;
+    let observing = false;
+    let pendingSince = null;
+    let pendingKind = null;
+    let lastCaptureAt = Number.NEGATIVE_INFINITY;
+    let lastUrl = win.location.href;
+    let wasPaired = hasPairedLocalTransport(transport);
+    let wasReady = doc.readyState !== "loading";
+
+    function nowMs() {
+      try {
+        const value = Number(now());
+        return Number.isFinite(value) ? value : Date.now();
+      } catch {
+        return Date.now();
+      }
+    }
+
+    function resetPending() {
+      if (timeoutId !== null) {
+        cancelTimeout(timeoutId);
+        timeoutId = null;
+      }
+      pendingSince = null;
+      pendingKind = null;
+    }
+
+    function runSnapshot() {
+      timeoutId = null;
+      if (
+        stopped ||
+        doc.visibilityState === "hidden" ||
+        !isFantraxLeaguePage(win.location.href)
+      ) {
+        return;
+      }
+      if (!hasPairedLocalTransport(transport)) {
+        resetPending();
+        return;
+      }
+      const result = captureRenderedViewSnapshot({ capture, win, doc, logger });
+      if (result.captured) {
+        lastCaptureAt = nowMs();
+      }
+      pendingSince = null;
+      pendingKind = null;
+    }
+
+    function requestSnapshot(kind = "mutation") {
+      if (
+        stopped ||
+        doc.visibilityState === "hidden" ||
+        !isFantraxLeaguePage(win.location.href) ||
+        !hasPairedLocalTransport(transport)
+      ) {
+        return false;
+      }
+      const requestedKind = kind === "mutation" ? "mutation" : "navigation";
+      const current = nowMs();
+      if (pendingSince === null) {
+        pendingSince = current;
+        pendingKind = requestedKind;
+      } else if (requestedKind === "navigation" && pendingKind === "mutation") {
+        // A route change supersedes an old same-view mutation cycle and gets
+        // its own settle window.
+        pendingSince = current;
+        pendingKind = "navigation";
+      }
+      const minInterval =
+        pendingKind === "mutation" ? mutationInterval : navigationInterval;
+      const quietAt = current + settleDelay;
+      const deadlineAt = pendingSince + settleDeadlineDelay;
+      const dueAt = Math.max(
+        Math.min(quietAt, deadlineAt),
+        lastCaptureAt + minInterval
+      );
+      if (timeoutId !== null) {
+        cancelTimeout(timeoutId);
+      }
+      timeoutId = scheduleTimeout(runSnapshot, Math.max(0, dueAt - current));
+      return true;
+    }
+
+    function attachObserver() {
+      if (
+        observing ||
+        typeof observerType !== "function" ||
+        !doc.documentElement
+      ) {
+        return;
+      }
+      try {
+        observer = new observerType(() => {
+          requestSnapshot("mutation");
+        });
+        observer.observe(doc.documentElement, { childList: true, subtree: true });
+        observing = true;
+      } catch (err) {
+        safeWarn(
+          logger,
+          `hoops-gm bridge: rendered-view observer unavailable (${err && err.message})`
+        );
+      }
+    }
+
+    function checkContext() {
+      if (stopped) {
+        return;
+      }
+      const nextUrl = win.location.href;
+      const paired = hasPairedLocalTransport(transport);
+      const ready = doc.readyState !== "loading";
+      if (nextUrl !== lastUrl) {
+        lastUrl = nextUrl;
+        resetPending();
+        if (isFantraxLeaguePage(nextUrl)) {
+          requestSnapshot("navigation");
+        }
+      }
+      if (ready && !wasReady) {
+        attachObserver();
+        requestSnapshot("navigation");
+      }
+      if (paired && !wasPaired && isFantraxLeaguePage(nextUrl)) {
+        resetPending();
+        requestSnapshot("navigation");
+      }
+      wasReady = ready;
+      wasPaired = paired;
+    }
+
+    const onDocumentReady = () => {
+      wasReady = true;
+      attachObserver();
+      requestSnapshot("navigation");
+    };
+    const onNavigationEvent = () => checkContext();
+    const onVisibilityChange = () => {
+      checkContext();
+      if (doc.visibilityState !== "hidden") {
+        resetPending();
+        requestSnapshot("navigation");
+      }
+    };
+
+    if (typeof win.addEventListener === "function") {
+      win.addEventListener("popstate", onNavigationEvent, false);
+      win.addEventListener("hashchange", onNavigationEvent, false);
+    }
+    if (typeof doc.addEventListener === "function") {
+      doc.addEventListener("visibilitychange", onVisibilityChange, false);
+      if (doc.readyState === "loading") {
+        doc.addEventListener("DOMContentLoaded", onDocumentReady, { once: true });
+      }
+    }
+
+    attachObserver();
+    if (doc.readyState !== "loading") {
+      requestSnapshot("navigation");
+    }
+    if (typeof scheduleInterval === "function") {
+      intervalId = scheduleInterval(checkContext, pollInterval);
+    }
+
+    return {
+      installed: true,
+      requestSnapshot,
+      checkContext,
+      uninstall: () => {
+        stopped = true;
+        resetPending();
+        if (intervalId !== null && typeof cancelInterval === "function") {
+          cancelInterval(intervalId);
+        }
+        if (observer && typeof observer.disconnect === "function") {
+          observer.disconnect();
+        }
+        if (typeof win.removeEventListener === "function") {
+          win.removeEventListener("popstate", onNavigationEvent, false);
+          win.removeEventListener("hashchange", onNavigationEvent, false);
+        }
+        if (typeof doc.removeEventListener === "function") {
+          doc.removeEventListener("visibilitychange", onVisibilityChange, false);
+          doc.removeEventListener("DOMContentLoaded", onDocumentReady);
+        }
+      },
+    };
   }
 
   /**
@@ -840,6 +1270,7 @@
     PAGE_EVENT_TYPE,
     FXPA_REQ_PATHNAME,
     shouldCapture,
+    isFantraxLeaguePage,
     normalizeBody,
     buildEnvelope,
     computeDedupeKey,
@@ -852,6 +1283,9 @@
     readExposedAppState,
     selectSnapshotRoot,
     buildDomSnapshotHtml,
+    captureRenderedViewSnapshot,
+    hasPairedLocalTransport,
+    installAutomaticRenderedViewCapture,
     captureManualSnapshot,
     installManualCaptureMenu,
   };
@@ -861,8 +1295,15 @@
   // Tampermonkey's isolated world so forwarding remains GM-privileged; only
   // the narrow response observer is injected into Fantrax's page world.
   if (typeof window !== "undefined" && typeof globalThis.HoopsGmTransport !== "undefined") {
-    const installed = createCapture({ transport: globalThis.HoopsGmTransport });
+    const transport = globalThis.HoopsGmTransport;
+    const installed = createCapture({ transport });
     installed.pageBridge = installPageWorldBridge({ capture: installed, win: window, doc: document });
+    installed.renderedViewWatcher = installAutomaticRenderedViewCapture({
+      capture: installed,
+      transport,
+      win: window,
+      doc: document,
+    });
     capture.instance = installed;
     installManualCaptureMenu({
       registerMenuCommand: typeof GM_registerMenuCommand === "function" ? GM_registerMenuCommand : undefined,

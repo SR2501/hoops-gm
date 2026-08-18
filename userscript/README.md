@@ -6,87 +6,154 @@ explicit owner command, provides a loopback `GM_xmlhttpRequest` transport with a
 `/health` probe and an authenticated handshake, and **read-only captures**
 Fantrax's internal `/fxpa/req` responses for forwarding to the backend —
 automatically via page-world `fetch`/`XHR` hooks and a best-effort Cache
-Storage watcher, and on explicit owner command via a manual page-state export
-for the traffic neither of those can reach (see "Root cause #2" below). It
-does not mutate the Fantrax DOM, does not touch any other endpoint, does not
-render an overlay, and does not execute any action. `bridge-overlay` and
-Phase 10 automation are separate, later work.
+Storage watcher, plus a conservative automatic rendered-view snapshot after
+initial load, SPA navigation, and settled page changes. An explicit manual
+page-state export remains the final fallback (see "Root cause #2" below).
+Capture clones rather than mutates the Fantrax DOM, does not touch any other
+Fantrax endpoint, does not render an overlay, and does not execute any action.
+`bridge-overlay` and Phase 10 automation are separate, later work.
 
 ## Install
 
 1. Start the local backend on `http://127.0.0.1:8000`.
 2. Install Tampermonkey and enable developer mode if the browser asks for it.
 3. Run `npm install` and `npm run build` in this directory.
-4. With the backend running, open
-   `http://127.0.0.1:8000/bridge/userscript.user.js` **in the specific
-   browser where Tampermonkey is installed** and install it there. This is
-   a one-time step — see "Updating" below for why you should not need to
-   repeat it. Do this by hand, in that browser's address bar: any script,
-   shell command, or automated tool that "opens" a URL generically (`start
-   <url>` on Windows, `open <url>` on macOS, a link click routed through the
-   OS) resolves through your **OS-registered default browser handler**, not
-   necessarily the browser Tampermonkey and the paired secret actually live
-   in. If Tampermonkey lives in a non-default browser (this project has
-   tested Brave and Edge; neither has to be the OS default), that kind of
-   automation opens the wrong browser entirely, with no error — you just
-   end up looking at the file in a browser with no Tampermonkey, no
-   pairing, and no installed script, exactly as if this step never
-   happened.
+4. Install the generated script one of two ways:
+   - Open a new tab at `http://127.0.0.1:8000/bridge/userscript.user.js`
+     **by hand in the specific browser where Tampermonkey is installed**.
+     Tampermonkey recognizes the `.user.js` URL and offers an **Install**
+     page directly. This is the recommended path because the same URL keeps
+     the script updated later (see "Automatic updates" below).
+   - Or open `dist/hoops-gm.user.js` directly (e.g. drag it into the
+     browser window) and install it from the local file the same way.
+   Do not automate either method with a generic URL/file opener (`start
+   <url>` on Windows, `open <url>` on macOS, or an OS-routed link). Those
+   use the OS-registered default browser, which may not be where Tampermonkey
+   and the paired secret live. This project has tested Brave and Edge without
+   requiring either to be the default browser; an automated open can silently
+   land in the wrong browser with no Tampermonkey, pairing, or installed
+   script.
 5. Open a Fantrax URL matching `https://www.fantrax.com/fantasy/league/*`.
 
-In Tampermonkey's extension menu, choose **Pair hoops-gm bridge**. The command
-obtains and displays a one-time 12-character code from the local backend, then
-asks you to paste it back to confirm the pairing. It is never automatic on page
-load. The successful response's bridge secret is stored under a Tampermonkey-only
-key and sent only as the `X-Bridge-Secret` request header. Neither the secret nor
-pairing code is logged to the console. A pairing code expires after ten minutes
-and can be used only once.
+### One-time upgrade from 0.2.0
 
-## Updating
+Repository history is unambiguous: the generated 0.2.0 metadata had the same
+`@name` and `@namespace` used today, but it had neither `@updateURL` nor
+`@downloadURL`, and its source had no self-update check. An installed 0.2.0
+therefore has no URL from which Tampermonkey can discover 0.5.0. It cannot
+bootstrap itself.
 
-The built script's `@updateURL`/`@downloadURL` metadata both point at
-`http://127.0.0.1:8000/bridge/userscript.user.js` — the same loopback backend
-that serves the handshake and pairing endpoints, never a public host.
-Tampermonkey periodically re-fetches that URL, compares `@version`, and
-prompts to update in place when it changes:
+**Do not uninstall 0.2.0.** With the current backend and build running, open
+`http://127.0.0.1:8000/bridge/userscript.user.js` once and approve
+Tampermonkey's install/update screen. Tampermonkey may also call out the two
+new grants used since 0.2.0 (`GM_registerMenuCommand` and `GM_addElement`). This
+is the one unavoidable browser confirmation. The stable pair
+`@name = "hoops-gm bridge"` plus
+`@namespace = "https://github.com/SR2501/hoops-gm"` makes this an in-place
+update rather than a new script, so its GM storage is retained. The storage
+key is also unchanged (`hoops-gm.bridge-secret`), and 0.5.0 explicitly accepts
+the 64-character hexadecimal secret generated by 0.2.0. Do not remove the old
+entry first: uninstalling can remove its GM storage and defeats that guarantee.
 
-1. From `userscript/`, run `npm run build` after any source change. The build
-   reads `@version` from `package.json`, so bump that field for the change to
-   be seen as an update at all — an unchanged version is invisible to
-   Tampermonkey's comparison, not merely slow to arrive.
-2. Keep the local backend running: Tampermonkey's update check is a plain GET
-   against that URL, so if the backend (and therefore the built file) is
-   unreachable, the check silently finds nothing to update rather than
-   erroring visibly.
-3. Trigger Tampermonkey's check manually (its dashboard has a "Check for
-   userscript updates" action) or wait for its own schedule, then approve the
-   update prompt when it appears. Do this from Tampermonkey's own dashboard
-   in the browser where it's installed — that dashboard is already inside
-   the right browser, so this step doesn't have the same wrong-browser risk
-   as opening the install URL by hand (see the note in **Install** above).
+After approval, there should still be one **hoops-gm bridge** entry, now at
+0.5.0. Reload the Fantrax tab. No browser profile or stored secret needs to be
+opened, copied, or changed during this upgrade.
 
-This means step 4 in **Install** above is a true one-time action for source
-changes going forward: rebuilding is enough, without reopening Tampermonkey's
-editor or reinstalling the file by hand. Rebuilding without bumping the
-version still regenerates `dist/hoops-gm.user.js` correctly; it only means
-Tampermonkey has nothing new to detect until the version moves.
+For a fresh or genuinely unpaired install, choose **Pair hoops-gm bridge** in
+Tampermonkey's extension menu. An in-place upgrade with a working preserved
+secret skips this step. The command obtains and displays a one-time
+12-character code from the local backend, then asks you to paste it back to
+confirm the pairing. It is never automatic on page load. The successful
+response's bridge secret is stored under a Tampermonkey-only key and sent only
+as the `X-Bridge-Secret` request header. Neither the secret nor pairing code is
+logged to the console. A pairing code expires after ten minutes and can be
+used only once.
 
-If `http://127.0.0.1:8000/bridge/userscript.user.js` returns 404, the backend
-is running but `userscript/dist/hoops-gm.user.js` does not exist yet — the
-response's `detail` field says so directly. Run `npm install && npm run
-build` in this directory and reload the URL; the route reads the file from
-disk on every request; nothing needs restarting.
-
-The served bytes are always exactly what a local `npm run build` produces:
-the endpoint is loopback-only and never contains a bridge secret, ADR-010's
-pairing exchange is the only path to one. Neither the build nor the serving
-route reads `BRIDGE_SECRET` or the on-disk paired secret file.
+Rebuilding changes only `dist/hoops-gm.user.js` on disk. Tampermonkey keeps
+running the *installed* copy until it either updates automatically (see
+"Automatic updates" below) or you reinstall/edit it by hand.
 
 The handshake calls the backend contract at
 `POST /api/v1/bridge/handshake` with `{ "protocol": 1 }` and the
 `X-Bridge-Secret` header. A successful response confirms `{ "status": "ok",
 "protocol": 1 }`. The independent `/health` probe remains available as a
 browser-to-backend round trip.
+
+## Automatic updates
+
+The build's metadata now includes `@updateURL` and `@downloadURL`, both
+pointing at `GET http://127.0.0.1:8000/bridge/userscript.user.js` — an
+unauthenticated, loopback-only backend route that serves whatever
+`userscript/dist/hoops-gm.user.js` currently contains on this machine (see
+`backend/src/hoops_gm/api/routes/userscript.py`). No secret is ever in that
+file; the bridge secret lives only in Tampermonkey's own storage, populated by
+the pairing flow above, never in the script source. Concretely, once the
+script is installed by *either* method above:
+
+1. A maintainer bumps the single version source and rebuilds:
+   `npm version patch --no-git-tag-version`, then `npm run build`.
+   `build.mjs` reads `package.json`; it fails if `package-lock.json` disagrees,
+   so metadata cannot quietly ship a stale or mismatched version. Tampermonkey
+   only accepts an update when the generated `@version` increases.
+2. The next time Tampermonkey runs its own scheduled update check (or you
+   trigger one manually — Tampermonkey dashboard → **Utilities** →
+   **Check for userscript updates now**), it fetches that same URL, sees the
+   higher version, downloads it, and replaces the installed script — with
+   the local backend running and reachable being the only requirement.
+3. Reload the Fantrax tab afterward so the new `document-start` script
+   actually takes over the page.
+
+Once 0.5.0 has been approved in place, step 2 requires no owner click:
+Tampermonkey, not the running userscript, performs the fetch and replacement.
+Tests freeze the legacy `@name`/`@namespace`, storage key, `@match`, `@grant`,
+`@noframes`, and `@connect` surface so an accidental identity or permission
+change cannot silently turn a future release into a second script, duplicate
+frame collector, or new approval prompt.
+An intentional permission expansion must update that contract and explicitly
+restore a one-time owner approval to the release instructions.
+
+**Limitations, stated plainly:**
+
+- **Not instant.** Tampermonkey checks on its own interval (configurable
+  under Tampermonkey → **Settings** → **Config Mode: Advanced** → **Update**;
+  it also checks once per browser start). A rebuilt script is not live until
+  that check fires or you trigger one by hand with **Check for userscript
+  updates now**.
+- **Requires the backend running at check time.** If `http://127.0.0.1:8000`
+  is down when Tampermonkey checks, that check simply fails silently and
+  retries at the next interval — there is no error dialog and no action is
+  taken, which is the fail-safe behaviour this bridge otherwise requires.
+- **This machine only.** `dist/` is gitignored on purpose (see "Local
+  development loop" below) — the served file always reflects whatever was
+  most recently built *on this machine*. A second leaguemate running their
+  own backend needs their own `npm run build` and their own one-time install
+  of this same URL against their own loopback backend; nothing here is
+  published or shared between machines.
+- **`http://`, not `https://`, is expected and fine for loopback.** Browsers
+  treat `127.0.0.1` as a secure context regardless of scheme, and
+  Tampermonkey does not require TLS for `@updateURL`/`@downloadURL` — this is
+  the same pattern documented for local userscript development generally. If
+  a Tampermonkey build ever enforces HTTPS-only update URLs, this local
+  pattern would need revisiting; nothing here assumes that will stay true
+  forever.
+- **The endpoint intentionally tolerates extension-controlled `Origin` and
+  `Cookie` headers.** Tampermonkey owns its updater implementation, so making
+  those incidental headers part of this route's contract risks a silent
+  update failure after an extension change. The route remains loopback-only,
+  does not broaden the backend's configured CORS allowlist, serves no secret,
+  and responds with
+  `Cache-Control: no-store, no-cache, must-revalidate` plus legacy no-cache
+  headers so a browser cache cannot hide a fresh build.
+- **A missing build returns a 404 with an actionable message** (run
+  `npm install && npm run build`) rather than crashing the backend or the
+  update check — a fresh checkout or a production image built without the
+  Node toolchain simply has nothing to serve yet, which is expected, not an
+  error condition on the backend's part.
+- **"Automatic" starts after 0.5.0, not before it, and is not a hot reload.**
+  The installed 0.2.0 cannot discover this update URL, and a userscript is not
+  allowed to rewrite its own Tampermonkey installation. Also, a newly
+  downloaded `document-start` script cannot replace code already executing in
+  an open Fantrax document; the next reload/navigation starts the new version.
 
 ## `/fxpa/req` capture (read-only)
 
@@ -114,7 +181,7 @@ patching `window.fetch`/`XMLHttpRequest` can only ever see requests page
 script itself issues, and structurally cannot see one the service worker
 issued on its own.
 
-Two things follow from that, both implemented here:
+Three things follow from that, all implemented here:
 
 1. **Cache Storage watcher (best-effort, automatic).** Cache Storage
    (`window.caches`) is a *per-origin* store shared by both `window` and the
@@ -128,12 +195,31 @@ Two things follow from that, both implemented here:
    as `fetch`/`xhr` captures, tagged `source: "cache-storage"`. **This is
    opportunistic and unverified against the live site** — it depends
    entirely on whether Fantrax's service worker actually uses Cache Storage
-   for this endpoint, which the owner's live check (below) determines. IndexedDB
-   is the same idea in principle but was deliberately left undone: its schema
-   would have to be reverse-engineered per Fantrax version, which is a far
-   more likely source of silent drift than Cache Storage's simple
-   Request/Response shape.
-2. **Manual export (guaranteed, owner-triggered).** Independent of which
+   for this endpoint, which the owner's live check (below) determines.
+2. **Rendered-view snapshot (conservative, automatic).** This is the hands-off
+   fallback when the raw service-worker response is unavailable. It runs in
+   Tampermonkey's isolated world only when all of these remain true: the
+   top-level current URL is an HTTPS `fantrax.com` or `www.fantrax.com`
+   `/fantasy/league/<id>...` page, the transport origin is exactly
+   `http://127.0.0.1:8000`, a valid bridge secret remains in GM storage, and
+   the document is visible. It snapshots after a 2-second quiet period on
+   initial load, SPA URL changes (detected by `popstate`/`hashchange` plus a
+   one-second read-only location check), and settled child-list changes.
+   Continuous DOM churn is forced to settle after 10 seconds rather than
+   postponing forever. Navigation attempts are at least 5 seconds apart and
+   ordinary same-view mutation attempts at least 60 seconds apart; exact-body
+   dedupe independently drops unchanged views.
+
+   Only a detached clone of `main`, `#root`, `#app`, or finally `body` is
+   serialized. Scripts, styles, noscript content, and form-control state are
+   stripped from the clone; the live page is never changed. Automatic output
+   is capped at 250,000 characters and tagged `source: "rendered-view"` so it
+   can never be mistaken for a raw `/fxpa/req` response. It never reads request
+   objects, request bodies, headers, cookies, local/session storage, or
+   service-worker internals. A backend failure is warned and dropped without
+   an immediate retry loop; its dedupe key is released so a later naturally
+   rate-limited page event can resume collection after the backend returns.
+3. **Manual export (guaranteed, owner-triggered).** Independent of which
    layer produced the data, the owner can invoke **hoops-gm: capture current
    Fantrax view** from Tampermonkey's extension menu at any moment. This runs
    entirely in Tampermonkey's isolated world (DOM access is not
@@ -148,20 +234,42 @@ Two things follow from that, both implemented here:
    guaranteed to work regardless of what `fx-sw.js` does. See "Customer
    workflow: manual export" below for exactly when and how to use it.
 
-Both new sources are stored in the same `bridge_payloads` table via the same
+All fallback sources are stored in the same `bridge_payloads` table via the same
 authenticated envelope contract (`schema`, `capturedAt`, `request`,
-`response`, `body`, `dedupeKey`) — only `source` and, for the manual export,
-the meaning of `request.url`/`response.status` differ. `source` is now one of
-`"fetch"`, `"xhr"`, `"cache-storage"`, or `"manual-export"`; the backend's
-`BridgeRequest` model enforces exactly these four.
+`response`, `body`, `dedupeKey`) — only `source` and, for rendered/manual
+views, the meaning of `request.url`/`response.status` differ. `source` is now
+one of `"fetch"`, `"xhr"`, `"cache-storage"`, `"rendered-view"`, or
+`"manual-export"`; the backend's `BridgeRequest` model enforces exactly these
+five.
+
+### What capture is automatic—and what cannot be
+
+After the one-time 0.5.0 update and a Fantrax reload, the page-world fetch/XHR
+observer, Cache Storage watcher, and isolated-world rendered-view watcher
+install automatically at `document-start`; none requires a menu command.
+The rendered-view watcher also notices a secret paired later in the same page
+and starts after settle. The manual-export command is a fallback, not a
+prerequisite for those paths.
+
+There is still no honest guarantee that *every* `/fxpa/req` response will be
+captured *raw* with zero clicks. When `fx-sw.js` issues a request internally
+and neither caches nor exposes its response to page script, Tampermonkey has no
+API that can observe that private response. The automatic rendered view now
+preserves the evidence Fantrax actually displayed without owner clicks, but it
+is intentionally labelled lower-confidence rather than pretending rendered
+HTML equals the missing JSON-RPC body. The explicit manual export remains the
+fail-safe for a moment the rate-limited watcher has not yet recorded. A
+guaranteed zero-click copy of uncached service-worker traffic would require a
+different privileged browser-extension/debugging surface or support from
+Fantrax itself, not another userscript permission.
 
 
-- **Read-only, response-only.** Nothing about an outgoing request is ever
-  changed, delayed, or blocked — the page's own promise/callback still
-  resolves with the exact, unmodified response it would have received with
-  the userscript absent. Fetch bodies are read from a **clone** of the
-  response so the page's own read of the stream is never consumed.
-  Outgoing request bodies are never read or forwarded at all.
+- **Read-only; network paths are response-only.** Nothing about an outgoing
+  request is ever changed, delayed, or blocked — the page's own
+  promise/callback still resolves with the exact, unmodified response it would
+  have received with the userscript absent. Fetch bodies are read from a
+  **clone** of the response so the page's own read of the stream is never
+  consumed. Outgoing request bodies are never read or forwarded at all.
 - **Narrow filter.** Only responses from `fantrax.com` or
   `www.fantrax.com` whose URL path is exactly `/fxpa/req` (Fantrax's
   undocumented internal JSON-RPC endpoint, see ADR-004) are captured.
@@ -172,6 +280,10 @@ the meaning of `request.url`/`response.status` differ. `source` is now one of
   body. Request headers, response headers other than `Content-Type`
   (notably never `Set-Cookie`), cookies, and outgoing request bodies are
   never read, stored, or forwarded.
+- **Rendered views are explicitly not raw RPC.** `source: "rendered-view"`
+  preserves already-rendered HTML for replay when service-worker traffic is
+  inaccessible. It is never normalized or presented as the JSON response the
+  userscript could not observe.
 - **Typed, normalized envelope.** Every capture is wrapped in a
   `hoops-gm.bridge-payload.v1` envelope (see the `@typedef` in
   `src/capture.js`) with the raw response body always preserved verbatim,
@@ -182,8 +294,9 @@ the meaning of `request.url`/`response.status` differ. `source` is now one of
   forwarding step is wrapped so a bug in this module can at most silently
   drop one capture — it can never throw into Fantrax's own page code or
   delay a response the page is waiting on. Forwarding failures (backend
-  unreachable, non-2xx, invalid JSON) are logged as a warning and dropped;
-  they are never retried in a way that could burst traffic.
+  unreachable, non-2xx, invalid JSON) are logged as a warning and dropped.
+  There is no immediate retry; a later normal capture event may try again
+  after the failed key is released.
 - **Bounded dedupe.** A small in-memory recency cache collapses
   byte-identical consecutive captures of the same method/URL/body (e.g. a
   page polling the same RPC call every few seconds), so an unchanged draft
@@ -220,12 +333,10 @@ npm run build
 that order, since capture's auto-install checks for the transport the first
 file creates) into one readable installable file at
 `userscript/dist/hoops-gm.user.js`, prefixed with the `==UserScript==`
-metadata block; `dist/` is ignored. The `@version` in that block comes from
-`package.json`, and `@updateURL`/`@downloadURL` both point at the backend's
-`GET /bridge/userscript.user.js`, so Tampermonkey's own update check is what
-picks up a rebuild after the version is bumped — see "Updating" above. This
-is a change from the original workflow, which required reopening
-Tampermonkey's editor or reinstalling the file by hand after every rebuild.
+metadata block; `dist/` is ignored. The version comes from `package.json`,
+and `@updateURL`/`@downloadURL` both point at the backend's
+`GET /bridge/userscript.user.js`. Rebuild after source changes; an installed
+0.5.0+ receives higher versions through the automatic update path above.
 
 The backend must remain loopback-bound. The userscript connects only to
 `http://127.0.0.1:8000`; do not change this to `0.0.0.0` or a public hostname.
@@ -241,35 +352,39 @@ the Fantrax tab so the new document-start page-world hook is installed:
 1. Keep the paired script enabled and the local backend running.
 2. Open a matching Fantrax league URL, then visit **Players**, **Roster**, and
    **League** normally.
-3. Check `bridge_payloads` in the local database (or the backend logs) for a
-   new row. Do not put a bridge secret, cookie, request body, or headers in
-   any diagnostic output.
+3. Wait for the page to settle, then check `bridge_payloads` in the local
+   database (or backend logs) for a new row. Even if raw/cache capture is
+   unavailable, the automatic fallback should produce
+   `source = 'rendered-view'`. Do not put a bridge secret, cookie, request
+   body, headers, or snapshot contents in diagnostic output.
 4. If still zero, open Tampermonkey's script console and report only the
    non-sensitive warning text plus browser/version and the active script
    version. Do not alter Fantrax requests to test it.
 5. If DevTools shows the relevant `/fxpa/req` request's initiator as
-   `fx-sw.js` (Fantrax's service worker) rather than a page script, the
-   fetch/XHR hook and the Cache Storage watcher above are both structurally
-   unable to help in general — go straight to the manual export below rather
-   than continuing to chase the automatic path.
+   `fx-sw.js` (Fantrax's service worker), expect a `rendered-view` row rather
+   than a raw `fetch`/`xhr` row unless Cache Storage contains the response.
+   Use the manual command only if the specific view needed was not recorded.
 
-This change has unit/build coverage only; a live browser result — including
-whether the Cache Storage watcher actually finds anything on the real site —
-is pending the owner repeating this check.
+The owner repeated this check against a live paired browser: bounded automatic
+captures persisted successful `rendered-view` rows for roster, players, and a
+paginated players view, while the manual fallback persisted a separate
+`manual-export` row. This verifies the rendered-view path against Fantrax's
+actual DOM; Cache Storage capture remains best-effort and was not required.
 
 During a live draft, Fantrax must remain the visible active tab. After roughly
 five minutes in a hidden tab, Chrome throttles timers to about once per minute,
 which stalls Fantrax's own draft polling. Later overlay work must therefore
 avoid requiring an alt-tab during a pick clock. The Cache Storage watcher
 respects this too: it skips its poll entirely while `document.visibilityState`
-is `"hidden"`, so it is never the thing competing for an already-throttled
-tick.
+is `"hidden"`. The rendered-view watcher likewise skips hidden documents and
+takes one settled snapshot after visibility returns, so neither watcher is the
+thing competing for an already-throttled tick.
 
 ## Customer workflow: manual export (guaranteed fallback)
 
-Use this whenever the automatic paths above are silent — most reliably, any
-time DevTools shows `/fxpa/req`'s initiator as `fx-sw.js` — or any time you
-want a capture of exactly what is on screen right now:
+Use this only when the automatic paths above are silent, the rate-limited
+rendered snapshot missed a specific moment, or you want an immediate capture
+of exactly what is on screen right now:
 
 1. Navigate to the Fantrax page showing the data you want captured (for
    example the **Players** list, a **Roster**, or the **Draft Board** during
@@ -287,10 +402,9 @@ want a capture of exactly what is on screen right now:
    of the main content region (`response.contentType = 'text/html'`).
 
 This is deliberately a lower-confidence, unparsed capture compared to a real
-`/fxpa/req` JSON-RPC response — it exists so a draft or roster view is never
-left completely uncaptured, not to replace the automatic path. Repeat it at
-each moment you want a record (e.g. once per draft pick); it does not run on
-a timer and nothing is captured until you invoke it.
+`/fxpa/req` JSON-RPC response. It remains the immediate human-controlled
+fallback, not the steady-state workflow; only `manual-export` waits for this
+command.
 
 ## Tests
 
@@ -300,14 +414,16 @@ injection (no real browser or network): URL filtering, malformed/non-JSON body
 normalization, typed envelope shape, dedupe, page-world fetch/XHR wiring,
 rejection of cross-origin, wrong-source, wrong-channel, malformed, and
 lookalike page events, the Cache Storage watcher (matching entries, the
-hidden-tab skip, and a rejecting `caches.keys()` never throwing), and the
-manual export (`captureManual` bypassing the `/fxpa/req` filter, app-state
-preference over DOM snapshot, script/style stripping, size truncation, and the
-Tampermonkey menu wiring). It also verifies that the hook has no request body
-or header field and that its real page response remains intact.
-`test/build.test.js` runs the real `build.mjs` and asserts on the produced
-`dist/hoops-gm.user.js`: `@version` matches `package.json`, `@updateURL` and
-`@downloadURL` are both present, identical, and loopback (never a hostname
-that could resolve off-machine), and no hex-64 or base64url-43 secret-shaped
-literal — the two accepted stored-secret shapes — appears anywhere in the
-build (ADR-010).
+hidden-tab skip, and a rejecting `caches.keys()` never throwing), the automatic
+rendered-view fallback (exact Fantrax/local/paired guards, initial settle, SPA
+URL detection, mutation rate limiting, dedupe, visibility, detached-clone
+sanitization, and size bounds), and the manual export (`captureManual`
+bypassing the `/fxpa/req` filter, app-state preference over DOM snapshot,
+script/style stripping, size truncation, and the Tampermonkey menu wiring).
+It also verifies that no capture envelope has a request body, cookie, or
+header field and that the page's real response and live DOM remain intact.
+`test/build.test.js` runs the real build and freezes the legacy identity,
+storage key, match/grant/connect/noframes permission surface, metadata order,
+package/package-lock version agreement, exact loopback update/download URL,
+single-file output, and ADR-010's guarantee that no hex-64 or base64url-43
+secret-shaped literal appears in the build.
