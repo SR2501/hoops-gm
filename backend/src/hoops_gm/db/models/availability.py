@@ -99,14 +99,6 @@ class AbsenceSplitComputationRun(IntPk, TimestampMixin, Base):
 
     __tablename__ = "absence_split_runs"
     __table_args__ = (
-        UniqueConstraint(
-            "season",
-            "season_type",
-            "evidence_version",
-            "schedule_version",
-            "input_fingerprint",
-            name="uq_absence_split_runs_input",
-        ),
         CheckConstraint("result_count >= 0", name="result_count_non_negative"),
         CheckConstraint(
             "skipped_one_sided_pairs >= 0",

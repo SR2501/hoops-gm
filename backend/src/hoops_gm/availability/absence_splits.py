@@ -66,12 +66,11 @@ class AbsenceSplitInputError(ValueError):
 
 @dataclass(frozen=True)
 class AbsenceSplitRun:
-    """Result of one complete, idempotent descriptive computation."""
+    """Result of one complete successful descriptive computation."""
 
     computation_run: AbsenceSplitComputationRun
     rows: tuple[AbsenceSplit, ...]
     created: int
-    reused: int
     skipped_one_sided_pairs: int
 
 
@@ -87,6 +86,21 @@ class _PairSamples:
     without_samples: list[_Sample] = field(default_factory=list)
     observed_absence_games: int = 0
     explicit_unknown_game_ids: set[int] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class _SplitDraft:
+    beneficiary_player_id: int
+    absent_player_id: int
+    team_id: int
+    games_with: int
+    games_without: int
+    observed_absence_games: int
+    production_with: dict[str, object]
+    production_without: dict[str, object]
+    descriptive_deltas: dict[str, object]
+    uncertainty: dict[str, object]
+    provenance: dict[str, object]
 
 
 def compute_absence_splits(
@@ -179,25 +193,6 @@ def compute_absence_splits(
         [_participation_input(row) for row in participation],
     )
 
-    existing_run = session.scalar(
-        select(AbsenceSplitComputationRun).where(
-            AbsenceSplitComputationRun.season == season,
-            AbsenceSplitComputationRun.season_type == season_type,
-            AbsenceSplitComputationRun.evidence_version == evidence_version,
-            AbsenceSplitComputationRun.schedule_version == schedule_refresh.version,
-            AbsenceSplitComputationRun.input_fingerprint == fingerprint,
-        )
-    )
-    if existing_run is not None:
-        existing_rows = _rows_for_run(session, existing_run.id)
-        return AbsenceSplitRun(
-            computation_run=existing_run,
-            rows=existing_rows,
-            created=0,
-            reused=len(existing_rows),
-            skipped_one_sided_pairs=existing_run.skipped_one_sided_pairs,
-        )
-
     pairs: dict[tuple[int, int, int], _PairSamples] = defaultdict(_PairSamples)
     target_keys = sorted(
         set(logs_by_player_game) | set(participation_by_player_game),
@@ -235,6 +230,57 @@ def compute_absence_splits(
     skipped = sum(
         not samples.with_samples or not samples.without_samples for samples in pairs.values()
     )
+
+    # Validate and materialize the whole cohort before persisting its activation.
+    # A caller may catch AbsenceSplitInputError and commit the surrounding
+    # transaction; no failed computation may then become the latest run.
+    drafts: list[_SplitDraft] = []
+    for (beneficiary_id, absent_id, team_id), samples in sorted(pairs.items()):
+        if not samples.with_samples or not samples.without_samples:
+            continue
+        production_with = _summarize([sample.log for sample in samples.with_samples])
+        production_without = _summarize([sample.log for sample in samples.without_samples])
+        drafts.append(
+            _SplitDraft(
+                beneficiary_player_id=beneficiary_id,
+                absent_player_id=absent_id,
+                team_id=team_id,
+                games_with=len(samples.with_samples),
+                games_without=len(samples.without_samples),
+                observed_absence_games=samples.observed_absence_games,
+                production_with=production_with,
+                production_without=production_without,
+                descriptive_deltas=_deltas(production_with, production_without),
+                uncertainty={
+                    "sample_sizes": {
+                        "with": len(samples.with_samples),
+                        "without": len(samples.without_samples),
+                    },
+                    "variance_estimable": {
+                        "with": len(samples.with_samples) >= 2,
+                        "without": len(samples.without_samples) >= 2,
+                    },
+                    "counting": (
+                        "sample standard deviation and standard error across beneficiary games"
+                    ),
+                    "shooting": (
+                        "aggregate makes/attempts only; no interval is estimated because "
+                        "attempts cluster within games"
+                    ),
+                    "causal_effect": False,
+                    "recommendation": False,
+                },
+                provenance={
+                    "contract": "descriptive_observational_evidence",
+                    "absence_evidence_method": DIRECT_EVIDENCE_METHOD,
+                    "with_samples": [sample.provenance for sample in samples.with_samples],
+                    "without_samples": [sample.provenance for sample in samples.without_samples],
+                    "explicit_unknown_game_ids": sorted(samples.explicit_unknown_game_ids),
+                    "missing_rows_classified": 0,
+                },
+            )
+        )
+
     run = AbsenceSplitComputationRun(
         season=season,
         season_type=season_type,
@@ -243,67 +289,36 @@ def compute_absence_splits(
         schedule_version=schedule_refresh.version,
         schedule_refreshed_at=schedule_refresh.refreshed_at,
         computed_at=when,
-        result_count=0,
+        result_count=len(drafts),
         skipped_one_sided_pairs=skipped,
     )
     session.add(run)
     session.flush()
 
     output_rows: list[AbsenceSplit] = []
-    for (beneficiary_id, absent_id, team_id), samples in sorted(pairs.items()):
-        if not samples.with_samples or not samples.without_samples:
-            continue
-        production_with = _summarize([sample.log for sample in samples.with_samples])
-        production_without = _summarize([sample.log for sample in samples.without_samples])
+    for draft in drafts:
         split = AbsenceSplit(
             run_id=run.id,
-            beneficiary_player_id=beneficiary_id,
-            absent_player_id=absent_id,
-            team_id=team_id,
-            games_with=len(samples.with_samples),
-            games_without=len(samples.without_samples),
-            observed_absence_games=samples.observed_absence_games,
-            production_with=production_with,
-            production_without=production_without,
-            descriptive_deltas=_deltas(production_with, production_without),
-            uncertainty={
-                "sample_sizes": {
-                    "with": len(samples.with_samples),
-                    "without": len(samples.without_samples),
-                },
-                "variance_estimable": {
-                    "with": len(samples.with_samples) >= 2,
-                    "without": len(samples.without_samples) >= 2,
-                },
-                "counting": (
-                    "sample standard deviation and standard error across beneficiary games"
-                ),
-                "shooting": (
-                    "aggregate makes/attempts only; no interval is estimated because "
-                    "attempts cluster within games"
-                ),
-                "causal_effect": False,
-                "recommendation": False,
-            },
-            provenance={
-                "contract": "descriptive_observational_evidence",
-                "absence_evidence_method": DIRECT_EVIDENCE_METHOD,
-                "with_samples": [sample.provenance for sample in samples.with_samples],
-                "without_samples": [sample.provenance for sample in samples.without_samples],
-                "explicit_unknown_game_ids": sorted(samples.explicit_unknown_game_ids),
-                "missing_rows_classified": 0,
-            },
+            beneficiary_player_id=draft.beneficiary_player_id,
+            absent_player_id=draft.absent_player_id,
+            team_id=draft.team_id,
+            games_with=draft.games_with,
+            games_without=draft.games_without,
+            observed_absence_games=draft.observed_absence_games,
+            production_with=draft.production_with,
+            production_without=draft.production_without,
+            descriptive_deltas=draft.descriptive_deltas,
+            uncertainty=draft.uncertainty,
+            provenance=draft.provenance,
         )
         session.add(split)
         output_rows.append(split)
 
-    run.result_count = len(output_rows)
     session.flush()
     return AbsenceSplitRun(
         computation_run=run,
         rows=tuple(output_rows),
         created=len(output_rows),
-        reused=0,
         skipped_one_sided_pairs=skipped,
     )
 

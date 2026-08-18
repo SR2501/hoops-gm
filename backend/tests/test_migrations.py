@@ -100,6 +100,96 @@ def test_the_migration_records_its_revision(alembic_config: Config, migration_ur
         engine.dispose()
 
 
+def test_absence_split_activation_migration_allows_recurring_fingerprints(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0006")
+    insert_run = text(
+        """
+        INSERT INTO absence_split_runs (
+            id,
+            season, season_type, evidence_version, input_fingerprint,
+            schedule_version, schedule_refreshed_at, computed_at,
+            result_count, skipped_one_sided_pairs
+        ) VALUES (
+            :id,
+            '2025-26', 'regular', 'absence-splits-descriptive-v2', 'same-input',
+            'schedule-v1', '2026-08-18 12:00:00', :computed_at, 1, 0
+        )
+        """
+    )
+    insert_split = text(
+        """
+        INSERT INTO absence_splits (
+            id, run_id, beneficiary_player_id, absent_player_id, team_id,
+            games_with, games_without, observed_absence_games,
+            production_with, production_without, descriptive_deltas,
+            uncertainty, provenance
+        ) VALUES (
+            :id, :run_id, 100, 101, 100, 1, 1, 1,
+            '{}', '{}', '{}', '{}', '{}'
+        )
+        """
+    )
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO nba_teams (
+                        id, nba_team_id, abbreviation, name, is_active
+                    ) VALUES (100, 100, 'TST', 'Test Team', true)
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO players (id, full_name, normalized_name, status)
+                    VALUES
+                        (100, 'Beneficiary', 'beneficiary', 'unknown'),
+                        (101, 'Absent', 'absent', 'unknown')
+                    """
+                )
+            )
+            connection.execute(
+                insert_run,
+                {"id": 100, "computed_at": "2026-08-18 12:01:00"},
+            )
+            connection.execute(insert_split, {"id": 100, "run_id": 100})
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                insert_run,
+                {"id": 101, "computed_at": "2026-08-18 12:02:00"},
+            )
+
+        command.upgrade(alembic_config, "head")
+
+        with engine.begin() as connection:
+            preserved = connection.scalar(text("SELECT COUNT(*) FROM absence_splits"))
+            connection.execute(
+                insert_run,
+                {"id": 101, "computed_at": "2026-08-18 12:03:00"},
+            )
+            connection.execute(insert_split, {"id": 101, "run_id": 101})
+        assert preserved == 1
+
+        command.downgrade(alembic_config, "0006")
+
+        with engine.connect() as connection:
+            run_ids = connection.scalars(
+                text("SELECT id FROM absence_split_runs ORDER BY id")
+            ).all()
+            split_run_ids = connection.scalars(
+                text("SELECT run_id FROM absence_splits ORDER BY run_id")
+            ).all()
+        assert run_ids == [101]
+        assert split_run_ids == [101]
+    finally:
+        engine.dispose()
+
+
 def test_the_migration_creates_the_enum_check_constraints(
     alembic_config: Config, migration_url: str
 ) -> None:

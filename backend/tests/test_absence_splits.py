@@ -430,9 +430,7 @@ def test_schedule_lineage_is_required_before_computation(session: Session) -> No
         compute_absence_splits(session, season=SEASON)
 
 
-def test_same_inputs_reuse_complete_run_and_changed_inputs_create_a_new_run(
-    session: Session,
-) -> None:
+def test_a_b_a_recomputation_reactivates_the_final_a_cohort(session: Session) -> None:
     team, opponent = _teams(session)
     beneficiary = _player(session, "Beneficiary")
     absent = _player(session, "Absent teammate")
@@ -452,29 +450,27 @@ def test_same_inputs_reuse_complete_run_and_changed_inputs_create_a_new_run(
         for game, points in zip(games, (10, 20, 30), strict=True)
     ]
 
-    first = compute_absence_splits(session, season=SEASON)
-    second = compute_absence_splits(session, season=SEASON)
-    assert first.created >= 1
-    assert second.created == 0
-    assert second.reused == first.created
-    assert second.computation_run.id == first.computation_run.id
-
+    first_a = compute_absence_splits(session, season=SEASON)
     beneficiary_logs[1].points = 25
     session.flush()
-    third = compute_absence_splits(session, season=SEASON)
+    middle_b = compute_absence_splits(session, season=SEASON)
+    beneficiary_logs[1].points = 20
+    session.flush()
+    final_a = compute_absence_splits(session, season=SEASON)
 
-    assert third.computation_run.id != first.computation_run.id
-    assert len(session.scalars(select(AbsenceSplitComputationRun)).all()) == 2
+    assert first_a.computation_run.input_fingerprint == final_a.computation_run.input_fingerprint
+    assert first_a.computation_run.id < middle_b.computation_run.id < final_a.computation_run.id
+    assert len(session.scalars(select(AbsenceSplitComputationRun)).all()) == 3
     pair_rows = session.scalars(
         select(AbsenceSplit).where(
             AbsenceSplit.beneficiary_player_id == beneficiary.id,
             AbsenceSplit.absent_player_id == absent.id,
         )
     ).all()
-    assert len(pair_rows) == 2
+    assert len(pair_rows) == 3
     latest = _pair(latest_absence_splits(session, season=SEASON), beneficiary, absent)
     latest_without = _dict(_dict(latest.production_without)["counting"])
-    assert _dict(latest_without["points"])["per_game"] == 25.0
+    assert _dict(latest_without["points"])["per_game"] == 20.0
 
 
 def test_empty_recomputation_supersedes_obsolete_pair_rows(session: Session) -> None:
@@ -511,3 +507,90 @@ def test_empty_recomputation_supersedes_obsolete_pair_rows(session: Session) -> 
         session.scalar(select(AbsenceSplit).where(AbsenceSplit.run_id == first.computation_run.id))
         is not None
     )
+
+
+def test_empty_nonempty_empty_reactivates_the_final_empty_cohort(session: Session) -> None:
+    team, opponent = _teams(session)
+    beneficiary = _player(session, "Beneficiary")
+    absent = _player(session, "Cohort teammate")
+    games = _games(session, team, opponent, 3, start=date(2026, 6, 1))
+    _register_schedule(session)
+    _log(session, player=absent, game=games[0], team=team, points=10)
+    middle = _participation(
+        session,
+        player=absent,
+        game=games[1],
+        team=team,
+        outcome=ParticipationOutcome.UNKNOWN,
+    )
+    _log(session, player=absent, game=games[2], team=team, points=10)
+    for game in games:
+        _log(session, player=beneficiary, game=game, team=team, points=20)
+
+    first_empty = compute_absence_splits(session, season=SEASON)
+    assert first_empty.rows == ()
+
+    middle.outcome = ParticipationOutcome.INACTIVE
+    session.flush()
+    nonempty = compute_absence_splits(session, season=SEASON)
+    assert _pair(nonempty.rows, beneficiary, absent).games_without == 1
+
+    middle.outcome = ParticipationOutcome.UNKNOWN
+    session.flush()
+    final_empty = compute_absence_splits(session, season=SEASON)
+
+    assert (
+        first_empty.computation_run.input_fingerprint
+        == final_empty.computation_run.input_fingerprint
+    )
+    assert (
+        first_empty.computation_run.id
+        < nonempty.computation_run.id
+        < final_empty.computation_run.id
+    )
+    assert final_empty.rows == ()
+    assert latest_absence_splits(session, season=SEASON) == ()
+
+
+def test_caught_invalid_computation_does_not_persist_an_activation(session: Session) -> None:
+    team, opponent = _teams(session)
+    beneficiary = _player(session, "Beneficiary")
+    absent = _player(session, "Invalid-input teammate")
+    games = _games(session, team, opponent, 3, start=date(2026, 7, 1))
+    _register_schedule(session)
+    _log(session, player=absent, game=games[0], team=team, points=10)
+    _participation(
+        session,
+        player=absent,
+        game=games[1],
+        team=team,
+        outcome=ParticipationOutcome.INACTIVE,
+    )
+    _log(session, player=absent, game=games[2], team=team, points=10)
+    beneficiary_logs = [
+        _log(
+            session,
+            player=beneficiary,
+            game=game,
+            team=team,
+            points=20,
+            free_throws_made=1,
+            free_throws_attempted=2,
+        )
+        for game in games
+    ]
+
+    valid = compute_absence_splits(session, season=SEASON)
+    beneficiary_logs[1].free_throws_made = 3
+    beneficiary_logs[1].free_throws_attempted = 2
+    session.flush()
+
+    with pytest.raises(AbsenceSplitInputError, match="invalid shooting components"):
+        compute_absence_splits(session, season=SEASON)
+    session.commit()
+
+    runs = session.scalars(select(AbsenceSplitComputationRun)).all()
+    assert [run.id for run in runs] == [valid.computation_run.id]
+    latest = _pair(latest_absence_splits(session, season=SEASON), beneficiary, absent)
+    latest_without = _dict(_dict(latest.production_without)["shooting"])
+    assert _dict(latest_without["free_throws"])["made"] == 1

@@ -1347,7 +1347,10 @@ state whether variance is estimable, and percentage intervals are omitted
 rather than treating clustered shot attempts as independent. Every successful
 computation persists a run even when no pair remains; the current selector reads
 only the newest run, so corrected input can remove an obsolete pair without
-deleting its audit history. No output claims causality or recommendation value.
+deleting its audit history. Every successful computation creates a fresh
+activation even if its fingerprint matches an older run, preserving A-to-B-to-A
+ordering. Cohorts are fully validated before activation, so a caught input error
+cannot install an empty latest run. No output claims causality or recommendation value.
 The Model gate does not apply to this descriptive artifact; it does apply to
 the future `contingent-value` model that turns this evidence into a
 decision-bearing quantity.

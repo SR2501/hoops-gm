@@ -68,10 +68,13 @@ store:
 - sample standard deviation and standard error where at least two games make
   variance estimable.
 
-Runs are append-only by complete-input fingerprint. `latest_absence_splits`
-reads exclusively from the latest successful run in the current schedule
-cohort. An empty recomputation therefore removes obsolete pairs from the current
-view while preserving the older run for audit.
+Every successful computation appends a new activation, even when its complete
+input fingerprint matches an older run. `latest_absence_splits` reads
+exclusively from the newest successful activation in the current schedule
+cohort. This preserves A-to-B-to-A ordering, and an empty recomputation removes
+obsolete pairs from the current view while preserving every older run for
+audit. The entire cohort is validated before its activation is inserted, so a
+caught input error cannot become current if the caller commits.
 
 ## Percentage categories
 
