@@ -354,7 +354,7 @@ def _write_slates(
             fact.slate_date,
             claim.off_night_model_version,
             claim.schedule_version,
-            claim.schedule_version,
+            claim.source_version,
         )
         row = existing.get(key)
         if row is None:
@@ -363,7 +363,7 @@ def _write_slates(
                 slate_date=fact.slate_date,
                 model_version=claim.off_night_model_version,
                 schedule_version=claim.schedule_version,
-                source_version=claim.schedule_version,
+                source_version=claim.source_version,
                 schedule_refreshed_at=refreshed_at,
                 computed_at=computed_at,
             )

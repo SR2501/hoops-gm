@@ -289,6 +289,9 @@ def test_0009_preserves_and_backfills_existing_provenance(
         assert slate[1] in ({}, "{}")
 
         inspector = inspect(engine)
+        assert "ix_off_night_slates_source_version" in {
+            index["name"] for index in inspector.get_indexes("off_night_slates")
+        }
         for table, column in (
             ("refresh_runs", "artifact_key"),
             ("refresh_runs", "season_key"),

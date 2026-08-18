@@ -174,6 +174,10 @@ def upgrade() -> None:
             "uq_off_night_slates_date_version",
             ["slate_date", "model_version", "schedule_version", "source_version"],
         )
+        batch_op.create_index(
+            "ix_off_night_slates_source_version",
+            ["source_version"],
+        )
         batch_op.create_check_constraint(
             "light_slate_percentile_range",
             "light_slate_percentile IS NULL OR "
@@ -262,6 +266,7 @@ def downgrade() -> None:
         )
 
     with op.batch_alter_table("off_night_slates", schema=None) as batch_op:
+        batch_op.drop_index("ix_off_night_slates_source_version")
         batch_op.drop_constraint(
             batch_op.f("ck_off_night_slates_threshold_games_nonnegative"),
             type_="check",

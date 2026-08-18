@@ -112,6 +112,7 @@ class OffNightSlate(IntPk, TimestampMixin, Base):
         Index("ix_off_night_slates_model_version", "model_version"),
         Index("ix_off_night_slates_slate_date", "slate_date"),
         Index("ix_off_night_slates_schedule_version", "schedule_version"),
+        Index("ix_off_night_slates_source_version", "source_version"),
     )
 
     season: Mapped[str] = mapped_column(String(9))

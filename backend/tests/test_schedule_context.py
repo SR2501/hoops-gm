@@ -424,7 +424,7 @@ def test_context_service_persists_explainable_versioned_outputs(session: Any) ->
     )
     [slate] = session.scalars(select(OffNightSlate)).all()
     assert slate.streaming_window_score is None
-    assert slate.source_version == claim.schedule_version
+    assert slate.source_version == claim.source_version
     assert slate.input_snapshot["opponent_context_coverage"]["eligible_fixture_rows"] == 4
 
 
@@ -458,8 +458,11 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
         season="2026-27",
         claim=claim,
         config=config,
+        computed_at=datetime(2026, 8, 18, 13, tzinfo=UTC),
     )
     old_count = session.scalar(select(func.count(OpponentContext.id)))
+    [old_slate] = session.scalars(select(OffNightSlate)).all()
+    old_slate_id = old_slate.id
 
     game = session.scalar(select(NbaGame).where(NbaGame.nba_game_id == "H000"))
     assert game is not None
@@ -477,6 +480,7 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
         )
 
     assert session.scalar(select(func.count(OpponentContext.id))) == old_count
+    assert session.scalar(select(func.count(OffNightSlate.id))) == 1
     new_claim = publish_schedule_context_cohorts(
         session,
         season="2026-27",
@@ -484,13 +488,28 @@ def test_context_service_rejects_changed_source_and_retains_old_rows(session: An
         refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
     assert new_claim.source_version != claim.source_version
-    compute_schedule_context(
+    counts = compute_schedule_context(
         session,
         season="2026-27",
         claim=new_claim,
         config=config,
+        computed_at=datetime(2026, 8, 19, 13, tzinfo=UTC),
     )
     assert session.scalar(select(func.count(OpponentContext.id))) == old_count + 4
+    assert counts.slate_created == 1
+    slates = session.scalars(select(OffNightSlate).order_by(OffNightSlate.computed_at)).all()
+    assert len(slates) == 2
+    assert next(slate.id for slate in slates) == old_slate_id
+    assert {slate.slate_date for slate in slates} == {date(2026, 10, 20)}
+    assert {slate.schedule_version for slate in slates} == {claim.schedule_version}
+    assert {slate.model_version for slate in slates} == {claim.off_night_model_version}
+    assert {slate.source_version for slate in slates} == {
+        claim.source_version,
+        new_claim.source_version,
+    }
+    assert [
+        slate.input_snapshot["opponent_context_coverage"]["coverage_ratio"] for slate in slates
+    ] == [1.0, 1.0]
 
 
 def test_context_service_rejects_a_superseded_model_cohort(session: Any) -> None:
