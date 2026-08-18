@@ -28,6 +28,8 @@ Three consequences, all deliberate:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -54,6 +56,11 @@ from hoops_gm.ingest.importers import (
     import_participation,
     import_resolutions,
     import_teams,
+)
+from hoops_gm.ingest.league_settings import (
+    BridgeLeagueSettingsObservation,
+    load_bridge_league_settings_capture,
+    merge_settings,
 )
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
@@ -114,6 +121,7 @@ def ingest_official_league_settings(
     fantrax: FantraxOfficialClient,
     league: League,
     fantrax_league_id: str,
+    bridge: BridgeLeagueSettingsObservation | None = None,
 ) -> ImportCounts:
     """Fetch and persist one official snapshot; season mismatch fails loudly."""
     if league.fantrax_league_id is None:
@@ -130,12 +138,28 @@ def ingest_official_league_settings(
         raise RuntimeError("getLeagueInfo transport returned no raw payload digest")
     if info.source_observed_at is None:
         raise RuntimeError("getLeagueInfo transport returned no observation timestamp")
+    document = info.settings
+    source_payload_sha256 = info.source_payload_sha256
+    observed_at = info.source_observed_at
+    if bridge is not None:
+        document = merge_settings(document, bridge.document)
+        source_payload_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "fantrax_bridge": bridge.source_payload_sha256,
+                    "fantrax_official": info.source_payload_sha256,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        observed_at = max(observed_at, bridge.observed_at)
     return import_league_settings(
         session,
         league=league,
-        document=info.settings,
-        source_payload_sha256=info.source_payload_sha256,
-        observed_at=info.source_observed_at,
+        document=document,
+        source_payload_sha256=source_payload_sha256,
+        observed_at=observed_at,
     )
 
 
@@ -326,6 +350,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     )
     league_settings.add_argument("league_id", type=int, help="local leagues.id")
     league_settings.add_argument("fantrax_league_id", help="non-secret Fantrax leagueId")
+    league_settings.add_argument(
+        "--bridge-capture",
+        type=Path,
+        default=None,
+        help="explicit local bridge settings JSON; never captured automatically",
+    )
 
     args = parser.parse_args(argv)
 
@@ -335,6 +365,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
         # This endpoint was verified without credentials; do not attach a
         # configured userSecretId to a request that does not need one.
         official = FantraxOfficialClient(store=RawPayloadStore(DEFAULT_RAW_ROOT))
+        bridge = (
+            load_bridge_league_settings_capture(args.bridge_capture)
+            if args.bridge_capture is not None
+            else None
+        )
         with database.session() as session:
             league = session.get(League, args.league_id)
             if league is None:
@@ -344,6 +379,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
                 fantrax=official,
                 league=league,
                 fantrax_league_id=args.fantrax_league_id,
+                bridge=bridge,
             )
         print(f"\n  league settings          {counts}")
         return 0

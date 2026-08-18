@@ -1435,3 +1435,38 @@ remains unverified against a successful live snake or auction response.
 **Next:** Re-run the credentials-free settings ingest after Fantrax exposes the
 2026-27 season. Use the existing read-only bridge only for official unknowns,
 without widening access or polling, and keep the 2025-26 snapshot historical.
+
+---
+
+## 2026-08-18 - data-engineer - Bridge fallback integration correction
+
+**Changed:** Closed an integration gap found by exact-head release review. The
+first implementation had a correct `merge_settings` library function but no
+production path that called it; bridge fallback existed only in tests, while
+the operator command imported the official document directly. Added a
+versioned, strict `BridgeLeagueSettingsPayload` contract and
+`load_bridge_league_settings_capture`. The `league-settings` operator command
+now accepts one explicit `--bridge-capture PATH`, validates the file's exact
+league id, season year, start/end boundaries, timezone-aware observation time,
+and typed rule values, merges it with official settings, and imports the result
+in the same database transaction.
+
+**Now true:** Bridge fallback is honestly reachable without any new Fantrax
+access. The code does not inspect the bridge database, capture a page,
+authenticate, or poll; an operator must deliberately supply an already
+captured JSON file. Official values win at nested-field granularity, bridge
+values fill only official unknowns, and the snapshot provenance combines both
+exact payload digests and uses the later observation time. An end-to-end
+production-entry regression proves official roster total 14 survives a bridge
+value of 99 while bridge-only lineup-lock and IR values are persisted with
+both sources' evidence.
+
+**Could not verify:** No real bridge settings capture was supplied, and the
+existing rendered-view contents remain deliberately uninspected. The committed
+regression uses a synthetic file conforming to the new handoff contract, so the
+first real operator-created capture may expose vocabulary that requires a
+schema-versioned adapter change. No access or ToS claim changed.
+
+**Next:** When an official unknown is needed, export only that evidence from
+the existing read-only bridge into the documented JSON contract and pass it
+explicitly. Do not make bridge capture automatic.

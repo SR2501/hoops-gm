@@ -110,6 +110,12 @@ the cache-bypassing league-settings drift check.
 # only leagueId; a source-season mismatch aborts instead of writing.
 python -m hoops_gm.ingest.backfill league-settings LOCAL_LEAGUE_ID FANTRAX_LEAGUE_ID
 
+# Optionally merge one operator-selected, already captured bridge settings file.
+# This does not capture, poll, or authenticate the bridge.
+python -m hoops_gm.ingest.backfill league-settings \
+  LOCAL_LEAGUE_ID FANTRAX_LEAGUE_ID \
+  --bridge-capture data/manual/league-settings.json
+
 # Build the NBA/Fantrax crosswalk. Use the CURRENT season: matching against a
 # historical one invents a team disagreement for every offseason move.
 python -m hoops_gm.ingest.backfill crosswalk --season 2026-27

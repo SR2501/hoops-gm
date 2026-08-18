@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models import League, LeagueSettingsSnapshot
+from hoops_gm.ingest.backfill import ingest_official_league_settings
 from hoops_gm.ingest.errors import SourceContractError
+from hoops_gm.ingest.fantrax_official import (
+    FantraxLeagueInfo,
+    FantraxOfficialClient,
+    parse_league_info,
+)
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
@@ -24,7 +32,9 @@ from hoops_gm.ingest.league_settings import (
     SourcedSetting,
     TradeDeadlineRules,
     WaiverRules,
+    load_bridge_league_settings_capture,
     merge_settings,
+    parse_bridge_league_settings,
     parse_official_league_settings,
 )
 
@@ -57,6 +67,50 @@ def _official_payload() -> dict[str, object]:
             },
         ],
     }
+
+
+class _StubLeagueSettingsClient(FantraxOfficialClient):
+    def __init__(self, result: FantraxLeagueInfo) -> None:
+        self.result = result
+
+    def get_league_info(
+        self,
+        league_id: str,
+        *,
+        max_age: timedelta | None = None,
+    ) -> FantraxLeagueInfo:
+        assert league_id == self.result.league_id
+        assert max_age is None
+        return self.result
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"roster_limits": {"total": 14, "totla": 99}},
+        {"roster_limits": {"total": "14"}},
+        {"keepers": {"enabled": "false"}},
+    ],
+)
+def test_bridge_capture_rejects_nested_typos_and_coercions(
+    settings: dict[str, object],
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "league_id": "league-1",
+        "season_year": 2025,
+        "start_date": "2025-10-21",
+        "end_date": "2026-03-15",
+        "observed_at": "2026-08-18T13:00:00Z",
+        "settings": settings,
+    }
+
+    with pytest.raises(SourceContractError, match="did not match schema version 1"):
+        parse_bridge_league_settings(
+            payload,
+            capture_ref="fixture:bridge",
+            source_payload_sha256="a" * 64,
+        )
 
 
 def test_official_fields_are_known_and_absent_fields_stay_unknown() -> None:
@@ -452,3 +506,73 @@ def test_import_versions_a_change_in_semantic_provenance(session: Session) -> No
     assert first.created == 1
     assert second.created == 1
     assert session.query(LeagueSettingsSnapshot).count() == 2
+
+
+def test_production_ingest_merges_an_explicit_bridge_capture_atomically(
+    session: Session,
+    tmp_path: Path,
+) -> None:
+    official_observed_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    official = parse_league_info(
+        _official_payload(),
+        league_id="league-1",
+        capture_ref="fantrax_official:sha256:" + "a" * 64,
+        source_payload_sha256="a" * 64,
+        source_observed_at=official_observed_at,
+    )
+    bridge_path = tmp_path / "league-settings.json"
+    bridge_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "league_id": "league-1",
+                "season_year": 2025,
+                "start_date": "2025-10-21",
+                "end_date": "2026-03-15",
+                "observed_at": "2026-08-18T13:00:00Z",
+                "settings": {
+                    "lineup_lock": {"lock_type": "per_player_tipoff"},
+                    "roster_limits": {
+                        "total": 99,
+                        "injured_reserve": 3,
+                        "injured_reserve_eligibility": ["IR", "IR+"],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    bridge = load_bridge_league_settings_capture(bridge_path)
+    league = League(
+        name="Historical league",
+        season="2025-26",
+        fantrax_league_id="league-1",
+    )
+    session.add(league)
+    session.flush()
+
+    counts = ingest_official_league_settings(
+        session,
+        fantrax=_StubLeagueSettingsClient(official),
+        league=league,
+        fantrax_league_id="league-1",
+        bridge=bridge,
+    )
+
+    snapshot = session.scalar(select(LeagueSettingsSnapshot))
+    assert snapshot is not None
+    stored = LeagueSettingsDocument.model_validate(snapshot.settings)
+    assert counts.created == 1
+    assert stored.roster_limits.value is not None
+    assert stored.roster_limits.value.total == 14
+    assert stored.roster_limits.value.injured_reserve == 3
+    assert stored.lineup_lock.value == LineupLockRules(lock_type="per_player_tipoff")
+    assert {item.source for item in stored.roster_limits.evidence} == {
+        "fantrax_official",
+        "fantrax_bridge",
+    }
+    assert snapshot.source_payload_sha256 not in {
+        official.source_payload_sha256,
+        bridge.source_payload_sha256,
+    }
+    assert snapshot.observed_at == bridge.observed_at

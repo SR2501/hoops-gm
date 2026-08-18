@@ -15,9 +15,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Literal, Never
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    ValidationError,
+    model_validator,
+)
 
 from hoops_gm.ingest.errors import SourceContractError
 
@@ -66,19 +78,19 @@ class SourcedSetting[T](BaseModel):
 
 
 class LineupLockRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     lock_type: LineupLockType
 
 
 class WaiverRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    period_days: int | None = Field(default=None, ge=0)
+    period_days: StrictInt | None = Field(default=None, ge=0)
     processing_time_local: str | None = None
     timezone: str | None = None
     claim_mechanism: ClaimMechanism | None = None
-    faab_budget: float | None = Field(default=None, ge=0)
+    faab_budget: StrictFloat | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def at_least_one_rule_is_known(self) -> WaiverRules:
@@ -99,10 +111,10 @@ class WaiverRules(BaseModel):
 
 
 class GamesCap(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     scope: GamesCapScope
-    limit: int = Field(ge=0)
+    limit: StrictInt = Field(ge=0)
     position: str | None = None
 
     @model_validator(mode="after")
@@ -114,19 +126,19 @@ class GamesCap(BaseModel):
 
 
 class GamesCapRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     caps: tuple[GamesCap, ...] = Field(min_length=1)
 
 
 class RosterLimits(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    total: int | None = Field(default=None, ge=0)
-    active: int | None = Field(default=None, ge=0)
-    reserve: int | None = Field(default=None, ge=0)
-    injured_reserve: int | None = Field(default=None, ge=0)
-    position_active: dict[str, int] = Field(default_factory=dict)
+    total: StrictInt | None = Field(default=None, ge=0)
+    active: StrictInt | None = Field(default=None, ge=0)
+    reserve: StrictInt | None = Field(default=None, ge=0)
+    injured_reserve: StrictInt | None = Field(default=None, ge=0)
+    position_active: dict[str, StrictInt] = Field(default_factory=dict)
     injured_reserve_eligibility: tuple[str, ...] | None = None
 
     @model_validator(mode="after")
@@ -146,36 +158,36 @@ class RosterLimits(BaseModel):
 
 
 class ScoringPeriodBoundary(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    period_number: int = Field(ge=1)
+    period_number: StrictInt = Field(ge=1)
     start_at: str
     end_at: str
 
 
 class ScoringPeriodRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     periods: tuple[ScoringPeriodBoundary, ...] = Field(min_length=1)
 
 
 class TradeDeadlineRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     deadline_at: str
 
 
 class PlayoffRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    period_numbers: tuple[int, ...] = Field(min_length=1)
+    period_numbers: tuple[StrictInt, ...] = Field(min_length=1)
 
 
 class KeeperRules(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    enabled: bool
-    max_keepers: int | None = Field(default=None, ge=0)
+    enabled: StrictBool
+    max_keepers: StrictInt | None = Field(default=None, ge=0)
     deadline_at: str | None = None
     provider_options: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
@@ -249,6 +261,145 @@ class LeagueSettingsDocument(BaseModel):
 
     def content_sha256(self) -> str:
         return hashlib.sha256(self.configuration_json().encode("utf-8")).hexdigest()
+
+
+class BridgeSettingsValues(BaseModel):
+    """Explicit values exported from an existing read-only bridge capture."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lineup_lock: LineupLockRules | None = None
+    waivers: WaiverRules | None = None
+    games_caps: GamesCapRules | None = None
+    roster_limits: RosterLimits | None = None
+    scoring_periods: ScoringPeriodRules | None = None
+    trade_deadline: TradeDeadlineRules | None = None
+    playoffs: PlayoffRules | None = None
+    keepers: KeeperRules | None = None
+
+
+class BridgeLeagueSettingsPayload(BaseModel):
+    """Versioned handoff shape for a manually supplied bridge capture."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[1]
+    league_id: str = Field(min_length=1, max_length=64)
+    season_year: int = Field(ge=2000, le=2100)
+    start_date: str = Field(min_length=1)
+    end_date: str = Field(min_length=1)
+    observed_at: datetime
+    settings: BridgeSettingsValues
+
+    @model_validator(mode="after")
+    def observation_is_timezone_aware(self) -> BridgeLeagueSettingsPayload:
+        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+            raise ValueError("observed_at must be timezone-aware")
+        return self
+
+
+@dataclass(frozen=True)
+class BridgeLeagueSettingsObservation:
+    """Validated bridge settings plus exact capture provenance."""
+
+    document: LeagueSettingsDocument
+    observed_at: datetime
+    source_payload_sha256: str
+
+
+def parse_bridge_league_settings(
+    payload: object,
+    *,
+    capture_ref: str,
+    source_payload_sha256: str,
+) -> BridgeLeagueSettingsObservation:
+    """Validate an explicit bridge capture without reading or polling Fantrax."""
+    if len(source_payload_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in source_payload_sha256
+    ):
+        raise ValueError("source_payload_sha256 must be a lowercase SHA-256 hex digest")
+    try:
+        parsed = BridgeLeagueSettingsPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise SourceContractError(
+            "bridge league-settings capture did not match schema version 1",
+            source=BRIDGE_SOURCE,
+            endpoint="leagueSettingsCapture",
+            detail=exc.errors(include_url=False),
+        ) from exc
+
+    values = parsed.settings
+    document = LeagueSettingsDocument(
+        source_league_id=parsed.league_id,
+        source_season_year=parsed.season_year,
+        source_start_date=parsed.start_date,
+        source_end_date=parsed.end_date,
+        lineup_lock=_bridge_setting(
+            values.lineup_lock,
+            path="$.settings.lineup_lock",
+            capture_ref=capture_ref,
+        ),
+        waivers=_bridge_setting(
+            values.waivers,
+            path="$.settings.waivers",
+            capture_ref=capture_ref,
+        ),
+        games_caps=_bridge_setting(
+            values.games_caps,
+            path="$.settings.games_caps",
+            capture_ref=capture_ref,
+        ),
+        roster_limits=_bridge_setting(
+            values.roster_limits,
+            path="$.settings.roster_limits",
+            capture_ref=capture_ref,
+        ),
+        scoring_periods=_bridge_setting(
+            values.scoring_periods,
+            path="$.settings.scoring_periods",
+            capture_ref=capture_ref,
+        ),
+        trade_deadline=_bridge_setting(
+            values.trade_deadline,
+            path="$.settings.trade_deadline",
+            capture_ref=capture_ref,
+        ),
+        playoffs=_bridge_setting(
+            values.playoffs,
+            path="$.settings.playoffs",
+            capture_ref=capture_ref,
+        ),
+        keepers=_bridge_setting(
+            values.keepers,
+            path="$.settings.keepers",
+            capture_ref=capture_ref,
+        ),
+    )
+    return BridgeLeagueSettingsObservation(
+        document=document,
+        observed_at=parsed.observed_at,
+        source_payload_sha256=source_payload_sha256,
+    )
+
+
+def load_bridge_league_settings_capture(path: Path) -> BridgeLeagueSettingsObservation:
+    """Load one operator-selected JSON capture; no capture or network access occurs."""
+    try:
+        body = path.read_bytes()
+        payload = json.loads(body.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceContractError(
+            f"could not read bridge league-settings capture: {exc}",
+            source=BRIDGE_SOURCE,
+            endpoint="leagueSettingsCapture",
+            detail={"path": str(path)},
+        ) from exc
+    digest = hashlib.sha256(body).hexdigest()
+    return parse_bridge_league_settings(
+        payload,
+        capture_ref=f"{BRIDGE_SOURCE}:sha256:{digest}",
+        source_payload_sha256=digest,
+    )
 
 
 def parse_official_league_settings(
@@ -450,6 +601,25 @@ def _choose_setting[ValueT](
     return SourcedSetting(
         value=None,
         evidence=primary.evidence + fallback.evidence,
+    )
+
+
+def _bridge_setting[ValueT](
+    value: ValueT | None,
+    *,
+    path: str,
+    capture_ref: str,
+) -> SourcedSetting[ValueT]:
+    return SourcedSetting(
+        value=value,
+        evidence=(
+            SettingEvidence(
+                source=BRIDGE_SOURCE,
+                status="observed" if value is not None else "absent",
+                source_path=path,
+                capture_ref=capture_ref,
+            ),
+        ),
     )
 
 

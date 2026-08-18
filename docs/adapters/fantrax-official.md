@@ -68,6 +68,37 @@ observation time. Import rejects a document whose `seasonYear` does not match
 the target `League.season`; the observed 2025 payload therefore cannot be
 attached to a 2026–27 league.
 
+### Bridge fallback is explicit and offline
+
+The official ingest command accepts `--bridge-capture PATH` for one
+operator-selected JSON file. It never captures a page, reads the bridge
+database, authenticates, or polls. The file contract is versioned and rejects
+unknown fields:
+
+```json
+{
+  "schema_version": 1,
+  "league_id": "<same Fantrax leagueId>",
+  "season_year": 2025,
+  "start_date": "2025-10-21",
+  "end_date": "2026-03-15",
+  "observed_at": "2026-08-18T13:00:00Z",
+  "settings": {
+    "lineup_lock": {"lock_type": "per_player_tipoff"},
+    "roster_limits": {
+      "injured_reserve": 3,
+      "injured_reserve_eligibility": ["IR", "IR+"]
+    }
+  }
+}
+```
+
+Omitted settings are recorded as bridge-absent. Merge requires exact league id,
+season year, start date, and end date equality. Official values win field by
+field; bridge values can fill only official unknowns. The merged snapshot
+records both exact payload digests and the later source observation time. Any
+validation or scope failure occurs before the database insert.
+
 ### `limit=N` returns N−1 rows
 
 Verified for N = 1, 2, 3, 5, 10. `limit=1` returns **zero** rows.
