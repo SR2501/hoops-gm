@@ -76,7 +76,7 @@ __all__ = [
 ]
 
 _IMPORT_LOCKS_GUARD = threading.Lock()
-_IMPORT_LOCKS: dict[tuple[str, str, str, str, str], threading.Lock] = {}
+_IMPORT_LOCKS: dict[str, threading.Lock] = {}
 _SESSION_LOCKS_KEY = "projection_import_locks"
 _SESSION_LOCK_LISTENER_KEY = "projection_import_lock_listener"
 
@@ -224,7 +224,7 @@ def _get_or_create_projection_import(
 
 def _hold_import_lock_until_transaction_end(
     session: Session,
-    key: tuple[str, str, str, str, str],
+    key: str,
 ) -> None:
     held = session.info.setdefault(_SESSION_LOCKS_KEY, {})
     if key in held:
@@ -880,13 +880,7 @@ def import_projection_csv(
     )
     _hold_import_lock_until_transaction_end(
         session,
-        (
-            source.value,
-            season,
-            content_sha256,
-            resolved_profile.profile_id,
-            resolved_profile.version,
-        ),
+        source.value,
     )
 
     source_row = get_or_create_projection_source(
@@ -894,6 +888,9 @@ def import_projection_csv(
         source=source,
         display_name=display_name,
         assumed_scoring_type=assumed_scoring_type,
+    )
+    session.scalar(
+        select(ProjectionSource.id).where(ProjectionSource.id == source_row.id).with_for_update()
     )
     profile_version_row = _get_or_create_profile_version(
         session,

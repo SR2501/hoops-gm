@@ -1361,6 +1361,56 @@ def test_concurrent_identical_imports_converge_without_duplicate_outputs(
         verification.close()
 
 
+def test_concurrent_distinct_files_serialize_shared_crosswalk_writes(
+    database: Database,
+) -> None:
+    setup = database.session_factory()
+    seed_player(setup, nba_id=51, name="Concurrent Revision", team_abbreviation="BOS")
+    setup.commit()
+    setup.close()
+
+    barrier = Barrier(2)
+    csv_files = (
+        b"player_name,team,points_per_game\nConcurrent Revision,BOS,20.0\n",
+        b"player_name,team,points_per_game\nConcurrent Revision,BOS,21.0\n",
+    )
+
+    def run_import(csv_bytes: bytes) -> int:
+        worker_session = database.session_factory()
+        try:
+            barrier.wait()
+            outcome = import_projection_csv(
+                worker_session,
+                source=ExternalSource.MANUAL,
+                display_name="Manual test source",
+                season="2026-27",
+                csv_bytes=csv_bytes,
+            )
+            worker_session.commit()
+            return outcome.projection_import.id
+        finally:
+            worker_session.rollback()
+            worker_session.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        import_ids = list(executor.map(run_import, csv_files))
+
+    verification = database.session_factory()
+    try:
+        assert len(set(import_ids)) == 2
+        assert verification.query(ProjectionImport).count() == 2
+        assert verification.query(Projection).count() == 2
+        source_links = (
+            verification.query(PlayerExternalId)
+            .filter(PlayerExternalId.source == ExternalSource.MANUAL)
+            .all()
+        )
+        assert len(source_links) == 1
+        assert source_links[0].current_for_source == ExternalSource.MANUAL.value
+    finally:
+        verification.close()
+
+
 def test_terminal_columns_are_ignored_and_never_persisted(
     seeded_players: Session,
 ) -> None:
