@@ -34,11 +34,16 @@ from hoops_gm.ingest.nba.parsers import (
     parse_teams,
 )
 from hoops_gm.ingest.nba.schedule import (
+    ScheduleDensityRecord,
     ScheduledGameCount,
     ScheduleGameRecord,
     ScheduleParseResult,
+    build_schedule_density,
+    compute_schedule_density,
     parse_schedule,
+    schedule_density,
     scheduled_game_counts,
+    team_schedule_density,
 )
 
 __all__ = [
@@ -54,10 +59,13 @@ __all__ = [
     "ParticipationOutcome",
     "PlayerBoxScoreRecord",
     "PlayerParticipationRecord",
+    "ScheduleDensityRecord",
     "ScheduleGameRecord",
     "ScheduleParseResult",
     "ScheduledGameCount",
+    "build_schedule_density",
     "combine_game_participation",
+    "compute_schedule_density",
     "parse_box_score_summary_v3",
     "parse_box_score_traditional_v3",
     "parse_common_all_players",
@@ -67,5 +75,7 @@ __all__ = [
     "parse_player_game_logs",
     "parse_schedule",
     "parse_teams",
+    "schedule_density",
     "scheduled_game_counts",
+    "team_schedule_density",
 ]
