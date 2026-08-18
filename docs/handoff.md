@@ -943,7 +943,7 @@ all write-path guardrails, and the owner-only first-live-action decision.
 
 ## 2026-08-17 — data-engineer — `injury-report-ingest`: NBA official injury report PDF adapter
 
-**Changed:** Built the `injury-report-ingest` backlog item end to end. There is no injury-report API — the NBA publishes a PDF to `ak-static.cms.nba.com`, updated irregularly through the day — so this is a document adapter, not a JSON one. Added `backend/src/hoops_gm/ingest/injury_report/` (`client.py` for transport, `parser.py` for the PDF table extraction, `models.py` for the parsed dataclasses), a new `injury_report_entries` table (migration `0006`, following merged refresh-lineage migration `0005`) and importer (`import_injury_report_entries`), a real captured fixture (`nba_injury_report_2025-11-01_0530pm.pdf`, 7 pages, 14 matchups), 14 offline contract tests and 2 live smoke tests. Full Code and Adapter gates pass locally: ruff format/lint clean, mypy strict clean on 77 source files, full default suite green (`pytest -q`), and `pytest -m live_smoke` green (14/14, including the 2 new) against the real source as of this session.
+**Changed:** Built the `injury-report-ingest` backlog item end to end. There is no injury-report API — the NBA publishes a PDF to `ak-static.cms.nba.com`, updated irregularly through the day — so this is a document adapter, not a JSON one. Added `backend/src/hoops_gm/ingest/injury_report/` (`client.py` for transport, `parser.py` for the PDF table extraction, `models.py` for the parsed dataclasses), a new `injury_report_entries` table (migration `0006`, following merged refresh-lineage migration `0005`) and importer (`import_injury_report_entries`), a real captured fixture (`nba_injury_report_2025-11-01_0530pm.pdf`, 7 pages, 14 matchups), 14 offline contract tests and 2 live smoke tests. Full Code and Adapter gates pass locally: ruff format/lint clean, mypy strict clean on 81 source files, full default suite green (446 passed, 14 live-smoke tests deselected), the recorded-fixture adapter suite green (82 passed), and the separately invoked live smoke suite green (14 passed, including the 2 new injury-report checks) against the real source as of this session.
 
 **Now true:**
 - The report cannot be read by extracting text top-to-bottom. Verified against the real capture: when a player's `Reason` cell wraps to two lines, the report **vertically centres** the shorter `Player Name`/`Current Status` cell inside that row's full height rather than top-aligning it — so the Reason's first line prints *above* the player's own name, and a naive reader would attach it to the *previous* player. The parser instead derives column x-boundaries from page 1's own header labels and row y-boundaries from each page's own drawn ruling lines (present only under Name/Status/Reason, never under the forward-filled Date/Time/Matchup/Team columns), then joins every physical line inside one cell's height with a space. This is the single most important finding in this adapter and is fully written up in `docs/adapters/nba-injury-report.md`.
@@ -1529,3 +1529,37 @@ available during the restack.
 **Next:** Require green migration-from-empty and full-suite Postgres CI at the
 new exact head, then repeat focused release review. Do not merge from the
 pre-restack review.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13 rebased after refresh-lineage merge
+
+**Changed:** Rebased `sr2501-injury-report-ingest` onto `origin/main` after PR
+#9 merged. The merged refresh-lineage migration is revision `0005` over
+`0004`, so the injury-report migration was renamed from
+`0005_injury_report.py` to `0006_injury_report.py` and changed consistently to
+`revision = "0006"` / `down_revision = "0005"`. Resolved the append-only
+handoff conflict by retaining both merged PR #9 entries and the injury adapter
+entry; no adapter, fixture, importer, read-only boundary, or automation scope
+was removed or widened.
+
+**Now true:** Alembic has one linear head: `0001 -> 0002 -> 0003 -> 0004 ->
+0005_refresh_lineage -> 0006_injury_report`. A fresh SQLite database upgraded
+through every revision, reported `0006 (head)`, produced no operations from
+`alembic check`, and downgraded through every revision to base. The full local
+backend Code gate passed (Ruff lint and format, mypy strict on 81 source files,
+446 tests with 14 live-smoke tests deselected, and the secret scan over 192
+tracked files). The recorded-fixture Adapter gate passed separately (82
+tests), and the live smoke suite passed separately against the real upstreams
+(14 tests).
+
+**Could not verify:** Native Postgres was not available locally, so the
+rebased `0005 -> 0006` path was exercised from empty on SQLite only. The
+repository's Postgres CI job remains the cross-dialect check after the
+force-with-lease push. The live checks prove the archived source paths and
+current parser contract still answer on 2026-08-18; they cannot prove the NBA
+will retain the same CMS filename or PDF layout for 2026-27.
+
+**Next:** PR #13 remains read-only and must not be merged by this session.
+Review the post-rebase CI results, especially the Postgres migration job, then
+merge only through the normal PR review path.
