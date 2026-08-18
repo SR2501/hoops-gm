@@ -340,6 +340,48 @@ def test_a_non_dict_scoring_category_value_fails_closed() -> None:
         )
 
 
+def test_a_non_dict_scoring_system_fails_closed_rather_than_absent() -> None:
+    """``scoringSystem`` present but malformed must not be treated as missing.
+
+    An earlier version of this parser returned ``None`` (an absent
+    observation) whenever ``scoringSystem`` was not a dict -- indistinguishable
+    from Fantrax genuinely never sending the key at all. A key that is present
+    but the wrong shape is malformed evidence, not silence: ``None`` is
+    reserved for genuinely missing keys, and this case must raise instead of
+    quietly persisting an official 'absent' observation for scoring rules the
+    source did in fact attempt to send.
+    """
+    payload = _base_payload()
+    payload["scoringSystem"] = "not-a-dict"
+
+    with pytest.raises(SourceContractError, match=r"scoringSystem must be an object"):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-system"
+        )
+
+
+def test_a_non_list_scoring_category_settings_fails_closed_rather_than_absent() -> None:
+    """``scoringCategorySettings`` present but non-list must not be absent either.
+
+    Mirrors the ``scoringSystem`` case above one level down: the container key
+    is present (unlike the genuinely-missing-key case exercised elsewhere in
+    this file), just the wrong shape, so it must raise rather than fall
+    through to an absent observation.
+    """
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": "not-a-list",
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.scoringCategorySettings must be a list"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:drift-settings"
+        )
+
+
 def test_map_source_categories_is_pure_and_reusable() -> None:
     """The mapping function has no session dependency -- it is pure evidence mapping."""
     definitions = map_source_categories(_NINE_CAT_SOURCE_CATEGORIES)
@@ -489,6 +531,72 @@ def test_scoring_type_evidence_cites_the_top_level_path_when_it_wins() -> None:
     assert document.scoring_type.value.raw_type == _VERIFIED_SCORING_TYPE
     [evidence] = document.scoring_type.evidence
     assert evidence.source_path == "$.scoringType"
+
+
+def test_top_level_scoring_type_present_but_non_string_fails_closed() -> None:
+    """A present-but-wrong-shaped ``scoringType`` must not fall through to nested.
+
+    An earlier version of this parser only checked ``isinstance(..., str)``
+    when *selecting* a value, so a malformed top-level ``scoringType`` (e.g. a
+    number) was silently treated as if it were absent and the nested
+    ``scoringSystem.type`` was used instead -- or, if that was also absent,
+    the whole field was persisted as an official 'absent' observation despite
+    the source having actually sent something. Both outcomes hide a real
+    contract violation; this must raise instead.
+    """
+    payload = _base_payload()
+    payload["scoringType"] = 12345
+    payload["scoringSystem"] = {
+        "type": _VERIFIED_SCORING_TYPE,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(SourceContractError, match=r"scoringType must be a non-empty string"):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:bad-top-level-type"
+        )
+
+
+def test_nested_scoring_type_present_but_non_string_fails_closed() -> None:
+    """A present-but-wrong-shaped ``scoringSystem.type`` must not be treated as absent."""
+    payload = _base_payload()
+    payload["scoringSystem"] = {
+        "type": 12345,
+        "scoringCategorySettings": [
+            {
+                "configs": [
+                    {
+                        "scoringCategory": {
+                            "code": "INDIVIDUAL_POINTS",
+                            "name": "Points",
+                            "shortName": "PTS",
+                        },
+                        "weight": 1.0,
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(
+        SourceContractError, match=r"scoringSystem\.type must be a non-empty string"
+    ):
+        parse_official_league_settings(
+            payload, source_league_id="league-1", capture_ref="test-fixture:bad-nested-type"
+        )
 
 
 # --------------------------------------------------------------------------

@@ -1624,14 +1624,30 @@ independent review; not merged or self-approved.
 ---
 
 
-## 2026-08-19 — quant — Scoring-profiles: snapshot-authoritative lineage rework (PR #22 remediation)
+## 2026-08-18 — quant — Scoring-profiles: snapshot-authoritative lineage rework (PR #22 remediation)
+
+*(Corrected in place on `sr2501-scoring-profiles`, still unmerged: the header
+above originally read "2026-08-19", one day ahead of every other entry in
+this file and of the work it describes -- a plain date typo, fixed here
+rather than left to propagate. The "Now true" paragraph below also
+originally claimed cross-snapshot A -> B -> A reuse that a later
+independent review found to be a lineage-rewriting bug, not a feature --
+corrected below; see the third-remediation-round entry later in this file
+for the actual fix and why cross-snapshot reuse specifically was wrong.)*
 
 **Changed:** An independent review at `b91bf7c` found the prior entry's
 central claim false: `build_scoring_profile` accepted an arbitrary caller-
 supplied `source_categories` sequence and separately stored
 `settings_snapshot_id`, so a profile could cite lineage from a snapshot that
 had no bearing on the categories it actually contained -- a lineage lie, not
-a lineage. Fixed by making the snapshot genuinely authoritative: extended
+a lineage. This also retires the prior entry's own "Next" guidance to extend
+`_FANTRAX_ABBREVIATION_TO_KEY` and wire a caller-supplied `SourceCategory`
+flow into `build_scoring_profile`: that plan is superseded entirely by
+making the snapshot genuinely authoritative below, not carried out as
+originally described -- `_FANTRAX_ABBREVIATION_TO_KEY` is renamed to
+`_FANTRAX_CODE_TO_KEY` (keyed on the stable `code`, not the abbreviation) and
+`build_scoring_profile` no longer accepts any caller-supplied category
+sequence at all. Fixed by making the snapshot genuinely authoritative: extended
 `LeagueSettingsDocument` with first-class `scoring_type`/`scoring_categories`
 `SourcedSetting`s, parsed by shared functions in `ingest/league_settings.py`
 (`parse_scoring_category_configs`, `parse_scoring_type_raw`) that the Fantrax
@@ -1727,10 +1743,21 @@ The Fantrax `code` is the verified, fixture-pinned mapping anchor; a
 category with an unmapped code, a duplicate, a non-unit weight, or an
 absent/unmapped scoring format all fail closed before any write, matching
 the same discipline the module already applied to an empty category list.
-Re-deriving from an unchanged current snapshot, and reactivating a
-previously-superseded profile version whose content matches the current one
-(A -> B -> A), both return the existing row rather than creating an
-indistinguishable new version. Activation cannot make a stale-lineage or
+Re-deriving from an unchanged current snapshot returns the existing row
+rather than creating an indistinguishable new version. *(Correction: this
+paragraph originally also claimed that reactivating a previously-superseded
+profile version whose content matches the current one across a **different**
+snapshot row (A -> B -> A) returns/reactivates that old row directly. A later
+independent review found that false and worse than merely inaccurate: the
+old row still cites the stale (A) snapshot, so reusing it verbatim is a dead
+end -- activation correctly refuses it as stale under the current (C)
+snapshot, with no way to ever escape that refusal by re-deriving again.
+Same-snapshot identical derivation does reuse the existing row, exactly as
+stated above; cross-snapshot identical content does not -- it mints a fresh
+lineage version carrying A's content but the new snapshot's own FK, which is
+what actually makes A -> B -> A activatable and honest. See the
+third-remediation-round entry later in this file for the real fix.)*
+Activation cannot make a stale-lineage or
 zero-category profile the league's active one, however that profile came to
 exist, and a rejected activation leaves the previously-active profile
 untouched. A real operator path (`derive_scoring_profile` /

@@ -509,14 +509,16 @@ def activate_scoring_profile_version(
 
     Once past the checks, this is a two-phase deactivate-then-activate: first
     null out whatever profile is currently active for ``profile.league_id``
-    (if any), flush, then set ``profile.active_league_id``. Doing this in two
-    flushes rather than one assignment keeps
-    ``uq_league_scoring_profiles_one_active`` satisfied at every intermediate
-    point, including when ``profile`` is already the active one (a no-op
-    deactivate-then-reactivate of itself) and when reactivating a previously-
-    superseded version (A -> B -> A): there is no special case for either,
-    because activation is always "deactivate whatever is active, then
-    activate this one."
+    (if any and it is a *different* row), flush, then set
+    ``profile.active_league_id``. Doing this in two flushes rather than one
+    assignment keeps ``uq_league_scoring_profiles_one_active`` satisfied at
+    every intermediate point when reactivating a previously-superseded
+    version (A -> B -> A), a genuinely different row that must be nulled out
+    before this one can take the unique slot. Activating a profile that is
+    *already* the active one is a true no-op: the deactivate step is skipped
+    entirely (there is nothing to null out that would not immediately be
+    re-set to the same row), leaving a single redundant assignment and flush
+    rather than an actual deactivate-then-reactivate cycle.
     """
 
     if profile.settings_snapshot.league_id != profile.league_id:
