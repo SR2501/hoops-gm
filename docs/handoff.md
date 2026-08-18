@@ -5719,3 +5719,36 @@ job including both native Postgres runs to pass, then give the exact head to an
 independent reviewer. Keep `csv-importer` blocked until a real vendor export is
 manually verified, reduced to privacy-safe evidence, committed as an offline
 contract fixture, and paired with a loud live-smoke path.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 restacked after injury-report ingestion
+
+**Changed:** Restacked the repaired projection importer onto `origin/main` at
+`875d40e`, which includes PR #13's injury-report ingestion and append-only
+handoff entries. Renumbered the projection importer migration from the
+now-occupied `0009` to the single-head `0010`, revising PR #13's injury-report
+`0009`. No importer boundary or migration object was dropped during the
+restack.
+
+**Now true:** The combined tree passes Ruff, formatting, strict mypy, all 584
+default backend tests, all 106 configured real-derived Adapter contract tests,
+SQLite upgrade/check/downgrade through `0010`, and the tracked-file secret
+scan. The importer still stores exact-byte identity and optional private raw
+payload reference at the import/observation boundary, immutable verified
+profile and transformation lineage at the import boundary, per-game production
+on projections, and source games-played assumptions separately. Terminal
+values remain excluded, and ambiguous or conflicting identities remain
+review-only.
+
+**Could not verify:** No local Postgres service was available, so native
+Postgres migration, constraints, concurrency, and full-suite behavior require
+fresh CI on the published restacked head. The projection-specific Adapter gate
+remains unmet: the built-in vendor profiles are unverified preview examples,
+and no privacy-safe fixture derived from a real vendor export or corresponding
+live-smoke path exists. This entry is neither merge approval nor self-approval.
+
+**Next:** Publish the restacked head with force-with-lease, require both native
+Postgres jobs and every other blocking job to pass, then submit that exact head
+for independent focused review. Keep `csv-importer` blocked until real-derived
+privacy-safe vendor evidence satisfies the projection Adapter gate.
