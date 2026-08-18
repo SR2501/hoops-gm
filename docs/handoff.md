@@ -2480,12 +2480,14 @@ have not been imported, so this verifies the query against explicit league
 fixtures rather than claiming which real dates or period numbers are playoffs.
 The six unresolved NBA Cup schedule games remain absent until the NBA assigns
 their teams, as recorded by `schedule-ingest`; counts will reflect the current
-schedule refresh until that source changes. The schedule refresh fingerprint
-versions `team_schedule`, not league settings: changing `ScoringPeriod`
-boundaries or `is_playoff` currently does not advance that version.
-`league-settings-ingest` must add settings/scoring-period lineage and cascade it
-to this grid before a consumer may claim the schedule version alone captures
-future rules changes.
+schedule refresh until that source changes. After rebasing onto current `main`,
+`league-settings-ingest` and `deadline-model` provide versioned source settings
+and an authoritative calendar, but `ScoringPeriod` still has no writer or
+lineage. The schedule refresh fingerprint versions `team_schedule`, so changing
+`ScoringPeriod` boundaries or `is_playoff` still does not advance this result's
+version. The pending `scoring-period-projection` unit must project the active
+calendar and cascade its lineage to this grid before a consumer may claim the
+schedule version alone captures future rules changes.
 
 **Next:** `draft-recommender` and `trade-evaluator` should consume this raw count
 contract directly. `quant` owns the later Model-gated value-weighted

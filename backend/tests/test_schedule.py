@@ -126,7 +126,12 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     first = import_schedule(session, result.games)
     second = import_schedule(session, result.games)
     counts = scheduled_game_counts(session, league_id=league.id, season="2026-27")
-    refresh = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    refresh = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season="2026-27",
+    )
 
     assert first.created == 30
     assert second.updated == 30
@@ -316,6 +321,7 @@ def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
         version="schedule-v1",
         source="test",
         season="2026-27",
@@ -362,12 +368,13 @@ def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
         version="schedule-v1",
         source="test",
         season="2025-26",
     )
 
-    with pytest.raises(RuntimeError, match="not '2026-27'"):
+    with pytest.raises(RuntimeError, match=r"no current schedule refresh.*'2026-27'"):
         scheduled_game_counts(session, league_id=1, season="2026-27")
 
 

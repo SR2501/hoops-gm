@@ -303,13 +303,14 @@ def scheduled_game_counts(
     created.
     """
 
-    refresh = current_refresh(session, RefreshArtifactType.SCHEDULE)
+    refresh = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        season=season,
+    )
     if refresh is None:
-        raise RuntimeError("no current schedule refresh is registered")
-    if refresh.season != season:
-        raise RuntimeError(
-            f"current schedule refresh is for season {refresh.season!r}, not {season!r}"
-        )
+        raise RuntimeError(f"no current schedule refresh is registered for season {season!r}")
     if refresh.refreshed_at.tzinfo is None or refresh.refreshed_at.utcoffset() is None:
         raise RuntimeError("current schedule refresh timestamp is not timezone-aware")
     refreshed_at_utc = refresh.refreshed_at.astimezone(UTC)
