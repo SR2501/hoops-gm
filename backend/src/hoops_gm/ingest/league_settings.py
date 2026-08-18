@@ -914,7 +914,9 @@ class RawScoringCategory:
     weight: float
 
 
-def parse_scoring_category_configs(payload: dict[object, object]) -> list[RawScoringCategory] | None:
+def parse_scoring_category_configs(
+    payload: dict[object, object],
+) -> list[RawScoringCategory] | None:
     """Extract per-category configs from ``scoringSystem.scoringCategorySettings``.
 
     Returns ``None`` when no such shape is present at all -- an absent
@@ -1014,6 +1016,21 @@ def _parse_scoring_categories(
     raw = parse_scoring_category_configs(payload)
     if raw is None:
         return _absent(capture_ref)
+    if not raw:
+        # Present-but-empty is distinct from absent: the source explicitly
+        # published a scoring-category shape with nothing in it, which is as
+        # unusable as reporting no categories at all -- and worse, silently
+        # continuing here would let a snapshot's own document construction
+        # succeed with zero categories, which later downstream code (this
+        # module's ``ScoringCategoriesRules.categories`` field) already
+        # refuses to hold. Raising here, explicitly, keeps that failure a
+        # named contract violation rather than an incidental pydantic error
+        # surfacing from a different layer.
+        raise SourceContractError(
+            "scoringSystem.scoringCategorySettings[*].configs is present but empty",
+            source=OFFICIAL_SOURCE,
+            endpoint="getLeagueInfo",
+        )
     categories = tuple(
         ScoringCategoryRule(
             code=item.code,

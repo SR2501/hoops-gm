@@ -68,6 +68,48 @@ observation time. Import rejects a document whose `seasonYear` does not match
 the target `League.season`; the observed 2025 payload therefore cannot be
 attached to a 2026–27 league.
 
+### Scoring type and category evidence — what is consumed, what is dropped
+
+`getLeagueInfo` publishes the same scoring configuration in **two** shapes
+under `scoringSystem`, and only one is a fit for a fail-closed vocabulary
+mapping. `scoringSystem.scoringCategorySettings[*].configs[*]` is consumed:
+each entry's `scoringCategory.code` (a stable identifier — e.g.
+`INDIVIDUAL_ASSISTS`), `scoringCategory.name`, `scoringCategory.shortName`
+(abbreviation) and `weight` are parsed into
+`LeagueSettingsDocument.scoring_categories`, and `scoringSystem.type` (e.g.
+`HEAD_TO_HEAD_ROTI_MULTI_WIN`) is parsed into `scoring_type`.
+`hoops_gm.scoring.profiles.map_source_categories` maps on `code` — the
+numeric `scoringCategory.id` and `shortName` are retained only as display
+evidence, never as the mapping anchor, because `id` is unverified as stable
+across seasons and `shortName` alone cannot distinguish two categories that
+happen to share an abbreviation.
+
+Two things in the same payload are deliberately **not** modeled:
+
+- `scoringSystem.scoringCategories` — a second, flatter rendering of the same
+  nine categories (`{"PLAYER": {"AST": {"Default": "1.0"}, ...}}`). It carries
+  no `code`, only the abbreviation and a stringified weight, so it cannot
+  anchor a fail-closed mapping and would be pure duplication of what
+  `scoringCategorySettings` already supplies with more evidence.
+- `configs[*].position` — every observed row is `{"code": "DEFAULT", ...}`.
+  This league has no position-conditioned category weighting to represent, so
+  the field is read but not carried into the domain document; a league that
+  actually used it would need a deliberate design decision, not a silent
+  default.
+
+**The `HEAD_TO_HEAD_ROTI_MULTI_WIN` → `ScoringType.H2H_EACH_CATEGORY` mapping
+is reasoned evidence, not a confirmed one-to-one contract.** The "H2H" and
+"MULTI_WIN" segments match this project's own historical rules baseline
+(`docs/league/2025-26-rules-baseline.md`: "H2H each category, 9-cat") and
+public head-to-head-categories terminology. The **"ROTI" segment has no
+confirmed meaning** — it does not appear in this project's own documentation
+or in any first-party Fantrax API reference found during this work, only in
+the raw discriminator string itself. Any *other* Fantrax scoring-format
+discriminator this adapter has not yet observed and mapped is rejected
+(`UnsupportedScoringFormatError`) rather than guessed at; extending the
+mapping requires the same standard: independent corroborating evidence, not
+just a plausible-sounding string.
+
 ### Bridge fallback is explicit and offline
 
 The official ingest command accepts `--bridge-capture PATH` for one
@@ -211,3 +253,9 @@ every setting as unavailable rather than reuse the historical snapshot.
 **`getDraftPicks` has not seen a successful real payload.** Its parser remains
 defensive and must be checked against both snake and auction responses before
 anything depends on it.
+
+**The "ROTI" segment of `HEAD_TO_HEAD_ROTI_MULTI_WIN` remains semantically
+unconfirmed.** See "Scoring type and category evidence" above — the mapping to
+`ScoringType.H2H_EACH_CATEGORY` is reasoned from this project's own rules
+baseline and general terminology, not from a first-party Fantrax reference for
+that exact discriminator string.

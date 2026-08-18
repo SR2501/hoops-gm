@@ -240,6 +240,37 @@ class TestFantraxLeagueSettings:
             "ST",
             "TO",
         }
+        # `code` (not the numeric id, not the abbreviation) is the durable
+        # mapping anchor `hoops_gm.scoring.profiles` keys off of -- tie every
+        # one of the nine categories' code/abbreviation/weight exactly to
+        # this capture so a future upstream rename shows up as a red build
+        # here rather than a silent mis-scored category downstream.
+        by_code = {category.code: category for category in result.scoring_categories}
+        assert set(by_code) == {
+            "INDIVIDUAL_ASSISTS",
+            "INDIVIDUAL_BLOCKS",
+            "INDIVIDUAL_POINTS",
+            "INDIVIDUAL_REBOUNDS",
+            "INDIVIDUAL_STEALS",
+            "INDIVIDUAL_THREE_POINTERS_MADE",
+            "INDIVIDUAL_TURNOVERS",
+            "INDIVIDUAL_FIELD_GOAL_PERCENTAGE",
+            "INDIVIDUAL_FREE_THROW_PERCENTAGE",
+        }
+        assert by_code["INDIVIDUAL_ASSISTS"].abbreviation == "AST"
+        assert by_code["INDIVIDUAL_BLOCKS"].abbreviation == "BLK"
+        assert by_code["INDIVIDUAL_POINTS"].abbreviation == "PTS"
+        assert by_code["INDIVIDUAL_REBOUNDS"].abbreviation == "REB"
+        assert by_code["INDIVIDUAL_STEALS"].abbreviation == "ST"
+        assert by_code["INDIVIDUAL_THREE_POINTERS_MADE"].abbreviation == "3PTM"
+        assert by_code["INDIVIDUAL_TURNOVERS"].abbreviation == "TO"
+        assert by_code["INDIVIDUAL_FIELD_GOAL_PERCENTAGE"].abbreviation == "FG%"
+        assert by_code["INDIVIDUAL_FREE_THROW_PERCENTAGE"].abbreviation == "FT%"
+        # Every category observed live carries weight == 1.0. This is not
+        # merely convenient: `hoops_gm.scoring.profiles` refuses to build a
+        # profile from a non-unit weight (weighted categories are not yet
+        # designed), so this fixture must keep proving the assumption holds.
+        assert all(category.weight == 1.0 for category in result.scoring_categories)
         assert result.unmapped_keys == ()
 
         settings = result.settings
@@ -254,6 +285,15 @@ class TestFantraxLeagueSettings:
         assert settings.roster_limits.value.injured_reserve is None
         assert settings.scoring_periods.value is not None
         assert len(settings.scoring_periods.value.periods) == 21
+        # The settings document itself -- not just the adapter's own
+        # FantraxLeagueInfo view -- must carry the same scoring evidence,
+        # since `LeagueSettingsDocument` (not `FantraxLeagueInfo`) is what
+        # `hoops_gm.scoring.profiles` actually derives a profile from.
+        assert settings.scoring_type.value is not None
+        assert settings.scoring_type.value.raw_type == "HEAD_TO_HEAD_ROTI_MULTI_WIN"
+        assert settings.scoring_categories.value is not None
+        assert len(settings.scoring_categories.value.categories) == 9
+        assert {c.code for c in settings.scoring_categories.value.categories} == set(by_code)
 
     def test_unpublished_rules_remain_explicitly_unknown(self) -> None:
         result = parse_league_info(

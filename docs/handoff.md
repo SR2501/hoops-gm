@@ -1624,6 +1624,167 @@ independent review; not merged or self-approved.
 ---
 
 
+## 2026-08-19 — quant — Scoring-profiles: snapshot-authoritative lineage rework (PR #22 remediation)
+
+**Changed:** An independent review at `b91bf7c` found the prior entry's
+central claim false: `build_scoring_profile` accepted an arbitrary caller-
+supplied `source_categories` sequence and separately stored
+`settings_snapshot_id`, so a profile could cite lineage from a snapshot that
+had no bearing on the categories it actually contained -- a lineage lie, not
+a lineage. Fixed by making the snapshot genuinely authoritative: extended
+`LeagueSettingsDocument` with first-class `scoring_type`/`scoring_categories`
+`SourcedSetting`s, parsed by shared functions in `ingest/league_settings.py`
+(`parse_scoring_category_configs`, `parse_scoring_type_raw`) that the Fantrax
+adapter's own `parse_official_league_settings` now calls -- so the *same*
+`getLeagueInfo` payload that produces roster limits and scoring periods also
+produces the scoring rules a profile derives from, and a real settings-rules
+change now produces a genuinely new snapshot version rather than an
+unrelated caller argument. `build_scoring_profile` no longer accepts
+`source_categories` or `scoring_type` parameters at all; both are parsed
+exclusively from `LeagueSettingsDocument.model_validate(settings_snapshot.
+settings)`, with an explicit `ValueError` if either is absent (an
+unattempted or partial settings ingest cannot silently produce a profile).
+The adapter's `FantraxScoringCategory` was corrected to key on the stable
+`code` (e.g. `INDIVIDUAL_ASSISTS`) rather than the numeric `id` or bare
+`shortName` -- `SourceCategory.code` is now the primary mapping anchor in
+`_FANTRAX_CODE_TO_KEY`, with `abbreviation` retained only as display
+evidence. Category `weight` is now parsed and explicitly asserted `== 1.0`;
+a non-unit weight raises `NonUnitCategoryWeightError` rather than being
+silently dropped, since weighted categories are undesigned and `point_value`
+already carries distinct points-league semantics this must not borrow.
+`scoring_type` is derived from the snapshot's exact discriminator via a
+verified `_FANTRAX_SCORING_TYPE_TO_LOCAL` mapping
+(`HEAD_TO_HEAD_ROTI_MULTI_WIN` -> `ScoringType.H2H_EACH_CATEGORY`, backed by
+this project's own `docs/league/2025-26-rules-baseline.md` line 13 stating
+the target league's format as "H2H each category, 9-cat" -- stronger than
+generic terminology alone); any other raw value raises
+`UnsupportedScoringFormatError` before a write, and the caller can no longer
+pass a default. `_parse_scoring_categories` now raises `SourceContractError`
+explicitly on a present-but-empty category list, rather than relying on an
+incidental `pydantic.ValidationError` from `ScoringCategoriesRules`'
+`min_length=1` to do that job. `activate_scoring_profile_version` gained
+three revalidation checks before touching whatever profile is currently
+active -- exact league binding, that `profile.settings_snapshot` is still
+the league's current snapshot, and `len(profile.categories) > 0` -- each
+raising before the previously-active profile is looked up or deactivated, so
+a failed activation never gets partway through. Added content-fingerprint
+idempotency: `build_scoring_profile` now computes a canonical fingerprint
+over scoring type, the settings document's own `content_sha256()` (which
+excludes capture-specific evidence, so two different snapshot rows with
+identical rules content fingerprint identically), and each category's key,
+direction, kind, ratio components and weight, then returns an existing
+`(league, name)` profile unchanged if its fingerprint matches rather than
+minting an indistinguishable new version -- this is what makes A -> B -> A
+honest reactivation rather than version churn. Added a production seam,
+`derive_scoring_profile` in `ingest/backfill.py` (plus a `scoring-profile`
+CLI subcommand with an explicit `--activate` opt-in, never automatic): looks
+up a league's current settings snapshot and derives from it, so an operator
+does not look that snapshot up by hand. Rewrote `test_scoring_profiles.py`
+top to bottom (27 tests, up from 16): every snapshot in the file is now
+built by calling the real `parse_official_league_settings` against a
+synthetic `getLeagueInfo`-shaped payload (own `_scoring_payload` builder)
+rather than a hand-constructed `LeagueSettingsDocument`, so the tests are
+tied to the actual ingestion boundary. New coverage: non-unit weight
+rejection (both through the builder and directly through
+`map_source_categories`), missing/unsupported scoring-type rejection,
+present-but-empty category list rejection at parse time (distinct from
+absent), verified scoring-type mapping, re-derivation from an unchanged
+snapshot returning the same profile, A -> B -> A content-fingerprint reuse
+across three distinct snapshot rows (v1 and v3 byte-identical in canonical
+content despite different rows; v2 different), activation revalidation
+rejecting a stale-settings profile and a direct-ORM-constructed empty-
+category profile (both leaving the prior active profile untouched), and an
+end-to-end production-seam test running the real captured fixture through
+`parse_league_info` -> `ingest_official_league_settings` ->
+`derive_scoring_profile` -> `activate_scoring_profile_version`.
+`test_adapter_contracts.py::TestFantraxLeagueSettings` gained exact
+code<->abbreviation<->weight fixture-contract assertions for all nine
+categories plus the settings-document-level `scoring_type`/
+`scoring_categories` values, tying the adapter gate to the modified payload
+contract. Wrote an evidence-fidelity section in
+`docs/adapters/fantrax-official.md` naming exactly what is consumed
+(`code`/`name`/`shortName`/`weight`/`scoringSystem.type`), what is
+deliberately not modeled (the flatter `scoringSystem.scoringCategories` map,
+which lacks `code` and cannot anchor a mapping; the `position` sub-object,
+always `DEFAULT` in this league), and flagging the "ROTI" segment of the raw
+discriminator as unconfirmed by any first-party reference found. Rebased
+onto `main` twice during this rework as it advanced out from under the
+branch: first to `ffd838c` (PR #19), then -- after PR #20 ("deadline-model")
+merged as `0ff417a` and claimed migration `0011` via
+`0011_league_deadline_calendars.py` -- renumbered this unit's migration
+`0011_scoring_profile_lineage.py` to `0012_scoring_profile_lineage.py`
+(`revision="0012"`, `down_revision="0011"`); the migration's schema content
+is unchanged from the original PR (no new columns -- scoring lineage still
+lives in the existing `LeagueSettingsSnapshot.settings` JSON blob), only the
+revision numbering moved.
+
+**Now true:** A scoring profile's lineage is real: its `scoring_type` and
+categories are derived exclusively from its cited `LeagueSettingsSnapshot`,
+never from an argument a caller could supply independently of that
+snapshot, and a genuine scoring-rules change in a re-ingested settings
+payload produces a new snapshot version that a re-derivation will pick up.
+The Fantrax `code` is the verified, fixture-pinned mapping anchor; a
+category with an unmapped code, a duplicate, a non-unit weight, or an
+absent/unmapped scoring format all fail closed before any write, matching
+the same discipline the module already applied to an empty category list.
+Re-deriving from an unchanged current snapshot, and reactivating a
+previously-superseded profile version whose content matches the current one
+(A -> B -> A), both return the existing row rather than creating an
+indistinguishable new version. Activation cannot make a stale-lineage or
+zero-category profile the league's active one, however that profile came to
+exist, and a rejected activation leaves the previously-active profile
+untouched. A real operator path (`derive_scoring_profile` /
+`scoring-profile` CLI subcommand) exists end to end from an ingested
+settings snapshot to an explicitly activated profile, exercised in tests
+against the real captured fixture rather than only library functions. ADR-008
+and ADR-002 both still hold: no ranking, AAV, or market aggregate is anywhere
+in this module's inputs or outputs, and no production, availability, or
+`p(play)` quantity is computed here -- this remains category/direction/ratio-
+component/scoring-type *configuration*, sourced only from a league's own
+stated rules. Local Code gate green: ruff check, ruff format --check, and
+project-wide `mypy` (strict config, 108 source files, zero errors) all pass;
+full backend suite 626 passed / 17 deselected (`live_smoke`), including
+`test_scoring_profiles.py`'s 27 tests and the extended adapter-contract
+assertions. Adapter gate: `pytest -m adapter_contract` passes (the modified
+`getLeagueInfo` scoring payload contract is pinned by
+`test_adapter_contracts.py`'s fixture-tied assertions); no new live call was
+added beyond the existing `getLeagueInfo` smoke coverage. Model gate remains
+explicitly not applicable -- nothing in this rework predicts, blends, or
+estimates anything; it is still configuration derivation, not a statistical
+model, so no model card was written. Migrations: `alembic upgrade head` from
+empty, `alembic check` (no drift detected), and `alembic downgrade base` all
+pass on SQLite at the new head; the migration file's content is byte-
+identical to the original PR, only its revision/down_revision numbers moved
+to `0012`/`0011`.
+
+**Could not verify:** The "ROTI" segment of `HEAD_TO_HEAD_ROTI_MULTI_WIN` has
+no confirmed meaning found in this project's own documentation or any
+first-party Fantrax reference during this work -- only the raw discriminator
+string itself and this project's own historical rules-baseline document
+support the `H2H_EACH_CATEGORY` mapping; a genuinely different Fantrax
+scoring format (points, roto) remains completely unhandled and unverified,
+by design, until built against real evidence for that format specifically.
+No local Postgres was available in this session (no `docker`/`psql` on
+PATH) -- the migration and full suite were exercised on SQLite only here,
+with the repository's Postgres CI job as the cross-dialect check, as in
+prior entries for this unit. Whether PR #21 has independently landed and
+already claimed migration `0012` was not re-checked immediately before this
+entry was written; a final rebase/renumber check against `origin/main`
+happens right before requesting review, per the race-condition coordination
+already flagged by the reviewing session.
+
+**Next:** Confirm `origin/main` has not advanced further and that PR #21 has
+not claimed migration `0012` before requesting final review; renumber again
+if it has. Push this remediation, request two focused independent reviews
+(percentage-math/layer-purity concerns already resolved in a prior round;
+this round's ask is specifically the lineage/idempotency/activation-
+revalidation fixes), and report back to the reviewing session with exact
+head/base, gate results, and this uncertainty list. Not merged or self-
+approved.
+
+---
+
+
 ## 2026-08-18 - data-engineer - Restack after absence-splits migrations
 
 **Changed:** Rebased the league-settings branch onto main commit `5f75968`,
