@@ -680,7 +680,9 @@ class TestBoxScoreV3:
 
 class TestFixtureManifest:
     def test_every_fixture_is_described_in_the_manifest(self, manifest: dict[str, Any]) -> None:
-        on_disk = {p.name for p in FIXTURES.glob("*.json")} - {"manifest.json"}
+        on_disk = {p.name for p in list(FIXTURES.glob("*.json")) + list(FIXTURES.glob("*.pdf"))} - {
+            "manifest.json"
+        }
         assert on_disk == set(manifest), (
             "every fixture must record where it came from and when; an undocumented "
             "fixture cannot be refreshed deliberately"

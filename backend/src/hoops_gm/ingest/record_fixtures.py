@@ -331,6 +331,52 @@ def record_nba() -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# NBA official injury report
+# --------------------------------------------------------------------------
+
+#: A real evening-before report from the 2025-26 season, chosen because it
+#: exercises every case the parser handles: 14 matchups across 7 pages, a
+#: player whose Reason wraps across two lines, and two teams (San Antonio,
+#: Los Angeles Lakers) whose report had not been filed as of this capture —
+#: a "NOT YET SUBMITTED" marker row rather than a player entry.
+FIXTURE_INJURY_REPORT_TIMESTAMP_ET = "2025-11-01T17:30:00-04:00"
+
+
+def record_injury_report() -> None:
+    from datetime import datetime
+
+    from hoops_gm.ingest.injury_report import InjuryReportClient
+
+    print("injury_report:")
+    client = InjuryReportClient()
+    timestamp = datetime.fromisoformat(FIXTURE_INJURY_REPORT_TIMESTAMP_ET)
+    body = client.fetch(timestamp, max_age=_never())
+    name = "nba_injury_report_2025-11-01_0530pm.pdf"
+    path = FIXTURE_ROOT / name
+    path.write_bytes(body)
+    manifest = _load_manifest()
+    manifest[name] = {
+        "captured_at": datetime.now(UTC).isoformat(),
+        "byte_size": path.stat().st_size,
+        "source": "nba_injury_report",
+        "endpoint": "InjuryReportPdf",
+        "params": {
+            "url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf"
+        },
+        "trimmed": False,
+        "note": (
+            "Real captured report, committed whole rather than trimmed: it is a "
+            "7-page PDF (~79KB) and the parser's row-boundary logic depends on the "
+            "full multi-page, multi-matchup, multi-line-reason and page-footer "
+            "structure, including a same-team 'NOT YET SUBMITTED' marker row for "
+            "two teams whose report had not been filed as of this capture."
+        ),
+    }
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"  wrote {name} ({path.stat().st_size:,} bytes)")
+
+
 def _never() -> Any:
     from datetime import timedelta
 
@@ -341,6 +387,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "fantrax": record_fantrax,
     "fantrax-league-settings": record_fantrax_league_settings,
     "nba": record_nba,
+    "injury_report": record_injury_report,
 }
 ALL_COMMANDS = ("fantrax", "nba")
 

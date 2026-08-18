@@ -128,6 +128,30 @@ class DnpReason(enum.StrEnum):
     NONE_GIVEN = "none_given"
 
 
+class InjuryReportStatus(enum.StrEnum):
+    """The NBA's own closed vocabulary for the official injury report.
+
+    Unlike :class:`DnpReason`, this is not free text a scorer typed — it is
+    the fixed designation the league's reporting policy requires a team to
+    pick (official.nba.com, verified 2026-08-17): OUT, DOUBTFUL, QUESTIONABLE,
+    PROBABLE or AVAILABLE. Five values, and only five, which is why the parser
+    treats anything else as :class:`~hoops_gm.ingest.errors.SourceContractError`
+    rather than an ``OTHER`` bucket — an unrecognised *status* here means the
+    league changed its designations, not that a scorer wrote something unusual.
+
+    ``NOT_YET_SUBMITTED`` is not a player status at all: it is the report
+    saying a team has not filed one for this slate yet. It carries no player
+    name, and the importer does not manufacture one.
+    """
+
+    OUT = "out"
+    DOUBTFUL = "doubtful"
+    QUESTIONABLE = "questionable"
+    PROBABLE = "probable"
+    AVAILABLE = "available"
+    NOT_YET_SUBMITTED = "not_yet_submitted"
+
+
 class MatchMethod(enum.StrEnum):
     """How an external identifier came to be attached to a canonical player."""
 

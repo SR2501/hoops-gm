@@ -468,7 +468,7 @@ G-score per arXiv 2307.02188, absorbing both production variance and availabilit
 
 ### `injury-report-ingest` - Ingesting NBA official injury reports
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `player-identity`
 
 Ingest the NBA official injury report (day-before release plus game-day updates) with full status history per player per game: OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, AVAILABLE.

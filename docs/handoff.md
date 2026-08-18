@@ -941,6 +941,33 @@ all write-path guardrails, and the owner-only first-live-action decision.
 
 ---
 
+## 2026-08-17 — data-engineer — `injury-report-ingest`: NBA official injury report PDF adapter
+
+**Changed:** Built the `injury-report-ingest` backlog item end to end. There is no injury-report API — the NBA publishes a PDF to `ak-static.cms.nba.com`, updated irregularly through the day — so this is a document adapter, not a JSON one. Added `backend/src/hoops_gm/ingest/injury_report/` (`client.py` for transport, `parser.py` for the PDF table extraction, `models.py` for the parsed dataclasses), a new `injury_report_entries` table (migration `0006`, following merged refresh-lineage migration `0005`) and importer (`import_injury_report_entries`), a real captured fixture (`nba_injury_report_2025-11-01_0530pm.pdf`, 7 pages, 14 matchups), 14 offline contract tests and 2 live smoke tests. Full Code and Adapter gates pass locally: ruff format/lint clean, mypy strict clean on 81 source files, full default suite green (446 passed, 14 live-smoke tests deselected), the recorded-fixture adapter suite green (82 passed), and the separately invoked live smoke suite green (14 passed, including the 2 new injury-report checks) against the real source as of this session.
+
+**Now true:**
+- The report cannot be read by extracting text top-to-bottom. Verified against the real capture: when a player's `Reason` cell wraps to two lines, the report **vertically centres** the shorter `Player Name`/`Current Status` cell inside that row's full height rather than top-aligning it — so the Reason's first line prints *above* the player's own name, and a naive reader would attach it to the *previous* player. The parser instead derives column x-boundaries from page 1's own header labels and row y-boundaries from each page's own drawn ruling lines (present only under Name/Status/Reason, never under the forward-filled Date/Time/Matchup/Team columns), then joins every physical line inside one cell's height with a space. This is the single most important finding in this adapter and is fully written up in `docs/adapters/nba-injury-report.md`.
+- The filename format has (at least) two eras: hourly-on-the-hour before 2025-12-22 ET, 15-minute granularity after. Verified live both ways. The legacy filename only encodes the hour, but the report's own masthead consistently reads `:30` past it — `Injury-Report_2025-12-01_01PM.pdf`'s masthead says `1:30 PM`. Masthead cross-verification (added specifically so a stale/mismatched capture cannot silently be read as the wrong timestamp) tolerates 45 minutes for exactly this reason.
+- A missing report is not always HTTP 404. Verified live: an off-season date (2025-08-15, months before any report existed) returns **403 Forbidden**. Both codes are folded into one `ReportNotAvailable` (a `SourceRejected` subtype), documented as evidenced fact rather than assumed.
+- `"NOT YET SUBMITTED"` rows (a team with no filed report yet — 5 of them in the captured fixture, across 3 different matchups) are preserved as their own marker status (`InjuryReportStatus.NOT_YET_SUBMITTED`) with no player name, never invented as a player entry and never dropped. `InjuryReportParseResult.player_entries` excludes them for a caller that only wants designations.
+- The status vocabulary (OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, AVAILABLE) is treated as closed, unlike `DnpReason`'s free text: an unrecognised sixth value is a loud `SourceContractError`, not an `OTHER` bucket, because the league's own reporting policy names exactly five designations.
+- Team, game and player resolution on `injury_report_entries` are all best-effort nullable FKs, never guessed. Team/game resolve from the `Matchup` tricode (an exact match against `nba_teams.abbreviation`) rather than the free-text `Team` column; which tricode is "this" row's team is derived from team order of appearance within the matchup block (away always listed first, verified against the real capture). Player resolves via the existing `identity.names.normalize_name` crosswalk, disambiguated by current team, left `NULL` on any remaining ambiguity per R7.
+- `injury_report_entries` is deliberately **not** versioned like `opponent_context`/`off_night_slates` (ADR-009): it is the injury-report analogue of `team_schedule` (data-engineer, Adapter gate, ingested fact), not of `schedule-context` (quant, Model gate). It carries no `model_version`/`schedule_version` because it asserts nothing beyond what the league published; `injury-status-conversion` is where a modelled quantity built from this table would carry that cascade, not here. State the claim precisely rather than gesture at it: neither ADR-011 nor ADR-012 actually names a "refresh/version cascade" mechanism by that phrase — the versioning pattern lives in `db.models.schedule_context` and is governed by ADR-009's ingested-fact/modelled-output boundary, which is the discipline actually being respected here.
+- `(report_timestamp, team_raw, player_name_raw)` is the natural key: a report re-ingested twice converges (idempotent), while a later capture at a genuinely different timestamp is retained as real history, never overwriting the earlier row — the whole point of the table per the backlog item's "full status history per player per game" requirement.
+- Added `pdfplumber==0.11.10` to the `ingest` extra, pinned exactly like `nba_api`/`fantraxapi`: the parser depends on its word-position and ruling-line extraction behaviour directly, and an upgrade silently changing that behaviour is exactly the kind of drift ADR-006 exists to catch. Deliberately did **not** add `tabula`/Java, unlike the prior-art packages consulted (`johngoodhand/nba-injury-report-pdf-to-df`, `mxufc29/nbainjuries`) — `pdfplumber` is pure Python and needs no JVM in CI.
+- Found and fixed a pre-existing gap while adding the fixture: `test_adapter_contracts.py::TestFixtureManifest` only globbed `*.json` on disk, so a `.pdf` fixture could exist without ever being checked against the manifest. Widened the glob to include `*.pdf`.
+- Found and fixed a duplicate-index bug in my own first draft of the ORM model: `mapped_column(index=True)` on `report_timestamp`/`game_date` plus an explicit same-named `Index(...)` in `__table_args__` collided under `Base.metadata.create_all` (SQLite raised "index already exists"). Removed the redundant explicit entries.
+
+**Could not verify:**
+- Whether the 2026-27 season will keep the current 15-minute filename granularity, or the NBA official CMS keeps the same URL path at all — no announcement of the prior format change was found anywhere, so there is no reason to expect advance notice of another one. The two live smoke tests (`TestInjuryReportIsAlive`) exist specifically to catch this; treat their failure as "check `docs/adapters/nba-injury-report.md` and re-derive the format," not as a flaky test.
+- Whether the 403-for-missing-report behaviour generalises to every kind of "no report" case, or is specific to pre-season dates. Only one negative case (an off-season date) was tested live; an in-season, never-published historical timestamp returned a normal 404 during development probing, so both codes are handled, but the full space of "why does this CDN 403 instead of 404" was not explored beyond what was needed to make the live smoke test pass honestly.
+- The live match rate of the player-name crosswalk against a full day's real report rather than the tiny two-player synthetic crosswalk used in the offline import test. A live smoke test asserting a specific match-rate threshold (matching the pattern `TestCrosswalkAgainstLiveData` already uses for the Fantrax/NBA crosswalk) was not added, because doing so honestly needs a live-ingested `players`/`nba_teams`/`nba_games` set from `nba-stats-ingest`/`schedule-ingest`, not a report parsed in isolation — worth adding once `injury-status-conversion` or a real backfill run needs the number.
+- Whether the two-team-per-matchup, away-team-listed-first ordering assumption used to disambiguate a tricode holds for every matchup shape the report can produce (e.g. the NBA Cup's in-progress/TBD team slots the schedule adapter already had to special-case). Only ordinary two-resolved-team matchups appear in the captured fixture; an NBA Cup game with an unresolved team would currently just fail to resolve `team_id`/`game_id` (both left `NULL`), which is the safe default, but was not specifically exercised.
+
+**Next:** `injury-status-conversion` can now be unblocked to consume `injury_report_entries` alongside `player_participation` — its backlog dependency (`injury-report-ingest`, `participation-ledger`) is satisfied. A scheduled backfill/poll of the live endpoint (which report timestamps to actually fetch, on what cadence) is explicitly out of scope here — this unit is the adapter and its import, not automation, and any scheduling belongs to whichever later item drives it (`lineup-autoset`'s pre-lock refresh is the nearest named consumer in the plan). `preseason-news-ingest` remains a separate, still-`pending` item: this adapter covers nothing before the season's first game, by design (R40).
+
+---
+
 ## 2026-08-17 — owner, architect — ADR-012 amendment: sparse event weeks and trade targets
 
 **Changed:** The owner added an important operational consequence to the accepted weekly schedule decision: In-Season Tournament and All-Star-break periods are often sparse across the league, so schedule value is relative to both a team's normal weekly distribution and the league-wide period baseline. Updated ADR-012, the draft plan, and `trade-evaluator`'s backlog scope. Trade analysis must surface schedule-driven targets and high-value weeks, not reduce schedule to a generic rest-of-season adjustment.
@@ -1502,3 +1529,401 @@ available during the restack.
 **Next:** Require green migration-from-empty and full-suite Postgres CI at the
 new exact head, then repeat focused release review. Do not merge from the
 pre-restack review.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13 rebased after refresh-lineage merge
+
+**Changed:** Rebased `sr2501-injury-report-ingest` onto `origin/main` after PR
+#9 merged. The merged refresh-lineage migration is revision `0005` over
+`0004`, so the injury-report migration was renamed from
+`0005_injury_report.py` to `0006_injury_report.py` and changed consistently to
+`revision = "0006"` / `down_revision = "0005"`. Resolved the append-only
+handoff conflict by retaining both merged PR #9 entries and the injury adapter
+entry; no adapter, fixture, importer, read-only boundary, or automation scope
+was removed or widened.
+
+**Now true:** Alembic has one linear head: `0001 -> 0002 -> 0003 -> 0004 ->
+0005_refresh_lineage -> 0006_injury_report`. A fresh SQLite database upgraded
+through every revision, reported `0006 (head)`, produced no operations from
+`alembic check`, and downgraded through every revision to base. The full local
+backend Code gate passed (Ruff lint and format, mypy strict on 81 source files,
+446 tests with 14 live-smoke tests deselected, and the secret scan over 192
+tracked files). The recorded-fixture Adapter gate passed separately (82
+tests), and the live smoke suite passed separately against the real upstreams
+(14 tests).
+
+**Could not verify:** Native Postgres was not available locally, so the
+rebased `0005 -> 0006` path was exercised from empty on SQLite only. The
+repository's Postgres CI job remains the cross-dialect check after the
+force-with-lease push. The live checks prove the archived source paths and
+current parser contract still answer on 2026-08-18; they cannot prove the NBA
+will retain the same CMS filename or PDF layout for 2026-27.
+
+**Next:** PR #13 remains read-only and must not be merged by this session.
+Review the post-rebase CI results, especially the Postgres migration job, then
+merge only through the normal PR review path.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13 re-rebased onto PR #10 (userscript auto-update); Postgres CI verified green
+
+**Changed:** `main` advanced again after the previous rebase, past the
+userscript auto-update PR (#10, `1c88325`), reopening conflicts on PR #13.
+Re-ran `git rebase origin/main`: the migration numbering from the prior
+rebase (`0006_injury_report.py` on `down_revision = "0005"`) needed no further
+change, since PR #10 touched only the bridge/backend/userscript surfaces
+(`api/routes/bridge.py`, new `api/routes/userscript.py`, `api/security.py`,
+`core/config.py`, the userscript package itself) with zero overlap against
+this branch's injury-report files. The only conflict was the same append-only
+`docs/handoff.md` collision as before, now against PR #10's entry instead of
+PR #9's; resolved identically by keeping both dated 2026-08-17 entries in
+full (PR #10's bridge/backend/safety entry first, then this branch's
+data-engineer entry), deleting only the conflict markers. Force-pushed with
+`--force-with-lease` and let the repository's own GitHub Actions CI run
+rather than approximating it locally.
+
+**Now true:** `gh pr view 13` reports `mergeStateStatus: CLEAN` and
+`mergeable: MERGEABLE` against current `main`. Both CI runs triggered by the
+push (the `push` event on the branch and the `pull_request` synchronize
+event) completed with `conclusion: success`, and critically this resolves the
+prior entry's open gap: **`Backend — the same suite against Postgres
+(ADR-001)` passed on GitHub's runner** (job `95712350451`, 2m40s), not just
+the SQLite-only local check this session could run. Every other required
+check also passed on both runs: Code gate — no secrets committed, Backend —
+lint/type-check/tests, Backend — migrations apply from empty, Frontend,
+Userscript, Model gate — backtests, and Adapter gate — recorded-fixture
+contract tests. `Adapter gate — live smoke` reported `skipping` on both runs
+(by design — it is allowed to fail loudly without blocking a merge, per
+`docs/governance/gates.md`; it did not fail here, it simply did not execute,
+consistent with how that job is gated in `ci.yml`) and did not affect
+`mergeStateStatus`.
+
+**Could not verify:** Why `Adapter gate — live smoke` shows `skipping` rather
+than actually running or explicitly being skipped with a stated reason in the
+job log — did not open the raw log for that job since it is documented as
+non-blocking either way, but a future session should confirm this is the
+job's designed conditional behavior (e.g. gated on a schedule/secret) rather
+than an unnoticed regression in the workflow trigger logic. Did not attempt a
+local Postgres run in this worktree (no `docker`/`psql`/`pg_ctl` on this
+machine); the Postgres verification here rests entirely on the GitHub-hosted
+runner's service container, which is the same authority CI merges are
+normally judged against.
+
+**Next:** PR #13 is CI-clean and mergeable as of this session; no further
+rebase should be needed unless `main` advances again before merge. This
+session made no write-path, automation, or scope changes beyond the rebase
+and the handoff-conflict resolution described above.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: fixed 4 blocking findings from independent review
+
+**Changed:** Independent review blocked PR #13 on four findings; fixed all
+four with regression tests, then rebased again onto `main` (which had
+advanced twice more, past PR #16 and PR #7). (1) `parser.py` was persisting
+the caller's *requested* `report_timestamp` on every entry rather than the
+PDF's own masthead instant. Because that field is part of
+`injury_report_entries`'s natural key, and the legacy hourly-filename era
+truncates a request to the hour while the masthead check tolerates 45
+minutes of drift from it, two different in-tolerance requests for the same
+PDF could each fabricate their own history row. `_verify_masthead` now
+returns the masthead's own parsed instant (converted to UTC), and every
+entry — and the returned `InjuryReportParseResult` itself — is stamped with
+that canonical value, never the request argument. (2) `importers.py`
+resolved which matchup tricode was "this" row's team from order-of-
+appearance across the imported batch — a real defect: importing a partial
+subset of a report (e.g. only the home team's rows, because the away team's
+report had not been filed yet) or a reordered sequence let appearance order
+disagree with the report's actual away-then-home structure and resolve a
+team to its opponent. Replaced it with direct `team_raw -> nba_teams.name`
+matching (the same "City Nickname" string `import_teams` already populates
+from the stats API's own `full_name`), cross-verified against the row's own
+matchup tricode pair — a resolution that needs no other row for context and
+so cannot be fooled by import order or a partial batch. (3) A nonempty row
+naming no player and no status, whose Reason was not the `NOT YET SUBMITTED`
+marker, was silently `continue`-d past instead of raising. Fixed to raise
+`SourceContractError`. Fixing this immediately surfaced a genuine,
+previously-hidden defect in the real committed fixture: `Toppin, Obi`'s
+wrapped, two-line Reason splits across a page break (`"...Stress"` on page
+2, `"Fracture"` alone at the top of page 3), and that orphaned continuation
+was being silently dropped, truncating the real reason. Added a narrowly-
+scoped exception — only the first row-segment of a page after the first,
+with every column but Reason blank — that reattaches the continuation to
+the preceding entry instead of raising or dropping it. (4) Added a second
+live-smoke probe against the active 15-minute-granularity filename era
+(`2026-01-15 17:30`, the convention 2026-27 will actually use), distinct
+from the existing legacy-era probe, with documented rotation/failure
+behavior in the test's own docstring; it remains `live_smoke`-marked
+(visible on demand, never part of the blocking Code/Adapter gate).
+
+**Now true:** All four fixes have dedicated regression tests: masthead
+canonicalization proven by parsing the same fixture PDF with two different
+in-tolerance request instants and asserting both the parse result and an
+idempotent import converge on one canonical timestamp and one row set; team
+resolution proven by a partial-subset case (only the home team's row
+present) and a reordered-entries case, both asserting the correct team
+survives rather than swapping to its opponent; the loud raise proven by
+exercising the full `parse_injury_report_pdf` entry point (not a private
+helper) against a synthetic pdfplumber-page double with a monkeypatched
+`pdfplumber.open`; and the page-break reattachment proven directly against
+the real fixture, asserting `Toppin, Obi`'s reason now reads
+`"Injury/Illness - Right Foot; Stress Fracture"` in full. `docs/adapters/
+nba-injury-report.md` was updated to describe all of the above, including
+the corrected team-resolution rationale (the order-of-appearance claim it
+previously documented was itself part of the defect). Rebased cleanly onto
+current `main` (past PR #16's docs-only ADR-008/governance commit and PR
+#7's `schedule-density` work, neither of which touches any injury-report
+file); the only conflict was the same append-only `docs/handoff.md`
+collision as both prior rebases, resolved identically by keeping every
+dated entry in full. Local Code gate green: ruff lint/format, mypy strict
+(84 source files), full default pytest suite, and the 3
+`TestInjuryReportIsAlive` live smoke tests run separately against the real
+source (including the new active-era probe). Pushed with
+`--force-with-lease`; both GitHub Actions CI runs (`push` and `pull_request`
+synchronize) completed `success`, including `Backend — the same suite
+against Postgres (ADR-001)`. `gh pr view 13` reports `mergeStateStatus:
+CLEAN`, `mergeable: MERGEABLE`.
+
+**Could not verify:** Whether a third, still-undiscovered malformed-row
+shape exists elsewhere in the real report that the new loud-raise would
+also need a reattachment exception for — only the one page-break case
+surfaced by the committed fixture was found and handled; a different capture
+could still expose another shape the raise correctly flags as unexpected
+review-worthy behavior rather than something this fix silently papers over.
+Did not re-verify `Adapter gate — live smoke`'s `skipping` conclusion in this
+pass (open from the prior entry); still believed non-blocking by design, not
+re-inspected further here.
+
+**Next:** PR #13 is CI-clean and mergeable as of this session. Did not merge
+and did not self-approve, per instructions; the branch awaits an independent
+reviewer's confirmation that these four fixes actually close the findings
+they were raised against.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: current-season dynamic live-smoke probe (MEDIUM finding)
+
+**Changed:** Focused re-review confirmed the four core fixes but held one
+MEDIUM Adapter-gate finding: the new "active-era" live smoke probe added to
+close finding 4 still used a fixed, permanently archived January 2026
+timestamp. An archived URL survives a filename-format rotation by
+construction — the CDN keeps serving the exact bytes it always served for
+that historical path — so it can never detect the NBA introducing a
+*third* filename convention or PDF layout for 2026-27. Added
+`select_recent_report_candidate` (`test_injury_report.py`, offline,
+unit-tested, no `live_smoke` marker) and a new
+`TestInjuryReportCurrentSeasonIsAlive` live test
+(`test_live_smoke.py`) built on it, rather than a fixed archive. The
+candidate is grounded in an independently defensible fact, not a calendar
+guess: `SEASON_2026_27_START = date(2026, 10, 20)`, the actual first
+`gameDate` in the already-recorded, really-captured `ScheduleLeagueV2`
+fixture (`nba_scheduleleaguev2_2026_27.json`). Only within that season's
+window (through a documented 240-day span covering the regular season and
+playoffs) does the function return a candidate — yesterday-evening-ET, the
+report's own documented publication window — clamped so opening day never
+probes a "yesterday" before the season existed. Outside that window it
+returns `None`, and the live test explicitly `pytest.skip`s with the reason
+spelled out, rather than either a noisy off-season red failure or the
+failure mode the review specifically called out: silently treating an
+expected 403/404 as evidence the adapter still works. When in season, a
+403/404 or parse failure on the chosen candidate is a real, unswallowed test
+failure — the whole point of picking a timestamp a report is actually
+expected to exist for. Exactly one candidate, therefore at most one HTTP
+request, per run. The archived legacy and 15-minute-era probes from finding
+4 are unchanged and still run alongside this one.
+
+**Now true:** Six new offline unit tests in `test_injury_report.py` pin the
+selection logic directly: naive-`now` rejection, `None` before the season
+starts (exercised against the real current date, 2026-08-18, which *is*
+before the season), `None` long after the season span, the ordinary
+in-season case, the opening-day clamp, and a non-Eastern-aware `now`
+(UTC) converting correctly. Ran the live test directly today: it
+`pytest.skip`s with the exact off-season message, confirming the guard
+behaves as designed against the real current date rather than only in
+unit tests. `docs/adapters/nba-injury-report.md` gained a "Live smoke
+coverage" section stating plainly what the dynamic probe can detect (URL/
+layout drift for a *current* request) and cannot (which specific format
+era is active, or "source broke" vs. "no game that day" any more precisely
+than the 240-day approximation allows). Full local Code gate green: ruff
+lint/format (one file needed `ruff format` after adding the new tests, now
+clean), mypy strict (84 source files), full default pytest suite, and the
+injury-report live smoke tests run separately (3 passed, 1 skipped — the
+new current-season probe, correctly, since today is off-season).
+
+**Could not verify:** Whether the dynamic probe actually executes (rather
+than skips) once the 2026-27 season starts — by construction, that cannot
+be observed until October 2026. The 240-day season span is an approximation
+extrapolated from typical regular-season-plus-playoffs length, not a
+captured end-of-season date; no fixture yet records when the 2026-27 season
+actually concludes, so a future session should tighten this once one does.
+
+**Next:** PR #13 awaits the independent reviewer's focused re-review of
+this fix. This closes the last outstanding finding raised so far; no other
+follow-up is expected from this session absent further review feedback.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: fixed 2 remaining blockers in the dynamic live-smoke probe
+
+**Changed:** Final focused review of the prior commit found two real
+defects in the current-season dynamic probe: (1) the opening-day clamp
+could select a **future** timestamp — on opening day itself, if "now" was
+earlier that same morning, the clamp returned that same day at 17:30 ET,
+which is *after* "now", guaranteeing a false-red 404 against a report not
+yet published; (2) the fixed "yesterday always has a game" rule silently
+treated routine no-game dates (All-Star break, scattered rest days, gaps
+beyond the recorded schedule) as source drift, when a 403/404 on a genuine
+no-game date is the correct response, not a bug. Redesigned
+`select_recent_report_candidate` from scratch to eliminate both classes of
+guess rather than patch around them: a candidate is now **only** ever built
+from a date `known_game_dates_from_schedule_fixture` reads directly from the
+real, committed `nba_scheduleleaguev2_2026_27.json` capture (currently
+`2026-10-20`, `2026-12-04`, `2027-03-14`) — never "yesterday", never a
+clamped guess — and among those known dates, only the most recent one that
+is both **strictly before now** (never future/present) and within a 45-day
+`FRESHNESS_WINDOW` (so a stale, months-old anchor is not silently treated as
+current) is eligible. `SEASON_2026_27_START`/`SEASON_SPAN` are gone entirely,
+replaced by this schedule-grounded selection. The function also now accepts
+an optional `known_game_dates` override so its offline unit tests can
+exercise arbitrary calendar shapes (a no-game gap, a stale anchor, multiple
+candidates) without waiting for the real fixture's sparse three dates to
+line up. `test_live_smoke.py`'s `TestInjuryReportCurrentSeasonIsAlive` and
+its skip message were updated to match; the archived legacy/15-minute probes
+and the one-bounded-request property are unchanged.
+
+**Now true:** Eight offline unit tests in `test_injury_report.py` pin the
+new logic directly, including the two specific defects found: a same-day
+game date is rejected until its own evening has passed (proves fix 1) and a
+day with no confirmed game is skipped in favour of the true most recent
+known game date rather than assumed to have one (proves fix 2), plus
+naive-`now` rejection, the pure off-season case (empty known-dates list),
+multi-candidate "most recent wins", the stale-anchor freshness cutoff, a
+non-Eastern-aware `now`, and a direct pin of
+`known_game_dates_from_schedule_fixture`'s three real dates so the whole
+design stays anchored to what the committed fixture actually contains.
+Ran the live test directly today (2026-08-18): it `pytest.skip`s with the
+new, more precise reason (no known game date is both published and fresh
+enough) rather than the old season-window message. `docs/adapters/
+nba-injury-report.md`'s "Live smoke coverage" section was rewritten to
+describe both fixes and the new schedule-grounded design plainly. Full
+local Code gate green: ruff lint/format (one reformat needed after the new
+tests, now clean), mypy strict (84 source files), full default pytest
+suite, and the injury-report live smoke tests run separately (3 passed, 1
+skipped — the dynamic probe, correctly, for the new stated reason).
+
+**Could not verify:** Whether the dynamic probe actually fetches (rather
+than skips) once a known game date both exists and is fresh — by
+construction, the earliest that can happen live is 2026-10-20 evening
+onward, which has not arrived yet. The 45-day `FRESHNESS_WINDOW` is a
+judgment call, not a captured value; a future session may need to widen it
+if the schedule fixture's recorded anchors are not refreshed often enough
+to keep the probe from going quiet for long season stretches.
+
+**Next:** PR #13 awaits another focused re-review of this HEAD. No other
+follow-up is expected from this session absent further review feedback; did
+not merge or self-approve.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13 re-rebased onto PR #17/#18 (absence-splits, league-settings); migration renumbered 0006 → 0009
+
+**Changed:** `main` advanced again, past two migration-bearing PRs
+(`#17` absence-splits, revisions `0006`–`0007`; `#18` league-settings
+snapshots, revision `0008`) that both landed on the same `0006` revision id
+this branch's injury-report migration already claimed — an unavoidable
+collision, since both were authored independently against the same prior
+head (`0005`). Rebased onto `origin/main`; the only textual conflicts were
+the same recurring append-only `docs/handoff.md` collision (resolved
+identically, keeping every dated entry) and import-ordering conflicts in
+`importers.py` (both sides added new alphabetically-ordered imports at the
+same location — merged to keep all of both: `datetime`/`date`,
+`InjuryReportEntry`/`League`/`LeagueSettingsSnapshot`, and
+`InjuryReportEntryRecord`/`LeagueSettingsDocument`). Renamed
+`0006_injury_report.py` to `0009_injury_report.py` and changed
+`revision = "0009"` / `down_revision = "0008"` to sit after the new head.
+
+**Now true:** Alembic has one linear chain: `0001 -> 0002 -> 0003 -> 0004 ->
+0005 -> 0006_absence_splits -> 0007_absence_split_activations ->
+0008_league_settings_snapshots -> 0009_injury_report`. A fresh SQLite
+database upgrades through every revision, `alembic check` reports no new
+operations, and downgrade to base succeeds cleanly. Full local Code gate
+green: ruff lint/format, mypy strict (91 source files, up from 84 — this
+rebase pulled in the absence-splits and league-settings modules), full
+default pytest suite, and the injury-report live smoke tests run separately
+(3 passed, 1 skipped — the dynamic probe, correctly, for the same reason as
+before). No adapter, fixture, importer, read-only boundary, or automation
+scope was removed or widened by this rebase; only the migration number and
+merged import lines changed outside of `docs/handoff.md`.
+
+**Could not verify:** Native Postgres was not available locally, so
+`0008 -> 0009` was exercised from empty on SQLite only in this pass; the
+repository's Postgres CI job remains the cross-dialect authority after the
+push.
+
+**Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
+merge or self-approve.
+
+---
+
+## 2026-08-18 — data-engineer — PR #13: dates-only 2026-27 calendar fixture closes the Dec→Mar blind interval
+
+**Changed:** A third focused review at the exact HEAD accepted the future-
+timestamp and unconfirmed-game-day fixes but found the remaining anchor set
+too coarse: `nba_scheduleleaguev2_2026_27.json`'s three deliberately-sparse
+kept dates (chosen for schedule-density/timezone test coverage, not for
+this purpose) produced up to a 54-day midseason skip, up to 100-day
+detection latency, and never covered anything after 2027-03-14 — and since
+archived CDN URLs stay live indefinitely, an up-to-45-day-old candidate
+barely improved on the fixed-archive probes this whole redesign exists to
+get past. Fetched the real, live `ScheduleLeagueV2` response for the
+2026-27 season directly via `NbaStatsClient.schedule_league` (the same
+adapter method `schedule-ingest` already uses) — confirmed all 173
+`gameDates` the existing fixture's manifest note already claimed — and
+derived a new, compact **dates-only** fixture,
+`nba_scheduleleaguev2_2026_27_gamedates.json`: every `gameDate`'s date
+string, no game objects, team/player identities, or box scores, with the
+13 preseason-only dates (every game that day labelled `gameLabel ==
+"Preseason"`) excluded, since the injury-report adapter is out of scope
+before the season's first game (R40, `docs/backlog.md`). 160 real
+regular-season dates remain, 2026-10-20 through 2027-04-11, whose largest
+gap is 7 days (the All-Star break, 2027-02-18 → 2027-02-25). Registered it
+in `tests/fixtures/manifest.json` following the existing trimmed-fixture
+schema, with a note explaining the derivation and preseason exclusion.
+`known_game_dates_from_schedule_fixture` now reads this new fixture instead
+of the old three-date one (which is untouched and still serves
+`test_schedule.py`). Tightened `FRESHNESS_WINDOW` from 45 to **10 days** —
+sized directly from the measured 7-day maximum gap plus a small buffer,
+not a guess.
+
+**Now true:** Three new offline unit tests in `test_injury_report.py` prove
+exactly what was asked: the December-to-March blind interval is gone (four
+probe dates spanning that old gap all now find an eligible, bounded-age
+candidate); candidate age stays within `FRESHNESS_WINDOW` for *every*
+calendar day across the entire real season (a day-by-day walk from the
+season opener through the last recorded date, including the All-Star break
+and every other real gap, against the actual committed fixture rather than
+a synthetic list); and a run well past the season's last recorded date
+skips rather than reusing a stale archive. The existing fixture-reading
+test was rewritten to pin the new fixture's actual shape (160 dates, first/
+last, preseason exclusion, 7-day max gap) instead of the old three dates.
+Ran the live test directly today: it still `pytest.skip`s (correctly —
+today, 2026-08-18, precedes every 2026-27 date), now citing the 10-day
+window. Full local Code gate green: ruff lint/format, mypy strict (91
+source files), full default pytest suite (fixture-manifest contract tests
+included), and the injury-report live smoke tests run separately (3
+passed, 1 skipped for the updated reason).
+
+**Could not verify:** Whether the live `NbaStatsClient.schedule_league`
+fetch used to derive this fixture will keep returning the same 173
+`gameDates` if re-run later (the NBA can and does revise its own published
+schedule); this fixture is therefore a point-in-time capture like every
+other one in `manifest.json`, not a live source of truth, and a future
+session refreshing it should re-derive rather than hand-edit it. Whether
+10 days remains the right freshness threshold for a future season's
+calendar (a longer All-Star break, a lockout-shortened season, etc.) was
+not tested beyond the one real 2026-27 shape measured here.
+
+**Next:** PR #13 awaits another focused re-review at this new HEAD. Did not
+merge or self-approve.
+

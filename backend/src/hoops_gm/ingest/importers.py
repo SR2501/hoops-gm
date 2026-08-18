@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,12 +31,14 @@ from hoops_gm.db.models.enums import (
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
+from hoops_gm.db.models.injury_report import InjuryReportEntry
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.resolver import Resolution
+from hoops_gm.ingest.injury_report.models import InjuryReportEntryRecord
 from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
     GameParticipation,
@@ -650,3 +652,167 @@ def import_participation(
 
     session.flush()
     return counts
+
+
+# --------------------------------------------------------------------------
+# Injury report
+# --------------------------------------------------------------------------
+
+
+def import_injury_report_entries(
+    session: Session,
+    entries: Sequence[InjuryReportEntryRecord],
+    *,
+    source_url: str,
+) -> ImportCounts:
+    """Write one report capture's entries idempotently, by natural key.
+
+    ``(report_timestamp, team_raw, player_name_raw)`` identifies a row: an
+    identical capture re-ingested twice converges rather than duplicates, and
+    a later capture at a *different* timestamp is genuine history, never an
+    overwrite of an earlier one — see ``db.models.injury_report`` on why the
+    timestamp is part of the key rather than a mere column.
+
+    ``team_id``, ``game_id`` and ``player_id`` are resolved best-effort and
+    left ``NULL`` on any ambiguity, never guessed. Team resolves the report's
+    own free-text ``team_raw`` (e.g. ``"Sacramento Kings"``) directly against
+    ``nba_teams.name``, which ``import_teams`` populates from the exact same
+    "City Nickname" string the stats API's own ``full_name`` field uses — an
+    unambiguous match that needs no other row for context. That resolution is
+    then cross-verified against the matchup's own tricode pair
+    (``matchup_raw``, e.g. ``"SAC@MIL"``): the resolved team's abbreviation
+    must be one of the two, or the row is left unresolved. This deliberately
+    does **not** infer which tricode is "this" row's team from the order rows
+    happen to appear in the ``entries`` sequence — a caller importing a
+    partial subset of a report (e.g. only one team's rows because the other
+    team's report had not been filed yet) or a re-ordered sequence would
+    otherwise see appearance order disagree with the report's actual
+    away-then-home structure and resolve a team to its opponent. Game
+    resolves from the same verified tricode pair.
+    """
+    counts = ImportCounts()
+    teams = list(session.scalars(select(NbaTeam)))
+    teams_by_abbr = {t.abbreviation: t.id for t in teams}
+    team_abbr_by_id = {t.id: t.abbreviation for t in teams}
+    teams_by_name: dict[str, list[int]] = {}
+    for t in teams:
+        teams_by_name.setdefault(t.name, []).append(t.id)
+    games_by_key = {
+        (g.home_team_id, g.away_team_id, g.game_date): g.id
+        for g in session.scalars(select(NbaGame))
+    }
+    players_by_norm: dict[str, list[int]] = {}
+    player_team: dict[int, int | None] = {}
+    for player in session.scalars(select(Player)):
+        players_by_norm.setdefault(player.normalized_name, []).append(player.id)
+        player_team[player.id] = player.current_team_id
+
+    existing = {
+        (row.report_timestamp, row.team_raw, row.player_name_raw): row
+        for row in session.scalars(select(InjuryReportEntry))
+    }
+
+    for record in entries:
+        team_id = _resolve_team_id(record, teams_by_name, team_abbr_by_id)
+        game_id = _resolve_game_id(record, teams_by_abbr, games_by_key)
+        player_id = _resolve_player_id(record, team_id, player_team, players_by_norm)
+
+        key = (record.report_timestamp, record.team_raw, record.player_name_raw)
+        row = existing.get(key)
+        if row is None:
+            row = InjuryReportEntry(
+                report_timestamp=record.report_timestamp,
+                team_raw=record.team_raw,
+                player_name_raw=record.player_name_raw,
+            )
+            session.add(row)
+            existing[key] = row
+            counts.created += 1
+        else:
+            counts.updated += 1
+
+        row.game_date = record.game_date
+        row.game_time_raw = record.game_time_raw
+        row.matchup_raw = record.matchup_raw
+        row.team_id = team_id
+        row.game_id = game_id
+        row.player_id = player_id
+        row.status_raw = record.status_raw
+        row.status = record.status
+        row.reason_raw = record.reason_raw
+        row.source = ExternalSource.NBA
+        row.source_url = source_url
+
+    session.flush()
+    return counts
+
+
+def _matchup_tricodes(matchup_raw: str) -> tuple[str, str] | None:
+    """``"SAC@MIL"`` -> ``("SAC", "MIL")`` (away, home), or ``None`` if malformed."""
+    away, sep, home = matchup_raw.partition("@")
+    if not sep or not away or not home:
+        return None
+    return away, home
+
+
+def _resolve_team_id(
+    record: InjuryReportEntryRecord,
+    teams_by_name: dict[str, list[int]],
+    team_abbr_by_id: dict[int, str],
+) -> int | None:
+    """Resolve ``team_raw`` to a team, verified against the matchup tricode.
+
+    Matches the report's free-text ``team_raw`` (e.g. ``"Sacramento Kings"``)
+    directly against ``nba_teams.name`` — a name+city string, not an
+    order-dependent heuristic — then cross-checks that the resolved team's
+    own abbreviation is actually one of the two tricodes in ``matchup_raw``.
+    Left ``NULL`` if the name does not match exactly one team, or if the
+    matched team is not part of this row's own matchup: either case means the
+    row's evidence disagrees with itself, and a guess would be worse than no
+    link at all.
+    """
+    candidates = teams_by_name.get(record.team_raw, [])
+    if len(candidates) != 1:
+        return None
+    team_id = candidates[0]
+    tricodes = _matchup_tricodes(record.matchup_raw)
+    if tricodes is None or team_abbr_by_id.get(team_id) not in tricodes:
+        return None
+    return team_id
+
+
+def _resolve_game_id(
+    record: InjuryReportEntryRecord,
+    teams_by_abbr: dict[str, int],
+    games_by_key: dict[tuple[int, int, date], int],
+) -> int | None:
+    tricodes = _matchup_tricodes(record.matchup_raw)
+    if tricodes is None:
+        return None
+    away_tri, home_tri = tricodes
+    away_id = teams_by_abbr.get(away_tri)
+    home_id = teams_by_abbr.get(home_tri)
+    if away_id is None or home_id is None:
+        return None
+    return games_by_key.get((home_id, away_id, record.game_date))
+
+
+def _resolve_player_id(
+    record: InjuryReportEntryRecord,
+    team_id: int | None,
+    player_team: dict[int, int | None],
+    players_by_norm: dict[str, list[int]],
+) -> int | None:
+    if not record.player_name_raw:
+        return None
+    candidates = players_by_norm.get(normalize_name(record.player_name_raw).key, [])
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1 and team_id is not None:
+        # Disambiguate by current team. Only accept a match that is unique
+        # after narrowing — an unresolved ambiguity is left NULL rather than
+        # guessed, per R7.
+        on_team = [pid for pid in candidates if player_team.get(pid) == team_id]
+        if len(on_team) == 1:
+            return on_team[0]
+    return None

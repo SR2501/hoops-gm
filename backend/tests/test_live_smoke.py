@@ -34,6 +34,12 @@ import pytest
 from hoops_gm.identity import IdentityResolver, ResolvableRecord
 from hoops_gm.ingest.errors import SourceRejected
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient, parse_league_info
+from hoops_gm.ingest.injury_report import (
+    InjuryReportClient,
+    ReportNotAvailable,
+    parse_injury_report_pdf,
+    report_url,
+)
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     parse_box_score_summary_v3,
@@ -48,14 +54,22 @@ from hoops_gm.ingest.record_fixtures import (
     FIXTURE_STATS_SEASON,
 )
 
+# The runtime candidate-selection logic for the current-season probe below is
+# defined and unit-tested offline in `test_injury_report.py` (no `live_smoke`
+# marker there), and imported here rather than duplicated so the exact logic
+# proven offline is what this live test actually runs.
+from test_injury_report import FRESHNESS_WINDOW, select_recent_report_candidate
+
 pytestmark = pytest.mark.live_smoke
 
 #: Live calls bypass the cache entirely. A smoke test served from a capture is
 #: a contract test wearing a disguise, and would report the source as healthy
 #: long after it stopped answering.
-from datetime import timedelta  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
+_EASTERN = ZoneInfo("America/New_York")
 
 
 @pytest.fixture
@@ -66,6 +80,11 @@ def fantrax() -> FantraxOfficialClient:
 @pytest.fixture
 def nba() -> NbaStatsClient:
     return NbaStatsClient()
+
+
+@pytest.fixture
+def injury_report() -> InjuryReportClient:
+    return InjuryReportClient()
 
 
 # ==========================================================================
@@ -346,3 +365,166 @@ class TestCrosswalkAgainstLiveData:
             "payloads has moved; check the unmatched report before trusting any "
             "number that crosses sources"
         )
+
+
+# ==========================================================================
+# NBA official injury report
+# ==========================================================================
+
+
+class TestInjuryReportIsAlive:
+    #: A real evening-before report from the 2025-26 season, permanently
+    #: archived on the CDN. Distinct from the committed contract-test fixture
+    #: timestamp so this test proves live reachability rather than replaying
+    #: the same capture the offline test already checked. This instant sits
+    #: in the **legacy, hourly** filename era (before 2025-12-22 ET) --
+    #: ``client.report_url`` truncates it to the hour before building the URL.
+    _KNOWN_GOOD_TIMESTAMP = datetime(2025, 12, 1, 13, 0, tzinfo=_EASTERN)
+
+    #: A real evening-before report in the **current, 15-minute-granularity**
+    #: filename era (on/after 2025-12-22 ET) -- the convention every request
+    #: for 2026-27 actually uses. The legacy-era probe above exercises a
+    #: retired code path (the hour-truncation branch of ``report_url``) and
+    #: cannot, by construction, detect a regression specific to this one.
+    #: Verified live 2026-08-17: ``2026-01-15 17:30`` resolves to
+    #: ``Injury-Report_2026-01-15_05_30PM.pdf``.
+    _KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP = datetime(2026, 1, 15, 17, 30, tzinfo=_EASTERN)
+
+    def test_a_known_historical_report_is_still_reachable_and_parses(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: the CDN path moved, or the PDF's column layout changed.
+
+        Unlike ``cdn.nba.com`` (risk R26, blocked from this network), this
+        source has been reachable from this machine every time it has been
+        checked. A failure here means the URL template, filename format era
+        boundary, or table layout has drifted since 2026-08-17.
+        """
+        body = injury_report.fetch(self._KNOWN_GOOD_TIMESTAMP, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body,
+            report_timestamp=self._KNOWN_GOOD_TIMESTAMP,
+            source_url="https://ak-static.cms.nba.com/referee/injury/"
+            "Injury-Report_2025-12-01_01PM.pdf",
+        )
+        assert len(result.entries) > 0, "a real evening-before report had zero entries"
+
+    def test_a_known_active_era_report_is_still_reachable_and_parses(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: the current 15-minute-granularity filename convention --
+        the one every 2026-27 request actually uses -- stops resolving, or
+        the PDF's column layout changed for a report requested past the
+        2025-12-22 format boundary.
+
+        This is deliberately a second, separate probe from the legacy-era one
+        above rather than a replacement for it: ``report_url`` branches on
+        the era boundary, so the legacy probe only exercises the
+        hour-truncating branch and cannot detect drift specific to this,
+        the active branch. **Rotation and failure behaviour**: the NBA has
+        changed this filename format once already, without any announcement
+        found (see ``docs/adapters/nba-injury-report.md``), and could rotate
+        to a third convention with the same silence for 2026-27. This test
+        does not, and cannot, protect against that in advance -- it exists
+        to fail loudly the day it happens, distinctly from the legacy probe,
+        so the specific era that broke is legible from which test went red.
+        It is marked ``live_smoke`` like every test in this module: visible
+        on every deliberate `pytest -m live_smoke` run, but never part of the
+        blocking Code/Adapter gate on a pull request (a third party's outage
+        must not turn a correct change red).
+        """
+        body = injury_report.fetch(self._KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body,
+            report_timestamp=self._KNOWN_GOOD_ACTIVE_ERA_TIMESTAMP,
+            source_url="https://ak-static.cms.nba.com/referee/injury/"
+            "Injury-Report_2026-01-15_05_30PM.pdf",
+        )
+        assert len(result.entries) > 0, "a real active-era report had zero entries"
+
+    def test_a_timestamp_with_no_published_report_is_reported_as_unavailable(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: an off-season timestamp stops being rejected cleanly.
+
+        Verified live 2026-08-17: this CDN answers a pre-season date with
+        HTTP **403**, not 404 — the two are folded together into
+        :class:`ReportNotAvailable` for exactly that reason (see
+        ``client.py``). A month with no NBA games at all should never have a
+        report.
+        """
+        off_season = datetime(2025, 8, 15, 17, 0, tzinfo=_EASTERN)
+        with pytest.raises(ReportNotAvailable):
+            injury_report.fetch(off_season, max_age=NO_CACHE)
+
+
+class TestInjuryReportCurrentSeasonIsAlive:
+    """A bounded, runtime-selected probe against whichever report should
+    exist *right now*, rather than a fixed archived timestamp.
+
+    Both probes above pin two already-*retired* filename eras against
+    permanently archived PDFs. Archived URLs survive a format rotation by
+    construction -- the CDN keeps serving the exact bytes it always served
+    for that historical path -- so neither one can ever detect the NBA
+    introducing a *third* filename convention or PDF column layout for
+    2026-27. Only a request built from "now", at test-run time, has any
+    chance of being served by whatever the source actually looks like today.
+
+    The candidate itself is never a calendar guess ("yesterday"): it is
+    always a date `select_recent_report_candidate` (`test_injury_report.py`)
+    has independently confirmed had a real game, read from the committed,
+    real `ScheduleLeagueV2` fixture, and it is only used once its own 17:30
+    ET evening has actually passed relative to "now" -- see that function's
+    docstring for exactly why both of those guards exist and what they
+    fixed (a second focused review found a same-day future-timestamp bug and
+    a routine-no-game-date false-failure risk in an earlier, calendar-only
+    version of this probe).
+
+    **What this can detect:** the CDN URL pattern or PDF column layout
+    breaking for a *current*, game-backed, already-published request -- the
+    one shape of drift the two archived probes above structurally cannot
+    see.
+
+    **What this cannot detect:** anything about a specific past or future
+    format era (that is what the archived legacy and 15-minute probes above
+    are for, and this is not a substitute for either); nor, beyond what
+    `select_recent_report_candidate`'s known-game-dates + freshness guard
+    already rules out, can it distinguish every possible "the source broke"
+    from every possible "there happened to be no game that day" -- it can
+    only ever probe a date this project has actually recorded as a real game
+    day, so it says nothing about any other date.
+
+    **Bounded by construction:** exactly one candidate timestamp, therefore
+    at most one HTTP request, per run -- never a scan across multiple days.
+    """
+
+    def test_a_recently_expected_report_is_reachable_and_parses(self) -> None:
+        """FAILS IF: the source or its layout has drifted for a live, current request.
+
+        Skips (does not fail) when `select_recent_report_candidate` returns
+        ``None`` -- no known game date is both already-published and fresh
+        enough (see that function's docstring) -- rather than either
+        producing a noisy red result against a source with nothing to
+        report, or -- the failure mode this whole probe exists to avoid --
+        silently treating an expected 403/404 as if it proved the adapter
+        still works. A 403/404 encountered on an actual candidate is not
+        caught here: it is a real failure, because the candidate is only
+        ever a date this project has independently confirmed had a game.
+        """
+        candidate = select_recent_report_candidate(datetime.now(tz=UTC))
+        if candidate is None:
+            pytest.skip(
+                "no known game date (from the recorded ScheduleLeagueV2 fixture) is "
+                f"both already-published and within the {FRESHNESS_WINDOW.days}-day "
+                "freshness window of now; no report is expected to exist for a date "
+                "this probe can defend, so it is skipped rather than producing a "
+                "noisy failure or silently treating an expected 403/404 as success. "
+                "The candidate-selection logic itself is proven offline by "
+                "test_injury_report.py::test_select_recent_report_candidate_*."
+            )
+        client = InjuryReportClient()
+        body = client.fetch(candidate, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body, report_timestamp=candidate, source_url=report_url(candidate)
+        )
+        assert len(result.entries) > 0, f"no entries parsed from the report for {candidate}"

@@ -1,0 +1,868 @@
+"""Adapter gate: the NBA official injury report PDF.
+
+Fixture: a real captured report from 2025-11-01 05:30 PM ET, chosen because it
+exercises every case the parser handles — 14 matchups over 7 pages, a reason
+that wraps across two physical lines, and a same-team "NOT YET SUBMITTED"
+marker for two teams whose report had not been filed as of this capture.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from typing import Any, ClassVar
+from zoneinfo import ZoneInfo
+
+import pytest
+from sqlalchemy import select
+
+from hoops_gm.db.models.enums import InjuryReportStatus, SeasonType
+from hoops_gm.db.models.identity import NbaTeam, Player
+from hoops_gm.db.models.injury_report import InjuryReportEntry
+from hoops_gm.db.models.stats import NbaGame
+from hoops_gm.ingest.errors import SourceContractError
+from hoops_gm.ingest.importers import import_injury_report_entries, import_teams
+from hoops_gm.ingest.injury_report import (
+    InjuryReportClient,
+    ReportNotAvailable,
+    parse_injury_report_pdf,
+    report_url,
+)
+from hoops_gm.ingest.injury_report.models import InjuryReportEntryRecord
+from hoops_gm.ingest.nba.models import NbaTeamRecord
+
+pytestmark = pytest.mark.adapter_contract
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+EASTERN = ZoneInfo("America/New_York")
+REPORT_TIMESTAMP = datetime(2025, 11, 1, 17, 30, tzinfo=EASTERN)
+FIXTURE_PDF = FIXTURES / "nba_injury_report_2025-11-01_0530pm.pdf"
+
+
+def load_pdf() -> bytes:
+    return FIXTURE_PDF.read_bytes()
+
+
+# ==========================================================================
+# URL construction
+# ==========================================================================
+
+
+def test_report_url_uses_the_hourly_legacy_format_before_the_15_minute_era() -> None:
+    url = report_url(REPORT_TIMESTAMP)
+    assert url == "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf"
+
+
+def test_report_url_uses_15_minute_granularity_after_the_format_change() -> None:
+    url = report_url(datetime(2026, 1, 15, 17, 30, tzinfo=EASTERN))
+    assert (
+        url == "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2026-01-15_05_30PM.pdf"
+    )
+
+
+def test_report_url_rejects_a_naive_timestamp() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        report_url(datetime(2025, 11, 1, 17, 30))
+
+
+# ==========================================================================
+# Parsing
+# ==========================================================================
+
+
+def test_parses_every_matchup_and_a_wrapped_multiline_reason() -> None:
+    result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
+    )
+
+    matchups = {e.matchup_raw for e in result.entries}
+    assert len(matchups) == 14
+    assert "SAC@MIL" in matchups
+
+    murray = next(e for e in result.entries if e.player_name_raw == "Murray, Keegan")
+    assert murray.status is InjuryReportStatus.OUT
+    assert murray.reason_raw == "Injury/Illness - Left Thumb; UCL Injury Recovery"
+    assert murray.game_date == date(2025, 11, 1)
+    assert murray.team_raw == "Sacramento Kings"
+    assert murray.matchup_raw == "SAC@MIL"
+
+
+def test_a_reason_wrapped_across_a_page_break_is_reattached_not_truncated() -> None:
+    """FAILS IF the tail of a page-spanning wrapped Reason goes missing again.
+
+    Found while fixing the "silently skip an unrecognised row" defect
+    (independent review, blocking finding 3): "Toppin, Obi"'s row is the
+    last one on page 2, and its Reason wraps to a second physical line that
+    the report renders past page 2's own bottom margin -- it reappears at
+    the very top of page 3, alone, with every other column blank. Before
+    this fix that orphaned continuation was silently dropped (the same
+    `continue` the new loud-raise now replaces for genuinely unrecognised
+    rows), truncating the real reason from "...Stress Fracture" to
+    "...Stress". It must now be reattached to the entry it belongs to.
+    """
+    result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
+    )
+    toppin = next(e for e in result.entries if e.player_name_raw == "Toppin, Obi")
+    assert toppin.reason_raw == "Injury/Illness - Right Foot; Stress Fracture"
+
+
+def test_not_yet_submitted_rows_are_present_but_excluded_from_player_entries() -> None:
+    result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
+    )
+
+    unsubmitted = [e for e in result.entries if e.status is InjuryReportStatus.NOT_YET_SUBMITTED]
+    assert len(unsubmitted) == 5
+    assert {e.team_raw for e in unsubmitted} == {
+        "Oklahoma City Thunder",
+        "Charlotte Hornets",
+        "San Antonio Spurs",
+        "Phoenix Suns",
+        "Los Angeles Lakers",
+    }
+    assert all(e.player_name_raw == "" for e in unsubmitted)
+    assert all(e not in result.player_entries for e in unsubmitted)
+
+
+def test_page_footer_text_never_leaks_into_a_data_row() -> None:
+    result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=REPORT_TIMESTAMP, source_url="https://example.invalid/fixture"
+    )
+    for entry in result.entries:
+        assert "Page" not in entry.team_raw
+        assert "Page" not in entry.player_name_raw
+
+
+def test_the_report_timestamp_is_cross_checked_against_the_pdf_masthead() -> None:
+    """FAILS IF the parser stops verifying it fetched the report it thinks it did."""
+    wrong_timestamp = REPORT_TIMESTAMP + timedelta(hours=1)
+    with pytest.raises(SourceContractError, match="masthead"):
+        parse_injury_report_pdf(
+            load_pdf(),
+            report_timestamp=wrong_timestamp,
+            source_url="https://example.invalid/fixture",
+        )
+
+
+def test_parse_result_is_stamped_with_the_masthead_instant_not_the_request_instant() -> None:
+    """FAILS IF the parser starts persisting the caller's request instant.
+
+    ``report_timestamp`` is only ever a request hint: the masthead check
+    tolerates up to 45 minutes of drift from it, and the legacy hourly-
+    filename era (``client.report_url``) truncates a request to the hour
+    before this function ever sees it. Two different in-tolerance requests
+    for the same PDF (here, 20 minutes on either side of the real 5:30 PM
+    masthead) must therefore resolve to the identical canonical timestamp —
+    the masthead's own instant — not to each request's own, different one.
+    """
+    early = REPORT_TIMESTAMP - timedelta(minutes=20)
+    late = REPORT_TIMESTAMP + timedelta(minutes=20)
+    assert early != late  # the bug this guards against needs them distinct
+
+    early_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=early, source_url="https://example.invalid/fixture"
+    )
+    late_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=late, source_url="https://example.invalid/fixture"
+    )
+
+    assert early_result.report_timestamp == late_result.report_timestamp
+    assert early_result.report_timestamp == REPORT_TIMESTAMP
+    assert all(e.report_timestamp == REPORT_TIMESTAMP for e in early_result.entries)
+    assert all(e.report_timestamp == REPORT_TIMESTAMP for e in late_result.entries)
+
+
+def test_import_converges_two_nearby_legacy_requests_into_one_history_row(session: Any) -> None:
+    """FAILS IF nearby legacy-era request instants create false history.
+
+    Before the masthead-canonicalization fix, two callers requesting "the
+    report near 5:30pm" at 20 minutes early and 20 minutes late both fetched
+    the identical legacy-era PDF but each stamped its own request instant as
+    ``report_timestamp`` — and because that field is part of
+    ``injury_report_entries``'s natural key, each import created its own
+    duplicate row set for what was really one report capture. Both requests
+    must now converge on a single set of rows keyed by the masthead's own
+    instant.
+    """
+    early = REPORT_TIMESTAMP - timedelta(minutes=20)
+    late = REPORT_TIMESTAMP + timedelta(minutes=20)
+    early_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=early, source_url="https://example.invalid/fixture-early"
+    )
+    late_result = parse_injury_report_pdf(
+        load_pdf(), report_timestamp=late, source_url="https://example.invalid/fixture-late"
+    )
+
+    first = import_injury_report_entries(
+        session, early_result.entries, source_url=early_result.source_url
+    )
+    second = import_injury_report_entries(
+        session, late_result.entries, source_url=late_result.source_url
+    )
+
+    assert first.created == len(early_result.entries)
+    assert second.created == 0
+    assert second.updated == len(late_result.entries)
+
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == len(early_result.entries)
+
+
+def test_parser_rejects_a_naive_report_timestamp() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        parse_injury_report_pdf(
+            load_pdf(),
+            report_timestamp=datetime(2025, 11, 1, 17, 30),
+            source_url="https://example.invalid/fixture",
+        )
+
+
+def test_parser_rejects_a_document_with_a_different_column_layout() -> None:
+    """FAILS IF the report's column layout changed and the parser did not notice.
+
+    Exercises the header-anchoring logic directly rather than mangling the
+    real PDF's bytes: the report's content stream is compressed, so a raw
+    byte substitution does not reliably change what actually renders.
+    """
+    from hoops_gm.ingest.injury_report.parser import _find_column_bounds
+
+    class FakePage:
+        width = 842.0
+
+        def extract_words(self, x_tolerance: float = 1.5) -> list[dict[str, Any]]:
+            # "Matchup" renamed to "Matchxxx" -- the header no longer matches
+            # the expected fixed sequence of seven column labels.
+            return [
+                {"text": "Game", "x0": 23.1, "x1": 50.2, "top": 107.7},
+                {"text": "Date", "x0": 53.0, "x1": 75.0, "top": 107.7},
+                {"text": "Game", "x0": 119.6, "x1": 146.6, "top": 107.7},
+                {"text": "Time", "x0": 149.4, "x1": 172.7, "top": 107.7},
+                {"text": "Matchxxx", "x0": 200.0, "x1": 241.8, "top": 107.7},
+                {"text": "Team", "x0": 264.2, "x1": 290.0, "top": 107.7},
+                {"text": "Player", "x0": 425.0, "x1": 454.1, "top": 107.7},
+                {"text": "Name", "x0": 456.9, "x1": 484.7, "top": 107.7},
+                {"text": "Current", "x0": 585.7, "x1": 621.3, "top": 107.7},
+                {"text": "Status", "x0": 624.1, "x1": 653.3, "top": 107.7},
+                {"text": "Reason", "x0": 666.1, "x1": 699.9, "top": 107.7},
+            ]
+
+    with pytest.raises(SourceContractError, match="Matchup"):
+        _find_column_bounds(FakePage())
+
+
+def test_parser_rejects_an_unrecognised_status_value() -> None:
+    """FAILS IF an unrecognised Current Status silently passes through.
+
+    The report's status vocabulary is closed (OUT, DOUBTFUL, QUESTIONABLE,
+    PROBABLE, AVAILABLE); this guards against silently accepting a sixth.
+    """
+    from hoops_gm.ingest.injury_report.parser import _parse_status
+
+    with pytest.raises(SourceContractError, match="unrecognised Current Status"):
+        _parse_status("Rehabbing")
+
+
+class _FakeCroppedPage:
+    """A ``page.within_bbox(...)`` double: just the words inside the crop."""
+
+    def __init__(self, words: list[dict[str, Any]]) -> None:
+        self._words = words
+
+    def extract_words(self, x_tolerance: float = 1.5) -> list[dict[str, Any]]:
+        return self._words
+
+
+class _FakeBadRowPage:
+    """A synthetic page producing exactly one malformed data row: no player
+    name, no status, and a Reason that is not the NOT YET SUBMITTED marker.
+
+    Built from real word/edge geometry rather than mangled PDF bytes (the
+    real fixture's content stream is compressed, so a byte substitution does
+    not reliably change what renders) -- the same approach
+    ``test_parser_rejects_a_document_with_a_different_column_layout`` already
+    uses for ``_find_column_bounds``, extended here to drive the *entire*
+    parser end to end so the raise is proven at the public entry point, not
+    just in an internal helper.
+    """
+
+    page_number = 1
+    height = 800.0
+    width = 800.0
+
+    def __init__(self) -> None:
+        # "Injury Report: 11/01/25 5:30 PM" -- matches REPORT_TIMESTAMP.
+        masthead: list[dict[str, Any]] = [
+            {"text": "11/01/25", "x0": 10.0, "x1": 60.0, "top": 5.0},
+            {"text": "5:30", "x0": 70.0, "x1": 90.0, "top": 5.0},
+            {"text": "PM", "x0": 95.0, "x1": 110.0, "top": 5.0},
+        ]
+        # The seven-column header, positioned so word-gap grouping produces
+        # exactly `parser.HEADER_LABELS`.
+        header: list[dict[str, Any]] = [
+            {"text": "Game", "x0": 0.0, "x1": 30.0, "top": 100.0},
+            {"text": "Date", "x0": 32.0, "x1": 55.0, "top": 100.0},
+            {"text": "Game", "x0": 100.0, "x1": 130.0, "top": 100.0},
+            {"text": "Time", "x0": 132.0, "x1": 155.0, "top": 100.0},
+            {"text": "Matchup", "x0": 200.0, "x1": 240.0, "top": 100.0},
+            {"text": "Team", "x0": 280.0, "x1": 310.0, "top": 100.0},
+            {"text": "Player", "x0": 400.0, "x1": 430.0, "top": 100.0},
+            {"text": "Name", "x0": 432.0, "x1": 455.0, "top": 100.0},
+            {"text": "Current", "x0": 560.0, "x1": 600.0, "top": 100.0},
+            {"text": "Status", "x0": 602.0, "x1": 630.0, "top": 100.0},
+            {"text": "Reason", "x0": 700.0, "x1": 740.0, "top": 100.0},
+        ]
+        # The one malformed data row: a Game Date re-print and a Reason, but
+        # no Player Name, no Current Status -- and the Reason text is not the
+        # recognised "NOT YET SUBMITTED" marker.
+        bad_row: list[dict[str, Any]] = [
+            {"text": "11/01/2025", "x0": 0.0, "x1": 60.0, "top": 230.0},
+            {"text": "SomethingWeird", "x0": 700.0, "x1": 750.0, "top": 230.0},
+        ]
+        self._all_words: list[dict[str, Any]] = masthead + header + bad_row
+        # One row-boundary ruling line under the Player Name column
+        # (x0 == that column's derived left edge), producing exactly one row
+        # split so the bad row lands in its own segment.
+        self.edges: list[dict[str, Any]] = [{"orientation": "h", "x0": 396.0, "top": 250.0}]
+
+    def extract_words(self, x_tolerance: float = 1.5) -> list[dict[str, Any]]:
+        return self._all_words
+
+    def within_bbox(self, bbox: tuple[float, float, float, float]) -> _FakeCroppedPage:
+        x0, y0, x1, y1 = bbox
+        words = [w for w in self._all_words if x0 <= w["x0"] < x1 and y0 <= w["top"] < y1]
+        return _FakeCroppedPage(words)
+
+
+class _FakePdfDocument:
+    def __init__(self, pages: list[Any]) -> None:
+        self.pages = pages
+
+    def __enter__(self) -> _FakePdfDocument:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+def test_parser_raises_on_a_nonempty_row_with_no_player_status_or_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FAILS IF a malformed nonempty row is silently dropped instead of raising.
+
+    A row that names no player and no status, and whose Reason text is not
+    the recognised "NOT YET SUBMITTED" marker, has no legitimate place in the
+    report's structure -- every real row either names a player+status or is
+    that one marker. Before this fix such a row was silently ``continue``-d
+    past, indistinguishable from ordinary blank filler; that would hide
+    exactly the kind of unnoticed PDF-extraction drift (a mis-detected row
+    boundary, a shifted column, a new marker phrase) the Adapter gate exists
+    to surface loudly. Exercises the full ``parse_injury_report_pdf`` entry
+    point end to end against a synthetic page, not a directly-called private
+    helper.
+    """
+    import pdfplumber
+
+    page = _FakeBadRowPage()
+    monkeypatch.setattr(pdfplumber, "open", lambda *_a, **_kw: _FakePdfDocument([page]))
+
+    with pytest.raises(SourceContractError, match="no player name or status"):
+        parse_injury_report_pdf(
+            b"%PDF-fake",
+            report_timestamp=REPORT_TIMESTAMP,
+            source_url="https://example.invalid/fixture",
+        )
+
+
+# ==========================================================================
+# Transport
+# ==========================================================================
+
+
+def test_client_translates_a_404_into_report_not_available() -> None:
+    import urllib.error
+    from email.message import Message
+
+    class FailingOpener:
+        def __call__(self, request: Any, timeout: float) -> Any:
+            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", Message(), None)
+
+    client = InjuryReportClient(opener=FailingOpener())
+    with pytest.raises(ReportNotAvailable):
+        client.fetch(REPORT_TIMESTAMP)
+
+
+def test_client_rejects_a_200_body_that_is_not_a_pdf() -> None:
+    """FAILS IF an HTML error page served under HTTP 200 is treated as data."""
+
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"Content-Type": "text/html"}
+
+        def read(self) -> bytes:
+            return b"<html>not a pdf</html>"
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    def opener(request: Any, timeout: float) -> Any:
+        return FakeResponse()
+
+    client = InjuryReportClient(opener=opener)
+    with pytest.raises(SourceContractError, match="PDF magic"):
+        client.fetch(REPORT_TIMESTAMP)
+
+
+# ==========================================================================
+# Import
+# ==========================================================================
+
+
+def test_import_is_idempotent_and_resolves_team_game_and_player(session: Any) -> None:
+    result = parse_injury_report_pdf(
+        load_pdf(),
+        report_timestamp=REPORT_TIMESTAMP,
+        source_url="https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf",
+    )
+
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(1610612758, "SAC", "Sacramento Kings"),
+            NbaTeamRecord(1610612749, "MIL", "Milwaukee Bucks"),
+        ],
+    )
+    teams = {t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))}
+    game = NbaGame(
+        nba_game_id="0022500100",
+        season="2025-26",
+        season_type=SeasonType.REGULAR,
+        game_date=date(2025, 11, 1),
+        home_team_id=teams[1610612749],
+        away_team_id=teams[1610612758],
+    )
+    session.add(game)
+    player = Player(
+        full_name="Keegan Murray",
+        normalized_name="keegan murray",
+        current_team_id=teams[1610612758],
+    )
+    session.add(player)
+    session.flush()
+
+    first = import_injury_report_entries(session, result.entries, source_url=result.source_url)
+    second = import_injury_report_entries(session, result.entries, source_url=result.source_url)
+
+    assert first.created == len(result.entries)
+    assert second.updated == len(result.entries)
+    assert second.created == 0
+
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == len(result.entries)
+
+    murray_row = next(r for r in rows if r.player_name_raw == "Murray, Keegan")
+    assert murray_row.player_id == player.id
+    assert murray_row.team_id == teams[1610612758]
+    assert murray_row.game_id == game.id
+    assert murray_row.status is InjuryReportStatus.OUT
+
+    unmatched = [r for r in rows if r.player_name_raw and r.player_id is None]
+    # Every player besides Keegan Murray is genuinely absent from the tiny
+    # crosswalk seeded above, so they are expected to stay unresolved rather
+    # than guessed at.
+    assert len(unmatched) == len(result.player_entries) - 1
+
+
+def test_import_never_guesses_a_player_id_for_an_ambiguous_normalized_name(session: Any) -> None:
+    result = parse_injury_report_pdf(
+        load_pdf(),
+        report_timestamp=REPORT_TIMESTAMP,
+        source_url="https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf",
+    )
+    murray = next(e for e in result.entries if e.player_name_raw == "Murray, Keegan")
+
+    # Two different players share a normalized name and neither is on the
+    # matchup's team -- an ambiguity the importer must not resolve by guessing.
+    session.add_all(
+        [
+            Player(full_name="Keegan Murray A", normalized_name="keegan murray"),
+            Player(full_name="Keegan Murray B", normalized_name="keegan murray"),
+        ]
+    )
+    session.flush()
+
+    import_injury_report_entries(session, [murray], source_url="https://example.invalid/fixture")
+    row = session.scalars(select(InjuryReportEntry)).one()
+    assert row.player_id is None
+
+
+def _seed_sac_at_mil_teams(session: Any) -> dict[int, int]:
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(1610612758, "SAC", "Sacramento Kings"),
+            NbaTeamRecord(1610612749, "MIL", "Milwaukee Bucks"),
+        ],
+    )
+    session.flush()
+    return {t.nba_team_id: t.id for t in session.scalars(select(NbaTeam))}
+
+
+def test_import_resolves_the_home_team_from_a_partial_subset_containing_only_it(
+    session: Any,
+) -> None:
+    """FAILS IF a partial subset misdirects a team to its opponent.
+
+    A real defect found in independent review: resolving which tricode is
+    "this" row's team from order-of-appearance within the imported batch
+    means a caller importing only one team's rows (e.g. because the other
+    team's report had not been filed yet) sees that lone team treated as
+    whichever tricode happened to appear first -- here, that would wrongly
+    resolve the home Bucks to the away Kings' tricode. Team resolution must
+    not depend on any other row being present in the same import call.
+    """
+    teams = _seed_sac_at_mil_teams(session)
+
+    home_only = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Milwaukee Bucks",
+        player_name_raw="Lopez, Brook",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Rest",
+    )
+
+    import_injury_report_entries(session, [home_only], source_url="https://example.invalid/fixture")
+    row = session.scalars(select(InjuryReportEntry)).one()
+    assert row.team_id == teams[1610612749]  # Milwaukee Bucks (home), not swapped to Sacramento
+
+
+def test_import_does_not_swap_teams_when_entries_are_out_of_report_order(session: Any) -> None:
+    """FAILS IF team resolution depends on which row of a matchup is imported first.
+
+    The report always lists the away team's rows before the home team's, but
+    nothing about the natural key or this importer should depend on that.
+    Feeding the home team's entry before the away team's -- the reverse of
+    the report's own order -- must still resolve each row to its own team,
+    not swap them.
+    """
+    teams = _seed_sac_at_mil_teams(session)
+
+    home_entry = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Milwaukee Bucks",
+        player_name_raw="Lopez, Brook",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Rest",
+    )
+    away_entry = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="05:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        reason_raw="Injury/Illness - Left Thumb",
+    )
+
+    # Home listed first, away second -- the reverse of the report's own order.
+    import_injury_report_entries(
+        session, [home_entry, away_entry], source_url="https://example.invalid/fixture"
+    )
+
+    rows = {r.player_name_raw: r for r in session.scalars(select(InjuryReportEntry)).all()}
+    assert rows["Lopez, Brook"].team_id == teams[1610612749]  # Milwaukee Bucks stays Bucks
+    assert rows["Murray, Keegan"].team_id == teams[1610612758]  # Sacramento Kings stays Kings
+
+
+# ==========================================================================
+# Current-season live-smoke candidate selection
+#
+# The selection logic itself is unit-tested here, offline, as part of the
+# default suite (this module carries no `live_smoke` marker). The actual
+# live HTTP fetch that uses it lives in
+# `test_live_smoke.py::TestInjuryReportCurrentSeasonIsAlive`, which imports
+# `select_recent_report_candidate` from this module rather than duplicating
+# it, so the exact logic proven here offline is what runs live.
+#
+# Redesigned twice after two focused reviews found real defects:
+#
+# Round 1 (calendar-only version): (1) clamping "yesterday" forward to a
+# fixed season-start date could select a timestamp later *today*, i.e. in
+# the future relative to "now", guaranteeing a false-red 404; (2) treating
+# every "yesterday" as a game day ignored that the real NBA calendar has
+# routine no-game dates (the All-Star break, scattered rest days) on which a
+# 403/404 is the *correct* response, not source drift. Fixed by never
+# inventing a candidate date: a candidate is only ever a date this project
+# has actually recorded the league schedule reporting as a real game day,
+# used only once its own evening has passed.
+#
+# Round 2 (three-sparse-anchor version): grounding candidates in
+# `nba_scheduleleaguev2_2026_27.json`'s three deliberately-sparse kept dates
+# (chosen for schedule-density/timezone test coverage, not for this purpose)
+# left gaps up to ~100 days between anchors and up to 45 days of allowed
+# staleness -- so for most of the season this "dynamic" probe would either
+# skip for weeks or reuse a candidate old enough that it stopped meaningfully
+# checking anything "current". Fixed by deriving a full, dates-only calendar
+# fixture from the real live schedule response (below) and tightening
+# `FRESHNESS_WINDOW` to match its actual, measured gaps.
+# ==========================================================================
+
+GAME_DATES_FIXTURE_PATH = FIXTURES / "nba_scheduleleaguev2_2026_27_gamedates.json"
+
+#: How stale the most recent independently-confirmed game date may be before
+#: it stops counting as "current enough" for this probe's purpose. Sized
+#: from the actual 2026-27 regular-season calendar in
+#: `nba_scheduleleaguev2_2026_27_gamedates.json`: the largest gap between two
+#: consecutive kept dates is 7 days (2027-02-18 -> 2027-02-25, the All-Star
+#: break), so 10 comfortably covers every real gap in that fixture with a
+#: few days of buffer, while staying "short" -- not the weeks-long window an
+#: earlier, sparser fixture needed. When every known date is this stale, the
+#: honest answer is to skip and ask for the fixture to be refreshed with a
+#: more recent recorded game date, not to keep reusing an old one
+#: indefinitely.
+FRESHNESS_WINDOW = timedelta(days=10)
+
+
+def known_game_dates_from_schedule_fixture() -> list[date]:
+    """Game dates this project has actually recorded the league playing.
+
+    Reads the `game_dates` array directly from the committed
+    `nba_scheduleleaguev2_2026_27_gamedates.json` fixture -- a compact,
+    dates-only calendar derived from the real, live `ScheduleLeagueV2`
+    response for the 2026-27 season (173 total `gameDates`; the 13
+    preseason-only dates are excluded, since the injury-report adapter is
+    out of scope before the season's first game, R40) -- rather than
+    assuming any particular calendar date has a game. A date not in this
+    list is not known to have a game, and this selector must never guess
+    that it does.
+    """
+    payload = json.loads(GAME_DATES_FIXTURE_PATH.read_text())
+    return sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in payload["game_dates"])
+
+
+def select_recent_report_candidate(
+    now: datetime, known_game_dates: Sequence[date] | None = None
+) -> datetime | None:
+    """Pick a recent, game-backed evening report timestamp to probe live.
+
+    A candidate is only ever built from a date in ``known_game_dates``
+    (defaulting to `known_game_dates_from_schedule_fixture`) -- never from
+    "yesterday" or any other calendar assumption -- because the real NBA
+    calendar has routine no-game dates (the All-Star break, scattered rest
+    days) on which a 403/404 from the source is the *correct* answer, not
+    drift; this selector must never manufacture a candidate for a date it
+    cannot independently confirm had a game.
+
+    Among the known game dates, only one both **already published** (its own
+    17:30 ET evening is strictly before ``now`` -- never a future or
+    same-moment timestamp, which would guarantee a false-red 404) and
+    **fresh enough** (within `FRESHNESS_WINDOW` of ``now``, so a probe run
+    long after the season's last recorded date does not keep reusing a
+    stale anchor and calling it current) is eligible. Returns the most
+    recent eligible date's 17:30 ET evening, or ``None`` if none qualify --
+    the correct response before the season starts, during a gap between
+    recorded anchors wider than `FRESHNESS_WINDOW`, or on a known game date
+    before its own evening has actually arrived.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_eastern = now.astimezone(EASTERN)
+    dates = (
+        list(known_game_dates)
+        if known_game_dates is not None
+        else known_game_dates_from_schedule_fixture()
+    )
+    eligible = [
+        d
+        for d in dates
+        if datetime.combine(d, time(17, 30), tzinfo=EASTERN) < now_eastern
+        and (now_eastern.date() - d) <= FRESHNESS_WINDOW
+    ]
+    if not eligible:
+        return None
+    return datetime.combine(max(eligible), time(17, 30), tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_rejects_a_naive_now() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        select_recent_report_candidate(datetime(2027, 1, 15, 12, 0))
+
+
+def test_select_recent_report_candidate_returns_none_with_no_known_game_dates() -> None:
+    """FAILS IF the selector invents a candidate with nothing to ground it.
+
+    This is the off-season case in practice (today, 2026-08-18, precedes
+    every date the recorded schedule fixture confirms), reached here via an
+    explicitly empty list so the assertion does not silently stop meaning
+    anything once the real fixture gains more dates.
+    """
+    now = datetime(2026, 8, 18, 12, 0, tzinfo=EASTERN)
+    assert select_recent_report_candidate(now, known_game_dates=[]) is None
+
+
+def test_select_recent_report_candidate_never_returns_a_future_or_present_timestamp() -> None:
+    """FAILS IF a same-day candidate can be selected before its own evening.
+
+    A real defect from the second focused review: clamping "yesterday"
+    forward to a fixed season-start date could select *today* at 17:30 ET
+    even when "now" was still this morning -- a future timestamp,
+    guaranteeing a false-red 404 against a report that has not been
+    published yet. A known game date must not be used until its own
+    evening has actually passed.
+    """
+    game_day = date(2026, 10, 20)
+    before_evening = datetime.combine(game_day, time(9, 0), tzinfo=EASTERN)
+    assert select_recent_report_candidate(before_evening, known_game_dates=[game_day]) is None
+
+    after_evening = datetime.combine(game_day, time(18, 0), tzinfo=EASTERN)
+    assert select_recent_report_candidate(
+        after_evening, known_game_dates=[game_day]
+    ) == datetime.combine(game_day, time(17, 30), tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_does_not_assume_an_unconfirmed_date_had_a_game() -> None:
+    """FAILS IF the selector falls back to assuming "yesterday" had a game.
+
+    The other real defect from the second focused review: treating every
+    "yesterday" as a game day silently mistakes a routine no-game date (the
+    All-Star break, a scattered rest day) for source drift when the report
+    is unavailable. Here, the day immediately before "now" is deliberately
+    *not* in the known-game-dates list -- standing in for exactly that kind
+    of gap -- and the selector must skip past it to the true most recent
+    confirmed game date instead of guessing.
+    """
+    confirmed_game_day = date(2027, 1, 5)
+    now = datetime(2027, 1, 10, 9, 0, tzinfo=EASTERN)  # "yesterday" (Jan 9) has no game
+    candidate = select_recent_report_candidate(now, known_game_dates=[confirmed_game_day])
+    assert candidate == datetime(2027, 1, 5, 17, 30, tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_picks_the_most_recent_eligible_date() -> None:
+    now = datetime(2027, 1, 10, 9, 0, tzinfo=EASTERN)
+    known = [date(2027, 1, 2), date(2027, 1, 5), date(2027, 1, 8)]
+    candidate = select_recent_report_candidate(now, known_game_dates=known)
+    assert candidate == datetime(2027, 1, 8, 17, 30, tzinfo=EASTERN)
+
+
+def test_select_recent_report_candidate_returns_none_when_only_known_dates_are_stale() -> None:
+    """FAILS IF a months-old anchor is silently treated as current.
+
+    A probe run long after the last date the schedule fixture happens to
+    record should not keep reusing that stale anchor indefinitely and
+    calling it a live, current-format check -- that would make this
+    "dynamic" probe just a slower-moving version of the fixed-archive
+    probes it exists to improve on.
+    """
+    stale_game_day = date(2026, 10, 20)
+    long_after = datetime.combine(
+        stale_game_day + FRESHNESS_WINDOW + timedelta(days=1), time(12, 0), tzinfo=EASTERN
+    )
+    assert select_recent_report_candidate(long_after, known_game_dates=[stale_game_day]) is None
+
+
+def test_select_recent_report_candidate_accepts_a_non_eastern_aware_now() -> None:
+    """FAILS IF the function assumes its caller already converted to Eastern."""
+    from datetime import UTC
+
+    game_day = date(2027, 1, 5)
+    now_utc = datetime(2027, 1, 10, 14, 0, tzinfo=UTC)  # 09:00 ET
+    candidate = select_recent_report_candidate(now_utc, known_game_dates=[game_day])
+    assert candidate == datetime(2027, 1, 5, 17, 30, tzinfo=EASTERN)
+
+
+def test_known_game_dates_from_schedule_fixture_reads_the_real_recorded_dates() -> None:
+    """FAILS IF the fixture-reading helper stops matching the committed fixture.
+
+    Pins the shape of the real, live-captured 2026-27 regular-season
+    calendar in `nba_scheduleleaguev2_2026_27_gamedates.json`: 160 dates
+    from the season opener through the last recorded regular-season date,
+    the 13 preseason-only dates excluded (out of scope per R40,
+    `docs/backlog.md`), and no gap wider than the All-Star break.
+    `select_recent_report_candidate`'s default grounding is only as
+    defensible as this list actually being read correctly.
+    """
+    dates = known_game_dates_from_schedule_fixture()
+    assert len(dates) == 160
+    assert dates[0] == date(2026, 10, 20)
+    assert dates[-1] == date(2027, 4, 11)
+    assert date(2026, 10, 3) not in dates  # preseason-only, excluded
+    gaps = [(dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)]
+    assert max(gaps) == 7  # the All-Star break, 2027-02-18 -> 2027-02-25
+
+
+def test_select_recent_report_candidate_has_no_blind_interval_between_december_and_march() -> None:
+    """FAILS IF the December-to-March blind interval this probe used to have reappears.
+
+    A real limitation found in a third focused review: grounding candidates
+    in the three deliberately-sparse anchor dates kept in
+    `nba_scheduleleaguev2_2026_27.json` (chosen for schedule-density/
+    timezone test coverage, not for this purpose) left roughly 100 days
+    between the December and March anchors during which no candidate was
+    both published and within the old 45-day freshness window for most of
+    that span. The full regular-season calendar fixture closes that gap
+    entirely -- every probe date below must find an eligible, bounded-age
+    candidate.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    for probe_date in (date(2026, 12, 20), date(2027, 1, 15), date(2027, 2, 1), date(2027, 3, 1)):
+        now = datetime.combine(probe_date, time(12, 0), tzinfo=EASTERN)
+        candidate = select_recent_report_candidate(now, known_game_dates=known)
+        assert candidate is not None, f"no eligible candidate found for {probe_date}"
+        age_days = (probe_date - candidate.date()).days
+        assert age_days <= FRESHNESS_WINDOW.days, (
+            f"{probe_date}: candidate {candidate.date()} is {age_days} days stale"
+        )
+
+
+def test_select_recent_report_candidate_age_stays_bounded_across_the_entire_season() -> None:
+    """FAILS IF any day in the real 2026-27 calendar -- including the
+    All-Star break, Christmas, and every other recorded gap -- produces no
+    eligible candidate, or one older than `FRESHNESS_WINDOW` allows.
+
+    Walks every calendar day from the day after the season's first game
+    through its last recorded game, against the real, committed dates-only
+    fixture rather than a synthetic list, so this proves the actual
+    committed calendar -- not just the selection mechanism in the abstract.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    probe_date = known[0] + timedelta(days=1)
+    last_day = known[-1]
+    while probe_date <= last_day:
+        now = datetime.combine(probe_date, time(12, 0), tzinfo=EASTERN)  # before any evening
+        candidate = select_recent_report_candidate(now, known_game_dates=known)
+        assert candidate is not None, f"no eligible candidate on {probe_date}"
+        age_days = (probe_date - candidate.date()).days
+        assert age_days <= FRESHNESS_WINDOW.days, (
+            f"{probe_date}: candidate {candidate.date()} is {age_days} days stale"
+        )
+        probe_date += timedelta(days=1)
+
+
+def test_select_recent_report_candidate_skips_well_after_the_season_ends() -> None:
+    """FAILS IF the probe keeps reusing the season's last recorded date indefinitely.
+
+    Well past `FRESHNESS_WINDOW` after the last date the real fixture
+    records, this must skip rather than silently treating a long-stale
+    archived date as evidence of anything current -- the same failure mode
+    the fixed-archive probes above were replaced to avoid.
+    """
+    known = known_game_dates_from_schedule_fixture()
+    long_after = datetime.combine(
+        known[-1] + FRESHNESS_WINDOW + timedelta(days=5), time(12, 0), tzinfo=EASTERN
+    )
+    assert select_recent_report_candidate(long_after, known_game_dates=known) is None
