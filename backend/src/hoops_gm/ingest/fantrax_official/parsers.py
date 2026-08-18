@@ -40,7 +40,11 @@ from hoops_gm.ingest.fantrax_official.models import (
     FantraxScoringCategory,
     FantraxTeamEntity,
 )
-from hoops_gm.ingest.league_settings import parse_official_league_settings
+from hoops_gm.ingest.league_settings import (
+    parse_official_league_settings,
+    parse_scoring_category_configs,
+    parse_scoring_type_raw,
+)
 
 SOURCE = "fantrax_official"
 
@@ -295,41 +299,26 @@ def parse_league_info(
         if isinstance(t, dict)
     ]
 
-    raw_categories = body.get("scoringCategories")
-    scoring_system = body.get("scoringSystem")
-    if not isinstance(raw_categories, list) and isinstance(scoring_system, dict):
-        rich_settings = scoring_system.get("scoringCategorySettings")
-        if isinstance(rich_settings, list):
-            raw_categories = [
-                config.get("scoringCategory")
-                for group in rich_settings
-                if isinstance(group, dict) and isinstance(group.get("configs"), list)
-                for config in group["configs"]
-                if isinstance(config, dict) and isinstance(config.get("scoringCategory"), dict)
-            ]
-    categories: list[FantraxScoringCategory] = []
-    if isinstance(raw_categories, list):
-        for c in raw_categories:
-            if isinstance(c, dict):
-                key = c.get("id") or c.get("key") or c.get("code") or c.get("name")
-                if key is not None:
-                    categories.append(
-                        FantraxScoringCategory(
-                            key=str(key),
-                            name=_optional_str(c.get("name")),
-                            abbreviation=_optional_str(c.get("shortName") or c.get("abbrev")),
-                        )
-                    )
-            elif isinstance(c, str):
-                categories.append(FantraxScoringCategory(key=c))
+    raw_categories = parse_scoring_category_configs(body)
+    categories: list[FantraxScoringCategory] = (
+        [
+            FantraxScoringCategory(
+                code=item.code,
+                name=item.display_name,
+                abbreviation=item.abbreviation,
+                weight=item.weight,
+            )
+            for item in raw_categories
+        ]
+        if raw_categories is not None
+        else []
+    )
 
     roster_info = body.get("rosterInfo")
     roster_size = body.get("rosterSize")
     if roster_size is None and isinstance(roster_info, dict):
         roster_size = roster_info.get("maxTotalPlayers")
-    scoring_type = body.get("scoringType")
-    if scoring_type is None and isinstance(scoring_system, dict):
-        scoring_type = scoring_system.get("type")
+    scoring_type = parse_scoring_type_raw(body)
     return FantraxLeagueInfo(
         league_id=resolved_league_id,
         league_name=_optional_str(body.get("leagueName")),

@@ -14,7 +14,9 @@ SQLite. CI does.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,8 +28,13 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base, enum_check_constraint_names
+from hoops_gm.db.models import League, LeagueSettingsSnapshot
 from hoops_gm.db.models.enums import ExternalSource, FieldEvidence
+from hoops_gm.db.session import Database
+from hoops_gm.ingest.importers import import_league_settings
+from hoops_gm.ingest.league_settings import LeagueSettingsDocument, parse_official_league_settings
 
 
 @pytest.fixture
@@ -710,6 +717,328 @@ def test_a_migrated_league_settings_snapshot_enforces_its_check_constraints(
                     "sha256": "too-short",
                 },
             )
+    finally:
+        engine.dispose()
+
+
+def _legacy_v1_official_payload() -> dict[str, object]:
+    return {
+        "seasonYear": 2026,
+        "startDate": "2026-10-20",
+        "endDate": "2027-03-14",
+        "rosterInfo": {
+            "positionConstraints": {"G": {"maxActive": 4}},
+            "maxTotalPlayers": 14,
+            "maxTotalActivePlayers": 10,
+            "maxTotalReservePlayers": 4,
+        },
+    }
+
+
+def test_0012_backfills_legacy_settings_snapshots_to_schema_v2(
+    alembic_config: Config, migration_url: str, tmp_path: Path
+) -> None:
+    """A snapshot captured before ``scoring_type``/``scoring_categories`` existed survives the bump.
+
+    ``LeagueSettingsDocument`` gained those two required fields in this
+    revision, bumping its own document ``schema_version`` 1 -> 2. Without a
+    backfill, reading a pre-existing snapshot's ``settings`` JSON back through
+    the new, stricter model would raise -- breaking both
+    ``import_league_settings``'s own re-ingest dedupe (which parses the prior
+    snapshot to compare content) and ``derive_deadline_calendar``'s read of
+    the current snapshot (the same ``model_validate`` call). The row inserted
+    here is built by taking what the *current* parser produces and removing
+    exactly the two fields it did not know about before this revision --
+    i.e. precisely what a real pre-migration row looked like -- then proving
+    it is still readable, and that the real importer runs cleanly against it,
+    after upgrading.
+    """
+    command.upgrade(alembic_config, "0011")
+
+    payload = _legacy_v1_official_payload()
+    current_document = parse_official_league_settings(
+        payload, source_league_id="league-1", capture_ref="sha256:" + "a" * 64
+    )
+    legacy_settings = current_document.model_dump(mode="json")
+    del legacy_settings["scoring_type"]
+    del legacy_settings["scoring_categories"]
+    legacy_settings["schema_version"] = 1
+    legacy_source_summary = {
+        field: legacy_settings[field]["evidence"]
+        for field in (
+            "lineup_lock",
+            "waivers",
+            "games_caps",
+            "roster_limits",
+            "scoring_periods",
+            "trade_deadline",
+            "playoffs",
+            "keepers",
+        )
+    }
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO leagues (id, name, season, scoring_type, draft_type, "
+                    "fantrax_league_id, is_active, created_at, updated_at) VALUES "
+                    "(1, 'Test League', '2026-27', 'h2h_categories', 'unknown', "
+                    "'league-1', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO league_settings_snapshots (league_id, version, "
+                    "schema_version, settings, source_summary, source_payload_sha256, "
+                    "observed_at, created_at, updated_at) VALUES (1, 1, '1', "
+                    ":settings, :source_summary, :sha256, :observed_at, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "settings": json.dumps(legacy_settings),
+                    "source_summary": json.dumps(legacy_source_summary),
+                    "sha256": "a" * 64,
+                    "observed_at": datetime(2026, 8, 1, tzinfo=UTC).isoformat(),
+                },
+            )
+
+        command.upgrade(alembic_config, "0012")
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT schema_version, settings FROM league_settings_snapshots WHERE id = 1")
+            ).one()
+        migrated_settings = (
+            row.settings if isinstance(row.settings, dict) else json.loads(row.settings)
+        )
+
+        assert row.schema_version == "2"
+        assert migrated_settings["schema_version"] == 2
+        for field_name in ("scoring_type", "scoring_categories"):
+            assert migrated_settings[field_name]["value"] is None
+            [evidence] = migrated_settings[field_name]["evidence"]
+            assert evidence["source"] == "schema_migration"
+            assert evidence["status"] == "absent"
+
+        # The exact read both import_league_settings and derive_deadline_calendar
+        # perform first against the *current* snapshot: must not raise.
+        LeagueSettingsDocument.model_validate(migrated_settings)
+
+        settings = Settings(
+            environment="test",
+            database_url=migration_url,
+            log_format="json",
+            bridge_secret_path=tmp_path / "bridge_secret",
+            _env_file=None,
+        )
+        database = Database.from_settings(settings)
+        session = database.session_factory()
+        try:
+            league = session.get(League, 1)
+            assert league is not None
+
+            # A first real import after the migration reads the migrated row
+            # (proving it doesn't raise) and, because a schema-migration
+            # "absent" observation is evidentially distinct from a genuine
+            # fantrax_official "absent" observation, correctly does not
+            # dedupe against it -- the migrated row honestly means "we never
+            # asked", not "the official source confirmed nothing here".
+            reimported_document = parse_official_league_settings(
+                payload, source_league_id="league-1", capture_ref="sha256:" + "b" * 64
+            )
+            counts = import_league_settings(
+                session,
+                league=league,
+                document=reimported_document,
+                source_payload_sha256="b" * 64,
+                observed_at=datetime(2026, 8, 19, tzinfo=UTC),
+            )
+            assert counts.created == 1
+            assert counts.skipped == 0
+
+            # A second, truly unchanged re-import against that new (now
+            # fantrax_official-evidenced) row dedupes normally -- proving the
+            # migration only changed how the *legacy* row reads, not the
+            # importer's ordinary idempotency going forward.
+            counts = import_league_settings(
+                session,
+                league=league,
+                document=reimported_document,
+                source_payload_sha256="b" * 64,
+                observed_at=datetime(2026, 8, 19, tzinfo=UTC),
+            )
+            assert counts.created == 0
+            assert counts.skipped == 1
+
+            # Genuinely new scoring content creates a real new version rather
+            # than raising, or being silently absorbed by an earlier row.
+            scored_payload = dict(payload)
+            scored_payload["scoringSystem"] = {
+                "type": "HEAD_TO_HEAD_ROTI_MULTI_WIN",
+                "scoringCategorySettings": [
+                    {
+                        "configs": [
+                            {
+                                "scoringCategory": {
+                                    "code": "INDIVIDUAL_ASSISTS",
+                                    "shortName": "AST",
+                                    "name": "Assists",
+                                },
+                                "weight": 1.0,
+                            }
+                        ]
+                    }
+                ],
+            }
+            scored_document = parse_official_league_settings(
+                scored_payload, source_league_id="league-1", capture_ref="sha256:" + "c" * 64
+            )
+            counts = import_league_settings(
+                session,
+                league=league,
+                document=scored_document,
+                source_payload_sha256="c" * 64,
+                observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+            )
+            assert counts.created == 1
+            session.commit()
+
+            versions = [
+                snapshot.version
+                for snapshot in session.query(LeagueSettingsSnapshot)
+                .filter(LeagueSettingsSnapshot.league_id == 1)
+                .order_by(LeagueSettingsSnapshot.version)
+                .all()
+            ]
+            assert versions == [1, 2, 3]
+        finally:
+            session.close()
+            database.dispose()
+    finally:
+        engine.dispose()
+
+
+def test_0012_downgrade_refuses_to_discard_genuine_post_migration_scoring_evidence(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """A real official import after 0012 must not be silently thrown away.
+
+    Downgrading to 0011 would otherwise strip a genuinely observed
+    ``scoring_type``/``scoring_categories`` pair back to the placeholder
+    "absent" shape -- indistinguishable, after the fact, from a row that was
+    never migrated at all. That is real data loss, so ``downgrade()`` must
+    refuse it loudly, matching the "refuse lossy downgrade" discipline 0010
+    already established for schedule-context provenance.
+    """
+    command.upgrade(alembic_config, "0012")
+
+    document = parse_official_league_settings(
+        {
+            **_legacy_v1_official_payload(),
+            "scoringSystem": {
+                "type": "HEAD_TO_HEAD_ROTI_MULTI_WIN",
+                "scoringCategorySettings": [
+                    {
+                        "configs": [
+                            {
+                                "scoringCategory": {
+                                    "code": "INDIVIDUAL_ASSISTS",
+                                    "shortName": "AST",
+                                    "name": "Assists",
+                                },
+                                "weight": 1.0,
+                            }
+                        ]
+                    }
+                ],
+            },
+        },
+        source_league_id="league-1",
+        capture_ref="sha256:" + "d" * 64,
+    )
+    serialized = document.model_dump(mode="json")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO leagues (id, name, season, scoring_type, draft_type, "
+                    "fantrax_league_id, is_active, created_at, updated_at) VALUES "
+                    "(1, 'Test League', '2026-27', 'h2h_categories', 'unknown', "
+                    "'league-1', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO league_settings_snapshots (league_id, version, "
+                    "schema_version, settings, source_summary, source_payload_sha256, "
+                    "observed_at, created_at, updated_at) VALUES (1, 1, '2', "
+                    ":settings, '{}', :sha256, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                ),
+                {"settings": json.dumps(serialized), "sha256": "d" * 64},
+            )
+
+        with pytest.raises(RuntimeError, match="refusing lossy 0012 downgrade"):
+            command.downgrade(alembic_config, "0011")
+    finally:
+        engine.dispose()
+
+
+def test_0012_downgrade_cleanly_reverts_purely_migration_sourced_rows(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """A row with no real scoring evidence at all reverts without complaint."""
+    command.upgrade(alembic_config, "0011")
+
+    payload = _legacy_v1_official_payload()
+    current_document = parse_official_league_settings(
+        payload, source_league_id="league-1", capture_ref="sha256:" + "e" * 64
+    )
+    legacy_settings = current_document.model_dump(mode="json")
+    del legacy_settings["scoring_type"]
+    del legacy_settings["scoring_categories"]
+    legacy_settings["schema_version"] = 1
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO leagues (id, name, season, scoring_type, draft_type, "
+                    "fantrax_league_id, is_active, created_at, updated_at) VALUES "
+                    "(1, 'Test League', '2026-27', 'h2h_categories', 'unknown', "
+                    "'league-1', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO league_settings_snapshots (league_id, version, "
+                    "schema_version, settings, source_summary, source_payload_sha256, "
+                    "observed_at, created_at, updated_at) VALUES (1, 1, '1', "
+                    ":settings, '{}', :sha256, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                ),
+                {"settings": json.dumps(legacy_settings), "sha256": "e" * 64},
+            )
+
+        command.upgrade(alembic_config, "0012")
+        command.downgrade(alembic_config, "0011")
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT schema_version, settings FROM league_settings_snapshots WHERE id = 1")
+            ).one()
+        reverted_settings = (
+            row.settings if isinstance(row.settings, dict) else json.loads(row.settings)
+        )
+        assert row.schema_version == "1"
+        assert "scoring_type" not in reverted_settings
+        assert "scoring_categories" not in reverted_settings
+        assert reverted_settings["schema_version"] == 1
     finally:
         engine.dispose()
 

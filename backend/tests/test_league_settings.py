@@ -189,6 +189,8 @@ def test_bridge_fills_only_an_official_unknown() -> None:
         trade_deadline=_bridge_unknown(),
         playoffs=_bridge_unknown(),
         keepers=_bridge_unknown(),
+        scoring_type=_bridge_unknown(),
+        scoring_categories=_bridge_unknown(),
     )
 
     merged = merge_settings(official, bridge)

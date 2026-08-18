@@ -136,6 +136,8 @@ def import_league_settings(
         "trade_deadline",
         "playoffs",
         "keepers",
+        "scoring_type",
+        "scoring_categories",
     )
     source_summary = {field: serialized[field]["evidence"] for field in sourced_fields}
     next_version = existing[-1].version + 1 if existing else 1

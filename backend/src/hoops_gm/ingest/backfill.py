@@ -35,11 +35,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings, get_settings
 from hoops_gm.db.models.enums import ExternalSource
-from hoops_gm.db.models.league import League
+from hoops_gm.db.models.league import League, LeagueScoringProfile
+from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.session import Database
 from hoops_gm.identity import IdentityResolver, ResolvableRecord, render_summary, to_csv
 from hoops_gm.identity.report import partition
@@ -73,6 +75,7 @@ from hoops_gm.ingest.nba import (
     parse_teams,
 )
 from hoops_gm.ingest.rawstore import RawPayloadStore
+from hoops_gm.scoring.profiles import activate_scoring_profile_version, build_scoring_profile
 
 DEFAULT_RAW_ROOT = Path("data") / "raw"
 DEFAULT_REPORT_DIR = Path("data") / "reports"
@@ -161,6 +164,50 @@ def ingest_official_league_settings(
         source_payload_sha256=source_payload_sha256,
         observed_at=observed_at,
     )
+
+
+def derive_scoring_profile(
+    session: Session,
+    *,
+    league: League,
+    name: str = "default",
+    activate: bool = False,
+) -> LeagueScoringProfile:
+    """Derive a league's scoring profile from its current settings snapshot.
+
+    This is the production seam between an already-ingested settings snapshot
+    (``ingest_official_league_settings`` above) and
+    ``hoops_gm.scoring.profiles.build_scoring_profile``: it looks up the
+    league's current (highest-version) ``LeagueSettingsSnapshot`` and derives
+    from it, rather than requiring an operator to look that up by hand.
+
+    Never activates the derived profile unless ``activate=True`` is passed
+    explicitly -- creating a profile is safe to run repeatedly (it is
+    idempotent by content; see ``build_scoring_profile``), but making it the
+    league's active profile changes what every subsequent read sees, and
+    that is not something a routine re-derivation should do as a side
+    effect.
+    """
+    current_snapshot = session.scalar(
+        select(LeagueSettingsSnapshot)
+        .where(LeagueSettingsSnapshot.league_id == league.id)
+        .order_by(LeagueSettingsSnapshot.version.desc())
+        .limit(1)
+    )
+    if current_snapshot is None:
+        raise ValueError(
+            f"league {league.id!r} has no settings snapshot to derive a scoring profile from "
+            "-- run league-settings ingest first"
+        )
+    profile = build_scoring_profile(
+        session,
+        league=league,
+        settings_snapshot=current_snapshot,
+        name=name,
+    )
+    if activate:
+        activate_scoring_profile_version(session, profile)
+    return profile
 
 
 # --------------------------------------------------------------------------
@@ -357,6 +404,18 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
         help="explicit local bridge settings JSON; never captured automatically",
     )
 
+    scoring_profile = subparsers.add_parser(
+        "scoring-profile",
+        help="derive a league's scoring profile from its current settings snapshot",
+    )
+    scoring_profile.add_argument("league_id", type=int, help="local leagues.id")
+    scoring_profile.add_argument("--name", default="default")
+    scoring_profile.add_argument(
+        "--activate",
+        action="store_true",
+        help="also make this the league's active profile (opt-in only; not automatic)",
+    )
+
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -382,6 +441,21 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
                 bridge=bridge,
             )
         print(f"\n  league settings          {counts}")
+        return 0
+
+    if args.command == "scoring-profile":
+        with database.session() as session:
+            league = session.get(League, args.league_id)
+            if league is None:
+                parser.error(f"no league exists with id {args.league_id}")
+            profile = derive_scoring_profile(
+                session,
+                league=league,
+                name=args.name,
+                activate=args.activate,
+            )
+        activation_note = " (activated)" if args.activate else " (not activated -- pass --activate)"
+        print(f"\n  scoring profile          v{profile.version}{activation_note}")
         return 0
 
     nba, fantrax = build_clients(settings)

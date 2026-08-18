@@ -54,9 +54,16 @@ def _require_offset_aware_timestamp(value: str) -> str:
 
 OFFICIAL_SOURCE = "fantrax_official"
 BRIDGE_SOURCE = "fantrax_bridge"
-SCHEMA_VERSION: Literal[1] = 1
+#: A field whose evidence was synthesized by a schema migration, not observed
+#: from either live source -- see ``0012_scoring_profile_lineage.py``'s
+#: legacy-snapshot backfill. Never used by parsing code; only by that
+#: migration, to label its own synthesized absence honestly rather than
+#: borrowing ``OFFICIAL_SOURCE``/``BRIDGE_SOURCE`` for evidence nobody
+#: actually gathered.
+MIGRATION_SOURCE = "schema_migration"
+SCHEMA_VERSION: Literal[2] = 2
 
-SettingSource = Literal["fantrax_official", "fantrax_bridge"]
+SettingSource = Literal["fantrax_official", "fantrax_bridge", "schema_migration"]
 EvidenceStatus = Literal["observed", "absent"]
 LineupLockType = Literal["per_player_tipoff", "daily", "weekly"]
 ClaimMechanism = Literal["priority", "faab"]
@@ -223,12 +230,79 @@ class KeeperRules(BaseModel):
         return _require_offset_aware_timestamp(value)
 
 
+class ScoringFormatRules(BaseModel):
+    """The league's scoring-format discriminator, verbatim from the source.
+
+    Kept as the raw upstream string (``raw_type``, e.g.
+    ``"HEAD_TO_HEAD_ROTI_MULTI_WIN"``) rather than normalized into
+    ``hoops_gm.db.models.enums.ScoringType`` here: this module is the
+    ingestion boundary and must not depend on ``hoops_gm.db`` (ADR-006 draws
+    that line at the adapter boundary, and ``hoops_gm.scoring.profiles``
+    already sits on the other side of it). The verified mapping from this raw
+    string to a local enum value -- including the decision to fail closed on
+    an unrecognised discriminator -- is that module's job, not this one's.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    raw_type: str = Field(min_length=1)
+
+
+class ScoringCategoryRule(BaseModel):
+    """One scoring category exactly as the league's rules report it.
+
+    ``code`` is the primary, durable mapping anchor: Fantrax's own stable
+    per-category identifier (e.g. ``"INDIVIDUAL_ASSISTS"``). ``abbreviation``
+    and ``display_name`` are retained as evidence/display only -- never as a
+    mapping key -- because Fantrax's numeric ``id`` and its display strings
+    are not guaranteed stable across payload shapes the way ``code`` is (see
+    ``ingest/fantrax_official/parsers.py``, which previously conflated the
+    numeric id with this field).
+
+    ``weight`` is Fantrax's own per-category scoring weight, a distinct
+    concept from ``LeagueScoringCategory.point_value`` (this project's
+    points-league weight, always null for a category league). Every category
+    observed in the target H2H league carries ``weight == 1.0``; a category
+    with a non-unit weight is data this document still records honestly, but
+    ``hoops_gm.scoring.profiles`` refuses to build a profile from it until
+    weighted categories are designed (fail closed rather than silently
+    dropping or misapplying the weight).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: str = Field(min_length=1)
+    display_name: str | None = None
+    abbreviation: str = Field(min_length=1)
+    weight: StrictFloat
+
+
+class ScoringCategoriesRules(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    categories: tuple[ScoringCategoryRule, ...] = Field(min_length=1)
+
+
 class LeagueSettingsDocument(BaseModel):
-    """Versioned normalized settings; rules are data, not algorithm branches."""
+    """Versioned normalized settings; rules are data, not algorithm branches.
+
+    ``schema_version`` bumped 1 -> 2 when ``scoring_type``/``scoring_categories``
+    became required fields (the `scoring-profiles` backlog unit). Both stay
+    strictly required here -- no lenient default, no before-validator leniency
+    -- because a pre-existing ``league_settings_snapshots`` row captured under
+    schema 1 has neither key at all, and this module's own fail-closed
+    philosophy says a reader must not paper over that with an assumed value.
+    Instead, ``0012_scoring_profile_lineage.py`` rewrites every such row once,
+    at migration time, adding both fields as an explicit *absent* observation
+    (evidenced as ``schema_migration``, never ``fantrax_official`` or
+    ``fantrax_bridge`` -- nothing was actually observed for that row) before
+    any code -- old or new -- ever reads it again. See that migration's
+    docstring for the backfill/downgrade contract.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    schema_version: Literal[1] = SCHEMA_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
     source_league_id: str = Field(min_length=1, max_length=64)
     source_season_year: int = Field(ge=2000, le=2100)
     source_start_date: str
@@ -241,6 +315,8 @@ class LeagueSettingsDocument(BaseModel):
     trade_deadline: SourcedSetting[TradeDeadlineRules]
     playoffs: SourcedSetting[PlayoffRules]
     keepers: SourcedSetting[KeeperRules]
+    scoring_type: SourcedSetting[ScoringFormatRules]
+    scoring_categories: SourcedSetting[ScoringCategoriesRules]
     unmapped_rule_paths: tuple[str, ...] = ()
 
     def canonical_json(self) -> str:
@@ -286,6 +362,8 @@ class LeagueSettingsDocument(BaseModel):
             "trade_deadline": setting("trade_deadline"),
             "playoffs": setting("playoffs"),
             "keepers": setting("keepers"),
+            "scoring_type": setting("scoring_type"),
+            "scoring_categories": setting("scoring_categories"),
             "unmapped_rule_paths": serialized["unmapped_rule_paths"],
         }
         return json.dumps(configuration, sort_keys=True, separators=(",", ":"))
@@ -405,6 +483,12 @@ def parse_bridge_league_settings(
             path="$.settings.keepers",
             capture_ref=capture_ref,
         ),
+        # The bridge capture contract has no scoring-rules fields (see
+        # BridgeSettingsValues): scoring type/categories are trusted only
+        # from the verified official source, never from the read-only
+        # bridge, so both are unconditionally absent here.
+        scoring_type=_absent(capture_ref),
+        scoring_categories=_absent(capture_ref),
     )
     return BridgeLeagueSettingsObservation(
         document=document,
@@ -441,10 +525,11 @@ def parse_official_league_settings(
 ) -> LeagueSettingsDocument:
     """Normalize the settings ``getLeagueInfo`` actually exposes.
 
-    The official response currently supplies roster limits and scoring-period
-    boundaries. It does not expose the timing and transaction-rule concerns
-    below in the observed NBA payload; those remain unknown, with an ``absent``
-    observation, rather than borrowing values from the historical baseline.
+    The official response currently supplies roster limits, scoring-period
+    boundaries, scoring type, and scoring categories. It does not expose the
+    timing and transaction-rule concerns below in the observed NBA payload;
+    those remain unknown, with an ``absent`` observation, rather than
+    borrowing values from the historical baseline.
     """
 
     endpoint = "getLeagueInfo"
@@ -457,6 +542,8 @@ def parse_official_league_settings(
 
     roster_limits = _parse_roster_limits(payload.get("rosterInfo"), capture_ref=capture_ref)
     scoring_periods = _parse_scoring_periods(payload.get("scoringPeriods"), capture_ref=capture_ref)
+    scoring_type = _parse_scoring_type(payload, capture_ref=capture_ref)
+    scoring_categories = _parse_scoring_categories(payload, capture_ref=capture_ref)
     return LeagueSettingsDocument(
         source_league_id=source_league_id,
         source_season_year=_required_positive_int(payload.get("seasonYear"), path="seasonYear"),
@@ -470,6 +557,8 @@ def parse_official_league_settings(
         trade_deadline=_absent(capture_ref),
         playoffs=_parse_playoff_periods(payload.get("scoringPeriods"), capture_ref=capture_ref),
         keepers=_absent(capture_ref),
+        scoring_type=scoring_type,
+        scoring_categories=scoring_categories,
         unmapped_rule_paths=_find_unmapped_rule_paths(payload),
     )
 
@@ -522,6 +611,13 @@ def merge_settings(
         ),
         playoffs=_choose_setting(official.playoffs, bridge.playoffs),
         keepers=_merge_keepers(official.keepers, bridge.keepers),
+        # The bridge capture contract has no scoring-rules fields (see
+        # BridgeSettingsValues) and never will supply an observed value here
+        # -- this is still official-priority _choose_setting for uniformity,
+        # not a special case, and it means a future bridge field would slot
+        # in without touching this function.
+        scoring_type=_choose_setting(official.scoring_type, bridge.scoring_type),
+        scoring_categories=_choose_setting(official.scoring_categories, bridge.scoring_categories),
         unmapped_rule_paths=tuple(
             sorted({*official.unmapped_rule_paths, *bridge.unmapped_rule_paths})
         ),
@@ -819,6 +915,283 @@ def _parse_playoff_periods(
     return SourcedSetting(
         value=PlayoffRules(period_numbers=tuple(periods)),
         evidence=(_observed("$.scoringPeriods[*].isPlayoff", capture_ref),),
+    )
+
+
+@dataclass(frozen=True)
+class RawScoringCategory:
+    """One scoring category exactly as ``scoringSystem`` reports it, pre-validation.
+
+    Shared by this module (to populate ``LeagueSettingsDocument.scoring_categories``)
+    and ``ingest/fantrax_official/parsers.py`` (to populate the adapter's own
+    ``FantraxLeagueInfo.scoring_categories``) so the two callers can never
+    silently drift into disagreeing about what a category's code, abbreviation
+    or weight is -- there is exactly one place this payload shape is read.
+    """
+
+    code: str
+    display_name: str | None
+    abbreviation: str
+    weight: float
+
+
+def parse_scoring_category_configs(
+    payload: dict[object, object],
+) -> list[RawScoringCategory] | None:
+    """Extract per-category configs from ``scoringSystem.scoringCategorySettings``.
+
+    Returns ``None`` only when the key is genuinely absent -- ``scoringSystem``
+    itself missing from the payload, or ``scoringCategorySettings`` missing
+    from an otherwise-present ``scoringSystem`` -- exactly like every other
+    concern in this module. A key that *is* present but the wrong shape, or
+    present with an explicit JSON ``null``, is not the same observation as a
+    missing key: it is malformed evidence, not silence, and reserving
+    ``None``/absent for a genuinely missing key only is what keeps "we never
+    asked" distinguishable from "the source sent us garbage" or "the source
+    told us nothing is there" (which, for a source that is nominally required
+    to report scoring rules, is itself a contract violation, not silence).
+    Membership (``in``) is checked before shape, never ``value is None``,
+    specifically so a present ``null`` cannot be misread as an absent key.
+    Every level of this therefore fails closed with :class:`SourceContractError`
+    rather than being silently treated as absent or dropped: a non-dict
+    ``scoringSystem``, a non-list ``scoringCategorySettings``, a non-dict
+    entry in ``scoringCategorySettings``, a non-list ``configs``, a non-dict
+    ``config`` or ``scoringCategory``, or a category missing its stable
+    ``code``, its ``shortName`` abbreviation, or a numeric ``weight``. An
+    earlier version of this parser skipped several of those with a bare
+    ``continue`` (or, for the two outer containers, silently returned
+    ``None`` as if the key had never been sent at all, including when the
+    key was present but explicitly ``null``) -- a scoring profile missing
+    one category (or unable to verify its weight) is a wrong valuation later
+    with no way to detect it after the fact, and that is exactly as true for
+    a malformed shape as for a missing field.
+
+    Only this rich, verified shape is handled. An earlier version of the
+    adapter also speculatively handled a flat top-level ``scoringCategories``
+    list of strings/dicts -- that shape has never actually been observed live
+    (the real payload nests a ``PLAYER``-keyed map under
+    ``scoringSystem.scoringCategories`` instead, which is not the same
+    thing), and an unverified alias for a payload shape that has never been
+    seen is a guess wearing evidence's clothes. It has been removed rather
+    than kept "just in case"; see docs/adapters/fantrax-official.md.
+    """
+
+    if "scoringSystem" not in payload:
+        return None
+    scoring_system = payload["scoringSystem"]
+    if not isinstance(scoring_system, dict):
+        raise SourceContractError(
+            f"scoringSystem must be an object, got {type(scoring_system).__name__}",
+            source=OFFICIAL_SOURCE,
+            endpoint="getLeagueInfo",
+        )
+    if "scoringCategorySettings" not in scoring_system:
+        return None
+    rich_settings = scoring_system["scoringCategorySettings"]
+    if not isinstance(rich_settings, list):
+        raise SourceContractError(
+            "scoringSystem.scoringCategorySettings must be a list, got "
+            f"{type(rich_settings).__name__}",
+            source=OFFICIAL_SOURCE,
+            endpoint="getLeagueInfo",
+        )
+
+    raw: list[RawScoringCategory] = []
+    for group_index, group in enumerate(rich_settings):
+        if not isinstance(group, dict):
+            raise SourceContractError(
+                f"scoringSystem.scoringCategorySettings[{group_index}] must be an "
+                f"object, got {type(group).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        configs = group.get("configs")
+        if not isinstance(configs, list):
+            raise SourceContractError(
+                f"scoringSystem.scoringCategorySettings[{group_index}].configs "
+                f"must be a list, got {type(configs).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        for config_index, config in enumerate(configs):
+            if not isinstance(config, dict):
+                raise SourceContractError(
+                    f"scoringSystem.scoringCategorySettings[{group_index}]"
+                    f".configs[{config_index}] must be an object, got "
+                    f"{type(config).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            category = config.get("scoringCategory")
+            if not isinstance(category, dict):
+                raise SourceContractError(
+                    f"scoringSystem.scoringCategorySettings[{group_index}]"
+                    f".configs[{config_index}].scoringCategory must be an object, "
+                    f"got {type(category).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            code = category.get("code")
+            if not isinstance(code, str) or not code:
+                raise SourceContractError(
+                    "scoringSystem.scoringCategorySettings[*].configs[*]"
+                    ".scoringCategory.code must be a non-empty string",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            abbreviation = category.get("shortName")
+            if not isinstance(abbreviation, str) or not abbreviation:
+                raise SourceContractError(
+                    f"scoring category {code!r} has no shortName abbreviation",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            weight = config.get("weight")
+            if isinstance(weight, bool) or not isinstance(weight, int | float):
+                raise SourceContractError(
+                    f"scoring category {code!r} has no numeric weight",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            name = category.get("name")
+            raw.append(
+                RawScoringCategory(
+                    code=code,
+                    display_name=name if isinstance(name, str) and name else None,
+                    abbreviation=abbreviation,
+                    weight=float(weight),
+                )
+            )
+    return raw
+
+
+def _scoring_type_with_source_path(payload: dict[object, object]) -> tuple[str, str] | None:
+    """Resolve the scoring-format discriminator and which field it came from.
+
+    Fantrax exposes this in two shapes: a top-level ``scoringType`` (preferred
+    when present) or nested inside ``scoringSystem.type``. The evidence
+    attached by ``_parse_scoring_type`` must name whichever field actually won
+    under that precedence -- ``$.scoringType`` or ``$.scoringSystem.type`` --
+    not always the nested path regardless of which one supplied the value.
+
+    ``None`` is returned only when both keys are genuinely absent (checked by
+    membership, never ``value is None``, so a key present with an explicit
+    JSON ``null`` is never misread as an absent key). A key that *is* present
+    -- including as ``null`` -- but not a non-empty string is malformed
+    evidence, not silence: it must not fall through to the other path, or be
+    swallowed as if the source had simply never sent it, so each
+    present-but-wrong-shaped field fails closed with
+    :class:`SourceContractError` instead.
+
+    Both candidates are validated *before* precedence is applied: a valid
+    top-level ``scoringType`` must not short-circuit past a simultaneously
+    present but malformed nested ``scoringSystem.type`` -- precedence decides
+    which valid value wins, it must never decide which candidate gets
+    validated at all.
+    """
+
+    top_level_value: str | None = None
+    if "scoringType" in payload:
+        scoring_type = payload["scoringType"]
+        if not isinstance(scoring_type, str) or not scoring_type:
+            raise SourceContractError(
+                f"scoringType must be a non-empty string, got {type(scoring_type).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        top_level_value = scoring_type
+
+    nested_value: str | None = None
+    if "scoringSystem" in payload:
+        scoring_system = payload["scoringSystem"]
+        if not isinstance(scoring_system, dict):
+            raise SourceContractError(
+                f"scoringSystem must be an object, got {type(scoring_system).__name__}",
+                source=OFFICIAL_SOURCE,
+                endpoint="getLeagueInfo",
+            )
+        if "type" in scoring_system:
+            nested = scoring_system["type"]
+            if not isinstance(nested, str) or not nested:
+                raise SourceContractError(
+                    f"scoringSystem.type must be a non-empty string, got {type(nested).__name__}",
+                    source=OFFICIAL_SOURCE,
+                    endpoint="getLeagueInfo",
+                )
+            nested_value = nested
+
+    if top_level_value is not None:
+        return top_level_value, "$.scoringType"
+    if nested_value is not None:
+        return nested_value, "$.scoringSystem.type"
+    return None
+
+
+def parse_scoring_type_raw(payload: dict[object, object]) -> str | None:
+    """The scoring-format discriminator, verbatim -- a top-level ``scoringType``
+    if present, else ``scoringSystem.type``. Never normalized here; see
+    ``ScoringFormatRules``.
+    """
+
+    resolved = _scoring_type_with_source_path(payload)
+    return resolved[0] if resolved is not None else None
+
+
+def _parse_scoring_categories(
+    payload: dict[object, object],
+    *,
+    capture_ref: str,
+) -> SourcedSetting[ScoringCategoriesRules]:
+    raw = parse_scoring_category_configs(payload)
+    if raw is None:
+        return _absent(capture_ref)
+    if not raw:
+        # Present-but-empty is distinct from absent: the source explicitly
+        # published a scoring-category shape with nothing in it, which is as
+        # unusable as reporting no categories at all -- and worse, silently
+        # continuing here would let a snapshot's own document construction
+        # succeed with zero categories, which later downstream code (this
+        # module's ``ScoringCategoriesRules.categories`` field) already
+        # refuses to hold. Raising here, explicitly, keeps that failure a
+        # named contract violation rather than an incidental pydantic error
+        # surfacing from a different layer.
+        raise SourceContractError(
+            "scoringSystem.scoringCategorySettings[*].configs is present but empty",
+            source=OFFICIAL_SOURCE,
+            endpoint="getLeagueInfo",
+        )
+    categories = tuple(
+        ScoringCategoryRule(
+            code=item.code,
+            display_name=item.display_name,
+            abbreviation=item.abbreviation,
+            weight=item.weight,
+        )
+        for item in raw
+    )
+    return SourcedSetting(
+        value=ScoringCategoriesRules(categories=categories),
+        evidence=(
+            _observed(
+                "$.scoringSystem.scoringCategorySettings[*].configs[*].scoringCategory",
+                capture_ref,
+            ),
+        ),
+    )
+
+
+def _parse_scoring_type(
+    payload: dict[object, object],
+    *,
+    capture_ref: str,
+) -> SourcedSetting[ScoringFormatRules]:
+    resolved = _scoring_type_with_source_path(payload)
+    if resolved is None:
+        return _absent(capture_ref)
+    raw_type, source_path = resolved
+    return SourcedSetting(
+        value=ScoringFormatRules(raw_type=raw_type),
+        evidence=(_observed(source_path, capture_ref),),
     )
 
 
