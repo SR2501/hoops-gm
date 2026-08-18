@@ -34,6 +34,16 @@ Multi-user support is planned (Phase 13), but who gets access, to what, and whet
 
 ---
 
+## Autonomous PR delivery — owner decision, 2026-08-18
+
+Ordinary read-only and code PRs may be merged autonomously after every applicable
+gate is green and an independent review approves. This authorizes delivery, not
+owner-only decisions: any owner-only decision, unresolved `safety` veto, paid
+service, ToS change, first live-account action, or ADR acceptance still requires
+the agent to stop and escalate.
+
+---
+
 ## How to escalate
 
 1. Stop work on the affected item.
