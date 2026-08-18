@@ -5820,3 +5820,30 @@ vendor export is manually verified, reduced to privacy-safe recorded evidence,
 and paired with an offline contract test and loud live-smoke path. Any eventual
 merge decision requires independent review; this entry is only a readiness
 report.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 restack deferred after PR #19
+
+**Changed:** Recorded that main advanced to `ffd838c` through merged PR #19,
+which now owns migration `0010`. PR #12 was not rebased or renumbered again
+because its projection-specific Adapter gate remains unmet; spending another
+integration cycle before the missing source evidence exists would not make the
+branch mergeable.
+
+**Now true:** Published PR #12 head `859fe77` remains the last reviewed importer
+code, based on `875d40e`, with its historical importer migration still numbered
+`0010`. That number is now known to conflict with current main but is not a
+claim on the next final revision. ADR-002/ADR-008 boundaries, fail-closed
+identity handling and lineage behavior are unchanged. No merge, self-approval
+or new readiness claim occurred.
+
+**Could not verify:** No privacy-safe real-derived vendor export fixture or
+projection-specific live smoke exists, so the Adapter gate remains blocked.
+Because the branch was deliberately not restacked, compatibility with main
+`ffd838c` and the eventual migration number are also intentionally unverified.
+
+**Next:** Only after real-derived projection Adapter evidence is available,
+rebase PR #12 onto the then-current main, inspect that main's actual Alembic
+head, assign the next available revision, rerun the cumulative Code and Adapter
+gates including native Postgres, and obtain independent exact-head review.
