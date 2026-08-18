@@ -1,6 +1,7 @@
 # ADR-008 — Aggregates are terminal outputs, never inputs
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-18 by the project owner
 **Date:** 2026-08-17
 **Originated by:** the project owner
 

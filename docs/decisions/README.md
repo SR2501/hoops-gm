@@ -25,7 +25,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [005](ADR-005-supervised-default.md) | Automation is supervised by default; autonomous is opt-in and gated | **Accepted** | Eight guardrails; `safety` holds veto; enabling autonomy is owner-only |
 | [006](ADR-006-adapter-isolation.md) | External adapters isolated behind contract tests | **Accepted** | Recorded fixtures; drift fails loudly in CI rather than degrading a number silently |
 | [007](ADR-007-availability-in-spine.md) | Availability is a spine concern, modelled before valuation | **Accepted** | It is an input to valuation, not an attribute of it |
-| [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | Proposed | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
+| [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | **Accepted** | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
 | [009](ADR-009-schedule-intelligence-contract.md) | Phase 3 schedule intelligence: table ownership and output contract | **Accepted** | `schedule-ingest`/`schedule-density` are data-engineer facts; `schedule-context` is quant's Phase 4 model, not a Phase 3 ingest |
 | [010](ADR-010-local-bridge-pairing.md) | One-time local pairing for the browser bridge | **Accepted** | A displayed, single-use local code provisions the userscript bearer secret without putting it in source control |
 | [011](ADR-011-strength-of-schedule-sequencing.md) | Strength of schedule is a Phase 5+ valuation concern, not schedule intelligence | **Accepted** | Needs a real projection/valuation to weight against; distinct from Phase 4's opponent-defence context and deliberately not built early on a placeholder value |
@@ -39,6 +39,5 @@ They record the decisions reached in the planning conversation of the same day a
 
 ADR-009 was accepted by the project owner on **2026-08-17**.
 
-## Awaiting the owner
-
-**ADR-008** is `Proposed`. Agents cannot mark their own work accepted.
+ADR-008 was accepted by the project owner on **2026-08-18**, who explicitly
+praised it as written.

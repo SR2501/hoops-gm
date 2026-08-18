@@ -1256,3 +1256,25 @@ deterministic assertion failure, not transient infrastructure.
 **Next:** Push the correction and re-run the two failed Backend Code-gate
 checks on PR #8; both should pass if the Ubuntu/Python 3.12 environment
 matches its prior successful lint and type-check steps.
+
+---
+
+## 2026-08-18 — architect — Autonomous delivery authority and ADR-008 acceptance
+
+**Changed:** Recorded the owner's decision that ordinary read-only and code PRs
+may merge autonomously only after every applicable gate is green and an
+independent review approves. The authority does not cross owner-only decisions,
+an unresolved `safety` veto, paid services, ToS changes, first live-account
+actions, or ADR acceptance. Also marked ADR-008 `Accepted` with the owner's
+2026-08-18 acceptance and recorded that the owner praised it as written.
+
+**Now true:** Autonomous delivery has an explicit repository policy without
+weakening any readiness gate or escalation boundary, and ADR-008's metadata and
+decision index match the owner's decision.
+
+**Could not verify:** Independent review and remote required checks have not yet
+completed. This documentation PR must not merge until both approve it.
+
+**Next:** An independent reviewer should confirm that the delivery authority is
+bounded exactly as stated and that ADR-008 was changed only in status metadata
+and the decision index.
