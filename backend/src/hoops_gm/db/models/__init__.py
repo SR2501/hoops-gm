@@ -3,10 +3,16 @@
 Phase 1 implemented four of the entity groups in the plan's data model:
 Identity, Stats, League and Schedule. Phase 2 adds the *observed* part of
 Availability — ``player_participation``, the ledger of who took part in what.
-The modelled parts of Availability (``p(play)``, reliability, shutdown risk)
-plus Contingent value, Projections, Valuation, Draft and Decisions belong to
-later phases and their owning agents. Bridge payload capture is implemented
-here as a raw transport boundary; it deliberately does not parse Fantrax data.
+Phase 3/4 add schedule context (``opponent_context``, ``off_night_slates``).
+Phase 5 adds the ``csv-importer`` slice of Projections — ``projection_sources``,
+``projection_imports``, ``projections`` (per-game rates) and
+``source_games_played_assumptions``. Blending, the baseline model and
+``expected-games`` fusion are not implemented here; they consume this table
+and belong to their own backlog items. The modelled parts of Availability
+(``p(play)``, reliability, shutdown risk) plus Contingent value, Valuation,
+Draft and Decisions belong to later phases and their owning agents. Bridge
+payload capture is implemented here as a raw transport boundary; it
+deliberately does not parse Fantrax data.
 
 Import every model here. Alembic autogenerate and ``Base.metadata`` both see
 only what has been imported, so a model missing from this list is a table that
@@ -58,6 +64,12 @@ from hoops_gm.db.models.league import (
 )
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.models.projections import (
+    Projection,
+    ProjectionImport,
+    ProjectionSource,
+    SourceGamesPlayedAssumption,
+)
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog, PlayerSeasonStat
@@ -98,6 +110,9 @@ __all__ = [
     "PlayerParticipation",
     "PlayerSeasonStat",
     "PlayerStatus",
+    "Projection",
+    "ProjectionImport",
+    "ProjectionSource",
     "RefreshArtifactType",
     "RefreshRun",
     "RosterEntry",
@@ -106,6 +121,7 @@ __all__ = [
     "ScoringPeriod",
     "ScoringType",
     "SeasonType",
+    "SourceGamesPlayedAssumption",
     "StatScope",
     "TeamScheduleEntry",
     "Transaction",

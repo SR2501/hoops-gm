@@ -182,7 +182,7 @@ def test_later_phase_entity_groups_are_absent() -> None:
         "shutdown_risk",
         "usage_redistribution",
         "stock_movements",
-        "projections",
+        "blend_profiles",
         "blended_projections",
         "expected_games",
         "valuations",
@@ -351,3 +351,34 @@ def test_the_league_settings_snapshot_table_is_present() -> None:
         "source_payload_sha256",
         "observed_at",
     }.issubset(columns)
+
+
+def test_csv_importer_tables_are_present() -> None:
+    """The Phase 5 ``csv-importer`` slice of Projections is now implemented.
+
+    Only the import/normalisation/versioning boundary — blending, the
+    baseline model and ``expected-games`` fusion remain absent (asserted in
+    ``test_later_phase_entity_groups_are_absent`` above) because they consume
+    this table rather than extend it.
+    """
+    assert {
+        "projection_sources",
+        "projection_imports",
+        "projections",
+        "source_games_played_assumptions",
+    } <= set(Base.metadata.tables)
+
+    import_columns = set(Base.metadata.tables["projection_imports"].columns.keys())
+    assert {"content_sha256", "season", "row_count", "matched_count"}.issubset(import_columns)
+
+    projection_columns = set(Base.metadata.tables["projections"].columns.keys())
+    # Rates only (ADR-002) — no games-played or expected-games column belongs
+    # on this table at all.
+    assert "games_played" not in projection_columns
+    assert "expected_games" not in projection_columns
+    assert {"points_per_game", "field_goals_made_per_game", "field_goals_attempted_per_game"} <= (
+        projection_columns
+    )
+
+    assumption_columns = set(Base.metadata.tables["source_games_played_assumptions"].columns.keys())
+    assert {"projection_id", "assumed_games_played"} <= assumption_columns
