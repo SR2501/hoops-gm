@@ -285,9 +285,7 @@ def _parse_utc(raw_game: Mapping[str, object], key: str, game_id: str) -> dateti
     return parsed.astimezone(UTC)
 
 
-def _parse_eastern_wall_clock(
-    raw_game: Mapping[str, object], key: str, game_id: str
-) -> datetime:
+def _parse_eastern_wall_clock(raw_game: Mapping[str, object], key: str, game_id: str) -> datetime:
     value = _required_text(raw_game, key)
     try:
         parsed = datetime.fromisoformat(value.replace("Z", ""))
