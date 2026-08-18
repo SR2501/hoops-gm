@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.projections.models import (
@@ -27,9 +28,11 @@ from hoops_gm.ingest.projections.models import (
 )
 from hoops_gm.ingest.projections.profiles import (
     SHOOTING_PAIRS,
+    TERMINAL_HEADER_ALIASES,
     ColumnProfile,
     StatColumn,
     ValueShape,
+    normalize_header,
     resolve_header,
 )
 
@@ -65,7 +68,10 @@ def _parse_float(raw: str) -> float | None:
     text = raw.strip()
     if not text:
         return None
-    return float(text.replace(",", ""))
+    value = float(text.replace(",", ""))
+    if not math.isfinite(value):
+        raise ValueError(f"non-finite numeric value {text!r}")
+    return value
 
 
 def _label_for(field_name: str) -> str:
@@ -86,6 +92,7 @@ def parse_projection_csv(
     fieldnames = list(reader.fieldnames or [])
     if not fieldnames:
         raise ProjectionProfileError("file has no header row")
+    _reject_duplicate_normalized_headers(fieldnames)
 
     name_header = resolve_header(fieldnames, profile.name_aliases)
     if name_header is None:
@@ -102,6 +109,19 @@ def parse_projection_csv(
         header = resolve_header(fieldnames, stat_column.aliases)
         if header is not None:
             stat_headers[stat_column.field] = header
+    missing_required = [
+        field for field in profile.required_production_fields if field not in stat_headers
+    ]
+    if missing_required:
+        raise ProjectionProfileError(
+            f"{profile.display_name} file is missing required production columns "
+            f"{missing_required}; the source schema changed or the wrong profile was selected"
+        )
+    if not stat_headers:
+        raise ProjectionProfileError(
+            f"{profile.display_name} file has no recognized production columns; "
+            "refusing to create all-null projections"
+        )
 
     percentage_headers: dict[str, str] = {}
     for made_field, aliases in profile.percentage_fallback_aliases.items():
@@ -118,7 +138,14 @@ def parse_projection_csv(
         resolved_headers["assumed_games_played"] = games_played_header
     resolved_headers.update(stat_headers)
 
-    result = ProjectionParseResult(resolved_headers=resolved_headers)
+    terminal_aliases = {normalize_header(alias) for alias in TERMINAL_HEADER_ALIASES}
+    ignored_terminal_headers = [
+        header for header in fieldnames if normalize_header(header) in terminal_aliases
+    ]
+    result = ProjectionParseResult(
+        resolved_headers=resolved_headers,
+        ignored_terminal_headers=ignored_terminal_headers,
+    )
 
     candidates: list[tuple[ProjectionSourceRow, bool]] = []  # (row, fatal)
 
@@ -148,12 +175,12 @@ def parse_projection_csv(
                 assumed_games_played_raw = raw_gp
                 try:
                     assumed_games_played = _parse_float(raw_gp)
-                except ValueError:
+                except ValueError as exc:
                     result.issues.append(
                         RowIssue(
                             row_number,
                             games_played_header,
-                            f"unparsable games-played value {raw_gp!r}",
+                            f"unparsable games-played value {raw_gp!r}: {exc}",
                             fatal=True,
                         )
                     )
@@ -203,6 +230,16 @@ def parse_projection_csv(
         )
         if _check_shooting_consistency(values=values, row_number=row_number, issues=result.issues):
             row_fatal = True
+        if not any(value is not None for value in values.values()):
+            result.issues.append(
+                RowIssue(
+                    row_number,
+                    None,
+                    "row has no usable production rates; refusing an all-null projection",
+                    fatal=True,
+                )
+            )
+            row_fatal = True
 
         source_row = ProjectionSourceRow(
             row_number=row_number,
@@ -219,7 +256,25 @@ def parse_projection_csv(
     _reject_duplicate_names(candidates, result.issues)
 
     result.rows = [row for row, fatal in candidates if not fatal]
+    if not result.rows:
+        reasons = "; ".join(issue.message for issue in result.fatal_issues[:3])
+        raise ProjectionProfileError(
+            "file contains no usable projection rows" + (f": {reasons}" if reasons else "")
+        )
     return result
+
+
+def _reject_duplicate_normalized_headers(fieldnames: list[str]) -> None:
+    by_normalized: dict[str, list[str]] = {}
+    for header in fieldnames:
+        by_normalized.setdefault(normalize_header(header), []).append(header)
+    duplicates = [headers for headers in by_normalized.values() if len(headers) > 1]
+    if duplicates:
+        rendered = ", ".join(repr(headers) for headers in duplicates)
+        raise ProjectionProfileError(
+            f"duplicate CSV headers after normalization: {rendered}; "
+            "column mapping would be ambiguous"
+        )
 
 
 class _Fatal:
@@ -251,12 +306,12 @@ def _parse_stat_value(
 
     try:
         value = _parse_float(text)
-    except ValueError:
+    except ValueError as exc:
         issues.append(
             RowIssue(
                 row_number,
                 stat_column.field,
-                f"unparsable value {raw_value!r} for column {header!r}",
+                f"unparsable value {raw_value!r} for column {header!r}: {exc}",
                 fatal=True,
             )
         )

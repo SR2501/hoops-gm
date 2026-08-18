@@ -946,17 +946,17 @@ ADR-002 is structural, not just documented: `projections` holds only per-game ra
 
 Identity resolution reuses the existing crosswalk rather than inventing a second one: `build_player_targets` builds `ResolvableRecord`s keyed by each canonical player's **NBA** external id (not the player's own primary key — `import_resolutions`'s `nba_links` lookup requires it, the same convention `backfill.build_crosswalk` uses for the Fantrax crosswalk), and `import_resolutions` (unmodified) writes the accepted matches to `player_external_ids` under the projection's own `ExternalSource`. Only accepted resolutions get a `projections` row; needs-review and unmatched rows surface through the existing `hoops_gm.identity.report` (`partition`/`render_summary`/`to_csv`) exactly as the Fantrax crosswalk does — no new report mechanism was built.
 
-Versioning is content-addressed: `projection_imports` is keyed by `(source_id, content_sha256)`, so re-running a byte-identical file converges onto the same import row while a source publishing an updated file creates a new one and the old rows stay queryable by their own `projection_import_id`. Row writes are idempotent by `(projection_import_id, player_id)`.
+Versioning is content-addressed over the original bytes: `projection_imports` is keyed by `(source_id, season, content_sha256)`, so re-running byte-identical content for one source and season converges while BOM/newline differences and a later season remain distinct. Reprocessing one import reconciles its output exactly: every owned projection and games-played assumption is removed and only currently accepted resolutions are rebuilt, while stale automated crosswalk links are superseded.
 
-Validation happens entirely in the pure parser: missing player name, unparsable numbers, an implausible games-played value (outside 0–100), and makes exceeding attempts are all fatal and scoped to their own row — one bad row does not lose the file. Two rows sharing a normalised name within one file are both rejected rather than one silently overwriting the other's crosswalk link, since a stable per-row key does not otherwise exist for a source with no identifier at all. A percentage-only shooting column (no makes/attempts to volume-weight) is a warning, not a fabricated rate — the exact "percentage categories are volume-weighted impact" trap AGENTS.md names as the most common bug in homebrew fantasy tools.
+Validation happens entirely in the pure parser: duplicate normalized headers, a missing profile signature, or a file with no usable production rows rejects the file; missing names, non-finite/unparsable numbers, an implausible games-played value (outside 0–100), and makes exceeding attempts reject their rows. Two rows sharing a normalised name within one file are both rejected. A percentage-only shooting column is a warning, not a fabricated rate. Original bytes are hashed before explicit UTF-8/UTF-8-BOM decoding. `Projection` stores no raw row: terminal Rank/AAV/composite/expected-games columns are identified and ignored under accepted ADR-008, while durable source evidence is referenced only from the raw-import boundary through `ProjectionImport.raw_payload_ref`.
 
 `test_portability.py`'s `test_later_phase_entity_groups_are_absent` previously asserted `projections` did not exist yet; updated to drop it from the not-yet set (and added `blend_profiles`, a plan.md table name for a later backlog item that the set had omitted) and added `test_csv_importer_tables_are_present` alongside the existing schedule-context presence test.
 
-**Now true:** `csv-importer` is done (backlog and `docs/backlog.md`'s count updated 18→19). A CSV can be imported through `import_projection_csv(session, source=..., display_name=..., season=..., csv_text=...)` and produces versioned, idempotent, ADR-002-separated rows with an identity-resolution report. 18 new tests (`test_projection_importer.py`) plus 2 updated portability tests; full backend suite (366 tests), ruff, ruff format and mypy strict all pass. No Model gate applies — this produces no decision-bearing number, only ingested and normalised facts — so no model card was written; the Adapter gate's shape (recorded fixture + offline contract test) was applied instead, using synthetic fixtures rather than a live capture (see below).
+**Now true:** The `csv-importer` implementation accepts `csv_bytes=...` and produces byte-versioned, exactly reconciled, ADR-002/ADR-008-separated rows with an identity-resolution report. The implementation is complete but the backlog item is blocked at the Adapter gate. No Model gate applies because this boundary ingests and normalises source data rather than producing a decision-bearing number.
 
-**Could not verify:** The FantasyPros, Hashtag and Basketball Monster column-mapping profiles are **best-effort guesses at common 9-cat export header conventions, not verified against a real downloaded file** — all three sit behind a Patreon paywall, a paid subscription, or an authenticated export, and nobody has actually pulled one to check. Said explicitly in `profiles.py`'s module docstring and in each test using them (marked `adapter_contract`, using synthetic data authored for this suite, not real published projections — plan.md: projection data is personal-use only). The `manual` canonical-header profile carries no such uncertainty and is the profile to reach for until a real vendor file is checked by hand against `ProjectionParseResult.resolved_headers`. Also unverified: whether the shooting-column-only-as-percentage detection and the games-played plausibility bound (0–100) match every real source's conventions; both are conservative guesses pending a real file.
+**Could not verify:** The FantasyPros, Hashtag and Basketball Monster column-mapping profiles are **best-effort guesses at common 9-cat export header conventions, not verified against a real downloaded file**. Their synthetic examples are ordinary unit tests and deliberately carry no `adapter_contract` marker. The projection Adapter gate is unmet until privacy-safe fixtures derived from real exports exist. The `manual` canonical-header profile carries no vendor claim and is the profile to reach for until a real source is checked by hand against `ProjectionParseResult.resolved_headers`.
 
-**Next:** `data-engineer` should check the three vendor profiles against a real downloaded file at the first opportunity and correct `profiles.py`'s aliases with the finding recorded here (per the "state the mechanism" house rule), not silently. `projection-blending` is next in the Phase 5 chain and consumes `projections`/`source_games_played_assumptions` as-is; `expected-games` (blocked on `availability-model`) is the only place a games-played assumption may ever be fused with a rate, per ADR-002 — nothing here should be extended to do that early. `layer-purity` (ADR-008) is not yet built and does not need to be for this table, since nothing here is a terminal valuation output.
+**Next:** `data-engineer` must replace intended vendor examples with privacy-safe fixtures derived from real exports and mark only those tests `adapter_contract`. `projection-blending` may consume `projections`/`source_games_played_assumptions` only after this gate is met; `expected-games` remains the sole future fusion seam under ADR-002.
 
 ---
 
@@ -5556,14 +5556,19 @@ suite.
 four source profiles, and preserves source/season/content lineage without
 collapsing seasons. ADR-002 and accepted ADR-008 remain structural:
 `projections` contains per-game production rates only; source games-played
-assumptions remain in their own one-to-one table; rankings, AAV, composite
-values and expected-games outputs are not accepted by this boundary. Ambiguous
+assumptions remain in their own one-to-one table. The independent review later
+proved the prior claim that terminal values were excluded was false because
+the complete source row, including Rank/AAV/composite/expected-games columns,
+was still persisted as `Projection.raw_row`; the focused remediation entry
+below records its removal. Ambiguous
 identities are reported for human adjudication and never guessed. Local gates
 passed Ruff, formatting, strict mypy, 460 default backend tests, 71 offline
 adapter-contract tests, SQLite upgrade/check/downgrade, the secret scan,
 frontend lint/type-check/12 tests/build, and userscript 63 tests/build. The
-final GitHub runs `32141211883` and `32141218621` are green across every
-blocking Code and Adapter job, including native Postgres.
+final GitHub runs `32141211883` and `32141218621` were green across every
+configured blocking job, including native Postgres, but that green Adapter job
+was success-shaped evidence: synthetic vendor examples were incorrectly marked
+`adapter_contract` and did not satisfy the projection Adapter gate.
 
 **Could not verify:** The FantasyPros, Hashtag and Basketball Monster mappings
 still have only synthetic, non-published fixtures because the real exports are

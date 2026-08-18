@@ -40,6 +40,7 @@ __all__ = [
     "HASHTAG_PROFILE",
     "MANUAL_PROFILE",
     "PROFILES_BY_SOURCE",
+    "TERMINAL_HEADER_ALIASES",
     "ColumnProfile",
     "StatColumn",
     "ValueShape",
@@ -106,6 +107,27 @@ SHOOTING_PAIRS: tuple[tuple[str, str, str], ...] = (
     ("free_throws_made_per_game", "free_throws_attempted_per_game", "free throw"),
 )
 
+#: Terminal or already-fused quantities forbidden by accepted ADR-008. A source
+#: may place these beside legitimate per-game rates, but the parser records
+#: their headers only as ignored evidence and never maps or persists the values
+#: as projection-layer inputs.
+TERMINAL_HEADER_ALIASES: tuple[str, ...] = (
+    "rank",
+    "ranking",
+    "overall rank",
+    "ros rank",
+    "rest of season rank",
+    "tier",
+    "aav",
+    "auction value",
+    "dollar value",
+    "composite",
+    "composite value",
+    "fantasy value",
+    "expected games",
+    "expected_games",
+)
+
 
 @dataclass(frozen=True)
 class ColumnProfile:
@@ -118,6 +140,11 @@ class ColumnProfile:
     position_aliases: tuple[str, ...] = ()
     games_played_aliases: tuple[str, ...] = ()
     stat_columns: tuple[StatColumn, ...] = field(default_factory=tuple)
+    #: Canonical production fields whose headers form this source profile's
+    #: minimum schema signature. Vendor exports must expose all of them; the
+    #: generic manual profile instead accepts any one recognized production
+    #: field.
+    required_production_fields: tuple[str, ...] = ()
     #: Percentage-only fallback headers, keyed by the made-field they cannot
     #: substitute for (e.g. ``"field_goals_made_per_game"`` ->
     #: ``("fg%", "fg pct")``). Present only so the parser can recognise "the
@@ -127,6 +154,21 @@ class ColumnProfile:
     #: Whether this mapping has been checked against a real downloaded file.
     #: ``False`` for every vendor profile below; see the module docstring.
     verified: bool = False
+
+    def __post_init__(self) -> None:
+        fields = [column.field for column in self.stat_columns]
+        if len(fields) != len(set(fields)):
+            raise ValueError(f"{self.display_name} profile maps a production field more than once")
+        unknown = set(fields) - set(CANONICAL_STAT_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"{self.display_name} profile maps unknown production fields: {unknown}"
+            )
+        missing = set(self.required_production_fields) - set(fields)
+        if missing:
+            raise ValueError(
+                f"{self.display_name} profile requires fields it does not map: {missing}"
+            )
 
 
 _WS_OR_UNDERSCORE = re.compile(r"[\s_]+")
@@ -192,6 +234,11 @@ FANTASYPROS_PROFILE = ColumnProfile(
         StatColumn("turnovers_per_game", ("to", "tov")),
         StatColumn("three_pointers_made_per_game", ("3pm",)),
     ),
+    required_production_fields=(
+        "points_per_game",
+        "rebounds_per_game",
+        "assists_per_game",
+    ),
     # FantasyPros' free 9-cat export publishes FG%/FT% without makes or
     # attempts, so those two categories cannot be volume-weighted from it —
     # the parser reports this rather than treating the percentage as a rate.
@@ -226,6 +273,11 @@ HASHTAG_PROFILE = ColumnProfile(
         StatColumn("free_throws_made_per_game", ("ftm",)),
         StatColumn("free_throws_attempted_per_game", ("fta",)),
     ),
+    required_production_fields=(
+        "points_per_game",
+        "rebounds_per_game",
+        "assists_per_game",
+    ),
     percentage_fallback_aliases={
         "field_goals_made_per_game": ("fg%",),
         "free_throws_made_per_game": ("ft%",),
@@ -254,6 +306,11 @@ BASKETBALL_MONSTER_PROFILE = ColumnProfile(
         StatColumn("three_pointers_attempted_per_game", ("3pa",)),
         StatColumn("free_throws_made_per_game", ("ftm",)),
         StatColumn("free_throws_attempted_per_game", ("fta",)),
+    ),
+    required_production_fields=(
+        "points_per_game",
+        "rebounds_per_game",
+        "assists_per_game",
     ),
     percentage_fallback_aliases={
         "field_goals_made_per_game": ("fg%",),

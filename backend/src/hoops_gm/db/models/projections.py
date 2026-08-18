@@ -42,10 +42,9 @@ apart.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    JSON,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -234,13 +233,6 @@ class Projection(IntPk, TimestampMixin, Base):
     three_pointers_attempted_per_game: Mapped[float | None] = mapped_column()
     free_throws_made_per_game: Mapped[float | None] = mapped_column()
     free_throws_attempted_per_game: Mapped[float | None] = mapped_column()
-
-    #: The source row exactly as parsed, before normalisation, keyed by the
-    #: profile's canonical field names. Kept so a disputed number can be
-    #: traced back to precisely what the source published, the same
-    #: "preserve raw before normalising" reasoning as ``rawstore.py``, scaled
-    #: down to a single CSV row rather than a multi-megabyte payload.
-    raw_row: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     projection_import: Mapped[ProjectionImport] = relationship(back_populates="projections")
     player: Mapped[Player] = relationship()

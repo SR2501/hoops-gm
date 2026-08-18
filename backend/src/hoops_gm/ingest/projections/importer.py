@@ -15,10 +15,11 @@ Two properties matter more than the write itself:
   source, season and the SHA-256 of the file's bytes, so re-running the same
   file converges onto the same import rather than minting a new "version" for
   identical content, while an updated file or a new season creates a new one.
-* **idempotent row writes** — a ``projections`` row is upserted by
-  ``(projection_import_id, player_id)``, so reprocessing one import (for
-  example after the crosswalk gains a new player) converges rather than
-  duplicates.
+* **exact-output reconciliation** — reprocessing an import removes every
+  projection and games-played assumption it previously owned, retracts stale
+  automated crosswalk links through ``import_resolutions``, and rebuilds only
+  the currently accepted matches. An accepted match that becomes ambiguous or
+  changes players cannot survive as stale output.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.enums import ExternalSource, ScoringType
@@ -51,6 +53,7 @@ from hoops_gm.ingest.projections.profiles import (
 )
 
 __all__ = [
+    "ProjectionEncodingError",
     "ProjectionImportOutcome",
     "build_player_targets",
     "get_or_create_projection_import",
@@ -61,8 +64,22 @@ __all__ = [
 ]
 
 
+class ProjectionEncodingError(ValueError):
+    """Raw projection bytes are not valid UTF-8/UTF-8-with-BOM."""
+
+
 def _content_checksum(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _decode_csv(content: bytes) -> str:
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ProjectionEncodingError(
+            "projection CSV must be UTF-8 (an optional UTF-8 BOM is supported); "
+            f"decoding failed at byte {exc.start}"
+        ) from exc
 
 
 def get_or_create_projection_source(
@@ -81,8 +98,16 @@ def get_or_create_projection_source(
     """
     row = session.scalar(select(ProjectionSource).where(ProjectionSource.source == source))
     if row is None:
-        row = ProjectionSource(source=source, display_name=display_name)
-        session.add(row)
+        candidate = ProjectionSource(source=source, display_name=display_name)
+        try:
+            with session.begin_nested():
+                session.add(candidate)
+                session.flush()
+            row = candidate
+        except IntegrityError:
+            row = session.scalar(select(ProjectionSource).where(ProjectionSource.source == source))
+            if row is None:
+                raise
     row.display_name = display_name
     if assumed_scoring_type is not None:
         row.assumed_scoring_type = assumed_scoring_type
@@ -97,7 +122,7 @@ def get_or_create_projection_import(
     *,
     source: ProjectionSource,
     season: str,
-    content: bytes,
+    content_sha256: str,
     original_filename: str | None = None,
     assumed_scoring_type: ScoringType | None = None,
     raw_payload_ref: str | None = None,
@@ -112,29 +137,41 @@ def get_or_create_projection_import(
     of nothing while the same bytes cannot leak an earlier season into a new
     import.
     """
-    checksum = _content_checksum(content)
     existing = session.scalar(
         select(ProjectionImport).where(
             ProjectionImport.source_id == source.id,
             ProjectionImport.season == season,
-            ProjectionImport.content_sha256 == checksum,
+            ProjectionImport.content_sha256 == content_sha256,
         )
     )
     if existing is not None:
         return existing, False
 
-    row = ProjectionImport(
+    candidate = ProjectionImport(
         source_id=source.id,
         season=season,
         imported_at=imported_at or datetime.now(UTC),
-        content_sha256=checksum,
+        content_sha256=content_sha256,
         original_filename=original_filename,
         assumed_scoring_type=assumed_scoring_type,
         raw_payload_ref=raw_payload_ref,
     )
-    session.add(row)
-    session.flush()
-    return row, True
+    try:
+        with session.begin_nested():
+            session.add(candidate)
+            session.flush()
+        return candidate, True
+    except IntegrityError:
+        existing = session.scalar(
+            select(ProjectionImport).where(
+                ProjectionImport.source_id == source.id,
+                ProjectionImport.season == season,
+                ProjectionImport.content_sha256 == content_sha256,
+            )
+        )
+        if existing is None:
+            raise
+        return existing, False
 
 
 def build_player_targets(session: Session) -> list[ResolvableRecord]:
@@ -203,24 +240,20 @@ def resolve_projection_identities(
 def _apply_row(projection: Projection, row: ProjectionSourceRow) -> None:
     for field_name in CANONICAL_STAT_FIELDS:
         setattr(projection, field_name, getattr(row, field_name))
-    projection.raw_row = dict(row.raw_row)
 
 
-def _upsert_games_played_assumption(
+def _write_games_played_assumption(
     session: Session, projection: Projection, row: ProjectionSourceRow
 ) -> None:
     if row.assumed_games_played is None and row.assumed_games_played_raw is None:
         return
-    existing = session.scalar(
-        select(SourceGamesPlayedAssumption).where(
-            SourceGamesPlayedAssumption.projection_id == projection.id
+    session.add(
+        SourceGamesPlayedAssumption(
+            projection_id=projection.id,
+            assumed_games_played=row.assumed_games_played,
+            assumed_games_played_raw=row.assumed_games_played_raw,
         )
     )
-    if existing is None:
-        existing = SourceGamesPlayedAssumption(projection_id=projection.id)
-        session.add(existing)
-    existing.assumed_games_played = row.assumed_games_played
-    existing.assumed_games_played_raw = row.assumed_games_played_raw
 
 
 def import_projection_rows(
@@ -230,12 +263,14 @@ def import_projection_rows(
     rows: Sequence[ProjectionSourceRow],
     source: ExternalSource,
 ) -> tuple[ImportCounts, ResolutionReport]:
-    """Resolve identities and upsert ``projections`` rows for one import batch.
+    """Resolve identities and exactly reconcile one import's projection rows.
 
     Only **accepted** resolutions produce a ``projections`` row — a needs-
     review or unmatched row belongs in the report handed back to a human
     (``hoops_gm.identity.report``), not in the data with a guessed
-    ``player_id`` attached to it.
+    ``player_id`` attached to it. Existing import-owned rows are deleted before
+    rebuilding, in the caller's transaction, so stale identities and their
+    one-to-one games-played assumptions cannot survive a re-resolution.
     """
     report = resolve_projection_identities(session, rows)
     import_resolutions(session, report.all_resolutions(), source=source)
@@ -243,19 +278,26 @@ def import_projection_rows(
     player_by_key = {
         link.external_id: link.player_id
         for link in session.scalars(
-            select(PlayerExternalId).where(PlayerExternalId.source == source)
+            select(PlayerExternalId).where(
+                PlayerExternalId.source == source,
+                PlayerExternalId.current_for_source == source.value,
+            )
         )
     }
     rows_by_key = {normalize_name(row.player_name).key: row for row in rows}
 
-    existing_by_player = {
-        proj.player_id: proj
-        for proj in session.scalars(
+    existing = list(
+        session.scalars(
             select(Projection).where(Projection.projection_import_id == projection_import.id)
         )
-    }
+    )
+    previous_player_ids = {projection.player_id for projection in existing}
+    for projection in existing:
+        session.delete(projection)
+    session.flush()
 
     counts = ImportCounts()
+    written_player_ids: set[int] = set()
     for resolution in report.accepted:
         key = resolution.source_record.key
         row = rows_by_key.get(key)
@@ -264,22 +306,23 @@ def import_projection_rows(
             counts.skipped += 1
             continue
 
-        projection = existing_by_player.get(player_id)
-        if projection is None:
-            projection = Projection(
-                projection_import_id=projection_import.id,
-                player_id=player_id,
-                season=projection_import.season,
-            )
-            session.add(projection)
-            counts.created += 1
-        else:
+        projection = Projection(
+            projection_import_id=projection_import.id,
+            player_id=player_id,
+            season=projection_import.season,
+        )
+        session.add(projection)
+        written_player_ids.add(player_id)
+        if player_id in previous_player_ids:
             counts.updated += 1
+        else:
+            counts.created += 1
 
         _apply_row(projection, row)
         session.flush()  # projection.id is required by the 1:1 GP assumption row
-        _upsert_games_played_assumption(session, projection, row)
+        _write_games_played_assumption(session, projection, row)
 
+    counts.superseded = len(previous_player_ids - written_player_ids)
     session.flush()
     return counts, report
 
@@ -310,7 +353,7 @@ def import_projection_csv(
     source: ExternalSource,
     display_name: str,
     season: str,
-    csv_text: str,
+    csv_bytes: bytes,
     original_filename: str | None = None,
     assumed_scoring_type: ScoringType | None = None,
     profile: ColumnProfile | None = None,
@@ -326,10 +369,18 @@ def import_projection_csv(
     :func:`import_projection_rows`). A caller with a CSV file and nothing
     else needs only this function.
     """
+    content_sha256 = _content_checksum(csv_bytes)
+    csv_text = _decode_csv(csv_bytes)
+
     resolved_profile = profile or PROFILES_BY_SOURCE.get(source)
     if resolved_profile is None:
         raise ValueError(
             f"no built-in column profile for {source!r}; pass one explicitly via `profile=`"
+        )
+    if resolved_profile.source is not source:
+        raise ValueError(
+            f"profile source {resolved_profile.source.value!r} does not match "
+            f"declared import source {source.value!r}"
         )
 
     parsed = parse_projection_csv(csv_text, resolved_profile, season=season)
@@ -344,7 +395,7 @@ def import_projection_csv(
         session,
         source=source_row,
         season=season,
-        content=csv_text.encode("utf-8"),
+        content_sha256=content_sha256,
         original_filename=original_filename,
         assumed_scoring_type=assumed_scoring_type,
         raw_payload_ref=raw_payload_ref,

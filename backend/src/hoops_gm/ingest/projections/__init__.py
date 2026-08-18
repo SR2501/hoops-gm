@@ -15,6 +15,7 @@ tables, never one.
 """
 
 from hoops_gm.ingest.projections.importer import (
+    ProjectionEncodingError,
     ProjectionImportOutcome,
     build_player_targets,
     get_or_create_projection_import,
@@ -49,6 +50,7 @@ __all__ = [
     "MANUAL_PROFILE",
     "PROFILES_BY_SOURCE",
     "ColumnProfile",
+    "ProjectionEncodingError",
     "ProjectionImportOutcome",
     "ProjectionParseResult",
     "ProjectionProfileError",

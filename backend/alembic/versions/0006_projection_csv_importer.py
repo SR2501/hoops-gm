@@ -206,7 +206,6 @@ def upgrade() -> None:
         sa.Column("three_pointers_attempted_per_game", sa.Float(), nullable=True),
         sa.Column("free_throws_made_per_game", sa.Float(), nullable=True),
         sa.Column("free_throws_attempted_per_game", sa.Float(), nullable=True),
-        sa.Column("raw_row", sa.JSON(), nullable=True),
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",

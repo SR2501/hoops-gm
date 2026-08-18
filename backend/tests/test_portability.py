@@ -376,6 +376,7 @@ def test_csv_importer_tables_are_present() -> None:
     # on this table at all.
     assert "games_played" not in projection_columns
     assert "expected_games" not in projection_columns
+    assert "raw_row" not in projection_columns
     assert {"points_per_game", "field_goals_made_per_game", "field_goals_attempted_per_game"} <= (
         projection_columns
     )

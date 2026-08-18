@@ -19,7 +19,9 @@ vendor file — see the caveat in that module's docstring.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -42,9 +44,12 @@ from hoops_gm.ingest.projections import (
     HASHTAG_PROFILE,
     MANUAL_PROFILE,
     ColumnProfile,
+    ProjectionEncodingError,
     ProjectionProfileError,
     StatColumn,
     ValueShape,
+    get_or_create_projection_import,
+    get_or_create_projection_source,
     import_projection_csv,
     parse_projection_csv,
 )
@@ -54,6 +59,10 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "projections"
 
 def load(name: str) -> str:
     return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+def load_bytes(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
 
 
 def seed_player(
@@ -135,11 +144,17 @@ def test_canonical_stat_fields_match_the_projection_schema() -> None:
 
 
 def test_projection_schema_has_no_games_played_or_expected_games_column() -> None:
-    """ADR-002, enforced by absence rather than merely documented."""
+    """ADR-002/ADR-008, enforced by absence rather than merely documented."""
     columns = set(Projection.__table__.columns.keys())
     assert "games_played" not in columns
     assert "expected_games" not in columns
     assert "assumed_games_played" not in columns
+    assert {
+        "raw_row",
+        "rank",
+        "aav",
+        "composite_value",
+    }.isdisjoint(columns)
 
 
 # --------------------------------------------------------------------------
@@ -189,20 +204,25 @@ def test_season_total_column_is_divided_by_games_played() -> None:
 
 
 def test_season_total_without_games_played_is_a_warning_not_a_fabrication() -> None:
+    # Give only Beta a usable per-game value through a second recognized field
+    # so the parser can return Alpha's row-level rejection instead of rejecting
+    # the whole file.
     profile = ColumnProfile(
         source=MANUAL_PROFILE.source,
         display_name="season-total test profile",
         name_aliases=("player_name",),
         stat_columns=(
             StatColumn("points_per_game", ("points_total",), shape=ValueShape.SEASON_TOTAL),
+            StatColumn("assists_per_game", ("assists_per_game",)),
         ),
     )
-    csv_text = "player_name,points_total\nPlayer Alpha,1600\n"
+    csv_text = "player_name,points_total,assists_per_game\nPlayer Alpha,1600,\nPlayer Beta,,5.0\n"
     result = parse_projection_csv(csv_text, profile, season="2026-27")
 
-    assert result.rejected_count == 0
-    assert result.rows[0].points_per_game is None
+    assert result.rejected_count == 1
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
     assert any("season total" in issue.message for issue in result.warnings)
+    assert any("no usable production" in issue.message for issue in result.fatal_issues)
 
 
 # --------------------------------------------------------------------------
@@ -231,11 +251,11 @@ def test_unparsable_number_rejects_only_its_row() -> None:
 
 
 def test_games_played_outside_plausible_range_is_fatal() -> None:
-    csv_text = "player_name,games_played\nPlayer Alpha,250\n"
+    csv_text = "player_name,games_played,points_per_game\nPlayer Alpha,250,20\nPlayer Beta,70,18\n"
     result = parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
 
     assert result.rejected_count == 1
-    assert result.rows == []
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
 
 
 def test_duplicate_name_within_file_rejects_all_occurrences() -> None:
@@ -256,11 +276,12 @@ def test_makes_exceeding_attempts_is_fatal() -> None:
     csv_text = (
         "player_name,field_goals_made_per_game,field_goals_attempted_per_game\n"
         "Player Alpha,10.0,8.0\n"
+        "Player Beta,6.0,12.0\n"
     )
     result = parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
 
     assert result.rejected_count == 1
-    assert result.rows == []
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
     assert any("exceed" in issue.message for issue in result.issues)
 
 
@@ -272,12 +293,59 @@ def test_missing_name_column_raises_a_profile_error() -> None:
         parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
 
 
+def test_duplicate_normalized_headers_fail_the_whole_file() -> None:
+    csv_text = "player_name,points_per_game,Points Per Game\nPlayer Alpha,20.0,21.0\n"
+    with pytest.raises(ProjectionProfileError, match="duplicate CSV headers"):
+        parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
+
+
+def test_vendor_profile_requires_its_production_signature() -> None:
+    csv_text = "Player,Team,PTS,REB\nPlayer Alpha,BOS,20.0,5.0\n"
+    with pytest.raises(ProjectionProfileError, match="assists_per_game"):
+        parse_projection_csv(csv_text, FANTASYPROS_PROFILE, season="2026-27")
+
+
+def test_file_with_no_production_headers_is_rejected() -> None:
+    csv_text = "player_name,rank,aav\nPlayer Alpha,1,55\n"
+    with pytest.raises(ProjectionProfileError, match="no recognized production columns"):
+        parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
+
+
+def test_row_with_no_usable_production_rate_is_rejected() -> None:
+    csv_text = "player_name,points_per_game\nPlayer Alpha,\n"
+    with pytest.raises(ProjectionProfileError, match="no usable production"):
+        parse_projection_csv(csv_text, MANUAL_PROFILE, season="2026-27")
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_games_played_is_rejected(value: str) -> None:
+    result = parse_projection_csv(
+        (f"player_name,games_played,points_per_game\nPlayer Alpha,{value},20\nPlayer Beta,70,18\n"),
+        MANUAL_PROFILE,
+        season="2026-27",
+    )
+
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
+    assert result.rejected_count == 1
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_production_stat_is_rejected(value: str) -> None:
+    result = parse_projection_csv(
+        (f"player_name,points_per_game\nPlayer Alpha,{value}\nPlayer Beta,18\n"),
+        MANUAL_PROFILE,
+        season="2026-27",
+    )
+
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
+    assert result.rejected_count == 1
+
+
 # --------------------------------------------------------------------------
-# Parser: vendor profiles (unverified aliases; see module docstring)
+# Parser examples: vendor profiles (synthetic, not Adapter-gate fixtures)
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.adapter_contract
 def test_fantasypros_profile_resolves_headers_and_flags_percentage_only() -> None:
     result = parse_projection_csv(
         load("fantasypros_sample.csv"), FANTASYPROS_PROFILE, season="2026-27"
@@ -298,7 +366,6 @@ def test_fantasypros_profile_resolves_headers_and_flags_percentage_only() -> Non
     )
 
 
-@pytest.mark.adapter_contract
 def test_hashtag_profile_resolves_full_shooting_volume() -> None:
     result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
 
@@ -310,7 +377,6 @@ def test_hashtag_profile_resolves_full_shooting_volume() -> None:
     assert beta.defensive_rebounds_per_game == 3.5
 
 
-@pytest.mark.adapter_contract
 def test_basketball_monster_profile_resolves_headers() -> None:
     result = parse_projection_csv(
         load("basketball_monster_sample.csv"), BASKETBALL_MONSTER_PROFILE, season="2026-27"
@@ -335,7 +401,7 @@ def test_import_writes_projections_only_for_accepted_matches(seeded_players: Ses
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=load("manual_sample.csv"),
+        csv_bytes=load_bytes("manual_sample.csv"),
         original_filename="manual_sample.csv",
     )
 
@@ -379,7 +445,7 @@ def test_ambiguous_player_is_reported_and_never_imported(session: Session) -> No
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text="player_name,points_per_game\nJordan Example,20.0\n",
+        csv_bytes=b"player_name,points_per_game\nJordan Example,20.0\n",
     )
 
     assert outcome.identity_report.accepted == []
@@ -397,21 +463,21 @@ def test_ambiguous_player_is_reported_and_never_imported(session: Session) -> No
 
 def test_reimporting_identical_bytes_is_idempotent(seeded_players: Session) -> None:
     session = seeded_players
-    csv_text = load("manual_sample.csv")
+    csv_bytes = load_bytes("manual_sample.csv")
 
     first = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=csv_text,
+        csv_bytes=csv_bytes,
     )
     second = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=csv_text,
+        csv_bytes=csv_bytes,
     )
 
     assert first.import_created is True
@@ -428,21 +494,21 @@ def test_identical_bytes_for_a_new_season_create_a_distinct_import(
     seeded_players: Session,
 ) -> None:
     session = seeded_players
-    csv_text = load("manual_sample.csv")
+    csv_bytes = load_bytes("manual_sample.csv")
 
     first = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=csv_text,
+        csv_bytes=csv_bytes,
     )
     second = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2027-28",
-        csv_text=csv_text,
+        csv_bytes=csv_bytes,
     )
 
     assert second.import_created is True
@@ -458,22 +524,22 @@ def test_identical_bytes_for_a_new_season_create_a_distinct_import(
 
 def test_an_updated_file_creates_a_new_versioned_import(seeded_players: Session) -> None:
     session = seeded_players
-    original = load("manual_sample.csv")
-    updated = original.replace("24.2", "25.0")  # a source publishing a revision
+    original = load_bytes("manual_sample.csv")
+    updated = original.replace(b"24.2", b"25.0")  # a source publishing a revision
 
     first = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=original,
+        csv_bytes=original,
     )
     second = import_projection_csv(
         session,
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=updated,
+        csv_bytes=updated,
     )
 
     assert second.import_created is True
@@ -503,6 +569,269 @@ def test_an_updated_file_creates_a_new_versioned_import(seeded_players: Session)
     assert new_alpha.points_per_game == 25.0
 
 
+def test_reprocessing_accepted_to_ambiguous_removes_all_owned_output(session: Session) -> None:
+    seed_player(session, nba_id=20, name="Casey Example", team_abbreviation="BOS", position="G")
+    csv_bytes = (
+        b"player_name,team,position,games_played,points_per_game\nCasey Example,BOS,G,70,20.0\n"
+    )
+    first = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+    assert first.projection_import.matched_count == 1
+    assert session.query(Projection).count() == 1
+    assert session.query(SourceGamesPlayedAssumption).count() == 1
+
+    seed_player(session, nba_id=21, name="Casey Example", team_abbreviation="BOS", position="G")
+    second = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+
+    assert second.import_created is False
+    assert second.identity_report.accepted == []
+    assert len(second.identity_report.needs_review) == 1
+    assert session.query(Projection).count() == 0
+    assert session.query(SourceGamesPlayedAssumption).count() == 0
+    link = (
+        session.query(PlayerExternalId)
+        .filter(PlayerExternalId.source == ExternalSource.MANUAL)
+        .one()
+    )
+    assert link.current_for_source is None
+
+
+def test_reprocessing_accepted_to_unmatched_removes_all_owned_output(session: Session) -> None:
+    player = seed_player(
+        session,
+        nba_id=30,
+        name="Taylor Example",
+        team_abbreviation="BOS",
+        position="F",
+    )
+    csv_bytes = (
+        b"player_name,team,position,games_played,points_per_game\nTaylor Example,BOS,F,68,18.0\n"
+    )
+    first = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+    assert first.projection_import.matched_count == 1
+
+    player.full_name = "Different Person"
+    player.normalized_name = normalize_name(player.full_name).key
+    session.flush()
+    second = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+
+    assert second.import_created is False
+    assert second.identity_report.accepted == []
+    assert len(second.identity_report.unmatched) == 1
+    assert session.query(Projection).count() == 0
+    assert session.query(SourceGamesPlayedAssumption).count() == 0
+    link = (
+        session.query(PlayerExternalId)
+        .filter(PlayerExternalId.source == ExternalSource.MANUAL)
+        .one()
+    )
+    assert link.current_for_source is None
+
+
+def test_reprocessing_player_a_to_player_b_replaces_output_exactly(session: Session) -> None:
+    player_a = seed_player(
+        session,
+        nba_id=40,
+        name="Morgan Example",
+        team_abbreviation="BOS",
+        position="F",
+    )
+    csv_bytes = (
+        b"player_name,team,position,games_played,points_per_game\nMorgan Example,BOS,F,66,17.0\n"
+    )
+    import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+    assert session.query(Projection).one().player_id == player_a.id
+
+    player_a.full_name = "Corrected Player A"
+    player_a.normalized_name = normalize_name(player_a.full_name).key
+    player_b = seed_player(
+        session,
+        nba_id=41,
+        name="Morgan Example",
+        team_abbreviation="BOS",
+        position="F",
+    )
+    session.flush()
+    second = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=csv_bytes,
+    )
+
+    assert second.import_created is False
+    projection = session.query(Projection).one()
+    assert projection.player_id == player_b.id
+    assert projection.player_id != player_a.id
+    assert session.query(SourceGamesPlayedAssumption).count() == 1
+    link = (
+        session.query(PlayerExternalId)
+        .filter(
+            PlayerExternalId.source == ExternalSource.MANUAL,
+            PlayerExternalId.current_for_source == ExternalSource.MANUAL.value,
+        )
+        .one()
+    )
+    assert link.player_id == player_b.id
+
+
+def test_raw_byte_identity_distinguishes_bom_and_newlines(seeded_players: Session) -> None:
+    session = seeded_players
+    lf = b"player_name,points_per_game\nPlayer Alpha,20.0\n"
+    crlf = lf.replace(b"\n", b"\r\n")
+    bom = b"\xef\xbb\xbf" + lf
+
+    outcomes = [
+        import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Manual test source",
+            season="2026-27",
+            csv_bytes=content,
+        )
+        for content in (lf, crlf, bom)
+    ]
+
+    assert all(outcome.import_created for outcome in outcomes)
+    assert len({outcome.projection_import.id for outcome in outcomes}) == 3
+    assert {outcome.projection_import.content_sha256 for outcome in outcomes} == {
+        hashlib.sha256(content).hexdigest() for content in (lf, crlf, bom)
+    }
+
+
+def test_non_utf8_bytes_fail_before_an_import_row_is_created(session: Session) -> None:
+    with pytest.raises(ProjectionEncodingError, match="must be UTF-8"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Manual test source",
+            season="2026-27",
+            csv_bytes=b"player_name,points_per_game\nJos\xe9,20.0\n",
+        )
+
+    assert session.query(ProjectionImport).count() == 0
+    assert session.query(ProjectionSource).count() == 0
+
+
+def test_profile_source_must_match_declared_source(session: Session) -> None:
+    with pytest.raises(ValueError, match="does not match declared import source"):
+        import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Misattributed source",
+            season="2026-27",
+            csv_bytes=b"player_name,points_per_game\nPlayer Alpha,20.0\n",
+            profile=FANTASYPROS_PROFILE,
+        )
+
+    assert session.query(ProjectionSource).count() == 0
+
+
+def test_duplicate_conflict_reselects_the_winning_import(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = get_or_create_projection_source(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+    )
+    content_sha256 = hashlib.sha256(b"same bytes").hexdigest()
+    winner, created = get_or_create_projection_import(
+        session,
+        source=source,
+        season="2026-27",
+        content_sha256=content_sha256,
+    )
+    assert created is True
+
+    real_scalar = session.scalar
+    calls = 0
+
+    def stale_once(statement: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return real_scalar(statement)
+
+    monkeypatch.setattr(session, "scalar", stale_once)
+    converged, created = get_or_create_projection_import(
+        session,
+        source=source,
+        season="2026-27",
+        content_sha256=content_sha256,
+    )
+
+    assert created is False
+    assert converged.id == winner.id
+    assert session.query(ProjectionImport).count() == 1
+
+
+def test_terminal_columns_are_ignored_and_never_persisted(
+    seeded_players: Session,
+) -> None:
+    session = seeded_players
+    outcome = import_projection_csv(
+        session,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(
+            b"player_name,rank,AAV,composite_value,expected_games,points_per_game\n"
+            b"Player Alpha,1,55,99.9,82,20.0\n"
+        ),
+        raw_payload_ref="raw://projection-import/fixture",
+    )
+
+    assert set(outcome.parse_result.ignored_terminal_headers) == {
+        "rank",
+        "AAV",
+        "composite_value",
+        "expected_games",
+    }
+    projection = session.query(Projection).one()
+    assert projection.points_per_game == 20.0
+    assert outcome.projection_import.raw_payload_ref == "raw://projection-import/fixture"
+    projection_columns = set(Projection.__table__.columns)
+    assert {
+        "raw_row",
+        "rank",
+        "aav",
+        "composite_value",
+        "expected_games",
+    }.isdisjoint(projection_columns)
+
+
 def test_source_games_played_assumption_never_becomes_a_projection_column(
     seeded_players: Session,
 ) -> None:
@@ -513,7 +842,7 @@ def test_source_games_played_assumption_never_becomes_a_projection_column(
         source=ExternalSource.MANUAL,
         display_name="Manual test source",
         season="2026-27",
-        csv_text=load("manual_sample.csv"),
+        csv_bytes=load_bytes("manual_sample.csv"),
     )
     del outcome
 

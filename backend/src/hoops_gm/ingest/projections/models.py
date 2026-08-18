@@ -96,6 +96,10 @@ class ProjectionParseResult:
     #: contract test or a human wants to know *why* a column was read the way
     #: it was.
     resolved_headers: dict[str, str] = field(default_factory=dict)
+    #: Higher-layer aggregate headers present in the file and deliberately
+    #: ignored under ADR-008. Values remain only in the transient raw row; no
+    #: projection-layer model persists them.
+    ignored_terminal_headers: list[str] = field(default_factory=list)
     #: Every data row the file contained, including rejected ones.
     total_rows: int = 0
 
@@ -120,10 +124,14 @@ class ProjectionParseResult:
 
 
 def build_raw_row(fieldnames: list[str], values: dict[str, Any]) -> dict[str, str]:
-    """Coerce a ``csv.DictReader`` row to ``dict[str, str]`` for storage.
+    """Coerce a ``csv.DictReader`` row to transient parse evidence.
 
     ``DictReader`` maps missing trailing columns to ``None`` and extra ones to
     a list under ``None`` key (``restkey``); both are normalised to strings so
-    ``raw_row`` round-trips through JSON without surprises.
+    callers can inspect the source row during adjudication. It is deliberately
+    not persisted on ``Projection``: terminal Rank/AAV/composite fields may be
+    present in the same CSV and accepted ADR-008 forbids attaching them to the
+    projection layer. Durable raw evidence belongs behind
+    ``ProjectionImport.raw_payload_ref``.
     """
     return {name: "" if values.get(name) is None else str(values.get(name)) for name in fieldnames}
