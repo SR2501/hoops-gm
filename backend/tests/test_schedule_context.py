@@ -16,6 +16,7 @@ from hoops_gm.schedule_context import (
     RELEASED_BLOWOUT_MODEL_VERSION,
     ContextGame,
     GameResult,
+    IncompleteRecentContextError,
     InsufficientContextCoverageError,
     ScheduleContextConfig,
     StaleContextCohortError,
@@ -123,9 +124,11 @@ def test_off_night_facts_count_unique_games_without_scoring_period_assumptions()
 def test_context_coverage_floor_is_fixed_and_versioned() -> None:
     default = ScheduleContextConfig()
     strict = ScheduleContextConfig(minimum_opponent_coverage=1.0)
+    shorter_history = ScheduleContextConfig(trailing_games=14)
 
     assert default.minimum_opponent_coverage == 0.95
     assert default.off_night_model_version != strict.off_night_model_version
+    assert default.off_night_model_version != shorter_history.off_night_model_version
     with pytest.raises(ValueError, match=r"must be in \[0.95, 1\]"):
         ScheduleContextConfig(minimum_opponent_coverage=0.94)
 
@@ -422,6 +425,23 @@ def test_context_service_persists_explainable_versioned_outputs(session: Any) ->
     assert all(
         row.input_snapshot["opponent_context_coverage"]["coverage_ratio"] == 1.0 for row in contexts
     )
+    assert all(
+        row.input_snapshot["opponent_context_coverage"]["observation_completeness"]
+        == {
+            "rule": "last_n_scored_regular_season_team_games_complete_v1",
+            "audited_team_fixture_histories": 4,
+            "scored_team_game_observations": 40,
+            "complete_team_game_observations": 40,
+            "incomplete_team_game_observations": 0,
+            "maximum_days_since_latest_scored_game": 355,
+            "maximum_days_since_latest_complete_game": 355,
+        }
+        for row in contexts
+    )
+    assert all(
+        row.input_snapshot["observation_completeness"]["team"]["incomplete_game_ids"] == []
+        for row in contexts
+    )
     [slate] = session.scalars(select(OffNightSlate)).all()
     assert slate.streaming_window_score is None
     assert slate.source_version == claim.source_version
@@ -599,16 +619,41 @@ def test_regular_season_source_fingerprint_excludes_playoff_rows(session: Any) -
     assert context_source_version(session) == regular_version
 
 
-def test_context_run_fails_before_writes_when_box_score_coverage_is_empty(
+def test_context_run_fails_before_writes_when_recent_half_of_box_scores_is_incomplete(
     session: Any,
 ) -> None:
-    games, config = _load_context_database(session)
-    for log in session.scalars(select(PlayerGameLog)):
+    games, _config = _load_context_database(session)
+    config = ScheduleContextConfig(trailing_games=15, minimum_history_games=3)
+    history_start = date(2026, 9, 19)
+    scored_games = session.scalars(select(NbaGame).where(NbaGame.home_score.is_not(None))).all()
+    for game in scored_games:
+        day = int(game.nba_game_id[1:3])
+        game.game_date = history_start + timedelta(days=day)
+        game.season = "2026-27"
+    session.flush()
+    recent_half_start = date(2026, 10, 4)
+    latest_complete_date = recent_half_start - timedelta(days=1)
+    assert (date(2026, 10, 20) - latest_complete_date).days == 17
+    recent_game_ids = session.scalars(
+        select(NbaGame.id).where(
+            NbaGame.game_date >= recent_half_start,
+            NbaGame.home_score.is_not(None),
+        )
+    ).all()
+    assert len(recent_game_ids) == 30
+    recent_logs = session.scalars(
+        select(PlayerGameLog).where(PlayerGameLog.game_id.in_(recent_game_ids))
+    ).all()
+    assert len(recent_logs) == 300
+    for log in recent_logs:
         log.seconds_played = 1
     session.flush()
     model, claim = _publish_test_claim(session, games, config)
 
-    with pytest.raises(InsufficientContextCoverageError, match="0/4"):
+    with pytest.raises(
+        IncompleteRecentContextError,
+        match=r"15/15 incomplete box scores in its last 15 scored games",
+    ):
         compute_schedule_context(
             session,
             season="2026-27",
@@ -617,6 +662,31 @@ def test_context_run_fails_before_writes_when_box_score_coverage_is_empty(
         )
 
     assert model.version == RELEASED_BLOWOUT_MODEL_VERSION
+    assert session.scalar(select(func.count(OpponentContext.id))) == 0
+    assert session.scalar(select(func.count(OffNightSlate.id))) == 0
+
+
+def test_context_run_fails_before_writes_when_fixture_coverage_is_below_floor(
+    session: Any,
+) -> None:
+    games, config = _load_context_database(session)
+    new_team = NbaTeam(nba_team_id=999, abbreviation="NEW", name="New Team")
+    session.add(new_team)
+    session.flush()
+    first_entry = session.scalar(select(TeamScheduleEntry).order_by(TeamScheduleEntry.id))
+    assert first_entry is not None
+    first_entry.team_id = new_team.id
+    session.flush()
+    _model, claim = _publish_test_claim(session, games, config)
+
+    with pytest.raises(InsufficientContextCoverageError, match="3/4"):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim,
+            config=config,
+        )
+
     assert session.scalar(select(func.count(OpponentContext.id))) == 0
     assert session.scalar(select(func.count(OffNightSlate.id))) == 0
 

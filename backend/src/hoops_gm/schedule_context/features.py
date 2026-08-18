@@ -35,6 +35,8 @@ class ScheduleContextConfig:
             [
                 "off-night-empirical-midrank-v1",
                 f"{self.off_night_percentile:.8f}",
+                f"trailing-games:{self.trailing_games}",
+                f"minimum-history-games:{self.minimum_history_games}",
                 f"minimum-opponent-coverage:{self.minimum_opponent_coverage:.8f}",
             ]
         )
@@ -42,6 +44,51 @@ class ScheduleContextConfig:
 
 class InsufficientContextError(ValueError):
     """The stored observations cannot support an as-of context row."""
+
+
+class IncompleteRecentContextError(ValueError):
+    """A recent scored game is missing a complete team box score."""
+
+
+@dataclass(frozen=True)
+class RecentObservationAudit:
+    team_id: int
+    features_as_of: date
+    window_games: int
+    scored_game_ids: tuple[str, ...]
+    complete_game_ids: tuple[str, ...]
+    incomplete_game_ids: tuple[str, ...]
+    latest_scored_game_date: date | None
+    latest_complete_game_date: date | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "rule": "last_n_scored_regular_season_team_games_complete_v1",
+            "team_id": self.team_id,
+            "features_as_of": self.features_as_of.isoformat(),
+            "window_games": self.window_games,
+            "scored_game_ids": list(self.scored_game_ids),
+            "complete_game_ids": list(self.complete_game_ids),
+            "incomplete_game_ids": list(self.incomplete_game_ids),
+            "latest_scored_game_date": (
+                self.latest_scored_game_date.isoformat() if self.latest_scored_game_date else None
+            ),
+            "latest_complete_game_date": (
+                self.latest_complete_game_date.isoformat()
+                if self.latest_complete_game_date
+                else None
+            ),
+            "days_since_latest_scored_game": (
+                (self.features_as_of - self.latest_scored_game_date).days
+                if self.latest_scored_game_date
+                else None
+            ),
+            "days_since_latest_complete_game": (
+                (self.features_as_of - self.latest_complete_game_date).days
+                if self.latest_complete_game_date
+                else None
+            ),
+        }
 
 
 @dataclass(frozen=True)
@@ -123,6 +170,7 @@ class OpponentProfile:
     defence_window_games: int
     blowout_probability: float
     input_snapshot: dict[str, object]
+    observation_audits: tuple[RecentObservationAudit, RecentObservationAudit]
 
 
 def build_off_night_facts(
@@ -177,6 +225,20 @@ def build_opponent_profile(
 
     if blowout_model.training_cutoff >= fixture_date:
         raise ValueError("blowout model training cutoff must precede the fixture")
+    team_observation_audit = _recent_observation_audit(
+        team_id=team_id,
+        before=fixture_date,
+        context_games=context_games,
+        score_games=score_games,
+        limit=config.trailing_games,
+    )
+    opponent_observation_audit = _recent_observation_audit(
+        team_id=opponent_team_id,
+        before=fixture_date,
+        context_games=context_games,
+        score_games=score_games,
+        limit=config.trailing_games,
+    )
     team_history = _team_history(team_id, fixture_date, context_games, config.trailing_games)
     opponent_history = _team_history(
         opponent_team_id, fixture_date, context_games, config.trailing_games
@@ -226,6 +288,10 @@ def build_opponent_profile(
             "box_score_completeness": (
                 "each_team_player_seconds_equals_240_plus_25_per_overtime_v1"
             ),
+            "observation_completeness": {
+                "team": team_observation_audit.as_dict(),
+                "opponent": opponent_observation_audit.as_dict(),
+            },
             "team_pace_game_ids": [game.result.game_id for game in team_history],
             "opponent_defence_game_ids": [game.result.game_id for game in opponent_history],
             "team_pace_game_seconds": [
@@ -240,7 +306,56 @@ def build_opponent_profile(
             "projected_margin_gap": projected_gap,
             "blowout_bin_edges": list(blowout_model.bin_edges),
         },
+        observation_audits=(team_observation_audit, opponent_observation_audit),
     )
+
+
+def _recent_observation_audit(
+    *,
+    team_id: int,
+    before: date,
+    context_games: Sequence[ContextGame],
+    score_games: Sequence[GameResult],
+    limit: int,
+) -> RecentObservationAudit:
+    scored_history = sorted(
+        (
+            game
+            for game in score_games
+            if game.game_date < before and team_id in (game.home_team_id, game.away_team_id)
+        ),
+        key=lambda game: (game.game_date, game.game_id),
+    )[-limit:]
+    complete_games = {
+        game.result.game_id: game
+        for game in context_games
+        if team_id in (game.result.home_team_id, game.result.away_team_id)
+    }
+    complete_history = [
+        complete_games[game.game_id] for game in scored_history if game.game_id in complete_games
+    ]
+    incomplete_game_ids = tuple(
+        game.game_id for game in scored_history if game.game_id not in complete_games
+    )
+    audit = RecentObservationAudit(
+        team_id=team_id,
+        features_as_of=before,
+        window_games=limit,
+        scored_game_ids=tuple(game.game_id for game in scored_history),
+        complete_game_ids=tuple(game.result.game_id for game in complete_history),
+        incomplete_game_ids=incomplete_game_ids,
+        latest_scored_game_date=(scored_history[-1].game_date if scored_history else None),
+        latest_complete_game_date=(
+            complete_history[-1].result.game_date if complete_history else None
+        ),
+    )
+    if incomplete_game_ids:
+        raise IncompleteRecentContextError(
+            f"team {team_id} has {len(incomplete_game_ids)}/{len(scored_history)} incomplete "
+            f"box scores in its last {limit} scored games before {before}: "
+            f"{', '.join(incomplete_game_ids)}"
+        )
+    return audit
 
 
 def _team_history(

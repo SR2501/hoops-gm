@@ -10,6 +10,7 @@ from hoops_gm.schedule_context.blowout import (
 )
 from hoops_gm.schedule_context.features import (
     ContextGame,
+    IncompleteRecentContextError,
     OffNightFact,
     OpponentProfile,
     ScheduleContextConfig,
@@ -42,6 +43,7 @@ __all__ = [
     "ContextGame",
     "ContextWriteCounts",
     "GameResult",
+    "IncompleteRecentContextError",
     "InsufficientContextCoverageError",
     "OffNightFact",
     "OpponentProfile",

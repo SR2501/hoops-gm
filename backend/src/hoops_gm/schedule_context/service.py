@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from hoops_gm.schedule_context.features import (
     ContextGame,
     InsufficientContextError,
     OpponentProfile,
+    RecentObservationAudit,
     ScheduleContextConfig,
     TeamGameStats,
     build_off_night_facts,
@@ -97,8 +98,14 @@ class ContextCoverageAudit:
     skipped_fixture_rows: int
     coverage_ratio: float
     minimum_coverage_ratio: float
+    audited_team_fixture_histories: int
+    scored_team_game_observations: int
+    complete_team_game_observations: int
+    incomplete_team_game_observations: int
+    maximum_days_since_latest_scored_game: int | None
+    maximum_days_since_latest_complete_game: int | None
 
-    def as_dict(self) -> dict[str, int | float | str]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "rule": "produced_regular_season_fixture_rows_over_scheduled_fixture_rows_v1",
             "eligible_fixture_rows": self.eligible_fixture_rows,
@@ -106,6 +113,19 @@ class ContextCoverageAudit:
             "skipped_fixture_rows": self.skipped_fixture_rows,
             "coverage_ratio": self.coverage_ratio,
             "minimum_coverage_ratio": self.minimum_coverage_ratio,
+            "observation_completeness": {
+                "rule": "last_n_scored_regular_season_team_games_complete_v1",
+                "audited_team_fixture_histories": self.audited_team_fixture_histories,
+                "scored_team_game_observations": self.scored_team_game_observations,
+                "complete_team_game_observations": self.complete_team_game_observations,
+                "incomplete_team_game_observations": self.incomplete_team_game_observations,
+                "maximum_days_since_latest_scored_game": (
+                    self.maximum_days_since_latest_scored_game
+                ),
+                "maximum_days_since_latest_complete_game": (
+                    self.maximum_days_since_latest_complete_game
+                ),
+            },
         }
 
 
@@ -180,6 +200,8 @@ def publish_schedule_context_cohorts(
             "box_score_completeness": (
                 "each_team_player_seconds_equals_240_plus_25_per_overtime_v1"
             ),
+            "observation_completeness": ("last_n_scored_regular_season_team_games_complete_v1"),
+            "observation_window_games": config.trailing_games,
         },
         refreshed_at=when,
     )
@@ -599,6 +621,7 @@ def _prepare_opponent_profiles(
     config: ScheduleContextConfig,
 ) -> tuple[list[tuple[TeamScheduleEntry, OpponentProfile]], ContextCoverageAudit]:
     prepared: list[tuple[TeamScheduleEntry, OpponentProfile]] = []
+    observation_audits: dict[tuple[int, date], RecentObservationAudit] = {}
     skipped = 0
     for entry in entries:
         try:
@@ -615,14 +638,38 @@ def _prepare_opponent_profiles(
             skipped += 1
             continue
         prepared.append((entry, profile))
+        for audit in profile.observation_audits:
+            observation_audits[(audit.team_id, audit.features_as_of)] = audit
     eligible = len(entries)
     coverage_ratio = len(prepared) / eligible if eligible else 0.0
+    scored_recencies = [
+        (audit.features_as_of - audit.latest_scored_game_date).days
+        for audit in observation_audits.values()
+        if audit.latest_scored_game_date is not None
+    ]
+    complete_recencies = [
+        (audit.features_as_of - audit.latest_complete_game_date).days
+        for audit in observation_audits.values()
+        if audit.latest_complete_game_date is not None
+    ]
     coverage = ContextCoverageAudit(
         eligible_fixture_rows=eligible,
         produced_fixture_rows=len(prepared),
         skipped_fixture_rows=skipped,
         coverage_ratio=coverage_ratio,
         minimum_coverage_ratio=config.minimum_opponent_coverage,
+        audited_team_fixture_histories=len(observation_audits),
+        scored_team_game_observations=sum(
+            len(audit.scored_game_ids) for audit in observation_audits.values()
+        ),
+        complete_team_game_observations=sum(
+            len(audit.complete_game_ids) for audit in observation_audits.values()
+        ),
+        incomplete_team_game_observations=sum(
+            len(audit.incomplete_game_ids) for audit in observation_audits.values()
+        ),
+        maximum_days_since_latest_scored_game=max(scored_recencies, default=None),
+        maximum_days_since_latest_complete_game=max(complete_recencies, default=None),
     )
     if not prepared or coverage_ratio < config.minimum_opponent_coverage:
         raise InsufficientContextCoverageError(

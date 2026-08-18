@@ -2127,3 +2127,47 @@ every exact-head GitHub check, including real PostgreSQL and migrations, to pass
 Do not merge or self-approve from this session.
 
 ---
+
+## 2026-08-18 — quant, backend — Close final schedule-context history gaps and restack after injury reports
+
+**Changed:** Rebased PR #19 onto injury-report main commit `875d40e`, preserved
+both sides of the append-only handoff conflict, and restacked schedule-context
+provenance as Alembic `0010` with `down_revision = "0009"`. Off-night slates now
+stamp `claim.source_version`; source version is part of their natural key and
+indexed, so two scoring-source cohorts retain two independently valid coverage
+audits instead of overwriting one row. Pace/defence history now audits the last N
+**scored** regular-season games for each team/fixture against complete team box
+scores. Any incomplete member raises before slate or opponent writes, rather
+than letting `_team_history` backfill from arbitrarily old valid games.
+
+**Now true:** Successful opponent rows persist exact scored/complete game IDs,
+latest scored/complete dates, and recency days for both teams. Every opponent and
+slate row also persists an aggregate observation-completeness audit alongside
+fixture coverage. The off-night derivation version includes the history window
+and minimum history because those settings affect its persisted coverage audit.
+Regressions invalidate the recent 15 of 30 team games and prove zero writes, keep
+the 95% fixture-coverage failure, and prove two slate source histories survive.
+The model card now explains the 1,146 examples from 1,225 training games (79
+cold-start drops), all 1,225 carryover holdout examples, fit/serve offseason
+asymmetry, statistically significant top-bin underprediction, canonical-JSON
+SHA-256 pinning, and display-only 2026-27 posture. It also corrects the earlier
+handoff's `3,676` source-game total to the artifact-backed `3,680` without
+rewriting that historical entry.
+
+Local cumulative gates pass on the rebased tree: Ruff, format, strict mypy, 558
+default backend tests including seven `model_backtest` tests, 12 frontend tests
+plus lint/type-check/build, 63 userscript tests plus build, secret scan, SQLite
+upgrade/check/downgrade through the single `0010` head, and loading release
+`4809af29ed135f6f` from a newly built wheel.
+
+**Could not verify:** Native PostgreSQL remains unavailable locally. GitHub's
+real PostgreSQL, migration, and cumulative CI jobs had not run against this
+exact remediation when this entry was written. V1 still has no online drift
+monitor; serving it as 2026-27 display context does not establish current-season
+calibration.
+
+**Next:** Force-push with lease, require every exact-head GitHub check including
+PostgreSQL and migrations to pass, and return the new head to both reviewers for
+focused recheck. Do not merge or self-approve from this session.
+
+---
