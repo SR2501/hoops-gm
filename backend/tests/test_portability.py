@@ -270,3 +270,23 @@ def test_schedule_context_tables_are_present() -> None:
 def test_the_raw_bridge_payload_table_is_present() -> None:
     """Bridge captures are raw observations and are now part of the backend seam."""
     assert "bridge_payloads" in Base.metadata.tables
+
+
+def test_the_league_settings_snapshot_table_is_present() -> None:
+    """The `league-settings-ingest` persistence boundary (docs/backlog.md).
+
+    One immutable, source-attributed row per ``(league_id, version)`` -- see
+    ``db/models/league_settings.py`` for why the settings vocabulary itself
+    lives inside the JSON document rather than as typed columns.
+    """
+    assert "league_settings_snapshots" in Base.metadata.tables
+    columns = set(Base.metadata.tables["league_settings_snapshots"].columns.keys())
+    assert {
+        "league_id",
+        "version",
+        "schema_version",
+        "settings",
+        "source_summary",
+        "source_payload_sha256",
+        "observed_at",
+    }.issubset(columns)

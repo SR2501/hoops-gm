@@ -53,6 +53,7 @@ from hoops_gm.db.models.league import (
     ScoringPeriod,
     Transaction,
 )
+from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
@@ -75,6 +76,7 @@ __all__ = [
     "League",
     "LeagueScoringCategory",
     "LeagueScoringProfile",
+    "LeagueSettingsSnapshot",
     "MatchMethod",
     "Matchup",
     "MatchupCategoryResult",

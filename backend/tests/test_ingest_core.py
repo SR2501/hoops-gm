@@ -391,11 +391,10 @@ class TestRawPayloadStore:
     def test_a_credential_is_never_written_to_the_index(self, tmp_path: Path) -> None:
         """The index is plaintext, append-only, never pruned, and kept forever.
 
-        ``getLeagueInfo`` and ``getDraftPicks`` both need a ``userSecretId``,
-        and the same params dict reaches the store. Written verbatim, a live
-        credential ends up in the same ``data/`` directory as the Fantrax
-        cookie we went to the trouble of encrypting — which would make the
-        encryption theatre.
+        Some league-scoped calls may carry a ``userSecretId``, and the same
+        params dict reaches the store. Written verbatim, a live credential ends
+        up in the same ``data/`` directory as the Fantrax cookie we went to the
+        trouble of encrypting — which would make the encryption theatre.
         """
         store = RawPayloadStore(tmp_path)
         store.put(
@@ -594,6 +593,26 @@ class TestFantraxTransport:
 
         self._client(opener).get_adp(limit=5)
         assert "limit=5" in seen[0]
+
+    def test_get_league_info_sends_only_the_league_id_without_configured_secret(
+        self,
+    ) -> None:
+        seen: list[str] = []
+
+        def opener(request: Any, timeout: float) -> FakeResponse:
+            seen.append(request.full_url)
+            return FakeResponse(
+                b'{"seasonYear": 2025, "startDate": "2025-10-21", '
+                b'"endDate": "2026-03-15", "rosterInfo": {"maxTotalPlayers": 14}, '
+                b'"scoringPeriods": [{"number": 1, "startDate": "2025-10-21", '
+                b'"endDate": "2025-10-26"}]}'
+            )
+
+        result = self._client(opener).get_league_info("non-secret-id")
+
+        assert result.settings is not None
+        assert "leagueId=non-secret-id" in seen[0]
+        assert "userSecretId" not in seen[0]
 
 
 # ==========================================================================

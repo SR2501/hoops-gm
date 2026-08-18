@@ -16,9 +16,10 @@ Retry
     see :mod:`hoops_gm.ingest.errors` for why.
 
 Authentication
-    ``getPlayerIds`` and ``getAdp`` need none — verified. ``getLeagueInfo`` and
-    ``getDraftPicks`` need a ``leagueId``, and private leagues additionally
-    need a ``userSecretId``.
+    ``getPlayerIds`` and ``getAdp`` need none — verified. ``getLeagueInfo`` needs
+    a ``leagueId``; the target private league returned its settings without a
+    ``userSecretId`` on 2026-08-18. A secret remains optional for endpoints or
+    leagues that reject the unauthenticated request.
 
 When the source is down
     A timeout, a connection error or a 5xx becomes ``SourceUnavailable`` and is

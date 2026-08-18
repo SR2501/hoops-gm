@@ -93,11 +93,23 @@ what changed, record it in `docs/handoff.md`, then:
 
 ```bash
 python -m hoops_gm.ingest.record_fixtures --all
+
+# Successful getLeagueInfo is separate because it needs the target league id.
+# The recorder removes identity-bearing sections and never uses userSecretId.
+HOOPS_GM_FANTRAX_LEAGUE_ID=... \
+python -m hoops_gm.ingest.record_fixtures fantrax-league-settings
 ```
+
+Set `HOOPS_GM_FANTRAX_LEAGUE_ID` when running `pytest -m live_smoke` to include
+the cache-bypassing league-settings drift check.
 
 ## Ingestion
 
 ```bash
+# Persist one immutable official settings snapshot. This intentionally sends
+# only leagueId; a source-season mismatch aborts instead of writing.
+python -m hoops_gm.ingest.backfill league-settings LOCAL_LEAGUE_ID FANTRAX_LEAGUE_ID
+
 # Build the NBA/Fantrax crosswalk. Use the CURRENT season: matching against a
 # historical one invents a team disagreement for every offseason move.
 python -m hoops_gm.ingest.backfill crosswalk --season 2026-27

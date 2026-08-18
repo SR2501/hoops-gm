@@ -215,6 +215,87 @@ class TestFantraxErrorEnvelope:
                 parser(payload)
 
 
+class TestFantraxLeagueSettings:
+    """``getLeagueInfo`` — verified official settings and explicit gaps."""
+
+    def test_success_payload_parses_the_verified_settings_shape(self) -> None:
+        result = parse_league_info(
+            load("fantrax_getleagueinfo_settings_sanitized.json"),
+            league_id="<fixture-league>",
+            capture_ref="fixture:fantrax_getleagueinfo_settings_sanitized.json",
+        )
+
+        assert result.roster_size == 14
+        assert result.draft_type == "snake"
+        assert result.scoring_type == "HEAD_TO_HEAD_ROTI_MULTI_WIN"
+        assert len(result.scoring_categories) == 9
+        assert {category.abbreviation for category in result.scoring_categories} == {
+            "3PTM",
+            "AST",
+            "BLK",
+            "FG%",
+            "FT%",
+            "PTS",
+            "REB",
+            "ST",
+            "TO",
+        }
+        assert result.unmapped_keys == ()
+
+        settings = result.settings
+        assert settings is not None
+        assert settings.source_season_year == 2025
+        assert settings.source_start_date == "2025-10-21"
+        assert settings.source_end_date == "2026-03-15"
+        assert settings.roster_limits.value is not None
+        assert settings.roster_limits.value.total == 14
+        assert settings.roster_limits.value.active == 10
+        assert settings.roster_limits.value.reserve == 14
+        assert settings.roster_limits.value.injured_reserve is None
+        assert settings.scoring_periods.value is not None
+        assert len(settings.scoring_periods.value.periods) == 21
+
+    def test_unpublished_rules_remain_explicitly_unknown(self) -> None:
+        result = parse_league_info(
+            load("fantrax_getleagueinfo_settings_sanitized.json"),
+            league_id="<fixture-league>",
+            capture_ref="fixture:fantrax_getleagueinfo_settings_sanitized.json",
+        )
+        assert result.settings is not None
+
+        unknown = (
+            result.settings.lineup_lock,
+            result.settings.waivers,
+            result.settings.games_caps,
+            result.settings.trade_deadline,
+            result.settings.playoffs,
+            result.settings.keepers,
+        )
+        assert all(setting.value is None for setting in unknown)
+        assert all(
+            evidence.status == "absent" for setting in unknown for evidence in setting.evidence
+        )
+        assert result.settings.unmapped_rule_paths == ()
+
+    def test_fixture_removed_identity_sections_without_editing_retained_values(
+        self, manifest: dict[str, Any]
+    ) -> None:
+        metadata = manifest["fantrax_getleagueinfo_settings_sanitized.json"]
+        assert metadata["original_sha256"] == (
+            "722b95c7bbecde2950aea9fea0ccc24519311248ee79a1320fe07455d718ae54"
+        )
+        assert set(metadata["removed_sections"]) == {
+            "leagueHistoryId",
+            "leagueName",
+            "matchups",
+            "playerInfo",
+            "teamInfo",
+        }
+        assert "userSecretId" not in metadata["params"]
+        payload = load("fantrax_getleagueinfo_settings_sanitized.json")
+        assert not set(metadata["removed_sections"]) & set(payload)
+
+
 # ==========================================================================
 # nba_api
 # ==========================================================================

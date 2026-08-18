@@ -48,6 +48,7 @@ from hoops_gm.db.models.stats import stat_key_sql_list
 
 if TYPE_CHECKING:
     from hoops_gm.db.models.identity import Player
+    from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 
 
 class League(IntPk, TimestampMixin, Base):
@@ -85,6 +86,9 @@ class League(IntPk, TimestampMixin, Base):
         back_populates="league", cascade="all, delete-orphan"
     )
     scoring_periods: Mapped[list[ScoringPeriod]] = relationship(
+        back_populates="league", cascade="all, delete-orphan"
+    )
+    settings_snapshots: Mapped[list[LeagueSettingsSnapshot]] = relationship(
         back_populates="league", cascade="all, delete-orphan"
     )
 

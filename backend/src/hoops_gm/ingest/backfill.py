@@ -31,12 +31,14 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings, get_settings
 from hoops_gm.db.models.enums import ExternalSource
+from hoops_gm.db.models.league import League
 from hoops_gm.db.session import Database
 from hoops_gm.identity import IdentityResolver, ResolvableRecord, render_summary, to_csv
 from hoops_gm.identity.report import partition
@@ -48,6 +50,7 @@ from hoops_gm.ingest.importers import (
     LookupMaps,
     import_box_scores,
     import_games,
+    import_league_settings,
     import_nba_players,
     import_participation,
     import_resolutions,
@@ -98,6 +101,31 @@ def build_clients(settings: Settings | None = None) -> tuple[NbaStatsClient, Fan
     return (
         NbaStatsClient(store=store),
         FantraxOfficialClient(store=store, user_secret_id=user_secret),
+    )
+
+
+# --------------------------------------------------------------------------
+# League settings
+# --------------------------------------------------------------------------
+
+
+def ingest_official_league_settings(
+    session: Session,
+    *,
+    fantrax: FantraxOfficialClient,
+    league: League,
+    fantrax_league_id: str,
+) -> ImportCounts:
+    """Fetch and persist one official snapshot; season mismatch fails loudly."""
+    info = fantrax.get_league_info(fantrax_league_id)
+    if info.settings is None:
+        raise RuntimeError("getLeagueInfo parser returned no settings document")
+    return import_league_settings(
+        session,
+        league=league,
+        document=info.settings,
+        source_payload_sha256=info.source_payload_sha256,
+        observed_at=datetime.now(UTC),
     )
 
 
@@ -282,10 +310,34 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     season.add_argument("--with-participation", action="store_true")
     season.add_argument("--limit-games", type=int, default=None)
 
+    league_settings = subparsers.add_parser(
+        "league-settings",
+        help="ingest getLeagueInfo with no userSecretId",
+    )
+    league_settings.add_argument("league_id", type=int, help="local leagues.id")
+    league_settings.add_argument("fantrax_league_id", help="non-secret Fantrax leagueId")
+
     args = parser.parse_args(argv)
 
     settings = get_settings()
     database = Database.from_settings(settings)
+    if args.command == "league-settings":
+        # This endpoint was verified without credentials; do not attach a
+        # configured userSecretId to a request that does not need one.
+        official = FantraxOfficialClient(store=RawPayloadStore(DEFAULT_RAW_ROOT))
+        with database.session() as session:
+            league = session.get(League, args.league_id)
+            if league is None:
+                parser.error(f"no league exists with id {args.league_id}")
+            counts = ingest_official_league_settings(
+                session,
+                fantrax=official,
+                league=league,
+                fantrax_league_id=args.fantrax_league_id,
+            )
+        print(f"\n  league settings          {counts}")
+        return 0
+
     nba, fantrax = build_clients(settings)
 
     with database.session() as session:

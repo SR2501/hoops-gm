@@ -25,7 +25,9 @@ real scale even when it parses the trimmed copy.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -51,6 +53,20 @@ FIXTURE_MIDSEASON_GAME_DATE = "2026-01-12"
 #: Seasons the fixtures are captured for.
 FIXTURE_STATS_SEASON = "2024-25"
 FIXTURE_CURRENT_SEASON = "2026-27"
+_LEAGUE_SETTINGS_RETAINED_SECTIONS = frozenset(
+    {
+        "draftSettings",
+        "draftType",
+        "endDate",
+        "poolSettings",
+        "rosterInfo",
+        "rosterPeriods",
+        "scoringPeriods",
+        "scoringSystem",
+        "seasonYear",
+        "startDate",
+    }
+)
 
 
 def _write(name: str, payload: Any, *, meta: dict[str, Any]) -> None:
@@ -126,9 +142,8 @@ def record_fantrax() -> None:
         },
     )
 
-    # The error envelope, captured live. Fantrax returns this under HTTP 200,
-    # so it is a real response and belongs in the fixtures exactly like a
-    # successful one — it is the only shape of getLeagueInfo we have ever seen.
+    # Fantrax returns this error envelope under HTTP 200, so it is a real
+    # response and belongs in the fixtures exactly like a successful one.
     payload = client.fetch_json("getLeagueInfo", {}, max_age=_never())
     _write(
         "fantrax_getleagueinfo_missing_league_id.json",
@@ -155,6 +170,57 @@ def record_fantrax() -> None:
             "params": {"sport": "NBA", "limit": 5},
             "trimmed": False,
             "note": "limit=5 returns 4 rows. The limit is off by one; verified for 1, 2, 3, 5, 10.",
+        },
+    )
+
+
+def _sanitize_league_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove whole identity-bearing sections without editing retained values."""
+    return {
+        key: value for key, value in payload.items() if key in _LEAGUE_SETTINGS_RETAINED_SECTIONS
+    }
+
+
+def record_fantrax_league_settings() -> None:
+    """Record a successful getLeagueInfo response without names or entity data."""
+    from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
+    from hoops_gm.ingest.rawstore import RawPayloadStore
+
+    league_id = os.environ.get("HOOPS_GM_FANTRAX_LEAGUE_ID")
+    if not league_id:
+        raise SystemExit("HOOPS_GM_FANTRAX_LEAGUE_ID is required; a userSecretId is not used")
+
+    print("fantrax_official getLeagueInfo:")
+    store = RawPayloadStore(Path("data/raw"))
+    client = FantraxOfficialClient(store=store)
+    params = {"leagueId": league_id}
+    payload = client.fetch_json("getLeagueInfo", params)
+    if not isinstance(payload, dict):
+        raise TypeError("getLeagueInfo fixture source must be a JSON object")
+
+    capture = store.latest(source="fantrax_official", endpoint="getLeagueInfo", params=params)
+    if capture is None:
+        raise RuntimeError("getLeagueInfo response was not captured")
+    raw = capture.read_bytes()
+    removed = sorted(set(payload) - _LEAGUE_SETTINGS_RETAINED_SECTIONS)
+    _write(
+        "fantrax_getleagueinfo_settings_sanitized.json",
+        _sanitize_league_settings(payload),
+        meta={
+            "source": "fantrax_official",
+            "endpoint": "getLeagueInfo",
+            "params": {"leagueId": "<redacted-non-secret-league-id>"},
+            "trimmed": False,
+            "sanitized": True,
+            "original_byte_size": len(raw),
+            "original_sha256": hashlib.sha256(raw).hexdigest(),
+            "original_top_level_keys": sorted(payload),
+            "removed_sections": removed,
+            "retained_sections": sorted(_LEAGUE_SETTINGS_RETAINED_SECTIONS),
+            "note": (
+                "Identity-bearing sections were removed whole. No retained source "
+                "value was edited. The endpoint succeeded without userSecretId."
+            ),
         },
     )
 
@@ -272,8 +338,10 @@ def _never() -> Any:
 
 COMMANDS: dict[str, Callable[[], None]] = {
     "fantrax": record_fantrax,
+    "fantrax-league-settings": record_fantrax_league_settings,
     "nba": record_nba,
 }
+ALL_COMMANDS = ("fantrax", "nba")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="record every source")
     args = parser.parse_args(argv)
 
-    selected = sorted(COMMANDS) if args.all else args.sources
+    selected = list(ALL_COMMANDS) if args.all else args.sources
     if not selected:
         parser.error("name at least one source, or pass --all")
 
