@@ -2423,3 +2423,32 @@ was written — reported separately to the reviewing session once available.
 history), report the new exact head commit back to the reviewing session,
 and wait for CI (including Postgres and the `0011` migration lifecycle)
 before any merge — still not self-approved.
+
+
+## 2026-08-18 — backend — `deadline-model`: docs-only authority-wording correction
+
+**Changed:** The independent focused-release review flagged that
+`db/models/deadline_calendar.py`'s module docstring still called
+`league.ScoringPeriod` "the league-scoped calendar" and framed
+`LeagueDeadlineCalendar` as not competing for that role — contradicting the
+ratified architecture decision from the prior remediation round (this table
+is authoritative; `ScoringPeriod` is the thing that must later become a
+derived, non-authoritative projection). Rewrote that section to say plainly:
+`LeagueDeadlineCalendar` is the authoritative source-truth calendar;
+`ScoringPeriod` has no writer yet and must eventually become a derived,
+non-authoritative `America/New_York`-date projection of this table's active
+calendar for ADR-012's `scheduled_game_counts` consumers, converting each
+boundary to that zone before `.date()` to align with
+`TeamScheduleEntry.game_date` and avoid DST/UTC double-counting — never a
+second ingest target. No behavior changed; diff is confined to the
+docstring (`git diff --stat`: one file, docstring lines only).
+
+**Now true:** `ruff format --check` / `ruff check` clean on the changed
+file. Diff scope confirmed single-file, comment-only via `git diff --stat`.
+
+**Could not verify:** Whether CI treats this as a fully independent run or
+reuses a cached result for the unchanged code paths — reported once GitHub's
+checks for this push are observed, same as prior rounds.
+
+**Next:** Push, confirm exact head/CLEAN state and required-check status,
+report back to the reviewing session. Still not merged, not self-approved.

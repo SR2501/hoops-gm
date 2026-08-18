@@ -23,19 +23,26 @@ a real timezone-aware instant rather than a naive reinterpretation — while
 carrying every other timing rule forward as an explicit unknown with its
 evidence trail intact.
 
-**Not a second ``league.ScoringPeriod``.** That table is already, by its own
-docstring, "the league-scoped calendar" — deliberately singular so a
-schedule-side week table can never disagree with it. This table does not
-compete for that role: ``scoring_periods`` here is not a second source of
-truth, it is a verbatim, versioned pass-through of whatever
-``LeagueSettingsSnapshot.settings.scoring_periods`` already said (which is
-itself already JSON, not a second set of typed columns) plus the schedule
-lineage it was joined against. ``ScoringPeriod`` has no writer yet — grep
-finds no importer — and widening its ``Date`` columns to carry a
-timezone-aware instant (the settings payload's boundaries cross a DST
-transition inside a single season) is a separate, later decision for whoever
-first wires up its population, not something this table's existence
-prejudges.
+**This table, not ``league.ScoringPeriod``, is the authoritative calendar.**
+``LeagueDeadlineCalendar`` is the versioned source-truth join of settings
+lineage and schedule lineage described above; ``scoring_periods`` here is a
+verbatim, versioned pass-through of whatever
+``LeagueSettingsSnapshot.settings.scoring_periods`` already said (itself
+already JSON, not a second set of typed columns), carried as real
+timezone-aware instants. ``ScoringPeriod`` has no writer yet — grep finds no
+importer — and its own docstring's "league-scoped calendar" framing predates
+this table and no longer reflects the ratified decision: ``ScoringPeriod``
+must eventually become a *derived, non-authoritative* projection of this
+table's active calendar for ADR-012's ``scheduled_game_counts`` consumers,
+never a second ingest target populated independently. That future projection
+must convert each boundary to ``America/New_York`` before taking ``.date()``
+so it aligns with ``TeamScheduleEntry.game_date`` and does not double-count
+or off-by-one across a DST transition or a UTC day boundary — widening
+``ScoringPeriod``'s ``Date`` columns to carry the timezone-aware instant
+directly (rather than projecting a pre-localized date) remains a separate,
+later decision for whoever first wires up that projection, not something
+this table's existence prejudges. See ``docs/backlog.md``'s
+``scoring-period-projection`` entry.
 
 **The override seam.** The only legitimate path for trade deadline, waiver
 timing, lineup locks, playoff flags or keeper deadlines to become known is
