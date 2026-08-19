@@ -5946,3 +5946,41 @@ published head. No merge or self-approval occurred.
 
 **Next:** Publish the correction, require all replacement jobs to pass, then
 obtain independent data-engineer and code reviews and fix every finding.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 final review remediation and cohort restack
+
+**Changed:** Closed all four findings from independent review of published head
+`3abe45f`. Reprocessing a historical import now reconciles only that import's
+projection and games-played outputs; only the newest season/import for a source
+may mutate the source-wide current crosswalk, so an old file cannot rewind a
+newer vendor id. Any non-finite derived statistic now makes its row fatal even
+when the derived field is optional. The private Basketball Monster smoke permits
+missing-production issues only on the exact logical rows whose `games` cell is
+blank or zero. Restored the one missing blank line in the inherited handoff
+prefix.
+
+Restacked the complete importer series onto exact `origin/main`
+`93878a83f465181f3793875efbfac0eafa34540b`, preserving the injury-conversion
+cohort manifest/tooling/backlog state and its handoff entries byte-for-byte.
+Migration `0015` remains the single child of main's `0014`; the migration
+contract did not change.
+
+**Now true:** Targeted regressions cover same-season and older-season replay
+after a newer vendor id, plus optional-derived overflow. The exact rebased tree
+passes Ruff, formatting, strict mypy, 912 default backend tests, 246 offline
+Adapter contracts, the explicit private Basketball Monster smoke, SQLite
+upgrade/check/downgrade through `0015`, model/migration drift detection, and the
+tracked-file secret scan over 260 files. The smoke emitted neither paid rows nor
+the private artifact path.
+
+**Could not verify:** This machine still has no local Postgres service. Native
+Postgres migration, constraint, concurrency and full-suite evidence must come
+from fresh CI on the published exact head. Fresh independent data-engineer and
+code reviews must also inspect only that head. No merge or self-approval
+occurred; FantasyPros and Hashtag remain non-production parse-preview profiles.
+
+**Next:** Publish this restacked head with force-with-lease, require every
+blocking job including both native Postgres lanes to pass, and obtain fresh
+independent data-engineer and code reviews before reporting readiness.
