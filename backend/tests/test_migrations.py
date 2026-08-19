@@ -32,6 +32,7 @@ from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base, enum_check_constraint_names
 from hoops_gm.db.models import League, LeagueSettingsSnapshot
 from hoops_gm.db.models.enums import ExternalSource, FieldEvidence
+from hoops_gm.db.models.injury_report import LEGACY_EVIDENCE_SCHEMA_VERSION
 from hoops_gm.db.session import Database
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import LeagueSettingsDocument, parse_official_league_settings
@@ -103,6 +104,79 @@ def test_the_migration_records_its_revision(alembic_config: Config, migration_ur
             current = MigrationContext.configure(connection).get_current_revision()
         script = ScriptDirectory.from_config(alembic_config)
         assert current == script.get_current_head()
+    finally:
+        engine.dispose()
+
+
+def test_0014_backfills_and_defaults_injury_evidence_to_legacy(
+    alembic_config: Config, migration_url: str
+) -> None:
+    command.upgrade(alembic_config, "0013")
+    engine = create_engine(migration_url)
+    insert_entry = text(
+        """
+        INSERT INTO injury_report_entries (
+            report_timestamp, game_date, game_time_raw, matchup_raw,
+            team_raw, player_name_raw, status_raw, status, reason_raw,
+            source, source_url
+        ) VALUES (
+            :report_timestamp, :game_date, '07:00 (ET)', 'SAC@MIL',
+            'Sacramento Kings', :player_name, 'Out', 'out', '',
+            'nba', :source_url
+        )
+        """
+    )
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                insert_entry,
+                {
+                    "report_timestamp": datetime(2025, 11, 1, 21, 30, tzinfo=UTC).isoformat(),
+                    "game_date": "2025-11-01",
+                    "player_name": "Before, Migration",
+                    "source_url": "https://example.invalid/before",
+                },
+            )
+        command.upgrade(alembic_config, "0014")
+        with engine.begin() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT import_schema_version FROM injury_report_entries "
+                        "WHERE player_name_raw = 'Before, Migration'"
+                    )
+                )
+                == LEGACY_EVIDENCE_SCHEMA_VERSION
+            )
+            connection.execute(
+                insert_entry,
+                {
+                    "report_timestamp": datetime(2025, 11, 1, 22, 0, tzinfo=UTC).isoformat(),
+                    "game_date": "2025-11-01",
+                    "player_name": "After, Migration",
+                    "source_url": "https://example.invalid/after",
+                },
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT import_schema_version FROM injury_report_entries "
+                        "WHERE player_name_raw = 'After, Migration'"
+                    )
+                )
+                == LEGACY_EVIDENCE_SCHEMA_VERSION
+            )
+
+        command.downgrade(alembic_config, "0013")
+        assert "import_schema_version" not in {
+            column["name"] for column in inspect(engine).get_columns("injury_report_entries")
+        }
+        command.upgrade(alembic_config, "0014")
+        with engine.connect() as connection:
+            versions = set(
+                connection.scalars(text("SELECT import_schema_version FROM injury_report_entries"))
+            )
+        assert versions == {LEGACY_EVIDENCE_SCHEMA_VERSION}
     finally:
         engine.dispose()
 

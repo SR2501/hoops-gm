@@ -36,7 +36,7 @@ from hoops_gm.db.models.enums import (
     SeasonType,
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
-from hoops_gm.db.models.injury_report import InjuryReportEntry
+from hoops_gm.db.models.injury_report import CURRENT_EVIDENCE_SCHEMA_VERSION, InjuryReportEntry
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.schedule import TeamScheduleEntry
@@ -694,11 +694,18 @@ def import_injury_report_entries(
 ) -> ImportCounts:
     """Write one report capture's entries idempotently, by natural key.
 
-    ``(report_timestamp, team_raw, player_name_raw)`` identifies a row: an
-    identical capture re-ingested twice converges rather than duplicates, and
-    a later capture at a *different* timestamp is genuine history, never an
-    overwrite of an earlier one — see ``db.models.injury_report`` on why the
-    timestamp is part of the key rather than a mere column.
+    ``(report_timestamp, team_raw, player_name_raw, game_date)`` identifies a
+    row: an identical capture re-ingested twice converges rather than
+    duplicates, and a later capture at a *different* timestamp is genuine
+    history, never an overwrite of an earlier one — see
+    ``db.models.injury_report`` on why the timestamp is part of the key
+    rather than a mere column. ``game_date`` is part of the key for the same
+    reason: one report capture's rolling window genuinely lists the same
+    player on the same team twice, once per calendar date, when that team
+    plays a back-to-back the very next night. Dropping ``game_date`` from the
+    key let the second night's row silently overwrite the first night's as an
+    ordinary "update" — found by independent review before any evidence
+    relying on this table was trusted.
 
     ``team_id``, ``game_id`` and ``player_id`` are resolved best-effort and
     left ``NULL`` on any ambiguity, never guessed. Team resolves the report's
@@ -716,6 +723,21 @@ def import_injury_report_entries(
     otherwise see appearance order disagree with the report's actual
     away-then-home structure and resolve a team to its opponent. Game
     resolves from the same verified tricode pair.
+
+    ``source_url`` is set only when a row is first created. A later capture
+    that converges on the identical natural key (two different requested
+    instants resolving to the same masthead) never overwrites the original
+    discovery URL with an unrelated later request's URL — provenance is
+    "where this row was first observed", not "the most recent request that
+    happened to touch it".
+
+    The "existing row" lookup is scoped to the distinct ``report_timestamp``
+    values actually present in ``entries`` (normally exactly one — a single
+    fetch is a single report capture), not a full-table reload: this import
+    is called once per fetched candidate during a historical backfill, and
+    reloading the entire (ever-growing) table on every call would make a
+    multi-date backfill's cost grow with the table's total size rather than
+    with the size of the one capture being imported.
     """
     counts = ImportCounts()
     teams = list(session.scalars(select(NbaTeam)))
@@ -734,23 +756,36 @@ def import_injury_report_entries(
         players_by_norm.setdefault(player.normalized_name, []).append(player.id)
         player_team[player.id] = player.current_team_id
 
-    existing = {
-        (row.report_timestamp, row.team_raw, row.player_name_raw): row
-        for row in session.scalars(select(InjuryReportEntry))
-    }
+    report_timestamps = {record.report_timestamp for record in entries}
+    existing: dict[tuple[datetime, str, str, date], InjuryReportEntry] = {}
+    if report_timestamps:
+        existing_stmt = select(InjuryReportEntry).where(
+            InjuryReportEntry.report_timestamp.in_(report_timestamps)
+        )
+        existing = {
+            (row.report_timestamp, row.team_raw, row.player_name_raw, row.game_date): row
+            for row in session.scalars(existing_stmt)
+        }
 
     for record in entries:
         team_id = _resolve_team_id(record, teams_by_name, team_abbr_by_id)
         game_id = _resolve_game_id(record, teams_by_abbr, games_by_key)
         player_id = _resolve_player_id(record, team_id, player_team, players_by_norm)
 
-        key = (record.report_timestamp, record.team_raw, record.player_name_raw)
+        key = (
+            record.report_timestamp,
+            record.team_raw,
+            record.player_name_raw,
+            record.game_date,
+        )
         row = existing.get(key)
         if row is None:
             row = InjuryReportEntry(
                 report_timestamp=record.report_timestamp,
                 team_raw=record.team_raw,
                 player_name_raw=record.player_name_raw,
+                game_date=record.game_date,
+                source_url=source_url,
             )
             session.add(row)
             existing[key] = row
@@ -758,7 +793,6 @@ def import_injury_report_entries(
         else:
             counts.updated += 1
 
-        row.game_date = record.game_date
         row.game_time_raw = record.game_time_raw
         row.matchup_raw = record.matchup_raw
         row.team_id = team_id
@@ -768,7 +802,12 @@ def import_injury_report_entries(
         row.status = record.status
         row.reason_raw = record.reason_raw
         row.source = ExternalSource.NBA
-        row.source_url = source_url
+        # Only this validated importer writes CURRENT. The model/database
+        # default is deliberately LEGACY so omitted direct or raw inserts
+        # cannot acquire trusted provenance by accident. Written on every
+        # create and update so a genuine re-import promotes the exact row it
+        # has validated under the fixed natural key.
+        row.import_schema_version = CURRENT_EVIDENCE_SCHEMA_VERSION
 
     session.flush()
     return counts

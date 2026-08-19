@@ -47,3 +47,7 @@ data/
 *.csv
 !docs/**/*.csv
 !**/fixtures/**/*.csv
+
+# Scratch live-evidence sampling directories (session-local, never committed)
+.live_evidence*/
+backend/.live_evidence*/

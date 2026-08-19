@@ -74,8 +74,11 @@ EASTERN: Final = ZoneInfo("America/New_York")
 
 #: Verified live 2026-08-17: the last confirmed hourly-format filename and the
 #: first confirmed 15-minute-format one straddle this instant. Format eras,
-#: not a claim about when reports were actually published.
-_FIFTEEN_MINUTE_ERA_START: Final = datetime(2025, 12, 22, 0, 0, tzinfo=EASTERN)
+#: not a claim about when reports were actually published. Public (not
+#: module-private) because ``injury_report.backfill`` needs the same
+#: boundary to choose its candidate-generation strategy — see
+#: :func:`is_fifteen_minute_era`.
+FIFTEEN_MINUTE_ERA_START: Final = datetime(2025, 12, 22, 0, 0, tzinfo=EASTERN)
 _STRF_LEGACY: Final = "%I%p"
 _STRF_NEW: Final = "%I_%M%p"
 
@@ -112,7 +115,31 @@ class ReportNotAvailable(SourceRejected):
     Raised for both HTTP 404 and HTTP 403: this CDN answers a pre-season
     date, months before any report existed, with 403 rather than 404
     (verified live 2026-08-17), so both codes mean the same thing here.
+
+    ``status_code`` is still recorded (404 or 403) rather than discarded,
+    because the two are not equally trustworthy across *many* consecutive
+    requests: a lone 403 for a pre-season or off-cadence timestamp is the
+    same "not published" signal as a 404, but a long *run* of 403s where
+    reports were expected is also exactly what a WAF block or a rate-limit
+    response disguised as a client error would look like. A caller doing a
+    bounded historical backfill is better served treating a 403 *streak* as
+    suspicious and aborting loudly than recording dozens of them as ordinary
+    absence — see ``injury_report.backfill``'s streak guard.
     """
+
+
+def is_fifteen_minute_era(instant: datetime) -> bool:
+    """Whether ``instant`` falls in the 15-minute-filename URL era.
+
+    ``instant`` must be timezone-aware; compared in Eastern, the wall clock
+    the boundary itself is defined in. Exposed so a caller choosing *how* to
+    guess a candidate report timestamp (not merely how to build a URL for
+    one already chosen) can branch on the same boundary this transport uses,
+    rather than re-deriving or duplicating the cutoff date.
+    """
+    if instant.tzinfo is None:
+        raise ValueError("instant must be timezone-aware")
+    return instant.astimezone(EASTERN) >= FIFTEEN_MINUTE_ERA_START
 
 
 def report_url(report_timestamp: datetime) -> str:
@@ -120,12 +147,25 @@ def report_url(report_timestamp: datetime) -> str:
 
     ``report_timestamp`` must be timezone-aware; it is converted to the
     Eastern wall clock the report's own filenames are always expressed in.
+
+    **Exact-minute match in the 15-minute era, no drift tolerance.** Unlike
+    the legacy era (which always truncates to the hour, so any request in
+    that hour resolves to the same file), a 15-minute-era request is not
+    rounded to the nearest quarter-hour here — it is formatted verbatim. A
+    request for ``13:07`` asks for ``..._01_07PM.pdf``, which almost
+    certainly does not exist if the source only ever publishes on the
+    quarter-hour; only a request for a minute the source actually published
+    at succeeds. The parser's separate 45-minutes-of-drift tolerance (see
+    ``parser._verify_masthead``) is a *post-fetch* sanity check against
+    whichever file this exact URL named — it cannot recover a URL that 404s
+    before any body is read, and does not make this function's own minute
+    choice more forgiving.
     """
     if report_timestamp.tzinfo is None:
         raise ValueError("report_timestamp must be timezone-aware")
     eastern = report_timestamp.astimezone(EASTERN)
     date_part = eastern.strftime("%Y-%m-%d")
-    if eastern >= _FIFTEEN_MINUTE_ERA_START:
+    if is_fifteen_minute_era(eastern):
         time_part = eastern.strftime(_STRF_NEW)
     else:
         # Legacy filenames are always on the hour; verified live against
@@ -217,6 +257,7 @@ class InjuryReportClient:
                     f"no report published for this timestamp (HTTP {exc.code}): {url}",
                     source=SOURCE,
                     endpoint=ENDPOINT,
+                    status_code=exc.code,
                 ) from exc
             if exc.code in _RETRYABLE_STATUS:
                 raise SourceUnavailable(

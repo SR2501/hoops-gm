@@ -55,10 +55,18 @@ class SourceError(Exception):
         source: str,
         endpoint: str | None = None,
         detail: Any = None,
+        status_code: int | None = None,
     ) -> None:
         self.source = source
         self.endpoint = endpoint
         self.detail = detail
+        #: The HTTP status code that produced this error, when the source
+        #: speaks HTTP and the caller cared enough to record it (``None``
+        #: otherwise). Exists so a caller can distinguish, for example, a 404
+        #: ("nothing published here") from a 403 ("refused" — which can also
+        #: mean a WAF or rate-limit block masquerading as an ordinary
+        #: absence) without re-deriving it from the message text.
+        self.status_code = status_code
         location = f"{source}.{endpoint}" if endpoint else source
         super().__init__(f"[{location}] {message}")
 
