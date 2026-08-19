@@ -2471,6 +2471,7 @@ class ExclusionCascade:
     ingested_games: int
     ingested_with_tipoff: int
     candidates_attempted: int | None
+    candidates_quarantined_unscoped: int | None
     candidates_forbidden: int | None
     candidates_not_available: int | None
     mastheads_recovered: int | None
@@ -2569,15 +2570,18 @@ def exclusion_cascade(
     )
 
     candidates_attempted: int | None = None
+    candidates_quarantined_unscoped: int | None = None
     candidates_forbidden: int | None = None
     candidates_not_available: int | None = None
     mastheads_recovered: int | None = None
     if coverage_report is not None:
         in_range_candidates: list[CandidateCoverage] = []
+        candidates_quarantined_unscoped = 0
         for candidate in coverage_report.candidates:
             try:
                 candidate_date = date.fromisoformat(candidate.report_date)
             except ValueError:
+                candidates_quarantined_unscoped += 1
                 continue
             if (start is None or candidate_date >= start) and (
                 end is None or candidate_date <= end
@@ -2602,6 +2606,7 @@ def exclusion_cascade(
         ingested_games=len(ready) + len(missing_tipoff),
         ingested_with_tipoff=len(ready),
         candidates_attempted=candidates_attempted,
+        candidates_quarantined_unscoped=candidates_quarantined_unscoped,
         candidates_forbidden=candidates_forbidden,
         candidates_not_available=candidates_not_available,
         mastheads_recovered=mastheads_recovered,
@@ -2624,6 +2629,7 @@ def render_exclusion_cascade(cascade: ExclusionCascade) -> str:
     def _fmt(value: int | None) -> str:
         return "unknown (not yet computed)" if value is None else str(value)
 
+    quarantined = _fmt(cascade.candidates_quarantined_unscoped)
     lines = [
         "exclusion cascade (denominator evidence, not a rate):",
         f"  1. expected games (official schedule):     {_fmt(cascade.expected_games)}",
@@ -2631,6 +2637,7 @@ def render_exclusion_cascade(cascade: ExclusionCascade) -> str:
         f"  3. ingested games (any):                   {cascade.ingested_games}",
         f"  4. ingested games with a tip-off instant:  {cascade.ingested_with_tipoff}",
         f"  5. candidates attempted (HTTP):             {_fmt(cascade.candidates_attempted)}",
+        f"  5b. candidates quarantined (date unassignable): {quarantined}",
         f"  6. candidates forbidden (403, unsettled):   {_fmt(cascade.candidates_forbidden)}",
         f"  7. candidates not_available (404):          {_fmt(cascade.candidates_not_available)}",
         f"  8. mastheads recovered (fetched, distinct): {_fmt(cascade.mastheads_recovered)}",
@@ -2658,6 +2665,13 @@ def render_exclusion_cascade(cascade: ExclusionCascade) -> str:
         lines.append(
             "\n  note: no coverage-report evidence found for this exact range — stages 5-8 "
             "are unverified, not zero."
+        )
+    elif cascade.candidates_quarantined_unscoped:
+        lines.append(
+            f"\n  note: {cascade.candidates_quarantined_unscoped} incompatible coverage "
+            "candidate(s) were quarantined. Their report dates cannot be interpreted by "
+            "this binary, so they are visible here but cannot be assigned to the requested "
+            "date range or counted in stages 5-8."
         )
     if cascade.entries_legacy_excluded:
         lines.append(
@@ -2787,8 +2801,8 @@ def _persist_coverage(
        persisted before this field existed) must also match before it is
        carried forward — a mismatch here should not be structurally
        possible once check 1 has passed, but is not assumed away. Any
-       candidate that fails this is excluded from the rewritten file
-       rather than silently trusted as current-scope evidence.
+       candidate that fails this raises :class:`CoverageScopeMismatch`
+       before rewrite rather than being dropped or silently trusted.
 
     Observation loading may quarantine incompatible candidates because it
     is read-only. Persistence may not: dropping an uninterpretable raw

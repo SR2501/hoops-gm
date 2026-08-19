@@ -963,7 +963,10 @@ skip candidates whose only local evidence is a legacy row.
 * **Round-14 release review corrected two evidence-destruction/provenance
   defaults:**
   * `CoverageReport.from_json` remains read-only and may represent incompatible
-    candidates as quarantined placeholders for observation classification.
+    candidates as quarantined placeholders for observation classification. The
+    exclusion cascade reports their count separately as date-unassignable
+    quarantined candidates; it does not silently shrink stages 5-8 without
+    exposing that evidence was omitted from the range denominator.
     `_persist_coverage` may not discard those raw records: if any existing
     candidate is legacy/missing-version, future-versioned (including added or
     renamed fields), or malformed while claiming the current version (unknown

@@ -2107,6 +2107,7 @@ def test_select_canonical_pregame_observations_ignores_not_yet_submitted(session
         status_raw="NOT YET SUBMITTED",
         status=InjuryReportStatus.NOT_YET_SUBMITTED,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     session.add(unsubmitted)
     session.flush()
@@ -5817,6 +5818,9 @@ def test_exclusion_cascade_date_range_ignores_quarantined_candidate(
     )
 
     assert cascade.candidates_attempted == 0
+    assert cascade.candidates_quarantined_unscoped == 1
+    rendered = render_exclusion_cascade(cascade)
+    assert "1 incompatible coverage candidate(s) were quarantined" in rendered
 
 
 def test_persist_coverage_refuses_current_schema_with_unknown_key(
