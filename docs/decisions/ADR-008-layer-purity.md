@@ -29,7 +29,7 @@ observations → projections → availability → valuation → rankings/values
 1. **Aggregate only within a layer.** Projections blend with projections — per-game rates, never seasonal totals with games baked in. Availability blends with availability. Never across.
 2. **Terminal products never re-enter.** No ranking, AAV or composite value may be an input to any earlier layer, at any weight, including zero-with-intent-to-raise-it.
 3. **External aggregates may be compared against, never blended in.** This is exactly the model-vs-market report: divergence is the signal, and it only means something if the two sides are independent.
-4. **Every stored quantity records its layer**, and a test rejects any flow from a higher layer to a lower one — the same "make it inexpressible" pattern as ADR-007's tenant isolation analogue.
+4. **Every stored quantity records its layer**, and a test rejects any flow from a higher layer to a lower one — the same project-wide "make invalid states inexpressible" pattern used at other load-bearing boundaries.
 5. **The draft-day rankings are ours alone** — computed end-to-end from our own projections and availability, with no external ranking anywhere in the lineage.
 
 ## Consequences

@@ -23,7 +23,7 @@ Since roughly 12:58Z on 2026-08-17, every GitHub Actions job fails **before exec
 
 This was first recorded as *likely a lapsed card*, on the reasoning that the message mentions failed payments and that this project had used only about an hour of runner time. **That was wrong, and the error is instructive.**
 
-The hour was an estimate for *this repository*. The 2,000 minutes are *account-wide*, across every private repository. A plausible mechanism was asserted rather than the number being looked at — which is precisely the failure mode this project has now catalogued seven times, this time by `architect` while writing the document that catalogues it.
+The hour was an estimate for *this repository*. The 2,000 minutes are *account-wide*, across every private repository. A plausible mechanism was asserted rather than the number being looked at — a failure mode this project has repeatedly catalogued, this time by `architect` while writing the document that catalogues it.
 
 The general form, already in the house rules: a mechanism that sounds right is not evidence. The billing page was one click away throughout.
 
@@ -33,7 +33,7 @@ The four readiness gates in `governance/gates.md` are enforced by exactly one me
 
 Right now a red tick says nothing about the code, and a green one cannot be obtained. That includes the Postgres job stood up specifically to make ADR-001 enforceable rather than asserted — and **R34 now depends on it**, because the Phase 2 migration uses `batch_alter_table(copy_from=...)`, whose Postgres code path has never executed.
 
-This project has already produced seven cases where a guarantee was believed and false. Every one was caught by executing something. Losing the thing that executes them is the single worst tool outage this project can have.
+This project has repeatedly produced guarantees that were believed and false. They were caught by executing something. Losing the thing that executes them is the single worst tool outage this project can have.
 
 ## Why no agent can resolve it
 

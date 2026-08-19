@@ -1,5 +1,9 @@
 # The decisions in plain English
 
+> **Frozen historical walkthrough.** This document covers ADR-001 through
+> ADR-009 and is not extended for later decisions. The individual ADRs and
+> [`README.md`](README.md) index are the current authoritative record.
+
 A readable walkthrough of why each architectural decision was made and what it means in practice. The ADRs themselves are the authoritative record; this is the version you can read without already knowing the codebase.
 
 All nine were accepted by the project owner. Each records the condition that would flip it — a decision without a reversal condition is a belief.

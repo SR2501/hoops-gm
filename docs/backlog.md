@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**27 done - 1 blocked - 71 pending - 99 total**
+**30 done - 1 blocked - 68 pending - 99 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -49,6 +49,19 @@ Invocable agent definitions in .github/agents/: architect, data-engineer, quant,
 
 FastAPI app in backend/ with pydantic settings/config, structured logging, /health endpoint. Wire pytest, ruff, mypy.
 
+### `bridge-capture` - Capturing Fantrax data via the bridge
+
+- [x] **done**
+- **Depends on:** `userscript-foundation`
+
+Intercept window.fetch and XMLHttpRequest against /fxpa/req, normalize the payloads and POST them to the backend. Persist raw payloads to bridge_payloads for replay and debugging.
+
+### `bridge-handshake-endpoint` - Adding the backend bridge handshake endpoint
+
+- [x] **done**
+
+The userscript calls POST /api/v1/bridge/handshake and that endpoint validates the shared secret, returns the protocol version, and rejects unauthenticated requests.
+
 ### `ci-billing-blocked` - Restoring GitHub Actions (owner-only)
 
 - [x] **done**
@@ -75,6 +88,13 @@ GitHub Actions running lint, type-check and tests for both backend and frontend 
 - **Depends on:** `backend-skeleton`
 
 SQLAlchemy setup with Alembic migrations and session management. Implement core schema: players, player_external_ids, nba_teams, leagues, fantasy_teams, rosters. SQLite for dev, keep Postgres seam clean.
+
+### `deadline-model` - Modelling the league deadline calendar
+
+- [x] **done**
+- **Depends on:** `league-settings-ingest`, `schedule-ingest`
+
+Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time — including when scoring periods themselves are unknown (no `[]` fallback), on out-of-order season/period bounds, and on duplicate period numbers; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. `trade_deadline.deadline_at`/`keepers.deadline_at` are validated offset-aware ISO 8601 at the ingest domain-type boundary, and the read endpoint is loopback-only (bridge-derived values, not a public dashboard fact). A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it. `LeagueDeadlineCalendar` is the authoritative source-truth calendar; the existing `ScoringPeriod` table is a separate, not-yet-built concern — see `scoring-period-projection`.
 
 ### `fantrax-official-adapter` - Building the official Fantrax API adapter
 
@@ -365,19 +385,6 @@ From the blind mock captures, identify systematic tendencies worth flagging live
 
 Once adherence data shows systematic tendencies, surface them live in the overlay - for example that the current bid is well over list on a position the owner has consistently overpaid for across prior mocks. Requires enough captures to distinguish tendency from noise. Read-only advisory, not a block.
 
-### `bridge-capture` - Capturing Fantrax data via the bridge
-
-- [ ] **pending**
-- **Depends on:** `userscript-foundation`
-
-Intercept window.fetch and XMLHttpRequest against /fxpa/req, normalize the payloads and POST them to the backend. Persist raw payloads to bridge_payloads for replay and debugging.
-
-### `bridge-handshake-endpoint` - Adding the backend bridge handshake endpoint
-
-- [ ] **pending**
-
-The userscript calls POST /api/v1/bridge/handshake and that endpoint does not exist. The userscript tests inject a fake transport so nothing catches it. Add the server half: validate the shared secret, return a protocol version, reject unauthenticated requests. bridge-capture must not assume it is there.
-
 ### `bridge-overlay` - Building the in-page recommendation overlay
 
 - [ ] **pending**
@@ -405,13 +412,6 @@ Generic CSV importer with per-source column-mapping profiles (FantasyPros, Hasht
 - **Depends on:** `draft-recommender`, `frontend-skeleton`, `risk-adjusted-valuation`
 
 The reasoning behind every overlay recommendation: full category math, punt-fit breakdown, durability and shutdown detail, contingent-value implications, schedule context, and live inflation state in auction. The overlay shows the decision, the dashboard shows why.
-
-### `deadline-model` - Modelling the league deadline calendar
-
-- [ ] **pending** (implementation complete; PR open awaiting independent review, not yet merged)
-- **Depends on:** `league-settings-ingest`, `schedule-ingest`
-
-Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time — including when scoring periods themselves are unknown (no `[]` fallback), on out-of-order season/period bounds, and on duplicate period numbers; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. `trade_deadline.deadline_at`/`keepers.deadline_at` are validated offset-aware ISO 8601 at the ingest domain-type boundary, and the read endpoint is loopback-only (bridge-derived values, not a public dashboard fact). A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it. `LeagueDeadlineCalendar` is the authoritative source-truth calendar; the existing `ScoringPeriod` table is a separate, not-yet-built concern — see `scoring-period-projection`.
 
 ### `deployment` - Preparing deployment and the Postgres migration path
 

@@ -3108,3 +3108,27 @@ ADR-012 have not yet been demonstrated end to end.
 the focused PR proceeds. The owner may separately decide whether to pursue a
 smaller projection-experiment protocol or amend ADR-006 for restricted
 personal-use inputs; neither proposal is in force.
+
+---
+
+## 2026-08-19 — architect — Mechanical documentation closure
+
+**Changed:** Corrected only repository-verifiable documentation drift: replaced stale `backend/app` and `backend/migrations` paths with the real `backend/src/hoops_gm` and `backend/alembic` tree; split calendar, scoring, settings-intake, persistence, and API ownership at their actual boundaries; made the existing model-card content the normative minimum and aligned the schedule-context card without changing its claims; preserved the existing universal Model gate at held-out data, calibration, model cards, blind spots, and traceability to model version/inputs; replaced mutable false-guarantee tallies in living docs with qualitative wording; added the canonical `ScheduleLeagueV2` contract page and links; removed ADR-008's dangling tenant-isolation analogue; and moved the already-merged `bridge-handshake-endpoint`, `bridge-capture`, and `deadline-model` backlog items to Done. The backlog now recomputes to 30 done, 1 blocked, 68 pending, 99 total. `csv-importer` remains pending and `blind-mocks` remains the sole blocked item.
+
+**Now true:** Every edited path resolves to the current tree; the ownership matrix distinguishes decision semantics from backend mechanics instead of assigning one misleading owner; the Model-gate summaries retain the same held-out-data and calibration requirement without promoting ADR-011/012-specific lineage into a universal contract; the schedule adapter index points to one canonical contract preserving the existing 1,200 resolved plus six TBD facts and timezone semantics; all relative Markdown links and anchors resolve; and the backlog status summary matches its 99 task sections and dependency references.
+
+**Could not verify:** No new live source was called, so this unit adds no evidence beyond the existing recorded `ScheduleLeagueV2` fixture and 2026-08-17 verification. It does not decide the README public-progress sentence, projection experiment protocol, ADR-006 restricted-input amendment, or historical handoff shape; all were deliberately left unchanged. It also does not claim that any pending injury-model work is ready.
+
+**Next:** Merge only after an independent exact-head review confirms the diff is mechanical and boundary-neutral and existing docs, link/anchor, dependency/count, and secret checks are green. Do not merge or self-approve from this session.
+
+---
+
+## 2026-08-19 — owner via architect liaison — ADR-010 and plain-English disposition
+
+**Changed:** Recorded two explicit owner selections from the 2026-08-19 architect liaison decision dialog: accept ADR-010, and freeze `docs/decisions/PLAIN-ENGLISH.md` as the historical ADR-001–009 walkthrough. ADR-010 already carried `Accepted` metadata, so its decision text and dates were preserved and the decision-index acceptance narrative now records the owner's explicit confirmation. The plain-English document now carries a freeze banner and points readers to the individual ADRs and decision index for the current record; it was not extended to ADR-010 or later decisions.
+
+**Now true:** ADR-010's accepted state has durable owner confirmation in the repository, and nobody should treat `PLAIN-ENGLISH.md` as a current or expanding ADR index.
+
+**Could not verify:** The dialog supplied the selections but no owner rationale beyond them, so none is inferred. No other owner-only choice was made or changed.
+
+**Next:** Keep ADR-010's existing accepted metadata intact, leave the frozen walkthrough at ADR-001–009, and use the decision index for later ADRs.
