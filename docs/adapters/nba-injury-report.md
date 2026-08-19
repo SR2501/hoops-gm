@@ -967,9 +967,12 @@ skip candidates whose only local evidence is a legacy row.
     `_persist_coverage` may not discard those raw records: if any existing
     candidate is legacy/missing-version, future-versioned (including added or
     renamed fields), or malformed while claiming the current version (unknown
-    or missing required keys), it raises `IncompatibleCoverageEvidence` before
-    creating a `.tmp` file. The original coverage file remains byte-for-byte
-    unchanged. Operator recovery is intentionally manual: preserve or move the
+    keys or missing required keys, including v3's `season`/`season_type`), it
+    raises `IncompatibleCoverageEvidence` before creating a `.tmp` file. A
+    current candidate whose recorded scope disagrees with the file/request
+    raises `CoverageScopeMismatch` at the same boundary rather than being
+    dropped. The original coverage file remains byte-for-byte unchanged.
+    Operator recovery is intentionally manual: preserve or move the
     incompatible artifact to a quarantine location, inspect it with a binary
     that understands its schema (or retain it for a future explicit migration),
     then retry with a separate compatible coverage path. This release does not

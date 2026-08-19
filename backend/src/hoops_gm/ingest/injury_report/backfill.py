@@ -1194,16 +1194,15 @@ _CANDIDATE_COVERAGE_FIELD_NAMES: Final[frozenset[str]] = frozenset(
 
 #: The subset of :data:`_CANDIDATE_COVERAGE_FIELD_NAMES` that
 #: :class:`CandidateCoverage` declares with no default value — i.e. every
-#: field :meth:`CoverageReport.from_json` (final-review follow-up) must find
-#: as a genuine key on a raw record before that record is trusted as
-#: current-schema. Computed from the dataclass's own field metadata (rather
-#: than hand-listed) so it stays correct if the dataclass ever gains or
-#: loses a required field.
+#: field :meth:`CoverageReport.from_json` must find as a genuine key on a
+#: raw record before that record is trusted as current-schema. The two v3
+#: scope fields are required on disk even though their dataclass defaults
+#: remain for constructing inert legacy placeholders.
 _CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     f.name
     for f in fields(CandidateCoverage)
     if f.default is MISSING and f.default_factory is MISSING
-)
+) | {"season", "season_type"}
 
 
 def _quarantined_incompatible_schema_candidate(
@@ -1280,9 +1279,9 @@ def _current_schema_candidate_or_none(c: Mapping[str, Any]) -> CandidateCoverage
     construction at all: every key in ``c`` must be a recognized
     :data:`CandidateCoverage` field name (no unknown keys survive, even
     silently), and every field :data:`CandidateCoverage` declares with no
-    default (:data:`_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES`) must be
-    present as a key in ``c`` (no silent defaulting of a genuinely required
-    field). Only a record passing both checks is constructed. The
+    default, plus the v3 scope fields
+    (:data:`_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES`), must be present as
+    keys in ``c``. Only a record passing both checks is constructed. The
     construction itself is still wrapped in a ``try``/``except`` as a
     belt-and-suspenders guard — the key-set check above should make this
     unreachable, but a value-level surprise (e.g. a non-list value under a
@@ -2574,12 +2573,16 @@ def exclusion_cascade(
     candidates_not_available: int | None = None
     mastheads_recovered: int | None = None
     if coverage_report is not None:
-        in_range_candidates = [
-            c
-            for c in coverage_report.candidates
-            if (start is None or date.fromisoformat(c.report_date) >= start)
-            and (end is None or date.fromisoformat(c.report_date) <= end)
-        ]
+        in_range_candidates: list[CandidateCoverage] = []
+        for candidate in coverage_report.candidates:
+            try:
+                candidate_date = date.fromisoformat(candidate.report_date)
+            except ValueError:
+                continue
+            if (start is None or candidate_date >= start) and (
+                end is None or candidate_date <= end
+            ):
+                in_range_candidates.append(candidate)
         candidates_attempted = len(in_range_candidates)
         candidates_forbidden = sum(1 for c in in_range_candidates if c.outcome == "forbidden")
         candidates_not_available = sum(
@@ -2825,13 +2828,18 @@ def _persist_coverage(
                 f"season={season!r} season_type={season_type.value!r}. Refusing to merge "
                 "and rewrite it under this request's scope."
             )
-        existing = [
-            c
-            for c in existing_report.candidates
-            if c.season == season
-            and c.season_type == season_type.value
-            and c.evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+        mismatched_indexes = [
+            index
+            for index, candidate in enumerate(existing_report.candidates)
+            if candidate.season != season or candidate.season_type != season_type.value
         ]
+        if mismatched_indexes:
+            raise CoverageScopeMismatch(
+                f"{coverage_path} contains candidate(s) at indexes {mismatched_indexes} "
+                "whose recorded season/season_type disagrees with the requested scope. "
+                "Refusing to merge or rewrite the original evidence."
+            )
+        existing = list(existing_report.candidates)
     merged = _merge_coverage(existing, new_candidates)
     write_coverage_report(
         coverage_path,

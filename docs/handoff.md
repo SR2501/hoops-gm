@@ -5098,5 +5098,20 @@ data/evidence reviews, and resolve every finding before conversion. Do not
 merge or self-approve. `injury-status-conversion` remains explicitly blocked
 on `injury-conversion-cohort-population` and its separate Model gate.
 
+**Review addendum:** Independent code and data/evidence reviews of exact head
+`084cef4` found one release blocker and one adjacent fail-closed defect. A
+current-v3 candidate could omit its `season`/`season_type` keys because those
+fields have placeholder-oriented dataclass defaults; it passed the initial
+malformed-current gate, defaulted to empty scope, and was then silently dropped
+by the per-candidate scope filter during atomic rewrite. A current candidate
+with explicitly disagreeing scope followed the same destructive filter.
+Fixed by making v3 scope keys contractually required on disk and by raising
+`CoverageScopeMismatch` for any per-candidate scope disagreement before write;
+tests assert bytes unchanged and no temp residue. The code review also found
+that a quarantined placeholder's intentionally empty `report_date` made
+date-ranged `exclusion_cascade` rendering raise `ValueError`; malformed dates
+are now excluded from that read-only range aggregate, with a regression test.
+Both findings were resolved before push; a fresh exact-head review is still
+required after the follow-up commit.
 
 

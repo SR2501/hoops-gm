@@ -4077,19 +4077,15 @@ def test_persist_coverage_raises_on_whole_file_season_type_mismatch(tmp_path: Pa
     assert len(still_there.candidates) == 1
 
 
-def test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagrees(
+def test_persist_coverage_refuses_a_candidate_whose_own_recorded_scope_disagrees(
     tmp_path: Path,
 ) -> None:
     """Round-10 review point 2, defense in depth.
 
     Even inside a file whose *top-level* declared scope matches this call's
     request, an individual candidate recorded with a *different* own
-    ``(season, season_type)`` (a hand-edited file, or a bug in some other
-    writer) must not be silently carried forward as current-scope evidence
-    merely because the enclosing file's own label happens to match. The
-    real load+merge+save path must exclude exactly that one candidate,
-    not the whole file, and not raise -- this is a narrower, quieter
-    failure mode than a whole-file mismatch, not a release-blocking one.
+    ``(season, season_type)`` must not be silently dropped by an atomic
+    rewrite. Persistence refuses the whole merge and preserves the artifact.
     """
     path = tmp_path / "coverage.json"
     mixed_file = {
@@ -4106,7 +4102,8 @@ def test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagree
             )
         ],
     }
-    path.write_text(json.dumps(mixed_file), encoding="utf-8")
+    original_bytes = json.dumps(mixed_file, indent=1).encode()
+    path.write_bytes(original_bytes)
 
     new_candidate = CandidateCoverage.from_candidate(
         ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
@@ -4118,15 +4115,11 @@ def test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagree
         status_code=404,
     )
 
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+    with pytest.raises(CoverageScopeMismatch, match="candidate\\(s\\) at indexes"):
+        _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
 
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    # The wrong-scope candidate is dropped from the rewritten file; only the
-    # genuinely current-scope one survives. Never two -- and never the
-    # mismatched one alone.
-    assert len(result.candidates) == 1
-    assert result.candidates[0].requested_timestamp == new_candidate.requested_timestamp
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    assert path.read_bytes() == original_bytes
+    assert not path.with_suffix(path.suffix + ".tmp").exists()
 
 
 def test_persist_coverage_refuses_an_unrecognized_future_schema_version_candidate(
@@ -4190,6 +4183,27 @@ def test_persist_coverage_refuses_a_legacy_pre_versioning_candidate_too(
         "season_type": "regular",
         "candidates": [legacy_candidate],
     }
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
+
+
+def test_persist_coverage_refuses_current_schema_missing_v3_scope(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "coverage.json"
+    current_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    del current_candidate["season"]
+    del current_candidate["season_type"]
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate],
+    }
+
     _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
@@ -5770,6 +5784,39 @@ def test_from_json_quarantines_current_schema_missing_required_field() -> None:
     assert quarantined.season == ""
     assert quarantined.season_type == ""
     assert quarantined.applicable_nba_game_ids == ()
+
+
+def test_exclusion_cascade_date_range_ignores_quarantined_candidate(
+    session: Any,
+) -> None:
+    legacy_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    del legacy_candidate["evidence_schema_version"]
+    report = CoverageReport.from_json(
+        json.dumps(
+            {
+                "season": "2025-26",
+                "season_type": "regular",
+                "candidates": [legacy_candidate],
+            }
+        )
+    )
+
+    cascade = exclusion_cascade(
+        session,
+        ready=(),
+        missing_tipoff=(),
+        game_coverage=(),
+        coverage_report=report,
+        start=date(2025, 11, 1),
+        end=date(2025, 11, 30),
+    )
+
+    assert cascade.candidates_attempted == 0
 
 
 def test_persist_coverage_refuses_current_schema_with_unknown_key(
