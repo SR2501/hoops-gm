@@ -45,9 +45,12 @@ adapter does not define them.
 
 ## Gate evidence and limits
 
-The committed `ScheduleLeagueV2` fixture and offline contract tests pin the
-resolved/TBD split, team coverage, and October/March timezone reconciliation. No
-new live evidence is claimed here beyond the existing 2026-08-17 verification.
+The existing 2026-08-17 live verification established the full 1,200/6 split
+and all-30-team coverage. The committed trimmed `ScheduleLeagueV2` fixture and
+offline contract tests exercise the parser's resolved/TBD handling and
+October/March timezone reconciliation on a representative sample; they do not
+independently preserve the full live-response counts. No new live evidence is
+claimed here.
 
 The six Cup assignments remain unknown, and this contract does not predict when
 the NBA will resolve them. A schedule refresh must preserve their explicit
