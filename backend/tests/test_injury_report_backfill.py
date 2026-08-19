@@ -5899,7 +5899,7 @@ def test_coverage_for_games_quarantines_current_schema_unknown_key_fetched_outco
     teams = _seed_teams(session)
     game = _seed_game(
         session,
-        nba_game_id="current-schema-unknown-key-fetched",
+        nba_game_id="unknown-key-fetched",
         game_date=date(2025, 11, 2),
         tipoff_utc=_et(2025, 11, 2, 19, 0),
         home_team_id=teams["MIL"],
