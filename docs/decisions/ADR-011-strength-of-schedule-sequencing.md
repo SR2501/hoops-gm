@@ -1,4 +1,4 @@
-# ADR-011 — Strength of schedule is a Phase 5+ valuation concern, not schedule intelligence
+# ADR-011 — Strength of schedule is a living projection dependency, not schedule intelligence
 
 **Status:** Accepted
 **Accepted:** 2026-08-17 by the project owner
@@ -31,3 +31,26 @@ There are several defensible SOS formulations (opponent record, opponent per-cat
 ## What would flip this
 
 If `quant` determines a projection-free SOS proxy (e.g., prior-season opponent defensive rank) is good enough to ship for the Phase 3/4 window and won't need to be thrown away once real projections land, it can move earlier — but that is itself a claim requiring evidence, not an assumption to build on.
+
+## Amendments
+
+### 2026-08-17 — Recursive refresh and weekly operating cadence
+
+Accepted by the project owner on 2026-08-17.
+
+SOS and projections form a **versioned recursive loop**. Every projection set in
+the corpus — published imports, blended projections, and the house model — is
+an input to the current SOS calculation. A changed SOS result triggers the
+affected projection sets to be recomputed, which may trigger SOS again. The
+dependency-aware cascade runs until its inputs stabilize or an explicit
+iteration/freshness limit is reached. No downstream consumer may mix versions
+from different cascade runs.
+
+During development season the loop runs at least weekly, and more often when a
+schedule, opponent-context, availability, source-data, or model-assumption
+change materially affects an input. The implementation records every input,
+iteration, version, and unresolved limit, and traces the resulting changes into
+the affected draft, auction, trade, playoff, and weekly-management outputs.
+The SOS formulation and convergence/freshness limits remain `quant` decisions
+that require Model-gate evidence; this amendment sets the dependency and
+provenance contract, not those values.

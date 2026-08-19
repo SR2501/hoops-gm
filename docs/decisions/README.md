@@ -28,8 +28,8 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [008](ADR-008-layer-purity.md) | Aggregates are terminal outputs, never inputs | **Accepted** | Rankings and AAV already contain availability; blending them back in double-counts it and destroys decomposability |
 | [009](ADR-009-schedule-intelligence-contract.md) | Phase 3 schedule intelligence: table ownership and output contract | **Accepted** | `schedule-ingest`/`schedule-density` are data-engineer facts; `schedule-context` is quant's Phase 4 model, not a Phase 3 ingest |
 | [010](ADR-010-local-bridge-pairing.md) | One-time local pairing for the browser bridge | **Accepted** | A displayed, single-use local code provisions the userscript bearer secret without putting it in source control |
-| [011](ADR-011-strength-of-schedule-sequencing.md) | Strength of schedule is a Phase 5+ valuation concern, not schedule intelligence | **Accepted** | Needs a real projection/valuation to weight against; distinct from Phase 4's opponent-defence context and deliberately not built early on a placeholder value |
-| [012](ADR-012-per-week-game-distribution.md) | Per-week game distribution is a draft/trade-facing view, not folded into valuation | **Accepted** | Weekly game volume is a first-class H2H management input, distinct from opponent quality (ADR-011); expose it to draft, trades, and weekly planning rather than waiting on `schedule-ui` |
+| [011](ADR-011-strength-of-schedule-sequencing.md) | Strength of schedule is a living projection dependency, not schedule intelligence | **Accepted** | SOS and every projection set form a versioned recursive loop with at least weekly refreshes and cascaded downstream outputs |
+| [012](ADR-012-per-week-game-distribution.md) | Per-week game distribution is a living schedule dependency across decisions | **Accepted** | Weekly game volume is re-ingested and cascaded into projections, SOS, valuations, draft, trades, lineups, streaming, and weekly planning |
 
 ## Accepted
 
@@ -41,3 +41,8 @@ ADR-009 was accepted by the project owner on **2026-08-17**.
 
 ADR-008 was accepted by the project owner on **2026-08-18**, who explicitly
 praised it as written.
+
+The recursive weekly refresh amendments to ADR-011 and ADR-012 were accepted by
+the project owner on **2026-08-17**. They extend the original sequencing
+decisions with versioned cascade and freshness requirements; they do not choose
+the SOS formulation or convergence thresholds.
