@@ -1013,3 +1013,28 @@ published. The empirical conversion of a status to an actual play rate
 (`injury-status-conversion`, `docs/backlog.md`) is a modelled quantity that
 belongs to `quant` in a later phase and consumes this table — it does not
 live in it.
+
+---
+
+## Representative historical cohort populated on 2026-08-19
+
+The privacy-safe provenance manifest is
+[`nba-injury-report-cohort-2025-12-08--2026-01-04.json`](nba-injury-report-cohort-2025-12-08--2026-01-04.json).
+The window was selected from the official schedule before fetching its reports:
+four inclusive weeks centered on the 2025-12-22 archive format/cadence boundary.
+It covers 171 games, 25 game dates, all 30 teams, both URL eras, all five player
+status values, and source-observed G/F/C labels without filling blank positions.
+
+All 89 bounded candidates completed without 403, 404, or contract failure. They
+resolved to 84 distinct mastheads, 1,934 canonical player-games, and 1,906
+authoritative participation joins. The join is represented and fingerprinted by
+stable `nba_game_id` plus NBA-source player external id; local surrogate ids are
+not evidence identity. One resolved `OUT` observation has no participation row
+and remains unknown under R35 rather than being inferred as a nonappearance.
+
+The manifest commits no raw NBA document or operational database. It records
+source-capture timestamps and SHA-256 identities, checkpoint/coverage artifact
+hashes, exclusion counts, unresolved identity counts, position evidence, and
+status-diverse stable-key samples. Raw PDFs, NBA JSON, checkpoint, coverage,
+expected-game evidence, and SQLite state remain under the existing gitignored
+`data/`/`.live_evidence*` policy.

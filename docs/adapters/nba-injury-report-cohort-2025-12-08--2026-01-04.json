@@ -1,0 +1,244 @@
+{
+  "canonical_observations": {
+    "distinct_nba_game_ids": 171,
+    "distinct_report_timestamps": 33,
+    "distinct_resolved_nba_player_ids": 363,
+    "distinct_team_labels": 30,
+    "lead_time_minutes": {
+      "maximum": 540,
+      "minimum": 15
+    },
+    "resolved_player_id": 1907,
+    "sha256_sorted_stable_records": "9fe70210367d229f711b34bc5b99d779534172fd0e218a335ce67f79d406765d",
+    "status_counts": {
+      "available": 206,
+      "doubtful": 22,
+      "out": 1495,
+      "probable": 59,
+      "questionable": 152
+    },
+    "total_player_games": 1934,
+    "unresolved_player_id": 27
+  },
+  "generated_at_utc": "2026-08-19T21:16:13.970049+00:00",
+  "independent_review": {
+    "code_review": "Approved with no actionable findings.",
+    "data_engineering_evidence_review": "Approved as representative enough to unblock the separately Model-gated injury-status-conversion task.",
+    "evidence_reproduced": [
+      "Windows working-tree source hashes (later corrected to canonical Git blob hashes) and operational artifact SHA-256 identities",
+      "171-game/25-date/all-team scope",
+      "season-wide production versus bounded participation separation",
+      "trusted-entry cascade arithmetic",
+      "canonical status and joined-outcome arithmetic",
+      "NBA-only stable identity anchors",
+      "empty Fantrax and write-path tables"
+    ],
+    "reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a",
+    "reviewer_did_not_rehit_live_source_for_resume": true
+  },
+  "kind": "injury_conversion_cohort_population_evidence",
+  "limitations": [
+    "No DNP reason was inferred and no injury-status conversion rate was fit or reported.",
+    "One resolved injury observation has no participation row and remains unknown because the authoritative ledger can be silent for full absences (R35).",
+    "Position coverage uses only non-empty G/F/C labels observed in the same window's BoxScoreTraditionalV3 captures; blank labels remain unknown and were not inferred.",
+    "Raw PDFs, JSON captures, checkpoint, coverage report, expected-game report, and SQLite database remain gitignored operational state. This provenance and aggregate manifest is the repository-safe evidence."
+  ],
+  "operational_artifacts": {
+    "alembic_revision": "0014",
+    "files": {
+      "injury_backfill_2025-26_regular.json": {
+        "bytes": 31830,
+        "sha256": "bf0e320700d4fc85e3523c45fd16b3231f26d550452ccdb50dc9414b20ec2210"
+      },
+      "injury_backfill_2025-26_regular_coverage.json": {
+        "bytes": 80855,
+        "sha256": "889f927e4ac6e2e1c6ff747e7076ec1a035eb8f36979e915e583689b7e844417"
+      },
+      "injury_backfill_2025-26_regular_expected_games.json": {
+        "bytes": 176,
+        "sha256": "13e3a8574a2da1639d7a6858e7f16be2c48b64ba350bdd6d7ae7aee6f5bd5f75"
+      }
+    }
+  },
+  "operator": {
+    "base_repository_head": "9c4ebac9a4a937594fb6ce18256d5269fe5dee93",
+    "bounded_participation_git_blob_sha256": "cb1e1c165781ab3a0fcd18c5d60338b5d6fb29d9fdcf150e4d32a541b4d0f7d3",
+    "bounded_participation_test_git_blob_sha256": "74683ea889640855ecb2c3e0ea74c363dd5c307a12eb9a91a6613bf459f46a5a",
+    "commands": [
+      "python -m alembic upgrade head",
+      "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation --start 2025-12-08 --end 2026-01-04",
+      "python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 100",
+      "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 100",
+      "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-12-08 --end 2026-01-04"
+    ],
+    "identity_bootstrap": "NbaStatsClient.static_teams plus CommonAllPlayers(season=2025-26, only_current=False), imported through parse_teams/import_teams and parse_common_all_players/import_nba_players before the bounded participation command",
+    "source_fingerprint_method": "SHA-256 of canonical Git blob bytes from reviewed_commit, resolved with git rev-parse <commit>:<path> and read with git cat-file blob <blob-id>",
+    "source_fingerprint_reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a"
+  },
+  "participation_join": {
+    "joined_player_games": 1906,
+    "key": [
+      "nba_games.nba_game_id",
+      "player_external_ids[source=nba].external_id"
+    ],
+    "local_join_columns": [
+      "game_id",
+      "player_id"
+    ],
+    "missing_rows_are_not_inferred_as_nonparticipation": true,
+    "participation_outcome_counts": {
+      "did_not_dress": 125,
+      "did_not_play": 72,
+      "inactive": 1408,
+      "not_with_team": 10,
+      "played": 291
+    },
+    "participation_rows_in_scope": 5980,
+    "resolved_observations_without_nba_anchor": 0,
+    "resolved_observations_without_participation_row": 1,
+    "sha256_sorted_joined_stable_records": "b4dbf93d6b9163bb4370def1a1d425ae800d50da543fa6568170d1ee486ad27b",
+    "stable_record_sample": [
+      {
+        "game_date": "2025-12-23",
+        "lead_time_minutes": 195,
+        "nba_game_id": "0022500421",
+        "nba_player_id": "1641815",
+        "participation_outcome": "inactive",
+        "report_timestamp": "2025-12-23T23:45:00+00:00",
+        "status": "out"
+      },
+      {
+        "game_date": "2025-12-22",
+        "lead_time_minutes": 195,
+        "nba_game_id": "0022500407",
+        "nba_player_id": "1630591",
+        "participation_outcome": "inactive",
+        "report_timestamp": "2025-12-22T23:45:00+00:00",
+        "status": "doubtful"
+      },
+      {
+        "game_date": "2025-12-20",
+        "lead_time_minutes": 285,
+        "nba_game_id": "0022500395",
+        "nba_player_id": "1642353",
+        "participation_outcome": "did_not_play",
+        "report_timestamp": "2025-12-20T22:45:00+00:00",
+        "status": "questionable"
+      },
+      {
+        "game_date": "2025-12-25",
+        "lead_time_minutes": 315,
+        "nba_game_id": "0022500011",
+        "nba_player_id": "203939",
+        "participation_outcome": "did_not_play",
+        "report_timestamp": "2025-12-25T16:45:00+00:00",
+        "status": "probable"
+      },
+      {
+        "game_date": "2025-12-26",
+        "lead_time_minutes": 15,
+        "nba_game_id": "0022500423",
+        "nba_player_id": "1631243",
+        "participation_outcome": "played",
+        "report_timestamp": "2025-12-26T23:45:00+00:00",
+        "status": "available"
+      }
+    ]
+  },
+  "position_evidence": {
+    "canonical_observations_with_source_observed_position": 586,
+    "canonical_observations_without_source_observed_position": 1321,
+    "distinct_resolved_players": 363,
+    "distinct_resolved_players_by_observed_label": {
+      "C": 43,
+      "F": 76,
+      "G": 76
+    },
+    "distinct_resolved_players_with_source_observed_position": 167,
+    "distinct_resolved_players_without_source_observed_position": 196,
+    "method": "Non-empty BoxScoreTraditionalV3 position labels observed for the same stable NBA player id in this exact 171-game window; a player may have more than one observed label, and blank labels stay unknown.",
+    "sha256_sorted_player_position_mapping": "40d5f9f552b4c947b8913bf3eedde3effe0c1e1008a22cc99e2326df776c87ef"
+  },
+  "schema_version": 1,
+  "scope": {
+    "candidate_attempts": 89,
+    "end_game_date": "2026-01-04",
+    "expected_games": 171,
+    "fifteen_minute_regime_game_dates": 13,
+    "game_dates": 25,
+    "games_missing_tipoff": 0,
+    "games_with_tipoff": 171,
+    "legacy_regime_game_dates": 12,
+    "mastheads_recovered": 84,
+    "nba_teams": 30,
+    "player_log_only_schedule_anomalies_in_window": 0,
+    "season": "2025-26",
+    "season_type": "regular",
+    "selection_basis": "Inclusive four-week window centered on the 2025-12-22 NBA injury-report archive format/cadence boundary; selected from the official schedule before the per-game/PDF sweep, not from known-success report dates.",
+    "start_game_date": "2025-12-08"
+  },
+  "source_capture_summary": {
+    "nba_injury_report/InjuryReportPdf": {
+      "captures": 84,
+      "distinct_content_sha256": 84,
+      "first_fetched_at": "2026-08-19T21:11:46.622854+00:00",
+      "last_fetched_at": "2026-08-19T21:14:43.655395+00:00",
+      "sha256_sorted_capture_identity": "112857e73ae205ec52524ed2931b699bab0e70ba70fa8bf0a23cb42dd5cf2725",
+      "total_uncompressed_bytes": 6726072
+    },
+    "nba_stats/BoxScoreSummaryV3": {
+      "captures": 171,
+      "distinct_content_sha256": 171,
+      "first_fetched_at": "2026-08-19T21:05:17.594493+00:00",
+      "last_fetched_at": "2026-08-19T21:11:32.190294+00:00",
+      "sha256_sorted_capture_identity": "94db206a5f7b42dbc47ddaf2057aaf39c43578b67b5608203427ba6d70aa3cf2",
+      "total_uncompressed_bytes": 2987525
+    },
+    "nba_stats/BoxScoreTraditionalV3": {
+      "captures": 171,
+      "distinct_content_sha256": 171,
+      "first_fetched_at": "2026-08-19T21:05:16.370834+00:00",
+      "last_fetched_at": "2026-08-19T21:11:31.113048+00:00",
+      "sha256_sorted_capture_identity": "fba8eace1b11888bf6c1d167c63b710c3b078bb96351235a376f24fcec1acd40",
+      "total_uncompressed_bytes": 3360882
+    },
+    "nba_stats/CommonAllPlayers": {
+      "captures": 1,
+      "distinct_content_sha256": 1,
+      "first_fetched_at": "2026-08-19T21:04:54.095987+00:00",
+      "last_fetched_at": "2026-08-19T21:04:54.095987+00:00",
+      "sha256_sorted_capture_identity": "d1fc886945350fd7d3c9791c81977045344690f1706449adc94d43db69df10f5",
+      "total_uncompressed_bytes": 723120
+    },
+    "nba_stats/LeagueGameFinder": {
+      "captures": 1,
+      "distinct_content_sha256": 1,
+      "first_fetched_at": "2026-08-19T21:02:20.149888+00:00",
+      "last_fetched_at": "2026-08-19T21:02:20.149888+00:00",
+      "sha256_sorted_capture_identity": "7568eb12700d280fdf366b1f291d14c2a9d8fd5e1ed950ac80c9d2436ca10e27",
+      "total_uncompressed_bytes": 461424
+    },
+    "nba_stats/PlayerGameLogs": {
+      "captures": 1,
+      "distinct_content_sha256": 1,
+      "first_fetched_at": "2026-08-19T21:05:11.205595+00:00",
+      "last_fetched_at": "2026-08-19T21:05:11.205595+00:00",
+      "sha256_sorted_capture_identity": "9e1659a1c8139d4f8c3bc0632e7c77ad48717f106ab373e6a9888829a75d14ba",
+      "total_uncompressed_bytes": 11844159
+    }
+  },
+  "trusted_entry_cascade": {
+    "candidate_forbidden_403": 0,
+    "candidate_not_available_404": 0,
+    "candidate_quarantined_unscoped": 0,
+    "entries_in_scope": 9082,
+    "entries_not_yet_submitted": 783,
+    "entries_resolved_game_id": 9082,
+    "entries_resolved_player_id": 8190,
+    "entries_with_listed_status": 8299,
+    "games_legacy_excluded": 0,
+    "games_observed": 171,
+    "games_unresolved_evidence": 0,
+    "listed_entries_unresolved_player_id": 109
+  }
+}

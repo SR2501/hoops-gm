@@ -128,6 +128,14 @@ python -m hoops_gm.ingest.backfill season 2024-25
 python -m hoops_gm.ingest.backfill season 2024-25 --with-participation
 ```
 
+Bound a participation run to an explicit inclusive game-date window without
+changing the season-wide schedule and production ingest:
+
+```powershell
+python -m hoops_gm.ingest.backfill season 2025-26 --with-participation `
+  --start 2025-12-08 --end 2026-01-04
+```
+
 The crosswalk writes `data/reports/unmatched_players.csv` — the tail a human
 has to adjudicate, with the per-field evidence behind every decision. Read it.
 
