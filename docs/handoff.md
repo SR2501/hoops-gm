@@ -4786,10 +4786,14 @@ in 234 tracked files. A fresh `alembic upgrade head` from an empty SQLite
 database applies the full `0001 → 0014` chain cleanly. `origin/main` remains
 at `5bed586` (PR #25) — the Alembic chain remains unchanged:
 `0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
-(evidence-schema-version)`. Only three files changed this round:
-`backend/src/hoops_gm/ingest/injury_report/backfill.py`,
-`backend/tests/test_injury_report_backfill.py`, and `docs/backlog.md` — no
-model, migration, or route changes.
+(evidence-schema-version)`. Six files changed this round: the two code/test
+files (`backend/src/hoops_gm/ingest/injury_report/backfill.py`,
+`backend/tests/test_injury_report_backfill.py`) plus four docs-only files
+(`docs/backlog.md`, `docs/governance/risks.md`,
+`docs/adapters/nba-injury-report.md`, and this file) — no model, migration,
+or route changes. (Corrected here after an independent code-review pass on
+`6825f20` caught this file count itself understating its own scope — see the
+review verdict recorded for this round.)
 
 **Could not verify:** Whether a live Postgres instance is reachable in this
 session — the same constraint as every prior round: Docker is not installed,
