@@ -6006,13 +6006,16 @@ historical exact-output reconciliation, parser fatal propagation, private-smoke
 row accounting, concurrency, SQLAlchemy flush order, schema constraints and
 migration `0015 -> 0014`.
 
+The coordinator completed independent exact-head verification and merged PR #12
+as `2c9c5831201788469407dc7c4efad4a5db81f13b` at
+`2026-08-19T22:25:05Z`.
+
 **Could not verify:** The private paid export and screenshot are deliberately
 absent from the repository, so independent reviewers can verify their committed
 hashes, privacy-safe derivative contract and smoke behavior but cannot inspect
 the source rows. FantasyPros and Hashtag remain non-production parse-preview
-profiles. This is a readiness report, not merge approval; no merge or
-self-approval occurred.
+profiles. No self-approval occurred.
 
-**Next:** The coordinator should perform the independent merge decision on the
-final published head. Any later code change requires another exact-head gate and
-review cycle.
+**Next:** `projection-blending` may now consume the imported per-game production
+rates. It must keep games played outside the blend: availability remains the
+separate future fusion seam required by ADR-002.
