@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
 from typing import Any
@@ -48,6 +49,7 @@ from hoops_gm.ingest.projections import (
     HASHTAG_PROFILE,
     MANUAL_PROFILE,
     ColumnProfile,
+    DerivedStatColumn,
     ProjectionEncodingError,
     ProjectionProfileError,
     StatColumn,
@@ -389,6 +391,32 @@ def test_season_total_conversion_rejects_non_finite_result() -> None:
     assert [row.player_name for row in result.rows] == ["Player Beta"]
     assert result.rejected_count == 1
     assert any("non-finite per-game value" in issue.message for issue in result.fatal_issues)
+
+
+def test_non_finite_optional_derivation_rejects_the_row() -> None:
+    profile = ColumnProfile(
+        profile_id="derived-overflow-test",
+        version="1",
+        source=ExternalSource.MANUAL,
+        display_name="derived overflow test",
+        name_aliases=("player_name",),
+        stat_columns=(StatColumn("assists_per_game", ("assists",), ValueShape.PER_GAME),),
+        derived_stat_columns=(
+            DerivedStatColumn(
+                "points_per_game",
+                (("assists_per_game", 1e308),),
+            ),
+        ),
+    )
+    result = parse_projection_csv(
+        ("player_name,assists\nPlayer Alpha,1e308\nPlayer Beta,1\n"),
+        profile,
+        season="2026-27",
+    )
+
+    assert [row.player_name for row in result.rows] == ["Player Beta"]
+    assert result.rejected_count == 1
+    assert any("derived points" in issue.message for issue in result.fatal_issues)
 
 
 def test_season_total_without_games_played_is_a_warning_not_a_fabrication() -> None:
@@ -1294,6 +1322,115 @@ def test_an_updated_file_creates_a_new_versioned_import(seeded_players: Session)
     )
     assert old_alpha.points_per_game == 24.2  # history is untouched
     assert new_alpha.points_per_game == 25.0
+
+
+def test_replaying_older_file_does_not_rewind_current_vendor_id(
+    seeded_players: Session,
+) -> None:
+    lines = load("basketball_monster_sample.csv").splitlines()
+    old_bytes = "\n".join((lines[0], lines[1], "")).encode()
+    new_bytes = old_bytes.replace(b"synthetic-alpha", b"synthetic-alpha-v2", 1)
+
+    old_outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.BASKETBALL_MONSTER,
+        display_name="Basketball Monster",
+        season="2026-27",
+        csv_bytes=old_bytes,
+    )
+    old_outcome.projection_import.imported_at = datetime(2026, 8, 1, tzinfo=UTC)
+    new_outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.BASKETBALL_MONSTER,
+        display_name="Basketball Monster",
+        season="2026-27",
+        csv_bytes=new_bytes,
+    )
+    new_outcome.projection_import.imported_at = datetime(2026, 8, 2, tzinfo=UTC)
+    seeded_players.flush()
+    import_projection_csv(
+        seeded_players,
+        source=ExternalSource.BASKETBALL_MONSTER,
+        display_name="Basketball Monster",
+        season="2026-27",
+        csv_bytes=old_bytes,
+    )
+
+    alpha = seeded_players.scalar(select(Player).where(Player.full_name == "Player Alpha"))
+    assert alpha is not None
+    current = seeded_players.scalar(
+        select(PlayerExternalId).where(
+            PlayerExternalId.player_id == alpha.id,
+            PlayerExternalId.source == ExternalSource.BASKETBALL_MONSTER,
+            PlayerExternalId.current_for_source == ExternalSource.BASKETBALL_MONSTER.value,
+        )
+    )
+    assert current is not None
+    assert current.external_id == "synthetic-alpha-v2"
+
+
+def test_replaying_older_season_does_not_rewind_current_crosswalk(
+    seeded_players: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ColumnProfile(
+        profile_id="manual-source-id-test",
+        version="1",
+        source=ExternalSource.MANUAL,
+        display_name="manual source id test",
+        name_aliases=("player_name",),
+        external_id_aliases=("source_id",),
+        stat_columns=(StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),),
+        verified=True,
+        verified_seasons=("2025-26", "2026-27"),
+        verification_evidence="test-only exact source-id fixture",
+    )
+    monkeypatch.setattr(
+        "hoops_gm.ingest.projections.importer.PROFILES_BY_SOURCE",
+        {ExternalSource.MANUAL: profile},
+    )
+    old_bytes = b"source_id,player_name,points_per_game\nold-alpha,Player Alpha,20\n"
+    new_bytes = b"source_id,player_name,points_per_game\nnew-alpha,Player Alpha,21\n"
+
+    old_outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual source-id test",
+        season="2025-26",
+        csv_bytes=old_bytes,
+        profile=profile,
+    )
+    old_outcome.projection_import.imported_at = datetime(2026, 8, 1, tzinfo=UTC)
+    new_outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual source-id test",
+        season="2026-27",
+        csv_bytes=new_bytes,
+        profile=profile,
+    )
+    new_outcome.projection_import.imported_at = datetime(2026, 8, 2, tzinfo=UTC)
+    seeded_players.flush()
+    import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual source-id test",
+        season="2025-26",
+        csv_bytes=old_bytes,
+        profile=profile,
+    )
+
+    alpha = seeded_players.scalar(select(Player).where(Player.full_name == "Player Alpha"))
+    assert alpha is not None
+    current = seeded_players.scalar(
+        select(PlayerExternalId).where(
+            PlayerExternalId.player_id == alpha.id,
+            PlayerExternalId.source == ExternalSource.MANUAL,
+            PlayerExternalId.current_for_source == ExternalSource.MANUAL.value,
+        )
+    )
+    assert current is not None
+    assert current.external_id == "new-alpha"
 
 
 def test_profile_lineage_is_immutable_and_versioned(

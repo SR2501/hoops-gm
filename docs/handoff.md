@@ -5304,6 +5304,7 @@ evidence under new source fingerprints. Before this independent PR merges, a
 fresh quant reviewer must inspect its exact head; downstream consumers must keep
 observed participation, production consistency, and future availability/value
 models separate.
+
 ---
 
 ## 2026-08-19 — architect — Projection experiment sequestration protocol

@@ -27,6 +27,8 @@ red smoke test teaches people to ignore red smoke tests.
 
 from __future__ import annotations
 
+import csv
+import io
 import os
 from pathlib import Path
 
@@ -133,13 +135,24 @@ class TestBasketballMonsterProjectionExportIsAlive:
                 "private BBM CSV drifted from the verified 2026-27 contract"
             ) from None
 
+        zero_game_rows: set[int] = set()
+        for row_number, row in enumerate(csv.DictReader(io.StringIO(csv_text)), start=2):
+            raw_games = (row.get("games") or "").strip()
+            try:
+                is_zero_game = not raw_games or float(raw_games.replace(",", "")) == 0
+            except ValueError:
+                is_zero_game = False
+            if is_zero_game:
+                zero_game_rows.add(row_number)
+
         allowed_zero_game_messages = (
             "given as a season total but no valid games-played figure",
             "row is missing required production values",
             "row has no usable production rates",
         )
         unexpected_issue = any(
-            not any(token in issue.message for token in allowed_zero_game_messages)
+            issue.row_number not in zero_game_rows
+            or not any(token in issue.message for token in allowed_zero_game_messages)
             for issue in parsed.issues
         )
         if not parsed.rows or unexpected_issue:

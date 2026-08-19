@@ -273,12 +273,13 @@ def parse_projection_csv(
             else:
                 values[stat_column.field] = parsed
 
-        _derive_stat_values(
+        if _derive_stat_values(
             values=values,
             profile=profile,
             row_number=row_number,
             issues=result.issues,
-        )
+        ):
+            row_fatal = True
 
         _enforce_percentage_decomposability(
             values=values,
@@ -439,8 +440,9 @@ def _derive_stat_values(
     profile: ColumnProfile,
     row_number: int,
     issues: list[RowIssue],
-) -> None:
+) -> bool:
     """Apply profile-declared derivations only after source-unit normalization."""
+    fatal = False
     for derived in profile.derived_stat_columns:
         inputs = [(values.get(field), coefficient) for field, coefficient in derived.terms]
         if any(value is None for value, _ in inputs):
@@ -450,6 +452,7 @@ def _derive_stat_values(
             float(value) * coefficient for value, coefficient in inputs if value is not None
         )
         if not math.isfinite(result) or result < 0:
+            fatal = True
             issues.append(
                 RowIssue(
                     row_number,
@@ -461,6 +464,7 @@ def _derive_stat_values(
             values[derived.field] = None
             continue
         values[derived.field] = result
+    return fatal
 
 
 def _enforce_percentage_decomposability(

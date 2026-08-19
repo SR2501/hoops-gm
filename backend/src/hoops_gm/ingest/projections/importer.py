@@ -817,15 +817,16 @@ def _import_projection_rows(
         resolve_projection_identities(session, rows, source=source),
         source=source,
     )
-    import_resolutions(
-        session,
-        _crosswalk_resolutions_preserving_manual_incumbents(
+    if _owns_current_source_crosswalk(session, projection_import):
+        import_resolutions(
             session,
-            report,
+            _crosswalk_resolutions_preserving_manual_incumbents(
+                session,
+                report,
+                source=source,
+            ),
             source=source,
-        ),
-        source=source,
-    )
+        )
 
     player_by_target_key = _nba_player_ids_by_key(session)
     rows_by_key = {_projection_source_key(row): row for row in rows}
@@ -873,6 +874,30 @@ def _import_projection_rows(
     counts.superseded = len(previous_player_ids - written_player_ids)
     session.flush()
     return counts, report
+
+
+def _owns_current_source_crosswalk(
+    session: Session,
+    projection_import: ProjectionImport,
+) -> bool:
+    """Only the newest source/season import may mutate the global crosswalk.
+
+    Projection rows are immutable per import, but ``player_external_ids`` is a
+    source-wide current view. Replaying an older file must reconcile that
+    historical import without rewinding identifiers established by a newer
+    file or season.
+    """
+    current_import_id = session.scalar(
+        select(ProjectionImport.id)
+        .where(ProjectionImport.source_id == projection_import.source_id)
+        .order_by(
+            ProjectionImport.season.desc(),
+            ProjectionImport.imported_at.desc(),
+            ProjectionImport.id.desc(),
+        )
+        .limit(1)
+    )
+    return current_import_id == projection_import.id
 
 
 @dataclass
