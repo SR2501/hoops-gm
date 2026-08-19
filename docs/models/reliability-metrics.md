@@ -96,16 +96,18 @@ with similar percentage.
 ## Chronological evaluation
 
 The checked evidence is
-`backend/tests/model_evidence/reliability_metrics_v1.json`. The protocol was
-locked in code before the final run:
+`backend/tests/model_evidence/reliability_metrics_v1.json`. Its complete
+parameter contract is version `b055dfbf67bb5127`, and the artifact is bound to
+runtime descriptive derivation `f4ce099a5e84e0f8`. Tests literal-lock every
+protocol value and verify both versions against executable code.
 
 | Stage | Training | Held out |
 |---|---|---|
 | Selection | 2023-24 | 2024-25 |
 | Final | 2024-25 | 2025-26 |
 
-Eligibility requires at least 20 player games in both adjacent seasons.
-Stability reports Spearman correlation and next-season MAE versus a
+Stability eligibility requires at least 20 player games in both adjacent
+seasons. Stability reports Spearman correlation and next-season MAE versus a
 training-season league-median baseline. The final transition contains 357
 eligible players. Minutes CV has Spearman 0.729 and player-specific MAE 0.124,
 versus 0.149 for the league-median baseline. Across category SDs, Spearman ranges
@@ -113,29 +115,43 @@ from 0.589 to 0.782; every player-specific MAE is lower than its corresponding
 league-median baseline MAE. This supports displaying the historical statistics,
 not wording them as forecasts.
 
-Held-out p20/p80 coverage is reported overall and in predeclared 1-19, 20-39,
-40-59, and 60+ training-sample bands. Continuous shooting-impact coverage is
-near the nominal bounds in the final transition (FG 0.221/0.783), while
-zero-heavy counting categories are not: for example, BLK p20/p80 covers
-0.679/0.881. Ties at zero make a discrete empirical p20 include substantially
-more than 20% of later observations. V1 therefore labels these values observed
-percentiles and makes no calibrated predictive-interval claim.
+Percentile coverage uses every player observed in both adjacent seasons rather
+than the 20-game stability threshold: 464 players in the final transition.
+Results are reported overall and in declared 1-19, 20-39, 40-59, and 60+
+training-sample bands. The sparse band is therefore measured, not an empty
+placeholder: its final FG-impact p20/p80 coverage is 0.292/0.680 across 55
+players. Overall FG-impact coverage is 0.226/0.777. Zero-heavy counting
+categories depart even further from nominal coverage because ties at zero make
+an empirical p20 include substantially more than 20% of later observations.
+V1 therefore labels every value an observed percentile, exposes its sample
+count, and makes no calibrated predictive-interval claim.
+
+The coordinator approved the partitions, thresholds, and calibration veto
+before the successful outcome run. However, the implementation and evidence
+first enter git together. The artifact records
+`immutable_repository_preregistration=false`; this repository cannot
+independently prove prospective registration. V1 is chronological held-out
+evidence under a predeclared plan, not an immutably preregistered experiment.
+Any future release must commit its protocol separately before evaluating its
+final holdout.
 
 ### Source-cohort audit
 
 | Season | Parsed games | Player-log game IDs | Included logs | Excluded logs | Fingerprint |
 |---|---:|---:|---:|---:|---|
-| 2023-24 | 1,230 | 1,230 | 26,401 | 0 | `d7a762232bbeeef9` |
-| 2024-25 | 1,225 | 1,230 | 26,188 | 118 | `d390049e25899542` |
-| 2025-26 | 1,225 | 1,230 | 26,549 | 102 | `47765bb5fafb9c09` |
+| 2023-24 | 1,230 | 1,230 | 26,401 | 0 | `4ecfda8e09653886` |
+| 2024-25 | 1,225 | 1,230 | 26,188 | 118 | `2a15ae8aa6114395` |
+| 2025-26 | 1,225 | 1,230 | 26,549 | 102 | `0b67fa26c1e30f9c` |
 
 The existing `LeagueGameFinder` parser produced no two-sided home/away record
 for five game IDs in each of 2024-25 and 2025-26 even though `PlayerGameLogs`
 contains those games. The evidence runner does not silently reparse
 adapter-owned source rows. It records every excluded ID and log count in the
-fingerprint and refuses to run if excluded game IDs exceed 1% of player-log game
-IDs. The retained cohorts cover 99.59% of those game IDs. This is a known source
-limitation, not evidence that the excluded games are ignorable.
+fingerprint. It also records parsed games with no player logs. Bidirectional
+coverage is bounded at 100%, and the run fails if either player-log-only or
+parsed-game-only IDs exceed 1% of their respective source set. The retained
+cohorts cover 99.59% of player-log game IDs and 100% of parsed games. This is a
+known source limitation, not evidence that the excluded games are ignorable.
 
 Reproduce the live study with:
 

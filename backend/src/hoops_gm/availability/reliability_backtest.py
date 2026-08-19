@@ -17,8 +17,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
+from hoops_gm.availability.reliability import (
+    RELIABILITY_COUNTING_CATEGORIES,
+    RELIABILITY_RATIO_CATEGORIES,
+    ReliabilityConfig,
+    sample_standard_deviation,
+    type7_quantile,
+    volume_weighted_impact,
+)
 from hoops_gm.db.lineage import content_fingerprint
 from hoops_gm.ingest.nba import (
     NbaGameRecord,
@@ -47,26 +55,12 @@ UPPER_PERCENTILE: Final = 0.80
 CALIBRATION_BIN_COUNT: Final = 4
 BOOTSTRAP_RESAMPLES: Final = 2000
 BOOTSTRAP_SEED: Final = 250119
-MAX_EXCLUDED_GAME_FRACTION: Final = 0.01
+MAX_SOURCE_GAME_ID_MISMATCH_FRACTION: Final = 0.01
 PERCENTILE_SAMPLE_SIZE_BANDS: Final = (
     ("1-19", 1, 19),
     ("20-39", 20, 39),
     ("40-59", 40, 59),
     ("60+", 60, None),
-)
-
-_COUNTING_CATEGORIES: Final = (
-    ("fg3m", "three_pointers_made"),
-    ("pts", "points"),
-    ("reb", "rebounds"),
-    ("ast", "assists"),
-    ("stl", "steals"),
-    ("blk", "blocks"),
-    ("to", "turnovers"),
-)
-_RATIO_CATEGORIES: Final = (
-    ("fg_pct", "field_goals_made", "field_goals_attempted"),
-    ("ft_pct", "free_throws_made", "free_throws_attempted"),
 )
 
 
@@ -95,7 +89,9 @@ class SeasonCohort:
     season: str
     games: tuple[NbaGameRecord, ...]
     logs: tuple[HistoricalPlayerGame, ...]
-    excluded_game_ids: tuple[str, ...]
+    player_log_game_ids: int
+    player_log_only_game_ids: tuple[str, ...]
+    parsed_game_only_ids: tuple[str, ...]
     excluded_player_game_logs: int
     fingerprint: str
 
@@ -113,9 +109,16 @@ class PlayerSeasonSummary:
     non_blowout_games: int
 
 
-def run_backtest(client: NbaStatsClient | None = None) -> dict[str, object]:
+class ReliabilityBacktestClient(Protocol):
+    def league_game_finder(self, *, season: str) -> object: ...
+
+    def player_game_logs(self, *, season: str) -> object: ...
+
+
+def run_backtest(client: ReliabilityBacktestClient | None = None) -> dict[str, object]:
     """Run development/selection once, then the locked final holdout."""
 
+    protocol = reliability_backtest_protocol()
     nba = client or NbaStatsClient()
     cohorts = {season: _load_season(nba, season) for season in SEASONS}
     summaries = {season: _season_summaries(cohort) for season, cohort in cohorts.items()}
@@ -138,36 +141,15 @@ def run_backtest(client: NbaStatsClient | None = None) -> dict[str, object]:
         "evidence_version": "reliability-metrics-v1",
         "source": "nba_api:LeagueGameFinder+PlayerGameLogs",
         "season_type": "regular",
-        "protocol": {
-            "pre_registered_partitions": {
-                "development": DEVELOPMENT_SEASON,
-                "selection": SELECTION_SEASON,
-                "final_training": FINAL_TRAINING_SEASON,
-                "final_holdout": FINAL_HOLDOUT_SEASON,
-            },
-            "minimum_player_games": MINIMUM_PLAYER_GAMES,
-            "minimum_blowout_games": MINIMUM_BLOWOUT_GAMES,
-            "minimum_non_blowout_games": MINIMUM_NON_BLOWOUT_GAMES,
-            "blowout_margin": BLOWOUT_MARGIN,
-            "lower_percentile": LOWER_PERCENTILE,
-            "upper_percentile": UPPER_PERCENTILE,
-            "calibration_bin_count": CALIBRATION_BIN_COUNT,
-            "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
-            "bootstrap_seed": BOOTSTRAP_SEED,
-            "maximum_excluded_game_fraction": MAX_EXCLUDED_GAME_FRACTION,
-            "percentile_sample_size_bands": [
-                {
-                    "label": label,
-                    "minimum": minimum,
-                    "maximum": maximum,
-                }
-                for label, minimum, maximum in PERCENTILE_SAMPLE_SIZE_BANDS
-            ],
-            "blowout_release_rule": (
-                "both chronological transitions must pass: candidate MAE < "
-                "zero-effect MAE; player-block bootstrap 95% improvement interval "
-                "lower bound > 0; calibration slope > 0; no calibration-bin sign "
-                "reversal; sign stability > 0.5"
+        "runtime_derivation_version": ReliabilityConfig().derivation_version,
+        "protocol": protocol,
+        "protocol_version": reliability_backtest_protocol_version(),
+        "protocol_provenance": {
+            "status": "coordinator_approved_before_successful_outcome_run",
+            "immutable_repository_preregistration": False,
+            "limitation": (
+                "the implementation and evidence first enter git together, so the "
+                "repository cannot independently prove prospective registration"
             ),
         },
         "source_cohorts": {season: _cohort_metadata(cohorts[season]) for season in SEASONS},
@@ -183,12 +165,11 @@ def run_backtest(client: NbaStatsClient | None = None) -> dict[str, object]:
             "calibration_reported": False,
         },
         "runtime_release": {
-            "descriptive_scorecard": "accepted",
             "blowout_suppression": "accepted" if blowout_released else "rejected",
             "blowout_suppression_reason": (
                 "selection and final holdout both passed"
                 if blowout_released
-                else "selection and/or final holdout failed the pre-registered rule"
+                else "selection and/or final holdout failed the predeclared rule"
             ),
             "composite_grade": "not_defined",
         },
@@ -205,7 +186,74 @@ def run_backtest(client: NbaStatsClient | None = None) -> dict[str, object]:
     }
 
 
-def _load_season(client: NbaStatsClient, season: str) -> SeasonCohort:
+def reliability_backtest_protocol() -> dict[str, object]:
+    """Return every declared evidence choice as a fingerprintable contract."""
+
+    return {
+        "declared_partitions": {
+            "development": DEVELOPMENT_SEASON,
+            "selection": SELECTION_SEASON,
+            "final_training": FINAL_TRAINING_SEASON,
+            "final_holdout": FINAL_HOLDOUT_SEASON,
+        },
+        "minimum_player_games": MINIMUM_PLAYER_GAMES,
+        "stability_metrics": [
+            "spearman",
+            "player_specific_mae",
+            "training_league_median_baseline_mae",
+        ],
+        "minimum_blowout_games": MINIMUM_BLOWOUT_GAMES,
+        "minimum_non_blowout_games": MINIMUM_NON_BLOWOUT_GAMES,
+        "blowout_margin": BLOWOUT_MARGIN,
+        "blowout_effect": (
+            "mean player minutes in margin>=15 games minus mean player minutes in all other games"
+        ),
+        "lower_percentile": LOWER_PERCENTILE,
+        "upper_percentile": UPPER_PERCENTILE,
+        "percentile_player_eligibility": (
+            "all players in both adjacent seasons with non-empty training and "
+            "holdout values for the category; no minimum-game threshold"
+        ),
+        "percentile_coverage_rule": (
+            "fraction of holdout values <= the player's training Type-7 quantile"
+        ),
+        "calibration_bin_count": CALIBRATION_BIN_COUNT,
+        "calibration_bin_method": "equal-count bins sorted by predicted delta",
+        "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
+        "bootstrap_seed": BOOTSTRAP_SEED,
+        "bootstrap_unit": "player-level paired MAE improvement",
+        "bootstrap_interval_quantiles": [0.025, 0.975],
+        "maximum_source_game_id_mismatch_fraction": (MAX_SOURCE_GAME_ID_MISMATCH_FRACTION),
+        "source_game_id_coverage_rule": (
+            "fail if either player-log-only ids / player-log ids or "
+            "parsed-game-only ids / parsed-game ids exceeds the ceiling"
+        ),
+        "percentile_sample_size_bands": [
+            {
+                "label": label,
+                "minimum": minimum,
+                "maximum": maximum,
+            }
+            for label, minimum, maximum in PERCENTILE_SAMPLE_SIZE_BANDS
+        ],
+        "blowout_release_rule": (
+            "both chronological transitions must pass: candidate MAE < "
+            "zero-effect MAE; player-block bootstrap 95% improvement interval "
+            "lower bound > 0; calibration slope > 0; no calibration-bin sign "
+            "reversal; sign stability > 0.5"
+        ),
+    }
+
+
+def reliability_backtest_protocol_version() -> str:
+    """Fingerprint the complete declared protocol independently of evidence."""
+
+    protocol = reliability_backtest_protocol()
+    rendered = json.dumps(protocol, sort_keys=True, separators=(",", ":"))
+    return content_fingerprint(["reliability-backtest-protocol-v1", rendered])
+
+
+def _load_season(client: ReliabilityBacktestClient, season: str) -> SeasonCohort:
     games = tuple(
         game
         for game in parse_league_game_finder(
@@ -221,20 +269,14 @@ def _load_season(client: NbaStatsClient, season: str) -> SeasonCohort:
         raise RuntimeError(f"{season} contains duplicate completed game ids")
 
     parsed_logs = parse_player_game_logs(client.player_game_logs(season=season))
-    unknown_game_ids = tuple(
-        sorted({row.nba_game_id for row in parsed_logs if row.nba_game_id not in games_by_id})
+    player_log_game_ids = {row.nba_game_id for row in parsed_logs}
+    parsed_game_ids = set(games_by_id)
+    player_log_only_game_ids, parsed_game_only_ids = _validated_source_game_id_mismatches(
+        season=season,
+        parsed_game_ids=parsed_game_ids,
+        player_log_game_ids=player_log_game_ids,
     )
-    if unknown_game_ids:
-        parsed_game_ids = {row.nba_game_id for row in parsed_logs}
-        excluded_fraction = len(unknown_game_ids) / len(parsed_game_ids)
-        if excluded_fraction > MAX_EXCLUDED_GAME_FRACTION:
-            raise RuntimeError(
-                f"{season} excludes {len(unknown_game_ids)} of {len(parsed_game_ids)} "
-                "player-log games because the parsed LeagueGameFinder cohort has no "
-                f"paired result ({excluded_fraction:.2%}, over the "
-                f"{MAX_EXCLUDED_GAME_FRACTION:.2%} ceiling)"
-            )
-    excluded_log_count = sum(row.nba_game_id in unknown_game_ids for row in parsed_logs)
+    excluded_log_count = sum(row.nba_game_id in player_log_only_game_ids for row in parsed_logs)
     included_logs = [row for row in parsed_logs if row.nba_game_id in games_by_id]
     logs = tuple(
         _historical_log(row, games_by_id[row.nba_game_id])
@@ -251,16 +293,47 @@ def _load_season(client: NbaStatsClient, season: str) -> SeasonCohort:
         season=season,
         games=tuple(sorted(games, key=lambda row: (row.game_date, row.nba_game_id))),
         logs=logs,
-        excluded_game_ids=unknown_game_ids,
+        player_log_game_ids=len(player_log_game_ids),
+        player_log_only_game_ids=player_log_only_game_ids,
+        parsed_game_only_ids=parsed_game_only_ids,
         excluded_player_game_logs=excluded_log_count,
         fingerprint=_cohort_fingerprint(
             season,
             games,
             logs,
-            excluded_game_ids=unknown_game_ids,
+            player_log_game_ids=len(player_log_game_ids),
+            player_log_only_game_ids=player_log_only_game_ids,
+            parsed_game_only_ids=parsed_game_only_ids,
             excluded_player_game_logs=excluded_log_count,
         ),
     )
+
+
+def _validated_source_game_id_mismatches(
+    *,
+    season: str,
+    parsed_game_ids: set[str],
+    player_log_game_ids: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not parsed_game_ids or not player_log_game_ids:
+        raise RuntimeError(f"{season} source game-id sets must both be non-empty")
+    player_log_only_game_ids = tuple(sorted(player_log_game_ids - parsed_game_ids))
+    parsed_game_only_ids = tuple(sorted(parsed_game_ids - player_log_game_ids))
+    player_log_only_fraction = len(player_log_only_game_ids) / len(player_log_game_ids)
+    parsed_game_only_fraction = len(parsed_game_only_ids) / len(parsed_game_ids)
+    if (
+        player_log_only_fraction > MAX_SOURCE_GAME_ID_MISMATCH_FRACTION
+        or parsed_game_only_fraction > MAX_SOURCE_GAME_ID_MISMATCH_FRACTION
+    ):
+        raise RuntimeError(
+            f"{season} source game-id mismatch exceeds the "
+            f"{MAX_SOURCE_GAME_ID_MISMATCH_FRACTION:.2%} ceiling: "
+            f"{len(player_log_only_game_ids)} of {len(player_log_game_ids)} "
+            "PlayerGameLogs game ids lack a parsed LeagueGameFinder game and "
+            f"{len(parsed_game_only_ids)} of {len(parsed_game_ids)} parsed games "
+            "lack all player logs"
+        )
+    return player_log_only_game_ids, parsed_game_only_ids
 
 
 def _historical_log(
@@ -294,12 +367,16 @@ def _cohort_fingerprint(
     games: Sequence[NbaGameRecord],
     logs: Sequence[HistoricalPlayerGame],
     *,
-    excluded_game_ids: Sequence[str],
+    player_log_game_ids: int,
+    player_log_only_game_ids: Sequence[str],
+    parsed_game_only_ids: Sequence[str],
     excluded_player_game_logs: int,
 ) -> str:
     parts = [
         f"reliability-backtest-v1:{season}",
-        f"excluded_game_ids:{','.join(excluded_game_ids)}",
+        f"player_log_game_ids:{player_log_game_ids}",
+        f"player_log_only_game_ids:{','.join(player_log_only_game_ids)}",
+        f"parsed_game_only_ids:{','.join(parsed_game_only_ids)}",
         f"excluded_player_game_logs:{excluded_player_game_logs}",
     ]
     parts.extend(
@@ -344,23 +421,28 @@ def _cohort_fingerprint(
 
 def _cohort_metadata(cohort: SeasonCohort) -> dict[str, object]:
     player_ids = {row.player_id for row in cohort.logs}
-    source_game_ids = len({row.game_id for row in cohort.logs}) + len(cohort.excluded_game_ids)
+    paired_game_ids = len(cohort.games) - len(cohort.parsed_game_only_ids)
     return {
         "fingerprint": cohort.fingerprint,
         "parsed_completed_games": len(cohort.games),
-        "source_game_ids_with_player_logs": source_game_ids,
-        "parsed_game_coverage": len(cohort.games) / source_game_ids,
+        "source_game_ids_with_player_logs": cohort.player_log_game_ids,
+        "parsed_game_coverage_of_player_logs": (paired_game_ids / cohort.player_log_game_ids),
+        "player_log_coverage_of_parsed_games": paired_game_ids / len(cohort.games),
         "player_game_logs": len(cohort.logs),
         "players": len(player_ids),
-        "excluded_game_ids": list(cohort.excluded_game_ids),
+        "player_log_only_game_ids": list(cohort.player_log_only_game_ids),
+        "parsed_game_only_ids": list(cohort.parsed_game_only_ids),
         "excluded_player_game_logs": cohort.excluded_player_game_logs,
-        "exclusion_reason": (
-            None
-            if not cohort.excluded_game_ids
-            else (
-                "PlayerGameLogs game ids without a two-sided home/away result from "
-                "the existing LeagueGameFinder parser"
-            )
+        "player_log_only_reason": (
+            "PlayerGameLogs game ids without a two-sided home/away result from "
+            "the existing LeagueGameFinder parser"
+            if cohort.player_log_only_game_ids
+            else None
+        ),
+        "parsed_game_only_reason": (
+            "parsed LeagueGameFinder games without any PlayerGameLogs rows"
+            if cohort.parsed_game_only_ids
+            else None
         ),
         "first_game_date": cohort.games[0].game_date.isoformat(),
         "last_game_date": cohort.games[-1].game_date.isoformat(),
@@ -382,7 +464,7 @@ def _season_summaries(cohort: SeasonCohort) -> dict[int, PlayerSeasonSummary]:
 
 def _ratio_rates(logs: Sequence[HistoricalPlayerGame]) -> dict[str, float | None]:
     rates: dict[str, float | None] = {}
-    for category, made_field, attempted_field in _RATIO_CATEGORIES:
+    for category, made_field, attempted_field in RELIABILITY_RATIO_CATEGORIES:
         made_total = 0
         attempted_total = 0
         for log in logs:
@@ -404,7 +486,7 @@ def _player_summary(
 ) -> PlayerSeasonSummary:
     ordered = sorted(logs, key=lambda row: (row.game_date, row.game_id))
     category_values: dict[str, tuple[float, ...]] = {}
-    for category, field in _COUNTING_CATEGORIES:
+    for category, field in RELIABILITY_COUNTING_CATEGORIES:
         values: list[float] = []
         for row in ordered:
             value = getattr(row, field)
@@ -416,7 +498,7 @@ def _player_summary(
                 )
             values.append(float(value))
         category_values[category] = tuple(values)
-    for category, made_field, attempted_field in _RATIO_CATEGORIES:
+    for category, made_field, attempted_field in RELIABILITY_RATIO_CATEGORIES:
         rate = ratio_rates[category]
         impacts: list[float] = []
         if rate is not None:
@@ -426,7 +508,7 @@ def _player_summary(
                 if made is None or attempted is None:
                     continue
                 _validate_shooting(row, made, attempted, made_field, attempted_field)
-                impacts.append(made - rate * attempted)
+                impacts.append(volume_weighted_impact(made, attempted, rate))
         category_values[category] = tuple(impacts)
 
     minute_values_list: list[float] = []
@@ -440,7 +522,7 @@ def _player_summary(
         minute_values_list.append(row.seconds_played / 60)
     minute_values = tuple(minute_values_list)
     minute_mean = _mean(minute_values)
-    minute_sd = _sample_standard_deviation(minute_values)
+    minute_sd = sample_standard_deviation(minute_values)
     metric_values: dict[str, float | None] = {
         "minutes_cv": (
             None
@@ -450,17 +532,17 @@ def _player_summary(
     }
     metric_values.update(
         {
-            f"{category}_sd": _sample_standard_deviation(values)
+            f"{category}_sd": sample_standard_deviation(values)
             for category, values in category_values.items()
         }
     )
     lower_quantiles = {
-        category: _type7_quantile(values, LOWER_PERCENTILE)
+        category: type7_quantile(values, LOWER_PERCENTILE)
         for category, values in category_values.items()
         if values
     }
     upper_quantiles = {
-        category: _type7_quantile(values, UPPER_PERCENTILE)
+        category: type7_quantile(values, UPPER_PERCENTILE)
         for category, values in category_values.items()
         if values
     }
@@ -510,6 +592,7 @@ def _evaluate_pair(
         if training[player_id].game_count >= MINIMUM_PLAYER_GAMES
         and holdout[player_id].game_count >= MINIMUM_PLAYER_GAMES
     )
+    percentile_players = sorted(set(training) & set(holdout))
     metric_names = sorted(
         {metric for player_id in eligible_players for metric in training[player_id].metric_values}
     )
@@ -525,14 +608,14 @@ def _evaluate_pair(
         )
         for metric in metric_names
     }
-    categories = [category for category, _field in _COUNTING_CATEGORIES] + [
-        category for category, _made, _attempted in _RATIO_CATEGORIES
+    categories = [category for category, _field in RELIABILITY_COUNTING_CATEGORIES] + [
+        category for category, _made, _attempted in RELIABILITY_RATIO_CATEGORIES
     ]
     percentile_coverage = {
         category: _percentile_coverage(
             training,
             holdout,
-            eligible_players=eligible_players,
+            eligible_players=percentile_players,
             category=category,
         )
         for category in categories
@@ -541,6 +624,7 @@ def _evaluate_pair(
         "stage": stage,
         "eligible_players": len(eligible_players),
         "minimum_games_each_season": MINIMUM_PLAYER_GAMES,
+        "percentile_players_considered": len(percentile_players),
         "stability": stability,
         "percentile_coverage": percentile_coverage,
         "blowout_suppression": _evaluate_blowout(training, holdout),
@@ -561,7 +645,7 @@ def _stability_metric(
         }
     training_values = [left for left, _right in pairs]
     holdout_values = [right for _left, right in pairs]
-    baseline = _type7_quantile(training_values, 0.5)
+    baseline = type7_quantile(training_values, 0.5)
     return {
         "players": len(pairs),
         "spearman": _spearman(training_values, holdout_values),
@@ -763,8 +847,8 @@ def _bootstrap_mean_interval(values: Sequence[float]) -> tuple[float, float]:
         for _sample in range(BOOTSTRAP_RESAMPLES)
     ]
     return (
-        _type7_quantile(estimates, 0.025),
-        _type7_quantile(estimates, 0.975),
+        type7_quantile(estimates, 0.025),
+        type7_quantile(estimates, 0.975),
     )
 
 
@@ -817,13 +901,6 @@ def _validate_shooting(
         )
 
 
-def _sample_standard_deviation(values: Sequence[float]) -> float | None:
-    if len(values) < 2:
-        return None
-    mean = _required_mean(values)
-    return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
-
-
 def _mean(values: Sequence[float]) -> float | None:
     return None if not values else sum(values) / len(values)
 
@@ -833,21 +910,6 @@ def _required_mean(values: Sequence[float]) -> float:
     if mean is None:
         raise ValueError("mean requires at least one value")
     return mean
-
-
-def _type7_quantile(values: Sequence[float], probability: float) -> float:
-    if not values:
-        raise ValueError("quantile requires at least one value")
-    if not 0 <= probability <= 1:
-        raise ValueError("quantile probability must be in [0, 1]")
-    ordered = sorted(values)
-    position = (len(ordered) - 1) * probability
-    lower_index = math.floor(position)
-    upper_index = math.ceil(position)
-    if lower_index == upper_index:
-        return ordered[lower_index]
-    weight = position - lower_index
-    return ordered[lower_index] * (1 - weight) + ordered[upper_index] * weight
 
 
 def _object_dict(value: object) -> dict[str, object]:

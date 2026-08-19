@@ -5225,13 +5225,25 @@ games. No composite grade, rank, value, projection, recommendation, or runtime
 blowout-suppression field exists.
 
 Added a reproducible chronological evidence runner and checked artifact using
-2023-24 -> 2024-25 for selection and 2024-25 -> untouched 2025-26 for final
+2023-24 -> 2024-25 for selection and 2024-25 -> 2025-26 for final held-out
 evaluation. The production-consistency statistics have measurable adjacent-year
 stability: final-transition minutes CV Spearman is 0.729 and its player-specific
 MAE is 0.124 versus 0.149 for the league-median baseline; every tested category
 SD also beats its league-median MAE baseline. Held-out p20/p80 coverage is
-reported overall and by predeclared sample-size band; discrete zero-heavy
-categories are explicitly not described as calibrated intervals.
+reported overall and by declared sample-size band across every adjacent-season
+player, including 55 final-transition players in the 1-19 band; sparse and
+discrete outputs are explicitly not described as calibrated intervals.
+
+The first independent exact-head quant review blocked release on four
+falsifiable issues. The corrected implementation now shares category
+definitions, sample SD, Type-7 quantiles, and volume-impact math between runtime
+and evidence; literal-locks and fingerprints the complete evidence protocol;
+binds the artifact to the runtime derivation version; exercises the evidence
+runner end to end against parsed synthetic source contracts; tests known answers
+for every statistical helper; evaluates rather than empties the sparse band;
+checks source game-ID coverage in both directions; and fingerprints percentile
+configuration with lossless `float.hex()` values rather than collision-prone
+eight-decimal rendering.
 
 **Now true:** Player-specific blowout suppression is rejected despite lower
 average error. On 351 selection players, candidate MAE is 2.646 versus 2.947 for
@@ -5245,9 +5257,16 @@ because the complete non-appearance labels R35 requires still do not exist. The
 full boundary, evidence, blind spots, and reproduction command are in
 `docs/models/reliability-metrics.md`.
 
+The coordinator approved the protocol before the successful outcome run, but
+the protocol and evidence first enter git together. The artifact therefore
+states `immutable_repository_preregistration=false`: the repository cannot
+independently prove prospective registration, and this is described as
+chronological held-out evidence under a predeclared plan rather than an
+immutably preregistered experiment.
+
 The local Code, Adapter, and Model gates pass with this worktree's `backend/src`
-explicitly on `PYTHONPATH`: Ruff, format, strict mypy, 692 default backend tests,
-111 recorded-fixture adapter-contract tests, 12 `model_backtest` tests, the
+explicitly on `PYTHONPATH`: Ruff, format, strict mypy, 697 default backend tests,
+111 recorded-fixture adapter-contract tests, 16 `model_backtest` tests, the
 secret scan, and SQLite upgrade/check/downgrade through unchanged head `0012`.
 The live evidence run completed against existing `LeagueGameFinder` and
 `PlayerGameLogs` adapters.
@@ -5263,12 +5282,13 @@ unit does not hide or repair: `PlayerGameLogs` contains 1,230 game IDs in both
 2024-25 and 2025-26, while the existing `LeagueGameFinder` parser produces only
 1,225 paired games in each season. Five game IDs per season do not yield a
 two-sided home/away record under the parser's reciprocal-matchup assumption.
-The evidence fingerprints every excluded ID and excludes 118 player logs in
-2024-25 and 102 in 2025-26, retaining 99.59% of player-log game IDs; it fails if
-that exclusion exceeds 1%. These games may be systematically unusual rather
-than random. The existing schedule-context evidence also reports 1,225 games
-from this parser and should be audited after the adapter is corrected; this
-entry does not claim how much that omission changes its calibration.
+The evidence fingerprints every player-log-only and parsed-game-only ID,
+excludes 118 player logs in 2024-25 and 102 in 2025-26, retains 99.59% of
+player-log game IDs and 100% of parsed game IDs, and fails if either mismatch
+direction exceeds 1%. These games may be systematically unusual rather than
+random. The existing schedule-context evidence also reports 1,225 games from
+this parser and should be audited after the adapter is corrected; this entry
+does not claim how much that omission changes its calibration.
 
 Local Python is 3.14 and has the previously documented stale editable install,
 so validation explicitly used this worktree's `backend/src` and suppressed only

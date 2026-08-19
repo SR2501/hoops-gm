@@ -41,7 +41,7 @@ RELIABILITY_SOURCE_KEY: Final = "reliability-observations"
 RELIABILITY_DERIVATION_KEY: Final = "reliability-derivation"
 OBSERVED_COVERAGE_STATUS: Final = "incomplete_r35"
 
-_COUNTING_CATEGORIES: Final = (
+RELIABILITY_COUNTING_CATEGORIES: Final = (
     ("fg3m", "three_pointers_made"),
     ("pts", "points"),
     ("reb", "rebounds"),
@@ -50,7 +50,7 @@ _COUNTING_CATEGORIES: Final = (
     ("blk", "blocks"),
     ("to", "turnovers"),
 )
-_RATIO_CATEGORIES: Final = (
+RELIABILITY_RATIO_CATEGORIES: Final = (
     ("fg_pct", "field_goals_made", "field_goals_attempted"),
     ("ft_pct", "free_throws_made", "free_throws_attempted"),
 )
@@ -101,13 +101,15 @@ class ReliabilityConfig:
                 "b2b:schedule-density-v1",
                 "dispersion:sample-standard-deviation",
                 "quantile:type-7",
-                f"lower:{self.lower_percentile:.8f}",
-                f"upper:{self.upper_percentile:.8f}",
+                f"lower:{self.lower_percentile.hex()}",
+                f"upper:{self.upper_percentile.hex()}",
                 "ratio-impact:made-minus-attempt-weighted-cohort-rate-times-attempts",
-                ",".join(f"{category}:{field}" for category, field in _COUNTING_CATEGORIES),
+                ",".join(
+                    f"{category}:{field}" for category, field in RELIABILITY_COUNTING_CATEGORIES
+                ),
                 ",".join(
                     f"{category}:{made}:{attempted}"
-                    for category, made, attempted in _RATIO_CATEGORIES
+                    for category, made, attempted in RELIABILITY_RATIO_CATEGORIES
                 ),
             ]
         )
@@ -401,7 +403,7 @@ def compute_reliability_scorecards(
         logs_by_player[log.player_id].append(log)
     ratio_baselines = {
         category: _ratio_baseline(snapshot.logs, made_field=made, attempted_field=attempted)
-        for category, made, attempted in _RATIO_CATEGORIES
+        for category, made, attempted in RELIABILITY_RATIO_CATEGORIES
     }
 
     lineage = ReliabilityLineage(
@@ -757,7 +759,7 @@ def _production_consistency(
         )
 
     categories: list[CategoryConsistency] = []
-    for category, field in _COUNTING_CATEGORIES:
+    for category, field in RELIABILITY_COUNTING_CATEGORIES:
         values = []
         for log in ordered:
             value = getattr(log, field)
@@ -778,7 +780,7 @@ def _production_consistency(
                 ratio_baseline=None,
             )
         )
-    for category, made_field, attempted_field in _RATIO_CATEGORIES:
+    for category, made_field, attempted_field in RELIABILITY_RATIO_CATEGORIES:
         baseline = ratio_baselines[category]
         impacts: list[float] = []
         if baseline.rate is not None:
@@ -788,7 +790,7 @@ def _production_consistency(
                 if made is None or attempted is None:
                     continue
                 _validate_shooting(log.id, made, attempted, made_field, attempted_field)
-                impacts.append(made - baseline.rate * attempted)
+                impacts.append(volume_weighted_impact(made, attempted, baseline.rate))
         categories.append(
             CategoryConsistency(
                 category=category,
@@ -866,23 +868,30 @@ def _distribution(
             upper_percentile=None,
         )
     mean = sum(values) / len(values)
-    standard_deviation = None
-    if len(values) >= 2:
-        standard_deviation = math.sqrt(
-            sum((value - mean) ** 2 for value in values) / (len(values) - 1)
-        )
+    standard_deviation = sample_standard_deviation(values)
     return DistributionSummary(
         observed_games=len(values),
         lower_percentile_probability=lower_percentile,
         upper_percentile_probability=upper_percentile,
         mean=mean,
         sample_standard_deviation=standard_deviation,
-        lower_percentile=_type7_quantile(values, lower_percentile),
-        upper_percentile=_type7_quantile(values, upper_percentile),
+        lower_percentile=type7_quantile(values, lower_percentile),
+        upper_percentile=type7_quantile(values, upper_percentile),
     )
 
 
-def _type7_quantile(values: Sequence[float], probability: float) -> float:
+def sample_standard_deviation(values: Sequence[float]) -> float | None:
+    """Return sample SD for shared runtime and evidence calculations."""
+
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
+
+
+def type7_quantile(values: Sequence[float], probability: float) -> float:
+    """Return the deterministic Hyndman-Fan Type-7 empirical quantile."""
+
     if not values:
         raise ValueError("quantile requires at least one value")
     if not 0 <= probability <= 1:
@@ -895,6 +904,16 @@ def _type7_quantile(values: Sequence[float], probability: float) -> float:
         return ordered[lower_index]
     weight = position - lower_index
     return ordered[lower_index] * (1 - weight) + ordered[upper_index] * weight
+
+
+def volume_weighted_impact(
+    made: int,
+    attempted: int,
+    baseline_rate: float,
+) -> float:
+    """Return one game's ratio-category impact without discarding volume."""
+
+    return made - baseline_rate * attempted
 
 
 def _lock_claim_scopes(session: Session, *, season: str) -> None:

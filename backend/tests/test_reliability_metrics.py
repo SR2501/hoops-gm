@@ -639,3 +639,14 @@ def test_stale_schedule_and_config_claims_are_rejected(session: Session) -> None
             claim=current_claim,
             config=ReliabilityConfig(lower_percentile=0.10, upper_percentile=0.90),
         )
+
+
+def test_derivation_version_preserves_full_float_configuration() -> None:
+    default = ReliabilityConfig(lower_percentile=0.2, upper_percentile=0.8)
+    nearby = ReliabilityConfig(
+        lower_percentile=0.200000001,
+        upper_percentile=0.8,
+    )
+
+    assert default.lower_percentile.hex() != nearby.lower_percentile.hex()
+    assert default.derivation_version != nearby.derivation_version
