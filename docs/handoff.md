@@ -5211,8 +5211,10 @@ work owned by `quant` and `data-engineer`.
 ## 2026-08-19 — quant — Descriptive reliability scorecards and rejected suppression candidate
 
 **Changed:** Implemented `reliability-metrics` without schema, migration, API, UI,
-projection, market, or PR #21 dependencies. The new in-memory scorecard publishes
-and rechecks exact schedule/source/derivation cohorts, then reports direct
+projection, or market dependencies. After rebasing onto `c6a6912`, the unit does
+not consume the historical injury cohort introduced by merged PR #21. The new
+in-memory scorecard publishes and rechecks exact schedule/source/derivation
+cohorts, then reports direct
 observed participation evidence separately from played-game production
 consistency. Availability evidence includes direct play/non-play/unknown counts,
 calendar-month observations, B2B observations derived from the historical
@@ -5264,12 +5266,13 @@ independently prove prospective registration, and this is described as
 chronological held-out evidence under a predeclared plan rather than an
 immutably preregistered experiment.
 
-The local Code, Adapter, and Model gates pass with this worktree's `backend/src`
-explicitly on `PYTHONPATH`: Ruff, format, strict mypy, 697 default backend tests,
-111 recorded-fixture adapter-contract tests, 16 `model_backtest` tests, the
-secret scan, and SQLite upgrade/check/downgrade through unchanged head `0012`.
-The live evidence run completed against existing `LeagueGameFinder` and
-`PlayerGameLogs` adapters.
+The local Code, Adapter, and Model gates pass after rebasing onto exact
+`origin/main` `c6a6912a8aad3b16b42993596f5f17714891d820`, with this worktree's
+`backend/src` explicitly on `PYTHONPATH`: Ruff, format, strict mypy, 836 default
+backend tests, 237 recorded-fixture adapter-contract tests, 16 `model_backtest`
+tests, the secret scan, and SQLite upgrade/check/downgrade through current head
+`0014`. This unit adds no migration. The live evidence run completed against
+existing `LeagueGameFinder` and `PlayerGameLogs` adapters.
 
 **Could not verify:** Full availability, B2B opportunity coverage, or
 availability calibration. The ledger still lacks authoritative historical
