@@ -5894,3 +5894,30 @@ remain unverified parse-preview examples and cannot write production.
 then force-update only PR #12 with lease. Require all blocking jobs including
 native Postgres and migration-from-empty to pass, obtain both independent
 exact-head reviews, fix every finding, and do not merge or self-approve.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 final docs-protocol restack
+
+**Changed:** Main advanced during the Basketball Monster implementation through
+docs-only PR #29. Restacked PR #12 again onto exact `origin/main` `9c4ebac`,
+preserving the new projection experiment sequestration protocol, its backlog
+state and all handoff entries before the importer history. Migration `0015`
+still follows main's actual `0014`; no schema or importer behavior changed in
+this second restack.
+
+**Now true:** The exact rebased tree passes the same cumulative local gates:
+Ruff, formatting, strict mypy, 905 default backend tests, 246 offline Adapter
+contracts, the explicit private Basketball Monster smoke, SQLite
+upgrade/check/downgrade through single head `0015`, portability coverage and
+the tracked-file secret scan. The private artifact remains outside the
+repository and its path and paid rows remain absent from logs and commits.
+
+**Could not verify:** Local Postgres remains unavailable. Fresh native Postgres
+and migration-from-empty CI plus independent data-engineer and code review must
+run against the exact published rebased head. No merge or self-approval has
+occurred.
+
+**Next:** Force-update only PR #12 with lease, require every blocking CI job to
+pass, and obtain both independent reviews on that immutable head. If either
+review finds a defect, fix it and repeat the exact-head gates and reviews.
