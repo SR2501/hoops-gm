@@ -1,0 +1,11 @@
+{
+  "source": "basketball_monster",
+  "season": "2026-27",
+  "evidence_date": "2026-08-19",
+  "private_export_sha256": "FA13AD188E8ACADD410DFEAE7FF296A25078842E22CE17046CF19DFBCA9D3ABD",
+  "private_semantic_screenshot_sha256": "3BA42FD80072E8C35C191C38BA19EB0C8A8BE4182D484FEFD73A31D1ED36C29B",
+  "privacy_safe_fixture_sha256": "A6DBFBCB7F3DB13CD4C6EACDFB3C2B5ACABF9AFC5D2BBD56D7D5593CA78DC548",
+  "fixture_hash_canonicalization": "SHA-256 after CRLF-to-LF normalization, matching the Git blob on every checkout",
+  "semantic_reconciliation": "13/13 visible quantities matched at source rounding",
+  "sanitization": "All paid player rows and private paths were removed. The committed rows are synthetic; only the exact header order and CSV dialect derive from the private export."
+}

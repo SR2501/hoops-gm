@@ -5509,3 +5509,478 @@ where the retained gitignored operational state is available.
 **Next:** Repeat independent exact-head data/evidence and code review after this
 correction; do not publish the branch until both approve the canonical
 fingerprint semantics.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 projection-importer integration repair
+
+**Changed:** Rebased the generic projection CSV importer onto `origin/main`
+through `8fb26a7`, preserving PR #9's refresh registry and Postgres fixture
+isolation, PR #10's userscript update path, PR #16's autonomous-delivery policy
+and accepted ADR-008, and PR #7's schedule-density handoff. Advanced the
+importer migration from the conflicting revision `0005` to the single-head
+revision `0006` after refresh lineage. Tightened projection-import identity from
+`(source_id, content_sha256)` to `(source_id, season, content_sha256)`: a CSV
+often does not carry its season in its bytes, so reusing identical content for
+a later season previously returned the earlier import and stamped new rows with
+the wrong season. Added end-to-end tests proving that cross-season imports stay
+distinct and that two indistinguishable canonical players produce a
+`needs_review` result with no projection or crosswalk write.
+
+Diagnosed rather than assumed the old Postgres failures. Both red PR #12 jobs
+failed only because `client`-fixture rows leaked between tests on the shared
+Postgres database (`xhr` was read instead of the just-written `cache-storage` or
+`manual-export` row). The rebased PR #9 `drop_all`/`create_all` isolation fixes
+that mechanism. On the final rebased head, both native Postgres jobs passed,
+including migrations from empty, `alembic check`, downgrade, and the full test
+suite.
+
+**Now true:** The importer has one migration head, remains reusable across its
+four source profiles, and preserves source/season/content lineage without
+collapsing seasons. ADR-002 and accepted ADR-008 remain structural:
+`projections` contains per-game production rates only; source games-played
+assumptions remain in their own one-to-one table. The independent review later
+proved the prior claim that terminal values were excluded was false because
+the complete source row, including Rank/AAV/composite/expected-games columns,
+was still persisted as `Projection.raw_row`; the focused remediation entry
+below records its removal. Ambiguous
+identities are reported for human adjudication and never guessed. Local gates
+passed Ruff, formatting, strict mypy, 460 default backend tests, 71 offline
+adapter-contract tests, SQLite upgrade/check/downgrade, the secret scan,
+frontend lint/type-check/12 tests/build, and userscript 63 tests/build. The
+final GitHub runs `32141211883` and `32141218621` were green across every
+configured blocking job, including native Postgres, but that green Adapter job
+was success-shaped evidence: synthetic vendor examples were incorrectly marked
+`adapter_contract` and did not satisfy the projection Adapter gate.
+
+**Could not verify:** The FantasyPros, Hashtag and Basketball Monster mappings
+still have only synthetic, non-published fixtures because the real exports are
+authenticated or paid; their exact live header aliases remain unverified. The
+manual canonical profile is the only verified import shape. No
+projection-specific live smoke exists, and CI correctly skipped the repository's
+network live-smoke job on this PR event. Docker/Postgres is unavailable on this
+machine, so native Postgres evidence comes from CI rather than a local service.
+No independent reviewer has approved PR #12 yet; green gates do not satisfy the
+repository's autonomous-delivery policy by themselves.
+
+**Next:** An independent reviewer should verify the layer boundary, identity
+fail-closed behavior, and migration/lineage integration before merge. The first
+real vendor CSV must be checked manually against `resolved_headers` and captured
+as a privacy-safe contract fixture before its vendor profile is treated as
+verified.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 independent-review remediation
+
+**Changed:** Reworked projection imports so reprocessing atomically reconciles
+all import-owned projections and source games-played assumptions to the current
+identity resolution. Accepted-to-ambiguous, accepted-to-unmatched, and
+player-A-to-player-B transitions now remove stale outputs rather than retaining
+plausible rows under an obsolete identity. Import identity now hashes the exact
+original bytes before an explicit UTF-8/UTF-8-BOM decode; byte-distinct BOM and
+newline forms remain distinct imports, while unsupported encodings fail before
+any database write. Parser profiles now enforce production schema signatures,
+reject duplicate normalized headers, all-null rows/files, non-finite numbers,
+and profile/source misattribution. Source/import creation recovers from a
+uniqueness conflict through a savepoint and reselect so concurrent identical
+imports converge. Synthetic vendor examples no longer carry
+`adapter_contract` markers or claims.
+
+Closed the accepted ADR-008 boundary in both schema and configuration:
+`Projection.raw_row` was removed from the ORM and migration, and custom profiles
+cannot map Rank, AAV, tier, composite/fantasy value, or expected-games aliases
+into identity, source GP, production, or percentage-fallback fields. These
+headers can only appear as ignored transient parse evidence. Exact source bytes
+belong at the raw-import/observation boundary: `ProjectionImport.content_sha256`
+addresses them and `ProjectionImport.raw_payload_ref` may point to durable raw
+storage; neither source bytes nor complete source rows are attached to a
+projection-layer quantity. `ProjectionSourceRow.raw_row` is transient
+adjudication evidence only.
+
+**Now true:** On head `10a3c04` plus the final profile-boundary correction,
+latest import output exactly equals latest accepted resolution, ambiguous
+players are never guessed, and stale automated crosswalk state cannot force a
+prior identity. Per-game production remains in `projections`; source-published
+games-played assumptions remain in the separate one-to-one
+`source_games_played_assumptions` table and are not fused into production.
+Terminal aggregates cannot enter either layer through a custom profile. Local
+Code-gate evidence is Ruff, formatting, strict mypy, 485 backend tests with 12
+live-smoke tests deselected, SQLite upgrade/check/downgrade, and the secret
+scan. GitHub runs `32144985211` and `32144991395` passed every configured
+blocking job, including both native Postgres migration/full-suite jobs. A
+focused read-only review verified the eight reported importer fixes; the
+subsequent ADR purity challenge found the custom-profile loophole described
+above, which is now covered by construction-time rejection regressions.
+
+**Could not verify:** The projection Adapter gate remains unmet. FantasyPros,
+Hashtag, and Basketball Monster fixtures are synthetic unit examples, not
+privacy-safe fixtures derived from real exports; therefore their live header
+aliases and source behavior remain unverified even though the repository's
+other recorded-fixture adapter tests pass. No projection-specific live smoke
+exists. Native Postgres evidence comes from GitHub CI because no local Postgres
+service was available. No independent reviewer has reviewed the final
+custom-profile correction or approved PR #12, and no claim of merge readiness
+supersedes that review.
+
+**Next:** Run the full Code and configured Adapter CI once more on the final
+commit, then give its head to an independent reviewer for focused verification
+of exact-output reconciliation, custom-profile ADR-008 enforcement, identity
+fail-closed behavior, and SQLite/Postgres parity. Keep `csv-importer` blocked
+until the first real vendor export is manually checked against
+`resolved_headers`, reduced to a privacy-safe recorded fixture, and paired with
+an offline contract test plus a loud live-smoke path.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 ADR-002/ADR-008 purity repair
+
+**Changed:** Rebased PR #12 onto `origin/main` through `2369d8f`, preserving
+absence-split revisions `0006`/`0007`, league-settings revision `0008`, and all
+append-only handoff entries. The importer migration is now the single-head
+revision `0009` after `0008`. Closed the four additional purity findings and
+the adversarial bypasses discovered while testing them:
+
+- Production imports now accept only the exact profile object in the immutable
+  committed profile registry. Source units have no default, profile ID/version
+  and exact season evidence are mandatory, and unverified FantasyPros,
+  Hashtag, and Basketball Monster profiles are parse-preview examples only.
+  Caller-created profiles cannot self-attest into production, and CSV profiles
+  are restricted in code and by database CHECK to the isolated projection
+  provider namespaces; NBA and Fantrax identity anchors are not representable
+  as projection sources.
+- `projection_profile_versions` stores one race-safe immutable definition per
+  source/profile/version. Each `projection_imports` row records the profile
+  identity, verified status, definition hash, resolved production and
+  percentage-observation headers, source/output units, and every field
+  transform. Reusing an identifier/version with changed aliases, units,
+  evidence, or transforms fails even when the CSV bytes differ; a deliberate
+  version bump preserves both interpretations.
+- Projection writes use `resolution.best.target` through its NBA anchor
+  directly, never a re-derived source crosswalk. A conflicting manual mapping
+  demotes an inferred accepted match to review with no projection. A current
+  manual alias can promote an otherwise unresolved source name, and a manual
+  incumbent under another alias remains final without blocking the accepted
+  projection or creating a second current crosswalk row.
+- FG% and FT% are usable only with complete makes-and-attempts volume. The
+  parser excludes incomplete pairs, records percentage-only exclusion in
+  lineage, and ORM/migration CHECK constraints reject partial FG/FT pairs even
+  through a direct database write.
+- Reconciliation is private to the byte-oriented verified entry point.
+  Imports hold a source-scoped process lock through transaction end for
+  SQLite and a `FOR UPDATE` source lock for Postgres, so identical and distinct
+  concurrent files converge without racing the shared source crosswalk.
+
+**Now true:** The raw-evidence boundary remains the import/observation layer:
+`ProjectionImport.content_sha256` addresses the exact original bytes and
+`raw_payload_ref` may point to durable private raw storage; full rows and
+terminal Rank/AAV/tier/composite/expected-games values do not persist on
+`Projection`. `ProjectionSourceRow.raw_row` remains transient adjudication
+evidence. Per-game production remains separate from
+`source_games_played_assumptions`; no availability or expected-games quantity
+is fused here. Latest outputs exactly match current accepted resolutions, and
+ambiguous/conflicting identities produce review output rather than guessed
+players. Local Code/Adapter evidence on the rebased tree is Ruff, formatting,
+strict mypy, 552 default backend tests, 75 existing real-derived adapter
+contracts, SQLite upgrade/check/downgrade through `0009`, and the secret scan.
+Focused independent defect reviews found and drove each bypass above; the last
+code review found no remaining code issue beyond publishing the rebased head.
+
+**Could not verify:** The projection Adapter gate is still explicitly unmet.
+No privacy-safe fixture derived from a real FantasyPros, Hashtag, or Basketball
+Monster export exists, so none of those profiles is production-enabled and no
+claim is made about its live headers or units. No projection-specific live
+smoke exists. A local Postgres service was unavailable; native Postgres
+migration, constraint, concurrency, and full-suite evidence must come from
+fresh GitHub CI on the rebased head. The process lock covers the project's
+single-process SQLite deployment; cross-process serialization is provided only
+by Postgres row locking. No reviewer has approved the final published head, and
+this entry is not merge approval.
+
+**Next:** Force-with-lease the rebased branch, require every configured blocking
+job including both native Postgres runs to pass, then give the exact head to an
+independent reviewer. Keep `csv-importer` blocked until a real vendor export is
+manually verified, reduced to privacy-safe evidence, committed as an offline
+contract fixture, and paired with a loud live-smoke path.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 restacked after injury-report ingestion
+
+**Changed:** Restacked the repaired projection importer onto `origin/main` at
+`875d40e`, which includes PR #13's injury-report ingestion and append-only
+handoff entries. Renumbered the projection importer migration from the
+now-occupied `0009` to the single-head `0010`, revising PR #13's injury-report
+`0009`. No importer boundary or migration object was dropped during the
+restack.
+
+**Now true:** The combined tree passes Ruff, formatting, strict mypy, all 584
+default backend tests, all 106 configured real-derived Adapter contract tests,
+SQLite upgrade/check/downgrade through `0010`, and the tracked-file secret
+scan. The importer still stores exact-byte identity and optional private raw
+payload reference at the import/observation boundary, immutable verified
+profile and transformation lineage at the import boundary, per-game production
+on projections, and source games-played assumptions separately. Terminal
+values remain excluded, and ambiguous or conflicting identities remain
+review-only.
+
+**Could not verify:** No local Postgres service was available, so native
+Postgres migration, constraints, concurrency, and full-suite behavior require
+fresh CI on the published restacked head. The projection-specific Adapter gate
+remains unmet: the built-in vendor profiles are unverified preview examples,
+and no privacy-safe fixture derived from a real vendor export or corresponding
+live-smoke path exists. This entry is neither merge approval nor self-approval.
+
+**Next:** Publish the restacked head with force-with-lease, require both native
+Postgres jobs and every other blocking job to pass, then submit that exact head
+for independent focused review. Keep `csv-importer` blocked until real-derived
+privacy-safe vendor evidence satisfies the projection Adapter gate.
+
+---
+
+## 2026-08-17 — quant — `csv-importer`: the generic projection CSV import boundary
+
+**Changed:** Built the Phase 5 `csv-importer` backlog item — the reusable import/normalisation/versioning boundary for per-game production projections, and nothing past it. Four new tables (`projection_sources`, `projection_imports`, `projections`, `source_games_played_assumptions`), migration `0006`, and a new `hoops_gm.ingest.projections` package: `profiles.py` (per-source column-mapping profiles for FantasyPros, Hashtag, Basketball Monster and a canonical-header `manual` profile), `parser.py` (pure, offline CSV validation — no database, no network), and `importer.py` (the DB-writing boundary).
+
+ADR-002 is structural, not just documented: `projections` holds only per-game rates (makes/attempts, never a bare percentage — CHECK constraints make "makes exceed attempts" inexpressible, the same "make it inexpressible" pattern `db/base.py` uses for enums), and a source's embedded games-played figure lives only in `source_games_played_assumptions`, a separate table 1:1 with a projection row, never a column read alongside a rate. Neither `expected-games` nor blending exist yet and nothing here anticipates their shape beyond the table split the plan already names.
+
+Identity resolution reuses the existing crosswalk rather than inventing a second one: `build_player_targets` builds `ResolvableRecord`s keyed by each canonical player's **NBA** external id (not the player's own primary key — `import_resolutions`'s `nba_links` lookup requires it, the same convention `backfill.build_crosswalk` uses for the Fantrax crosswalk), and `import_resolutions` (unmodified) writes the accepted matches to `player_external_ids` under the projection's own `ExternalSource`. Only accepted resolutions get a `projections` row; needs-review and unmatched rows surface through the existing `hoops_gm.identity.report` (`partition`/`render_summary`/`to_csv`) exactly as the Fantrax crosswalk does — no new report mechanism was built.
+
+Versioning is content-addressed over the original bytes: `projection_imports` is keyed by `(source_id, season, content_sha256)`, so re-running byte-identical content for one source and season converges while BOM/newline differences and a later season remain distinct. Reprocessing one import reconciles its output exactly: every owned projection and games-played assumption is removed and only currently accepted resolutions are rebuilt, while stale automated crosswalk links are superseded.
+
+Validation happens entirely in the pure parser: duplicate normalized headers, a missing profile signature, or a file with no usable production rows rejects the file; missing names, non-finite/unparsable numbers, an implausible games-played value (outside 0–100), and makes exceeding attempts reject their rows. Two rows sharing a normalised name within one file are both rejected. A percentage-only shooting column is a warning, not a fabricated rate. Original bytes are hashed before explicit UTF-8/UTF-8-BOM decoding. `Projection` stores no raw row: terminal Rank/AAV/composite/expected-games columns are identified and ignored under accepted ADR-008, while durable source evidence is referenced only from the raw-import boundary through `ProjectionImport.raw_payload_ref`.
+
+`test_portability.py`'s `test_later_phase_entity_groups_are_absent` previously asserted `projections` did not exist yet; updated to drop it from the not-yet set (and added `blend_profiles`, a plan.md table name for a later backlog item that the set had omitted) and added `test_csv_importer_tables_are_present` alongside the existing schedule-context presence test.
+
+**Now true:** The `csv-importer` implementation accepts `csv_bytes=...` and produces byte-versioned, exactly reconciled, ADR-002/ADR-008-separated rows with an identity-resolution report. The implementation is complete but the backlog item is blocked at the Adapter gate. No Model gate applies because this boundary ingests and normalises source data rather than producing a decision-bearing number.
+
+**Could not verify:** The FantasyPros, Hashtag and Basketball Monster column-mapping profiles are **best-effort guesses at common 9-cat export header conventions, not verified against a real downloaded file**. Their synthetic examples are ordinary unit tests and deliberately carry no `adapter_contract` marker. The projection Adapter gate is unmet until privacy-safe fixtures derived from real exports exist. The `manual` canonical-header profile carries no vendor claim and is the profile to reach for until a real source is checked by hand against `ProjectionParseResult.resolved_headers`.
+
+**Next:** `data-engineer` must replace intended vendor examples with privacy-safe fixtures derived from real exports and mark only those tests `adapter_contract`. `projection-blending` may consume `projections`/`source_games_played_assumptions` only after this gate is met; `expected-games` remains the sole future fusion seam under ADR-002.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 exact-head review follow-up
+
+**Changed:** Closed three issues found by independent review of published head
+`3f93d2a`. A finite season total divided by a finite positive GP can still
+overflow, so the parser now checks the transformed per-game result with
+`math.isfinite` and rejects the row rather than emitting infinity. Rows with
+more cells than the header are now structurally rejected before any identity or
+production parsing; `csv.DictReader`'s overflow list can no longer be discarded
+while a shifted value is accepted. Restored `docs/handoff.md` to the exact
+merged-main prefix and moved the original importer entry to EOF, preserving the
+append-only rule.
+
+**Now true:** The full local gate passes after these changes: Ruff, formatting,
+strict mypy, all 586 default backend tests, all 106 existing real-derived
+Adapter contract tests, SQLite upgrade/check/downgrade through `0010`, and the
+tracked-file secret scan. Regression tests cover arithmetic overflow and extra
+CSV cells. All main-branch handoff content is byte-for-byte unchanged and every
+PR #12 entry follows it.
+
+**Could not verify:** The corrected head still requires fresh native Postgres
+and migration CI plus another exact-head independent review. Projection-specific
+Adapter readiness remains unmet because no privacy-safe real-derived vendor CSV
+fixture or projection live-smoke path exists; vendor profiles remain unverified
+and cannot import production. This is not merge approval.
+
+**Next:** Publish the correction, require every blocking job including both
+native Postgres runs to pass, and return the exact resulting head to the
+independent reviewer. Keep `csv-importer` blocked on real-derived vendor
+evidence regardless of Code-gate status.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 final integration evidence
+
+**Changed:** Published review-corrected code head `50d5cc5` after restacking on
+main `875d40e`. GitHub runs `32159332778` and `32159336827` passed every
+configured blocking job, including both native Postgres full-suite jobs and
+both migration-from-empty jobs. An independent exact-head review then verified
+the transformed-value finiteness guard, surplus-cell rejection and row
+accounting, and byte-for-byte preservation of the merged-main handoff prefix;
+it found no new high-confidence code defect.
+
+**Now true:** PR #12's Code gate and all configured repository Adapter jobs are
+green on the reviewed code. Migration `0010` follows the injury-report `0009`
+with one Alembic head. ADR-002 production/availability separation, ADR-008
+terminal-output exclusion, exact-byte and immutable transformation lineage,
+fail-closed identity handling, and exact-output reconciliation remain intact.
+No merge or self-approval occurred.
+
+**Could not verify:** The projection-specific Adapter gate remains unmet despite
+green repository Adapter jobs. No privacy-safe fixture derived from a real
+FantasyPros, Hashtag, or Basketball Monster export exists, and no
+projection-specific live smoke exists. Consequently those vendor profiles
+remain unverified and cannot import production. This known evidence gap keeps
+`csv-importer` blocked and PR #12 not ready to merge.
+
+**Next:** The coordinator should retain the Adapter-gate block until a real
+vendor export is manually verified, reduced to privacy-safe recorded evidence,
+and paired with an offline contract test and loud live-smoke path. Any eventual
+merge decision requires independent review; this entry is only a readiness
+report.
+
+---
+
+## 2026-08-18 — data-engineer — PR #12 restack deferred after PR #19
+
+**Changed:** Recorded that main advanced to `ffd838c` through merged PR #19,
+which now owns migration `0010`. PR #12 was not rebased or renumbered again
+because its projection-specific Adapter gate remains unmet; spending another
+integration cycle before the missing source evidence exists would not make the
+branch mergeable.
+
+**Now true:** Published PR #12 head `859fe77` remains the last reviewed importer
+code, based on `875d40e`, with its historical importer migration still numbered
+`0010`. That number is now known to conflict with current main but is not a
+claim on the next final revision. ADR-002/ADR-008 boundaries, fail-closed
+identity handling and lineage behavior are unchanged. No merge, self-approval
+or new readiness claim occurred.
+
+**Could not verify:** No privacy-safe real-derived vendor export fixture or
+projection-specific live smoke exists, so the Adapter gate remains blocked.
+Because the branch was deliberately not restacked, compatibility with main
+`ffd838c` and the eventual migration number are also intentionally unverified.
+
+**Next:** Only after real-derived projection Adapter evidence is available,
+rebase PR #12 onto the then-current main, inspect that main's actual Alembic
+head, assign the next available revision, rerun the cumulative Code and Adapter
+gates including native Postgres, and obtain independent exact-head review.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 verified Basketball Monster contract
+
+**Changed:** Rebased PR #12 onto exact `origin/main` `a32c9e8` and renumbered
+the projection migration to the single Alembic head `0015` after main's `0014`.
+Replaced the guessed Basketball Monster aliases with one exact, immutable
+2026-27 contract backed by a private paid export
+(`FA13AD188E8ACADD410DFEAE7FF296A25078842E22CE17046CF19DFBCA9D3ABD`)
+and independently reconciled semantic screenshot
+(`3BA42FD80072E8C35C191C38BA19EB0C8A8BE4182D484FEFD73A31D1ED36C29B`).
+No paid row or private path entered the repository. The committed
+privacy-safe fixture uses synthetic ids, names and quantities while preserving
+the exact source headers, order and CSV dialect; its hash and sanitization
+record live beside it.
+
+The profile now reads separate first/last names and the stable source
+`player_id`, never invents team or position, and treats every production field
+as a season total despite the UI's per-game label. It divides production by
+the separately persisted `games` assumption, retains makes/attempts volume,
+derives `PTS = 2*FGM + 3PM + FTM` and `REB = ORB + DRB`, and records every
+normalization coefficient/source header in immutable transformation lineage.
+Technicals, double-doubles, triple-doubles and comments are explicitly ignored
+outside projection quantities. The opt-in live smoke reads only an explicitly
+configured private path and suppresses paths and paid row values from failures.
+
+**Now true:** The private smoke parsed 536 source rows without exposing them:
+505 positive-games rows normalized successfully and 31 zero/missing-games rows
+were rejected because their season totals cannot honestly become rates. The
+full local Code and configured Adapter gates pass: Ruff, formatting, strict
+mypy, 905 default backend tests, 246 offline Adapter contracts, SQLite
+upgrade/check/downgrade through `0015`, portability coverage and secret scan.
+ADR-002 production/availability separation and ADR-008 terminal-output purity
+remain structural.
+
+**Could not verify:** Docker, `psql`, a local Postgres service and ports 5432/
+5433 are unavailable on this machine. Native Postgres migration lifecycle,
+constraints, concurrency and full-suite evidence therefore require fresh
+GitHub CI on the force-updated rebased head. Exact-head independent
+data-engineer and code reviews are also still pending. FantasyPros and Hashtag
+remain unverified parse-preview examples and cannot write production.
+
+**Next:** Fetch main once more before publication, restack again if it advanced,
+then force-update only PR #12 with lease. Require all blocking jobs including
+native Postgres and migration-from-empty to pass, obtain both independent
+exact-head reviews, fix every finding, and do not merge or self-approve.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 final docs-protocol restack
+
+**Changed:** Main advanced during the Basketball Monster implementation through
+docs-only PR #29. Restacked PR #12 again onto exact `origin/main` `9c4ebac`,
+preserving the new projection experiment sequestration protocol, its backlog
+state and all handoff entries before the importer history. Migration `0015`
+still follows main's actual `0014`; no schema or importer behavior changed in
+this second restack.
+
+**Now true:** The exact rebased tree passes the same cumulative local gates:
+Ruff, formatting, strict mypy, 905 default backend tests, 246 offline Adapter
+contracts, the explicit private Basketball Monster smoke, SQLite
+upgrade/check/downgrade through single head `0015`, portability coverage and
+the tracked-file secret scan. The private artifact remains outside the
+repository and its path and paid rows remain absent from logs and commits.
+
+**Could not verify:** Local Postgres remains unavailable. Fresh native Postgres
+and migration-from-empty CI plus independent data-engineer and code review must
+run against the exact published rebased head. No merge or self-approval has
+occurred.
+
+**Next:** Force-update only PR #12 with lease, require every blocking CI job to
+pass, and obtain both independent reviews on that immutable head. If either
+review finds a defect, fix it and repeat the exact-head gates and reviews.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 fixture-hash portability correction
+
+**Changed:** Fresh Linux CI exposed that the privacy-safe fixture metadata had
+hashed Windows checkout bytes with CRLF endings. GitHub checked out the same
+Git blob with LF endings, so the contract hash failed even though parsing and
+all migration jobs succeeded. The fixture hash is now explicitly computed
+after CRLF-to-LF normalization and metadata records that canonicalization;
+source dialect assertions remain unchanged.
+
+**Now true:** The corrected hash is stable across Windows and Linux. The local
+full Code and Adapter suites are green again. On the failed published head,
+both Postgres jobs reached the same sole cross-platform hash assertion after
+the migration lifecycle passed; one reported 902 passes and 2 expected skips
+before that failure, so no Postgres-specific importer failure was observed.
+
+**Could not verify:** The corrected commit still needs new Linux, native
+Postgres and migration CI. Independent reviews must inspect only that corrected
+published head. No merge or self-approval occurred.
+
+**Next:** Publish the correction, require all replacement jobs to pass, then
+obtain independent data-engineer and code reviews and fix every finding.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 final review remediation and cohort restack
+
+**Changed:** Closed all four findings from independent review of published head
+`3abe45f`. Reprocessing a historical import now reconciles only that import's
+projection and games-played outputs; only the newest season/import for a source
+may mutate the source-wide current crosswalk, so an old file cannot rewind a
+newer vendor id. Any non-finite derived statistic now makes its row fatal even
+when the derived field is optional. The private Basketball Monster smoke permits
+missing-production issues only on the exact logical rows whose `games` cell is
+blank or zero. Restored the one missing blank line in the inherited handoff
+prefix.
+
+Restacked the complete importer series onto exact `origin/main`
+`93878a83f465181f3793875efbfac0eafa34540b`, preserving the injury-conversion
+cohort manifest/tooling/backlog state and its handoff entries byte-for-byte.
+Migration `0015` remains the single child of main's `0014`; the migration
+contract did not change.
+
+**Now true:** Targeted regressions cover same-season and older-season replay
+after a newer vendor id, plus optional-derived overflow. The exact rebased tree
+passes Ruff, formatting, strict mypy, 912 default backend tests, 246 offline
+Adapter contracts, the explicit private Basketball Monster smoke, SQLite
+upgrade/check/downgrade through `0015`, model/migration drift detection, and the
+tracked-file secret scan over 260 files. The smoke emitted neither paid rows nor
+the private artifact path.
+
+**Could not verify:** This machine still has no local Postgres service. Native
+Postgres migration, constraint, concurrency and full-suite evidence must come
+from fresh CI on the published exact head. Fresh independent data-engineer and
+code reviews must also inspect only that head. No merge or self-approval
+occurred; FantasyPros and Hashtag remain non-production parse-preview profiles.
+
+**Next:** Publish this restacked head with force-with-lease, require every
+blocking job including both native Postgres lanes to pass, and obtain fresh
+independent data-engineer and code reviews before reporting readiness.

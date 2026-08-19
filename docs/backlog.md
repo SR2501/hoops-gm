@@ -454,10 +454,19 @@ Usage-redistribution graph: when player X sits, who gains, in which categories, 
 
 ### `csv-importer` - Building the generic projection CSV importer
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `player-identity`
 
-Generic CSV importer with per-source column-mapping profiles (FantasyPros, Hashtag, Basketball Monster, manual). Name resolution via the identity layer, validation, import history. Captures each source embedded games-played assumption separately from per-game rates so our own availability model can override it.
+Reusable, versioned CSV importer with exact-byte lineage, immutable
+source-season profiles, fail-closed identity resolution and exact-output
+reconciliation. Basketball Monster's 2026-27 contract is verified against
+private paid-export evidence whose hashes are committed without its rows or
+path; the committed fixture preserves the exact headers/order/dialect with
+synthetic values. The source's season totals are divided by its separately
+persisted `games` assumption, with PTS and REB derivations recorded explicitly.
+FantasyPros and Hashtag remain unverified parse-preview examples and cannot
+write production until they independently earn source evidence. Blending and
+expected-games fusion remain separate tasks.
 
 ### `dashboard-evidence-views` - Building the dashboard evidence views
 

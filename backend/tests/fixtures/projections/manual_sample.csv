@@ -1,0 +1,5 @@
+player_name,team,position,games_played,minutes_per_game,points_per_game,offensive_rebounds_per_game,defensive_rebounds_per_game,rebounds_per_game,assists_per_game,steals_per_game,blocks_per_game,turnovers_per_game,personal_fouls_per_game,field_goals_made_per_game,field_goals_attempted_per_game,three_pointers_made_per_game,three_pointers_attempted_per_game,free_throws_made_per_game,free_throws_attempted_per_game
+Player Alpha,BOS,SF,70,34.5,24.2,1.1,6.0,7.1,4.3,1.2,0.8,2.1,2.0,8.6,17.5,2.5,6.2,4.5,5.3
+Player Beta,LAL,PG,65,30.0,18.5,1.0,3.5,4.5,6.2,1.5,0.3,2.8,1.8,6.1,13.2,1.8,4.9,3.2,3.9
+Player Gamma,DEN,C,78,32.1,15.0,3.4,6.8,10.2,2.1,0.9,1.6,1.9,2.4,5.5,9.8,0.2,0.6,3.0,3.8
+Unmatched Player,MIA,SG,50,20.0,10.0,0.5,2.0,2.5,1.5,0.5,0.2,1.0,1.5,3.5,8.0,0.9,2.5,1.2,1.5

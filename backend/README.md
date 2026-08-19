@@ -103,6 +103,10 @@ python -m hoops_gm.ingest.record_fixtures fantrax-league-settings
 Set `HOOPS_GM_FANTRAX_LEAGUE_ID` when running `pytest -m live_smoke` to include
 the cache-bypassing league-settings drift check.
 
+The Basketball Monster projection smoke is private-file-only and opt-in. Set
+`HOOPS_GM_BBM_PROJECTION_CSV` to an explicit local export path and select
+`BasketballMonsterProjectionExport`; no default path is searched or logged.
+
 ## Ingestion
 
 ```bash
