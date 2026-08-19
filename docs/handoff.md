@@ -5984,3 +5984,35 @@ occurred; FantasyPros and Hashtag remain non-production parse-preview profiles.
 **Next:** Publish this restacked head with force-with-lease, require every
 blocking job including both native Postgres lanes to pass, and obtain fresh
 independent data-engineer and code reviews before reporting readiness.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 final exact-head evidence
+
+**Now verified:** Published head `85e2386aa619b8d0570c9a4bb90893f3053771ba`
+passed both fresh GitHub Actions CI runs: push run `32307821639` and pull-request
+run `32307824910`. All 20 blocking checks passed, including both native Postgres
+full-suite/migration lifecycles, both SQLite migration-from-empty jobs, backend
+Code gates, recorded-fixture Adapter gates, CodeQL, frontend, userscript and
+secret scanning. The two live-smoke jobs skipped by design; the
+projection-specific private smoke had already passed explicitly and emitted no
+paid rows or private path.
+
+Fresh independent data-engineer/Adapter and code reviews inspected the complete
+`93878a83..85e2386` diff and found no blocking findings. They specifically
+checked the verified Basketball Monster contract, production/GP separation,
+lineage, identity ambiguity/manual overrides, current-crosswalk ownership,
+historical exact-output reconciliation, parser fatal propagation, private-smoke
+row accounting, concurrency, SQLAlchemy flush order, schema constraints and
+migration `0015 -> 0014`.
+
+**Could not verify:** The private paid export and screenshot are deliberately
+absent from the repository, so independent reviewers can verify their committed
+hashes, privacy-safe derivative contract and smoke behavior but cannot inspect
+the source rows. FantasyPros and Hashtag remain non-production parse-preview
+profiles. This is a readiness report, not merge approval; no merge or
+self-approval occurred.
+
+**Next:** The coordinator should perform the independent merge decision on the
+final published head. Any later code change requires another exact-head gate and
+review cycle.
