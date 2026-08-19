@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
+    current_refresh,
     lock_league_settings_scope,
     lock_refresh_scope,
 )
@@ -254,23 +255,13 @@ def _current_settings_snapshot(session: Session, league_id: int) -> LeagueSettin
 
 
 def _current_schedule_refresh(session: Session, season: str) -> RefreshRun | None:
-    """The season-scoped current schedule refresh.
+    """Return the exact season-scoped NBA schedule stream, never another schedule key."""
 
-    ``hoops_gm.db.lineage.current_refresh`` is global per ``artifact_type`` and
-    is not season-aware, so it would return the wrong season's schedule if
-    multiple seasons were ever refreshed out of order. This mirrors the same,
-    already-established workaround as
-    ``hoops_gm.availability.absence_splits._schedule_refresh``.
-    """
-    return session.scalar(
-        select(RefreshRun)
-        .where(
-            RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE,
-            RefreshRun.artifact_key == NBA_SCHEDULE_ARTIFACT_KEY,
-            RefreshRun.season == season,
-        )
-        .order_by(RefreshRun.refreshed_at.desc(), RefreshRun.id.desc())
-        .limit(1)
+    return current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
     )
 
 

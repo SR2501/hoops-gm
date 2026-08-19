@@ -5186,9 +5186,10 @@ materialization unreadable until the active calendar is re-projected. Unknown
 playoff evidence never becomes `False`, replacement history remains
 reconstructable, and all official writers/readers share transaction locks in a
 consistent settings -> NBA schedule -> league projection order. The full local
-backend Code gate passes (`ruff check`, format check, strict `mypy`, 687 tests
-with 17 live-smoke tests deselected), the SQLite upgrade/check/downgrade
-lifecycle reports no model drift, and the secret scan is clean.
+backend Code gate passes (`ruff check`, format check, strict `mypy`, 812 tests
+with 17 live-smoke tests deselected), all 237 recorded-fixture Adapter contract
+tests pass, the SQLite upgrade/check/downgrade lifecycle through migration
+`0014` reports no model drift, and the secret scan is clean.
 
 **Could not verify:** The observed official Fantrax league-settings payload has
 no playoff markers, and no authoritative bridge capture supplying the 2026-27
