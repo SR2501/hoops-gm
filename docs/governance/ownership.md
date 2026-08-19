@@ -8,17 +8,17 @@ One owner per module. Ownership means: you write it, you are accountable for it,
 |---|---|---|
 | `docs/decisions/` | `architect` | Anyone may propose; `architect` shapes and sequences |
 | `docs/governance/` | `architect` | |
-| `backend/app/ingest/` | `data-engineer` | nba_api, Fantrax official + private, injury reports |
-| `backend/app/identity/` | `data-engineer` | Player crosswalk — highest-risk foundational item |
-| `backend/app/schedule/` | `data-engineer` | Ingest and density only — pure calendar facts, no modelling judgment (ADR-009) |
-| `backend/app/availability/` | `quant` | Schedule context (opponent pace, category defence), participation ledger, p(play), reliability, shutdown, contingent value (ADR-009) |
-| `backend/app/projections/` | `quant` | CSV import mapping is shared with `data-engineer` |
-| `backend/app/valuation/` | `quant` | z-score, G-score, risk-adjusted, punts, auction pricing |
-| `backend/app/engines/` | `quant` | Draft, lineup, trade, streaming |
-| `backend/app/api/` | `backend` | REST + SSE contracts |
-| `backend/app/models/`, `backend/migrations/` | `backend` | Schema is `backend`-owned even where `quant` defines the fields |
-| `backend/app/bridge/` | `backend` | Server side of the bridge; `bridge` owns the client side |
-| `backend/app/automation/` | `bridge` | **Reviewed by `safety`, always** |
+| `backend/src/hoops_gm/ingest/` | `data-engineer` | nba_api, Fantrax official + private, injury reports, schedule ingest, and league-settings intake |
+| `backend/src/hoops_gm/identity/` | `data-engineer` | Player crosswalk — highest-risk foundational item |
+| `backend/src/hoops_gm/ingest/nba/schedule.py` | `data-engineer` | Source parsing and observable schedule facts only; no modelling judgment (ADR-009) |
+| `backend/src/hoops_gm/schedule_context/`, `backend/src/hoops_gm/availability/` | `quant` | Schedule context, p(play), reliability, shutdown, and contingent-value semantics (ADR-009) |
+| Projection, valuation, and decision-engine semantics | `quant` | Includes blending, z-score, G-score, risk adjustment, punts, auction pricing, draft, lineup, trade, and streaming math |
+| `backend/src/hoops_gm/scoring/` | `quant` | Scoring category semantics and category math; settings intake remains `data-engineer`-owned |
+| `backend/src/hoops_gm/calendar/` | `backend` | Calendar persistence/service mechanics; source meaning remains with the producing specialist |
+| `backend/src/hoops_gm/api/` | `backend` | REST + SSE contracts, including scoring and calendar API mechanics |
+| `backend/src/hoops_gm/db/`, `backend/alembic/` | `backend` | Persistence and migrations, including scoring/calendar storage; schema mechanics are `backend`-owned even where another specialist defines semantics |
+| `backend/src/hoops_gm/core/bridge_pairing.py`, `backend/src/hoops_gm/api/routes/bridge.py` | `backend` | Server side of the bridge; `bridge` owns the client side |
+| Automation write-path concern | `bridge` | **Reviewed by `safety`, always** |
 | `frontend/` | `frontend` | |
 | `userscript/` | `bridge` | |
 | `.github/workflows/` | `backend` | `safety` must approve changes affecting the Automation gate |
@@ -33,7 +33,8 @@ These need agreement from both owners before changing:
 | Player identity | `data-engineer` → everyone | Canonical `player_id`; nothing downstream invents its own IDs |
 | Schedule density | `data-engineer` → `quant` | Density features are inputs to the availability model |
 | `expected-games` fusion | `quant` internal | Production and availability stay separate up to this point (ADR-002) |
-| Valuation output | `quant` → `backend` → `frontend` | Every value carries its input versions |
+| Scoring profile | `data-engineer` → `quant` → `backend` | Settings intake supplies evidence; `quant` defines category semantics/math; `backend` owns persistence and API mechanics |
+| Valuation output | `quant` → `backend` → `frontend` | Every value carries model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile |
 | Action protocol | `bridge` ↔ `backend` | Typed schema; changes need `safety` review |
 | Surface parity | `frontend` ↔ `bridge` | No draft-critical decision may exist in only one surface |
 

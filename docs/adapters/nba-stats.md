@@ -124,6 +124,11 @@ name in parts and the game logs give `"First Last"`.
 
 ### `gameEt` carries a `Z` suffix and is not UTC
 
+The season-schedule endpoint has its own canonical contract in
+[`nba-schedule.md`](nba-schedule.md). Both adapters preserve the same distinction:
+the UTC field is the instant, while the Eastern wall-clock field supplies the
+NBA game date after independent reconciliation.
+
 The same payload shows `gameTimeUTC = 2024-12-01T20:30:00Z` and
 `gameEt = 2024-12-01T15:30:00Z` — five hours apart, both marked UTC. `gameEt`
 is Eastern time wearing a UTC marker.

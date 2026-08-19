@@ -1,11 +1,13 @@
 # Schedule-context model card
 
-**Status:** Implemented. Descriptive context is available. Blowout probability
-v1 met the release calibration rule for display as context, but its improvement
+**Owner:** quant
+**Version:** 1
+**Status:** active — descriptive context is available. Blowout probability v1
+met the release calibration rule for display as context, but its improvement
 over baseline is small and it is not approved to adjust minutes, valuation, or
 automated decisions. Garbage-time suppression remains disabled.
 
-## Purpose and output classes
+## What it predicts
 
 Schedule context deliberately contains two different kinds of output:
 
@@ -24,7 +26,13 @@ No schedule-density fact is computed here. Back-to-backs, rest days, rolling
 calendar density, and road-trip structure remain in the data-engineer-owned
 schedule-density contract. No playoff date or scoring-period count is assumed.
 
-## Inputs and methods
+## Inputs
+
+Schedule rows, completed team and player box scores, scoring-time source
+cohorts, and the trailing histories described below. Derived inputs retain the
+source, schedule, and model lineage documented under Provenance.
+
+## Method
 
 ### Off-night slates
 
@@ -86,11 +94,13 @@ baseline, but its aggregate ECE (3.23%) is slightly worse than the constant
 baseline's absolute held-out rate gap (3.11%). A more complex model is not
 justified until independent inputs add measurable held-out value.
 
-## Model selection and held-out evidence
+## Training window
 
 The bin count was selected using 2023–24 for training and 2024–25 for
 validation. The selected three-bin formulation was then refit on 2024–25 and
 evaluated once on untouched 2025–26 regular-season games.
+
+## Evaluation
 
 | Metric | Held-out result |
 |---|---:|
@@ -191,7 +201,7 @@ The blowout model version includes its training-source fingerprint separately
 from the scoring-time source version. This preserves the distinction between the
 data that fit the model and the observations used to score a future fixture.
 
-## Base-rate drift and monitoring limits
+## Known failure modes
 
 The 2024-25 training blowout rate is 34.12%; that is not a permanent league
 constant. Pace, parity, officiating, schedule policy, and late-season incentives
@@ -209,7 +219,7 @@ Until enough current-season outcomes exist, consumers must show this as
 historical-context probability, not imply that monitoring has proved
 current-season calibration.
 
-## What this cannot see
+## What this model cannot see
 
 - future injuries, late scratches, unannounced rest, or post-refresh schedule changes;
 - trades, coaching changes, lineup and rotation changes;
@@ -220,3 +230,9 @@ current-season calibration.
 These omissions are why pace/category context remains descriptive, blowout
 probability stays visible as a probability, and suppression/streaming scores are
 not published.
+
+## Change log
+
+| Version | Date | Change | Evaluation effect |
+|---|---|---|---|
+| 1 | 2026-08-18 | Initial display-only schedule-context release. | Brier 0.23314 and ECE 0.03229 on the untouched 2025–26 cohort; no approval for minutes, valuation, or automated decisions. |

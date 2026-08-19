@@ -4,7 +4,10 @@ One card per model that produces a number a decision rests on. Required by the *
 
 A model card is not documentation of the code. It is a statement of what the model claims, how well it actually performs on data it has not seen, and — critically — **what it cannot see at all**.
 
-## Required sections
+## Normative minimum
+
+Every model card must contain the metadata and sections below. A card may add
+model-specific sections, but it may not omit, merge away, or rename this minimum.
 
 ```markdown
 # <model name>
@@ -27,7 +30,9 @@ Enough that someone could rebuild it. Note what was tried and rejected.
 Which seasons, and why. Note any recency weighting.
 
 ## Evaluation
-Held-out data only — never evaluate on what you fit on.
+Chronologically held-out observations only — never evaluate on observations used
+to fit or select the model. Record the forecast origin/cutoff and the
+input/source cohort fingerprints.
 For probabilistic outputs, **calibration is the primary metric**: a reliability
 diagram or binned calibration table. Accuracy alone is not sufficient and can be
 actively misleading.
@@ -44,6 +49,10 @@ mid-season role changes, small samples.
 ## Change log
 Version, date, what changed, and the effect on evaluation results.
 ```
+
+Decision-bearing persisted outputs must also record the model version,
+input/source cohort fingerprints, forecast origin/cutoff, and scoring profile
+where applicable.
 
 ## Why calibration, not accuracy
 

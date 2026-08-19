@@ -37,11 +37,11 @@ Enforced by CI.
 
 **Applies to:** anything producing a number a decision rests on — `p(play)`, reliability metrics, projections, blending, z-score, G-score, risk-adjusted valuation, auction dollar values, inflation, contingent value.
 
-- **Backtest against held-out data.** Never evaluate on data the model was fit on.
+- **Backtest against chronologically held-out observations.** Never evaluate on observations the model was fit or selected on. A whole held-out season is valid when available, but the gate requires a time-ordered cutoff, not an arbitrary season boundary.
 - **Report calibration, not just accuracy.** For probabilistic outputs this is the primary metric. A model that says 70% and is right 70% of the time is more useful for lineup decisions than a higher-accuracy model that is overconfident. Reliability diagrams or binned calibration tables.
 - **Model card in `docs/models/`** — inputs, method, training window, evaluation results, known failure modes.
 - **State what the model cannot see.** Trades, coaching changes, undisclosed injuries, personal matters, front-office intent. Be explicit about the blind spots.
-- **Version the output.** Every stored number records the model version and inputs that produced it.
+- **Version the output and its lineage.** Every stored number records the model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable.
 
 **Why:** wrong models don't crash. They produce confident, plausible, wrong numbers, and green tests say nothing about it.
 

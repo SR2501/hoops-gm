@@ -106,7 +106,7 @@ hoops-gm/
 
 - **Local-first.** Binds to `127.0.0.1`. SQLite for dev, but all access through SQLAlchemy so the Postgres move for leaguemate sharing is a config change.
 - **Adapters are isolated.** Every external source sits behind an interface with recorded-fixture contract tests, so upstream breakage is caught by CI rather than at 11:59pm on lineup lock.
-- **Everything is versioned and explainable.** Every stored valuation records its inputs (projection blend version, availability model version, scoring profile, punt config). Every availability prediction records its driver features, so "why is this guy projected for 61 games?" always has an answer.
+- **Everything is versioned and explainable.** Every stored decision-bearing output records its model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable. Every availability prediction records its driver features, so "why is this guy projected for 61 games?" always has an answer.
 - **Bridge auth.** Userscript and backend share a locally generated secret; the bridge endpoint rejects anything without it.
 - **Secrets** (Fantrax cookie, `userSecretId`, API keys) live in `.env`, never committed. Cookie is stored encrypted at rest with a re-login path when it expires.
 
@@ -184,7 +184,7 @@ Nothing merges without passing the gate matching its work type. Gates are cumula
 |---|---|---|
 | **Code** | All code | Lint, type-check, tests green |
 | **Adapter** | Anything calling an external source | Recorded fixture committed + contract test; a separate live smoke test that is allowed to fail loudly and visibly |
-| **Model** | Anything producing a number a decision rests on | Backtest against held-out seasons reporting **calibration**, not just accuracy; model card in `docs/models/` created or updated; explicit statement of what the model cannot see |
+| **Model** | Anything producing a number a decision rests on | Backtest against chronologically held-out observations reporting **calibration**, not just accuracy; model card in `docs/models/` created or updated; explicit blind spots; output lineage recording model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable |
 | **Automation** | Anything in the write path | Dry-run transcript attached + independent `safety` sign-off. No exceptions, including "trivial" changes |
 
 ### Owner-only decisions
@@ -304,7 +304,7 @@ observations → projections → availability → valuation → rankings / dolla
 
 **Where this bites in practice.** FantasyPros publishes both consensus rankings and underlying projections. Only the projections may be imported, with their embedded games-played assumption stripped and replaced by ours. The rankings may only ever appear on the other side of a divergence report. Same for every AAV seed source (see the auction section) — a seeded AAV is market evidence, not a valuation input.
 
-**The pattern this belongs to.** Third instance on this project of laundering derived information into apparent independent evidence: using a name-matched ID dataset as a crosswalk bridge would have laundered a name match into an apparent hard key (R23); bidding with our own values in mocks would launder our own output back in as market data (R38); this would launder an aggregate into an input.
+**The pattern this belongs to.** This project has repeatedly found derived information laundered into apparent independent evidence: using a name-matched ID dataset as a crosswalk bridge would have laundered a name match into an apparent hard key (R23); bidding with our own values in mocks would launder our own output back in as market data (R38); this would launder an aggregate into an input.
 
 ### The draft-day sequence
 
@@ -319,6 +319,10 @@ Because rankings are terminal and reproducible, the draft-day workflow is a clea
 ---
 
 ## Schedule intelligence
+
+The canonical `ScheduleLeagueV2` adapter contract, including the verified
+1,200 resolved games plus six unresolved NBA Cup assignments and the source's
+timezone semantics, is [`docs/adapters/nba-schedule.md`](adapters/nba-schedule.md).
 
 Deeper than games-per-week, since the availability model consumes it and streaming lives on it.
 
@@ -548,7 +552,7 @@ Tracked in SQL by ID. Phases are ordered by dependency; the spine (0–5) must l
 - `adapter-contract-tests` — Recorded fixtures + CI contract tests so upstream schema drift fails loudly.
 
 **Phase 3 — Schedule intelligence** · owner: `data-engineer` (ADR-009)
-- `schedule-ingest` — Season schedule, fantasy week definitions, per-week game counts.
+- `schedule-ingest` — Season schedule, fantasy week definitions, per-week game counts; see the canonical [`ScheduleLeagueV2` contract](adapters/nba-schedule.md).
 - `schedule-density` — B2Bs, 3-in-4 / 4-in-5 / 4-in-6, rest differentials, road-trip structure. Pure calendar arithmetic only, no modelling judgment.
 - `playoff-schedule` — Fantasy playoff week schedule strength and game counts.
 
