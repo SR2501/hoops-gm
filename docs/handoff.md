@@ -5206,3 +5206,101 @@ command. Repeat that projection after settings or NBA schedule lineage changes;
 downstream count consumers will fail closed until it succeeds. Recursive
 SOS/projection convergence and weekly scheduling remain separate ADR-011/012
 work owned by `quant` and `data-engineer`.
+---
+
+## 2026-08-19 — quant — Descriptive reliability scorecards and rejected suppression candidate
+
+**Changed:** Implemented `reliability-metrics` without schema, migration, API, UI,
+projection, or market dependencies. After rebasing onto `c6a6912`, the unit does
+not consume the historical injury cohort introduced by merged PR #21. The new
+in-memory scorecard publishes and rechecks exact schedule/source/derivation
+cohorts, then reports direct
+observed participation evidence separately from played-game production
+consistency. Availability evidence includes direct play/non-play/unknown counts,
+calendar-month observations, B2B observations derived from the historical
+team/game schedule row, source-row IDs, and mandatory
+`coverage_status=incomplete_r35`; missing and unknown rows never become
+absences. Production reports sample-based minutes CV, per-category sample SD,
+Type-7 empirical p20/p80, and volume-weighted FG/FT impact against a
+same-window aggregate makes/attempts baseline. DNPs never become zero-production
+games. No composite grade, rank, value, projection, recommendation, or runtime
+blowout-suppression field exists.
+
+Added a reproducible chronological evidence runner and checked artifact using
+2023-24 -> 2024-25 for selection and 2024-25 -> 2025-26 for final held-out
+evaluation. The production-consistency statistics have measurable adjacent-year
+stability: final-transition minutes CV Spearman is 0.729 and its player-specific
+MAE is 0.124 versus 0.149 for the league-median baseline; every tested category
+SD also beats its league-median MAE baseline. Held-out p20/p80 coverage is
+reported overall and by declared sample-size band across every adjacent-season
+player, including 55 final-transition players in the 1-19 band; sparse and
+discrete outputs are explicitly not described as calibrated intervals.
+
+The first independent exact-head quant review blocked release on four
+falsifiable issues. The corrected implementation now shares category
+definitions, sample SD, Type-7 quantiles, and volume-impact math between runtime
+and evidence; literal-locks and fingerprints the complete evidence protocol;
+binds the artifact to the runtime derivation version; exercises the evidence
+runner end to end against parsed synthetic source contracts; tests known answers
+for every statistical helper; evaluates rather than empties the sparse band;
+checks source game-ID coverage in both directions; and fingerprints percentile
+configuration with lossless `float.hex()` values rather than collision-prone
+eight-decimal rendering.
+
+**Now true:** Player-specific blowout suppression is rejected despite lower
+average error. On 351 selection players, candidate MAE is 2.646 versus 2.947 for
+zero effect, but the player-block bootstrap 95% improvement interval is -0.006
+to 0.577. On 346 final-holdout players, MAE is 2.426 versus 2.910 and the interval
+is 0.203 to 0.739. Both transitions nevertheless reverse sign in the highest
+predicted-delta calibration bin: players predicted to gain minutes in blowouts
+had a negative observed mean delta. The predeclared calibration veto therefore
+keeps the field out of runtime. Availability/B2B calibration is not reported
+because the complete non-appearance labels R35 requires still do not exist. The
+full boundary, evidence, blind spots, and reproduction command are in
+`docs/models/reliability-metrics.md`.
+
+The coordinator approved the protocol before the successful outcome run, but
+the protocol and evidence first enter git together. The artifact therefore
+states `immutable_repository_preregistration=false`: the repository cannot
+independently prove prospective registration, and this is described as
+chronological held-out evidence under a predeclared plan rather than an
+immutably preregistered experiment.
+
+The local Code, Adapter, and Model gates pass after rebasing onto exact
+`origin/main` `c6a6912a8aad3b16b42993596f5f17714891d820`, with this worktree's
+`backend/src` explicitly on `PYTHONPATH`: Ruff, format, strict mypy, 836 default
+backend tests, 237 recorded-fixture adapter-contract tests, 16 `model_backtest`
+tests, the secret scan, and SQLite upgrade/check/downgrade through current head
+`0014`. This unit adds no migration. The live evidence run completed against
+existing `LeagueGameFinder` and `PlayerGameLogs` adapters.
+
+**Could not verify:** Full availability, B2B opportunity coverage, or
+availability calibration. The ledger still lacks authoritative historical
+roster intervals and per-game ingestion-completeness evidence, so long absences
+represented by silence remain invisible. No real 2026-27 outcomes, native
+Postgres run, or downstream API/UI consumer was available.
+
+The live source audit also found an adapter-owned cohort defect that this quant
+unit does not hide or repair: `PlayerGameLogs` contains 1,230 game IDs in both
+2024-25 and 2025-26, while the existing `LeagueGameFinder` parser produces only
+1,225 paired games in each season. Five game IDs per season do not yield a
+two-sided home/away record under the parser's reciprocal-matchup assumption.
+The evidence fingerprints every player-log-only and parsed-game-only ID,
+excludes 118 player logs in 2024-25 and 102 in 2025-26, retains 99.59% of
+player-log game IDs and 100% of parsed game IDs, and fails if either mismatch
+direction exceeds 1%. These games may be systematically unusual rather than
+random. The existing schedule-context evidence also reports 1,225 games from
+this parser and should be audited after the adapter is corrected; this entry
+does not claim how much that omission changes its calibration.
+
+Local Python is 3.14 and has the previously documented stale editable install,
+so validation explicitly used this worktree's `backend/src` and suppressed only
+the known Python-3.14 `pytest-asyncio` deprecation that CI's Python 3.12 does not
+emit. GitHub Actions remains the Python 3.12 and Postgres verification.
+
+**Next:** `data-engineer` should repair the reciprocal-matchup parser with a
+recorded anomalous fixture and contract test, then regenerate affected model
+evidence under new source fingerprints. Before this independent PR merges, a
+fresh quant reviewer must inspect its exact head; downstream consumers must keep
+observed participation, production consistency, and future availability/value
+models separate.

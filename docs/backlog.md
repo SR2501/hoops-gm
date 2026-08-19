@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**32 done - 1 blocked - 68 pending - 101 total**
+**33 done - 1 blocked - 67 pending - 101 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -189,6 +189,22 @@ Game counts for the fantasy playoff weeks specifically, surfaced during the draf
 - **Depends on:** `schedule-ingest`
 
 A small `refresh_runs` registry and `/api/v1/lineage` contract recording when a schedule, projection, or model artifact was last (re)computed at a given version, and letting a downstream consumer check whether its claimed `schedule_version`/`model_version`/`projection_version` cohort is still current, stale, or unregistered. `import_schedule` stamps a content-fingerprinted schedule refresh as a side effect. Deliberately does not compute anything the registry describes — not SOS convergence (ADR-011), not p(play), not a projection blend — it only makes an existing versioning claim (ADR-009's `model_version`/`schedule_version` columns on `opponent_context`/`off_night_slates`) mechanically checkable. `quant` owns stamping its own rows consistently with what this reports as current and owns registering projection/model refreshes when those exist; this item does not modify the already-merged `schedule_context` schema.
+
+### `reliability-metrics` - Building player reliability and consistency metrics
+
+- [x] **done**
+- **Depends on:** `participation-ledger`, `schedule-context`, `schedule-density`
+
+V1 is the smallest scorecard current data can support honestly. It exposes
+directly observed play/non-play evidence, a monthly observed trend, and observed
+B2B sit evidence with counts and `incomplete_r35` coverage; missing and unknown
+rows never become absences. Played-game production remains separate and reports
+minutes CV, per-category sample SD, empirical p20/p80, and volume-weighted FG/FT
+impact. A chronological three-season study rejected player-level
+blowout-minutes suppression because calibration reversed sign in one bin, and no
+composite grade has a defensible target, so neither field exists at runtime.
+Results are computed on demand with schedule/source/derivation lineage; no
+schema, API, or UI was added.
 
 ### `repo-create` - Creating the repo and pushing the handoff commit
 
@@ -660,13 +676,6 @@ Punt-config modelling with recomputed rankings per build, side-by-side compariso
 - **Depends on:** `blind-mocks`, `draft-day-synthesis`, `draft-simulator`, `surface-parity-tests`
 
 Instruments the Fantrax dress-rehearsal mocks (no fewer than 10): per pick, whether the overlay alone sufficed, when the dashboard was opened and what was checked, time-to-decision, and recommendation take rate. Produces an evidence-based answer on whether a second monitor is actually needed and identifies anything repeatedly checked elsewhere that belongs in the overlay. NOTE: league is auction, so the corpus must be predominantly AUCTION mocks - snake mocks cannot calibrate inflation curves or budget behaviour.
-
-### `reliability-metrics` - Building player reliability and consistency metrics
-
-- [ ] **pending**
-- **Depends on:** `participation-ledger`, `schedule-context`
-
-Durability scorecard: availability rate and its trend, B2B sit rate (most actionable single pattern), minutes volatility (CV), per-category nightly standard deviation, floor/ceiling percentiles, blowout-minutes suppression, and a composite reliability grade shown wherever a player appears.
 
 ### `reliability-ui` - Building the reliability UI
 
