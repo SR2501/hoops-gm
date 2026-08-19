@@ -28,7 +28,7 @@ This is raw count data, not a model — no Model gate, just the Adapter gate `sc
 
 ## Rejected
 
-**Waiting for `schedule-ui`** — ties a zero-judgment fact to a Phase 6 UI item and to the availability model, when the underlying data is ready in Phase 3 and the decision it informs (draft, trade) happens well before Phase 6 ships.
+**Waiting for `schedule-ui`** — ties a zero-judgment fact to a Phase 7 UI item and to the availability model, when the underlying data is ready in Phase 3 and the decision it informs (draft, trade) happens well before Phase 7 ships.
 
 ## What would flip this
 

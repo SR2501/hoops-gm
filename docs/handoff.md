@@ -2986,3 +2986,39 @@ recorded fixture and the Adapter gate keeps live smoke separate and non-blocking
 **Next:** Re-ingest deliberately if a future live capture introduces either
 supported alias or a new playoff marker; contract drift must be investigated
 rather than normalized into absent evidence.
+
+---
+
+## 2026-08-18 — architect — Tracked Markdown consistency audit
+
+**Changed:** Audited all 45 tracked Markdown files against merged repository
+history and the current tree. Applied only objectively determined corrections:
+the authoritative backlog now groups and counts its 99 unique tasks by their
+own checkbox status (27 done, 1 blocked, 71 pending); the resolved Actions
+billing incident and Postgres migration-path risk are closed in current
+governance documents without rewriting historical handoff entries; stale Python,
+identity-crosswalk, league-settings, model-card-index, ADR phase, and bridge
+capture claims now match executable or merged evidence. No ADR status, product
+behaviour, ownership assignment, or model-gate semantics changed.
+
+**Now true:** Current documentation no longer says CI is unavailable, directs
+readers to Python 3.11, treats Fantrax IDs as an NBA identity anchor, calls the
+verified `getLeagueInfo` timing-field omissions unknown, omits the existing
+schedule-context model card from its index, or places `schedule-ui` in Phase 6.
+Every relative Markdown link resolves, every backlog dependency names an
+existing task, and the backlog has 99 unique ids with status sections matching
+their task markers.
+
+**Could not verify:** Product-facing status wording in `README.md`; ownership
+for the real `calendar/` and `scoring/` packages; whether ADR-010 was accepted;
+whether the plain-English ADR walkthrough is maintained or frozen; whether the
+model-card template is binding; canonical Model-gate split wording; the intended
+referent of ADR-008's nonexistent "tenant isolation analogue"; and whether
+three incomplete historical handoff entries warrant an appended correction.
+Those questions have multiple reasonable answers and were deliberately left
+unchanged for owner review. Localhost URLs were not expected to resolve without
+running services, and no live Fantrax request was made.
+
+**Next:** The owner should review the separately reported decision list.
+Any follow-up should make one named decision at a time rather than folding
+product or governance choices into mechanical documentation cleanup.

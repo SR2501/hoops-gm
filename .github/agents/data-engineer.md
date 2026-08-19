@@ -36,7 +36,7 @@ Own every path where data enters the system, and the identity layer that makes d
 
 ## What matters here
 
-**Player identity is where this project quietly dies.** Fantrax IDs, NBA IDs and projection-CSV name strings all disagree. Anchor on Fantrax `getPlayerIds` + `nba_api` rosters, then normalized-name + team + position matching for CSVs, with a confidence score and manual override for the tail. Ship an unmatched-players report. A silent mismatch corrupts every downstream number and looks like a modelling bug for weeks. This gets its own test suite.
+**Player identity is where this project quietly dies.** Fantrax exposes no NBA.com player id, so there is no anchor pair: every cross-source match is inferred from normalized name + team + position. Preserve per-field three-valued evidence so absent evidence is distinct from disagreement, plus confidence, manual override for the tail, and an unmatched-players report. A silent mismatch corrupts every downstream number and looks like a modelling bug for weeks. This gets its own test suite.
 
 **Assume upstreams are hostile.** `/fxpa/req` is undocumented internal Fantrax infrastructure. `stats.nba.com` needs specific headers and ~1 req/s. Both change without notice. Your job is to make that failure *loud* — a contract test that goes red in CI, not a number that quietly drifts.
 

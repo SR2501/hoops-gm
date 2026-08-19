@@ -43,7 +43,7 @@ because it is an input to it, not an attribute of it.
 
 ## Running it
 
-Requires Python 3.11+ and Node 20.19+.
+Requires Python 3.12+ and Node 20.19+.
 
 ```bash
 cp .env.example .env          # fill in; .env is gitignored and stays that way
@@ -81,8 +81,8 @@ Start with **[`AGENTS.md`](AGENTS.md)**, then **[`docs/handoff.md`](docs/handoff
 | Where | What |
 |---|---|
 | [`docs/plan.md`](docs/plan.md) | The full plan, including the research that constrains it |
-| [`docs/backlog.md`](docs/backlog.md) | **The task list.** 96 items with dependencies and status. A task is ready when every dependency is done |
-| **[`docs/governance/OPEN-ci-billing.md`](docs/governance/OPEN-ci-billing.md)** | ⚠️ **Open, needs the owner.** GitHub Actions is stopped by billing, so all four gates are currently unenforced |
+| [`docs/backlog.md`](docs/backlog.md) | **The task list.** 99 items with dependencies and status. A task is ready when every dependency is done |
+| [`docs/governance/OPEN-ci-billing.md`](docs/governance/OPEN-ci-billing.md) | Resolved 2026-08-17: the repository was made public and GitHub Actions was restored |
 | [`docs/handoff.md`](docs/handoff.md) | Append-only project memory. Read before starting; append when finishing |
 | [`docs/decisions/`](docs/decisions/) | ADRs — what was decided, what was rejected, what would flip it |
 | [`docs/governance/`](docs/governance/) | Ownership, readiness gates, owner-only decisions, risk register |
@@ -149,8 +149,9 @@ capture uses a CSP-safe, page-world response observer because isolated-world
 `fetch`/`XMLHttpRequest` patches do not intercept Fantrax's SPA requests in
 Chromium Tampermonkey. Then visit Players, Roster, and League normally and
 confirm a new `bridge_payloads` row. Some `/fxpa/req` traffic is issued by
-Fantrax's own service worker rather than page script, which no page-world
-0.5.0 therefore also records a bounded, deduped `rendered-view` snapshot
+Fantrax's own service worker rather than page script, which no page-world hook
+can observe. Version 0.5.0 therefore also records a bounded, deduped
+`rendered-view` snapshot
 automatically after initial load, SPA navigation, and settled visible-page
 changes, using only the paired loopback transport. Use Tampermonkey's
 **hoops-gm: capture current Fantrax view** command only as the immediate manual

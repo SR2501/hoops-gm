@@ -441,7 +441,7 @@ None of this can be computed without knowing the league's actual rules. Ingest a
 - **Scoring periods** — week boundaries, which already live on `scoring_periods`
 - **Trade deadline, playoff weeks, keeper rules**
 
-`getLeagueInfo` returns scoring settings and league config, but **whether it carries the timing fields is unverified** — that is exactly the kind of assumption this project keeps disproving. Verify against the live endpoint before building on it; the bridge is the fallback.
+Verified live on 2026-08-18, `getLeagueInfo` returns roster and scoring-period configuration but omits waiver, lineup-lock, games-cap, trade-deadline, playoff, keeper, and IR-specific fields (R43). Preserve those omissions as explicit unknowns; the read-only bridge is the fallback.
 
 ### The four timing edges, in order of value
 
