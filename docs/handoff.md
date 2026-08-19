@@ -3036,8 +3036,9 @@ current shared userscript-serving route: a genuinely missing build retains the s
 `userscript_build_missing` 404 contract, while a present path that cannot be
 read now returns a distinct `userscript_build_unreadable` 500 rather than
 incorrectly advising the operator to rebuild. Added a regression test using a
-directory at the configured file path, which exercises `IsADirectoryError`
-portably without platform-specific permission manipulation.
+directory at the configured file path, which portably exercises a
+non-`FileNotFoundError` `OSError` without platform-specific permission
+manipulation.
 
 **Now true:** The reconciliation does not regress current route mounting, the
 shared loopback guard, `Cache-Control: no-store`, bridge/userscript 0.5.0
@@ -3047,13 +3048,13 @@ mypy, 673 backend tests (17 live-smoke tests deselected), 63 userscript tests,
 userscript production build, and the repository secret scan.
 
 **Could not verify:** A native permission-denied file read on POSIX; the
-cross-platform regression instead proves the same non-`FileNotFoundError`
-`OSError` branch with `IsADirectoryError`. GitHub Actions and native Postgres
-were not run locally; no schema, migration, adapter, fixture, or external-source
-code changed. The preservation commit's proposed restricted-input Adapter-gate
-amendment, projection experiment protocol, and recursive weekly refresh
-commitments remain unaccepted owner/product decisions and were reported rather
-than ported.
+cross-platform regression instead proves the same generic
+non-`FileNotFoundError` `OSError` branch, while the concrete exception subtype
+is platform-dependent. GitHub Actions and native Postgres were not run locally;
+no schema, migration, adapter, fixture, or external-source code changed. The
+preservation commit's proposed restricted-input Adapter-gate amendment,
+projection experiment protocol, and recursive weekly refresh commitments
+remain unaccepted owner/product decisions and were reported rather than ported.
 
 **Next:** An independent reviewer should inspect this exact branch head before
 a focused PR is opened. The owner may separately decide whether to pursue a
