@@ -5473,3 +5473,39 @@ unavailable; CI is still the Postgres gate.
 **Next:** `quant` may consume the frozen cohort under the Model gate, preserving
 the unresolved identities, the R35 unknown, and blank source positions as
 missing evidence rather than negative outcomes.
+
+---
+
+## 2026-08-19 — review correction — Canonical source fingerprints
+
+**Changed:** Final exact-head code review found that the manifest's two source
+fingerprints were SHA-256 values of the Windows working-tree files after
+`core.autocrlf=true` had materialized CRLF line endings. They were reproducible
+on this checkout but were not canonical identities of the code committed at
+the reviewed head. The manifest now names and hashes the Git blob bytes for
+`backend/src/hoops_gm/ingest/backfill.py` and
+`backend/tests/test_backfill.py` at
+`4e89cc5f59c31656508183a2939a82d03a92ec1a`, using binary output from
+`git cat-file blob`:
+
+```text
+backfill.py      cb1e1c165781ab3a0fcd18c5d60338b5d6fb29d9fdcf150e4d32a541b4d0f7d3
+test_backfill.py 74683ea889640855ecb2c3e0ea74c363dd5c307a12eb9a91a6613bf459f46a5a
+```
+
+**Now true:** The source fingerprints are invariant across checkout newline
+configuration and operating system. The preceding review addendum's phrase
+"every committed source/artifact hash it checked" was too broad: the first
+review reproduced the checked-out working-tree source hashes and operational
+artifact hashes, while the final code review distinguished those source bytes
+from the canonical committed blobs. The operational capture/artifact hashes,
+cohort fingerprints, counts and backlog status are unchanged.
+
+**Could not verify:** No additional live source request was made for this
+metadata-only correction. The correction does not make the uncommitted raw
+captures independently downloadable; their provenance remains verifiable only
+where the retained gitignored operational state is available.
+
+**Next:** Repeat independent exact-head data/evidence and code review after this
+correction; do not publish the branch until both approve the canonical
+fingerprint semantics.

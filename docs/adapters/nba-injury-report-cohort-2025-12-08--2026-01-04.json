@@ -25,7 +25,7 @@
     "code_review": "Approved with no actionable findings.",
     "data_engineering_evidence_review": "Approved as representative enough to unblock the separately Model-gated injury-status-conversion task.",
     "evidence_reproduced": [
-      "source and operational artifact SHA-256 identities",
+      "Windows working-tree source hashes (later corrected to canonical Git blob hashes) and operational artifact SHA-256 identities",
       "171-game/25-date/all-team scope",
       "season-wide production versus bounded participation separation",
       "trusted-entry cascade arithmetic",
@@ -62,8 +62,8 @@
   },
   "operator": {
     "base_repository_head": "9c4ebac9a4a937594fb6ce18256d5269fe5dee93",
-    "bounded_participation_source_sha256": "02a2894b543f7c5a51cd6d7c2d7567152f2689f000ef244596cda94996b40e16",
-    "bounded_participation_test_sha256": "5a157ffb91cb7e47bfbd3c3c9510c28a97682283f764c2004f8478f497077183",
+    "bounded_participation_git_blob_sha256": "cb1e1c165781ab3a0fcd18c5d60338b5d6fb29d9fdcf150e4d32a541b4d0f7d3",
+    "bounded_participation_test_git_blob_sha256": "74683ea889640855ecb2c3e0ea74c363dd5c307a12eb9a91a6613bf459f46a5a",
     "commands": [
       "python -m alembic upgrade head",
       "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation --start 2025-12-08 --end 2026-01-04",
@@ -71,7 +71,9 @@
       "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 100",
       "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-12-08 --end 2026-01-04"
     ],
-    "identity_bootstrap": "NbaStatsClient.static_teams plus CommonAllPlayers(season=2025-26, only_current=False), imported through parse_teams/import_teams and parse_common_all_players/import_nba_players before the bounded participation command"
+    "identity_bootstrap": "NbaStatsClient.static_teams plus CommonAllPlayers(season=2025-26, only_current=False), imported through parse_teams/import_teams and parse_common_all_players/import_nba_players before the bounded participation command",
+    "source_fingerprint_method": "SHA-256 of canonical Git blob bytes from reviewed_commit, resolved with git rev-parse <commit>:<path> and read with git cat-file blob <blob-id>",
+    "source_fingerprint_reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a"
   },
   "participation_join": {
     "joined_player_games": 1906,
