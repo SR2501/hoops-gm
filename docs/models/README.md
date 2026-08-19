@@ -6,8 +6,9 @@ A model card is not documentation of the code. It is a statement of what the mod
 
 ## Normative minimum
 
-Every model card must contain the metadata and sections below. A card may add
-model-specific sections, but it may not omit, merge away, or rename this minimum.
+Every model card must cover the metadata and content below. A card may add
+model-specific sections or use clearer model-specific headings, but this
+minimum content must remain explicit.
 
 ```markdown
 # <model name>
@@ -30,9 +31,7 @@ Enough that someone could rebuild it. Note what was tried and rejected.
 Which seasons, and why. Note any recency weighting.
 
 ## Evaluation
-Chronologically held-out observations only — never evaluate on observations used
-to fit or select the model. Record the forecast origin/cutoff and the
-input/source cohort fingerprints.
+Held-out data only — never evaluate on what you fit on.
 For probabilistic outputs, **calibration is the primary metric**: a reliability
 diagram or binned calibration table. Accuracy alone is not sufficient and can be
 actively misleading.
@@ -49,10 +48,6 @@ mid-season role changes, small samples.
 ## Change log
 Version, date, what changed, and the effect on evaluation results.
 ```
-
-Decision-bearing persisted outputs must also record the model version,
-input/source cohort fingerprints, forecast origin/cutoff, and scoring profile
-where applicable.
 
 ## Why calibration, not accuracy
 

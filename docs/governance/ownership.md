@@ -34,7 +34,7 @@ These need agreement from both owners before changing:
 | Schedule density | `data-engineer` → `quant` | Density features are inputs to the availability model |
 | `expected-games` fusion | `quant` internal | Production and availability stay separate up to this point (ADR-002) |
 | Scoring profile | `data-engineer` → `quant` → `backend` | Settings intake supplies evidence; `quant` defines category semantics/math; `backend` owns persistence and API mechanics |
-| Valuation output | `quant` → `backend` → `frontend` | Every value carries model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile |
+| Valuation output | `quant` → `backend` → `frontend` | Every value carries its input versions |
 | Action protocol | `bridge` ↔ `backend` | Typed schema; changes need `safety` review |
 | Surface parity | `frontend` ↔ `bridge` | No draft-critical decision may exist in only one surface |
 

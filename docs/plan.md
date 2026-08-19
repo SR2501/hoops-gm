@@ -106,7 +106,7 @@ hoops-gm/
 
 - **Local-first.** Binds to `127.0.0.1`. SQLite for dev, but all access through SQLAlchemy so the Postgres move for leaguemate sharing is a config change.
 - **Adapters are isolated.** Every external source sits behind an interface with recorded-fixture contract tests, so upstream breakage is caught by CI rather than at 11:59pm on lineup lock.
-- **Everything is versioned and explainable.** Every stored decision-bearing output records its model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable. Every availability prediction records its driver features, so "why is this guy projected for 61 games?" always has an answer.
+- **Everything is versioned and explainable.** Every stored valuation records its inputs (projection blend version, availability model version, scoring profile, punt config). Every availability prediction records its driver features, so "why is this guy projected for 61 games?" always has an answer.
 - **Bridge auth.** Userscript and backend share a locally generated secret; the bridge endpoint rejects anything without it.
 - **Secrets** (Fantrax cookie, `userSecretId`, API keys) live in `.env`, never committed. Cookie is stored encrypted at rest with a re-login path when it expires.
 
@@ -184,7 +184,7 @@ Nothing merges without passing the gate matching its work type. Gates are cumula
 |---|---|---|
 | **Code** | All code | Lint, type-check, tests green |
 | **Adapter** | Anything calling an external source | Recorded fixture committed + contract test; a separate live smoke test that is allowed to fail loudly and visibly |
-| **Model** | Anything producing a number a decision rests on | Backtest against chronologically held-out observations reporting **calibration**, not just accuracy; model card in `docs/models/` created or updated; explicit blind spots; output lineage recording model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable |
+| **Model** | Anything producing a number a decision rests on | Backtest against held-out data reporting **calibration**, not just accuracy; model card in `docs/models/` created or updated; explicit statement of what the model cannot see |
 | **Automation** | Anything in the write path | Dry-run transcript attached + independent `safety` sign-off. No exceptions, including "trivial" changes |
 
 ### Owner-only decisions

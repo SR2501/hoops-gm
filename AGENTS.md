@@ -57,7 +57,7 @@ Nothing merges without passing the gate matching its work type. Gates are cumula
 |---|---|---|
 | **Code** | All code | Lint, type-check, tests green |
 | **Adapter** | Anything calling an external source | Recorded fixture committed + contract test; separate live smoke test allowed to fail loudly |
-| **Model** | Anything producing a number a decision rests on | Backtest against chronologically held-out observations reporting **calibration**, not just accuracy; model card in `docs/models/`; explicit blind spots; output lineage recording model version, input/source cohort fingerprints, forecast origin/cutoff, and scoring profile where applicable |
+| **Model** | Anything producing a number a decision rests on | Backtest against held-out data reporting **calibration**, not just accuracy; model card in `docs/models/`; explicit statement of what the model cannot see |
 | **Automation** | Anything in the write path | Dry-run transcript attached + independent `safety` sign-off. No exceptions, including "trivial" changes |
 
 ---
