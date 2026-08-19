@@ -1812,6 +1812,346 @@ approved.
 ---
 
 
+## 2026-08-18 — data-engineer — Historical injury-report backfill
+
+**Changed:** `injury-status-conversion` was blocked on evidence — only one
+committed injury PDF snapshot existed, from the initial adapter build (PR #13).
+Built `hoops_gm.ingest.injury_report.backfill`, a bounded, resumable operator
+workflow that derives candidate archived-report timestamps from exact ingested
+schedule tip-off instants plus the documented NBA publication cadence
+(pre-2025-12-22: report due 5pm local the evening before; from 2025-12-22:
+report due 11am–1pm local game day, per the ESPN-reported NBA memo — a date
+that independently matches this codebase's own observed filename-format-era
+boundary), fetches through the existing unmodified `InjuryReportClient` with
+its existing throttle/retry/cache semantics, imports through the existing
+unmodified `import_injury_report_entries` (whose natural key already
+structurally dedupes two candidate timestamps that resolve to the same
+masthead), and exposes `select_canonical_pregame_observations` as a pure query
+— the single latest pre-tipoff report row per `(game, team, player)`,
+re-deriving the no-lookahead gate independently at read time rather than
+trusting the plan. No rate is fitted and no status-conversion number is
+reported here; that remains `quant`'s Model-gated work. No schema migration
+was needed (`alembic check`: no new operations). Checkpointing is a JSON file
+written atomically (tmp + rename); `ReportNotAvailable` (403/404) is the
+ordinary "ungettable" case and is never counted as a failure, while any other
+`SourceError` is rolled back, recorded as a genuine failure, and left
+unsettled so a resumed run retries it. `enforce_request_budget` refuses to run
+an unbounded plan. Added 21 offline tests (`adapter_contract`-marked) covering
+candidate derivation, no-lookahead selection around tip-off (including "no
+expected game-day report"), plan cache-awareness, request-budget enforcement,
+checkpoint settle/resume including disk persistence, run atomicity on partial
+failure, duplicate-masthead convergence, and canonical-selection semantics.
+Added a "Historical backfill" section to `docs/adapters/nba-injury-report.md`,
+a new done backlog item `injury-report-historical-backfill` (blocking
+`injury-status-conversion`), and risk `R44` (the scheme's anchors are a
+heuristic, not a documented schedule, so an off-cadence emergency report is a
+disclosed, falsifiable gap, not a claimed one).
+
+Independent review (PR #21, before merge) found a real bug: `--no-cache` /
+`force_refetch` was documented in three places (CLI help, module docstring,
+`enforce_request_budget`'s own docstring) to force a live re-fetch of every
+candidate, but `run_backfill` only ever iterated `plan.to_fetch`, which
+excludes already-cached candidates regardless of the flag — the one case the
+flag exists for could never be reached, and the checkpoint's settled-outcome
+gate had the identical unconditional exclusion. The reviewer reproduced this
+directly against the shipped code before any fix. Corrected in the same PR:
+`run_backfill` now takes a `force_refetch` parameter that, when set, iterates
+`plan.fetches` (not `plan.to_fetch`) and bypasses `checkpoint.is_settled`,
+and the CLI now threads `args.no_cache` into it. Added a test
+(`test_run_backfill_force_refetch_bypasses_cache_and_checkpoint`) that seeds
+a candidate that is both cache-hit and checkpoint-settled and asserts
+`force_refetch=True` genuinely re-requests and re-imports it. The review also
+flagged that the exact-tip-off boundary (`report_timestamp == tipoff_utc`)
+had no test even though the `<` comparison was already correct; added
+`test_select_canonical_pregame_observations_excludes_exact_tipoff_boundary`.
+Also clarified the live-evidence entry below to state the exact
+`build_plan(start=2025-11-01, end=2026-01-15)` window the "505 excluded
+games" figure came from (527 games in that window minus the 22 patched),
+since the reviewer correctly could not reproduce it from the original text.
+21 → 23 tests; full suite re-run green (548 passed, 17 deselected).
+
+Ran a real, bounded live evidence sample against the completed 2025-26 season
+(script kept out of the repository, in this session's own scratch state — not
+a committed tool, since it exists only to produce a real-network number this
+one time): ingested the season schedule (1,225 games) and teams/players (dates
+only, no tip-off) with two `nba_api` requests, then patched tip-off instants
+for exactly the 22 real games on three known-good dates (2025-11-01,
+2025-12-01, 2026-01-15) via 22 `BoxScoreSummaryV3` calls — every other game's
+`tipoff_utc` stayed `None` on purpose. `build_plan` was run with
+`start=2025-11-01, end=2026-01-15` — a window covering 527 of the season's
+1,225 games — and correctly generated exactly 6 candidates (two per date) and
+loudly excluded the other 505 in-range games (527 − 22) for having no
+ingested tip-off, rather than guessing. All 6 fetches against the real
+`ak-static.cms.nba.com` CDN succeeded on the
+first attempt (0 failures, 0 `not_available`): distinct archived masthead
+timestamps recovered were 2025-10-31T21:30Z, 2025-11-01T17:30Z,
+2025-11-30T22:30Z, 2025-12-01T18:30Z, 2026-01-14T22:30Z and
+2026-01-15T18:00Z. 645 injury-report-entry rows were imported in total (each
+report's rolling window covers players from an adjacent calendar date too, not
+only its nominal date — real, previously undocumented behaviour, confirmed
+from the actual payloads rather than assumed); 372 of those rows carry a
+`game_date` matching the three target dates, and
+`select_canonical_pregame_observations` recovered 203 canonical pregame
+player-game observations across the 22 real games on those three dates.
+
+**Now true:** A real, non-fabricated, multi-date, multi-game historical
+cohort exists in principle and was proven reachable end-to-end against the
+live archive — 6/6 candidate fetches succeeded with zero retries needed —
+without widening Fantrax access, without committing a large raw corpus (the
+evidence run's raw PDFs and database live outside the repository), and
+without any new schema. `injury-status-conversion` is unblocked to build its
+own committed fixture set using this tool, deliberately scoped to whatever
+date range `quant` chooses for the Model gate's held-out backtest.
+
+**Could not verify:**
+- **Whether `ScheduleLeagueV2` (the schedule-with-future-dates endpoint) works
+  for a past season.** The evidence run sidestepped the question entirely by
+  using `LeagueGameFinder` + per-game `BoxScoreSummaryV3` patch-back instead —
+  the same approach `backfill_season` already uses and is confirmed to work
+  historically. If a future caller wants `ScheduleLeagueV2` specifically for a
+  past season, that is untested.
+- **Whether every archived report in the 2025-26 season is reachable by this
+  scheme.** Only three dates were exercised live, all three chosen because
+  they were already confirmed reachable in earlier research. A full-season
+  run was not attempted here — the task was to prove the mechanism and its
+  gates, not to produce the full committed fixture corpus, which is
+  `injury-status-conversion`'s job.
+- **Whether an emergency, off-cadence report (e.g. a 3am ET injury update)
+  exists anywhere in the archive and is reachable by a different anchor.**
+  Not probed; recorded as risk R44 rather than assumed away.
+- **The discrepancy between 645 total imported rows and 372 scoped to the
+  three target dates was investigated and explained** (each report's rolling
+  window bleeds into one adjacent calendar date), not left as an unexplained
+  number — but whether this rolling-window behaviour is stable across the
+  whole season or particular to these three dates was not checked further.
+
+**Next:** `quant` builds the committed fixture corpus and the held-out
+backtest for `injury-status-conversion` using this tool, choosing its own
+date range and reporting calibration — that gate is separate from this one.
+If a wider historical cohort is ever wanted, re-run this same tool with a
+wider `--start`/`--end` after ingesting the corresponding schedule tip-offs,
+watching `enforce_request_budget`.
+
+---
+
+## 2026-08-18 — data-engineer — Historical injury-report backfill: correcting the record after independent review found real defects
+
+**Changed:** A second, more thorough independent review of PR #21 at exact
+head `e96788a` found the above entry premature on multiple points and found
+real bugs the earlier review's fix did not catch. Recorded honestly, in the
+order found, because the house rules require correcting rather than quietly
+rewriting a prior entry:
+
+1. **Natural-key data loss (critical).** `injury_report_entries`'s unique
+   constraint was `(report_timestamp, team_raw, player_name_raw)` — missing
+   `game_date`. One masthead reporting a player's back-to-back split across
+   two calendar dates collapsed to one row: the second date's import
+   silently overwrote the first as an ordinary "update", permanently losing
+   one night's row. Fixed: migration `0012` (`down_revision = "0011"`, after
+   PR #20 merged and claimed `0011` — this migration was originally cut as
+   `0011` before that merge and had to be renumbered) adds `game_date` to the
+   constraint; the importer's natural key and existing-row lookup were
+   updated to match. New regression test
+   (`test_import_never_collapses_a_back_to_back_split_across_game_dates`)
+   pins it.
+2. **Cache was gating processing, not just avoiding network.** `run_backfill`
+   only ever iterated the plan's *uncached* subset; `already_cached` is now
+   purely `build_plan`/CLI-render metadata, and the only gate on whether a
+   candidate is processed is the checkpoint's own settled-outcome state.
+   Fixed the case a cached-but-never-checkpointed candidate (a crash between
+   writing the raw payload and writing the checkpoint) was silently skipped
+   forever on every resume. New cache-not-gating and
+   cached-after-parse-error resume tests.
+3. **Commit/checkpoint ordering was backwards.** A candidate was checkpointed
+   `"fetched"` before its database commit, so a commit failure after that
+   checkpoint write left the checkpoint permanently, wrongly believing the
+   row was persisted. Fixed: commit now happens first; a commit exception is
+   caught, the session rolled back, and the candidate checkpointed as
+   unsettled `"error"` so a resume retries it. New simulated-commit-failure
+   atomicity/resume test.
+4. **O(n²) importer reload.** `import_injury_report_entries`'s existing-row
+   lookup reloaded the whole table per candidate. Fixed: scoped to the
+   batch's own `report_timestamp` values.
+5. **No durable coverage evidence, only console counts.** Added
+   `CandidateCoverage`/`CoverageReport` (JSON, atomic-written next to the
+   checkpoint) recording per candidate: era, lead time before tip-off, HTTP
+   outcome, canonical masthead instant, and listed-vs-`NOT_YET_SUBMITTED`
+   split; and `GameObservationCoverage`/`coverage_for_games`, exposed as a new
+   network-free `observations` CLI subcommand, distinguishing four per-game
+   outcomes (observed / no-candidate-coverage / unsubmitted-only /
+   missing-tipoff) so "no report" is never conflated with "no schedule data"
+   or "collision with another game".
+6. **No fail-closed gate on incomplete tip-off coverage.** The prior entry's
+   own "22/527" evidence run would previously have been indistinguishable
+   from a genuine full-range backfill. Fixed: `enforce_full_tipoff_coverage`
+   now refuses to run (raises `IncompleteScheduleCoverage`) against any
+   requested game scope with a missing tip-off, unless explicitly overridden
+   via `--allow-missing-tipoff N`.
+7. **The 45-minute masthead-tolerance claim does not hold past
+   2025-12-22.** The prior entry's design section wrongly implied the
+   parser's 45-minute drift tolerance recovers a fixed-clock guess in both
+   URL eras. In fact `report_url()` only truncates to the hour (and is only
+   safely recoverable within 45 minutes) in the legacy, pre-2025-12-22
+   filename era; from 2025-12-22 the URL is an exact-minute match with *no*
+   tolerance at the request level, so a single fixed `game_day@13:00` guess
+   is a minute-exact gamble, frequently hours stale relative to a real
+   tip-off. Fixed: dates in the 15-minute era with a known tip-off now use
+   four bounded, tip-off-anchored offsets (150/90/45/15 minutes before that
+   date's earliest tip-off, `NEAR_TIP_OFFSETS`) instead of the fixed clock
+   guess. `docs/adapters/nba-injury-report.md` and risk `R44` are corrected
+   to state this precisely rather than repeat the wrong claim. New
+   era-boundary and near-tip-anchor selection tests confirm no lookahead.
+8. **403 was being treated identically to 404.** A 403 can be a WAF or
+   rate-limit response and is not the same evidentiary claim as an in-season
+   404's documented "nothing published here." Fixed: `SourceError` now
+   carries `status_code`; a streak of consecutive 403s (default threshold 3,
+   never triggered by a single 403 or by any 404) raises a new
+   `SuspectedSourceBlock` and aborts the run rather than recording each as
+   confirmed absence. New 403-streak-abort test.
+9. **Provenance URL could be silently overwritten.** Two different requested
+   instants converging on the same masthead (the legacy hourly-truncation
+   case) previously let a later request's URL overwrite the first-seen
+   `source_url` with no audit trail. Fixed: `source_url` is now set only on
+   row creation. New convergence-preserves-provenance regression test.
+10. **Coverage exposure for the downstream join.** `select_canonical_pregame_
+    observations` and the new coverage artifacts above expose stable
+    per-player-game evidence and coverage; the join to `player_participation`
+    itself remains, correctly, `injury-status-conversion`'s job, not this
+    tool's — not changed, only clarified.
+
+All ten points were independently re-verified against the actual pre-fix code
+(not accepted on the reviewer's word alone) before being fixed, per house
+rules. 67 tests now cover `test_injury_report_backfill.py` +
+`test_injury_report.py` combined (up from 23), all passing; ruff/format/mypy
+clean.
+
+**Now true:** The natural key, cache/checkpoint/commit ordering, coverage
+gate, era-conditional candidate strategy, 403 handling, and provenance
+preservation described in the entry above are corrected. The **645
+imported rows / 372 scoped rows / 203 canonical observations** figures in
+the entry above are retained as a real, historically accurate record of what
+that specific tool-validation run produced against the pre-fix code and a
+deliberately small, non-representative 22-game sample (patched tip-offs on
+3 of many dates) — **not** a representative or complete cohort, and not
+re-claimed here as evidence toward `injury-status-conversion`. That entry's
+closing claim, "`injury-status-conversion` is unblocked," is retracted: it
+was written before this review found the natural-key collision above, which
+alone means some of those 203 observations could have silently discarded a
+real back-to-back row. `injury-status-conversion` remains blocked pending a
+fresh live sample against the corrected code and independent re-review of
+this remediation.
+
+**Could not verify:** A fresh live-archive sample against the corrected code
+(spanning both URL eras) had not been run when this entry was written — see
+the following entry, if present, for that result or its absence. Native
+PostgreSQL remains unavailable locally; migration `0012`'s chain
+(`... -> 0011 -> 0012`) was validated only against a throwaway SQLite DB
+locally, not GitHub's real PostgreSQL job, as of this entry.
+
+**Next:** Run a corrected live bounded sample if network-accessible: report
+real numbers, expected to differ from the retracted 645/372/203 figures.
+Push the rebased, renumbered branch; get a fresh independent review of this
+remediation (the prior reviews were both against pre-fix code); do not merge
+or self-approve; do not report `injury-status-conversion` as unblocked until
+that fresh review passes.
+
+---
+
+## 2026-08-18 — data-engineer — Fresh live sample against the corrected code, both URL eras, after PR #20 rebase and migration renumber
+
+**Changed:** Rebased this branch onto `origin/main` at `0ff417a` (PR #20,
+"Add league deadline calendar contract"). PR #20 claimed migration `0011`
+(`0011_league_deadline_calendars.py`); this branch's migration — cut before
+that merge as `0011` — was renamed and renumbered to
+`0012_injury_report_natural_key_game_date.py`
+(`revision="0012"`, `down_revision="0011"`). Rebase was clean, no conflicts
+(PR #20 touches an unrelated subsystem). Ran a fresh, genuinely new live
+sample against `ak-static.cms.nba.com` using the corrected `backfill.py`
+directly (not an ad hoc counting script — the sample script only drives the
+real `build_plan` / `enforce_full_tipoff_coverage` / `run_backfill` /
+`coverage_for_games` functions and prints their own `.render()` output),
+against 4 target dates chosen to cover **both** URL eras and include two
+dates never previously probed in this project:
+
+- **Legacy era (pre-2025-12-22):** 2025-11-01 (previously probed) and
+  **2025-12-10 (new)** — 2 candidates each (`evening_before`, fixed
+  `game_day@13:00`).
+- **15-minute era (2025-12-22 onward):** 2026-01-15 (previously probed) and
+  **2026-01-20 (new)** — 5 candidates each (`evening_before` plus the four
+  bounded `near_tip_150/90/45/15` offsets anchored to that date's real
+  earliest tip-off, patched from a live `BoxScoreSummaryV3` call per game).
+
+Each date was run through `build_plan(start=date, end=date)` individually so
+`enforce_full_tipoff_coverage` passed honestly (every game in each
+single-date scope had a real patched tip-off; no `--allow-missing-tipoff`
+override used anywhere) — the fail-closed gate added in the remediation
+above was exercised for real, not bypassed.
+
+**Result, all against the real, completed 2025-26 season:** 22 real games
+across the 4 dates (5 + 2 + 8 + 7), all with live-patched tip-offs. 14 live
+HTTP requests total (2+2+5+5, one per candidate) — **all 14 returned HTTP
+200 on the first attempt** (0 failures, 0 `not_available`, 0 403s, no
+`SuspectedSourceBlock` triggered), recorded in the raw payload store's own
+`index.jsonl` with real `fetched_at` timestamps, byte sizes and SHA-256
+content hashes (not fabricated — verified directly from that file after the
+run). 14 distinct archived masthead timestamps recovered: `2025-10-31T21:30Z,
+2025-11-01T17:30Z, 2025-12-09T22:30Z, 2025-12-10T18:30Z, 2026-01-14T22:30Z,
+2026-01-15T21:30Z/22:30Z/23:15Z/23:45Z, 2026-01-19T22:30Z,
+2026-01-20T21:30Z/22:30Z/23:15Z/23:45Z`. 860 `injury_report_entries` rows
+imported for these 4 dates (natural key now includes `game_date`, so this
+count is safe from the B2B-collision bug the remediation above fixed).
+`select_canonical_pregame_observations` recovered **214** canonical pregame
+player-game observations across the 22 games. `coverage_for_games` /
+`render_observation_coverage` — the new committed `observations`-equivalent
+reporting, not console counting — classified **all 22 games as `observed`,
+0 as `no_candidate_coverage`, 0 as `not_yet_submitted_only`, 0 as
+`missing_tipoff`** for this specific bounded sample.
+
+A second invocation of the same script (immediately after, same database and
+raw-store directory) exercised resume/idempotency for real: every one of the
+14 candidates showed `already_cached` and `skipped (already settled)`, 0
+re-fetches, 0 re-imports — confirming the cache-not-gating-but-checkpoint-
+gating design from the remediation above behaves correctly on a genuine
+second run, not just in the unit tests.
+
+**Now true:** The corrected code has now recovered real archived reports
+from **both** URL eras, including two dates (`2025-12-10`, `2026-01-20`)
+never previously probed by any script in this project, with a 100% first-
+attempt success rate on this specific bounded sample and zero coverage gaps
+in it. The migration chain is `... -> 0010 -> 0011 (PR #20) -> 0012 (this
+PR)`, single head, verified via `alembic upgrade head` + `alembic check` on a
+fresh SQLite DB with no drift. Local gates all green post-rebase: `ruff
+check` clean, `ruff format --check` clean (121 files), `mypy src` clean (78
+source files), full `pytest -q` **635 passed, 17 deselected** (up from 558
+pre-rebase, reflecting PR #20's own new tests plus this remediation's ~44 new
+tests), `pytest -m adapter_contract` **142 passed, 510 deselected**, and the
+repository's `scripts/check_no_secrets.py` reports no secrets in 229 tracked
+files.
+
+**Could not verify:**
+- **Whether this 100%-success, zero-gap sample generalises to the rest of
+  the season.** This remains a deliberately small, bounded 4-date/22-game
+  sample chosen to exercise both eras and the fail-closed coverage gate
+  honestly, not a full-season run — building the full committed fixture
+  corpus for `injury-status-conversion` is explicitly that task's own job,
+  as before.
+- **GitHub's real PostgreSQL/migration-drift CI job** had not run against
+  this exact rebased head when this entry was written — only local SQLite.
+- **A fresh independent code review of the full remediation** (all 10
+  points from the second review, against the new code, not the pre-fix
+  `e96788a` code either prior review actually examined) had not completed
+  when this entry was written.
+
+**Next:** Push this rebased, renumbered branch. Get a fresh independent
+review of the complete remediation. Coordinate the migration-slot race with
+PR #22 explicitly — whichever of PR #21/PR #22 is independently reviewed and
+merge-ready first keeps `0012`; the other restacks again onto whatever `main`
+then owns. Do not merge or self-approve. Do not report
+`injury-status-conversion` as unblocked until independent review of this
+exact head passes.
+
+---
+
 ## 2026-08-18 - data-engineer - Restack after absence-splits migrations
 
 **Changed:** Rebased the league-settings branch onto main commit `5f75968`,
@@ -3132,3 +3472,1163 @@ personal-use inputs; neither proposal is in force.
 **Could not verify:** The dialog supplied the selections but no owner rationale beyond them, so none is inferred. No other owner-only choice was made or changed.
 
 **Next:** Keep ADR-010's existing accepted metadata intact, leave the frozen walkthrough at ADR-001–009, and use the decision index for later ADRs.
+## 2026-08-18 — data-engineer — Historical injury-report backfill: third round, one more genuine defect found and fixed (403-checkpoint-before-abort)
+
+**Changed:** Pushed the second remediation round (commit `a0989a7`) to
+`origin/sr2501-historical-injury-backfill` (PR #21, head now on top of
+`0ff417a`/main, migration `0012`/`down_revision="0011"`). GitHub CI then
+surfaced a real gap this session's own local validation had missed, and a
+subsequent independent `code-review` sub-agent pass against that exact
+pushed head found one more genuine, reproducible defect in the streak-abort
+handling. Both are now fixed, at commit `7809acf`.
+
+**1. CI mypy failure (process gap, not a design defect).** CI's backend job
+runs bare `mypy` (project-wide, tests included); this session had only been
+running `mypy src` locally, so 4 errors in
+`tests/test_injury_report_backfill.py` were invisible until CI caught them:
+two now-unused `# type: ignore[method-assign]` comments on
+`session.commit = ...` reassignments, and two dict-invariance errors from
+`_ScriptedFetcher`'s `dict[datetime, InjuryReportParseResult | Exception]`
+parameter being passed a narrower `dict[datetime, ReportNotAvailable]`
+literal. Fixed by removing the unused ignores and explicitly annotating the
+two dict comprehensions with the wider value type. No behavior change; all
+67 injury-report tests still passed. **Local validation going forward
+should run bare `mypy`, not `mypy src`, to match CI exactly** — recorded
+here so this gap does not recur silently.
+
+**2. Independent re-review of the pushed head (all 10 second-round points)
+found one still-incomplete fix: point 8, 403 vs 404.** The abort-on-streak
+mechanism itself worked (`SuspectedSourceBlock` correctly raised on the
+Nth consecutive HTTP 403), but `run_backfill` was still calling
+`checkpoint.record(candidate, "not_available")` **unconditionally** for
+every `ReportNotAvailable`, 403 or 404 alike, *before* checking whether the
+403 crossed the abort threshold. That meant the very candidates whose 403
+streak triggered the abort were durably checkpointed as settled "confirmed
+absence" moments before the exception fired — so a resumed run (after
+whatever blocked us, e.g. a WAF or rate-limit condition, cleared) would
+silently skip exactly the candidates the abort exists to protect, treating
+a suspected block as permanent "no report" forever. This directly
+contradicted both the exception's own message ("rather than recording these
+as confirmed absence") and the adapter doc's description of the same
+behavior — reproduced and confirmed independently before being accepted as
+real, not assumed from the review's write-up.
+
+**Fix:** `run_backfill` now buffers a 403's checkpoint write rather than
+recording it immediately. A buffered 403 is only flushed to the checkpoint
+as settled once its streak is confirmed *not* to be an abort: either a
+later non-403 result (a 404, a genuine fetch, or a different `SourceError`)
+breaks the streak, or the run ends normally without ever crossing
+`max_forbidden_streak`. If the streak *does* cross the threshold,
+`SuspectedSourceBlock` is raised **before** any of that streak's buffered
+403s are flushed, so every one of them is left unsettled and will be
+retried on the next run. A 404 (or any non-403 absence) is still
+checkpointed as settled immediately, unchanged — this is scoped to the
+one code path that was actually wrong.
+
+Three new regression tests were added (`test_injury_report_backfill.py`):
+`test_run_backfill_does_not_settle_a_403_streak_that_triggered_the_abort`
+(reloads the checkpoint from disk after the abort and asserts none of the
+streak's candidates are settled — this is exactly the bug the fix
+addresses, and the test fails against the pre-fix code), 
+`test_run_backfill_retries_403s_from_an_aborted_streak_on_resume` (a second
+run against the same checkpoint, now returning 404s, proves every candidate
+from the aborted streak is genuinely re-fetched, not skipped), and
+`test_run_backfill_settles_a_short_403_run_that_never_crosses_the_abort_threshold`
+(a 2-candidate 403 run, below the default streak threshold of 3, still
+ends up settled once the run completes normally — proving the fix doesn't
+regress the documented "a lone or short 403 run is the same trustworthy
+signal as a 404" behavior). `run_backfill`'s docstring, the module-level
+natural-key mention (which had gone stale, still describing the pre-fix
+3-column key), and `docs/adapters/nba-injury-report.md`'s 403/404 section
+were all corrected to match.
+
+**Verified:** `ruff check`/`ruff format --check` clean; bare `mypy`
+(matching CI) clean, 107 source files; full local `pytest -q` green
+(70/70 in the two injury-report test files, exit code 0 across the whole
+suite — this environment's pytest does not print a final summary line for
+reasons not yet understood, but no `F`/`E` markers appeared and exit code
+was consistently `0`); the editable `hoops_gm` install had gone stale again
+mid-session (a recurrence of the issue noted in the prior entry) and was
+re-run (`pip install -e .` from `backend/`) before trusting collection.
+Pushed as `7809acf`. Re-ran `gh pr checks 21`: all jobs pass, including
+"Backend — lint, type-check, tests" (previously failing) and "Backend —
+the same suite against Postgres (ADR-001)". `gh pr view 21` reports
+`mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`, base `0ff417a`
+(`origin/main` re-fetched and confirmed unchanged at `0ff417a` — no further
+migration-slot race yet from PR #22).
+
+**Could not verify:** whether a fourth independent review pass exists
+somewhere finding issues beyond point 8 and the mypy gap — only one
+`code-review` sub-agent pass was run this round, and it explicitly listed
+point 8 as the *one* remaining blocker rather than a partial list; a
+different reviewer could in principle find something this pass missed.
+Also could not verify PR #22's current state or whether `main` will
+advance again before this PR is merge-ready — that must be re-checked at
+merge time, not assumed from this entry.
+
+**Next:** Report this exact head/status back to the reviewing session
+(cross-session request originated from a merge-queue session tracking
+this PR). Still not merged, not self-approved, and `injury-status-conversion`
+remains explicitly not unblocked until an independent reviewer signs off on
+this exact commit.
+
+## 2026-08-18 — data-engineer — Historical injury-report backfill: fourth round, eight more integrity gaps closed, first genuine live-cascade evidence
+
+**Changed:** A fourth independent exact-head review of `fb7d095` found 8
+further correctness gaps, all now fixed, tested, and validated against a
+real live sample (this entry's commit is the first one in this PR to be
+built without adding a new gap the next review finds, as far as this round
+can tell — but see **Could not verify** below, that is not this session's
+call to make).
+
+**1. Checkpoint identity was mutable.** Keying was `(date, candidate_kind)`
+only; a corrected or newly-resolved earliest tip-off changes the actual
+candidate timestamp/URL under an already-settled key, and the old design
+would treat the new timestamp as already done. Fixed: `Checkpoint` now
+stores the exact resolved timestamp and the key check compares it — a
+stored-timestamp mismatch is treated as **unsettled**, not skipped. Added
+tip-change and partial-schedule-expansion resume regressions.
+
+**2. Coverage was lost on abort.** `SuspectedSourceBlock` used to carry only
+enough to re-raise; a run that hit the 403 abort mid-way lost every
+candidate's coverage evidence gathered before the abort. Fixed: both
+`SuspectedSourceBlock` and the new `IncompleteExpectedGameCoverage` now
+carry their own `coverage`/partial-result object (mirrored design), and
+coverage is written in a `finally`-equivalent durable path so a
+success-then-403-then-resume sequence has no coverage holes. Tested
+end-to-end.
+
+**3. The full-scope gate only compared DB rows to themselves.** It could
+not have caught a narrow-but-internally-consistent 22/527 scope, because
+"expected" was derived from the same ingested rows being checked. Fixed:
+added `enforce_expected_game_coverage`, which fetches the real official
+`LeagueGameFinder` slate for the requested season/type/date window
+(cached/throttled through the existing `NbaStatsClient`) and fails closed
+*before any injury-report HTTP call* if the ingested game set doesn't
+match it, persisting expected-vs-ingested game IDs and reasons
+(`IncompleteExpectedGameCoverage`, overridable via an explicit
+`--allow-missing-games` count).
+
+**4. Near-tip candidates in the 15-minute era weren't grid-aligned.** A
+non-:00/:15/:30/:45 real tip-off (e.g. 19:10) would generate a candidate
+that isn't on the source's actual publication grid. Fixed:
+`_floor_to_quarter_hour_et` floors every near-tip candidate wall time to
+the prior quarter-hour, strictly pre-tip. **Honest finding:** every real
+tip-off in this session's sampled archive (`BoxScoreSummaryV3` across three
+seasons via `lastFiveMeetings`) falls on `:00`/`:30` ET — no genuinely
+off-grid real tip-off was found to validate this against live data. The
+fix is unit-tested against a synthetic/monkeypatched off-grid tip-off only;
+it remains **unproven against a real off-grid tip-off** because none has
+been observed. This is stated here rather than implied to be fully live-
+validated.
+
+**5. 403 handling still wasn't fail-closed across invocation boundaries.**
+Round 3's buffered-streak design correctly avoided settling a 403 as
+confirmed absence *within* one run, but nothing stopped a later run or a
+different error from resetting/flushing a still-unresolved 403 to
+settled. Fixed, simplified to the honest v1 the review asked for: a
+planned-game 403 is **never** settled as `not_available`; it is persisted
+as `forbidden`/unsettled coverage and `run_backfill` returns nonzero so an
+operator investigates, regardless of run boundaries or intervening
+errors. Added a per-date repeated-403 regression proving this survives a
+process restart.
+
+**6. The exclusion cascade didn't expose the actual denominator.** A
+single "game observed" bit told a reviewer nothing about where player-games
+were lost. Fixed: `ExclusionCascade`/`exclusion_cascade`/
+`render_exclusion_cascade` now persist and render every stage: expected
+games → missing from ingest → ingested → ingested-with-tipoff → candidates
+attempted → forbidden (403) → not_available (404) → mastheads recovered →
+entries in scope → entries resolved to game_id → entries resolved to
+player_id → NOT_YET_SUBMITTED → listed status → games with a canonical
+observation. The `observations` CLI subcommand renders this, not just
+game-level success.
+
+**7. Pre-fix rows were untrustworthy and undistinguishable from fixed
+rows.** Migration `0013` adds `import_schema_version` (current = `2`) to
+`injury_report_entries`, defaulted via both the model column
+(`server_default`, required for `test_models_and_migrations_agree`) and
+the migration itself. Canonical-observation selection can exclude legacy
+(`version < 2`) rows unless explicitly overridden; documented that any
+locally-imported pre-`0012` data needs re-capture or an explicit override,
+not blind trust.
+
+**8. Coverage merge keys didn't include the requested timestamp/URL.**
+Fixed alongside point 1 — the same resolved-timestamp field that fixed
+checkpoint identity is also part of the coverage merge key, with a
+round-trip test for changed candidates.
+
+**Live evidence (real data, not synthetic):** Reused real archived
+fixtures cached in an earlier round (`BoxScoreSummaryV3` for 2025-11-01,
+2025-12-01, 2026-01-15; a real `LeagueGameFinder` capture for season
+2025-26 regular season) to seed a **freshly alembic-migrated** scratch
+SQLite DB (`backend/.live_evidence_r4/`, gitignored, not committed) with
+22 real games/30 real teams across both URL eras, then ran the actual
+`backfill plan`/`run`/`observations` CLI against it:
+
+- `plan` correctly showed legacy fixed-offset candidates
+  (`evening_before`+`game_day@13:00`) for the two pre-2025-12-22 dates and
+  4 grid-aligned `near_tip_*` candidates for the post-boundary date.
+- `run` across the full 2025-11-01→2026-01-15 range correctly **failed
+  closed** against the real `LeagueGameFinder` slate: 527 expected games,
+  505 missing from this deliberately tiny 22-game seed — a genuine,
+  reproducible demonstration of the exact "22/527" failure mode the
+  reviewers described, using real official-schedule data, not a
+  contrived one.
+- `run` for 2025-12-01 alone and for 2026-01-15 alone each passed the
+  gate and produced a real fetch/import (9 candidates total across all
+  three dates, all cache hits against real archived PDFs; 267 and 726
+  entries created respectively). A follow-up run of the full range with
+  an explicit `--allow-missing-games 505` override correctly resumed
+  with 0 new fetches/imports (all 9 candidates already checkpointed
+  settled) — real idempotency evidence, not asserted.
+- `observations` for the full range: 22 games in scope, 21 with a
+  canonical observation, 1 `not_yet_submitted_only`; exclusion cascade:
+  527 expected → 505 missing-from-ingest → 22 ingested (all with a
+  tip-off) → 9 candidates attempted (0 forbidden, 0 not_available) → 9
+  mastheads recovered → 638 entries in scope → 638 resolved to game_id →
+  **0 resolved to player_id** (this scratch DB seeded games/teams only,
+  no `Player` rows — an honest limitation of this specific sample, not a
+  tool defect) → 25 NOT_YET_SUBMITTED → 613 listed status → 21 canonical
+  observations.
+- DB query confirmed all 1150 imported rows carry
+  `import_schema_version = 2` (current); 9 distinct report timestamps
+  (mastheads) spanning 2025-10-31 through 2026-01-16 (report dates
+  differ from game dates by design — `evening_before` anchors land the
+  night prior); 596 distinct player-games by the corrected
+  `(game_date, team_raw, player_name_raw)` natural-key shape.
+- **Incidental, real, out-of-scope finding:** two of the sampled real
+  games (`0022500147` DAL@DET 2025-11-01, `0022500578` MEM@ORL
+  2026-01-15) have a genuine anomaly in the archived `LeagueGameFinder`
+  payload — **both** team rows for each game carry an away-style `"@"`
+  `MATCHUP` string instead of one `"vs."`/one `"@"` — so the
+  already-merged `parse_league_game_finder` (PR #13/#19 territory, not
+  this PR) correctly and defensively drops both games as one-sided/
+  ambiguous rather than guessing a home team. This is why the "5 of 6"
+  and "8 of 9" expected counts for those two dates matched the ingested
+  counts exactly: the schedule parser's own existing defensive skip
+  already excludes these two games from "expected," independent of
+  anything in this backfill. Recorded here for honesty; not something
+  this PR should or does fix.
+- `stats.nba.com` (needed for a *fresh* `LeagueGameFinder` fetch) timed
+  out from this sandbox during this round, same as prior rounds — all
+  live-evidence fetches for this round reused cache hits within their
+  documented freshness windows, not new network calls. Genuinely fresh
+  network reachability against `stats.nba.com` remains unverified from
+  this environment.
+
+**Gates:** `ruff check`/`ruff format --check`/bare `mypy` clean;
+`pytest -q` green (injury-report test count now 90+, all new round-4
+tests included); `pytest -m adapter_contract -q` green;
+`scripts/check_no_secrets.py` clean; standalone `alembic upgrade head` →
+`alembic check` ("No new upgrade operations detected") → `alembic
+downgrade base` clean round-trip (0001→0013→base) against fresh SQLite.
+Postgres gate not runnable locally (no Docker in this sandbox, same as
+every prior round) — deferred to CI.
+
+**Now true:** All 8 round-4 review points are fixed with regression
+tests. The natural-key fix (`0012`) and evidence-versioning fix (`0013`)
+both remain on this PR's branch; `origin/main` is unchanged at `0ff417a`
+this round, so no rebase or migration renumbering was needed. PR #22 was
+still open/unmerged as of this check, so `0012`/`0013` remain
+uncontested for now but must be re-verified at push/merge time.
+
+**Could not verify:** A fifth independent review pass has not yet
+happened as of this entry — this round's fixes are validated by this
+session's own tests, gates, and one live sample, not yet by a fresh
+reviewer looking at the actual pushed commit. Whether `injury-status-
+conversion`'s non-blocking-but-mandatory follow-ups (a random/unselected-
+date recovery study, the full participation join, holdout-by-date,
+calibration by status × lead-time × cadence era) have any path forward
+also remains unassessed — those are explicitly out of scope for this PR
+and belong to `quant`. Genuinely fresh (non-cached) network reachability
+against both `ak-static.cms.nba.com` and `stats.nba.com` from this exact
+sandbox was not re-verified this round beyond the one reachability probe
+already reported.
+
+**Next:** Push this round's commit, request a fresh independent
+`code-review` pass against the exact new head, and report status back
+honestly — including the "22/527 real evidence," the "no real off-grid
+tip-off found" limitation, and the incidental `LeagueGameFinder`
+matchup-anomaly finding — without merging or self-approving.
+`injury-status-conversion` remains explicitly blocked.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: fifth round, the measurement itself was found untrustworthy, not just the source's coverage gap
+
+**Changed:** Two independent exact-head reviews of `962bff4` found 8 further
+integrity gaps — this time not in what the tool fetches, but in what its own
+denominator/coverage machinery *reports about* what it fetched. All 8 are
+now fixed and regression-tested.
+
+**1. The unresolved-game-id cascade stage was tautological.**
+`exclusion_cascade`'s underlying query filtered `game_id.in_(...)` before
+counting how many entries resolved to a `game_id`, so the stage could never
+show loss — 100% "resolved" was true by construction, not by evidence.
+Fixed: raw entries are now scoped by `game_date.in_(...)` (always populated)
+first, resolution is counted as a separate stage, and a bounded sample of
+unresolved `(game_date, matchup, team, player_name_raw)` rows is persisted
+and rendered. Added an exact regression proving the old query would have
+hidden the loss this one catches.
+
+**2. `no_candidate_coverage` conflated two different absences.** "No
+candidate was ever attempted for this game" and "a candidate was fetched and
+the team genuinely submitted zero injured players" were the same outcome —
+which erases the difference between "we don't know" and "we know, and it's
+empty," a distinction a downstream model needs. Fixed: `coverage_for_games`
+now distinguishes four outcomes — `no_candidate_coverage`,
+`not_yet_submitted_only`, `submitted_zero_listed`, `legacy_excluded` — and
+`observations` renders all four separately.
+
+**3. Legacy (pre-`0012`/`0013`) rows were inconsistently excluded across
+cascade stages.** Some stages honored `import_schema_version`, others
+didn't, so a legacy row could silently inflate a "trusted" count at one
+stage while being correctly excluded at another. Fixed: `exclusion_cascade`
+splits entries into `trusted`/`legacy` **before** computing any of stages
+11–18, and every one of them is computed from `trusted` only. A legacy
+`NOT_YET_SUBMITTED` row is reported as `legacy_excluded`, never as
+`not_yet_submitted_only` — it is equally subject to the natural-key
+collision the schema fix corrected, regardless of its status text.
+
+**4. `ExpectedGameCoverage`/`CoverageReport` were not bound to the exact
+requested scope.** Persisted evidence for one season/date-range could
+silently answer a request for a different one. Fixed:
+`_expected_coverage_matches_scope` requires an exact match (season,
+season_type, start, end) between persisted evidence and the current
+invocation; `observations` discards and warns on a mismatch rather than
+presenting stale evidence as if it answered the live request.
+
+**5. `lead_minutes` was the anchor's intended offset, not a realized
+per-game lead time.** The same anchor offset (e.g. "90 minutes before the
+date's earliest tip-off") was shared across every game on a date regardless
+of that specific game's actual tip-off — wrong for a late game on a
+multi-tip date, and mislabelled as if it were a real per-game measurement.
+Fixed: renamed to `anchor_offset_minutes` on `ReportCandidate`/
+`CandidateCoverage` (what it always was), and added a genuinely new,
+per-game `CanonicalPregameObservation.lead_time_minutes` computed as
+`tipoff_utc - report_timestamp` for that specific game, exposed in
+`observations` and the exclusion cascade for downstream stratification by
+realized lead time.
+
+**6. The expected-slate gate didn't fail closed on an empty response, and
+season-type mapping was wrong.** An empty in-range `LeagueGameFinder`
+payload previously passed the gate vacuously (0 expected, 0 missing — a
+false "complete"). The CLI also silently mapped `PRESEASON`/`PLAY_IN` onto
+`PLAYOFFS`, which would have compared the wrong slate entirely. Fixed:
+`enforce_expected_game_coverage` raises on an empty in-range response, and
+`_expected_schedule_season_type_label` restricts v1 to `REGULAR`/`PLAYOFFS`,
+raising `ValueError` (caught in `main()` before any HTTP call) for
+`PRESEASON`/`PLAY_IN`.
+
+**7. The canonical player-game surface didn't collapse by resolved player
+identity.** Spelling variants of the same player's name across different
+mastheads could double-count as distinct canonical observations. Fixed:
+`_canonical_observation_key`/`select_canonical_pregame_observations` now key
+on `entry.player_id` when resolved, falling back to the raw name only when
+unresolved — an unresolved row is kept distinct from any resolved row (an
+`int` id never coerces to compare equal to a `str` name), so identity
+collapse never silently merges an unresolved row into a resolved one.
+
+**8. CLI help text referenced a nonexistent `--expected-coverage` flag, and
+gate ordering/coverage-persistence had no end-to-end test.** Fixed the help
+text; added 5 new `main()`-level CLI tests (monkeypatching
+`get_settings`/`Database`/`default_expected_game_fetcher`/
+`default_fetch_and_parse` at the module level, no real network) proving:
+scope-mismatched persisted evidence is discarded with a warning,
+season-type validation fails closed before any HTTP call, expected-game
+coverage is persisted even when the gate itself fails, a full happy-path run
+persists a `CoverageReport`, and a 403-abort still persists partial
+coverage.
+
+**Live evidence for fix #3 (legacy consistency), reusing real archived
+data:** Reused round 4's `live_evidence.db` (645 real `injury_report_entries`
+rows across 22 real games, 3 real dates spanning both URL eras) and manually
+applied migration `0013`'s exact effect (added `import_schema_version`,
+stamped every existing row `1`/legacy — this DB predates `0013`, so every
+row is genuinely, not synthetically, legacy). Ran `observations` against it
+with the round-5 code: **all 22 games and all 564 in-range rows report
+`legacy_excluded` at every cascade stage** (9 through 18 all read 0 for the
+trusted-only counts, not a false "resolved" or "listed" number derived from
+legacy rows) — proving the legacy-consistency fix holds against real
+previously-imported data, not just a synthetic fixture. `--allow-missing-games`
+evidence (stages 1–2, "unknown — not yet computed") and coverage evidence
+(stages 5–8) correctly report as **unverified, not zero**, because this
+session did not re-run `backfill run` against this scratch DB (no network in
+this sandbox) — an honest gap in this specific validation run, not a defect;
+those two stage groups are otherwise covered by the round-4 live sample and
+this round's unit/CLI tests.
+
+**Gates (this branch, pre-rebase):** `ruff check`/`ruff format --check`/bare
+`mypy` all clean on the touched files and whole-project `mypy` (107 source
+files). `pytest -q` (whole backend suite) green, no failures, no unraisable-
+exception warnings (see **Could not verify**-adjacent note below — one was
+found and fixed this round, not merely observed). `pytest -m
+adapter_contract -q` green. `scripts/check_no_secrets.py` clean (230 tracked
+files). No `db/models/`or `alembic/versions/` changes this round — all 8
+fixes are query-scoping, derived-field, and CLI-validation changes against
+the existing `0012`/`0013` schema.
+
+**A genuine test-environment bug found and fixed, unrelated to backfill
+logic:** the new CLI tests initially left a `sqlite3.Connection` unclosed —
+`main()`'s own `Database.from_settings(settings)` call constructs a *second*
+SQLAlchemy engine against the same SQLite file the test's `database` fixture
+already owns, and nothing disposes that second engine's connection pool
+before test teardown, which this project's `filterwarnings = ["error"]`
+pytest config correctly escalates to a hard error (reported against
+whichever *later* test happens to trigger garbage collection, per pytest's
+own unraisable-exception collection timing — not necessarily the test that
+leaked). Fixed by monkeypatching `backfill_module.Database` to a
+`SimpleNamespace(from_settings=lambda settings: database)` in each CLI test,
+so `main()` reuses the fixture's already-owned `Database` instance instead
+of constructing an undisposed second one. This is a test-harness fix, not a
+production-code change — `main()`'s own single real invocation per process
+was never the problem.
+
+**Now true:** All 8 round-5 review points are fixed with regression tests
+(test count in this file grew from 72 to 90+ across rounds 4→5 additions
+this session). No migration or model change this round.
+
+**Could not verify:** A sixth independent review pass has not yet happened
+as of this entry — validated by this session's own tests, gates, and one
+targeted live-evidence check (fix #3 only), not yet by a fresh reviewer
+against the actual pushed/rebased commit. This entry is being written
+*before* the required rebase onto `origin/main` (which has since advanced
+past this branch's `0ff417a` base through PR #14 and PR #22, with PR #22
+taking migration `0012` — this branch's provisional `0012`/`0013` must be
+renumbered to `0013`/`0014` before push). Genuinely fresh network
+reachability against `stats.nba.com`/`ak-static.cms.nba.com` was not
+attempted this round (no new HTTP calls at all this round — only a manual
+schema patch against a pre-existing cached DB and re-runs of the CLI's
+network-free `observations` command). Whether `injury-status-conversion`'s
+non-blocking-but-mandatory follow-ups have any path forward remains
+unassessed and out of scope for this PR.
+
+**Next:** Rebase onto `origin/main` at `036e4ca` (PR #22 merged, owns
+migration `0012`), renumber this branch's provisional migrations to
+`0013`/`0014` (down_revision chain `0012` → `0013` → `0014`), rerun the full
+gate suite including Postgres CI and the migration lifecycle
+(upgrade/check/downgrade round-trip), push, and request a fresh sixth
+independent review — without merging or self-approving.
+`injury-status-conversion` remains explicitly blocked.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: rebased onto PR #22 (main); migrations renumbered 0012/0013 → 0013/0014
+
+**Changed:** `origin/main` advanced to `036e4ca` (PR #22, "Add configurable
+scoring profiles," merged) and claimed migration `0012` for
+`0012_scoring_profile_lineage.py`, colliding with this branch's provisional
+`0012_injury_report_natural_key_game_date.py`/
+`0013_injury_report_evidence_schema_version.py`. Rebased this branch onto
+`036e4ca` (one conflict, in `docs/handoff.md` only — resolved by
+concatenating both sides' entries in append-only order, since the conflict
+was purely "both branches appended new entries at the same location," not a
+substantive disagreement) and renumbered:
+`0012_injury_report_natural_key_game_date.py` → `0013_...`
+(`down_revision` now `0012`), `0013_injury_report_evidence_schema_version.py`
+→ `0014_...` (`down_revision` now `0013`). Updated every in-repo prose
+reference to the old numbers (`docs/adapters/nba-injury-report.md`,
+`docs/backlog.md`, `docs/governance/risks.md`,
+`backend/src/hoops_gm/ingest/injury_report/backfill.py`'s docstrings/
+comments, one test docstring) to the new `0013`/`0014` numbers — this
+historical entry and all earlier ones in this file are deliberately left
+referring to whatever numbers were true when they were written, per this
+file's own append-only convention.
+
+**Now true:** This branch's migration chain is `... → 0011
+(league_deadline_calendars, PR #20) → 0012 (scoring_profile_lineage, PR #22)
+→ 0013 (injury_report_natural_key_game_date) → 0014
+(injury_report_evidence_schema_version)`, contiguous with current
+`origin/main`.
+
+**Could not verify:** Whether another PR will claim `0013`/`0014` before
+this one merges — the same race this branch has already been renumbered
+around twice (`0011`→`0012` after PR #20, `0012`/`0013`→`0013`/`0014` after
+PR #22). Must be re-checked immediately before requesting final review and
+again immediately before merge.
+
+**Next:** Re-run the full gate suite (Code, Adapter, migration
+upgrade/check/downgrade lifecycle, Postgres CI) against the rebased head,
+push, and request a fresh independent review pass. Not merged, not
+self-approved. `injury-status-conversion` remains explicitly blocked.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: rebased onto PR #23 (main); migration numbers unchanged
+
+**Changed:** `origin/main` advanced again to `4d5ab92` (PR #23, "Fail closed
+on null league-settings evidence," merged) — confirmed via
+`git show 4d5ab92 --stat` that it touched only
+`backend/src/hoops_gm/ingest/league_settings.py`,
+`backend/tests/test_league_settings.py`,
+`docs/adapters/fantrax-official.md`, and `docs/handoff.md`; no
+`backend/alembic/versions/` file changed, so the migration head on main is
+still `0012_scoring_profile_lineage.py`. This branch's migrations therefore
+keep their `0013`/`0014` numbers unchanged — only a rebase was needed, not a
+further renumbering. Rebased onto `4d5ab92` (one conflict, again only in
+`docs/handoff.md`, resolved the same way: concatenate HEAD's then the
+incoming commit's entries, since both sides only ever append).
+
+**Now true:** Branch head after this rebase sits directly on `4d5ab92`
+(PR #23) → `036e4ca` (PR #22) → ... Migration chain unchanged:
+`... → 0011 (PR #20) → 0012 (PR #22) → 0013 (this PR, natural-key fix) →
+0014 (this PR, evidence-schema-version)`. Re-ran the full local gate suite
+after the rebase: `ruff check` clean, `ruff format --check` clean (126
+files), bare `mypy .` clean (110 source files), full `pytest -q` all green,
+`pytest -m adapter_contract -q` all green, `scripts/check_no_secrets.py`
+clean (234 tracked files), and a fresh `alembic upgrade head` → `alembic
+check` → `alembic downgrade base` round-trip against a new throwaway SQLite
+file — all three steps succeeded, "No new upgrade operations detected," and
+the downgrade unwound cleanly to `-> ` (empty).
+
+**Could not verify:** Whether yet another PR merges to main and claims a
+migration number before this one is reviewed and merged — this project's
+migration slot has now moved three times under this branch (`0011` after
+PR #20, `0012`/`0013`→`0013`/`0014` after PR #22, unchanged-but-rebase-required
+after PR #23). Must re-check `origin/main`'s migration head immediately
+before every future push and again immediately before merge.
+
+**Next:** Push this rebase, confirm GitHub CI (including the Postgres job)
+is green against the new head, and obtain a fresh independent review. Not
+merged, not self-approved. `injury-status-conversion` remains explicitly
+blocked pending that review.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: sixth independent review found one missed file in the migration renumbering; fixed
+
+**Changed:** A sixth-round independent review of head `b03b8e9` (correcting
+this file's own prior claim that the `0012`/`0013`→`0013`/`0014` renumbering
+swept "every in-repo prose reference") found that
+`backend/src/hoops_gm/db/models/injury_report.py` — new in this PR — still
+used the old provisional pairing (0012 = natural-key fix, 0013 =
+evidence-schema-version) in six docstring/comment locations, contradicting
+every other reference in the diff and the actual migration files. This is a
+comment/docstring-only defect with zero runtime effect (all functional code
+paths were correctly renumbered), but it directly undermines this PR's own
+premise of trustworthy provenance documentation, so it is fixed rather than
+waved through. All six lines corrected to say 0013 (natural-key fix) / 0014
+(evidence-schema-version), matching the rest of the diff. Re-ran `ruff
+check`, `ruff format --check`, bare `mypy .`, and full `pytest -q` — all
+clean.
+
+**Now true:** Every in-repo reference to this PR's two migrations is
+internally consistent: 0013 = `injury_report_natural_key_game_date`, 0014 =
+`injury_report_evidence_schema_version`. The sixth review's other findings
+were all re-verifications of rounds 1-5's fixes holding under fresh,
+independent execution (not just trusting commit messages) — chain
+integrity, single alembic head, upgrade/check/downgrade round-trip, all
+eight round-5 fixes (a)-(h), ruff/mypy/pytest/adapter_contract all
+independently re-run and confirmed clean, and no evidence of dropped or
+duplicated logic from either rebase's append-only `docs/handoff.md`
+conflict resolution. No other defects found.
+
+**Could not verify:** Whether this is genuinely the last inconsistency —
+the same "renumbering commit missed one file" failure mode could recur if
+main's migration head moves again before this PR merges. A full-repo grep
+for the exact old numbers immediately before every future push remains the
+only defense.
+
+**Next:** Push this fix, confirm CI stays green, and report final status
+(exact head, all gates, CLEAN/MERGEABLE, all round 1-6 fixes) to the
+coordinator. Not merged, not self-approved. `injury-status-conversion`
+remains explicitly blocked.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: seventh round, three coverage-honesty defects found and fixed (checkpoint/coverage atomicity, unresolved-entry veto, stale-tipoff revalidation)
+
+**Changed:** A seventh independent review of head `d08cf88` found three
+HIGH-severity defects, all in the coverage/checkpoint machinery itself
+rather than in the source's actual coverage gap — each is exactly the
+"validation of form cannot catch errors of meaning" failure mode this
+project's own house rules warn about: the code ran, the types checked, and
+it still produced a confidently wrong per-game claim.
+
+1. **Checkpoint settlement and coverage evidence were not durably atomic.**
+   `run_backfill` accumulated every candidate's `CandidateCoverage` in
+   memory and wrote the whole run's coverage file once at the very end
+   (`main`), but checkpointed each candidate as settled immediately as it
+   was decided. A crash (or a later import exception) between those two
+   points left a permanently-settled candidate with no coverage record and
+   no way to reconstruct one, since resume skips settled candidates by
+   design — a durable, silent coverage hole. Fixed by adding a
+   `persist_coverage: Callable[[CandidateCoverage], None] | None` parameter
+   to `run_backfill` and a `_record_coverage` helper that calls it — merging
+   that single candidate's evidence into the durable, merge-idempotent
+   coverage file — strictly *before* `checkpoint.record(...)` in every one
+   of the four outcome branches (forbidden/403, not-available/404,
+   error/commit-failure, fetched). A crash between the two calls now either
+   leaves both durable, or leaves coverage durable with the checkpoint
+   still unsettled (safe: reprocessed on resume; idempotent for import via
+   its natural key and for coverage via `_coverage_merge_key`) — never the
+   reverse. `main()` wires this to the existing `_persist_coverage`
+   read-merge-write helper, unchanged in its own logic.
+2. **An unresolved report entry could let a game falsely read as a clean
+   zero-injury submission.** `coverage_for_games`'s entry query filtered on
+   `InjuryReportEntry.game_id.in_(...)`, so a listed (non-`NOT_YET_SUBMITTED`)
+   row whose `game_id` never resolved was structurally invisible to it.
+   Independently reproduced exactly as reported: a fetched report with one
+   unresolved `OUT` entry classified its game `submitted_zero_listed` while
+   `entries_in_scope=1, resolved_game_id=0, status_listed=1`. Fixed by
+   broadening the query to `game_date.in_(...)` (always populated) first,
+   then adding a local, conservative supplementary lookup that
+   re-attributes an unresolved row to a single unambiguous `ready` game on
+   its date via the report's own `Matchup` column tricodes (parsed by a new
+   `_matchup_tricodes` helper). When zero or more than one candidate game
+   matches, the row is never silently dropped: it vetoes
+   `submitted_zero_listed` for every game sharing that date through a new
+   `unresolved_evidence` outcome (`GameObservationCoverage.outcome`),
+   ranked above both `not_yet_submitted_only` and `submitted_zero_listed`
+   — so an unattributable listed row can only ever make a game's reported
+   outcome more honest, never disappear from it.
+3. **A tip-off correction could leave stale, now-post-tip coverage still
+   vouching for a clean submission.** `coverage_for_games` trusted a
+   fetched candidate's persisted `applicable_game_ids` unconditionally,
+   with no revalidation against the game's *current* `tipoff_utc`. If a
+   game's tip-off was corrected after that candidate's canonical masthead
+   instant was recorded, evidence that was genuinely pre-tip when fetched
+   can retroactively become post-tip — and only strictly pre-tip evidence
+   may support a clean-submission claim. Fixed: each fetched candidate's
+   `canonical_report_timestamp` is now parsed and compared against the
+   game's current `tipoff_utc` (looked up fresh from the live `ready`
+   argument on every call, never a stale precomputed set) before its
+   `applicable_game_ids` may contribute to `submitted_zero_listed`. A stale
+   candidate simply stops counting for that game (falling to
+   `no_candidate_coverage` if nothing else applies) without vetoing a
+   separate, still-valid candidate covering the same game — verified by a
+   dedicated stale-and-corrected-coexist regression.
+
+Six new regression tests were added to
+`backend/tests/test_injury_report_backfill.py`: two exact reproductions of
+findings #2/#3 (`test_coverage_for_games_does_not_let_an_unresolved_listed
+_entry_become_zero_listed`,
+`test_coverage_for_games_revalidates_canonical_timestamp_against_current
+_tipoff`), one veto-fallback test
+(`test_coverage_for_games_vetoes_zero_listed_for_a_genuinely_unattributable
+_row`), one coexistence test
+(`test_coverage_for_games_stale_and_corrected_coverage_can_coexist`), and
+two crash-after-settlement durability tests for finding #1, fetched and 404
+outcomes respectively
+(`test_run_backfill_persists_coverage_durably_before_settling_a_fetched
+_candidate`,
+`test_run_backfill_persists_coverage_durably_before_settling_a_404
+_candidate`) — each simulates a crash immediately after the first
+candidate's coverage is persisted but before its checkpoint would be
+written, confirms the process aborts with `_CrashAfterCoverage`, then
+resumes and asserts the durable coverage file already has that candidate's
+record (proving no hole) and that resuming produces no duplicate for it
+(proving no double-write on the merge-idempotent key).
+
+**Now true:** `ruff check` and `ruff format --check` clean across the
+repo; bare `mypy .` clean (110 source files); the full backend test suite
+(`pytest -q`, default `-m 'not live_smoke'`) exits 0 with no failures,
+including all 78 tests in `test_injury_report_backfill.py` (72 prior +
+6 new — confirmed via `--collect-only`; an earlier commit-message claim of
+"84/84" was a miscount, corrected here); `pytest -m adapter_contract -q`
+exits 0; `test_portability.py`'s
+static migration-chain checks pass; `scripts/check_no_secrets.py` finds no
+secrets in 234 tracked files. `docs/adapters/nba-injury-report.md` gained a
+new "Round-6 review found three more honesty defects" section documenting
+all three fixes in the same falsifiable style as prior rounds.
+`origin/main` was re-fetched and confirmed unchanged at `4d5ab92` (no
+rebase or migration renumbering required); the Alembic chain remains
+`0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
+(evidence-schema-version)`, confirmed via direct `revision`/`down_revision`
+inspection of each versions file.
+
+**Could not verify:** Whether a live Postgres instance is reachable in
+this session — Docker is not installed here (`docker` is not a recognized
+command), `TEST_DATABASE_URL` is unset, and no local Postgres service was
+available to start, so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record
+for this round's changes (none of which touch schema — no new migration
+was needed, only application-code and coverage-file-shape changes). Real
+403/network behavior against the live NBA CDN was not re-exercised this
+round: all three fixes were validated against recorded fixtures and
+in-memory doubles (`_CrashAfterCoverage`, scripted 403/404/fetched
+candidates), not a fresh live probe, so the actual production frequency of
+a genuine mid-run crash, an unresolved-entry-and-zero-listed collision, or
+a tip-off correction landing between two backfill runs remains
+theoretical rather than empirically observed — the fixes close a proven
+*possible* failure mode (each has an exact reproducing regression), not a
+measured *frequent* one. Whether GitHub's merge-readiness check (CI green,
+CLEAN/MERGEABLE) reflects this specific push is reported separately once
+observed after pushing.
+
+**Next:** Push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`,
+commission a fresh independent exact-head code review re-verifying these
+three fixes plus re-confirming rounds 1-6 have not regressed, then report
+the new exact head/base and full gate status to the coordinator. Still not
+merged, not self-approved; `injury-status-conversion` remains explicitly
+blocked pending the separate, later Model-gated deliverable.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: eighth round, three more evidence-identity defects found and fixed (current-DB tipoff race, per-game unresolved applicability, stable NBA game-id evidence)
+
+**Changed:** An eighth independent review, of exact head `650d74e`, found
+three more HIGH-severity defects in `coverage_for_games` and its evidence —
+again in the coverage-classification machinery itself, not the source's
+actual coverage gap. In-code comments and identifiers for these three
+fixes are labelled "round-7 review point 1/2/3" (matching the reviewer's
+own numbering of this specific finding set); this handoff entry is titled
+"eighth round" to keep this log's own sequential count of independent
+review passes against this PR.
+
+1. **Stale caller-supplied `tipoff_utc` snapshot, not the current DB
+   value.** `coverage_for_games` validated fetched-candidate mastheads
+   against the caller's own `BackfillGame.tipoff_utc` (the `ready`
+   argument) — ordinarily built by an earlier `games_to_backfill` call and
+   able to go stale before this function actually runs. A schedule
+   correction landing in that window could let evidence that is genuinely
+   post-tip against the *current* database row still be trusted as
+   pre-tip because the caller's own snapshot disagreed. Fixed: every
+   game's identity and `tipoff_utc` are now re-queried fresh from the
+   database inside `coverage_for_games`'s own read scope, and only that
+   freshly-read value is ever compared against a masthead timestamp. A
+   game whose live row disappeared or lost its tip-off since the caller's
+   snapshot was built is now reported `missing_tipoff` rather than
+   classified against a value that no longer reflects the database.
+
+2. **Unresolved-row veto was date-wide, not per-game/strictly-pre-tip,
+   and its precedence could be masked by `legacy_excluded`.** The
+   round-7 (seventh-round) fix let any current-schema row that never
+   resolved to a single game veto every game on that date, including ones
+   the row could not possibly concern (a report published after a game
+   already tipped off cannot be pregame evidence for that game); it also
+   excluded `NOT_YET_SUBMITTED` rows from the veto even though such a row
+   still proves genuine uncertainty about whichever game it actually
+   concerns; and a game with both a legacy row and separate current-schema
+   unresolved evidence could report the coarser `legacy_excluded` instead
+   of the more specific `unresolved_evidence`. Fixed: an unresolved row now
+   vetoes `submitted_zero_listed` only for the same-date games whose
+   *current* tip-off is strictly after the row's own report timestamp
+   (built via a `games_by_date` map over freshly-read tip-offs); the
+   `row.status is not NOT_YET_SUBMITTED` exclusion was removed, so
+   `NOT_YET_SUBMITTED` rows participate in the veto like any other
+   current-schema row; and the final outcome precedence now checks
+   `unresolved_evidence` before `legacy_excluded`, so current-schema
+   uncertainty is never masked by the coarser legacy caveat.
+
+3. **Persisted coverage relied on reusable surrogate `NbaGame.id` values
+   as evidence identity.** `CandidateCoverage.applicable_game_ids` named
+   games by their surrogate DB primary key, which a DB rebuild or
+   reingestion can reassign to a wholly unrelated game — a stale coverage
+   record could then prove `submitted_zero_listed` for whatever game now
+   holds that recycled id, not the game it actually covered. Fixed:
+   `CandidateCoverage` gained a required `applicable_nba_game_ids:
+   tuple[str, ...]` field (the NBA's own stable game identifier, already
+   carried by `BackfillGame.nba_game_id`) and a defaulted
+   `evidence_schema_version: int = CURRENT_COVERAGE_SCHEMA_VERSION`
+   field. `coverage_for_games` now matches fetched-candidate evidence
+   against games by `applicable_nba_game_ids` only, via a
+   `games_by_nba_id` map built from the same freshly-read rows as point 1
+   — `applicable_game_ids` is retained solely for human-readable display,
+   never as evidence identity. `CoverageReport.from_json` defaults a
+   pre-fix record's missing `applicable_nba_game_ids` to `()` and its
+   missing `evidence_schema_version` to `LEGACY_COVERAGE_SCHEMA_VERSION`
+   on load (rather than letting an absent key silently read as current),
+   and `coverage_for_games` explicitly skips any candidate whose
+   `evidence_schema_version` is below current — a pre-round-7/8 coverage
+   record is excluded entirely rather than trusted against whichever game
+   holds its surrogate id today. `PlannedFetch` and `build_plan` were
+   extended to compute and thread `applicable_nba_game_ids` alongside the
+   existing surrogate ids, and all five `CandidateCoverage.from_candidate`
+   call sites in `run_backfill` were updated to pass it.
+
+Nine new regression tests were added to
+`backend/tests/test_injury_report_backfill.py`:
+`test_coverage_for_games_uses_current_db_tipoff_not_stale_caller_snapshot`
+(point 1 — a stale caller snapshot must not launder post-tip evidence as
+clean); five staggered-multi-game tests for point 2
+(`test_coverage_for_games_unattributable_row_before_both_tipoffs_vetoes
+_both_games`,
+`..._unattributable_row_between_tipoffs_vetoes_only_the_later_game`,
+`..._unattributable_row_after_both_tipoffs_vetoes_neither_game`,
+`..._unattributable_not_yet_submitted_row_still_vetoes`,
+`..._unattributable_legacy_row_does_not_veto`, and
+`test_coverage_for_games_unresolved_evidence_outranks_legacy_excluded` for
+the precedence fix); and two for point 3
+(`test_coverage_for_games_stable_nba_id_prevents_reused_surrogate_id
+_transfer`,
+`test_coverage_for_games_legacy_evidence_schema_version_is_excluded_fail
+_closed`). All sixteen pre-existing `CandidateCoverage.from_candidate(...)`
+call sites across the test file were also updated to pass the new
+required `applicable_nba_game_ids` keyword (real games' `.nba_game_id` for
+DB-backed tests, parallel placeholder strings like `"nba-1"` for the
+JSON-round-trip/merge-key tests that use placeholder surrogate ints and
+never call `coverage_for_games` itself).
+
+While rewriting `coverage_for_games`, a mypy variable-shadowing bug was
+introduced and caught before commit: an `NbaGame` dict comprehension and a
+later `InjuryReportEntry` loop both used the loop variable name `row`
+within the same function, and mypy narrowed `row`'s type from the first
+usage, flagging every `InjuryReportEntry`-only attribute access on the
+second loop as invalid. Fixed by renaming the `NbaGame` comprehension's
+variable to `nba_row` throughout its scope; `mypy src/hoops_gm/ingest
+/injury_report/backfill.py` confirmed clean afterward. This was caught by
+the type checker before any test ran, not by a test — worth noting since
+this project's own house rule is that green tests do not prove
+correctness; here the type gate is what actually caught the defect.
+
+**Now true:** `ruff check` and `ruff format --check` clean across the
+repo; bare `mypy .` clean (110 source files); the full backend test suite
+(`pytest -q`, default `-m 'not live_smoke'`) exits 0 with no failures,
+including all 87 tests in `test_injury_report_backfill.py` (78 prior + 9
+new — confirmed via `--collect-only`); `pytest -m adapter_contract -q`
+exits 0; `test_portability.py`'s static migration-chain checks pass;
+`scripts/check_no_secrets.py` finds no secrets in 234 tracked files.
+`origin/main` was re-fetched and confirmed unchanged at `4d5ab92` (no
+rebase or migration renumbering required — this round's changes are an
+application-code and coverage-JSON-artifact-shape change, not a database
+schema change); the Alembic chain remains
+`0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
+(evidence-schema-version)`.
+
+**Could not verify:** Whether a live Postgres instance is reachable in
+this session — the same constraint as every prior round: Docker is not
+installed, `TEST_DATABASE_URL` is unset, and no local Postgres service was
+available to start, so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record.
+Real 403/network behavior and a genuine schedule-correction race against
+the live NBA CDN were not re-exercised this round either: all three fixes
+were validated against recorded fixtures, seeded SQLite rows, and directly
+constructed `CandidateCoverage`/`BackfillGame` doubles, not a fresh live
+probe or a real concurrent-write race — the fixes close proven *possible*
+failure modes (each has an exact reproducing regression against the
+described mechanism), not measured *frequent* ones, and the staggered
+multi-game veto tests use synthetic same-date games rather than a
+recovered real slate with genuinely staggered tip-offs. Whether GitHub's
+merge-readiness check (CI green, CLEAN/MERGEABLE) reflects this specific
+push is reported separately once observed after pushing.
+
+**Next:** Push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`,
+commission a fresh independent exact-head code review re-verifying these
+three fixes plus re-confirming rounds 1-7 have not regressed, then report
+the new exact head/base and full gate status to the coordinator. Still not
+merged, not self-approved; `injury-status-conversion` remains explicitly
+blocked pending the separate, later Model-gated deliverable.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: ninth round, ORM identity-map staleness, full schedule-scope binding, and duplicate/leaked coverage output found and fixed
+
+**Changed:** A ninth independent review, of exact head `b1f2d67`, found four
+more defects (two HIGH, two MEDIUM release-blocking) in `coverage_for_games`
+— once again in the classification machinery's own evidence handling, not
+the source's actual coverage gap. In-code comments are labelled "round-9
+review point 1/2/3/4" (matching the reviewer's own numbering); this entry is
+"ninth round" to keep this log's sequential count of independent review
+passes against this PR.
+
+1. **ORM identity-map staleness could still return a stale tip-off even
+   after round-8's "re-query fresh" fix.** Round 8 replaced the caller's
+   snapshot with a fresh `session.scalars(select(NbaGame)...)` query, but a
+   plain re-query is not automatically a fresh *read*: if the same session
+   already has a `NbaGame` row loaded in its identity map (e.g. from an
+   earlier call, or a caller that touched the row for an unrelated reason),
+   SQLAlchemy's default merge behavior leaves that already-loaded instance's
+   attributes untouched, even though the query itself re-executes against
+   the database. This project's session factory is configured with
+   `expire_on_commit=False`, so even the session's own commit does not clear
+   this staleness — it persists until something forces a real refresh.
+   Fixed: `.execution_options(populate_existing=True)` was added to all
+   three `NbaGame` queries in `coverage_for_games` and
+   `select_canonical_pregame_observations` that matter for freshness
+   (the `current_rows` query, the `by_tricode_pair`-building loop, and the
+   games dict comprehension in `select_canonical_pregame_observations`),
+   forcing SQLAlchemy to repopulate any already-identity-mapped instance's
+   attributes from the query's own fresh result row rather than trusting
+   whatever was cached.
+
+2. **Persisted coverage validated only stable NBA game id + timestamp, not
+   full schedule-scope binding or an exact schema version.** Round 7/8
+   rejected legacy (`< CURRENT`) schema versions and matched by stable NBA
+   game id, but an *unrecognized future* schema version (`>= CURRENT`) still
+   passed, and nothing checked that a candidate's `report_date` still
+   matched the game's *current* `game_date` (a reschedule keeping the same
+   stable id could inherit stale evidence for a different date) or that the
+   `CoverageReport`'s own `season`/`season_type` matched the game's current
+   schedule scope (evidence built under one season/type could otherwise
+   "prove" a claim for an unrelated one sharing the same NBA game id by
+   coincidence). Fixed: the schema-version check changed from `<` to `!=`
+   (rejects both legacy *and* unrecognized-future versions); a new
+   `game.game_date == date.fromisoformat(candidate.report_date)` binding
+   check rejects evidence for a game rescheduled to a different date; and a
+   new `game_scope_by_id: dict[int, tuple[str, str]]` map (built from the
+   same freshly-read rows, no extra query) checks the game's current
+   `(season, season_type.value)` against `coverage_report.season`/
+   `coverage_report.season_type` before trusting any `submitted_zero_listed`
+   claim.
+
+3. **A retracted-tipoff game was emitted twice.** The `for g in ready:`
+   results loop appended an inline `missing_tipoff` record whenever
+   `games_by_id.get(g.game_id)` was `None`, and the same game was emitted
+   again via the separate `for mg in newly_missing:` loop, inflating
+   counts. Fixed: the inline emission was removed (now a bare `continue`
+   with a comment explaining the game is already captured exactly once via
+   `newly_missing`).
+
+4. **Resolved-but-out-of-scope evidence fanned out onto unrelated same-date
+   games.** If a row's `game_id` was non-null but no longer resolved to a
+   currently-live game (e.g. because that game's own tip-off was
+   retracted), it was treated identically to a genuinely unattributable row
+   (`game_id is None`) and fanned the conservative date-wide veto across
+   every later same-date game — contaminating games it says nothing about.
+   Fixed: the fan-out veto logic (`unresolved_evidence_ids`) now applies
+   only when `row.game_id is None`; a resolved-but-out-of-scope `game_id`
+   is `continue`d without any side effect, remaining bound to its own
+   (now-missing) game.
+
+Seven new regression tests were added to
+`backend/tests/test_injury_report_backfill.py`:
+`test_coverage_for_games_uses_database_current_tipoff_despite_retained_orm_identity`
+(point 1 — a genuine two-session reproduction: one session's identity-mapped
+row is committed stale, a wholly separate session updates and commits the
+correction, and classification through the first session must see the
+corrected value);
+`test_coverage_report_from_json_loads_real_legacy_serialized_text_as_legacy`,
+`test_coverage_report_from_json_rejects_an_unrecognized_future_schema_version`,
+`test_coverage_for_games_rejects_evidence_whose_report_date_no_longer_matches_current_game`,
+and
+`test_coverage_for_games_rejects_evidence_from_a_coverage_report_with_a_different_season`
+(point 2 — hand-written literal legacy JSON text, an unrecognized future
+`evidence_schema_version`, a rescheduled game_date, and a mismatched
+`season`, each proven unable to yield `submitted_zero_listed`);
+`test_coverage_for_games_retracted_tipoff_game_is_emitted_exactly_once`
+(point 3 — an exact cardinality assertion, not just an outcome check); and
+`test_coverage_for_games_resolved_out_of_scope_row_does_not_leak_to_unrelated_game`
+(point 4 — a resolved-but-retracted game plus an unrelated later same-date
+game, proving the latter is not vetoed).
+
+A mypy narrowing regression was hit and fixed during this round: an initial
+refactor of the unattributable-row branch introduced an intermediate
+`resolved_by_id = row.game_id is not None` boolean to avoid repeating the
+`None`-check, which broke mypy's flow-sensitive narrowing on
+`row.game_id: int | None` at the later `games_by_id.get(row.game_id)` call
+(mypy could not infer non-`None`-ness through the boolean indirection).
+Fixed by checking `row.game_id is not None` directly at both call sites
+instead of caching the boolean result — worth remembering for any future
+refactor of this function, since this is the second round in a row a
+`None`-narrowing subtlety has appeared here (round 8's was a *variable-name
+shadowing* issue; this one is an *indirection-breaks-narrowing* issue).
+
+**Now true:** `ruff check` and `ruff format --check` clean across the repo;
+bare `mypy .` clean (110 source files); the full backend test suite
+(`pytest -q`, default `-m 'not live_smoke'`) exits 0 with no failures,
+including all 94 tests in `test_injury_report_backfill.py` (87 prior + 7
+new — confirmed via `--collect-only`); `pytest -m adapter_contract -q`
+exits 0; `test_portability.py`'s static migration-chain checks pass;
+`scripts/check_no_secrets.py` finds no secrets in 234 tracked files.
+`origin/main` was re-fetched and confirmed unchanged at `4d5ab92` (no rebase
+or migration renumbering required — this round's changes are again an
+application-code and coverage-classification-logic change, not a database
+schema change); the Alembic chain remains
+`0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
+(evidence-schema-version)`.
+
+**Could not verify:** Whether a live Postgres instance is reachable in this
+session — the same constraint as every prior round: Docker is not
+installed, `TEST_DATABASE_URL` is unset, and no local Postgres service was
+available to start, so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record.
+The identity-map-staleness reproduction (point 1) does exercise a genuine
+two-session/two-transaction race against a real file-backed SQLite database
+(via the `database` fixture, not the single non-committing `session`
+fixture), which is a materially stronger reproduction than a synthetic
+double built entirely in one session/transaction — but it is still not a
+live probe against the real NBA CDN or a real concurrent-write race under
+production load, and Postgres's own MVCC/locking behavior for this exact
+sequence was not independently exercised this round (SQLite's locking
+semantics differ from Postgres's, though `populate_existing` itself is a
+SQLAlchemy ORM-layer behavior independent of the backing dialect). Whether
+GitHub's merge-readiness check (CI green, CLEAN/MERGEABLE) reflects this
+specific push is reported separately once observed after pushing.
+
+**Next:** Push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`, commission
+a fresh independent exact-head code review re-verifying these four fixes
+plus re-confirming rounds 1-8 have not regressed, then report the new exact
+head/base and full gate status to the coordinator. Still not merged, not
+self-approved; `injury-status-conversion` remains explicitly blocked pending
+the separate, later Model-gated deliverable.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: tenth round, single-snapshot classification, coverage scope/version binding, and scope-sensitive checkpoint settlement
+
+**Changed:** A tenth independent review, of exact head `15e923e`, found three
+more release-blocking defects (two HIGH, one MEDIUM) in the same coverage/
+checkpoint machinery — again in the classification layer's own evidence
+handling, not the source's actual coverage gap. In-code comments are labelled
+"round-10 review point 1/2/3"; this entry is "tenth round" to keep this log's
+sequential count of independent review passes against this PR.
+
+1. **Classification still mixed state across separate statements, this time
+   between two different functions.** `coverage_for_games` issued one
+   `NbaGame` query building `games_by_id`, then called
+   `select_canonical_pregame_observations`, which issued its *own*,
+   separately-timed `NbaGame` query solely to look up tip-offs for lead-time
+   computation. A schedule correction landing between the two could let one
+   game's trust-classification see an old tip-off while another game's
+   observation lead-time, computed moments later in the very same
+   `coverage_for_games` call, already saw a new one — self-inconsistent
+   within one invocation. Round 9 already established that a second query
+   is not automatically fixed by re-querying (ORM identity-map staleness);
+   this round removes the second query outright. Fixed: `coverage_for_games`
+   now reads every classification-relevant field — stable id, local id,
+   date, tip-off, season, season_type, and both teams' abbreviations (via
+   `aliased(NbaTeam)` for home/away) for tricode matching — in **exactly
+   one** `SELECT`, once, at the top of the function; every downstream map
+   (`games_by_id`, `games_by_nba_id`, `game_scope_by_id`, `games_by_date`,
+   the tricode-pair index, `game_tipoffs`) is derived solely from that one
+   immutable result. `select_canonical_pregame_observations` gained an
+   optional `game_tipoffs: Mapping[int, datetime] | None` parameter so
+   `coverage_for_games` can pass its own snapshot in rather than triggering
+   a second query; its other (exclusion-cascade) call site is unaffected and
+   still queries internally when the parameter is omitted. Selecting
+   individual columns rather than full `NbaGame` entities also means there
+   is no ORM identity map for a stale instance to hide in at all —
+   `populate_existing` becomes structurally moot, not merely applied.
+
+   The regression proves this with a real second database connection, not a
+   mock: `test_coverage_for_games_reads_one_atomic_snapshot_despite_a_correction_committed_mid_call`
+   registers a `before_cursor_execute` hook — fired by the SQLAlchemy engine
+   itself as the classification statement is about to run, not sequenced by
+   test code before the call — that has a wholly separate session commit a
+   tip-off correction for one game and retract another's entirely. The test
+   asserts (a) the classification `SELECT` (matched by its unique
+   `home_abbr` column label) executes exactly once for the whole call, and
+   (b) the one query's result reflects the corrected 20:00 tip-off for the
+   first game and the retraction for the second, together and consistently
+   — proving there is no second statement left for a correction to land
+   between, and that a stale caller-supplied `ready` snapshot cannot win
+   either.
+
+2. **Persisted coverage validated stable identity and per-game schedule
+   scope, but not the file's own declared scope or each candidate's own
+   recorded scope.** `_persist_coverage`/`_merge_coverage` could load a
+   candidate carrying a different `season`/`season_type` than either the
+   file already held or the caller's current request, merge it by an
+   identity key that omitted season/type, and rewrite the file under the
+   caller's trusted label — silently laundering wrong-scope evidence into
+   a scope it never actually belonged to. Fixed: `CURRENT_COVERAGE_SCHEMA_VERSION`
+   bumped 2 → 3; `CandidateCoverage` gained required `season`/`season_type`
+   fields (self-describing its own scope, not just inherited from the
+   enclosing `CoverageReport`); `_coverage_merge_key` is now a 5-tuple
+   including season/season_type; `_persist_coverage` raises the new
+   `CoverageScopeMismatch` when the file's own declared scope disagrees
+   with the current request (refusing to merge and rewrite under the wrong
+   label), and separately excludes — without raising — any individual
+   candidate whose own recorded scope disagrees, even inside an otherwise-
+   matching file. `coverage_for_games` also gained a defense-in-depth check
+   rejecting a fetched candidate whose self-described `season`/`season_type`
+   disagrees with the `CoverageReport`'s own, on top of the existing
+   DB-derived `game_scope_by_id` check from round 9.
+
+   Three new regression tests exercise the real `_persist_coverage` load +
+   merge + save path against hand-built literal serialized JSON (not
+   in-memory objects, via a new `_serialized_candidate` test helper):
+   `test_persist_coverage_raises_on_whole_file_season_mismatch`,
+   `test_persist_coverage_raises_on_whole_file_season_type_mismatch`, and
+   `test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagrees`.
+
+3. **Checkpoint settlement identity ignored applicable-game scope
+   entirely.** `Checkpoint.key()` embeds `(date, anchor, resolved
+   report_timestamp)`, which round 4 fixed to catch a *changed* resolved
+   instant — but a near-tip candidate's instant is derived from a date's
+   earliest *known* tip-off among currently-ready games. A genuine
+   `--allow-missing-tipoff` partial day, where a same-day game's tip-off is
+   ingested *later* than the date's already-known earliest, leaves the
+   resolved instant (and therefore the checkpoint key) completely
+   unchanged — the same key still matches on resume, so the previously
+   recorded settlement (covering only the games ready at the time) was
+   trusted forever, permanently stuck at `no_candidate_coverage` for the
+   newly-ready game even though the exact URL this candidate names was
+   already fetched (or confirmed `not_available`) and genuinely does apply
+   to it now. Fixed: `Checkpoint.is_settled`/`record` now accept an
+   `applicable_nba_game_ids: Sequence[str]` parameter; `record` persists the
+   settled scope (stable NBA game ids, not surrogate local ids) alongside
+   the existing key fields, and `is_settled` reports unsettled — regardless
+   of whether the resolved-timestamp key itself changed — whenever the
+   currently requested scope is not a subset of what was actually recorded
+   settled. `run_backfill` and `BackfillPlan.PlannedFetch` were threaded
+   through: every `checkpoint.record`/`is_settled` call site now passes
+   `pf.applicable_nba_game_ids`. Reprocessing on scope expansion is
+   idempotent either way — the raw payload is already locally cached, a
+   fetched candidate's re-import is idempotent by natural key, and a
+   `not_available` candidate simply stays `not_available` — so this only
+   ever expands correctly-attributed coverage, never duplicates anything.
+   Corrected a false claim this project's own adapter doc made about this:
+   it previously implied a newly-ingested game *always* changes the
+   resolved timestamp, which is only true when the new game's tip-off is
+   *earlier* than the date's already-known earliest — the doc now explains
+   both cases and the scope-fingerprint fix that catches the one where the
+   timestamp does not change.
+
+   `test_run_backfill_partial_day_missing_tipoff_then_later_tipoff_resumes_and_expands_scope`
+   is an end-to-end regression through `build_plan`/`run_backfill`/
+   `Checkpoint`/`coverage_for_games` together: run 1 settles a near-tip
+   candidate covering only a ready game A while game B is genuinely missing
+   a tip-off; game B then gains a tip-off *later* than game A's (so the
+   date's earliest tip-off, and this candidate's resolved instant, are
+   provably unchanged — asserted directly); the candidate is proven *not*
+   settled for the expanded scope, resume reprocesses it (not skipped,
+   zero new rows created — a clean idempotent reprocess of a zero-listed
+   payload), and `coverage_for_games` afterward classifies both games as
+   `submitted_zero_listed`, not leaving game B stuck at
+   `no_candidate_coverage`.
+
+Fixing 21 pre-existing `CandidateCoverage.from_candidate(...)` test call
+sites for the new required `season`/`season_type` kwargs, and 3 direct
+`checkpoint.record(...)` test call sites for the new
+`applicable_nba_game_ids` kwarg, surfaced a genuine pre-existing test gap:
+several tests recorded settlement with an implicit empty scope and then
+checked `is_settled` against a real, non-empty `PlannedFetch.applicable_nba_game_ids`
+from an actual `build_plan()` result — which the new subset-check now
+(correctly) reports as unsettled, forcing those call sites to pass the real
+scope explicitly rather than relying on the previously-inert default.
+
+A mypy variable-shadowing subtlety was hit and fixed this round, a third
+consecutive round with a distinct flavor of the same underlying lesson
+(round 8: shadowing across an unrelated branch; round 9: an intermediate
+boolean breaking flow-sensitive narrowing; this round: reusing the same
+local variable name — `row` — for two structurally different query-result
+row types across two different loops in the same function body, which
+caused mypy to unify/misinfer the type across both usages). Fixed by
+renaming the outer snapshot-loop variable to `snap_row`.
+
+**Now true:** `ruff check` and `ruff format --check` clean across the repo;
+bare `mypy .` clean (110 source files); the full backend test suite
+(`pytest -q`, default `-m 'not live_smoke'`) exits 0 with no failures,
+including all 99 tests in `test_injury_report_backfill.py` (94 prior + 5
+new — confirmed via `--collect-only`); `pytest -m adapter_contract -q`
+exits 0; `test_portability.py`'s static migration-chain checks pass;
+`scripts/check_no_secrets.py` finds no secrets in 234 tracked files.
+`origin/main` was re-fetched and confirmed unchanged at `4d5ab92` (no
+rebase or migration renumbering required — this round is again an
+application-code and coverage/checkpoint-logic change, not a database
+schema change); the Alembic chain remains
+`0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
+(evidence-schema-version)`.
+
+**Could not verify:** Whether a live Postgres instance is reachable in this
+session — the same constraint as every prior round: Docker is not
+installed, `TEST_DATABASE_URL` is unset, and no local Postgres service was
+available to start, so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record.
+The single-snapshot concurrency regression (point 1) does exercise a
+genuine two-session/two-transaction race against a real file-backed SQLite
+database (via the `database` fixture and a real `before_cursor_execute`
+engine hook, not a synthetic double built entirely in one
+session/transaction) — but SQLite's locking semantics differ materially
+from Postgres's READ COMMITTED snapshot behavior the original finding named,
+and this exact interleaving was not independently re-exercised against a
+live Postgres connection this round. No live NBA CDN probe was attempted
+this round (no code path touching the live archive changed). Whether
+GitHub's merge-readiness check (CI green, CLEAN/MERGEABLE) reflects this
+specific push is reported separately once observed after pushing.
+
+**Next:** Push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`, commission
+a fresh independent exact-head code review re-verifying these three fixes
+plus re-confirming rounds 1-9 have not regressed, then report the new exact
+head/base and full gate status to the coordinator. Still not merged, not
+self-approved; `injury-status-conversion` remains explicitly blocked pending
+the separate, later Model-gated deliverable.

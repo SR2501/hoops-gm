@@ -211,6 +211,84 @@ def test_import_converges_two_nearby_legacy_requests_into_one_history_row(sessio
     assert len(rows) == len(early_result.entries)
 
 
+def test_import_never_collapses_a_back_to_back_split_across_game_dates(session: Any) -> None:
+    """FAILS IF the natural key omits ``game_date``, silently losing one game.
+
+    One masthead reporting on a team playing a back-to-back can legitimately
+    carry two rows for the identical player, on the identical team, at the
+    identical ``report_timestamp`` — one for the game the day before, one for
+    the game the day after — differing only in ``game_date``. Before
+    ``game_date`` was part of the natural key
+    (``uq_injury_report_entries_report_team_player_date``), the second row's
+    import silently *updated* the first as though it were a correction to
+    the same row, permanently losing the first night's distinct player-game
+    observation. Both nights must persist as two rows, not collapse to one.
+    """
+    shared_timestamp = REPORT_TIMESTAMP
+    night_one = InjuryReportEntryRecord(
+        report_timestamp=shared_timestamp,
+        game_date=date(2025, 11, 1),
+        game_time_raw="07:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",
+        status_raw="Questionable",
+        status=InjuryReportStatus.QUESTIONABLE,
+    )
+    night_two = InjuryReportEntryRecord(
+        report_timestamp=shared_timestamp,
+        game_date=date(2025, 11, 2),  # the back-to-back's second night
+        game_time_raw="07:00 (ET)",
+        matchup_raw="SAC@DET",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",  # identical player, identical team, identical timestamp
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+    )
+
+    counts = import_injury_report_entries(
+        session, [night_one, night_two], source_url="https://example.invalid/fixture"
+    )
+
+    assert counts.created == 2  # both nights are distinct rows, never a create + an update
+    assert counts.updated == 0
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == 2
+    by_date = {r.game_date: r for r in rows}
+    assert by_date[date(2025, 11, 1)].status is InjuryReportStatus.QUESTIONABLE
+    assert by_date[date(2025, 11, 2)].status is InjuryReportStatus.OUT
+
+
+def test_import_preserves_first_seen_provenance_url_on_convergence(session: Any) -> None:
+    """A later, unrelated request URL must never overwrite the original.
+
+    Two different requested instants can legitimately converge on the same
+    natural key (masthead canonicalization, or a genuine correction) — but
+    ``source_url`` records *where this row was first discovered*, and a
+    later request's URL is not necessarily the same document. Overwriting it
+    unconditionally on every update would silently lose that provenance.
+    """
+    record = InjuryReportEntryRecord(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="07:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",
+        status_raw="Questionable",
+        status=InjuryReportStatus.QUESTIONABLE,
+    )
+
+    import_injury_report_entries(session, [record], source_url="https://example.invalid/first-seen")
+    import_injury_report_entries(
+        session, [record], source_url="https://example.invalid/second-request"
+    )
+
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == 1
+    assert rows[0].source_url == "https://example.invalid/first-seen"
+
+
 def test_parser_rejects_a_naive_report_timestamp() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         parse_injury_report_pdf(

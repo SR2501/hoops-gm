@@ -16,6 +16,16 @@ each new capture would destroy the one thing this table exists to keep:
 history. ``report_timestamp`` is therefore part of the natural key, not merely
 a column.
 
+**``game_date`` is also part of the natural key, not merely a column.** One
+report capture's "rolling window" genuinely names the same player on the same
+team twice, once per calendar date, when that team plays a back-to-back the
+very next night — the same masthead lists both games. Without ``game_date``
+in the key, the second night's row collided with the first night's under
+``(report_timestamp, team_raw, player_name_raw)`` alone and silently
+overwrote it as an ordinary update, destroying one of the two distinct
+player-games this row is supposed to distinguish. This was found by
+independent review before it corrupted any evidence relied upon downstream.
+
 **Deliberately not versioned like ``opponent_context``/``off_night_slates``.**
 ADR-009 draws the line between ``schedule-ingest`` (data-engineer, ingested
 fact, Adapter gate) and ``schedule-context`` (quant, modelled output, Model
@@ -24,6 +34,18 @@ injury-report analogue of ``team_schedule``, not of ``opponent_context``: it
 carries no model version because it asserts nothing beyond what the league
 published. A future model consuming this table is where that cascade applies,
 not here.
+
+**``import_schema_version`` distinguishes rows written under the fixed
+natural key from rows that predate it.** Migration 0013 fixed a real
+back-to-back collision (see above); any row whose *last write* predates
+migration 0014 cannot be trusted to be free of that collision after the
+fact — the overwrite, if it happened, already destroyed the evidence that
+would prove it. Those rows are stamped ``LEGACY_EVIDENCE_SCHEMA_VERSION``
+(``1``); every row the fixed importer creates or updates from migration
+0014 onward is stamped ``CURRENT_EVIDENCE_SCHEMA_VERSION`` (``2``). A
+canonical-observation query defaults to excluding version-1 rows rather
+than silently trusting them — see
+``injury_report.backfill.select_canonical_pregame_observations``.
 
 **``player_id`` and ``game_id`` are best-effort and nullable.** The report
 names a player by "Last, First" text and a game by a two-team tricode
@@ -37,9 +59,9 @@ reason ``player_participation.raw_comment`` is never dropped.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from sqlalchemy import Date, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, Index, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
@@ -49,6 +71,21 @@ if TYPE_CHECKING:
     from hoops_gm.db.models.identity import NbaTeam, Player
     from hoops_gm.db.models.stats import NbaGame
 
+#: The evidence-schema version a row was *last written under*. ``1`` is any
+#: row whose most recent write predates migration 0014 — practically, any
+#: row that has never been re-imported by the natural-key-fixed importer
+#: (migration 0013 + the corresponding ``import_injury_report_entries``
+#: fix). Those rows cannot be algorithmically distinguished after the fact
+#: from a row that genuinely never collided under the old 3-column key —
+#: the collision, if one happened, already silently overwrote its victim
+#: before this column existed to say so. ``2`` (:data:`CURRENT_EVIDENCE_SCHEMA_VERSION`)
+#: is written by every row the fixed importer creates or touches going
+#: forward. A canonical-observation query defaults to excluding version-1
+#: rows for exactly this reason — see
+#: ``injury_report.backfill.select_canonical_pregame_observations``.
+LEGACY_EVIDENCE_SCHEMA_VERSION: Final = 1
+CURRENT_EVIDENCE_SCHEMA_VERSION: Final = 2
+
 
 class InjuryReportEntry(IntPk, TimestampMixin, Base):
     """One player's designation on one captured NBA official injury report."""
@@ -56,14 +93,25 @@ class InjuryReportEntry(IntPk, TimestampMixin, Base):
     __tablename__ = "injury_report_entries"
     __table_args__ = (
         # The natural key of one report capture: the same report published at
-        # the same timestamp names the same player for the same team at most
-        # once. This is what makes re-ingesting an already-captured report an
-        # idempotent no-op rather than a duplicate.
+        # the same timestamp names the same player for the same team on the
+        # same game date at most once. This is what makes re-ingesting an
+        # already-captured report an idempotent no-op rather than a
+        # duplicate. ``game_date`` is part of this key, not merely
+        # ``(report_timestamp, team_raw, player_name_raw)`` — a single report
+        # capture's "rolling window" genuinely lists the same player on the
+        # same team twice when that team plays a back-to-back covered by one
+        # masthead (verified live: a report's window spans two calendar game
+        # dates). Without ``game_date`` in the key, the second night's row for
+        # that player silently overwrote the first night's as an ordinary
+        # "update", destroying one of the two distinct player-games under the
+        # same key. Found by independent review of the historical-backfill
+        # PR before any evidence relying on it was trusted.
         UniqueConstraint(
             "report_timestamp",
             "team_raw",
             "player_name_raw",
-            name="uq_injury_report_entries_report_team_player",
+            "game_date",
+            name="uq_injury_report_entries_report_team_player_date",
         ),
         Index("ix_injury_report_entries_player_report", "player_id", "report_timestamp"),
     )
@@ -124,6 +172,17 @@ class InjuryReportEntry(IntPk, TimestampMixin, Base):
     #: The exact PDF URL this row was captured from, so a disputed row can be
     #: traced back to the raw capture in ``RawPayloadStore``.
     source_url: Mapped[str] = mapped_column(String(255))
+    #: See :data:`CURRENT_EVIDENCE_SCHEMA_VERSION` / :data:`LEGACY_EVIDENCE_SCHEMA_VERSION`.
+    #: Migration 0014 stamps every row that existed before it ran with ``1``;
+    #: the importer always writes ``CURRENT_EVIDENCE_SCHEMA_VERSION`` on
+    #: every create *and* every update from this point forward, so a legacy
+    #: row is automatically upgraded the next time a real re-import touches
+    #: it under the fixed key.
+    import_schema_version: Mapped[int] = mapped_column(
+        SmallInteger,
+        default=CURRENT_EVIDENCE_SCHEMA_VERSION,
+        server_default=str(CURRENT_EVIDENCE_SCHEMA_VERSION),
+    )
 
     team: Mapped[NbaTeam | None] = relationship(foreign_keys=[team_id])
     game: Mapped[NbaGame | None] = relationship(foreign_keys=[game_id])
