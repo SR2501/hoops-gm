@@ -53,7 +53,14 @@ FastAPI app in backend/ with pydantic settings/config, structured logging, /heal
 
 - [x] **done**
 
-Resolved 2026-08-17 by the owner making the repository public. Public repositories are exempt from the Actions quota and receive free secret scanning, push protection, and CodeQL. CI was restored and PR #3 merged the scheduled live-smoke repair. The incident analysis and corrected quota diagnosis remain in `docs/governance/OPEN-ci-billing.md`.
+The outage began around 12:58Z on 2026-08-17 after a last green run at
+12:56Z, when the account-wide private-repository Actions quota was exhausted.
+Resolved the same day by the owner making the repository public, deliberately
+accepting that the strategy became visible and noting the repository's
+portfolio value. Public repositories are exempt from the Actions quota and
+receive free secret scanning, push protection, and CodeQL. CI was restored and
+PR #3 merged the scheduled live-smoke repair. The incident analysis and
+corrected quota diagnosis remain in `docs/governance/OPEN-ci-billing.md`.
 
 ### `ci-pipeline` - Setting up the CI pipeline
 
