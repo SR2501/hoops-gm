@@ -16,7 +16,7 @@ from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -45,6 +45,7 @@ from hoops_gm.ingest.injury_report.backfill import (
     ExpectedGameCoverage,
     IncompleteExpectedGameCoverage,
     IncompleteScheduleCoverage,
+    MissingTipoffGame,
     ReportCandidate,
     SuspectedSourceBlock,
     _coverage_merge_key,
@@ -1194,6 +1195,82 @@ def test_run_backfill_does_not_checkpoint_as_settled_when_the_commit_fails(
     )
     resumed_result = run_backfill(
         session, plan=resumed_plan, fetch_and_parse=resumed_fetcher, checkpoint=checkpoint
+    )
+    assert evening_before.candidate in resumed_result.fetched
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == 1
+
+
+def test_run_backfill_does_not_checkpoint_as_settled_when_the_import_flush_fails(
+    session: Any, tmp_path: Path
+) -> None:
+    """Round-11 review point 4: an import-time flush failure must never look settled either.
+
+    ``import_injury_report_entries`` calls ``session.flush()`` internally,
+    *before* ``run_backfill`` ever reaches its own ``session.commit()``.
+    Before this fix, that flush sat entirely outside any try/except in
+    ``run_backfill``: an exception from it propagated straight out of the
+    whole function, aborting every other candidate in the plan too --
+    rather than being handled as this one candidate's recorded, unsettled
+    failure the way a commit failure already was.
+
+    This is a genuine, real database constraint violation -- not a mocked
+    commit: ``player_name_raw`` is a real ``NOT NULL`` column
+    (``injury_report_entries.player_name_raw``), enforced by SQLite (and
+    Postgres) regardless of foreign-key pragma settings. Passing ``None``
+    for it (bypassing the frozen dataclass's type hint, which Python does
+    not enforce at runtime) makes the importer's own internal flush raise a
+    real ``IntegrityError`` at flush-time, exercising the actual database
+    engine's constraint enforcement.
+    """
+    plan = _plan_with_two_candidates(session)
+    evening_before = next(pf for pf in plan.fetches if pf.candidate.anchor == "evening_before")
+    game_day = next(pf for pf in plan.fetches if pf.candidate.anchor == "game_day")
+
+    broken_entry = _entry(
+        report_timestamp=evening_before.candidate.report_timestamp,
+        player_name_raw=cast(Any, None),
+    )
+    payload = InjuryReportParseResult(
+        report_timestamp=evening_before.candidate.report_timestamp,
+        source_url="https://example.invalid/fixture",
+        entries=(broken_entry,),
+    )
+    fetcher = _ScriptedFetcher(
+        {
+            evening_before.candidate.report_timestamp: payload,
+            game_day.candidate.report_timestamp: ReportNotAvailable(
+                "no report", source=SOURCE, endpoint=ENDPOINT
+            ),
+        }
+    )
+    checkpoint = Checkpoint.load(tmp_path / "checkpoint.json")
+
+    result = run_backfill(session, plan=plan, fetch_and_parse=fetcher, checkpoint=checkpoint)
+
+    assert evening_before.candidate not in result.fetched
+    assert any("import/commit failed" in why for _, why in result.failures)
+    # Never checkpointed as settled -- a resumed run must retry it.
+    assert not checkpoint.is_settled(evening_before.candidate)
+    # The failed flush must not leave a half-written row visible: rollback
+    # is real, not merely reported.
+    rows = session.scalars(select(InjuryReportEntry)).all()
+    assert len(rows) == 0
+    # The other candidate in the same run (game_day, a genuine 404) is
+    # entirely unaffected -- one candidate's flush failure does not abort
+    # the run.
+    assert game_day.candidate in result.not_available
+
+    # A genuine resumed run with a valid entry now succeeds and persists data.
+    good_entry = _entry(report_timestamp=evening_before.candidate.report_timestamp)
+    good_payload = InjuryReportParseResult(
+        report_timestamp=evening_before.candidate.report_timestamp,
+        source_url="https://example.invalid/fixture",
+        entries=(good_entry,),
+    )
+    resumed_fetcher = _ScriptedFetcher({evening_before.candidate.report_timestamp: good_payload})
+    resumed_result = run_backfill(
+        session, plan=plan, fetch_and_parse=resumed_fetcher, checkpoint=checkpoint
     )
     assert evening_before.candidate in resumed_result.fetched
     rows = session.scalars(select(InjuryReportEntry)).all()
@@ -3296,6 +3373,111 @@ def test_coverage_for_games_reads_one_atomic_snapshot_despite_a_correction_commi
     assert by_game_id[game_y_id].outcome == "missing_tipoff"
 
 
+def test_coverage_for_games_single_snapshot_promotes_a_newly_tipped_off_missing_game(
+    database: Any,
+) -> None:
+    """Round-11 review point 1: the one-statement snapshot must cover
+    ``missing_tipoff`` too, not just ``ready``.
+
+    Every prior revision scoped its single authoritative ``SELECT`` to
+    ``ready``'s game ids only, so a game the caller had already classified
+    as ``missing_tipoff`` (no tip-off known when ``games_to_backfill`` ran)
+    was invisible to that snapshot -- even if a tip-off was ingested for it
+    moments later, genuinely *during* this call. This proves the fix with a
+    real second connection and the same ``before_cursor_execute`` hook
+    technique as the sibling atomic-snapshot test above: the correcting
+    session commits a brand-new tip-off for a game the caller still
+    believes has none, right as the classification statement is about to
+    run, and a canonical observation already exists for it. The single
+    snapshot must see the new tip-off and promote the game out of
+    ``missing_tipoff`` into full classification within this same call --
+    not defer to the caller's now-stale ``missing_tipoff`` partition.
+    """
+    with database.session() as seed_session:
+        teams = _seed_teams(seed_session)
+        game = _seed_game(
+            seed_session,
+            nba_game_id="promoted-missing-tipoff",
+            game_date=date(2025, 11, 12),
+            tipoff_utc=None,  # genuinely no tip-off yet, per the caller's snapshot
+            home_team_id=teams["MIL"],
+            away_team_id=teams["SAC"],
+        )
+        game_id, game_nba_id = game.id, game.nba_game_id
+        # A canonical observation already sitting in the database, strictly
+        # before the tip-off the correcting session is about to commit --
+        # invisible to any classification that never re-queries this game.
+        seed_session.add(
+            InjuryReportEntry(
+                report_timestamp=_et(2025, 11, 12, 17, 30),
+                game_date=date(2025, 11, 12),
+                game_time_raw="07:00 (ET)",
+                matchup_raw="SAC@MIL",
+                team_raw="Sacramento Kings",
+                game_id=game_id,
+                player_name_raw="Fox, De'Aaron",
+                status_raw="Out",
+                status=InjuryReportStatus.OUT,
+                source_url="https://example.invalid/fixture",
+            )
+        )
+        seed_session.commit()
+
+    classify_session = database.session_factory()
+    statement_count = 0
+    corrected = False
+
+    def _promote_mid_statement(
+        conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+    ) -> None:
+        nonlocal statement_count, corrected
+        if "home_abbr" not in statement:
+            return  # not the classification snapshot query -- ignore
+        statement_count += 1
+        if corrected:
+            return
+        corrected = True
+        with database.session() as correcting_session:
+            g = correcting_session.get(NbaGame, game_id)
+            assert g is not None
+            g.tipoff_utc = _et(2025, 11, 12, 19, 0)  # newly ingested, mid-call
+
+    event.listen(database.engine, "before_cursor_execute", _promote_mid_statement)
+    try:
+        # The caller's own classification is stale in exactly the direction
+        # this review point names: it still believes this game has no
+        # tip-off at all.
+        missing = (
+            MissingTipoffGame(
+                game_id=game_id, nba_game_id=game_nba_id, game_date=date(2025, 11, 12)
+            ),
+        )
+        game_coverage = coverage_for_games(
+            classify_session,
+            ready=(),
+            missing_tipoff=missing,
+            coverage_report=None,
+        )
+    finally:
+        event.remove(database.engine, "before_cursor_execute", _promote_mid_statement)
+        classify_session.rollback()
+        classify_session.close()
+
+    # Exactly one statement covered this game's state -- the promotion is
+    # visible within the same single snapshot, not a second query.
+    assert statement_count == 1
+
+    by_game_id = {gc.game_id: gc for gc in game_coverage}
+    assert game_id in by_game_id, "the promoted game must still appear exactly once"
+    assert by_game_id[game_id].outcome == "observed", (
+        "a game the caller believed had no tip-off, but that the one "
+        "authoritative snapshot shows now has one, must be promoted out of "
+        "missing_tipoff and classified against its real evidence -- not "
+        "left reporting the caller's now-stale missing_tipoff forever"
+    )
+    assert by_game_id[game_id].observation_count == 1
+
+
 def test_coverage_for_games_resolved_out_of_scope_row_does_not_leak_to_unrelated_game(
     session: Any,
 ) -> None:
@@ -3902,6 +4084,211 @@ def test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagree
     assert len(result.candidates) == 1
     assert result.candidates[0].requested_timestamp == new_candidate.requested_timestamp
     assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+
+
+def test_persist_coverage_quarantines_an_unrecognized_future_schema_version_candidate(
+    tmp_path: Path,
+) -> None:
+    """Round-11 review point 2: a future schema version must never be retained/rewritten.
+
+    ``coverage_for_games`` already refuses to *trust* a candidate whose
+    ``evidence_schema_version`` is not exactly current for classification --
+    but before this fix, ``_persist_coverage`` itself would still read such
+    a candidate back off disk, merge it unchanged, and rewrite it into this
+    run's own "current" file, forever laundering it forward as if it were
+    ordinary same-scope evidence. This is a genuine on-disk artifact (hand-
+    built raw dict, not ``CandidateCoverage.from_candidate``) exercising the
+    real load -> merge -> save path, with a schema version this code has
+    never seen (``CURRENT_COVERAGE_SCHEMA_VERSION + 1``).
+    """
+    path = tmp_path / "coverage.json"
+    future_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-future-1",
+    )
+    future_candidate["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    # The unrecognized-future-version candidate is quarantined out of the
+    # rewritten file entirely -- not retained, not rewritten as current.
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+
+
+def test_persist_coverage_quarantines_a_legacy_pre_versioning_candidate_too(
+    tmp_path: Path,
+) -> None:
+    """The same quarantine applies to a legacy (pre-round-7) record, not just future ones.
+
+    A record predating ``evidence_schema_version`` entirely (defaulted by
+    :meth:`CoverageReport.from_json` to :data:`LEGACY_COVERAGE_SCHEMA_VERSION`
+    on load) must also never be carried forward into a freshly rewritten
+    "current" file -- it was already excluded from classification trust,
+    and round-11 closes the matching persistence-side gap.
+    """
+    path = tmp_path / "coverage.json"
+    legacy_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-legacy-1",
+    )
+    # Simulate a genuinely pre-versioning record: the key is simply absent,
+    # exactly as CoverageReport.from_json's own docstring describes.
+    del legacy_candidate["evidence_schema_version"]
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [legacy_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+
+
+def test_coverage_merge_key_distinguishes_records_differing_only_in_canonical_masthead() -> None:
+    """Round-11 review point 3: same requested instant, a later attempt resolves
+    a *different* canonical masthead timestamp (e.g. a corrected publish).
+
+    Before this fix, ``_coverage_merge_key`` did not include
+    ``canonical_report_timestamp`` at all, so the second, corrected fetch
+    would silently overwrite the first's evidence under an identical key --
+    even though both are real, distinct trusted evidence.
+    """
+    first = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1,),
+        applicable_nba_game_ids=("nba-1",),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 30),
+        entries_total=2,
+    )
+    second = CandidateCoverage.from_candidate(
+        # Identical requested instant/date/anchor -- but the masthead this
+        # time resolved to a different (corrected) canonical timestamp.
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1,),
+        applicable_nba_game_ids=("nba-1",),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 45),
+        entries_total=3,
+    )
+    assert _coverage_merge_key(first) != _coverage_merge_key(second)
+
+    merged = _merge_coverage([first], [second])
+    assert len(merged) == 2, "distinct canonical mastheads must coexist, not overwrite"
+    by_canonical = {c.canonical_report_timestamp: c.entries_total for c in merged}
+    assert by_canonical[first.canonical_report_timestamp] == 2
+    assert by_canonical[second.canonical_report_timestamp] == 3
+
+
+def test_coverage_merge_key_distinguishes_records_differing_only_in_applicable_game_scope() -> None:
+    """Same requested instant and canonical masthead, but a different applicable game set.
+
+    Before this fix, ``_coverage_merge_key`` had no game-scope fingerprint,
+    so a re-fetch that resolved a *different* set of applicable games (a
+    schedule change between attempts) would silently overwrite the earlier
+    attempt's evidence for a now-different set of games.
+    """
+    first = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1,),
+        applicable_nba_game_ids=("nba-1",),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 30),
+    )
+    second = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1, 2),
+        applicable_nba_game_ids=("nba-1", "nba-2"),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 30),
+    )
+    assert _coverage_merge_key(first) != _coverage_merge_key(second)
+
+    merged = _merge_coverage([first], [second])
+    assert len(merged) == 2, "distinct applicable game scopes must coexist, not overwrite"
+    by_scope = {c.applicable_nba_game_ids: c.outcome for c in merged}
+    assert by_scope[("nba-1",)] == "fetched"
+    assert by_scope[("nba-1", "nba-2")] == "fetched"
+
+
+def test_coverage_merge_key_dedupes_a_truly_identical_re_fetch() -> None:
+    """A re-fetch identical in requested instant, canonical masthead, *and* game
+    scope must still correctly dedupe to a single record -- round-11's fix must
+    not turn ordinary idempotent re-fetches into unbounded duplicate growth.
+    """
+    original = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1,),
+        applicable_nba_game_ids=("nba-1",),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 30),
+        entries_total=5,
+    )
+    identical_re_fetch = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(1,),
+        applicable_nba_game_ids=("nba-1",),
+        outcome="fetched",
+        canonical_report_timestamp=_et(2025, 11, 1, 17, 30),
+        entries_total=5,
+    )
+    assert _coverage_merge_key(original) == _coverage_merge_key(identical_re_fetch)
+
+    merged = _merge_coverage([original], [identical_re_fetch])
+    assert len(merged) == 1
 
 
 # ==========================================================================

@@ -1360,6 +1360,19 @@ def run_backfill(
     recorded as an *unsettled* ``"error"`` so a resumed run retries it
     instead of silently losing it forever.
 
+    **Round-11 review point 4: the importer's own internal flush is inside
+    this same boundary, not before it.**
+    :func:`~hoops_gm.ingest.importers.import_injury_report_entries` calls
+    ``session.flush()`` itself, and a flush can fail for the identical
+    reasons a commit can. Before this fix, that call sat outside any
+    try/except in this function: a flush-time failure propagated straight
+    out of ``run_backfill`` and aborted the entire run, rather than being
+    handled as this one candidate's recorded, unsettled failure. The import
+    call and ``session.commit()`` now share one ``try``/``except`` — a
+    failure from either path takes the identical rollback + failure-
+    coverage + checkpoint-``"error"`` treatment, and every other candidate
+    in the plan still runs to completion.
+
     **This candidate's ``CandidateCoverage`` evidence is durably persisted
     (via ``persist_coverage``, when supplied) *before* ``checkpoint.record``
     settles it** — round-6 review point 1. Coverage previously only
@@ -1494,19 +1507,35 @@ def run_backfill(
             continue
 
         consecutive_forbidden = 0
-        counts = import_injury_report_entries(session, parsed.entries, source_url=parsed.source_url)
         try:
+            # Round-11 review point 4: the import call flushes internally
+            # (see ``import_injury_report_entries``'s own ``session.flush()``)
+            # before this function's own commit is ever reached. A flush can
+            # fail for the exact same reasons a commit can -- a constraint
+            # violation, a dropped connection -- and before this fix, that
+            # flush sat entirely outside any try/except here: an exception
+            # from it propagated straight out of ``run_backfill``, aborting
+            # the *entire* run rather than being handled as one candidate's
+            # recorded, unsettled failure. Import and commit are now one
+            # shared rollback + failure-coverage + checkpoint-error boundary,
+            # so a flush-time failure is indistinguishable from a commit-time
+            # one to every downstream consumer: this candidate is rolled
+            # back, recorded as an unsettled "error", and safely retried on
+            # resume -- and every other candidate in the plan still runs.
+            counts = import_injury_report_entries(
+                session, parsed.entries, source_url=parsed.source_url
+            )
             session.commit()
-        except Exception as exc:  # a commit failure must never look "settled"
+        except Exception as exc:  # an import/flush/commit failure must never look "settled"
             session.rollback()
-            result.failures.append((candidate, f"commit failed: {exc}"))
+            result.failures.append((candidate, f"import/commit failed: {exc}"))
             _record_coverage(
                 CandidateCoverage.from_candidate(
                     candidate,
                     applicable_game_ids=pf.applicable_game_ids,
                     applicable_nba_game_ids=pf.applicable_nba_game_ids,
                     outcome="error",
-                    detail=f"commit failed: {exc}",
+                    detail=f"import/commit failed: {exc}",
                     season=plan.season,
                     season_type=plan.season_type.value,
                 )
@@ -1514,7 +1543,7 @@ def run_backfill(
             checkpoint.record(
                 candidate,
                 "error",
-                f"commit failed: {exc}",
+                f"import/commit failed: {exc}",
                 applicable_nba_game_ids=pf.applicable_nba_game_ids,
             )
             continue
@@ -1896,8 +1925,45 @@ def coverage_for_games(
     Selecting individual columns rather than full ``NbaGame`` entities also
     means there is no ORM identity map for a stale instance to hide in —
     ``populate_existing`` is moot here, not merely applied.
+
+    **The one-statement snapshot must cover every requested game,
+    including ones the caller believes are missing a tip-off (round-11
+    review point 1).** Every previous revision of this function scoped its
+    single ``SELECT`` to ``ready``'s game ids only, so a game the caller
+    classified as ``missing_tipoff`` (no tip-off known when
+    ``games_to_backfill`` ran) was never re-queried here at all -- even
+    though this function's whole premise is that it, not the caller,
+    decides what is currently true. A tip-off ingested between the
+    caller's classification and this call would leave that game reported
+    ``missing_tipoff`` forever within this invocation, and it would never
+    be classified against real evidence. The snapshot query below covers
+    the *union* of ``ready`` and ``missing_tipoff`` game ids, and every
+    game's ready/missing status is derived solely from that one query's
+    result -- a game the caller thought was missing but that now has a
+    tip-off is promoted and fully classified exactly like any other ready
+    game; a game the caller thought was ready but whose tip-off has since
+    been retracted is (as before) reported ``missing_tipoff``. The
+    caller's own partition into ``ready``/``missing_tipoff`` is treated as
+    nothing more than "the requested scope" -- never as evidence of
+    current tip-off state.
     """
-    game_ids = tuple(g.game_id for g in ready)
+    # Round-11 review point 1: the caller's ready/missing_tipoff partition
+    # is only a *request* for which games to classify -- it is never
+    # trusted as evidence of current tip-off state. Build the union of
+    # both, ready first, so the one-statement snapshot below can promote a
+    # now-tipped-off "missing" game or retract a now-tip-off-less "ready"
+    # one, purely from what it reads.
+    requested_games: list[tuple[int, str, date]] = []
+    requested_ids: set[int] = set()
+    for g in ready:
+        if g.game_id not in requested_ids:
+            requested_ids.add(g.game_id)
+            requested_games.append((g.game_id, g.nba_game_id, g.game_date))
+    for mg in missing_tipoff:
+        if mg.game_id not in requested_ids:
+            requested_ids.add(mg.game_id)
+            requested_games.append((mg.game_id, mg.nba_game_id, mg.game_date))
+    game_ids = tuple(requested_ids)
 
     # Round-7 review point 1: re-derive identity/tipoff fresh, in this
     # function's own read scope, rather than trusting `ready`'s snapshot.
@@ -1905,7 +1971,9 @@ def coverage_for_games(
     # function needs to know about these games' current state -- see the
     # docstring above. `home_team_alias`/`away_team_alias` let both teams'
     # abbreviations come back in the same row as the game itself, so the
-    # tricode-pair index below needs no separate query either.
+    # tricode-pair index below needs no separate query either. Round-11
+    # review point 1: `game_ids` now covers `missing_tipoff` too, so a
+    # game the caller thought had no tip-off is re-checked here as well.
     home_team_alias = aliased(NbaTeam)
     away_team_alias = aliased(NbaTeam)
     game_snapshot = (
@@ -1935,21 +2003,32 @@ def coverage_for_games(
     # a fetched candidate's evidence can be bound to the exact schedule
     # window `coverage_report` was built for, not just a stable game id.
     game_scope_by_id: dict[int, tuple[str, str]] = {}
+    # Round-11 review point 1: this is now every requested game the fresh
+    # snapshot shows has no current tip-off -- whether the caller thought
+    # it was `ready` (and it was since retracted) or already knew it as
+    # `missing_tipoff` (and it still is). Either way it is derived solely
+    # from `current_rows`, never from the caller's own partition.
     newly_missing: list[MissingTipoffGame] = []
     games_by_date: dict[date, list[BackfillGame]] = {}
     by_tricode_pair: dict[tuple[date, frozenset[str]], list[int]] = {}
     game_tipoffs: dict[int, datetime] = {}
-    for g in ready:
-        snap_row = current_rows.get(g.game_id)
+    for game_id, caller_nba_id, caller_game_date in requested_games:
+        snap_row = current_rows.get(game_id)
         if snap_row is None or snap_row.tipoff_utc is None:
-            # Deleted, or its tip-off was retracted, since the caller's
-            # snapshot was built. This tool cannot reason about pre/post-tip
+            # Deleted, or its tip-off is (still, or newly) not live, per
+            # this function's own fresh read -- not the caller's
+            # classification. This tool cannot reason about pre/post-tip
             # evidence without a live tip-off -- report it the same honest
-            # way as any other never-ingested tip-off rather than trusting a
-            # value that no longer reflects the database.
+            # way as any other never-ingested tip-off rather than trusting
+            # a value that no longer reflects the database. Prefer the
+            # snapshot row's own (fresher) identity fields when the row
+            # still exists; fall back to the caller's only if the row
+            # itself is gone.
             newly_missing.append(
                 MissingTipoffGame(
-                    game_id=g.game_id, nba_game_id=g.nba_game_id, game_date=g.game_date
+                    game_id=game_id,
+                    nba_game_id=snap_row.nba_game_id if snap_row is not None else caller_nba_id,
+                    game_date=snap_row.game_date if snap_row is not None else caller_game_date,
                 )
             )
             continue
@@ -2121,15 +2200,16 @@ def coverage_for_games(
                 # point 3).
 
     results: list[GameObservationCoverage] = []
-    for g in ready:
-        game = games_by_id.get(g.game_id)
+    for game_id, _caller_nba_id, _caller_game_date in requested_games:
+        game = games_by_id.get(game_id)
         if game is None:
-            # Round-9 review point 3: this game's live tip-off is missing or
-            # was retracted since the caller's snapshot was built -- it is
-            # already captured in `newly_missing` and emitted exactly once
-            # from that list below. Emitting it again here as well would
-            # duplicate it in the output and inflate every count derived
-            # from it.
+            # Round-9 review point 3, extended by round-11 review point 1:
+            # this game's live tip-off is (still, or newly) missing per this
+            # function's own fresh snapshot -- whether the caller thought it
+            # was `ready` or already `missing_tipoff`. It is already
+            # captured in `newly_missing` and emitted exactly once from that
+            # list below. Emitting it again here as well would duplicate it
+            # in the output and inflate every count derived from it.
             continue
         count = observed_counts.get(game.game_id, 0)
         if count > 0:
@@ -2154,15 +2234,14 @@ def coverage_for_games(
                 lead_minutes=tuple(observed_leads.get(game.game_id, ())),
             )
         )
-    for mg in missing_tipoff:
-        results.append(
-            GameObservationCoverage(
-                game_id=mg.game_id,
-                nba_game_id=mg.nba_game_id,
-                game_date=mg.game_date,
-                outcome="missing_tipoff",
-            )
-        )
+    # Round-11 review point 1: `newly_missing` is now the single, complete
+    # source of every requested game the fresh snapshot shows has no
+    # current tip-off -- it already covers both "caller thought it was
+    # ready, but it was retracted" and "caller thought it was
+    # missing_tipoff, and it still is". There is no longer a separate
+    # pass-through loop over the caller's own `missing_tipoff` list: that
+    # would re-trust the caller's now-superseded classification and could
+    # also double-emit a game already captured in `newly_missing`.
     for mg in newly_missing:
         results.append(
             GameObservationCoverage(
@@ -2460,8 +2539,9 @@ def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
-def _coverage_merge_key(c: CandidateCoverage) -> tuple[str, str, str, str, str]:
-    """Merge identity for persisted coverage: scope, date, anchor, *and* requested instant.
+def _coverage_merge_key(c: CandidateCoverage) -> tuple[str, str, str, str, str, str, str]:
+    """Merge identity for persisted coverage: scope, date, anchor, requested instant,
+    canonical masthead, and applicable game scope.
 
     ``(report_date, anchor)`` alone let a changed candidate (the same
     round-4 mutable-anchor problem :class:`Checkpoint` fixes) silently
@@ -2475,8 +2555,35 @@ def _coverage_merge_key(c: CandidateCoverage) -> tuple[str, str, str, str, str]:
     belong to different scopes (a wrong-scope artifact merged in by
     mistake, or a future date range genuinely reused across seasons) are
     never collapsed into a single record either.
+
+    **Round-11 review point 3**: two ``fetched`` candidates can share every
+    field above and still be genuinely distinct evidence -- the same
+    requested instant can resolve to a *different* canonical masthead
+    timestamp on a later attempt (a corrected publish, or a re-fetch after
+    a transient drift), or to a *different* applicable game scope (the
+    schedule changed between attempts). Neither ``canonical_report_timestamp``
+    nor ``applicable_nba_game_ids`` was part of the key, so the later
+    attempt's record silently overwrote the earlier one's -- even though
+    both are real, previously-trusted evidence for potentially different
+    games. Including the canonical masthead timestamp (``""`` for a
+    candidate with none, e.g. a 404/403/error outcome) and a stable,
+    order-independent fingerprint of the applicable NBA game id set means
+    two records that differ in either dimension coexist as separate
+    entries rather than one clobbering the other; two records that agree
+    on every field -- including these two -- still correctly dedupe to one,
+    since re-fetching identical evidence must stay idempotent rather than
+    accumulating duplicates.
     """
-    return (c.season, c.season_type, c.report_date, c.anchor, c.requested_timestamp)
+    game_scope_fingerprint = ",".join(sorted(c.applicable_nba_game_ids))
+    return (
+        c.season,
+        c.season_type,
+        c.report_date,
+        c.anchor,
+        c.requested_timestamp,
+        c.canonical_report_timestamp or "",
+        game_scope_fingerprint,
+    )
 
 
 def _merge_coverage(
@@ -2527,6 +2634,25 @@ def _persist_coverage(
        possible once check 1 has passed, but is not assumed away. Any
        candidate that fails this is excluded from the rewritten file
        rather than silently trusted as current-scope evidence.
+
+    **Round-11 review point 2: quarantine incompatible schema versions at
+    this load+merge+save boundary too, not only at classification time.**
+    :func:`coverage_for_games` already refuses to *trust* a candidate whose
+    ``evidence_schema_version`` is not exactly
+    :data:`CURRENT_COVERAGE_SCHEMA_VERSION` for a clean-submission claim —
+    but before this fix, that was the *only* place a wrong version was
+    ever checked. This function's own ``existing`` filter checked
+    ``(season, season_type)`` alone, so a legacy record (predating this
+    field, or any future record with a schema version this code has never
+    seen and cannot validate) would still be read back, merged unchanged,
+    and rewritten into the very file this run treats as its own current,
+    trusted artifact for this scope — "quarantined" from classification,
+    but never actually quarantined from the persisted evidence itself. An
+    incompatible-version candidate is now dropped from ``existing`` here,
+    at the moment it is read, so it can never be laundered forward into a
+    freshly-rewritten "current" file again; it is not overwritten in place
+    on disk (this function never rewrites a *different* path), simply
+    excluded from every subsequent merge this tool performs.
     """
     existing: list[CandidateCoverage] = []
     if coverage_path.is_file():
@@ -2543,7 +2669,14 @@ def _persist_coverage(
         existing = [
             c
             for c in existing_report.candidates
-            if c.season == season and c.season_type == season_type.value
+            if c.season == season
+            and c.season_type == season_type.value
+            # Round-11 review point 2: a legacy or unrecognized-future
+            # schema version is excluded here, not merely at classification
+            # -- otherwise it is retained and rewritten into this run's
+            # own "current" file forever, even though nothing ever trusts
+            # it for evidence.
+            and c.evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
         ]
     merged = _merge_coverage(existing, new_candidates)
     write_coverage_report(

@@ -4632,3 +4632,192 @@ plus re-confirming rounds 1-9 have not regressed, then report the new exact
 head/base and full gate status to the coordinator. Still not merged, not
 self-approved; `injury-status-conversion` remains explicitly blocked pending
 the separate, later Model-gated deliverable.
+
+## 2026-08-19 — data-engineer — Historical injury-report backfill: eleventh round, evidence-durability and persistence-boundary fixes, plus a docs overclaim correction
+
+A fresh independent review of exact head `eaf91c2` (base `main` at `5bed586`,
+PR #25 merged) found five more release-blocking issues, all now fixed, tested,
+and re-gated. `origin/main` was re-fetched and confirmed unchanged at
+`5bed586` — no rebase or migration renumbering required this round; this is
+again an application-code, test, and docs-only change, not a schema change.
+
+1. **The single authoritative DB snapshot in `coverage_for_games` still
+   excluded every game the caller classified as `missing_tipoff`.** Round 10
+   built one atomic snapshot query to close a mid-call staleness gap, but
+   that query's `WHERE NbaGame.id.in_(...)` clause was built only from
+   `ready` game ids — a game the caller believed still had no tip-off never
+   appeared in the snapshot at all, so a tip-off ingested for it *during*
+   this same call (the exact interleaved-correction scenario round 10's own
+   fix targeted) could never be observed within that invocation; the game
+   stayed reported `missing_tipoff` forever for that call, trusting the
+   caller's stale classification instead of this function's own fresh read.
+   Fixed: `ready` and `missing_tipoff` game ids are now unioned into one
+   `requested_games` list feeding the single snapshot query; classification
+   iterates that unified list and promotes any game whose fresh snapshot row
+   shows a non-null `tipoff_utc` into full classification regardless of
+   which caller-side list it originally came from. The old separate
+   `for mg in missing_tipoff:` passthrough loop — which never re-checked the
+   database at all — is deleted entirely.
+
+   New regression:
+   `test_coverage_for_games_single_snapshot_promotes_a_newly_tipped_off_missing_game`
+   seeds a game with `tipoff_utc=None` and a real canonical entry already
+   committed for it, calls `coverage_for_games` classifying it as
+   `missing_tipoff`, and uses a real `before_cursor_execute` hook (a second,
+   separate DB session) to commit a genuine tip-off for that game exactly as
+   the snapshot statement is about to execute — proving the promotion
+   happens inside the one snapshot, not via a second read.
+
+2. **`_persist_coverage` could still retain and rewrite an incompatible
+   coverage-schema-version candidate as trusted current evidence.**
+   `coverage_for_games` already refused to *trust* a candidate whose
+   `evidence_schema_version` was not exactly current for a clean-submission
+   claim — but that was the only place a wrong version was ever checked.
+   `_persist_coverage`'s own `existing` filter checked `(season,
+   season_type)` alone; a legacy (pre-round-7) record, or any future record
+   with a schema version this code has never seen, would still be read back
+   off disk, merged unchanged by `_merge_coverage`, and rewritten into the
+   very file this run treats as its own current, trusted artifact for this
+   scope — quarantined from classification, but never actually quarantined
+   from the persisted evidence itself. Fixed: `_persist_coverage`'s
+   `existing` filter now also requires
+   `c.evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION`, dropping
+   any legacy or unrecognized-future candidate at the moment it is read, so
+   it can never be laundered forward into a freshly-rewritten "current" file
+   again.
+
+   Two new regressions exercise the real load+merge+save path against
+   hand-built literal serialized JSON (the existing `_serialized_candidate`
+   test helper, not in-memory objects):
+   `test_persist_coverage_quarantines_an_unrecognized_future_schema_version_candidate`
+   (schema version `CURRENT_COVERAGE_SCHEMA_VERSION + 1`) and
+   `test_persist_coverage_quarantines_a_legacy_pre_versioning_candidate_too`
+   (the key entirely absent, exactly as a genuine pre-round-7 record would
+   be).
+
+3. **The coverage merge key was still incomplete.** `_coverage_merge_key`
+   included `(season, season_type, report_date, anchor, requested_timestamp)`
+   — every field describing *what was requested*, but nothing describing
+   *what evidence was actually resolved*. Two genuinely distinct fetched
+   records sharing every requested-side field (the same requested instant,
+   re-attempted) but resolving a *different* canonical masthead timestamp
+   (a corrected publish) or a *different* applicable game scope (the
+   schedule changed between attempts) collapsed under an identical key —
+   the later attempt silently overwrote the earlier one's real, distinct
+   trusted evidence. Fixed: the key now also includes
+   `canonical_report_timestamp` (`""` for an outcome with none, e.g. a
+   404/403/error) and an order-independent fingerprint of
+   `applicable_nba_game_ids` (`",".join(sorted(...))`).
+
+   Three new regressions:
+   `test_coverage_merge_key_distinguishes_records_differing_only_in_canonical_masthead`
+   and `test_coverage_merge_key_distinguishes_records_differing_only_in_applicable_game_scope`
+   prove two such records now coexist rather than one clobbering the other;
+   `test_coverage_merge_key_dedupes_a_truly_identical_re_fetch` proves an
+   ordinary idempotent re-fetch (identical on every field, including these
+   two new ones) still correctly collapses to one record rather than
+   growing duplicates.
+
+4. **An import-time flush failure bypassed the commit-failure recovery
+   boundary entirely.** `import_injury_report_entries` calls
+   `session.flush()` internally, before `run_backfill` ever reaches its own
+   `session.commit()` — but that call sat outside any `try`/`except` in
+   `run_backfill`. A flush can fail for the identical reasons a commit can
+   (a constraint violation, a dropped connection); before this fix, such a
+   failure propagated straight out of the entire function, aborting every
+   other still-unprocessed candidate in the plan, rather than being handled
+   as this one candidate's recorded, unsettled `"error"` the way a commit
+   failure already was. Fixed: the import call and `session.commit()` now
+   share one `try`/`except` — a failure from either path takes the
+   identical rollback + failure-coverage + checkpoint-`"error"` treatment,
+   and every other candidate in the plan still runs to completion.
+
+   New regression:
+   `test_run_backfill_does_not_checkpoint_as_settled_when_the_import_flush_fails`
+   is a genuine database constraint violation, not a mocked commit: it
+   passes `player_name_raw=None` (bypassing the frozen dataclass's type
+   hint, which Python does not enforce at runtime) for one entry, which
+   violates `injury_report_entries.player_name_raw`'s real `NOT NULL`
+   column and makes the importer's own internal flush raise a real
+   `IntegrityError` against the actual SQLite engine. Proves: the candidate
+   is rolled back (zero rows persisted), recorded as an unsettled `"error"`
+   (never checkpointed settled), the other candidate in the same run (a
+   genuine 404) is entirely unaffected, and a subsequent resume with a valid
+   entry succeeds and persists exactly one row.
+
+5. **`docs/backlog.md`'s `injury-report-historical-backfill` entry overclaimed
+   a representative, trusted real cohort.** Its heading read "...for a real
+   evidence cohort" and its opening sentence claimed the tool "populates a
+   real multi-date, multi-game historical injury-report cohort ... so
+   `injury-status-conversion` has more than the single committed fixture to
+   work from" — read together with the entry's `[x] done` marker, this
+   implied a representative cohort already exists, when in fact (per this
+   file's own round-5 entry, still accurate) the only live-archive run
+   performed was a deliberately small, non-representative 22-of-527-game
+   sample used to validate the tool's mechanics, not to seed
+   `injury-status-conversion`. Fixed: the heading now reads "Bounded,
+   resumable operator workflow for backfilling historical NBA injury
+   reports"; the opening sentence now says the tool "fetches and imports
+   historical NBA official injury-report captures ... into durable per-game
+   evidence, so `injury-status-conversion` has more than the single
+   committed fixture to build against **once a genuinely representative
+   cohort exists**"; and a new closing paragraph states explicitly what
+   "done" means here — the bounded operator workflow itself, its gates, its
+   durability/idempotency, and its tests — and what it does not: a populated,
+   representative, conversion-ready cohort does not yet exist, populating one
+   is separate unstarted work, and `injury-status-conversion` remains
+   explicitly blocked. `docs/backlog.md`'s heading count (100) and its
+   `[x]`/`[ ]` marker counts are unchanged — only this one entry's wording
+   changed.
+
+All five points were independently re-verified against the actual pre-fix
+code (not accepted on the reviewer's word alone) before being fixed, per
+house rules. 7 new tests were added to `test_injury_report_backfill.py`
+(99 → 106, confirmed via `--collect-only`), all passing; the full file and
+the full backend suite both pass with no regressions.
+
+**Now true:** `ruff check` and `ruff format --check` clean across the repo;
+bare `mypy .` clean (110 source files); the full backend test suite
+(`pytest -q`, default `-m 'not live_smoke'`) exits 0 with no failures,
+including all 106 tests in `test_injury_report_backfill.py`;
+`pytest -m adapter_contract -q` exits 0; `test_portability.py`'s static
+migration-chain checks pass; `scripts/check_no_secrets.py` finds no secrets
+in 234 tracked files. A fresh `alembic upgrade head` from an empty SQLite
+database applies the full `0001 → 0014` chain cleanly. `origin/main` remains
+at `5bed586` (PR #25) — the Alembic chain remains unchanged:
+`0011(main)→0012(main, PR #22)→0013(natural-key fix)→0014
+(evidence-schema-version)`. Only three files changed this round:
+`backend/src/hoops_gm/ingest/injury_report/backfill.py`,
+`backend/tests/test_injury_report_backfill.py`, and `docs/backlog.md` — no
+model, migration, or route changes.
+
+**Could not verify:** Whether a live Postgres instance is reachable in this
+session — the same constraint as every prior round: Docker is not installed,
+`TEST_DATABASE_URL` is unset, and no local Postgres service was available to
+start, so only SQLite-backed unit tests and `test_portability.py`'s static
+cross-dialect analysis ran locally; CI's dedicated Postgres job remains the
+actual cross-dialect check of record. The new missing-tipoff-promotion
+concurrency regression (point 1) does exercise a genuine two-session/
+two-transaction race against a real file-backed SQLite database (the same
+`database` fixture and `before_cursor_execute` engine-hook technique as
+round 10's own concurrency regression), but this exact interleaving was not
+independently re-exercised against a live Postgres connection this round.
+No live NBA CDN probe was attempted this round — no code path touching the
+live archive changed, and this round's fixes are entirely about local
+persistence/classification correctness and docs wording, not transport.
+Whether GitHub's merge-readiness check (CI green, CLEAN/MERGEABLE) reflects
+this specific push is reported separately once observed after pushing, and
+whether a further independent review finds anything beyond these five points
+is likewise unverified until that review runs.
+
+**Next:** Commit this round's three changed files, push to
+`origin/sr2501-historical-injury-backfill`, monitor all GitHub CI jobs
+(including the Postgres job) to green, confirm `mergeStateStatus: CLEAN`/
+`mergeable: MERGEABLE` via `gh pr view`, commission a fresh independent
+exact-head code review re-verifying these five fixes plus re-confirming
+rounds 1-10 have not regressed, then report the new exact head/base and full
+gate status to the coordinator. Still not merged, not self-approved;
+`injury-status-conversion` remains explicitly blocked pending a genuinely
+representative live-archive cohort and the separate, later Model-gated
+deliverable.
+

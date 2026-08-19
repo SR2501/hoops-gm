@@ -816,6 +816,61 @@ skip candidates whose only local evidence is a legacy row.
     game id absent from what was recorded as unsettled, regardless of
     whether the resolved-timestamp key itself changed.
 
+* **Round-11 review found five more evidence-durability and
+  persistence-boundary defects** — fixed and regression-tested:
+  * **The single authoritative snapshot excluded every game the caller had
+    already classified `missing_tipoff`.** Round 10's one-`SELECT` snapshot
+    was built only from `ready` game ids; a game the caller believed had no
+    tip-off never appeared in that query at all, so a tip-off ingested for
+    it *during* the same call — the exact interleaved-correction scenario
+    round 10's fix targeted — could never be observed within that
+    invocation. `ready` and `missing_tipoff` game ids are now unioned into
+    one `requested_games` list feeding the single snapshot; classification
+    promotes any requested game whose fresh snapshot row shows a non-null
+    `tipoff_utc`, regardless of which caller-side list it came from. The old
+    separate passthrough loop over `missing_tipoff` — which never re-checked
+    the database — is deleted.
+  * **`_persist_coverage` retained and rewrote incompatible schema-version
+    candidates as trusted current evidence.** Classification already
+    refused to *trust* a non-current `evidence_schema_version` for a clean
+    submission claim, but `_persist_coverage`'s own `existing` filter
+    checked only `(season, season_type)` — a legacy (pre-round-7) or
+    unrecognized-future-schema candidate would still be read back, merged
+    unchanged, and rewritten into this run's own "current" file forever.
+    `_persist_coverage` now also requires
+    `evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION` before
+    carrying a candidate forward, quarantining both legacy and
+    unrecognized-future records at the load+merge+save boundary itself, not
+    only at classification.
+  * **The coverage merge key omitted the canonical masthead timestamp and
+    applicable game scope.** `_coverage_merge_key` described only what was
+    *requested* (season, season_type, date, anchor, requested instant) —
+    two fetched records sharing all of that but resolving a genuinely
+    different canonical masthead (a corrected publish) or a different
+    applicable game set (a schedule change between attempts) collapsed
+    under one key, the later overwriting the earlier's real evidence. The
+    key now also includes `canonical_report_timestamp` and an
+    order-independent fingerprint of `applicable_nba_game_ids`, so distinct
+    evidence coexists while a truly identical re-fetch still dedupes to one
+    record.
+  * **An import-time flush failure bypassed the commit-failure recovery
+    boundary.** `import_injury_report_entries` flushes internally before
+    `run_backfill` ever reaches its own `session.commit()`; that call sat
+    outside any `try`/`except`, so a flush-time failure (a real constraint
+    violation, not merely a dropped connection at commit) propagated
+    straight out of the whole function and aborted every other candidate in
+    the plan. The import call and `session.commit()` now share one
+    `try`/`except`, taking the identical rollback + failure-coverage +
+    checkpoint-`"error"` path regardless of which of the two raised.
+  * **`docs/backlog.md` overclaimed a representative, conversion-ready
+    cohort.** Its heading and opening sentence read as though a real,
+    trusted historical cohort already existed once this workflow shipped;
+    corrected to describe the bounded operator workflow itself (fetch,
+    import, gates, durability) as what is `done`, and to state explicitly
+    that populating an actual representative cohort against the live
+    archive is separate, unstarted work — `injury-status-conversion` is not
+    unblocked by this entry.
+
 
 ### What this tool is not
 
