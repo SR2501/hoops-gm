@@ -37,6 +37,20 @@ def test_missing_build_returns_a_clear_404(
     assert "userscript/" in response.json()["detail"]
 
 
+def test_unreadable_build_returns_a_distinct_500(
+    app: FastAPI, client: TestClient, tmp_path: Path
+) -> None:
+    dist_path = tmp_path / "hoops-gm.user.js"
+    dist_path.mkdir()
+    app.state.settings = app.state.settings.model_copy(update={"userscript_dist_path": dist_path})
+
+    response = client.get(USERSCRIPT_URL)
+
+    assert response.status_code == 500
+    assert response.json()["error"] == "userscript_build_unreadable"
+    assert "could not be read" in response.json()["detail"]
+
+
 def test_serves_the_built_userscript_uncached(
     app: FastAPI, client: TestClient, tmp_path: Path
 ) -> None:

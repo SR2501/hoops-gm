@@ -23,6 +23,7 @@ _BUILD_MISSING_DETAIL = (
     "`npm install` once and then `npm run build` to produce "
     "dist/hoops-gm.user.js, then reload this URL."
 )
+_BUILD_UNREADABLE_DETAIL = "The userscript build exists but could not be read."
 
 
 @router.get(
@@ -38,11 +39,17 @@ def get_userscript(request: Request) -> Response:
     dist_path = request.app.state.settings.userscript_dist_path
     try:
         content = dist_path.read_bytes()
-    except OSError as exc:
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail=_BUILD_MISSING_DETAIL,
             headers={"X-Bridge-Error": "userscript_build_missing"},
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_BUILD_UNREADABLE_DETAIL,
+            headers={"X-Bridge-Error": "userscript_build_unreadable"},
         ) from exc
 
     return Response(

@@ -3022,3 +3022,40 @@ running services, and no live Fantrax request was made.
 **Next:** The owner should review the separately reported decision list.
 Any follow-up should make one named decision at a time rather than folding
 product or governance choices into mechanical documentation cleanup.
+
+---
+
+## 2026-08-18 — backend, architect, bridge — Preservation snapshot reconciliation
+
+**Changed:** Compared every hunk in local preservation commit `5b2a3f0` against
+current remote main `b570c32` instead of replaying the commit. All 24 files were
+classified as already merged, byte-identical, superseded by newer reviewed
+behavior, genuinely unique, or an unaccepted product/governance decision.
+Ported the one genuinely unique technical hardening requirement into the
+current shared userscript-serving route: a genuinely missing build retains the shipped
+`userscript_build_missing` 404 contract, while a present path that cannot be
+read now returns a distinct `userscript_build_unreadable` 500 rather than
+incorrectly advising the operator to rebuild. Added a regression test using a
+directory at the configured file path, which exercises `IsADirectoryError`
+portably without platform-specific permission manipulation.
+
+**Now true:** The reconciliation does not regress current route mounting, the
+shared loopback guard, `Cache-Control: no-store`, bridge/userscript 0.5.0
+behavior, live-verification documentation, migrations, or append-only handoff
+history. The full local Code gate passes: Ruff lint and format, bare-project
+mypy, 673 backend tests (17 live-smoke tests deselected), 63 userscript tests,
+userscript production build, and the repository secret scan.
+
+**Could not verify:** A native permission-denied file read on POSIX; the
+cross-platform regression instead proves the same non-`FileNotFoundError`
+`OSError` branch with `IsADirectoryError`. GitHub Actions and native Postgres
+were not run locally; no schema, migration, adapter, fixture, or external-source
+code changed. The preservation commit's proposed restricted-input Adapter-gate
+amendment, projection experiment protocol, and recursive weekly refresh
+commitments remain unaccepted owner/product decisions and were reported rather
+than ported.
+
+**Next:** An independent reviewer should inspect this exact branch head before
+a focused PR is opened. The owner may separately decide whether to pursue a
+smaller projection-experiment protocol or amend ADR-006 for restricted
+personal-use inputs; neither proposal is in force.
