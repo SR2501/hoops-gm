@@ -5337,3 +5337,102 @@ or mock outcome was inspected.
 **Next:** `data-engineer` and an independent `quant` should exercise the
 protocol when `baseline-model` begins; the model worker must stop rather than
 accept an unmanifested package or an outcome released before its freeze.
+
+---
+
+## 2026-08-19 — data-engineer — Representative injury-conversion cohort population
+
+**Changed:** Populated the pending `injury-conversion-cohort-population`
+evidence from the official 2025-26 NBA sources without fitting a model. A
+read-only `LeagueGameFinder` preflight selected `2025-12-08..2026-01-04`, an
+inclusive four-week window centered on the independently established
+2025-12-22 archive cadence/filename boundary, before any per-game or PDF sweep.
+That scope contains 171 parsed official games on 25 game dates, all 30 teams,
+12 legacy-era dates, 13 fifteen-minute-era dates, and none of the five known
+2025-26 player-log-only `LeagueGameFinder` anomaly ids. The existing season
+participation command could only fetch a whole season or its first N games, so
+the smallest blocking operator fix adds inclusive `--start`/`--end` bounds
+(with inverted-range and negative/zero-limit tests) while leaving schedule and
+production ingest season-wide and separate from availability.
+
+The operational sequence, run with `PYTHONPATH` set to this worktree's
+`backend/src` and `DATABASE_URL=sqlite:///./.live_evidence_cohort/cohort.db`,
+was:
+
+```powershell
+python -m alembic upgrade head
+
+# One-time NBA anchor bootstrap used only official NBA identity:
+# NbaStatsClient.static_teams() -> parse_teams/import_teams, then
+# CommonAllPlayers(season="2025-26", only_current=False) ->
+# parse_common_all_players/import_nba_players.
+
+python -m hoops_gm.ingest.backfill season 2025-26 --with-participation `
+  --start 2025-12-08 --end 2026-01-04
+
+python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 100
+
+python -m hoops_gm.ingest.injury_report.backfill run 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 100
+
+python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 `
+  --start 2025-12-08 --end 2026-01-04
+```
+
+The identity bootstrap created 30 teams and 5,206 NBA-anchored canonical
+players. The bounded participation run imported 1,225 season schedule rows,
+26,549 production rows (102 known player-log rows skipped because their five
+game ids are absent from the defensive two-sided schedule parser), and 5,980
+participation rows for the selected 171 games. It had zero per-game source
+failures. The injury plan had 89 candidates under the explicit budget of 100.
+All 89 completed with zero 403, 404, or contract failures; legacy URL
+coalescence produced 84 distinct fetched captures/mastheads. The run created
+9,250 injury rows and reconciled 694 rows through the natural key. An immediate
+resume processed zero candidates, skipped all 89 as settled, and imported
+nothing.
+
+**Now true:** Every one of the 171 expected games is ingested with an exact
+tip-off and has a canonical pregame observation. The trusted cascade is 9,082
+in-scope rows -> 9,082 game-resolved -> 8,190 player-resolved, with 783
+`NOT_YET_SUBMITTED` rows and 8,299 listed-status rows. The canonical surface is
+1,934 player-games: 1,907 resolve to canonical player ids and 27 remain
+unresolved. Joining only by local `(game_id, player_id)`, then proving those
+links through stable NBA `nba_game_id` plus NBA-source player external id,
+yields 1,906 authoritative outcomes: 291 played, 72 did not play, 125 did not
+dress, 10 were not with team, and 1,408 were inactive. The one remaining
+resolved `OUT` observation (`0022500491` / NBA player `1641890`) has no
+participation row and stays unknown; silence is not converted into an absence.
+All five report statuses are present (`OUT` 1,495; `AVAILABLE` 206;
+`QUESTIONABLE` 152; `PROBABLE` 59; `DOUBTFUL` 22). Source-observed,
+same-window BoxScoreTraditionalV3 labels establish G/F/C diversity for 167 of
+363 resolved players; 196 players with no nonempty label remain position-
+unknown rather than inferred.
+
+The repository-safe evidence is
+`docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json`. It records
+capture timestamps, source/artifact SHA-256 identities, exact scope and
+commands, cascade counts, unresolved identities, stable-key join fingerprints,
+position evidence, and status-diverse stable-key samples. The sorted canonical
+fingerprint is
+`9fe70210367d229f711b34bc5b99d779534172fd0e218a335ce67f79d406765d`;
+the sorted joined-outcome fingerprint is
+`b4dbf93d6b9163bb4370def1a1d425ae800d50da543fa6568170d1ee486ad27b`.
+Raw NBA PDFs/JSON, checkpoint, coverage, expected-game evidence, and SQLite
+state remain gitignored and were not redistributed.
+
+**Could not verify:** The first independent exact-head data/evidence and code
+reviews had not run when this entry was written, so the backlog item remains
+pending until they approve representativeness and the bounded-loader change.
+The one R35-silent resolved observation cannot be classified without
+authoritative historical roster/completeness evidence. Position labels are
+available only when BoxScoreTraditionalV3 emitted a nonempty value in this
+window; blank labels remain unknown. No live Postgres service was available
+locally. No DNP reason was inferred, no conversion rate or probability was
+computed, no paid source or Fantrax access was used, and no owner-only decision
+was made.
+
+**Next:** Obtain independent exact-head data/evidence and code reviews. If both
+pass, mark `injury-conversion-cohort-population` done; then `quant` may begin
+the separately Model-gated `injury-status-conversion` work from this frozen
+observation cohort.

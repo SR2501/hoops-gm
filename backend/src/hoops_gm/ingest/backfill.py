@@ -33,6 +33,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy import select
@@ -70,6 +71,7 @@ from hoops_gm.ingest.league_settings import (
     merge_settings,
 )
 from hoops_gm.ingest.nba import (
+    NbaGameRecord,
     NbaStatsClient,
     combine_game_participation,
     parse_box_score_summary_v3,
@@ -314,6 +316,8 @@ def backfill_season(
     season: str,
     season_type: str = "Regular Season",
     with_participation: bool = False,
+    start: date | None = None,
+    end: date | None = None,
     limit_games: int | None = None,
     progress: Callable[[str], None] = print,
 ) -> BackfillResult:
@@ -335,7 +339,12 @@ def backfill_season(
     if not with_participation:
         return result
 
-    selected = games[:limit_games] if limit_games else games
+    selected = _participation_games_in_scope(
+        games,
+        start=start,
+        end=end,
+        limit_games=limit_games,
+    )
     totals = ImportCounts()
     progress(
         f"  participation: {len(selected)} games at ~2 requests each; "
@@ -378,6 +387,27 @@ def backfill_season(
     return result
 
 
+def _participation_games_in_scope(
+    games: Sequence[NbaGameRecord],
+    *,
+    start: date | None,
+    end: date | None,
+    limit_games: int | None,
+) -> list[NbaGameRecord]:
+    """Select a bounded participation window without changing season-wide production ingest."""
+    if start is not None and end is not None and start > end:
+        raise ValueError(f"participation start date {start} is after end date {end}")
+    if limit_games is not None and limit_games < 0:
+        raise ValueError("limit_games must be non-negative")
+
+    selected = [
+        game
+        for game in games
+        if (start is None or game.game_date >= start) and (end is None or game.game_date <= end)
+    ]
+    return selected[:limit_games] if limit_games is not None else selected
+
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -394,6 +424,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     season.add_argument("season", help="e.g. 2024-25")
     season.add_argument("--season-type", default="Regular Season")
     season.add_argument("--with-participation", action="store_true")
+    season.add_argument("--start", type=date.fromisoformat, default=None)
+    season.add_argument("--end", type=date.fromisoformat, default=None)
     season.add_argument("--limit-games", type=int, default=None)
 
     league_settings = subparsers.add_parser(
@@ -501,6 +533,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
                 season=args.season,
                 season_type=args.season_type,
                 with_participation=args.with_participation,
+                start=args.start,
+                end=args.end,
                 limit_games=args.limit_games,
             )
 
