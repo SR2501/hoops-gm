@@ -4,6 +4,11 @@ One card per model that produces a number a decision rests on. Required by the *
 
 A model card is not documentation of the code. It is a statement of what the model claims, how well it actually performs on data it has not seen, and — critically — **what it cannot see at all**.
 
+Projection-model experiments also follow the
+[`projection experiment sequestration protocol`](../governance/projection-experiment-protocol.md):
+workers receive only immutable released packages, and held-out outcomes remain
+sealed until a pre-registration is frozen.
+
 ## Normative minimum
 
 Every model card must cover the metadata and content below. A card may add
