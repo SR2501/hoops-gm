@@ -1,8 +1,13 @@
-# Open: GitHub Actions is stopped by billing
+# Resolved: GitHub Actions billing outage
 
 **Raised:** 2026-08-17
-**Status:** Awaiting the owner. Nothing else can resolve it.
+**Resolved:** 2026-08-17
+**Status:** Closed. The owner made the repository public, restoring GitHub Actions.
 **Risk:** R29
+
+PR #3 subsequently merged, and CI is enforced on `main` again, including the
+Postgres job. The remainder of this document preserves the incident analysis in
+its original present tense as a record of the outage and the decision it required.
 
 ---
 
