@@ -42,6 +42,9 @@ ADR-009 was accepted by the project owner on **2026-08-17**.
 ADR-008 was accepted by the project owner on **2026-08-18**, who explicitly
 praised it as written.
 
+ADR-010's existing `Accepted` metadata was explicitly confirmed by the project
+owner through the architect liaison decision dialog on **2026-08-19**.
+
 The recursive weekly refresh amendments to ADR-011 and ADR-012 were accepted by
 the project owner on **2026-08-17**. They extend the original sequencing
 decisions with versioned cascade and freshness requirements; they do not choose
