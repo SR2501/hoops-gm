@@ -220,7 +220,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
@@ -1192,6 +1192,19 @@ _CANDIDATE_COVERAGE_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     f.name for f in fields(CandidateCoverage)
 )
 
+#: The subset of :data:`_CANDIDATE_COVERAGE_FIELD_NAMES` that
+#: :class:`CandidateCoverage` declares with no default value — i.e. every
+#: field :meth:`CoverageReport.from_json` (final-review follow-up) must find
+#: as a genuine key on a raw record before that record is trusted as
+#: current-schema. Computed from the dataclass's own field metadata (rather
+#: than hand-listed) so it stays correct if the dataclass ever gains or
+#: loses a required field.
+_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES: Final[frozenset[str]] = frozenset(
+    f.name
+    for f in fields(CandidateCoverage)
+    if f.default is MISSING and f.default_factory is MISSING
+)
+
 
 def _quarantined_incompatible_schema_candidate(
     evidence_schema_version: object,
@@ -1240,6 +1253,57 @@ def _quarantined_incompatible_schema_candidate(
         season="",
         season_type="",
     )
+
+
+def _current_schema_candidate_or_none(c: Mapping[str, Any]) -> CandidateCoverage | None:
+    """Build a :class:`CandidateCoverage` from a raw dict already confirmed
+    to claim :data:`CURRENT_COVERAGE_SCHEMA_VERSION` — or return ``None`` if
+    its key set does not match the current dataclass contract exactly.
+
+    Final-review follow-up: a record claiming the current schema version
+    but whose actual keys do not match this code's dataclass contract must
+    never be silently filtered or defaulted into trusted "fetched"
+    evidence. Two failure modes were previously possible even though the
+    version claim was checked: an **unknown key** — added without a
+    version bump, or belonging to a genuinely different (but
+    identically-numbered) shape — was silently dropped by a
+    ``k in _CANDIDATE_COVERAGE_FIELD_NAMES`` filter and the record was
+    still constructed and trusted; and a **missing required key** (e.g.
+    ``applicable_nba_game_ids`` or ``outcome`` absent entirely) was
+    silently defaulted or omitted rather than rejected, which for a field
+    with no real default (``applicable_nba_game_ids``, previously defaulted
+    here via ``c.get(..., ())`` even though the dataclass declares it
+    required) let a materially incomplete record through as if it were
+    complete.
+
+    This function validates the raw key *set* before attempting
+    construction at all: every key in ``c`` must be a recognized
+    :data:`CandidateCoverage` field name (no unknown keys survive, even
+    silently), and every field :data:`CandidateCoverage` declares with no
+    default (:data:`_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES`) must be
+    present as a key in ``c`` (no silent defaulting of a genuinely required
+    field). Only a record passing both checks is constructed. The
+    construction itself is still wrapped in a ``try``/``except`` as a
+    belt-and-suspenders guard — the key-set check above should make this
+    unreachable, but a value-level surprise (e.g. a non-list value under a
+    list-typed key) must quarantine exactly the same way, never crash the
+    loader.
+    """
+    raw_keys = set(c.keys())
+    if not raw_keys <= _CANDIDATE_COVERAGE_FIELD_NAMES:
+        return None
+    if not raw_keys >= _CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES:
+        return None
+    try:
+        return CandidateCoverage(
+            **{
+                **c,
+                "applicable_game_ids": tuple(c["applicable_game_ids"]),
+                "applicable_nba_game_ids": tuple(c["applicable_nba_game_ids"]),
+            }
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -1292,35 +1356,40 @@ class CoverageReport:
         exactly :data:`CURRENT_COVERAGE_SCHEMA_VERSION` (legacy, or a future
         version this code has never seen) is routed to
         :func:`_quarantined_incompatible_schema_candidate` instead, which
-        never interprets that record's other fields at all. Only a
-        current-version record's keys are unpacked into the dataclass
-        constructor, and even then filtered to
-        :data:`_CANDIDATE_COVERAGE_FIELD_NAMES` first, so a stray extra key
-        can never reach the constructor and crash it either. Every
+        never interprets that record's other fields at all.
+
+        **Final-review follow-up**: claiming
+        :data:`CURRENT_COVERAGE_SCHEMA_VERSION` is necessary but not
+        sufficient to be trusted. A record whose *keys* do not exactly match
+        the current dataclass contract — an unknown key the previous fix
+        silently dropped, or a genuinely required key silently missing — is
+        no longer filtered/defaulted into a trusted record. Every
+        current-version record's key set is validated by
+        :func:`_current_schema_candidate_or_none` first; only a record
+        passing that check is constructed, and anything else — legacy,
+        unrecognized-future, or a same-numbered-but-malformed current
+        record — is quarantined via
+        :func:`_quarantined_incompatible_schema_candidate`. Every
         incompatible record this loads is already excluded from every trust
         check downstream (:func:`coverage_for_games`,
         :func:`_persist_coverage`) — this only stops the loader itself from
-        crashing before either ever runs.
+        crashing before either ever runs, and stops a malformed
+        current-claiming record from ever reaching either as if it were
+        complete.
         """
         raw = json.loads(text)
         candidates: list[CandidateCoverage] = []
         for c in raw["candidates"]:
             raw_version = c.get("evidence_schema_version", LEGACY_COVERAGE_SCHEMA_VERSION)
-            if raw_version != CURRENT_COVERAGE_SCHEMA_VERSION:
-                candidates.append(_quarantined_incompatible_schema_candidate(raw_version))
-                continue
-            known = {k: v for k, v in c.items() if k in _CANDIDATE_COVERAGE_FIELD_NAMES}
+            candidate = (
+                _current_schema_candidate_or_none(c)
+                if raw_version == CURRENT_COVERAGE_SCHEMA_VERSION
+                else None
+            )
             candidates.append(
-                CandidateCoverage(
-                    **{
-                        **known,
-                        "applicable_game_ids": tuple(c["applicable_game_ids"]),
-                        "applicable_nba_game_ids": tuple(c.get("applicable_nba_game_ids", ())),
-                        "evidence_schema_version": raw_version,
-                        "season": c.get("season", ""),
-                        "season_type": c.get("season_type", ""),
-                    }
-                )
+                candidate
+                if candidate is not None
+                else _quarantined_incompatible_schema_candidate(raw_version)
             )
         return cls(season=raw["season"], season_type=raw["season_type"], candidates=candidates)
 

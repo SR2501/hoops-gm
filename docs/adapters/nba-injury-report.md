@@ -921,6 +921,45 @@ skip candidates whose only local evidence is a legacy row.
     depend on it too, so the dependency graph and the prose now agree:
     conversion is not structurally ready until that cohort exists.
 
+* **A final-review follow-up found the fix above closed the crash but left
+  a genuine fail-closed gap: a record *claiming* the current schema version
+  was not automatically trustworthy** — fixed and regression-tested:
+  * **`CoverageReport.from_json` still silently repaired a malformed
+    current-claiming record instead of quarantining it.** The prior fix
+    correctly quarantines any record whose `evidence_schema_version` is not
+    exactly `CURRENT_COVERAGE_SCHEMA_VERSION`, but for a record that *does*
+    claim the current version, the loader filtered its raw keys down to
+    `known = {k: v for k, v in c.items() if k in
+    _CANDIDATE_COVERAGE_FIELD_NAMES}` — silently dropping any unknown key
+    rather than treating its presence as evidence the record does not
+    actually match the current contract — and separately defaulted
+    `applicable_nba_game_ids` to `()` via `c.get(..., ())` even though the
+    dataclass declares that field required with no default, so a record
+    genuinely missing it was silently treated as if it named zero stable
+    games rather than being rejected as incomplete. Both let a
+    contract-drifted or corrupted record — including the release-blocking
+    combination of an unknown key alongside `outcome="fetched"` — be
+    constructed and trusted as clean current-schema evidence. Fixed by a
+    new `_current_schema_candidate_or_none` helper that validates the raw
+    key *set* before any construction is attempted: every key present must
+    be a recognized `CandidateCoverage` field name (an unknown key
+    quarantines, it is never silently dropped), and every field the
+    dataclass declares with no default (computed via
+    `_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES`, itself derived from
+    `dataclasses.fields()` rather than hand-listed) must be present as a
+    key (a missing required field quarantines, it is never silently
+    defaulted). Only a record passing both checks is constructed at all;
+    construction itself is still wrapped in a narrow `try`/`except` as a
+    belt-and-suspenders guard against a value-level surprise the key-set
+    check does not catch, quarantining rather than crashing there too.
+    Regression-tested with genuine on-disk JSON claiming the current schema
+    version with an unknown key (including the exact `outcome="fetched"`
+    combination that would otherwise falsely prove a clean submission) and
+    with a required key deleted entirely, through `CoverageReport.from_json`
+    directly, the real `_persist_coverage` load+merge+save path, and the
+    full `observations`/`coverage_for_games` classification chain — proving
+    no crash and no trusted `submitted_zero_listed` claim in any case.
+
 
 ### What this tool is not
 

@@ -4927,4 +4927,115 @@ exact head/base to the coordinator. Still not merged, not self-approved;
 `injury-conversion-cohort-population` and the separate, later Model-gated
 deliverable.
 
+## 2026-08-19 — data-engineer — Historical injury-report backfill: final-review follow-up (fail-closed key validation)
+
+A final coordinator evidence review of exact head `e4559b6` (this session's
+prior round, independently reviewed PASS, CI green, `mergeable:
+MERGEABLE`) found one surgical release-blocking gap the prior fix left
+open: the schema-version check alone was necessary but not sufficient to
+trust a raw candidate record.
+
+**Now true:**
+
+`CoverageReport.from_json` no longer silently repairs a malformed
+current-schema-claiming record. The prior round's fix correctly quarantines
+any record whose `evidence_schema_version` is not exactly
+`CURRENT_COVERAGE_SCHEMA_VERSION`, but a record that *does* claim the
+current version was still trusted even when its actual keys did not match
+the current dataclass contract, in two ways:
+
+1. **An unknown key on a current-claiming record was silently dropped, not
+   treated as evidence of contract drift.** The old loader filtered a raw
+   dict's keys down to `known = {k: v for k, v in c.items() if k in
+   _CANDIDATE_COVERAGE_FIELD_NAMES}` before construction — any key not in
+   that set simply vanished, and the record was still constructed and
+   trusted as clean current-schema evidence. This is a real gap
+   independent of the future-schema-version scenario the prior round
+   closed: a field added *without* bumping the version number (a
+   plausible real mistake, not a hypothetical) or a corrupted/hand-edited
+   record would sail through unnoticed, including the release-blocking
+   combination of an unknown key alongside `outcome="fetched"` — the exact
+   shape that proves `submitted_zero_listed` if trusted.
+2. **A genuinely required field missing from a current-claiming record was
+   silently defaulted, not rejected.** `applicable_nba_game_ids` has no
+   default in the `CandidateCoverage` dataclass — the dataclass itself
+   declares it required — but the old loader unconditionally defaulted a
+   missing key to `()` via `c.get("applicable_nba_game_ids", ())`. A
+   record genuinely missing its stable game identity (the exact field this
+   whole schema exists to make durable — see round 7) was silently treated
+   as if it validly named zero games, rather than being rejected as
+   incomplete.
+
+Fixed with a new `_current_schema_candidate_or_none` helper
+(`backend/src/hoops_gm/ingest/injury_report/backfill.py`) that validates a
+current-claiming record's raw key *set* before any construction is
+attempted: every key present must be a recognized `CandidateCoverage` field
+name (an unknown key now quarantines the whole record, it is never
+silently dropped), and every field the dataclass declares with no default —
+computed as a new `_CANDIDATE_COVERAGE_REQUIRED_FIELD_NAMES` frozenset via
+`dataclasses.fields()`'s own `default`/`default_factory` metadata, not
+hand-listed — must be present as a key (a missing required field now
+quarantines too, it is never silently defaulted). Only a record passing
+both checks is constructed; construction itself is still wrapped in a
+narrow `try`/`except (TypeError, ValueError)` as a belt-and-suspenders
+guard for a value-level surprise the key-set check would not catch (this
+should be unreachable given the checks above, but quarantines rather than
+crashes there too, for the same reason the prior round's fix did).
+`CoverageReport.from_json`'s per-candidate loop now routes to this helper
+only for the `evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION`
+case; anything else still goes straight to
+`_quarantined_incompatible_schema_candidate` as before.
+
+Five new regression tests added to
+`backend/tests/test_injury_report_backfill.py`, all using genuine on-disk
+JSON (built from the existing `_serialized_candidate` helper, mutated) not
+mocks: `test_from_json_quarantines_current_schema_with_unknown_key` and
+`test_from_json_quarantines_current_schema_missing_required_field` exercise
+`CoverageReport.from_json` directly;
+`test_persist_coverage_quarantines_current_schema_with_unknown_key` and
+`test_persist_coverage_quarantines_current_schema_missing_required_field`
+exercise the real `_persist_coverage` load+merge+save path (writing actual
+bytes to disk, reading them back);
+`test_coverage_for_games_quarantines_current_schema_unknown_key_fetched_outcome`
+exercises the full `observations`/`coverage_for_games` classification
+chain with the release-blocking `outcome="fetched"` plus unknown-key
+combination, asserting the game classifies as `no_candidate_coverage`, not
+`submitted_zero_listed`.
+
+**Gates and CI:** `ruff check .` and `ruff format --check .` clean (126
+files, after one auto-format pass and fixing one Yoda-condition lint and
+one over-length docstring line); `mypy .` clean (110 source files, after
+removing one now-unused `type: ignore` comment); the full local `pytest -q`
+(default `-m 'not live_smoke'`) exits 0 with no failures, including all 116
+tests in `test_injury_report_backfill.py` (111 → 116, the five new
+regressions above); `pytest -m adapter_contract -q` and
+`pytest tests/test_portability.py -q` both exit 0;
+`scripts/check_no_secrets.py` finds no secrets in 234 tracked files.
+`CURRENT_COVERAGE_SCHEMA_VERSION` remains 3 — this fix is purely
+loader-side key-set validation, not a new persisted shape, so no migration
+was needed. `origin/main` remains at `5bed586` (PR #25); no rebase needed.
+
+**Could not verify:** The same standing constraint as every prior round —
+no live Postgres instance was reachable in this session (Docker not
+installed, `TEST_DATABASE_URL` unset), so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record. No
+live NBA CDN probe was attempted this round — no transport code changed;
+this round is entirely loader key-set validation. Whether GitHub's
+merge-readiness check (CI green, CLEAN/MERGEABLE) reflects this exact push,
+and whether a further independent review finds anything beyond this one
+point, are both unverified until observed after pushing and reviewing.
+
+**Next:** Commit the two changed source/test files plus the three docs
+files, push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`,
+commission a fresh independent exact-head code review re-verifying this fix
+plus re-confirming rounds 1-12 have not regressed, then report the new
+exact head/base to the coordinator. Still not merged, not self-approved;
+`injury-status-conversion` remains explicitly blocked pending
+`injury-conversion-cohort-population` and the separate, later Model-gated
+deliverable.
+
+
 

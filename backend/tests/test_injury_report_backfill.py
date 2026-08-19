@@ -5707,3 +5707,231 @@ def test_coverage_for_games_survives_future_schema_with_an_added_field(
         "clean-submission claim, even after surviving the load"
     )
     assert by_game_id[game.id].outcome == "no_candidate_coverage"
+
+
+# ==========================================================================
+# Final-review follow-up: a record *claiming*
+# CURRENT_COVERAGE_SCHEMA_VERSION is not automatically trusted. The prior
+# fix above only closed the crash for a record whose ``evidence_schema_
+# version`` genuinely differs from CURRENT_COVERAGE_SCHEMA_VERSION. It left
+# a real fail-closed gap for a record that claims the current version but
+# whose actual keys do not match this code's dataclass contract: an
+# unknown key was silently dropped by the old
+# ``k in _CANDIDATE_COVERAGE_FIELD_NAMES`` filter and the record was still
+# constructed and trusted, and a genuinely required key silently missing
+# (``applicable_nba_game_ids`` had no real default in the dataclass, but
+# was defaulted here via ``c.get(..., ())`` anyway) let a materially
+# incomplete record through as if it were complete. Both must now
+# quarantine instead -- never crash, and never be trusted as current
+# evidence -- exercised through the same three paths as the future-schema
+# regressions above: ``CoverageReport.from_json`` directly,
+# ``_persist_coverage``'s real load -> merge -> save path, and the full
+# ``observations`` CLI classification chain.
+# ==========================================================================
+
+
+def test_from_json_quarantines_current_schema_with_unknown_key() -> None:
+    """A record claiming CURRENT_COVERAGE_SCHEMA_VERSION with an unknown key must quarantine.
+
+    Before this fix, ``from_json`` silently dropped any key not in
+    ``_CANDIDATE_COVERAGE_FIELD_NAMES`` (``known = {k: v for k, v in
+    c.items() if k in _CANDIDATE_COVERAGE_FIELD_NAMES}``) and still
+    constructed and trusted the record -- an unknown key added without a
+    version bump (a real contract drift, not a hypothetical future
+    version) was invisible to every downstream check.
+    """
+    current_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    assert current_candidate["evidence_schema_version"] == CURRENT_COVERAGE_SCHEMA_VERSION
+    current_candidate["confidence_score"] = 0.87  # unknown key, current version claimed
+    raw = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate],
+    }
+
+    report = CoverageReport.from_json(json.dumps(raw))
+
+    assert len(report.candidates) == 1
+    quarantined = report.candidates[0]
+    # Never silently trusted as real current-schema evidence.
+    assert quarantined.outcome != "fetched"
+    assert quarantined.season == ""
+    assert quarantined.season_type == ""
+
+
+def test_from_json_quarantines_current_schema_missing_required_field() -> None:
+    """A record claiming CURRENT_COVERAGE_SCHEMA_VERSION missing a required key must quarantine.
+
+    ``applicable_nba_game_ids`` has no default in ``CandidateCoverage`` --
+    the dataclass genuinely requires it. Before this fix, ``from_json``
+    defaulted a missing key to ``()`` via ``c.get("applicable_nba_game_ids",
+    ())`` regardless, silently accepting a materially incomplete record
+    (no stable game identity at all) as if it were complete current-schema
+    evidence, rather than quarantining it.
+    """
+    current_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    del current_candidate["applicable_nba_game_ids"]
+    raw = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate],
+    }
+
+    # Must not raise -- this exact shape must quarantine, not crash.
+    report = CoverageReport.from_json(json.dumps(raw))
+
+    assert len(report.candidates) == 1
+    quarantined = report.candidates[0]
+    assert quarantined.outcome != "fetched"
+    assert quarantined.season == ""
+    assert quarantined.season_type == ""
+    assert quarantined.applicable_nba_game_ids == ()
+
+
+def test_persist_coverage_quarantines_current_schema_with_unknown_key(
+    tmp_path: Path,
+) -> None:
+    """The real load -> merge -> save path must also refuse an unknown key on a current record.
+
+    Exercises the exact on-disk bytes ``_persist_coverage`` reads back via
+    its own internal ``CoverageReport.from_json`` call -- not merely the
+    loader in isolation.
+    """
+    path = tmp_path / "coverage.json"
+    current_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-current-unknown-key",
+    )
+    current_candidate["confidence_score"] = 0.87
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    # The unknown-key current-claiming record is quarantined out of the
+    # rewritten file entirely -- not retained, not rewritten as trusted
+    # current evidence.
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+
+
+def test_persist_coverage_quarantines_current_schema_missing_required_field(
+    tmp_path: Path,
+) -> None:
+    """Same real ``_persist_coverage`` path, but the stale record is missing a required key."""
+    path = tmp_path / "coverage.json"
+    current_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-current-missing-field",
+    )
+    del current_candidate["outcome"]
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    # Must not raise -- the real on-disk artifact this run reads back.
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+
+
+def test_coverage_for_games_quarantines_current_schema_unknown_key_fetched_outcome(
+    session: Any,
+) -> None:
+    """End-to-end: unknown key + fetched outcome must never prove clean submission.
+
+    This is the release-blocking scenario: a record claims the current
+    schema version *and* ``outcome="fetched"`` (the shape that would prove
+    ``submitted_zero_listed`` if trusted), but carries an unrecognized key
+    -- exactly the contract-drift case the coordinator's review found
+    still slipping through the version check alone. Must not be trusted for
+    a clean-submission claim even though the version number matches.
+    """
+    teams = _seed_teams(session)
+    game = _seed_game(
+        session,
+        nba_game_id="current-schema-unknown-key-fetched",
+        game_date=date(2025, 11, 2),
+        tipoff_utc=_et(2025, 11, 2, 19, 0),
+        home_team_id=teams["MIL"],
+        away_team_id=teams["SAC"],
+    )
+    canonical_ts = _et(2025, 11, 1, 17, 30)
+    current_candidate_raw = _serialized_candidate(
+        report_date="2025-11-02",
+        requested_timestamp=canonical_ts.isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=game.id,
+        nba_game_id=game.nba_game_id,
+        outcome="fetched",
+    )
+    current_candidate_raw["confidence_score"] = 0.99  # unknown key; version still current
+    raw_report = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [current_candidate_raw],
+    }
+
+    coverage_report = CoverageReport.from_json(json.dumps(raw_report))
+
+    ready, missing = games_to_backfill(session, season="2025-26", season_type=SeasonType.REGULAR)
+    coverage = coverage_for_games(
+        session, ready=ready, missing_tipoff=missing, coverage_report=coverage_report
+    )
+    by_game_id = {gc.game_id: gc for gc in coverage}
+    assert by_game_id[game.id].outcome != "submitted_zero_listed", (
+        "an unknown key on a current-claiming record must never be trusted "
+        "for a clean-submission claim, even though its version number "
+        "matches CURRENT_COVERAGE_SCHEMA_VERSION"
+    )
+    assert by_game_id[game.id].outcome == "no_candidate_coverage"
