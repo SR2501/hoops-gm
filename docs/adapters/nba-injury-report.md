@@ -970,7 +970,8 @@ skip candidates whose only local evidence is a legacy row.
     `_persist_coverage` may not discard those raw records: if any existing
     candidate is legacy/missing-version, future-versioned (including added or
     renamed fields), or malformed while claiming the current version (unknown
-    keys or missing required keys, including v3's `season`/`season_type`), it
+    keys or missing required keys, including v3's `season`/`season_type`), or
+    is not a JSON object at all, it
     raises `IncompatibleCoverageEvidence` before creating a `.tmp` file. A
     current candidate whose recorded scope disagrees with the file/request
     raises `CoverageScopeMismatch` at the same boundary rather than being

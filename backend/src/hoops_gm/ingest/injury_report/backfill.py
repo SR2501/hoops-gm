@@ -1375,10 +1375,20 @@ class CoverageReport:
         crashing before either ever runs, and stops a malformed
         current-claiming record from ever reaching either as if it were
         complete.
+
+        A candidate that is not a JSON object is equally uninterpretable. It
+        is quarantined before any mapping operation so the read-only
+        ``observations`` path remains available and visibly counts the
+        candidate rather than crashing on ``.get``.
         """
         raw = json.loads(text)
         candidates: list[CandidateCoverage] = []
         for c in raw["candidates"]:
+            if not isinstance(c, Mapping):
+                candidates.append(
+                    _quarantined_incompatible_schema_candidate(LEGACY_COVERAGE_SCHEMA_VERSION)
+                )
+                continue
             raw_version = c.get("evidence_schema_version", LEGACY_COVERAGE_SCHEMA_VERSION)
             candidate = (
                 _current_schema_candidate_or_none(c)

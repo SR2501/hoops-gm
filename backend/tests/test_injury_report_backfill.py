@@ -5581,6 +5581,33 @@ def test_from_json_survives_future_schema_with_a_renamed_field() -> None:
     assert report.candidates[0].outcome != "fetched"
 
 
+def test_from_json_quarantines_non_mapping_candidate() -> None:
+    raw = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": ["uninterpretable raw candidate"],
+    }
+
+    report = CoverageReport.from_json(json.dumps(raw))
+
+    assert len(report.candidates) == 1
+    quarantined = report.candidates[0]
+    assert quarantined.outcome != "fetched"
+    assert quarantined.season == ""
+    assert quarantined.season_type == ""
+
+
+def test_persist_coverage_refuses_non_mapping_candidate(tmp_path: Path) -> None:
+    path = tmp_path / "coverage.json"
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": ["uninterpretable raw candidate"],
+    }
+
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
+
+
 def test_persist_coverage_refuses_future_schema_with_an_added_field(
     tmp_path: Path,
 ) -> None:

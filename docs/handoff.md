@@ -5114,4 +5114,41 @@ are now excluded from that read-only range aggregate, with a regression test.
 Both findings were resolved before push; a fresh exact-head review is still
 required after the follow-up commit.
 
+**Round-14 finalization addendum (rebased onto `6c405ef`):** Rebased the
+complete append-only history onto PR #26's exact squash commit
+`6c405ef81e2828de390f7dda56489b62f8b21143`; `docs/backlog.md` was reconciled
+mechanically to `31 done - 1 blocked - 69 pending - 101 total`. A second
+exact-head review cycle found no release blocker. Its two code observations
+were resolved: the exclusion cascade now exposes date-unassignable
+quarantined coverage candidates as a separate stage 5b rather than silently
+shrinking stages 5-8, and the `NOT_YET_SUBMITTED` canonical-selection fixture
+explicitly declares current trusted provenance. A subsequent independent
+data/evidence review found one medium read-path inconsistency: a non-object
+JSON candidate failed loud with `AttributeError` in `CoverageReport.from_json`
+instead of becoming an inert quarantine placeholder. The loader now
+quarantines that shape too; the real persistence path still raises typed
+`IncompatibleCoverageEvidence` before write, and regression tests prove bytes
+unchanged, no temporary residue, and no trusted evidence.
+
+**Now true (final local gate):** Ruff check and format check passed for 126
+files; bare mypy passed for 110 source files; full pytest passed with 798 tests
+and 17 live-smoke tests deselected; the Adapter gate passed with 235 recorded-
+fixture contract tests; the secret scan passed over 235 tracked files; and a
+fresh SQLite `upgrade head -> alembic check -> downgrade base` lifecycle
+passed through the single `0012 -> 0013 -> 0014` tail. Migration `0014`
+continues to backfill and default omitted evidence provenance to legacy (`1`);
+only the validated importer writes current (`2`).
+
+**Could not verify:** This local host has no real Postgres service. GitHub's
+Postgres migration lifecycle and full suite had not run against the final
+post-review head when this addendum was written. A fresh independent code and
+data/evidence review is still required after the final documentation commit.
+No live archive request was repeated because transport and scheduling did not
+change; the standing live uncertainty remains whether bounded candidate
+scheduling reaches every off-cadence NBA archive report.
+
+**Conversion block:** Do not merge or self-approve this PR.
+`injury-status-conversion` remains explicitly blocked on
+`injury-conversion-cohort-population` and its separate Model gate, even after
+this backfill PR is green.
 
