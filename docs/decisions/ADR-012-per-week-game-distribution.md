@@ -1,4 +1,4 @@
-# ADR-012 — Per-week game distribution is a draft/trade-facing view, not folded into valuation
+# ADR-012 — Per-week game distribution is a living schedule dependency across decisions
 
 **Status:** Accepted
 **Accepted:** 2026-08-17 by the project owner
@@ -39,3 +39,22 @@ If held-out H2H analysis shows weekly game-count timing has negligible fantasy v
 ### 2026-08-17 — Sparse league-wide weeks and trade targeting
 
 The schedule grid must identify sparse periods caused by league-wide calendar events, especially the In-Season Tournament and All-Star break. These weeks can have fewer games across the league, so a player's raw scheduled-game count must be shown both against that team's normal distribution and against the league-wide period baseline. Trade evaluation must use this information to identify schedule-driven targets and avoid treating a high-value week as an ordinary period. A trade can be attractive because it improves a specific sparse or high-volume H2H period even when rest-of-season totals barely change.
+
+### 2026-08-17 — Living refresh and downstream cascade
+
+Accepted by the project owner on 2026-08-17.
+
+The standalone `schedule-grid-early` view is versioned and remains a live
+dependency after draft preparation. Draft and auction tools, trade evaluation,
+lineup and streaming plans, and weekly management all consume the current
+schedule version. Re-ingest it at least weekly during development season and
+whenever the NBA schedule, league scoring periods, or a source interpretation
+changes.
+
+Each refresh cascades into affected projections, SOS (ADR-011), valuations,
+draft/trade analyses, and weekly recommendations. Consumers expose the
+data/version timestamp and may not combine a new game-count grid with stale
+downstream outputs. The grid remains raw count data governed by the Adapter
+gate; a downstream use that changes a decision-bearing number also inherits the
+Model gate. Sparse league-wide periods trigger the same cascade when their
+changed shape affects those inputs.

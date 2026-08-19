@@ -3022,3 +3022,89 @@ running services, and no live Fantrax request was made.
 **Next:** The owner should review the separately reported decision list.
 Any follow-up should make one named decision at a time rather than folding
 product or governance choices into mechanical documentation cleanup.
+
+---
+
+## 2026-08-17 — architect — Recursive SOS and schedule refresh contract
+
+**Changed:** Reworked ADR-011 and ADR-012 together after owner review. SOS and
+every projection set in the corpus are now explicitly a versioned recursive
+loop: projection changes can change SOS, SOS can require projection changes,
+and the dependency-aware cascade repeats until stable or an explicit limit is
+reached. Per-week game distribution is now a living schedule dependency,
+re-ingested at least weekly during development season and cascaded into
+projections, SOS, valuation, draft, auction, trades, lineups, streaming, and
+weekly planning. The ADR index summaries were updated to match.
+
+**Now true:** These outputs must carry refresh/version provenance and may not
+combine fresh upstream data with stale downstream results. The schedule grid
+remains raw count data, while any resulting decision number inherits the
+relevant Model gate.
+
+**Could not verify:** No implementation currently executes the recursive
+cascade or weekly scheduler; these ADR changes define the contract for the
+quant, data-engineer, backend, and feature implementations.
+
+**Next:** `architect` should sequence the cascade contract with the projection
+and schedule work; `quant` and `data-engineer` must choose the convergence,
+freshness, and backtest details when implementing the model and adapters.
+
+---
+
+## 2026-08-17 — owner — ADR-011 and ADR-012 recursive refresh amendments accepted
+
+**Changed:** The project owner accepted the revised ADR-011 recursive
+SOS/projection contract and ADR-012 living per-week schedule dependency
+contract.
+
+**Now true:** Work that was waiting on these decisions may resume. The
+schedule-context work was explicitly authorized to continue under the weekly
+refresh, versioning, and cascade requirements.
+
+**Could not verify:** The downstream implementation has not yet demonstrated
+recursive convergence or a weekly refresh run; those remain implementation and
+Model-gate work.
+
+**Next:** `quant`, `data-engineer`, and downstream feature owners should
+implement and test the cascade without mixing stale versions.
+
+---
+
+## 2026-08-18 — backend, architect, bridge — Preservation snapshot reconciliation
+
+**Changed:** Compared every hunk in local preservation commit `5b2a3f0` against
+current remote main `b570c32` instead of replaying the commit. All 24 files were
+classified as already merged, byte-identical, superseded by newer reviewed
+behavior, genuinely unique, or an owner/product decision. Restored the
+owner-accepted recursive weekly refresh amendments to ADR-011 and ADR-012,
+their decision-index summaries, and their acceptance narrative. Also ported the
+one genuinely unique technical hardening requirement into the current shared
+userscript-serving route: a genuinely missing build retains the shipped
+`userscript_build_missing` 404 contract, while a present path that cannot be
+read now returns a distinct `userscript_build_unreadable` 500 rather than
+incorrectly advising the operator to rebuild. Added a regression test using a
+directory at the configured file path, which portably exercises a
+non-`FileNotFoundError` `OSError` without platform-specific permission
+manipulation.
+
+**Now true:** The reconciliation does not regress current route mounting, the
+shared loopback guard, `Cache-Control: no-store`, bridge/userscript 0.5.0
+behavior, live-verification documentation, migrations, or append-only handoff
+history. ADR-011 and ADR-012 now retain both their newer current-main text and
+the accepted recursive refresh contract as additive amendments.
+
+**Could not verify:** A native permission-denied file read on POSIX; the
+cross-platform regression instead proves the same generic
+non-`FileNotFoundError` `OSError` branch, while the concrete exception subtype
+is platform-dependent. GitHub Actions and native Postgres were not run locally;
+no schema, migration, adapter, fixture, or external-source code changed. The
+preservation commit's proposed restricted-input Adapter-gate amendment,
+projection experiment protocol, and their associated handoff proposal remain
+unaccepted owner/product decisions and were reported rather than ported. The
+recursive cascade and weekly refresh scheduler required by accepted ADR-011 and
+ADR-012 have not yet been demonstrated end to end.
+
+**Next:** An independent reviewer should inspect this exact branch head before
+the focused PR proceeds. The owner may separately decide whether to pursue a
+smaller projection-experiment protocol or amend ADR-006 for restricted
+personal-use inputs; neither proposal is in force.
