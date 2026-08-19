@@ -220,10 +220,10 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -1181,6 +1181,67 @@ class CandidateCoverage:
         )
 
 
+#: Every field name :class:`CandidateCoverage` currently knows about. Used
+#: by :meth:`CoverageReport.from_json` (round-11 follow-up) to strip any
+#: stray key from a raw on-disk dict *before* it ever reaches the dataclass
+#: constructor — a genuine future schema version may add fields this code
+#: has never seen, and passing those through as keyword arguments would
+#: crash with ``TypeError: unexpected keyword argument`` rather than being
+#: quarantined.
+_CANDIDATE_COVERAGE_FIELD_NAMES: Final[frozenset[str]] = frozenset(
+    f.name for f in fields(CandidateCoverage)
+)
+
+
+def _quarantined_incompatible_schema_candidate(
+    evidence_schema_version: object,
+) -> CandidateCoverage:
+    """A safe placeholder for a record whose schema version is not current.
+
+    Round-11 follow-up review point 1: before this fix, ``from_json`` always
+    unpacked a raw candidate's *entire* dict as keyword arguments to
+    :class:`CandidateCoverage`, trusting that its shape matched the current
+    dataclass exactly. That is true for a current-version record, but never
+    guaranteed for a legacy (pre-versioning) one or — the crash this closes
+    — a realistic *future* version: one that adds a field this code has
+    never seen raises ``TypeError`` at construction, and one that renames or
+    drops a currently-required field (``report_date``, ``anchor``, etc.)
+    raises a missing-argument ``TypeError`` instead. Either crashes the
+    entire load, taking down ``observations`` and ``_persist_coverage``
+    alike, rather than being quarantined.
+
+    This function never attempts to interpret the incompatible record's
+    shape at all — not even to opportunistically read fields that happen to
+    share a name with the current schema, since a future version could
+    repurpose a field name to mean something else entirely. It builds an
+    inert, self-consistent placeholder carrying only the raw
+    ``evidence_schema_version`` value through unchanged (even if it is not
+    an ``int``, e.g. a malformed or missing-then-defaulted value), plus safe
+    defaults for every other field. ``outcome`` is stamped as a sentinel
+    that is not ``"fetched"``, and ``season``/``season_type`` as ``""`` —
+    both already excluded by every existing trust check
+    (:func:`coverage_for_games`'s ``candidate.outcome != "fetched"`` guard,
+    :func:`_persist_coverage`'s ``(season, season_type)`` filter, and both
+    functions' ``evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION``
+    checks), so this placeholder is quarantined the same way an in-shape
+    incompatible-version record already was — it just no longer crashes the
+    loader on the way there.
+    """
+    return CandidateCoverage(
+        report_date="",
+        anchor="",
+        era="",
+        anchor_offset_minutes=None,
+        requested_timestamp="",
+        applicable_game_ids=(),
+        applicable_nba_game_ids=(),
+        outcome="quarantined_incompatible_schema_version",
+        evidence_schema_version=cast(int, evidence_schema_version),
+        season="",
+        season_type="",
+    )
+
+
 @dataclass
 class CoverageReport:
     """The full set of :class:`CandidateCoverage` records for one run.
@@ -1208,7 +1269,7 @@ class CoverageReport:
 
     @classmethod
     def from_json(cls, text: str) -> CoverageReport:
-        """Load persisted coverage, stamping any pre-fix record as legacy.
+        """Load persisted coverage, quarantining any non-current record.
 
         A record written before round-7's stable-identity fix has no
         ``applicable_nba_game_ids``/``evidence_schema_version`` keys at all
@@ -1223,27 +1284,45 @@ class CoverageReport:
         ``season``/``season_type`` keys either — default both to ``""``,
         never a guessed real value, so :func:`_persist_coverage` can never
         mistake a reconstructed default for genuine recorded scope.
+
+        **Round-11 follow-up review point 1**: ``evidence_schema_version``
+        is inspected *before* any attempt to build the current
+        :class:`CandidateCoverage` shape from a raw candidate's dict — not
+        only after, as a previous fix assumed. A record whose version is not
+        exactly :data:`CURRENT_COVERAGE_SCHEMA_VERSION` (legacy, or a future
+        version this code has never seen) is routed to
+        :func:`_quarantined_incompatible_schema_candidate` instead, which
+        never interprets that record's other fields at all. Only a
+        current-version record's keys are unpacked into the dataclass
+        constructor, and even then filtered to
+        :data:`_CANDIDATE_COVERAGE_FIELD_NAMES` first, so a stray extra key
+        can never reach the constructor and crash it either. Every
+        incompatible record this loads is already excluded from every trust
+        check downstream (:func:`coverage_for_games`,
+        :func:`_persist_coverage`) — this only stops the loader itself from
+        crashing before either ever runs.
         """
         raw = json.loads(text)
-        return cls(
-            season=raw["season"],
-            season_type=raw["season_type"],
-            candidates=[
+        candidates: list[CandidateCoverage] = []
+        for c in raw["candidates"]:
+            raw_version = c.get("evidence_schema_version", LEGACY_COVERAGE_SCHEMA_VERSION)
+            if raw_version != CURRENT_COVERAGE_SCHEMA_VERSION:
+                candidates.append(_quarantined_incompatible_schema_candidate(raw_version))
+                continue
+            known = {k: v for k, v in c.items() if k in _CANDIDATE_COVERAGE_FIELD_NAMES}
+            candidates.append(
                 CandidateCoverage(
                     **{
-                        **c,
+                        **known,
                         "applicable_game_ids": tuple(c["applicable_game_ids"]),
                         "applicable_nba_game_ids": tuple(c.get("applicable_nba_game_ids", ())),
-                        "evidence_schema_version": c.get(
-                            "evidence_schema_version", LEGACY_COVERAGE_SCHEMA_VERSION
-                        ),
+                        "evidence_schema_version": raw_version,
                         "season": c.get("season", ""),
                         "season_type": c.get("season_type", ""),
                     }
                 )
-                for c in raw["candidates"]
-            ],
-        )
+            )
+        return cls(season=raw["season"], season_type=raw["season_type"], candidates=candidates)
 
 
 def default_coverage_path(season: str, season_type: SeasonType) -> Path:

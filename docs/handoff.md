@@ -4825,3 +4825,106 @@ gate status to the coordinator. Still not merged, not self-approved;
 representative live-archive cohort and the separate, later Model-gated
 deliverable.
 
+## 2026-08-19 — data-engineer — Historical injury-report backfill: round-11 follow-up (two fixes)
+
+A fresh coordinator evidence review of exact head `d0e045d` (round 11's
+final, independently-reviewed head, CI green, `mergeable: MERGEABLE`,
+`mergeStateStatus: CLEAN`) blocked release on two further findings — not new
+runtime-correctness defects like rounds 1-11, but a genuine loader crash the
+round-11 quarantine fix never actually exercised, plus a backlog structural
+inconsistency the round-11 wording fix did not close.
+
+**Now true:**
+
+1. **`CoverageReport.from_json` no longer crashes on a realistic future
+   schema version.** Round 11's fix (quarantining a non-current
+   `evidence_schema_version` at `_persist_coverage`/classification) never
+   actually protected the *loader itself*: `from_json` still built every
+   raw candidate as `CandidateCoverage(**c)` — the entire dict, unpacked as
+   keyword arguments — *before* ever inspecting its schema version. The
+   original round-11 regression tests only ever bumped the version number
+   on an otherwise-unchanged dict, so they never triggered this. A genuine
+   future version — one that plausibly adds a field this code has never
+   seen, which is the realistic shape a real future version would take —
+   raised `TypeError: unexpected keyword argument`, crashing the *entire
+   load* before quarantine logic ever ran. This took down both the
+   `observations` CLI's read path and `_persist_coverage`'s own internal
+   read of `existing` candidates (called on every persist, even one holding
+   only current-scope evidence). A future version renaming or dropping a
+   currently-required field (e.g. `report_date`, which has no default)
+   crashed with a different `TypeError` (missing required positional
+   argument) for the same underlying reason. Fixed by inspecting
+   `evidence_schema_version` first, before any attempt to build the current
+   shape: a non-current version is now routed to a new
+   `_quarantined_incompatible_schema_candidate` placeholder that never
+   interprets that record's other fields at all — not even
+   opportunistically reading fields sharing a name with the current
+   schema, since a future version could repurpose a field name entirely. A
+   current-version record's own keys are now also filtered to a new
+   `_CANDIDATE_COVERAGE_FIELD_NAMES` frozenset before construction, so a
+   stray extra key on an otherwise-current record can never reach the
+   constructor either. Five new regression tests added: two exercise
+   `CoverageReport.from_json` directly with hand-built raw JSON (one with
+   an added field, one with a renamed/dropped required field), two exercise
+   the real `_persist_coverage` load+merge+save path with the same two
+   variants, and one exercises the full `observations`-path chain
+   (`CoverageReport.from_json` → `coverage_for_games`) with an added-field
+   future record against a seeded game, proving no crash and that the
+   quarantined record is never trusted for a `submitted_zero_listed` claim.
+   `CURRENT_COVERAGE_SCHEMA_VERSION` remains 3 — no new coverage schema
+   fields were added, so no migration was needed for this fix.
+2. **`docs/backlog.md`'s dependency graph now agrees with its own prose.**
+   Round 11's fix corrected the *wording* of the
+   `injury-report-historical-backfill` entry, but never touched the
+   *structural* dependency graph: `injury-status-conversion` listed exactly
+   three dependencies (`injury-report-ingest`,
+   `injury-report-historical-backfill`, `participation-ledger`), all three
+   already marked `done`, so the backlog's own stated rule — "a task is
+   ready when every dependency is done" — made it appear structurally
+   ready despite the prose two paragraphs above saying the representative
+   cohort it actually needs does not exist. Fixed by adding a new explicit
+   backlog item, `injury-conversion-cohort-population` (not done; depends
+   on `injury-report-historical-backfill` and `participation-ledger`;
+   describes running the backfill tool at scale against the live archive to
+   produce an actual multi-date, multi-game, evidence-reviewed cohort), and
+   making `injury-status-conversion` depend on it too. The backlog's
+   summary line is updated from "28 done - 1 blocked - 71 pending - 100
+   total" to "28 done - 1 blocked - 72 pending - 101 total" — verified via
+   direct heading/marker counts (`^### ` = 101, `[x] **done**` = 28,
+   `[ ] **pending**` = 72, `[ ] **blocked**` = 1; 28+1+72=101, matching).
+
+**Gates and CI:** `ruff check .` and `ruff format --check .` clean (126
+files); `mypy .` clean (110 source files); the full local `pytest -q`
+(default `-m 'not live_smoke'`) exits 0 with no failures, including all 111
+tests in `test_injury_report_backfill.py` (106 → 111, the five new
+regressions above); `pytest -m adapter_contract -q` and
+`pytest tests/test_portability.py -q` both exit 0;
+`scripts/check_no_secrets.py` finds no secrets in 234 tracked files. A fresh
+`alembic upgrade head` from an empty SQLite database applies the full
+`0001 → 0014` chain cleanly — unchanged, no migration needed this round.
+`origin/main` remains at `5bed586` (PR #25); no rebase needed.
+
+**Could not verify:** The same standing constraint as every prior round —
+no live Postgres instance was reachable in this session (Docker not
+installed, `TEST_DATABASE_URL` unset), so only SQLite-backed unit tests and
+`test_portability.py`'s static cross-dialect analysis ran locally; CI's
+dedicated Postgres job remains the actual cross-dialect check of record. No
+live NBA CDN probe was attempted this round — no transport code changed;
+this round is entirely loader-crash-safety and backlog-structure
+correctness. Whether GitHub's merge-readiness check (CI green,
+CLEAN/MERGEABLE) reflects this exact push, and whether a further independent
+review finds anything beyond these two points, are both unverified until
+observed after pushing and reviewing.
+
+**Next:** Commit the two changed source/test files plus the three docs
+files, push to `origin/sr2501-historical-injury-backfill`, monitor all
+GitHub CI jobs (including the Postgres job) to green, confirm
+`mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` via `gh pr view`,
+commission a fresh independent exact-head code review re-verifying both
+fixes plus re-confirming rounds 1-11 have not regressed, then report the new
+exact head/base to the coordinator. Still not merged, not self-approved;
+`injury-status-conversion` remains explicitly blocked pending
+`injury-conversion-cohort-population` and the separate, later Model-gated
+deliverable.
+
+

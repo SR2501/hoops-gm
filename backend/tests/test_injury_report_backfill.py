@@ -5471,3 +5471,239 @@ def test_main_run_persists_coverage_gathered_before_a_403_abort(
     )
     assert len(coverage_report.candidates) > 0
     assert any(c.outcome == "forbidden" for c in coverage_report.candidates)
+
+
+# ==========================================================================
+# Round-11 follow-up: a realistic future schema version must be quarantined
+# *before* CoverageReport.from_json ever attempts to build the current
+# CandidateCoverage shape from its raw dict -- not only after, at
+# classification/persistence time. Bumping evidence_schema_version alone
+# (as the original round-11 tests did) never actually exercised the crash:
+# a genuine future version would plausibly add a field this code has never
+# seen, or rename/drop one it currently requires with no default, and the
+# old ``CandidateCoverage(**c)`` unpacked the *entire* raw dict regardless
+# of version, crashing with TypeError before either downstream check could
+# run.
+# ==========================================================================
+
+
+def test_from_json_survives_future_schema_with_an_added_field() -> None:
+    """A future version that adds a field must not crash the loader.
+
+    This is the realistic shape a future schema version would plausibly
+    take -- new evidence, not merely a bumped integer. Before this fix,
+    ``CoverageReport.from_json`` unpacked the raw dict's every key
+    (including the unknown one) as a keyword argument to
+    ``CandidateCoverage`` regardless of its ``evidence_schema_version``,
+    raising ``TypeError: unexpected keyword argument`` and crashing the
+    entire load.
+    """
+    future_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    future_candidate["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    future_candidate["confidence_score"] = 0.87  # a field this code has never seen
+    raw = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate],
+    }
+
+    # Must not raise -- this exact shape crashed before this fix.
+    report = CoverageReport.from_json(json.dumps(raw))
+
+    assert len(report.candidates) == 1
+    quarantined = report.candidates[0]
+    assert quarantined.evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    # Never trusted as real evidence once quarantined.
+    assert quarantined.outcome != "fetched"
+    assert quarantined.season == ""
+    assert quarantined.season_type == ""
+
+
+def test_from_json_survives_future_schema_with_a_renamed_field() -> None:
+    """A future version that renames/drops a currently-required field must not crash either.
+
+    ``report_date`` has no default in ``CandidateCoverage`` -- a future
+    version renaming it (here to ``report_date_v4``) previously raised a
+    *different* ``TypeError`` (missing required positional argument) in
+    addition to the unexpected-keyword one for the new name. Inspecting
+    ``evidence_schema_version`` before ever attempting construction closes
+    both failure modes at once, because a non-current version is never
+    unpacked into the dataclass at all.
+    """
+    future_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+    )
+    future_candidate["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    future_candidate["report_date_v4"] = future_candidate.pop("report_date")
+    raw = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate],
+    }
+
+    report = CoverageReport.from_json(json.dumps(raw))
+
+    assert len(report.candidates) == 1
+    assert report.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    assert report.candidates[0].outcome != "fetched"
+
+
+def test_persist_coverage_survives_future_schema_with_an_added_field(
+    tmp_path: Path,
+) -> None:
+    """The real load -> merge -> save path in ``_persist_coverage`` must survive too.
+
+    The original round-11 quarantine test only ever bumped
+    ``evidence_schema_version`` on an otherwise-unchanged raw dict, so it
+    never actually exercised a future version that also *adds* a field --
+    the realistic shape, and the exact one that crashed
+    ``CoverageReport.from_json`` (called internally by ``_persist_coverage``
+    to read ``existing``) before this fix.
+    """
+    path = tmp_path / "coverage.json"
+    future_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-future-added-field",
+    )
+    future_candidate["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    future_candidate["confidence_score"] = 0.87
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    # Must not raise -- the real on-disk artifact this run reads back.
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    # Quarantined out of the rewritten file entirely -- not retained, not
+    # rewritten as current, and the loader never crashed on the way there.
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+
+
+def test_persist_coverage_survives_future_schema_with_a_renamed_field(
+    tmp_path: Path,
+) -> None:
+    """Same real ``_persist_coverage`` path, but the future version renames a required field.
+
+    ``anchor`` has no default -- renaming it (here to ``anchor_kind``)
+    previously raised a missing-required-argument ``TypeError`` from deep
+    inside ``_persist_coverage``'s own ``existing`` load, aborting the
+    entire persist call (and thus this run's whole checkpoint/coverage
+    write) rather than quarantining just the one incompatible record.
+    """
+    path = tmp_path / "coverage.json"
+    future_candidate = _serialized_candidate(
+        report_date="2025-11-01",
+        requested_timestamp=_et(2025, 10, 31, 17, 30).isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=1,
+        nba_game_id="nba-future-renamed-field",
+    )
+    future_candidate["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    future_candidate["anchor_kind"] = future_candidate.pop("anchor")
+    stale_file = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate],
+    }
+    path.write_text(json.dumps(stale_file), encoding="utf-8")
+
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    assert len(result.candidates) == 1
+    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+
+
+def test_coverage_for_games_survives_future_schema_with_an_added_field(
+    session: Any,
+) -> None:
+    """End-to-end through the ``observations`` CLI's real load path.
+
+    ``main``'s ``observations`` subcommand reads a persisted coverage file
+    via ``CoverageReport.from_json`` and feeds the result straight into
+    ``coverage_for_games`` -- the same crash this closes would have taken
+    down that CLI path too, for the same realistic added-field future
+    version. This proves the exact chain survives, and that the
+    quarantined record is never trusted for a clean-submission claim once
+    it does.
+    """
+    teams = _seed_teams(session)
+    game = _seed_game(
+        session,
+        nba_game_id="future-schema-added-field",
+        game_date=date(2025, 11, 2),
+        tipoff_utc=_et(2025, 11, 2, 19, 0),
+        home_team_id=teams["MIL"],
+        away_team_id=teams["SAC"],
+    )
+    canonical_ts = _et(2025, 11, 1, 17, 30)
+    future_candidate_raw = _serialized_candidate(
+        report_date="2025-11-02",
+        requested_timestamp=canonical_ts.isoformat(),
+        season="2025-26",
+        season_type="regular",
+        game_id=game.id,
+        nba_game_id=game.nba_game_id,
+        outcome="fetched",
+    )
+    future_candidate_raw["evidence_schema_version"] = CURRENT_COVERAGE_SCHEMA_VERSION + 1
+    future_candidate_raw["confidence_score"] = 0.99
+    raw_report = {
+        "season": "2025-26",
+        "season_type": "regular",
+        "candidates": [future_candidate_raw],
+    }
+
+    # The exact sequence the ``observations`` CLI subcommand runs: parse
+    # the persisted JSON, then classify against it. Must not raise.
+    coverage_report = CoverageReport.from_json(json.dumps(raw_report))
+
+    ready, missing = games_to_backfill(session, season="2025-26", season_type=SeasonType.REGULAR)
+    coverage = coverage_for_games(
+        session, ready=ready, missing_tipoff=missing, coverage_report=coverage_report
+    )
+    by_game_id = {gc.game_id: gc for gc in coverage}
+    assert by_game_id[game.id].outcome != "submitted_zero_listed", (
+        "an unrecognized future schema version must never be trusted for a "
+        "clean-submission claim, even after surviving the load"
+    )
+    assert by_game_id[game.id].outcome == "no_candidate_coverage"

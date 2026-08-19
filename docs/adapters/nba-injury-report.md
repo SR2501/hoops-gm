@@ -871,6 +871,56 @@ skip candidates whose only local evidence is a legacy row.
     archive is separate, unstarted work — `injury-status-conversion` is not
     unblocked by this entry.
 
+* **A round-11 follow-up review found the future-schema-version quarantine
+  above still crashed the loader on a realistic future record, and that the
+  backlog fix left `injury-status-conversion` structurally reachable** —
+  fixed and regression-tested:
+  * **`CoverageReport.from_json` unpacked a raw candidate's entire dict
+    before ever inspecting its schema version.** The round-11 fix above
+    quarantines a non-current `evidence_schema_version` at the
+    `_persist_coverage`/classification boundary, but the *loader itself*
+    still built every raw candidate — regardless of version — as
+    `CandidateCoverage(**c)`. Bumping only the version number (as the
+    original round-11 regression did) never actually exercised this: a
+    real future schema version would plausibly *add* a field this code has
+    never seen, and unpacking that dict raised `TypeError: unexpected
+    keyword argument`, crashing the whole load before quarantine logic ever
+    ran — taking down both the `observations` CLI's read path and
+    `_persist_coverage`'s own internal read of `existing` candidates. A
+    future version renaming or dropping a currently-required field (e.g.
+    `report_date`, which has no default) crashed with a different
+    `TypeError` (missing required positional argument) for the same
+    underlying reason. Fixed by inspecting `evidence_schema_version` first,
+    *before* any attempt to build the current shape: anything not exactly
+    `CURRENT_COVERAGE_SCHEMA_VERSION` is routed to
+    `_quarantined_incompatible_schema_candidate`, an inert placeholder that
+    never interprets that record's other fields at all — not even
+    opportunistically reading fields that happen to share a name with the
+    current schema, since a future version could repurpose a name to mean
+    something else entirely. A current-version record's own keys are now
+    also filtered to `_CANDIDATE_COVERAGE_FIELD_NAMES` before construction,
+    so a stray extra key on an otherwise-current record can never reach the
+    constructor either. Regression-tested with genuine raw JSON carrying
+    both an added field and a renamed required field, through both the
+    `CoverageReport.from_json` → `coverage_for_games` observations path and
+    the real `_persist_coverage` load+merge+save path — no crash, and the
+    quarantined record is never rewritten as trusted current evidence in
+    either.
+  * **`docs/backlog.md`'s dependency graph let `injury-status-conversion`
+    appear structurally ready anyway.** The prior round's wording fix
+    corrected the *prose*, but the backlog's own stated rule — "a task is
+    ready when every dependency is done" — was still satisfied: all three
+    of `injury-status-conversion`'s listed dependencies
+    (`injury-report-ingest`, `injury-report-historical-backfill`,
+    `participation-ledger`) were marked `done`, so the structural signal a
+    reader or tool would follow disagreed with the prose warning it. A
+    representative cohort was never itself a tracked dependency. Fixed by
+    adding `injury-conversion-cohort-population` as its own explicit
+    backlog item (not done; depends on `injury-report-historical-backfill`
+    and `participation-ledger`) and making `injury-status-conversion`
+    depend on it too, so the dependency graph and the prose now agree:
+    conversion is not structurally ready until that cohort exists.
+
 
 ### What this tool is not
 
