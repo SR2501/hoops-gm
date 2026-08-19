@@ -5921,3 +5921,27 @@ occurred.
 **Next:** Force-update only PR #12 with lease, require every blocking CI job to
 pass, and obtain both independent reviews on that immutable head. If either
 review finds a defect, fix it and repeat the exact-head gates and reviews.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 fixture-hash portability correction
+
+**Changed:** Fresh Linux CI exposed that the privacy-safe fixture metadata had
+hashed Windows checkout bytes with CRLF endings. GitHub checked out the same
+Git blob with LF endings, so the contract hash failed even though parsing and
+all migration jobs succeeded. The fixture hash is now explicitly computed
+after CRLF-to-LF normalization and metadata records that canonicalization;
+source dialect assertions remain unchanged.
+
+**Now true:** The corrected hash is stable across Windows and Linux. The local
+full Code and Adapter suites are green again. On the failed published head,
+both Postgres jobs reached the same sole cross-platform hash assertion after
+the migration lifecycle passed; one reported 902 passes and 2 expected skips
+before that failure, so no Postgres-specific importer failure was observed.
+
+**Could not verify:** The corrected commit still needs new Linux, native
+Postgres and migration CI. Independent reviews must inspect only that corrected
+published head. No merge or self-approval occurred.
+
+**Next:** Publish the correction, require all replacement jobs to pass, then
+obtain independent data-engineer and code reviews and fix every finding.

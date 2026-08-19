@@ -724,8 +724,9 @@ class TestBasketballMonsterProjectionContract:
             (FIXTURES / "basketball_monster_sample.metadata.json").read_text(encoding="utf-8")
         )
 
+        canonical_fixture_bytes = fixture_bytes.replace(b"\r\n", b"\n")
         assert (
-            hashlib.sha256(fixture_bytes).hexdigest().upper()
+            hashlib.sha256(canonical_fixture_bytes).hexdigest().upper()
             == metadata["privacy_safe_fixture_sha256"]
         )
         assert metadata["private_export_sha256"] == (

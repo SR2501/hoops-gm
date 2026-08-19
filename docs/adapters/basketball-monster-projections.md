@@ -22,7 +22,9 @@ The exact headers and order are pinned by
 `BASKETBALL_MONSTER_2026_27_HEADERS`. The CSV is UTF-8, comma-delimited,
 double-quote-capable, has no leading BOM, and the observed export uses CRLF
 records. A privacy-safe fixture preserves the exact headers, order and dialect
-with synthetic identifiers, names and values.
+with synthetic identifiers, names and values. Its published hash normalizes
+CRLF to LF first so Windows checkout conversion cannot make the contract
+platform-dependent.
 
 The source values are season totals even though the visible page labels the
 presentation "Per Game Stats." `games` is persisted only as the source
