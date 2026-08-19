@@ -5304,3 +5304,36 @@ evidence under new source fingerprints. Before this independent PR merges, a
 fresh quant reviewer must inspect its exact head; downstream consumers must keep
 observed participation, production consistency, and future availability/value
 models separate.
+
+---
+
+## 2026-08-19 — architect — Projection experiment sequestration protocol
+
+**Changed:** Recorded the owner's explicit 2026-08-19 decision as the focused
+[`projection experiment sequestration protocol`](governance/projection-experiment-protocol.md).
+It adopts only five rules: model workers have no direct source access; a
+data-engineer custodian prepares packages and an independent quant releases
+them; packages are immutable and timestamped; experiment plans freeze before
+outcomes are unblinded; and mock outcomes never enter production or
+availability. The protocol defines the three separated responsibilities, the
+minimal package manifest and digest identity, freeze/unblind records, required
+audit evidence, and fail-closed violations. The preserved 387-line local draft
+was not ported, summarized, or ratified. This is not an ADR, does not amend
+ADR-006, and does not expand the Model gate or source/ToS policy.
+
+**Now true:** The model-document index links the protocol, and the pending
+`baseline-model` backlog task requires projection experiments to follow it.
+Implementers can identify the exact package, freeze, release, and unblind
+evidence needed without adopting new isolation infrastructure or another
+project-wide gate.
+
+**Could not verify:** No projection experiment has yet exercised the package,
+freeze, or unblind records, so their first real use may expose a missing
+operational detail. This documentation cannot prove role separation or source
+non-access by itself; the named audit records make those claims reviewable but
+do not add technical enforcement. No source data, paid service, Fantrax access,
+or mock outcome was inspected.
+
+**Next:** `data-engineer` and an independent `quant` should exercise the
+protocol when `baseline-model` begins; the model worker must stop rather than
+accept an unmanifested package or an outcome released before its freeze.

@@ -416,7 +416,13 @@ Per-player p(play) for each scheduled game, conditioned on B2B/density, rest day
 - [ ] **pending**
 - **Depends on:** `nba-stats-ingest`, `projection-blending`
 
-Own per-game production model from historical logs, accounting for minutes, usage and role. Exposed as another source inside the blending layer.
+Own per-game production model from historical logs, accounting for minutes,
+usage and role. Exposed as another source inside the blending layer. Its
+experiments must follow the
+[`projection experiment sequestration protocol`](governance/projection-experiment-protocol.md):
+the model worker receives only independently released immutable packages,
+freezes the experiment before held-out outcomes are unblinded, and may never use
+mock outcomes as production or availability evidence.
 
 ### `behavioural-baseline` - Modelling the owner own drafting tendencies
 
