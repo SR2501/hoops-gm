@@ -32,6 +32,11 @@ from typing import Final
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    lock_league_settings_scope,
+    lock_refresh_scope,
+)
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.db.models.league import League
@@ -97,6 +102,7 @@ def derive_deadline_calendar(
     if when.tzinfo is None or when.utcoffset() is None:
         raise ValueError("derived_at must be timezone-aware")
 
+    _lock_calendar_inputs(session, league)
     settings_snapshot = _current_settings_snapshot(session, league.id)
     if settings_snapshot is None:
         raise DeadlineCalendarLineageError(
@@ -137,7 +143,7 @@ def derive_deadline_calendar(
             f"season_end_date ({season_end_date.isoformat()}) is before "
             f"season_start_date ({season_start_date.isoformat()})"
         )
-    scoring_periods = _scoring_periods(document)
+    scoring_periods = scoring_period_windows(document)
     unsupported_rules = _unsupported_rules(document)
 
     latest_version = session.scalar(
@@ -182,6 +188,7 @@ def activate_deadline_calendar(
     is already the league's current calendar, this is a no-op that still
     performs the currency check.
     """
+    _lock_calendar_inputs(session, league)
     target = session.scalar(
         select(LeagueDeadlineCalendar).where(
             LeagueDeadlineCalendar.league_id == league.id,
@@ -259,10 +266,21 @@ def _current_schedule_refresh(session: Session, season: str) -> RefreshRun | Non
         select(RefreshRun)
         .where(
             RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE,
+            RefreshRun.artifact_key == NBA_SCHEDULE_ARTIFACT_KEY,
             RefreshRun.season == season,
         )
         .order_by(RefreshRun.refreshed_at.desc(), RefreshRun.id.desc())
         .limit(1)
+    )
+
+
+def _lock_calendar_inputs(session: Session, league: League) -> None:
+    lock_league_settings_scope(session, league_id=league.id, season=league.season)
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=league.season,
     )
 
 
@@ -289,7 +307,9 @@ def _require_aware(value: str, *, path: str) -> datetime:
     return parsed
 
 
-def _scoring_periods(document: LeagueSettingsDocument) -> list[dict[str, object]]:
+def scoring_period_windows(document: LeagueSettingsDocument) -> list[dict[str, object]]:
+    """Normalize the settings document's authoritative period windows."""
+
     if not document.scoring_periods.is_known:
         # A calendar's entire reason to exist is scoring-period boundaries;
         # returning ``[]`` here would silently turn "the source was never
@@ -338,6 +358,13 @@ def _scoring_periods(document: LeagueSettingsDocument) -> list[dict[str, object]
                 "is_playoff": is_playoff,
             }
         )
+    if playoff_numbers is not None:
+        unknown_playoff_numbers = playoff_numbers - seen_period_numbers
+        if unknown_playoff_numbers:
+            rendered = ", ".join(str(number) for number in sorted(unknown_playoff_numbers))
+            raise DeadlineCalendarLineageError(
+                f"playoffs references unknown scoring period numbers: {rendered}"
+            )
     return periods
 
 

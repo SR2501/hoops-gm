@@ -14,7 +14,7 @@ from hoops_gm.availability import (
     compute_absence_splits,
     latest_absence_splits,
 )
-from hoops_gm.db.lineage import record_refresh
+from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
 from hoops_gm.db.models import (
     AbsenceSplit,
     AbsenceSplitComputationRun,
@@ -108,6 +108,7 @@ def _register_schedule(session: Session, version: str = "schedule-test-v1") -> N
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
         version=version,
         season=SEASON,
         source="test",

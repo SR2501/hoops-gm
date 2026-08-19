@@ -32,7 +32,7 @@ from hoops_gm.calendar.deadline_calendar import (
 )
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
-from hoops_gm.db.lineage import record_refresh
+from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
 from hoops_gm.db.models import League, LeagueDeadlineCalendar, LeagueSettingsSnapshot
 from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.ingest.importers import import_league_settings
@@ -187,6 +187,7 @@ def _register_schedule(
     record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
         version=version,
         season=SEASON,
         source="test",
@@ -411,6 +412,23 @@ def test_deriving_fails_closed_on_duplicate_scoring_period_numbers(session: Sess
     _register_schedule(session)
 
     with pytest.raises(DeadlineCalendarLineageError, match="duplicate scoring_periods"):
+        derive_deadline_calendar(session, league)
+
+    assert session.query(LeagueDeadlineCalendar).count() == 0
+
+
+def test_deriving_fails_closed_when_playoffs_reference_an_unknown_period(
+    session: Session,
+) -> None:
+    league = _league(session)
+    _write_settings(
+        session,
+        league,
+        _document(playoffs=_known_playoffs((99,))),
+    )
+    _register_schedule(session)
+
+    with pytest.raises(DeadlineCalendarLineageError, match="unknown scoring period numbers: 99"):
         derive_deadline_calendar(session, league)
 
     assert session.query(LeagueDeadlineCalendar).count() == 0

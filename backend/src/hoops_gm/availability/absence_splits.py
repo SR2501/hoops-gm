@@ -20,6 +20,7 @@ from typing import Final, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY
 from hoops_gm.db.models.availability import (
     AbsenceSplit,
     AbsenceSplitComputationRun,
@@ -370,6 +371,7 @@ def _schedule_refresh(session: Session, season: str) -> RefreshRun | None:
         select(RefreshRun)
         .where(
             RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE,
+            RefreshRun.artifact_key == NBA_SCHEDULE_ARTIFACT_KEY,
             RefreshRun.season == season,
         )
         .order_by(RefreshRun.refreshed_at.desc(), RefreshRun.id.desc())

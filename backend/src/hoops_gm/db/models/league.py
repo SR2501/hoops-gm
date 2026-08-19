@@ -356,11 +356,13 @@ class RosterEntry(IntPk, TimestampMixin, Base):
 
 
 class ScoringPeriod(IntPk, TimestampMixin, Base):
-    """One scoring period — in H2H, a fantasy week.
+    """One replaceable date projection of an active league deadline calendar.
 
-    This is the league-scoped calendar. The plan also lists a schedule-side
-    ``week_definitions``; see ``schedule.py`` for why that was not built as a
-    second table.
+    ``LeagueDeadlineCalendar`` is the immutable, versioned source of truth.
+    ``hoops_gm.calendar.scoring_periods`` is the only production writer here:
+    it projects authoritative timezone-aware boundaries to Eastern calendar
+    dates for schedule joins, and registers the replacement lineage separately.
+    This table is never an independent ingest target.
     """
 
     __tablename__ = "scoring_periods"
@@ -375,8 +377,8 @@ class ScoringPeriod(IntPk, TimestampMixin, Base):
     label: Mapped[str | None] = mapped_column(String(48))
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
-    #: The weeks that decide the season. Flagged here so playoff schedule
-    #: strength is a query during the draft, not a March discovery.
+    #: Written only when the source supplied authoritative playoff evidence;
+    #: the projection refuses to turn an unknown flag into this column's False.
     is_playoff: Mapped[bool] = mapped_column(default=False, index=True)
 
     league: Mapped[League] = relationship(back_populates="scoring_periods")

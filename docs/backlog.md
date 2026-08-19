@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**31 done - 1 blocked - 69 pending - 101 total**
+**32 done - 1 blocked - 68 pending - 101 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -233,6 +233,27 @@ Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-
 - **Depends on:** `nba-stats-ingest`
 
 Season schedule ingestion, fantasy week definitions, and per-week scheduled game counts per team. Foundation for schedule density and the availability model.
+
+### `scoring-period-projection` - Deriving `ScoringPeriod` from the active deadline calendar
+
+- [x] **done**
+- **Depends on:** `deadline-model`, `schedule-density`
+
+`LeagueDeadlineCalendar` remains the immutable, versioned authority.
+`project_scoring_periods` is the sole production writer for the older
+`ScoringPeriod` table: it validates the active calendar against the current
+league-settings snapshot and keyed NBA schedule refresh, rejects unknown
+playoff evidence, converts every boundary to `America/New_York` before taking
+its inclusive date, and records a deterministic keyed refresh containing the
+exact settings, calendar, schedule, and projected-period cohorts. Changed
+materializations replace only unreferenced rows; matchup references fail closed,
+while immutable calendars and refresh summaries preserve replacement history.
+`scheduled_game_counts` and `playoff_scheduled_game_counts` now validate that
+both the materialized rows and projection lineage match current inputs before
+returning counts, and each result carries all four cohort identifiers and
+versions. The existing schema supports this contract honestly, so no migration
+or reserved revision number was used. This remains calendar fact only: no
+opponent-quality, availability, or model math is added.
 
 ### `scoring-profiles` - Abstracting scoring profiles for multi-format support
 
@@ -674,13 +695,6 @@ Games-per-week grid showing availability-adjusted expected games (scheduled game
 - **Depends on:** `frontend-skeleton`, `live-matchup-state`
 
 Live scorecard fed by SSE: category-by-category win/loss/margin, games remaining, and projected final with confidence bands derived from production and availability variance.
-
-### `scoring-period-projection` - Deriving `ScoringPeriod` from the active deadline calendar
-
-- [ ] **pending**
-- **Depends on:** `deadline-model`, `schedule-density`
-
-`LeagueDeadlineCalendar` (`deadline-model`) is the league's one authoritative, versioned source of scoring-period boundaries; `ScoringPeriod` (`db/models/league.py`) is a separate, older table with `Date`-only bounds and a non-null `is_playoff` default of `False` that cannot honestly represent "the source never said" — populating it directly from a settings snapshot would silently convert an explicit unknown into a confident `False`. This unit makes `ScoringPeriod` a derived, non-authoritative *projection* of the currently active `LeagueDeadlineCalendar` — never a second ingest target, never written from anywhere but that projection — computed only when the active calendar's scoring periods and playoff flags are actually known. Required for ADR-012's `scheduled_game_counts` (per-week game-count distribution), which joins on `ScoringPeriod`'s `Date` bounds against `TeamScheduleEntry.game_date`. The projection must convert each boundary's timezone-aware instant to `America/New_York` *before* calling `.date()`, not use UTC or the source's raw offset directly — the boundary and `game_date` must agree on a wall-clock day, or the projection double-counts or drops games at the DST transition and around a scoring period's midnight boundary.
 
 ### `shutdown-risk` - Modelling late-season shutdown risk
 

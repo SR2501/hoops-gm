@@ -21,8 +21,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
     SCHEDULE_CONTEXT_SOURCE_KEY,
     content_fingerprint,
+    lock_league_settings_scope,
     lock_refresh_scope,
     record_refresh,
 )
@@ -114,6 +116,7 @@ def import_league_settings(
             f"{document.unmapped_rule_paths}"
         )
 
+    lock_league_settings_scope(session, league_id=league.id, season=league.season)
     serialized = document.model_dump(mode="json")
     existing = list(
         session.scalars(
@@ -455,7 +458,7 @@ def import_schedule(session: Session, records: Sequence[ScheduleGameRecord]) -> 
         lock_refresh_scope(
             session,
             artifact_type=RefreshArtifactType.SCHEDULE,
-            artifact_key="nba-schedule",
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
             season=season,
         )
     counts = import_games(session, [record.game for record in records])
@@ -533,7 +536,7 @@ def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameR
         record_refresh(
             session,
             artifact_type=RefreshArtifactType.SCHEDULE,
-            artifact_key="nba-schedule",
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
             version=version,
             source="nba_api:ScheduleLeagueV2",
             season=season,

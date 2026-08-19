@@ -30,6 +30,7 @@ from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.session import acquire_transaction_lock
 
 CohortStatus = Literal["current", "stale", "unknown"]
+NBA_SCHEDULE_ARTIFACT_KEY = "nba-schedule"
 SCHEDULE_CONTEXT_SOURCE_KEY = "schedule-context-observations"
 
 
@@ -148,6 +149,23 @@ def lock_refresh_scope(
     )
 
 
+def league_settings_artifact_key(league_id: int) -> str:
+    """The lock-only lineage scope for one league's versioned settings."""
+
+    return f"league-settings:{league_id}"
+
+
+def lock_league_settings_scope(session: Session, *, league_id: int, season: str) -> None:
+    """Serialize settings writers with calendar derivation and projection readers."""
+
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SOURCE,
+        artifact_key=league_settings_artifact_key(league_id),
+        season=season,
+    )
+
+
 def current_refresh(
     session: Session,
     artifact_type: RefreshArtifactType,
@@ -210,7 +228,7 @@ def check_cohort(
     """
 
     claims: tuple[tuple[RefreshArtifactType, str, str | None], ...] = (
-        (RefreshArtifactType.SCHEDULE, "nba-schedule", schedule_version),
+        (RefreshArtifactType.SCHEDULE, NBA_SCHEDULE_ARTIFACT_KEY, schedule_version),
         (RefreshArtifactType.MODEL, "default", model_version),
         (RefreshArtifactType.PROJECTION, "default", projection_version),
     )
