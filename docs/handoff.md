@@ -5436,3 +5436,40 @@ was made.
 pass, mark `injury-conversion-cohort-population` done; then `quant` may begin
 the separately Model-gated `injury-status-conversion` work from this frozen
 observation cohort.
+
+---
+
+## 2026-08-19 — independent review addendum — Injury cohort accepted
+
+**Reviewed:** Independent data-engineering/evidence and code reviews examined
+exact commit `4e89cc5f59c31656508183a2939a82d03a92ec1a` against exact base
+`9c4ebac9a4a937594fb6ce18256d5269fe5dee93`. Code review found no actionable
+correctness, security or integration issue. The evidence reviewer approved the
+cohort as representative enough to unblock the separately Model-gated
+`injury-status-conversion` task.
+
+The evidence review independently queried the gitignored database rather than
+accepting the manifest claims. It reproduced the 171-game/25-date/all-team
+scope, 5,980 bounded participation rows, season-wide 1,225 schedule and 26,549
+production rows, trusted-entry cascade arithmetic, canonical status arithmetic,
+1,906 joined outcomes, NBA-only identity anchors, empty Fantrax/write-path
+tables, and every committed source/artifact hash it checked. It also confirmed
+that the 2025-12-22 boundary pre-dated cohort selection and that the one R35
+gap remained unknown.
+
+**Now true:** `injury-conversion-cohort-population` is done in
+`docs/backlog.md`. This closes only the observation-layer data/evidence task; it
+does not approve a conversion rate, probability, availability model, or any
+production/availability fusion.
+
+**Could not verify:** The independent reviewer did not repeat the live resume
+request because that would re-hit the hostile external source; it reviewed the
+settled checkpoint design and recorded zero-import/89-skip transcript instead.
+The raw-entry/canonical distinct-player counts differ by one across resolution
+layers; downstream cohort identity is the canonical 363-player NBA-id surface,
+and no rate should consume raw-entry distinct counts. Local Postgres remained
+unavailable; CI is still the Postgres gate.
+
+**Next:** `quant` may consume the frozen cohort under the Model gate, preserving
+the unresolved identities, the R35 unknown, and blank source positions as
+missing evidence rather than negative outcomes.

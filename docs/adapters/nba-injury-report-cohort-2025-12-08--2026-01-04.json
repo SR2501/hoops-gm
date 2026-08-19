@@ -21,13 +21,27 @@
     "unresolved_player_id": 27
   },
   "generated_at_utc": "2026-08-19T21:16:13.970049+00:00",
+  "independent_review": {
+    "code_review": "Approved with no actionable findings.",
+    "data_engineering_evidence_review": "Approved as representative enough to unblock the separately Model-gated injury-status-conversion task.",
+    "evidence_reproduced": [
+      "source and operational artifact SHA-256 identities",
+      "171-game/25-date/all-team scope",
+      "season-wide production versus bounded participation separation",
+      "trusted-entry cascade arithmetic",
+      "canonical status and joined-outcome arithmetic",
+      "NBA-only stable identity anchors",
+      "empty Fantrax and write-path tables"
+    ],
+    "reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a",
+    "reviewer_did_not_rehit_live_source_for_resume": true
+  },
   "kind": "injury_conversion_cohort_population_evidence",
   "limitations": [
     "No DNP reason was inferred and no injury-status conversion rate was fit or reported.",
     "One resolved injury observation has no participation row and remains unknown because the authoritative ledger can be silent for full absences (R35).",
     "Position coverage uses only non-empty G/F/C labels observed in the same window's BoxScoreTraditionalV3 captures; blank labels remain unknown and were not inferred.",
-    "Raw PDFs, JSON captures, checkpoint, coverage report, expected-game report, and SQLite database remain gitignored operational state. This provenance and aggregate manifest is the repository-safe evidence.",
-    "The first independent exact-head data/evidence and code reviews had not yet run when this manifest was committed."
+    "Raw PDFs, JSON captures, checkpoint, coverage report, expected-game report, and SQLite database remain gitignored operational state. This provenance and aggregate manifest is the repository-safe evidence."
   ],
   "operational_artifacts": {
     "alembic_revision": "0014",
