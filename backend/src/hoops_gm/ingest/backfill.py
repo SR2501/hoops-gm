@@ -38,6 +38,11 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from hoops_gm.calendar import (
+    activate_deadline_calendar,
+    derive_deadline_calendar,
+    project_scoring_periods,
+)
 from hoops_gm.core.config import Settings, get_settings
 from hoops_gm.db.models.enums import ExternalSource
 from hoops_gm.db.models.league import League, LeagueScoringProfile
@@ -415,6 +420,16 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
         action="store_true",
         help="also make this the league's active profile (opt-in only; not automatic)",
     )
+    scoring_periods = subparsers.add_parser(
+        "scoring-periods",
+        help="project an active deadline calendar into date-based scoring periods",
+    )
+    scoring_periods.add_argument("league_id", type=int, help="local leagues.id")
+    scoring_periods.add_argument(
+        "--derive-and-activate",
+        action="store_true",
+        help="explicitly derive and activate current settings/schedule lineage first",
+    )
 
     args = parser.parse_args(argv)
 
@@ -456,6 +471,22 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
             )
         activation_note = " (activated)" if args.activate else " (not activated -- pass --activate)"
         print(f"\n  scoring profile          v{profile.version}{activation_note}")
+        return 0
+
+    if args.command == "scoring-periods":
+        with database.session() as session:
+            league = session.get(League, args.league_id)
+            if league is None:
+                parser.error(f"no league exists with id {args.league_id}")
+            if args.derive_and_activate:
+                calendar = derive_deadline_calendar(session, league).calendar
+                activate_deadline_calendar(session, league, calendar.version)
+            projection_result = project_scoring_periods(session, league)
+        print(
+            "\n  scoring periods          "
+            f"{projection_result.created} created, {projection_result.replaced} replaced, "
+            f"projection {projection_result.lineage.projection_version}"
+        )
         return 0
 
     nba, fantrax = build_clients(settings)

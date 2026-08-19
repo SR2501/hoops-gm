@@ -5152,3 +5152,57 @@ scheduling reaches every off-cadence NBA archive report.
 `injury-conversion-cohort-population` and its separate Model gate, even after
 this backfill PR is green.
 
+---
+
+## 2026-08-19 — backend — Authoritative scoring-period projection
+
+**Changed:** Implemented `scoring-period-projection` without a schema change or
+an Alembic revision. Added `calendar/scoring_periods.py` as the sole production
+writer for `ScoringPeriod`: it locks and validates the current league-settings,
+active `LeagueDeadlineCalendar`, keyed NBA schedule, and league projection
+scopes; converts authoritative boundaries to `America/New_York` before
+extracting inclusive dates; refuses unknown playoff flags; and fingerprints the
+exact settings snapshot, calendar, schedule refresh, and projected rows into a
+league-scoped `refresh_runs` stream. Unchanged reruns preserve row identities.
+Changed projections lock the existing parent rows and replace the complete
+current materialization only when no `Matchup` references it; otherwise they
+fail closed rather than let an existing or concurrent matchup be
+cascade-deleted. Prior immutable calendars and refresh summaries retain the
+content and lineage of every replaced version. Added the explicit
+`scoring-periods` operator command, with an opt-in `--derive-and-activate` path.
+
+`scheduled_game_counts` and `playoff_scheduled_game_counts` now require current
+projection lineage before querying and return the schedule refresh, projection
+refresh, deadline calendar, and settings snapshot identifiers and versions on
+every row. They reject manual row mutation, stale settings or NBA schedule
+lineage, and a mismatched projection refresh. Introducing a second keyed
+schedule-type stream exposed two older type-only refresh lookups; deadline
+calendar and absence-split selection now explicitly request `nba-schedule`
+instead of accidentally accepting the newest scoring-period stream.
+
+**Now true:** A playoff count cannot claim freshness from NBA schedule lineage
+alone. Changing authoritative period boundaries or playoff evidence makes the
+materialization unreadable until the active calendar is re-projected. Unknown
+playoff evidence never becomes `False`, replacement history remains
+reconstructable, and all official writers/readers share transaction locks in a
+consistent settings -> NBA schedule -> league projection order. The full local
+backend Code gate passes (`ruff check`, format check, strict `mypy`, 812 tests
+with 17 live-smoke tests deselected), all 237 recorded-fixture Adapter contract
+tests pass, the SQLite upgrade/check/downgrade lifecycle through migration
+`0014` reports no model drift, and the secret scan is clean.
+
+**Could not verify:** The observed official Fantrax league-settings payload has
+no playoff markers, and no authoritative bridge capture supplying the 2026-27
+playoff periods was available, so no real league projection was run; projection
+correctly remains blocked on that missing evidence. Matchup-reference conflicts,
+DST/date-boundary behavior, and stale-lineage paths were verified with
+deterministic database fixtures rather than live league data. Native Postgres
+was not configured locally; the GitHub Postgres job remains the cross-dialect
+execution check of record.
+
+**Next:** After authoritative 2026-27 playoff evidence is ingested, derive and
+activate the current deadline calendar and run the `scoring-periods` operator
+command. Repeat that projection after settings or NBA schedule lineage changes;
+downstream count consumers will fail closed until it succeeds. Recursive
+SOS/projection convergence and weekly scheduling remain separate ADR-011/012
+work owned by `quant` and `data-engineer`.

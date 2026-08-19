@@ -21,9 +21,10 @@ per-team, per-game row with a surrogate key.
 ``scoring_periods`` describe the same thing. A fantasy week *is* a scoring
 period, and a league's periods are the ones that decide matchups. Two tables
 that must agree and have no mechanism to enforce agreement is a bug waiting to
-happen, so there is one — ``league.ScoringPeriod``. If a league-independent
-NBA week calendar is ever needed for streaming analysis, it should be added
-then, on evidence.
+happen, so there is one date-based projection —
+``league.ScoringPeriod`` — derived only from the active, versioned
+``LeagueDeadlineCalendar``. If a league-independent NBA week calendar is
+ever needed for streaming analysis, it should be added then, on evidence.
 
 Both departures are recorded in ``docs/handoff.md``.
 """

@@ -16,8 +16,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import current_refresh, lock_refresh_scope
-from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
+from hoops_gm.calendar.scoring_periods import require_current_scoring_period_projection
+from hoops_gm.db.models.enums import SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
@@ -51,10 +51,18 @@ class ScheduleParseResult:
 
 @dataclass(frozen=True)
 class ScheduledGameCount:
-    """One team's observed game count inside one scoring period."""
+    """One team's observed game count with exact schedule and period lineage."""
 
+    schedule_refresh_id: int
     schedule_version: str
     schedule_refreshed_at: datetime
+    projection_refresh_id: int
+    projection_version: str
+    projection_refreshed_at: datetime
+    deadline_calendar_id: int
+    deadline_calendar_version: int
+    settings_snapshot_id: int
+    settings_snapshot_version: int
     period_number: int
     team_id: int
     games: int
@@ -303,29 +311,13 @@ def scheduled_game_counts(
     created.
     """
 
-    league_season = session.scalar(select(League.season).where(League.id == league_id))
-    if league_season is None:
+    league = session.get(League, league_id)
+    if league is None:
         raise RuntimeError(f"league {league_id} does not exist")
-    if league_season != season:
-        raise RuntimeError(f"league {league_id} is for season {league_season!r}, not {season!r}")
+    if league.season != season:
+        raise RuntimeError(f"league {league_id} is for season {league.season!r}, not {season!r}")
 
-    lock_refresh_scope(
-        session,
-        artifact_type=RefreshArtifactType.SCHEDULE,
-        artifact_key="nba-schedule",
-        season=season,
-    )
-    refresh = current_refresh(
-        session,
-        RefreshArtifactType.SCHEDULE,
-        artifact_key="nba-schedule",
-        season=season,
-    )
-    if refresh is None:
-        raise RuntimeError(f"no current schedule refresh is registered for season {season!r}")
-    if refresh.refreshed_at.tzinfo is None or refresh.refreshed_at.utcoffset() is None:
-        raise RuntimeError("current schedule refresh timestamp is not timezone-aware")
-    refreshed_at_utc = refresh.refreshed_at.astimezone(UTC)
+    lineage = require_current_scoring_period_projection(session, league)
 
     statement: Select[tuple[int, int, int]] = (
         select(
@@ -358,11 +350,19 @@ def scheduled_game_counts(
 
     return [
         ScheduledGameCount(
-            refresh.version,
-            refreshed_at_utc,
-            period_number,
-            team_id,
-            games,
+            schedule_refresh_id=lineage.schedule_refresh_id,
+            schedule_version=lineage.schedule_version,
+            schedule_refreshed_at=lineage.schedule_refreshed_at,
+            projection_refresh_id=lineage.projection_refresh_id,
+            projection_version=lineage.projection_version,
+            projection_refreshed_at=lineage.projection_refreshed_at,
+            deadline_calendar_id=lineage.deadline_calendar_id,
+            deadline_calendar_version=lineage.deadline_calendar_version,
+            settings_snapshot_id=lineage.settings_snapshot_id,
+            settings_snapshot_version=lineage.settings_snapshot_version,
+            period_number=period_number,
+            team_id=team_id,
+            games=games,
         )
         for period_number, team_id, games in session.execute(statement)
     ]
