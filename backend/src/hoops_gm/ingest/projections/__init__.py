@@ -29,6 +29,7 @@ from hoops_gm.ingest.projections.models import (
 )
 from hoops_gm.ingest.projections.parser import ProjectionProfileError, parse_projection_csv
 from hoops_gm.ingest.projections.profiles import (
+    BASKETBALL_MONSTER_2026_27_HEADERS,
     BASKETBALL_MONSTER_PROFILE,
     CANONICAL_STAT_FIELDS,
     FANTASYPROS_PROFILE,
@@ -36,11 +37,13 @@ from hoops_gm.ingest.projections.profiles import (
     MANUAL_PROFILE,
     PROFILES_BY_SOURCE,
     ColumnProfile,
+    DerivedStatColumn,
     StatColumn,
     ValueShape,
 )
 
 __all__ = [
+    "BASKETBALL_MONSTER_2026_27_HEADERS",
     "BASKETBALL_MONSTER_PROFILE",
     "CANONICAL_STAT_FIELDS",
     "FANTASYPROS_PROFILE",
@@ -48,6 +51,7 @@ __all__ = [
     "MANUAL_PROFILE",
     "PROFILES_BY_SOURCE",
     "ColumnProfile",
+    "DerivedStatColumn",
     "ProjectionEncodingError",
     "ProjectionImportOutcome",
     "ProjectionParseResult",

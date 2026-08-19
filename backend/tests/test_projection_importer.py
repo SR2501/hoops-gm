@@ -8,18 +8,16 @@ Three layers, tested at their own level:
 * **importer** (``import_projection_csv``) — the DB-writing boundary,
   covering identity resolution, versioning and idempotency.
 
-The FantasyPros/Hashtag/Basketball Monster fixtures here are **synthetic**,
-authored for this test suite — not a live capture, and not real published
-projections (plan.md: projection data is personal-use only, so a purchased or
-Patreon-gated CSV has no business being committed). They exist to prove the
-column-mapping code path runs and to pin the *unverified* header aliases in
-``profiles.py`` against a regression, not to claim the mapping matches a real
-vendor file — see the caveat in that module's docstring.
+FantasyPros and Hashtag fixtures remain unverified synthetic examples.
+Basketball Monster's fixture is a privacy-safe synthetic derivative of a
+privately retained paid export: it preserves the proven 2026-27 headers, order
+and CSV dialect while containing no paid player rows or private path.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -43,6 +41,7 @@ from hoops_gm.db.session import Database
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.report import partition, render_summary, to_csv
 from hoops_gm.ingest.projections import (
+    BASKETBALL_MONSTER_2026_27_HEADERS,
     BASKETBALL_MONSTER_PROFILE,
     CANONICAL_STAT_FIELDS,
     FANTASYPROS_PROFILE,
@@ -677,7 +676,7 @@ def test_percentage_exclusion_is_persisted_in_import_lineage(
 
 
 # --------------------------------------------------------------------------
-# Parser examples: vendor profiles (synthetic, not Adapter-gate fixtures)
+# Parser examples: unverified vendor profiles
 # --------------------------------------------------------------------------
 
 
@@ -712,16 +711,217 @@ def test_hashtag_profile_resolves_full_shooting_volume() -> None:
     assert beta.defensive_rebounds_per_game == 3.5
 
 
-def test_basketball_monster_profile_resolves_headers() -> None:
-    result = parse_projection_csv(
-        load("basketball_monster_sample.csv"), BASKETBALL_MONSTER_PROFILE, season="2026-27"
-    )
+# --------------------------------------------------------------------------
+# Basketball Monster: privacy-safe derivative of proven private contract
+# --------------------------------------------------------------------------
 
-    assert result.rejected_count == 0
-    gamma = next(row for row in result.rows if row.player_name == "Player Gamma")
-    assert gamma.rebounds_per_game == 10.2
-    assert gamma.free_throws_made_per_game == 3.0
-    assert gamma.free_throws_attempted_per_game == 3.8
+
+@pytest.mark.adapter_contract
+class TestBasketballMonsterProjectionContract:
+    def test_fixture_is_privacy_safe_and_tied_to_private_evidence_hashes(self) -> None:
+        fixture_bytes = load_bytes("basketball_monster_sample.csv")
+        metadata = json.loads(
+            (FIXTURES / "basketball_monster_sample.metadata.json").read_text(encoding="utf-8")
+        )
+
+        assert (
+            hashlib.sha256(fixture_bytes).hexdigest().upper()
+            == metadata["privacy_safe_fixture_sha256"]
+        )
+        assert metadata["private_export_sha256"] == (
+            "FA13AD188E8ACADD410DFEAE7FF296A25078842E22CE17046CF19DFBCA9D3ABD"
+        )
+        assert metadata["private_semantic_screenshot_sha256"] == (
+            "3BA42FD80072E8C35C191C38BA19EB0C8A8BE4182D484FEFD73A31D1ED36C29B"
+        )
+        serialized_metadata = json.dumps(metadata)
+        assert "C:\\" not in serialized_metadata
+        assert "/Users/" not in serialized_metadata
+        parsed = parse_projection_csv(
+            fixture_bytes.decode("utf-8"),
+            BASKETBALL_MONSTER_PROFILE,
+            season="2026-27",
+        )
+        assert all(
+            row.source_player_id and row.source_player_id.startswith("synthetic-")
+            for row in parsed.rows
+        )
+
+    def test_exact_headers_and_season_total_transformations(self) -> None:
+        csv_text = load("basketball_monster_sample.csv")
+        assert tuple(csv_text.splitlines()[0].split(",")) == BASKETBALL_MONSTER_2026_27_HEADERS
+
+        result = parse_projection_csv(
+            csv_text,
+            BASKETBALL_MONSTER_PROFILE,
+            season="2026-27",
+        )
+
+        assert result.rejected_count == 0
+        assert result.ignored_source_headers == [
+            "technicals",
+            "double_doubles",
+            "triple_doubles",
+            "comments",
+        ]
+        alpha = next(row for row in result.rows if row.player_name == "Player Alpha")
+        assert alpha.source_player_id == "synthetic-alpha"
+        assert alpha.team is None
+        assert alpha.position is None
+        assert alpha.assumed_games_played == 70
+        assert alpha.minutes_per_game == pytest.approx(34.5)
+        assert alpha.field_goals_made_per_game == pytest.approx(8.6)
+        assert alpha.field_goals_attempted_per_game == pytest.approx(17.5)
+        assert alpha.free_throws_made_per_game == pytest.approx(4.5)
+        assert alpha.free_throws_attempted_per_game == pytest.approx(5.3)
+        assert alpha.three_pointers_made_per_game == pytest.approx(2.5)
+        assert alpha.points_per_game == pytest.approx(24.2)
+        assert alpha.offensive_rebounds_per_game == pytest.approx(1.0)
+        assert alpha.defensive_rebounds_per_game == pytest.approx(6.1)
+        assert alpha.rebounds_per_game == pytest.approx(7.1)
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            ",".join(BASKETBALL_MONSTER_2026_27_HEADERS[:-1]),
+            ",".join(
+                (
+                    BASKETBALL_MONSTER_2026_27_HEADERS[1],
+                    BASKETBALL_MONSTER_2026_27_HEADERS[0],
+                    *BASKETBALL_MONSTER_2026_27_HEADERS[2:],
+                )
+            ),
+            ",".join(BASKETBALL_MONSTER_2026_27_HEADERS).replace(
+                "field_goals,",
+                "field_goals_made,",
+                1,
+            ),
+        ],
+    )
+    def test_any_header_or_order_drift_fails_loudly(self, header: str) -> None:
+        row = load("basketball_monster_sample.csv").splitlines()[1]
+        with pytest.raises(ProjectionProfileError, match="header names/order drifted"):
+            parse_projection_csv(
+                f"{header}\n{row}\n",
+                BASKETBALL_MONSTER_PROFILE,
+                season="2026-27",
+            )
+
+    def test_verified_import_uses_vendor_id_and_persists_derivation_lineage(
+        self,
+        seeded_players: Session,
+    ) -> None:
+        outcome = import_projection_csv(
+            seeded_players,
+            source=ExternalSource.BASKETBALL_MONSTER,
+            display_name="Basketball Monster",
+            season="2026-27",
+            csv_bytes=load_bytes("basketball_monster_sample.csv"),
+            original_filename="basketball_monster_sample.csv",
+        )
+
+        assert outcome.projection_import.profile_verified is True
+        assert outcome.projection_import.row_count == 2
+        assert outcome.projection_import.matched_count == 2
+        links = list(
+            seeded_players.scalars(
+                select(PlayerExternalId).where(
+                    PlayerExternalId.source == ExternalSource.BASKETBALL_MONSTER
+                )
+            )
+        )
+        assert {link.external_id for link in links} == {
+            "synthetic-alpha",
+            "synthetic-gamma",
+        }
+
+        alpha = (
+            seeded_players.query(Projection)
+            .join(Player)
+            .filter(Player.full_name == "Player Alpha")
+            .one()
+        )
+        assert alpha.points_per_game == pytest.approx(24.2)
+        assert not hasattr(alpha, "comments")
+        assumption = (
+            seeded_players.query(SourceGamesPlayedAssumption)
+            .filter(SourceGamesPlayedAssumption.projection_id == alpha.id)
+            .one()
+        )
+        assert assumption.assumed_games_played == 70
+
+        lineage = outcome.projection_import.profile_lineage
+        assert lineage["ignored_source_headers"] == [
+            "technicals",
+            "double_doubles",
+            "triple_doubles",
+            "comments",
+        ]
+        field_transforms = lineage["field_transforms"]
+        assert isinstance(field_transforms, dict)
+        assert field_transforms["points_per_game"] == {
+            "terms": [
+                {
+                    "input_field": "field_goals_made_per_game",
+                    "coefficient": 2.0,
+                    "source_header": "field_goals",
+                    "source_unit": "season_total",
+                    "normalization": "divide_by_assumed_games_played",
+                },
+                {
+                    "input_field": "three_pointers_made_per_game",
+                    "coefficient": 1.0,
+                    "source_header": "threes",
+                    "source_unit": "season_total",
+                    "normalization": "divide_by_assumed_games_played",
+                },
+                {
+                    "input_field": "free_throws_made_per_game",
+                    "coefficient": 1.0,
+                    "source_header": "free_throws",
+                    "source_unit": "season_total",
+                    "normalization": "divide_by_assumed_games_played",
+                },
+            ],
+            "output_unit": "per_game",
+            "transform": "linear_combination_of_normalized_fields",
+        }
+
+    def test_profile_is_not_verified_for_another_season(self, session: Session) -> None:
+        with pytest.raises(ProjectionProfileError, match="not verified"):
+            import_projection_csv(
+                session,
+                source=ExternalSource.BASKETBALL_MONSTER,
+                display_name="Basketball Monster",
+                season="2027-28",
+                csv_bytes=load_bytes("basketball_monster_sample.csv"),
+            )
+
+    def test_zero_game_season_total_row_is_rejected_not_fabricated(self) -> None:
+        lines = load("basketball_monster_sample.csv").splitlines()
+        zero_game_row = lines[1].replace(",70,2415,", ",0,2415,", 1)
+        result = parse_projection_csv(
+            "\n".join((lines[0], zero_game_row, lines[2], "")),
+            BASKETBALL_MONSTER_PROFILE,
+            season="2026-27",
+        )
+
+        assert [row.player_name for row in result.rows] == ["Player Gamma"]
+        assert result.rejected_count == 1
+        assert any(
+            "season total but no valid games-played figure" in issue.message
+            for issue in result.warnings
+        )
+
+    def test_duplicate_vendor_ids_are_rejected(self) -> None:
+        lines = load("basketball_monster_sample.csv").splitlines()
+        second = lines[2].replace("synthetic-gamma", "synthetic-alpha", 1)
+        with pytest.raises(ProjectionProfileError, match="duplicate source player id"):
+            parse_projection_csv(
+                "\n".join((lines[0], lines[1], second, "")),
+                BASKETBALL_MONSTER_PROFILE,
+                season="2026-27",
+            )
 
 
 # --------------------------------------------------------------------------

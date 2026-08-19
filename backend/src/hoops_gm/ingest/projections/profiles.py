@@ -6,19 +6,12 @@ are data, and the parser that reads them is a pure function, so both stay
 testable offline (the same reason ``ingest/nba/parsers.py`` never imports
 SQLAlchemy).
 
-**The FantasyPros / Hashtag / Basketball Monster profiles below are
-best-effort, not verified live captures.** Every other adapter in this
-project earns its column mapping against a fixture pulled from the real
-endpoint (`ingest/record_fixtures.py`); these three sources sit behind a
-Patreon paywall, a paid subscription, or an authenticated export, so nobody
-has actually downloaded one of their files to check the header spelling
-against. The aliases below are a reasonable guess at common 9-cat export
-conventions and are deliberately generous (several spellings per field) so a
-close-but-not-identical real header still resolves — but "the importer runs"
-is not the same claim as "the mapping is correct", and the first real file
-run through one of these three should be checked by hand against
-``resolved_headers`` before anything downstream trusts it. Say so here rather
-than silently asserting a confidence nobody has earned.
+FantasyPros and Hashtag remain unverified parse-preview examples. Basketball
+Monster is different: its 2026-27 profile is pinned to owner-provided private
+evidence from a real paid export. Only the evidence hashes and exact structural
+contract live here; paid rows and private paths never enter the repository.
+The profile intentionally accepts one exact header sequence rather than
+layering guessed aliases over the proven contract.
 
 ``MANUAL_PROFILE`` carries no such uncertainty: it expects the canonical field
 names directly (a spreadsheet the owner builds or converts by hand), and is
@@ -27,6 +20,7 @@ the profile to reach for whenever a vendor mapping has not been confirmed.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +30,7 @@ from types import MappingProxyType
 from hoops_gm.db.models.enums import ExternalSource
 
 __all__ = [
+    "BASKETBALL_MONSTER_2026_27_HEADERS",
     "BASKETBALL_MONSTER_PROFILE",
     "CANONICAL_STAT_FIELDS",
     "FANTASYPROS_PROFILE",
@@ -45,6 +40,7 @@ __all__ = [
     "PROJECTION_IMPORT_SOURCES",
     "TERMINAL_HEADER_ALIASES",
     "ColumnProfile",
+    "DerivedStatColumn",
     "StatColumn",
     "ValueShape",
     "normalize_header",
@@ -78,6 +74,15 @@ class StatColumn:
     #: Explicit source unit. There is deliberately no default: an ambiguous
     #: header such as ``PTS`` cannot become a per-game rate by omission.
     shape: ValueShape
+
+
+@dataclass(frozen=True)
+class DerivedStatColumn:
+    """A canonical rate derived from already-normalised canonical rates."""
+
+    field: str
+    #: ``(canonical input field, coefficient)`` terms in a linear combination.
+    terms: tuple[tuple[str, float], ...]
 
 
 #: Every per-game rate field a projection row can carry. Mirrors the columns
@@ -152,11 +157,15 @@ class ColumnProfile:
     version: str
     source: ExternalSource
     display_name: str
-    name_aliases: tuple[str, ...]
+    name_aliases: tuple[str, ...] = ()
+    external_id_aliases: tuple[str, ...] = ()
+    first_name_aliases: tuple[str, ...] = ()
+    last_name_aliases: tuple[str, ...] = ()
     team_aliases: tuple[str, ...] = ()
     position_aliases: tuple[str, ...] = ()
     games_played_aliases: tuple[str, ...] = ()
     stat_columns: tuple[StatColumn, ...] = field(default_factory=tuple)
+    derived_stat_columns: tuple[DerivedStatColumn, ...] = field(default_factory=tuple)
     #: Canonical production fields whose headers form this source profile's
     #: minimum schema signature. Vendor exports must expose all of them; the
     #: generic manual profile instead accepts any one recognized production
@@ -168,6 +177,11 @@ class ColumnProfile:
     #: source gave a percentage, not volume" and warn rather than silently
     #: import nothing with no explanation.
     percentage_fallback_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Exact source header sequence when evidence proves a closed CSV contract.
+    #: Empty for looser/manual profiles.
+    expected_headers: tuple[str, ...] = ()
+    #: Source fields deliberately excluded from projection quantities.
+    ignored_source_headers: tuple[str, ...] = ()
     #: Whether this mapping has been checked against a real downloaded file.
     #: ``False`` for every vendor profile below; see the module docstring.
     verified: bool = False
@@ -180,6 +194,10 @@ class ColumnProfile:
     def __post_init__(self) -> None:
         if not self.profile_id.strip() or not self.version.strip():
             raise ValueError("projection profiles require a non-empty identifier and version")
+        if not self.name_aliases and not (self.first_name_aliases and self.last_name_aliases):
+            raise ValueError(
+                f"{self.display_name} requires a full-name field or both first/last-name fields"
+            )
         if self.source not in PROJECTION_IMPORT_SOURCES:
             raise ValueError(
                 f"{self.source.value} is not an isolated projection-provider namespace"
@@ -204,6 +222,9 @@ class ColumnProfile:
         terminal_aliases = {normalize_header(alias) for alias in TERMINAL_HEADER_ALIASES}
         mapped_aliases = {
             "player name": self.name_aliases,
+            "source player id": self.external_id_aliases,
+            "player first name": self.first_name_aliases,
+            "player last name": self.last_name_aliases,
             "team": self.team_aliases,
             "position": self.position_aliases,
             "games played": self.games_played_aliases,
@@ -228,15 +249,83 @@ class ColumnProfile:
         fields = [column.field for column in self.stat_columns]
         if len(fields) != len(set(fields)):
             raise ValueError(f"{self.display_name} profile maps a production field more than once")
-        unknown = set(fields) - set(CANONICAL_STAT_FIELDS)
+        derived_fields = [column.field for column in self.derived_stat_columns]
+        if len(derived_fields) != len(set(derived_fields)):
+            raise ValueError(
+                f"{self.display_name} profile derives a production field more than once"
+            )
+        overlap = set(fields) & set(derived_fields)
+        if overlap:
+            raise ValueError(
+                f"{self.display_name} profile both maps and derives production fields: {overlap}"
+            )
+        unknown = (set(fields) | set(derived_fields)) - set(CANONICAL_STAT_FIELDS)
         if unknown:
             raise ValueError(
                 f"{self.display_name} profile maps unknown production fields: {unknown}"
             )
-        missing = set(self.required_production_fields) - set(fields)
+        missing = set(self.required_production_fields) - (set(fields) | set(derived_fields))
         if missing:
             raise ValueError(
                 f"{self.display_name} profile requires fields it does not map: {missing}"
+            )
+        for derived in self.derived_stat_columns:
+            if not derived.terms:
+                raise ValueError(
+                    f"{self.display_name} derived field {derived.field} has no input terms"
+                )
+            unknown_inputs = {term_field for term_field, _ in derived.terms} - set(fields)
+            if unknown_inputs:
+                raise ValueError(
+                    f"{self.display_name} derives {derived.field} from unmapped fields: "
+                    f"{unknown_inputs}"
+                )
+            if any(not math.isfinite(coefficient) for _, coefficient in derived.terms):
+                raise ValueError(
+                    f"{self.display_name} derives {derived.field} with a non-finite coefficient"
+                )
+
+        if self.expected_headers:
+            if len(self.expected_headers) != len(set(self.expected_headers)):
+                raise ValueError(f"{self.display_name} exact header contract contains duplicates")
+            normalized_expected = [normalize_header(header) for header in self.expected_headers]
+            if len(normalized_expected) != len(set(normalized_expected)):
+                raise ValueError(
+                    f"{self.display_name} exact header contract collides after normalization"
+                )
+            expected = list(self.expected_headers)
+            unresolved_roles = [
+                role
+                for role, aliases in mapped_aliases.items()
+                if aliases and resolve_header(expected, aliases) is None
+            ]
+            if unresolved_roles:
+                raise ValueError(
+                    f"{self.display_name} exact header contract omits mapped roles: "
+                    f"{unresolved_roles}"
+                )
+            absent_ignored = [
+                header
+                for header in self.ignored_source_headers
+                if header not in self.expected_headers
+            ]
+            if absent_ignored:
+                raise ValueError(
+                    f"{self.display_name} ignores headers absent from its exact contract: "
+                    f"{absent_ignored}"
+                )
+
+        mapped_normalized = {
+            normalize_header(alias) for aliases in mapped_aliases.values() for alias in aliases
+        }
+        ignored_overlap = [
+            header
+            for header in self.ignored_source_headers
+            if normalize_header(header) in mapped_normalized
+        ]
+        if ignored_overlap:
+            raise ValueError(
+                f"{self.display_name} both maps and ignores source headers: {ignored_overlap}"
             )
 
 
@@ -365,40 +454,122 @@ HASHTAG_PROFILE = ColumnProfile(
     verified=False,
 )
 
+BASKETBALL_MONSTER_2026_27_HEADERS: tuple[str, ...] = (
+    "player_id",
+    "last_name",
+    "first_name",
+    "games",
+    "minutes",
+    "field_goals_attempted",
+    "field_goals",
+    "free_throws_attempted",
+    "free_throws",
+    "threes",
+    "threes_attempted",
+    "offensive_rebounds",
+    "defensive_rebounds",
+    "assists",
+    "blocks",
+    "steals",
+    "turnovers",
+    "fouls",
+    "technicals",
+    "double_doubles",
+    "triple_doubles",
+    "comments",
+)
+
 BASKETBALL_MONSTER_PROFILE = ColumnProfile(
-    profile_id="basketball-monster-unverified-example",
+    profile_id="basketball-monster-2026-27",
     version="1",
     source=ExternalSource.BASKETBALL_MONSTER,
-    display_name="Basketball Monster",
-    name_aliases=("player", "name"),
-    team_aliases=("team", "tm"),
-    position_aliases=("pos", "position"),
-    games_played_aliases=("gp", "g"),
+    display_name="Basketball Monster 2026-27",
+    external_id_aliases=("player_id",),
+    first_name_aliases=("first_name",),
+    last_name_aliases=("last_name",),
+    games_played_aliases=("games",),
     stat_columns=(
-        StatColumn("minutes_per_game", ("min", "mpg"), ValueShape.PER_GAME),
-        StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
-        StatColumn("rebounds_per_game", ("reb", "trb"), ValueShape.PER_GAME),
-        StatColumn("assists_per_game", ("ast",), ValueShape.PER_GAME),
-        StatColumn("steals_per_game", ("stl",), ValueShape.PER_GAME),
-        StatColumn("blocks_per_game", ("blk",), ValueShape.PER_GAME),
-        StatColumn("turnovers_per_game", ("to", "tov"), ValueShape.PER_GAME),
-        StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
-        StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
-        StatColumn("three_pointers_made_per_game", ("3pm",), ValueShape.PER_GAME),
-        StatColumn("three_pointers_attempted_per_game", ("3pa",), ValueShape.PER_GAME),
-        StatColumn("free_throws_made_per_game", ("ftm",), ValueShape.PER_GAME),
-        StatColumn("free_throws_attempted_per_game", ("fta",), ValueShape.PER_GAME),
+        StatColumn("minutes_per_game", ("minutes",), ValueShape.SEASON_TOTAL),
+        StatColumn(
+            "field_goals_attempted_per_game",
+            ("field_goals_attempted",),
+            ValueShape.SEASON_TOTAL,
+        ),
+        StatColumn("field_goals_made_per_game", ("field_goals",), ValueShape.SEASON_TOTAL),
+        StatColumn(
+            "free_throws_attempted_per_game",
+            ("free_throws_attempted",),
+            ValueShape.SEASON_TOTAL,
+        ),
+        StatColumn("free_throws_made_per_game", ("free_throws",), ValueShape.SEASON_TOTAL),
+        StatColumn("three_pointers_made_per_game", ("threes",), ValueShape.SEASON_TOTAL),
+        StatColumn(
+            "three_pointers_attempted_per_game",
+            ("threes_attempted",),
+            ValueShape.SEASON_TOTAL,
+        ),
+        StatColumn(
+            "offensive_rebounds_per_game",
+            ("offensive_rebounds",),
+            ValueShape.SEASON_TOTAL,
+        ),
+        StatColumn(
+            "defensive_rebounds_per_game",
+            ("defensive_rebounds",),
+            ValueShape.SEASON_TOTAL,
+        ),
+        StatColumn("assists_per_game", ("assists",), ValueShape.SEASON_TOTAL),
+        StatColumn("blocks_per_game", ("blocks",), ValueShape.SEASON_TOTAL),
+        StatColumn("steals_per_game", ("steals",), ValueShape.SEASON_TOTAL),
+        StatColumn("turnovers_per_game", ("turnovers",), ValueShape.SEASON_TOTAL),
+        StatColumn("personal_fouls_per_game", ("fouls",), ValueShape.SEASON_TOTAL),
+    ),
+    derived_stat_columns=(
+        DerivedStatColumn(
+            "points_per_game",
+            (
+                ("field_goals_made_per_game", 2.0),
+                ("three_pointers_made_per_game", 1.0),
+                ("free_throws_made_per_game", 1.0),
+            ),
+        ),
+        DerivedStatColumn(
+            "rebounds_per_game",
+            (
+                ("offensive_rebounds_per_game", 1.0),
+                ("defensive_rebounds_per_game", 1.0),
+            ),
+        ),
     ),
     required_production_fields=(
+        "minutes_per_game",
         "points_per_game",
+        "offensive_rebounds_per_game",
+        "defensive_rebounds_per_game",
         "rebounds_per_game",
         "assists_per_game",
+        "steals_per_game",
+        "blocks_per_game",
+        "turnovers_per_game",
+        "personal_fouls_per_game",
+        "field_goals_made_per_game",
+        "field_goals_attempted_per_game",
+        "three_pointers_made_per_game",
+        "three_pointers_attempted_per_game",
+        "free_throws_made_per_game",
+        "free_throws_attempted_per_game",
     ),
-    percentage_fallback_aliases={
-        "field_goals_made_per_game": ("fg%",),
-        "free_throws_made_per_game": ("ft%",),
-    },
-    verified=False,
+    expected_headers=BASKETBALL_MONSTER_2026_27_HEADERS,
+    ignored_source_headers=("technicals", "double_doubles", "triple_doubles", "comments"),
+    verified=True,
+    verified_seasons=("2026-27",),
+    verification_evidence=(
+        "private paid export sha256 "
+        "FA13AD188E8ACADD410DFEAE7FF296A25078842E22CE17046CF19DFBCA9D3ABD; "
+        "semantic screenshot sha256 "
+        "3BA42FD80072E8C35C191C38BA19EB0C8A8BE4182D484FEFD73A31D1ED36C29B; "
+        "13/13 visible quantities reconciled at source rounding on 2026-08-19"
+    ),
 )
 
 PROFILES_BY_SOURCE: Mapping[ExternalSource, ColumnProfile] = MappingProxyType(

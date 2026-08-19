@@ -5847,3 +5847,50 @@ Because the branch was deliberately not restacked, compatibility with main
 rebase PR #12 onto the then-current main, inspect that main's actual Alembic
 head, assign the next available revision, rerun the cumulative Code and Adapter
 gates including native Postgres, and obtain independent exact-head review.
+
+---
+
+## 2026-08-19 — data-engineer — PR #12 verified Basketball Monster contract
+
+**Changed:** Rebased PR #12 onto exact `origin/main` `a32c9e8` and renumbered
+the projection migration to the single Alembic head `0015` after main's `0014`.
+Replaced the guessed Basketball Monster aliases with one exact, immutable
+2026-27 contract backed by a private paid export
+(`FA13AD188E8ACADD410DFEAE7FF296A25078842E22CE17046CF19DFBCA9D3ABD`)
+and independently reconciled semantic screenshot
+(`3BA42FD80072E8C35C191C38BA19EB0C8A8BE4182D484FEFD73A31D1ED36C29B`).
+No paid row or private path entered the repository. The committed
+privacy-safe fixture uses synthetic ids, names and quantities while preserving
+the exact source headers, order and CSV dialect; its hash and sanitization
+record live beside it.
+
+The profile now reads separate first/last names and the stable source
+`player_id`, never invents team or position, and treats every production field
+as a season total despite the UI's per-game label. It divides production by
+the separately persisted `games` assumption, retains makes/attempts volume,
+derives `PTS = 2*FGM + 3PM + FTM` and `REB = ORB + DRB`, and records every
+normalization coefficient/source header in immutable transformation lineage.
+Technicals, double-doubles, triple-doubles and comments are explicitly ignored
+outside projection quantities. The opt-in live smoke reads only an explicitly
+configured private path and suppresses paths and paid row values from failures.
+
+**Now true:** The private smoke parsed 536 source rows without exposing them:
+505 positive-games rows normalized successfully and 31 zero/missing-games rows
+were rejected because their season totals cannot honestly become rates. The
+full local Code and configured Adapter gates pass: Ruff, formatting, strict
+mypy, 905 default backend tests, 246 offline Adapter contracts, SQLite
+upgrade/check/downgrade through `0015`, portability coverage and secret scan.
+ADR-002 production/availability separation and ADR-008 terminal-output purity
+remain structural.
+
+**Could not verify:** Docker, `psql`, a local Postgres service and ports 5432/
+5433 are unavailable on this machine. Native Postgres migration lifecycle,
+constraints, concurrency and full-suite evidence therefore require fresh
+GitHub CI on the force-updated rebased head. Exact-head independent
+data-engineer and code reviews are also still pending. FantasyPros and Hashtag
+remain unverified parse-preview examples and cannot write production.
+
+**Next:** Fetch main once more before publication, restack again if it advanced,
+then force-update only PR #12 with lease. Require all blocking jobs including
+native Postgres and migration-from-empty to pass, obtain both independent
+exact-head reviews, fix every finding, and do not merge or self-approve.

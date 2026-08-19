@@ -276,6 +276,9 @@ def _validate_lineage_against_profile_version(
 def _profile_definition(profile: ColumnProfile) -> dict[str, object]:
     return {
         "name_aliases": list(profile.name_aliases),
+        "external_id_aliases": list(profile.external_id_aliases),
+        "first_name_aliases": list(profile.first_name_aliases),
+        "last_name_aliases": list(profile.last_name_aliases),
         "team_aliases": list(profile.team_aliases),
         "position_aliases": list(profile.position_aliases),
         "games_played_aliases": list(profile.games_played_aliases),
@@ -287,10 +290,22 @@ def _profile_definition(profile: ColumnProfile) -> dict[str, object]:
             }
             for column in profile.stat_columns
         ],
+        "derived_stat_columns": [
+            {
+                "field": column.field,
+                "terms": [
+                    {"field": input_field, "coefficient": coefficient}
+                    for input_field, coefficient in column.terms
+                ],
+            }
+            for column in profile.derived_stat_columns
+        ],
         "required_production_fields": list(profile.required_production_fields),
         "percentage_fallback_aliases": {
             field: list(aliases) for field, aliases in profile.percentage_fallback_aliases.items()
         },
+        "expected_headers": list(profile.expected_headers),
+        "ignored_source_headers": list(profile.ignored_source_headers),
     }
 
 
@@ -436,6 +451,29 @@ def _build_profile_lineage(
                 "transform": "trim",
             }
 
+    for derived in profile.derived_stat_columns:
+        terms: list[dict[str, object]] = []
+        for input_field, coefficient in derived.terms:
+            source_column = columns_by_field[input_field]
+            terms.append(
+                {
+                    "input_field": input_field,
+                    "coefficient": coefficient,
+                    "source_header": parsed.resolved_headers[input_field],
+                    "source_unit": source_column.shape.value,
+                    "normalization": (
+                        "identity"
+                        if source_column.shape is ValueShape.PER_GAME
+                        else "divide_by_assumed_games_played"
+                    ),
+                }
+            )
+        field_transforms[derived.field] = {
+            "terms": terms,
+            "output_unit": ValueShape.PER_GAME.value,
+            "transform": "linear_combination_of_normalized_fields",
+        }
+
     percentage_pairs = {
         "field_goals_made_per_game": "field_goals_attempted_per_game",
         "field_goals_attempted_per_game": "field_goals_made_per_game",
@@ -468,6 +506,7 @@ def _build_profile_lineage(
         "resolved_headers": dict(parsed.resolved_headers),
         "resolved_percentage_headers": dict(parsed.resolved_percentage_headers),
         "ignored_terminal_headers": list(parsed.ignored_terminal_headers),
+        "ignored_source_headers": list(parsed.ignored_source_headers),
         "field_transforms": field_transforms,
         "profile_definition": definition,
     }
@@ -517,13 +556,11 @@ def resolve_projection_identities(
 ) -> ResolutionReport:
     """Resolve parsed CSV rows against the canonical player crosswalk.
 
-    The resolvable record's ``key`` is the row's normalised name. Projection
-    CSVs carry no identifier of any kind (plan.md), so the raw name string is
-    the only stable handle a source gives us across repeated imports — the
-    same reasoning ``PlayerExternalId.external_name`` documents for why the
-    raw string *is* the evidence here. Duplicate names within one file are
-    rejected by the parser before this ever runs, so this key is unique
-    within ``rows``.
+    The resolvable record's ``key`` is the vendor's stable player id when the
+    verified profile exposes one, otherwise the row's normalised name. The
+    player name remains the matching evidence either way; a vendor id is a
+    source crosswalk key, never a canonical identity anchor. Duplicate names
+    and duplicate vendor ids are rejected by the parser before this runs.
     """
     targets = build_player_targets(session)
     targets_by_key = {target.key: target for target in targets}
@@ -545,7 +582,7 @@ def resolve_projection_identities(
     }
     records = [
         ResolvableRecord.build(
-            key=normalize_name(row.player_name).key,
+            key=_projection_source_key(row),
             name=row.player_name,
             team=row.team,
             position=row.position,
@@ -581,6 +618,10 @@ def resolve_projection_identities(
                 )
             )
     return _reject_post_override_target_collisions(report)
+
+
+def _projection_source_key(row: ProjectionSourceRow) -> str:
+    return row.source_player_id or normalize_name(row.player_name).key
 
 
 def _reject_post_override_target_collisions(
@@ -787,7 +828,7 @@ def _import_projection_rows(
     )
 
     player_by_target_key = _nba_player_ids_by_key(session)
-    rows_by_key = {normalize_name(row.player_name).key: row for row in rows}
+    rows_by_key = {_projection_source_key(row): row for row in rows}
 
     existing = list(
         session.scalars(

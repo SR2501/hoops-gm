@@ -88,22 +88,29 @@ def parse_projection_csv(
 ) -> ProjectionParseResult:
     """Parse ``csv_text`` under ``profile`` into validated per-game-rate rows.
 
-    ``season`` is accepted but not stored on the row — it exists so a future
-    profile can vary its mapping by season without changing this function's
-    signature again; today it is unused beyond that reservation.
+    ``season`` is accepted but not stored on the row; profile verification
+    scope is enforced by the DB-writing importer.
     """
-    del season  # reserved for a future season-varying profile; see docstring
+    del season
     reader = csv.DictReader(io.StringIO(csv_text))
     fieldnames = list(reader.fieldnames or [])
     if not fieldnames:
         raise ProjectionProfileError("file has no header row")
     _reject_duplicate_normalized_headers(fieldnames)
+    if profile.expected_headers and tuple(fieldnames) != profile.expected_headers:
+        raise ProjectionProfileError(
+            f"{profile.display_name} CSV header names/order drifted from profile "
+            f"{profile.profile_id!r} version {profile.version!r}"
+        )
 
     name_header = resolve_header(fieldnames, profile.name_aliases)
-    if name_header is None:
+    external_id_header = resolve_header(fieldnames, profile.external_id_aliases)
+    first_name_header = resolve_header(fieldnames, profile.first_name_aliases)
+    last_name_header = resolve_header(fieldnames, profile.last_name_aliases)
+    if name_header is None and (first_name_header is None or last_name_header is None):
         raise ProjectionProfileError(
-            f"no column in {fieldnames} matches the {profile.display_name} name aliases "
-            f"{profile.name_aliases}; wrong profile, or the source changed its header"
+            f"{profile.display_name} file has neither a recognized full-name column nor "
+            "both recognized first/last-name columns; wrong profile, or source drift"
         )
     team_header = resolve_header(fieldnames, profile.team_aliases)
     position_header = resolve_header(fieldnames, profile.position_aliases)
@@ -114,8 +121,11 @@ def parse_projection_csv(
         header = resolve_header(fieldnames, stat_column.aliases)
         if header is not None:
             stat_headers[stat_column.field] = header
+    derived_fields = {derived.field for derived in profile.derived_stat_columns}
     missing_required = [
-        field for field in profile.required_production_fields if field not in stat_headers
+        field
+        for field in profile.required_production_fields
+        if field not in stat_headers and field not in derived_fields
     ]
     if missing_required:
         raise ProjectionProfileError(
@@ -134,7 +144,16 @@ def parse_projection_csv(
         if header is not None:
             percentage_headers[made_field] = header
 
-    resolved_headers = {"player_name": name_header}
+    resolved_headers: dict[str, str] = {}
+    if name_header:
+        resolved_headers["player_name"] = name_header
+    else:
+        if first_name_header is None or last_name_header is None:
+            raise AssertionError("component name headers were validated above")
+        resolved_headers["player_first_name"] = first_name_header
+        resolved_headers["player_last_name"] = last_name_header
+    if external_id_header:
+        resolved_headers["source_player_id"] = external_id_header
     if team_header:
         resolved_headers["team"] = team_header
     if position_header:
@@ -147,10 +166,14 @@ def parse_projection_csv(
     ignored_terminal_headers = [
         header for header in fieldnames if normalize_header(header) in terminal_aliases
     ]
+    ignored_source_headers = [
+        header for header in fieldnames if header in profile.ignored_source_headers
+    ]
     result = ProjectionParseResult(
         resolved_headers=resolved_headers,
         resolved_percentage_headers=percentage_headers,
         ignored_terminal_headers=ignored_terminal_headers,
+        ignored_source_headers=ignored_source_headers,
     )
 
     candidates: list[tuple[ProjectionSourceRow, bool]] = []  # (row, fatal)
@@ -168,10 +191,28 @@ def parse_projection_csv(
         result.total_rows += 1
         row_fatal = False
 
-        name = (raw.get(name_header) or "").strip()
+        if name_header:
+            name = (raw.get(name_header) or "").strip()
+        else:
+            first_name = (raw.get(first_name_header) or "").strip() if first_name_header else ""
+            last_name = (raw.get(last_name_header) or "").strip() if last_name_header else ""
+            name = " ".join(part for part in (first_name, last_name) if part)
         if not name:
             result.issues.append(
                 RowIssue(row_number, "player_name", "missing player name", fatal=True)
+            )
+            row_fatal = True
+        source_player_id = (
+            (raw.get(external_id_header) or "").strip() if external_id_header else None
+        )
+        if external_id_header and not source_player_id:
+            result.issues.append(
+                RowIssue(
+                    row_number,
+                    "source_player_id",
+                    "missing source player id",
+                    fatal=True,
+                )
             )
             row_fatal = True
 
@@ -232,6 +273,13 @@ def parse_projection_csv(
             else:
                 values[stat_column.field] = parsed
 
+        _derive_stat_values(
+            values=values,
+            profile=profile,
+            row_number=row_number,
+            issues=result.issues,
+        )
+
         _enforce_percentage_decomposability(
             values=values,
             percentage_headers=percentage_headers,
@@ -240,6 +288,19 @@ def parse_projection_csv(
             issues=result.issues,
         )
         if _check_shooting_consistency(values=values, row_number=row_number, issues=result.issues):
+            row_fatal = True
+        missing_required_values = [
+            field for field in profile.required_production_fields if values.get(field) is None
+        ]
+        if missing_required_values:
+            result.issues.append(
+                RowIssue(
+                    row_number,
+                    None,
+                    f"row is missing required production values {missing_required_values}",
+                    fatal=True,
+                )
+            )
             row_fatal = True
         if not any(value is not None for value in values.values()):
             result.issues.append(
@@ -255,6 +316,7 @@ def parse_projection_csv(
         source_row = ProjectionSourceRow(
             row_number=row_number,
             player_name=name,
+            source_player_id=source_player_id,
             team=team,
             position=position,
             assumed_games_played=assumed_games_played,
@@ -265,6 +327,7 @@ def parse_projection_csv(
         candidates.append((source_row, row_fatal))
 
     _reject_duplicate_names(candidates, result.issues)
+    _reject_duplicate_source_ids(candidates, result.issues)
 
     result.rows = [row for row, fatal in candidates if not fatal]
     if not result.rows:
@@ -368,6 +431,36 @@ def _parse_stat_value(
         )
         return _FATAL
     return transformed
+
+
+def _derive_stat_values(
+    *,
+    values: dict[str, float | None],
+    profile: ColumnProfile,
+    row_number: int,
+    issues: list[RowIssue],
+) -> None:
+    """Apply profile-declared derivations only after source-unit normalization."""
+    for derived in profile.derived_stat_columns:
+        inputs = [(values.get(field), coefficient) for field, coefficient in derived.terms]
+        if any(value is None for value, _ in inputs):
+            values[derived.field] = None
+            continue
+        result = sum(
+            float(value) * coefficient for value, coefficient in inputs if value is not None
+        )
+        if not math.isfinite(result) or result < 0:
+            issues.append(
+                RowIssue(
+                    row_number,
+                    derived.field,
+                    f"derived {_label_for(derived.field)} is not a finite non-negative rate",
+                    fatal=True,
+                )
+            )
+            values[derived.field] = None
+            continue
+        values[derived.field] = result
 
 
 def _enforce_percentage_decomposability(
@@ -480,6 +573,32 @@ def _reject_duplicate_names(
                     row_number,
                     "player_name",
                     f"duplicate player name within this file ({names}); resolve manually",
+                    fatal=True,
+                )
+            )
+            candidates[index] = (candidates[index][0], True)
+
+
+def _reject_duplicate_source_ids(
+    candidates: list[tuple[ProjectionSourceRow, bool]], issues: list[RowIssue]
+) -> None:
+    """Reject repeated vendor ids; one source id cannot identify two rows."""
+    by_id: dict[str, list[int]] = {}
+    for index, (row, fatal) in enumerate(candidates):
+        if fatal or row.source_player_id is None:
+            continue
+        by_id.setdefault(row.source_player_id, []).append(index)
+
+    for source_id, indices in by_id.items():
+        if len(indices) < 2:
+            continue
+        for index in indices:
+            row_number = candidates[index][0].row_number
+            issues.append(
+                RowIssue(
+                    row_number,
+                    "source_player_id",
+                    f"duplicate source player id {source_id!r} within this file",
                     fatal=True,
                 )
             )

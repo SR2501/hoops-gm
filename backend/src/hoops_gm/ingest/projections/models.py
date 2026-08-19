@@ -32,6 +32,10 @@ class ProjectionSourceRow:
 
     row_number: int
     player_name: str
+    #: Stable identifier supplied by the projection vendor, when its contract
+    #: exposes one. Used as the source crosswalk key instead of a name-derived
+    #: surrogate; it never replaces the NBA id as the canonical anchor.
+    source_player_id: str | None = None
     team: str | None = None
     position: str | None = None
 
@@ -100,6 +104,9 @@ class ProjectionParseResult:
     #: ignored under ADR-008. Values remain only in the transient raw row; no
     #: projection-layer model persists them.
     ignored_terminal_headers: list[str] = field(default_factory=list)
+    #: Profile-declared source columns intentionally outside the projection
+    #: contract (for example comments and non-9-cat counters).
+    ignored_source_headers: list[str] = field(default_factory=list)
     #: Percentage observations that cannot themselves enter a projection.
     #: Kept separate from ``resolved_headers`` because they do not resolve to
     #: a stored canonical rate; lineage records their explicit exclusion.

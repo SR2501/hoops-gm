@@ -14,8 +14,8 @@ assumption captured separately (ADR-002). Blending, the baseline model and
 ``expected-games`` fusion are later backlog items and are not part of this
 revision.
 
-Revision ID: 0010
-Revises: 0009
+Revision ID: 0015
+Revises: 0014
 Create Date: 2026-08-17
 """
 
@@ -26,8 +26,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0010"
-down_revision: str | None = "0009"
+revision: str = "0015"
+down_revision: str | None = "0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -28,6 +28,7 @@ red smoke test teaches people to ignore red smoke tests.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -46,6 +47,11 @@ from hoops_gm.ingest.nba import (
     parse_common_all_players,
     parse_league_game_finder,
     parse_teams,
+)
+from hoops_gm.ingest.projections import (
+    BASKETBALL_MONSTER_PROFILE,
+    ProjectionProfileError,
+    parse_projection_csv,
 )
 from hoops_gm.ingest.record_fixtures import (
     FIXTURE_CURRENT_SEASON,
@@ -70,6 +76,7 @@ from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
 _EASTERN = ZoneInfo("America/New_York")
+_BBM_PRIVATE_CSV_ENV = "HOOPS_GM_BBM_PROJECTION_CSV"
 
 
 @pytest.fixture
@@ -85,6 +92,60 @@ def nba() -> NbaStatsClient:
 @pytest.fixture
 def injury_report() -> InjuryReportClient:
     return InjuryReportClient()
+
+
+# ==========================================================================
+# Basketball Monster private projection export
+# ==========================================================================
+
+
+class TestBasketballMonsterProjectionExportIsAlive:
+    def test_explicit_private_export_still_matches_the_verified_contract(self) -> None:
+        """FAILS IF: the explicitly supplied paid export changed shape or units.
+
+        The path is intentionally opt-in and never echoed. CI and ordinary local
+        runs skip this probe because they do not possess the private artifact.
+        Failures suppress parser details so paid row values and local paths do
+        not enter logs.
+        """
+        configured = os.getenv(_BBM_PRIVATE_CSV_ENV)
+        if not configured:
+            pytest.skip(f"set {_BBM_PRIVATE_CSV_ENV} explicitly to run the BBM smoke")
+
+        try:
+            content = Path(configured).read_bytes()
+        except OSError:
+            raise AssertionError(
+                f"{_BBM_PRIVATE_CSV_ENV} must identify a readable private CSV"
+            ) from None
+        try:
+            csv_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise AssertionError("private BBM CSV is no longer UTF-8") from None
+        try:
+            parsed = parse_projection_csv(
+                csv_text,
+                BASKETBALL_MONSTER_PROFILE,
+                season="2026-27",
+            )
+        except (ProjectionProfileError, ValueError):
+            raise AssertionError(
+                "private BBM CSV drifted from the verified 2026-27 contract"
+            ) from None
+
+        allowed_zero_game_messages = (
+            "given as a season total but no valid games-played figure",
+            "row is missing required production values",
+            "row has no usable production rates",
+        )
+        unexpected_issue = any(
+            not any(token in issue.message for token in allowed_zero_game_messages)
+            for issue in parsed.issues
+        )
+        if not parsed.rows or unexpected_issue:
+            raise AssertionError(
+                "private BBM CSV contains unexpected row failures under the verified contract"
+            )
 
 
 # ==========================================================================
