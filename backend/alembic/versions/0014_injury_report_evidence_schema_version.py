@@ -6,9 +6,10 @@ night silently overwriting the first as an ordinary "update"). Any row whose
 that collision after the fact — the overwrite, if it happened, already
 destroyed the very evidence that would show it did. This migration adds
 ``import_schema_version`` and stamps every row that already exists as ``1``
-(legacy, unverified); the importer writes ``2`` (current) on every create and
-update from this point forward, so a legacy row is upgraded automatically the
-next time a real re-import touches it under the fixed key. See
+(legacy, unverified). Its server default is also ``1``: omitted direct/raw
+inserts have not passed importer validation and cannot be trusted. The importer
+explicitly writes ``2`` (current) on every create and update, so a legacy row is
+upgraded automatically the next time a real re-import touches it under the fixed key. See
 ``db.models.injury_report`` and
 ``injury_report.backfill.select_canonical_pregame_observations``, which
 defaults to excluding version-1 rows.
@@ -36,7 +37,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _LEGACY = 1
-_CURRENT = 2
 
 
 def upgrade() -> None:
@@ -66,7 +66,7 @@ def upgrade() -> None:
             "import_schema_version",
             existing_type=sa.SmallInteger(),
             nullable=False,
-            server_default=str(_CURRENT),
+            server_default=str(_LEGACY),
         )
 
 

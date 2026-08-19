@@ -802,11 +802,11 @@ def import_injury_report_entries(
         row.status = record.status
         row.reason_raw = record.reason_raw
         row.source = ExternalSource.NBA
-        # Written unconditionally, on every create *and* every update: a
-        # legacy (pre-migration-0013) row that this fixed importer touches
-        # again is thereby proven safe under the current natural key and is
-        # upgraded, not left stamped legacy forever. See
-        # db.models.injury_report.CURRENT_EVIDENCE_SCHEMA_VERSION.
+        # Only this validated importer writes CURRENT. The model/database
+        # default is deliberately LEGACY so omitted direct or raw inserts
+        # cannot acquire trusted provenance by accident. Written on every
+        # create and update so a genuine re-import promotes the exact row it
+        # has validated under the fixed natural key.
         row.import_schema_version = CURRENT_EVIDENCE_SCHEMA_VERSION
 
     session.flush()

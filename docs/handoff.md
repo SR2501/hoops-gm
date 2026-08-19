@@ -5051,6 +5051,52 @@ not a production bug), fixed by shortening the value to 19 characters;
 re-run confirmed green against Postgres in CI. This is exactly the kind of
 gap ADR-001's dedicated Postgres CI job exists to catch, and it did.
 
+## 2026-08-19 — data-engineer, backend — Historical injury-report backfill: round-14 release blockers
+
+**Changed:** Closed two confirmed release blockers without widening the
+backfill. `_persist_coverage` no longer drops incompatible existing candidates
+and atomically replaces their artifact: legacy/missing-version, future-version
+(including added/renamed fields), and malformed-current (unknown/missing
+required keys) raw candidates now raise typed
+`IncompatibleCoverageEvidence` before a temporary file is created. Observation
+loading remains read-only and may quarantine those candidates for
+classification. `InjuryReportEntry.import_schema_version` now defaults to
+`LEGACY_EVIDENCE_SCHEMA_VERSION` in both SQLAlchemy metadata and unmerged
+migration `0014`; only `import_injury_report_entries` explicitly writes
+`CURRENT_EVIDENCE_SCHEMA_VERSION` on every validated insert/update. Added
+real-file byte-preservation/no-temp/no-trusted-evidence tests for all six
+incompatible shapes, direct ORM and raw-SQL omitted-default tests, importer
+current-version coverage, canonical exclusion, and an upgrade-from-`0013` /
+downgrade / re-upgrade migration test that runs under both the local SQLite
+suite and GitHub's Postgres-configured suite.
+
+**Now true:** Existing incompatible coverage evidence is never silently
+destroyed by a running binary that cannot interpret it. Operator recovery is
+explicit and manual: preserve or move the artifact to quarantine, inspect it
+with a compatible binary (or retain it for a future explicit migration), then
+retry against a separate compatible coverage file; this change does not invent
+an automated migration. Omitted direct/ORM/raw injury-report inserts are
+legacy/untrusted and excluded from canonical selection, while a genuine
+validated re-import still promotes the exact reconciled row to current. The
+Alembic chain remains single-head `0012 -> 0013 -> 0014`, with `0014`
+backfilling existing `0013` rows to legacy and using legacy as its server
+default. Local Code and Adapter gates are green: Ruff check, Ruff format check
+(126 files), bare mypy (110 source files), full pytest, adapter-contract tests,
+secret scan (234 tracked files), and a fresh SQLite `upgrade head -> alembic
+check -> downgrade base` lifecycle all passed.
+
+**Could not verify:** GitHub Actions, including the real Postgres suite, had
+not run against this exact remediation head when this entry was written.
+Independent exact-head code and data/evidence reviews had not yet been
+commissioned. No live NBA archive call was repeated because transport and
+candidate derivation did not change; the standing uncertainty remains whether
+the bounded candidate schedule reaches every off-cadence archive report.
+
+**Next:** Commit and push the remediation, require GitHub's Postgres and all
+other checks to pass, obtain fresh independent exact-head code and
+data/evidence reviews, and resolve every finding before conversion. Do not
+merge or self-approve. `injury-status-conversion` remains explicitly blocked
+on `injury-conversion-cohort-population` and its separate Model gate.
 
 
 

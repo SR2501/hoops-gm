@@ -2760,6 +2760,10 @@ class CoverageScopeMismatch(RuntimeError):
     """
 
 
+class IncompatibleCoverageEvidence(RuntimeError):
+    """Existing coverage contains raw evidence this binary cannot safely rewrite."""
+
+
 def _persist_coverage(
     coverage_path: Path,
     season: str,
@@ -2783,28 +2787,35 @@ def _persist_coverage(
        candidate that fails this is excluded from the rewritten file
        rather than silently trusted as current-scope evidence.
 
-    **Round-11 review point 2: quarantine incompatible schema versions at
-    this load+merge+save boundary too, not only at classification time.**
-    :func:`coverage_for_games` already refuses to *trust* a candidate whose
-    ``evidence_schema_version`` is not exactly
-    :data:`CURRENT_COVERAGE_SCHEMA_VERSION` for a clean-submission claim —
-    but before this fix, that was the *only* place a wrong version was
-    ever checked. This function's own ``existing`` filter checked
-    ``(season, season_type)`` alone, so a legacy record (predating this
-    field, or any future record with a schema version this code has never
-    seen and cannot validate) would still be read back, merged unchanged,
-    and rewritten into the very file this run treats as its own current,
-    trusted artifact for this scope — "quarantined" from classification,
-    but never actually quarantined from the persisted evidence itself. An
-    incompatible-version candidate is now dropped from ``existing`` here,
-    at the moment it is read, so it can never be laundered forward into a
-    freshly-rewritten "current" file again; it is not overwritten in place
-    on disk (this function never rewrites a *different* path), simply
-    excluded from every subsequent merge this tool performs.
+    Observation loading may quarantine incompatible candidates because it
+    is read-only. Persistence may not: dropping an uninterpretable raw
+    candidate and atomically replacing the file destroys evidence. If any
+    existing raw candidate is legacy, future-versioned, or malformed under
+    the current schema, :class:`IncompatibleCoverageEvidence` is raised
+    before a temporary file is created. The operator must preserve or
+    quarantine the original artifact explicitly before retrying.
     """
     existing: list[CandidateCoverage] = []
     if coverage_path.is_file():
-        existing_report = CoverageReport.from_json(coverage_path.read_text(encoding="utf-8"))
+        existing_text = coverage_path.read_text(encoding="utf-8")
+        raw_report = json.loads(existing_text)
+        raw_candidates = raw_report["candidates"]
+        incompatible_indexes = [
+            index
+            for index, raw_candidate in enumerate(raw_candidates)
+            if not isinstance(raw_candidate, Mapping)
+            or raw_candidate.get("evidence_schema_version", LEGACY_COVERAGE_SCHEMA_VERSION)
+            != CURRENT_COVERAGE_SCHEMA_VERSION
+            or _current_schema_candidate_or_none(raw_candidate) is None
+        ]
+        if incompatible_indexes:
+            raise IncompatibleCoverageEvidence(
+                f"{coverage_path} contains incompatible raw coverage candidate(s) at "
+                f"indexes {incompatible_indexes}. Refusing to merge or rewrite evidence "
+                "this binary cannot interpret; preserve or quarantine the original file "
+                "before retrying."
+            )
+        existing_report = CoverageReport.from_json(existing_text)
         if existing_report.candidates and (
             existing_report.season != season or existing_report.season_type != season_type.value
         ):
@@ -2819,11 +2830,6 @@ def _persist_coverage(
             for c in existing_report.candidates
             if c.season == season
             and c.season_type == season_type.value
-            # Round-11 review point 2: a legacy or unrecognized-future
-            # schema version is excluded here, not merely at classification
-            # -- otherwise it is retained and rewritten into this run's
-            # own "current" file forever, even though nothing ever trusts
-            # it for evidence.
             and c.evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
         ]
     merged = _merge_coverage(existing, new_candidates)

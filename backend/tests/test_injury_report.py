@@ -16,11 +16,15 @@ from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from hoops_gm.db.models.enums import InjuryReportStatus, SeasonType
 from hoops_gm.db.models.identity import NbaTeam, Player
-from hoops_gm.db.models.injury_report import InjuryReportEntry
+from hoops_gm.db.models.injury_report import (
+    CURRENT_EVIDENCE_SCHEMA_VERSION,
+    LEGACY_EVIDENCE_SCHEMA_VERSION,
+    InjuryReportEntry,
+)
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_injury_report_entries, import_teams
@@ -209,6 +213,7 @@ def test_import_converges_two_nearby_legacy_requests_into_one_history_row(sessio
 
     rows = session.scalars(select(InjuryReportEntry)).all()
     assert len(rows) == len(early_result.entries)
+    assert {row.import_schema_version for row in rows} == {CURRENT_EVIDENCE_SCHEMA_VERSION}
 
 
 def test_import_never_collapses_a_back_to_back_split_across_game_dates(session: Any) -> None:
@@ -287,6 +292,59 @@ def test_import_preserves_first_seen_provenance_url_on_convergence(session: Any)
     rows = session.scalars(select(InjuryReportEntry)).all()
     assert len(rows) == 1
     assert rows[0].source_url == "https://example.invalid/first-seen"
+
+
+def test_direct_orm_insert_defaults_to_legacy_untrusted_provenance(session: Any) -> None:
+    entry = InjuryReportEntry(
+        report_timestamp=REPORT_TIMESTAMP,
+        game_date=date(2025, 11, 1),
+        game_time_raw="07:00 (ET)",
+        matchup_raw="SAC@MIL",
+        team_raw="Sacramento Kings",
+        player_name_raw="Murray, Keegan",
+        status_raw="Out",
+        status=InjuryReportStatus.OUT,
+        source_url="https://example.invalid/direct",
+    )
+    session.add(entry)
+    session.flush()
+
+    assert entry.import_schema_version == LEGACY_EVIDENCE_SCHEMA_VERSION
+
+
+def test_raw_sql_insert_omitting_schema_version_defaults_to_legacy(session: Any) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO injury_report_entries (
+                report_timestamp, game_date, game_time_raw, matchup_raw,
+                team_raw, player_name_raw, status_raw, status, reason_raw,
+                source, source_url
+            ) VALUES (
+                :report_timestamp, :game_date, :game_time_raw, :matchup_raw,
+                :team_raw, :player_name_raw, :status_raw, :status, :reason_raw,
+                :source, :source_url
+            )
+            """
+        ),
+        {
+            "report_timestamp": REPORT_TIMESTAMP.isoformat(),
+            "game_date": "2025-11-01",
+            "game_time_raw": "07:00 (ET)",
+            "matchup_raw": "SAC@MIL",
+            "team_raw": "Sacramento Kings",
+            "player_name_raw": "Murray, Keegan",
+            "status_raw": "Out",
+            "status": "out",
+            "reason_raw": "",
+            "source": "nba",
+            "source_url": "https://example.invalid/raw",
+        },
+    )
+    session.flush()
+
+    version = session.scalar(select(InjuryReportEntry.import_schema_version))
+    assert version == LEGACY_EVIDENCE_SCHEMA_VERSION
 
 
 def test_parser_rejects_a_naive_report_timestamp() -> None:

@@ -177,11 +177,13 @@ class InjuryReportEntry(IntPk, TimestampMixin, Base):
     #: the importer always writes ``CURRENT_EVIDENCE_SCHEMA_VERSION`` on
     #: every create *and* every update from this point forward, so a legacy
     #: row is automatically upgraded the next time a real re-import touches
-    #: it under the fixed key.
+    #: it under the fixed key. Both Python and database defaults are legacy:
+    #: an omitted direct/ORM/raw insert has not passed importer validation and
+    #: must not acquire trusted provenance merely by leaving this field out.
     import_schema_version: Mapped[int] = mapped_column(
         SmallInteger,
-        default=CURRENT_EVIDENCE_SCHEMA_VERSION,
-        server_default=str(CURRENT_EVIDENCE_SCHEMA_VERSION),
+        default=LEGACY_EVIDENCE_SCHEMA_VERSION,
+        server_default=str(LEGACY_EVIDENCE_SCHEMA_VERSION),
     )
 
     team: Mapped[NbaTeam | None] = relationship(foreign_keys=[team_id])

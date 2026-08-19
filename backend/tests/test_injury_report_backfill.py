@@ -43,6 +43,7 @@ from hoops_gm.ingest.injury_report.backfill import (
     CoverageReport,
     CoverageScopeMismatch,
     ExpectedGameCoverage,
+    IncompatibleCoverageEvidence,
     IncompleteExpectedGameCoverage,
     IncompleteScheduleCoverage,
     MissingTipoffGame,
@@ -1974,6 +1975,7 @@ def test_select_canonical_pregame_observations_picks_latest_before_tipoff(sessio
         status_raw="Questionable",
         status=InjuryReportStatus.QUESTIONABLE,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     later_pregame = InjuryReportEntry(
         report_timestamp=_et(2025, 11, 1, 18, 30),
@@ -1988,6 +1990,7 @@ def test_select_canonical_pregame_observations_picks_latest_before_tipoff(sessio
         status_raw="Out",
         status=InjuryReportStatus.OUT,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     after_tipoff = InjuryReportEntry(
         report_timestamp=_et(2025, 11, 1, 20, 0),  # after tip-off: must never be canonical
@@ -2002,6 +2005,7 @@ def test_select_canonical_pregame_observations_picks_latest_before_tipoff(sessio
         status_raw="Active",
         status=InjuryReportStatus.AVAILABLE,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     session.add_all([earlier, later_pregame, after_tipoff])
     session.flush()
@@ -2053,6 +2057,7 @@ def test_select_canonical_pregame_observations_excludes_exact_tipoff_boundary(
         status_raw="Questionable",
         status=InjuryReportStatus.QUESTIONABLE,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     exactly_at_tipoff = InjuryReportEntry(
         report_timestamp=tipoff,  # exactly equal to tip-off, not after it
@@ -2067,6 +2072,7 @@ def test_select_canonical_pregame_observations_excludes_exact_tipoff_boundary(
         status_raw="Out",
         status=InjuryReportStatus.OUT,
         source_url="https://example.invalid/fixture",
+        import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
     )
     session.add_all([pregame, exactly_at_tipoff])
     session.flush()
@@ -2153,6 +2159,7 @@ def test_select_canonical_pregame_observations_collapses_spelling_variants_by_pl
                 status_raw="Questionable",
                 status=InjuryReportStatus.QUESTIONABLE,
                 source_url="https://example.invalid/fixture-a",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
             InjuryReportEntry(
                 report_timestamp=_et(2025, 11, 1, 13, 0),
@@ -2166,6 +2173,7 @@ def test_select_canonical_pregame_observations_collapses_spelling_variants_by_pl
                 status_raw="Out",
                 status=InjuryReportStatus.OUT,
                 source_url="https://example.invalid/fixture-b",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
         ]
     )
@@ -2207,6 +2215,7 @@ def test_select_canonical_pregame_observations_keeps_unresolved_rows_distinct_by
                 status_raw="Questionable",
                 status=InjuryReportStatus.QUESTIONABLE,
                 source_url="https://example.invalid/fixture-a",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
             InjuryReportEntry(
                 report_timestamp=_et(2025, 10, 31, 17, 30),
@@ -2220,6 +2229,7 @@ def test_select_canonical_pregame_observations_keeps_unresolved_rows_distinct_by
                 status_raw="Out",
                 status=InjuryReportStatus.OUT,
                 source_url="https://example.invalid/fixture-a",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
         ]
     )
@@ -2273,6 +2283,7 @@ def test_canonical_pregame_observation_lead_time_is_realized_not_the_anchor_offs
                 status_raw="Out",
                 status=InjuryReportStatus.OUT,
                 source_url="https://example.invalid/fixture",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
             InjuryReportEntry(
                 report_timestamp=report_timestamp,
@@ -2285,6 +2296,7 @@ def test_canonical_pregame_observation_lead_time_is_realized_not_the_anchor_offs
                 status_raw="Out",
                 status=InjuryReportStatus.OUT,
                 source_url="https://example.invalid/fixture",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             ),
         ]
     )
@@ -2373,6 +2385,7 @@ def test_coverage_for_games_distinguishes_observed_no_coverage_unsubmitted_and_m
             status_raw="Questionable",
             status=InjuryReportStatus.QUESTIONABLE,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.add(
@@ -2387,6 +2400,7 @@ def test_coverage_for_games_distinguishes_observed_no_coverage_unsubmitted_and_m
             status_raw="NOT YET SUBMITTED",
             status=InjuryReportStatus.NOT_YET_SUBMITTED,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -2525,6 +2539,7 @@ def test_coverage_for_games_does_not_let_an_unresolved_listed_entry_become_zero_
             status_raw="Out",
             status=InjuryReportStatus.OUT,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -2592,6 +2607,7 @@ def test_coverage_for_games_vetoes_zero_listed_for_a_genuinely_unattributable_ro
             status_raw="Questionable",
             status=InjuryReportStatus.QUESTIONABLE,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -3013,6 +3029,7 @@ def test_coverage_for_games_unresolved_evidence_outranks_legacy_excluded(session
             status_raw="Out",
             status=InjuryReportStatus.OUT,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -3419,6 +3436,7 @@ def test_coverage_for_games_single_snapshot_promotes_a_newly_tipped_off_missing_
                 status_raw="Out",
                 status=InjuryReportStatus.OUT,
                 source_url="https://example.invalid/fixture",
+                import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
             )
         )
         seed_session.commit()
@@ -3515,6 +3533,7 @@ def test_coverage_for_games_resolved_out_of_scope_row_does_not_leak_to_unrelated
             status_raw="Out",
             status=InjuryReportStatus.OUT,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -3950,6 +3969,30 @@ def _serialized_candidate(
     }
 
 
+def _assert_incompatible_coverage_persist_is_non_destructive(
+    path: Path, stale_file: dict[str, Any]
+) -> None:
+    original_bytes = json.dumps(stale_file, indent=1).encode()
+    path.write_bytes(original_bytes)
+    new_candidate = CandidateCoverage.from_candidate(
+        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
+        season="2025-26",
+        season_type="regular",
+        applicable_game_ids=(2,),
+        applicable_nba_game_ids=("nba-2",),
+        outcome="not_available",
+        status_code=404,
+    )
+
+    with pytest.raises(IncompatibleCoverageEvidence, match="Refusing to merge or rewrite"):
+        _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
+
+    assert path.read_bytes() == original_bytes
+    assert not path.with_suffix(path.suffix + ".tmp").exists()
+    observed = CoverageReport.from_json(path.read_text(encoding="utf-8"))
+    assert all(candidate.outcome != "fetched" for candidate in observed.candidates)
+
+
 def test_persist_coverage_raises_on_whole_file_season_mismatch(tmp_path: Path) -> None:
     """Round-10 review point 2: a persisted file's own declared ``season``.
 
@@ -4086,7 +4129,7 @@ def test_persist_coverage_excludes_a_candidate_whose_own_recorded_scope_disagree
     assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
 
 
-def test_persist_coverage_quarantines_an_unrecognized_future_schema_version_candidate(
+def test_persist_coverage_refuses_an_unrecognized_future_schema_version_candidate(
     tmp_path: Path,
 ) -> None:
     """Round-11 review point 2: a future schema version must never be retained/rewritten.
@@ -4116,29 +4159,10 @@ def test_persist_coverage_quarantines_an_unrecognized_future_schema_version_cand
         "season_type": "regular",
         "candidates": [future_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    # The unrecognized-future-version candidate is quarantined out of the
-    # rewritten file entirely -- not retained, not rewritten as current.
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
-    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
-def test_persist_coverage_quarantines_a_legacy_pre_versioning_candidate_too(
+def test_persist_coverage_refuses_a_legacy_pre_versioning_candidate_too(
     tmp_path: Path,
 ) -> None:
     """The same quarantine applies to a legacy (pre-round-7) record, not just future ones.
@@ -4166,23 +4190,7 @@ def test_persist_coverage_quarantines_a_legacy_pre_versioning_candidate_too(
         "season_type": "regular",
         "candidates": [legacy_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
 def test_coverage_merge_key_distinguishes_records_differing_only_in_canonical_masthead() -> None:
@@ -4650,6 +4658,7 @@ def test_exclusion_cascade_full_denominator_with_expected_and_coverage_evidence(
             status_raw="Out",
             status=InjuryReportStatus.OUT,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -4759,6 +4768,7 @@ def test_exclusion_cascade_unresolved_game_id_stage_is_not_tautological(session:
             status_raw="Out",
             status=InjuryReportStatus.OUT,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     # An entry on the same report date whose game_id never resolved.
@@ -4774,6 +4784,7 @@ def test_exclusion_cascade_unresolved_game_id_stage_is_not_tautological(session:
             status_raw="Questionable",
             status=InjuryReportStatus.QUESTIONABLE,
             source_url="https://example.invalid/fixture",
+            import_schema_version=CURRENT_EVIDENCE_SCHEMA_VERSION,
         )
     )
     session.flush()
@@ -4991,10 +5002,10 @@ def test_select_canonical_pregame_observations_excludes_legacy_schema_rows_by_de
     assert included[0].player_name_raw == "Murray, Keegan"
 
 
-def test_select_canonical_pregame_observations_includes_current_schema_rows_by_default(
+def test_select_canonical_pregame_observations_excludes_omitted_schema_version_by_default(
     session: Any,
 ) -> None:
-    """The ordinary case: a row written under the fixed key needs no override."""
+    """A direct ORM insert cannot become trusted evidence through its default."""
     teams = _seed_teams(session)
     game = _seed_game(
         session,
@@ -5019,9 +5030,8 @@ def test_select_canonical_pregame_observations_includes_current_schema_rows_by_d
     session.add(entry)
     session.flush()
 
-    assert entry.import_schema_version == CURRENT_EVIDENCE_SCHEMA_VERSION
-    observations = select_canonical_pregame_observations(session, game_ids=[game.id])
-    assert len(observations) == 1
+    assert entry.import_schema_version == LEGACY_EVIDENCE_SCHEMA_VERSION
+    assert select_canonical_pregame_observations(session, game_ids=[game.id]) == ()
 
 
 def test_run_backfill_upgrades_a_legacy_row_when_genuinely_re_imported(
@@ -5556,7 +5566,7 @@ def test_from_json_survives_future_schema_with_a_renamed_field() -> None:
     assert report.candidates[0].outcome != "fetched"
 
 
-def test_persist_coverage_survives_future_schema_with_an_added_field(
+def test_persist_coverage_refuses_future_schema_with_an_added_field(
     tmp_path: Path,
 ) -> None:
     """The real load -> merge -> save path in ``_persist_coverage`` must survive too.
@@ -5584,30 +5594,10 @@ def test_persist_coverage_survives_future_schema_with_an_added_field(
         "season_type": "regular",
         "candidates": [future_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    # Must not raise -- the real on-disk artifact this run reads back.
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    # Quarantined out of the rewritten file entirely -- not retained, not
-    # rewritten as current, and the loader never crashed on the way there.
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
-    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
-def test_persist_coverage_survives_future_schema_with_a_renamed_field(
+def test_persist_coverage_refuses_future_schema_with_a_renamed_field(
     tmp_path: Path,
 ) -> None:
     """Same real ``_persist_coverage`` path, but the future version renames a required field.
@@ -5634,23 +5624,7 @@ def test_persist_coverage_survives_future_schema_with_a_renamed_field(
         "season_type": "regular",
         "candidates": [future_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
 def test_coverage_for_games_survives_future_schema_with_an_added_field(
@@ -5798,7 +5772,7 @@ def test_from_json_quarantines_current_schema_missing_required_field() -> None:
     assert quarantined.applicable_nba_game_ids == ()
 
 
-def test_persist_coverage_quarantines_current_schema_with_unknown_key(
+def test_persist_coverage_refuses_current_schema_with_unknown_key(
     tmp_path: Path,
 ) -> None:
     """The real load -> merge -> save path must also refuse an unknown key on a current record.
@@ -5822,30 +5796,10 @@ def test_persist_coverage_quarantines_current_schema_with_unknown_key(
         "season_type": "regular",
         "candidates": [current_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    # The unknown-key current-claiming record is quarantined out of the
-    # rewritten file entirely -- not retained, not rewritten as trusted
-    # current evidence.
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
-    assert result.candidates[0].evidence_schema_version == CURRENT_COVERAGE_SCHEMA_VERSION
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
-def test_persist_coverage_quarantines_current_schema_missing_required_field(
+def test_persist_coverage_refuses_current_schema_missing_required_field(
     tmp_path: Path,
 ) -> None:
     """Same real ``_persist_coverage`` path, but the stale record is missing a required key."""
@@ -5864,24 +5818,7 @@ def test_persist_coverage_quarantines_current_schema_missing_required_field(
         "season_type": "regular",
         "candidates": [current_candidate],
     }
-    path.write_text(json.dumps(stale_file), encoding="utf-8")
-
-    new_candidate = CandidateCoverage.from_candidate(
-        ReportCandidate(date(2025, 11, 2), "evening_before", _et(2025, 11, 1, 17, 30)),
-        season="2025-26",
-        season_type="regular",
-        applicable_game_ids=(2,),
-        applicable_nba_game_ids=("nba-2",),
-        outcome="not_available",
-        status_code=404,
-    )
-
-    # Must not raise -- the real on-disk artifact this run reads back.
-    _persist_coverage(path, "2025-26", SeasonType.REGULAR, [new_candidate])
-
-    result = CoverageReport.from_json(path.read_text(encoding="utf-8"))
-    assert len(result.candidates) == 1
-    assert result.candidates[0].applicable_nba_game_ids == ("nba-2",)
+    _assert_incompatible_coverage_persist_is_non_destructive(path, stale_file)
 
 
 def test_coverage_for_games_quarantines_current_schema_unknown_key_fetched_outcome(

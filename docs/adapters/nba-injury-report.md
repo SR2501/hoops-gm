@@ -960,6 +960,29 @@ skip candidates whose only local evidence is a legacy row.
     full `observations`/`coverage_for_games` classification chain — proving
     no crash and no trusted `submitted_zero_listed` claim in any case.
 
+* **Round-14 release review corrected two evidence-destruction/provenance
+  defaults:**
+  * `CoverageReport.from_json` remains read-only and may represent incompatible
+    candidates as quarantined placeholders for observation classification.
+    `_persist_coverage` may not discard those raw records: if any existing
+    candidate is legacy/missing-version, future-versioned (including added or
+    renamed fields), or malformed while claiming the current version (unknown
+    or missing required keys), it raises `IncompatibleCoverageEvidence` before
+    creating a `.tmp` file. The original coverage file remains byte-for-byte
+    unchanged. Operator recovery is intentionally manual: preserve or move the
+    incompatible artifact to a quarantine location, inspect it with a binary
+    that understands its schema (or retain it for a future explicit migration),
+    then retry with a separate compatible coverage path. This release does not
+    invent an automated migration for evidence it cannot interpret.
+  * `injury_report_entries.import_schema_version` now defaults to
+    `LEGACY_EVIDENCE_SCHEMA_VERSION` (`1`) in both SQLAlchemy metadata and
+    migration `0014`'s server default. Existing rows upgraded from `0013`, raw
+    SQL inserts omitting the column, and direct ORM inserts omitting it are
+    therefore untrusted and excluded from canonical selection. Only
+    `import_injury_report_entries`, after validating and reconciling a row,
+    explicitly writes `CURRENT_EVIDENCE_SCHEMA_VERSION` (`2`) on every insert
+    and update.
+
 
 ### What this tool is not
 
