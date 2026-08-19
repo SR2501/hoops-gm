@@ -5037,5 +5037,20 @@ exact head/base to the coordinator. Still not merged, not self-approved;
 `injury-conversion-cohort-population` and the separate, later Model-gated
 deliverable.
 
+**Addendum (same night):** the exact-head report below reflects one further
+commit, `70d942a`, on top of the fix described above (still exact head
+`1e2fa87`'s production code — nothing in `backfill.py` changed again).
+GitHub's real Postgres CI job caught something the local SQLite-backed
+suite could not: the new end-to-end regression test used an `nba_game_id`
+value 34 characters long against `NbaGame.nba_game_id`'s real
+`VARCHAR(32)` column — SQLite does not enforce `VARCHAR` length at all, so
+it passed locally, but Postgres correctly raised
+`psycopg.errors.StringDataRightTruncation`. This is a test-fixture-only
+defect (a test value picked without checking the column's real constraint,
+not a production bug), fixed by shortening the value to 19 characters;
+re-run confirmed green against Postgres in CI. This is exactly the kind of
+gap ADR-001's dedicated Postgres CI job exists to catch, and it did.
+
+
 
 
