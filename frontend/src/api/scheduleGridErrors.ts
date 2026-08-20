@@ -65,7 +65,7 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
   schedule_grid_incomplete_evidence: {
     summary:
-      "The backend could not verify the evidence behind the counts it was asked for, so it served none. Which check failed differs: the schedule refresh may be unable to account for what it imported, it may have imported a different cohort from the one this grid counts, or the counted rows may not line up with this league's teams and scoring periods. This is not a claim that the schedule is wrong — it is that nothing on record establishes the counts this request asked for.",
+      "The backend could not verify the evidence behind the counts it was asked for, so it served none. The backend's wording below names the check that failed; common cases are a refresh that cannot account for what it imported, a refresh describing a different cohort from the one this grid counts, and counted rows that do not line up with this league's teams or scoring calendar. This is not a claim that the schedule is wrong — it is that nothing on record establishes the counts this request asked for.",
     action:
       "Read the backend's wording below: it names the check that failed, and the remedy is not the same for each. A refresh that cannot state its completeness needs the schedule re-importing; a team or scoring period with no row needs the league's team data or calendar corrected, and re-importing the schedule will not create one.",
   },

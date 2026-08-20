@@ -9,12 +9,13 @@
  * assumptions meet something the backend actually produced.
  *
  * It also settles a question that was guessed at in review: the recorded
- * `refreshed_at` is `2026-08-20T15:10:39.334171Z` — a `Z` suffix with
- * microsecond precision, not the `+00:00` form the Pydantic model was assumed
- * to emit. The test below asserts a UTC designator rather than `Z`
- * specifically, because `+00:00` would be equally correct and equally
- * parseable; pinning the serializer's choice would fail on a change that broke
- * nothing.
+ * `refreshed_at` carries a `Z` suffix with microsecond precision, not the
+ * `+00:00` form the Pydantic model was assumed to emit. The exact literal is
+ * deliberately not quoted here — it changes on every re-capture, and a
+ * docstring naming a value the fixture no longer holds is the same defect this
+ * branch has already shipped twice. The assertion below asserts a UTC
+ * designator rather than `Z` specifically, because `+00:00` would be equally
+ * correct.
  *
  * **What this recording cannot check.** The seed produces 20 non-zero
  * team-games, so 610 of its 630 cells are `0`. It exercises no three-digit

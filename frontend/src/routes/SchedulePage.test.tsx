@@ -513,10 +513,16 @@ describe('schedule grid refusals', () => {
     const summary = within(panel).getByTestId('async-error-summary')
     const action = within(panel).getByTestId('async-error-action')
 
-    // All three families named, so no condition is misdescribed.
-    expect(summary).toHaveTextContent(/unable to account for what it imported/)
+    // All three common families named, and named as examples rather than as a
+    // closed set — the code has nine raisers and any enumeration the copy makes
+    // is a claim about the response it cannot keep.
+    expect(summary).toHaveTextContent(/common cases are/)
+    expect(summary).toHaveTextContent(/cannot account for what it imported/)
     expect(summary).toHaveTextContent(/different cohort from the one this grid counts/)
-    expect(summary).toHaveTextContent(/not line up with this league's teams and scoring periods/)
+    expect(summary).toHaveTextContent(/not line up with this league's teams or scoring calendar/)
+    // The backend's wording is the statement of what failed, not a selector
+    // between two options.
+    expect(summary).toHaveTextContent(/names the check that failed/)
 
     // The action must not assert a single remedy. Three of the nine conditions
     // are about the league's calendar or team rows, and re-importing the
