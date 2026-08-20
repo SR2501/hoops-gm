@@ -11,11 +11,11 @@ from typing import Any
 
 from hoops_gm.schedule_context.blowout import BlowoutModel, blowout_model_version
 
-RELEASED_BLOWOUT_MODEL_VERSION = "4809af29ed135f6f"
+RELEASED_BLOWOUT_MODEL_VERSION = "e273cfbe4b599b16"
 _RELEASE_FILES = {
     RELEASED_BLOWOUT_MODEL_VERSION: (
-        "schedule_context_blowout_v1.json",
-        "160c729a78b415ce387bfa67233a6dcf7d6e4a70552f2eb1156c219504919afe",
+        "schedule_context_blowout_v2.json",
+        "a31d77d5fc07494d6f7ab0bf2ee73fdfc84cd391ed1a5f931e66e115bc564b31",
     ),
 }
 

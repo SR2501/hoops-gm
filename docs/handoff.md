@@ -6317,3 +6317,62 @@ lanes above are the exact-head Postgres evidence.
 all blocking CI jobs, including both native Postgres lanes, on the final
 published head. The coordinator may evaluate the pull request only after that
 evidence is green. This session must not merge or self-approve it.
+
+---
+
+## 2026-08-19 — data-engineer, quant — Historical schedule completeness correction
+
+**Changed:** Reproduced the `LeagueGameFinder` defect from live official
+2024-25 and 2025-26 payloads on exact base `7136740`, then restacked onto exact
+`origin/main` `79a5e3e`. The ten omitted games were not one-sided source
+records: both team rows existed, but both repeated one canonical `MATCHUP`
+string (for example, both rows for `0022400633` say `IND @ SAS`). The parser
+treated the separator as the current row's side, assigned both rows to one side,
+and silently dropped the game. It now reconciles each row's
+`TEAM_ABBREVIATION` against both matchup sides, preserves stable `GAME_ID`
+ordering and Eastern `GAME_DATE`, and raises on incomplete, duplicate,
+contradictory, same-team, malformed, or wrong season/type records. Added a
+privacy-safe recorded fixture, contract coverage, and an exact-1,230 live smoke.
+
+Regenerated and versioned both affected Model-gate artifacts without changing
+math, thresholds, partitions, or release rules. Schedule-context v2 restores
+1,230 training and 1,230 holdout source games (fingerprints
+`415fbf126685d4b4` / `227986453d8e33cd`), produces 1,152 training and 1,230
+held-out examples, and records Brier `0.23298` versus baseline `0.23437`, ECE
+`0.03469`, and model `e273cfbe4b599b16`. The incomplete v1 runtime model
+`4809af29ed135f6f` is removed from the allowlist; its file remains historical
+evidence only. Reliability v2 restores all 118 excluded 2024-25 and 102 excluded
+2025-26 player logs, yielding 26,306 / 26,651 included rows and complete 1,230
+game-ID coverage (fingerprints `34a836176d535b4b` /
+`b7301976c833738f`). Descriptive conclusions remain stable; blowout suppression
+still fails its calibration sign-reversal veto and remains unreleased.
+
+**Now true:** `LeagueGameFinder` and `PlayerGameLogs` reconcile 1,230/1,230
+game IDs in all three evidence seasons. The full backend gate passes (Ruff,
+format, strict mypy, 938 default tests), the focused live NBA smoke returns
+exactly 1,230 games, SQLite upgrades/checks/downgrades through `0015`, and the
+tracked-file secret scan is clean. No model threshold or method changed.
+
+The corrected `2025-12-08..2026-01-04` injury-conversion scope contains 173
+games, not 171. Omitted games `0022501229` and `0022501230` are both on
+2025-12-13 and carry 39 player logs before participation-only observations.
+The PR #30 cohort is therefore invalidated and must be regenerated end-to-end:
+bounded participation, expected-game preflight, injury coverage, canonical
+observations, joins, fingerprints, privacy-safe manifest, and independent
+review. Its backlog item is pending again, and `injury-status-conversion`
+remains blocked. No injury model or active injury branch was touched.
+
+**Could not verify:** Docker, a local Postgres service, and
+`TEST_DATABASE_URL` are unavailable, so native Postgres and migration-from-empty
+evidence must come from fresh GitHub CI on the published exact head. The
+invalidated injury cohort's raw PDFs, JSON captures, checkpoint, database, and
+coverage files are gitignored operational state and were not available in this
+worktree; the required 173-game regeneration was not attempted here. Fresh
+exact-head data-engineer, quant, and code reviews are still required before
+publication. No merge or self-approval occurred.
+
+**Next:** Commit the complete correction, obtain all three independent reviews
+against that exact head, publish one coherent PR only if they are clear, and
+require every blocking CI lane including native Postgres. Separately regenerate
+the invalidated 173-game injury cohort before `injury-status-conversion`
+resumes; do not use or repair the active injury branch from this work.

@@ -694,7 +694,9 @@ def test_only_the_gate_passed_blowout_release_can_be_published(session: Any) -> 
     release = load_blowout_release(RELEASED_BLOWOUT_MODEL_VERSION)
     assert release.model.version == RELEASED_BLOWOUT_MODEL_VERSION
     assert release.model.source_version == release.training_source_fingerprint
-    assert release.holdout_source_fingerprint == "e992a314295c442a"
+    assert release.holdout_source_fingerprint == "227986453d8e33cd"
+    with pytest.raises(UnreleasedBlowoutModelError):
+        load_blowout_release("4809af29ed135f6f")
 
 
 def test_three_player_subset_is_not_a_complete_team_box_score() -> None:

@@ -138,7 +138,7 @@ def run_backtest(client: ReliabilityBacktestClient | None = None) -> dict[str, o
         selection_blowout["release_rule_passed"] and final_blowout["release_rule_passed"]
     )
     return {
-        "evidence_version": "reliability-metrics-v1",
+        "evidence_version": "reliability-metrics-v2",
         "source": "nba_api:LeagueGameFinder+PlayerGameLogs",
         "season_type": "regular",
         "runtime_derivation_version": ReliabilityConfig().derivation_version,

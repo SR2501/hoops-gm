@@ -1,4 +1,15 @@
 {
+  "current_status": "invalidated_pending_regeneration",
+  "schedule_completeness_impact": {
+    "corrected_expected_games": 173,
+    "omitted_game_ids": [
+      "0022501229",
+      "0022501230"
+    ],
+    "omitted_player_game_logs": 39,
+    "reason": "The LeagueGameFinder parser used for the frozen preflight assigned both official team rows to one side when both rows repeated the canonical MATCHUP string. The accepted 171-game scope therefore omitted two official 2025-12-13 games inside the requested window.",
+    "required_action": "Regenerate the bounded participation, injury-report coverage, canonical observation, join, and privacy-safe provenance artifacts from the corrected 173-game scope before injury-status-conversion may consume this cohort."
+  },
   "canonical_observations": {
     "distinct_nba_game_ids": 171,
     "distinct_report_timestamps": 33,

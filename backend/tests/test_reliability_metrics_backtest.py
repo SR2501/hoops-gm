@@ -18,7 +18,7 @@ from hoops_gm.availability.reliability import (
 
 pytestmark = pytest.mark.model_backtest
 
-EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "reliability_metrics_v1.json"
+EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "reliability_metrics_v2.json"
 _SEASON_DATES = {
     "2023-24": "2023-10-24",
     "2024-25": "2024-10-22",
@@ -218,41 +218,28 @@ def test_reliability_evidence_uses_chronological_partitions() -> None:
     )
     assert {season: row["fingerprint"] for season, row in cohorts.items()} == {
         "2023-24": "4ecfda8e09653886",
-        "2024-25": "2a15ae8aa6114395",
-        "2025-26": "0b67fa26c1e30f9c",
+        "2024-25": "34a836176d535b4b",
+        "2025-26": "b7301976c833738f",
     }
 
 
-def test_source_exclusions_are_bounded_and_auditable() -> None:
+def test_source_game_id_coverage_is_complete_and_auditable() -> None:
     evidence = _evidence()
-    maximum_excluded = evidence["protocol"]["maximum_source_game_id_mismatch_fraction"]
     cohorts = evidence["source_cohorts"]
 
-    assert cohorts["2023-24"]["parsed_game_coverage_of_player_logs"] == 1.0
-    assert cohorts["2024-25"]["player_log_only_game_ids"] == [
-        "0022400147",
-        "0022400621",
-        "0022400633",
-        "0022401229",
-        "0022401230",
-    ]
-    assert cohorts["2025-26"]["player_log_only_game_ids"] == [
-        "0022500147",
-        "0022500578",
-        "0022500602",
-        "0022501229",
-        "0022501230",
-    ]
     for cohort in cohorts.values():
+        assert cohort["parsed_completed_games"] == 1230
         assert cohort["source_game_ids_with_player_logs"] == 1230
         for field in (
             "parsed_game_coverage_of_player_logs",
             "player_log_coverage_of_parsed_games",
         ):
-            assert 1 - maximum_excluded <= cohort[field] <= 1
+            assert cohort[field] == 1.0
+        assert cohort["player_log_only_game_ids"] == []
+        assert cohort["player_log_only_reason"] is None
         assert cohort["parsed_game_only_ids"] == []
         assert cohort["parsed_game_only_reason"] is None
-        assert bool(cohort["player_log_only_game_ids"]) == bool(cohort["player_log_only_reason"])
+        assert cohort["excluded_player_game_logs"] == 0
 
 
 def test_source_game_id_guard_rejects_truncation_in_either_direction() -> None:
@@ -285,7 +272,7 @@ def test_descriptive_metrics_report_stability_and_percentile_coverage() -> None:
     evidence = _evidence()
     final = evidence["final"]
 
-    assert final["eligible_players"] == 357
+    assert final["eligible_players"] == 358
     assert final["percentile_players_considered"] == 464
     assert set(final["stability"]) == {
         "ast_sd",
