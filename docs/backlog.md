@@ -2,7 +2,11 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**37 done - 1 blocked - 63 pending - 101 total**
+**37 done - 1 blocked - 66 pending - 104 total**
+
+(Counted from the status markers themselves, not carried forward: 104 `###`
+headings and 104 markers, 1:1. The line before this entry claimed 37 done / 63
+pending against an actual 36 / 64, and that drift predates this work.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -258,6 +262,45 @@ blowout calibration alone does not validate its magnitude; it belongs to
 - **Depends on:** `schedule-ingest`
 
 Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-trip length and structure. Direct input to the availability model.
+
+### `schedule-grid-early` - Exposing the current raw schedule grid
+
+- [x] **done**
+- **Depends on:** `scoring-period-projection`
+
+Loopback-only `GET /api/v1/leagues/{league_id}/schedule-grid/current` over
+`scheduled_game_counts`: the complete ordered active-team x scoring-period raw
+count matrix including explicit zeroes, plus the `teams` and `periods` a
+browser screen needs to label its own rows and columns, plus the exact current
+NBA schedule, scoring-period projection, deadline-calendar and
+settings-snapshot lineage. `teams` and `periods` are read inside the same
+transaction and lock scope as `counts`, so a screen can never render one
+lineage's numbers against another lineage's headers. No classifications,
+rankings, recommendations or schedule recomputation cross this boundary
+(ADR-009).
+
+Completeness evidence comes from `db/lineage.py`'s `verify_refresh` and
+`schedule_completeness` — the canonical verifier the producer stamps against —
+never from a second reader in the route. Missing, stale, unverifiable or
+self-contradicting evidence, a wholly zero grid, an empty grid, a non-loopback
+caller and an unknown league each fail closed with a typed code in
+`ErrorResponse.error` and no partial data. (`X-Bridge-Error` is the internal
+route-to-handler transport, not a response header: `api/app.py` consumes it and
+returns the code in the body — verified, not assumed.)
+`schedule_grid_incomplete_evidence` is a **family**: some members mean "the
+refresh cannot state what it imported", others mean "it states what it imported
+perfectly well, but that is not the cohort this grid counts". A consumer
+rendering one fixed sentence for the code will be wrong for the second kind, and
+must not substring-match `detail`, which is free-form prose rather than a
+contract surface. Splitting the code or adding a machine-readable discriminator
+is an open `architect` + `frontend` decision.
+
+Operational, not merely safe: `python -m hoops_gm.dev.seed_schedule_grid`
+brings a local database to a verified state offline from the committed NBA
+fixtures, through the production importers, and the endpoint returns a real
+200 against it (see `backend/README.md`). The first attempt at this item was
+fail-closed but permanently unavailable, which is why the seed path is part of
+the deliverable rather than a convenience.
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 
@@ -525,6 +568,37 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 - **Depends on:** `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
+
+### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
+
+- [ ] **pending**
+- **Depends on:** `backend-skeleton`
+
+`backend/tests/test_secret_scan.py` plants a fake credential **into the real
+committed fixture `backend/tests/fixtures/nba_static_teams.json`** and restores
+it in a `finally`. Two consequences, both observed rather than theorised. Any
+concurrent reader of that fixture — the schedule-grid seed, `test_importers.py`,
+a second pytest process in the same worktree — can read it mid-mutation and fail
+with a `JSONDecodeError` that looks like flakiness in an unrelated test; this
+cost one lane an hour and produced two successive wrong explanations before an
+independent reviewer caught the failure in the act. And a hard kill inside that
+window leaves a credential-shaped string sitting in a tracked fixture. Copy the
+fixture to `tmp_path` and plant there, or point the scanner at a temporary tree.
+
+### `error-code-observability` - Logging the error code, not just the status
+
+- [ ] **pending**
+- **Depends on:** `backend-skeleton`
+
+`api/middleware.py` logs `status_code` and `app.py`'s HTTP exception handler
+logs nothing, so every typed refusal reads identically in the log. The schedule
+grid made this concrete: four of its five refusals are `409`, and
+`schedule_grid_not_current` and `schedule_grid_incomplete_evidence` demand
+different operator actions — re-import versus a refresh that can never populate
+the contract — yet an operator reading logs cannot tell them apart. Log the
+`ErrorResponse.error` code alongside the status. App-wide and pre-existing;
+surfaced here because this is the first route whose codes carry distinct
+operator actions.
 
 ### `expected-games` - Fusing production with expected games played
 

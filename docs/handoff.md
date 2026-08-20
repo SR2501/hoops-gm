@@ -6766,3 +6766,667 @@ Local SQLite cannot reproduce shared external-database residue by construction.
 
 **Next:** Push the correction and require both duplicate native PostgreSQL
 workflow runs to pass before treating the PR as complete.
+
+---
+
+## 2026-08-20 — backend — Schedule grid API, operational rather than merely safe
+
+**Changed:** Ported the vetoed schedule-grid endpoint onto current main as a
+rewrite, not a rebase. `GET /api/v1/leagues/{league_id}/schedule-grid/current`
+is loopback-only and returns the dense active-team x scoring-period raw game
+count matrix with explicit zeroes, its four lineage blocks, and two new
+sections: `teams` (`team_id`, `nba_team_id`, `abbreviation`, `name`) and
+`periods` (`period_number`, `start_date`, `end_date`, `is_playoff`). Both are
+read inside the same transaction and lock scope as `counts`, so a screen can
+never label one lineage's numbers with another lineage's headers.
+`scheduled_game_counts` alone emits bare integer team ids and no period dates,
+so a browser could not honestly label its own rows.
+
+The hand-rolled `_schedule_completeness()` from `f4a9cdb` is deleted. Evidence
+now comes from `db/lineage.py`'s `schedule_completeness()` and
+`verify_refresh()` — the same seam the producer stamps against — and the route
+takes the canonical schedule lock before reading, so the refresh it verifies is
+the one `scheduled_game_counts` counts under.
+
+`hoops_gm.dev.seed_schedule_grid` is new: an offline, rerunnable path that
+brings a database to a verified state from `tests/fixtures/nba_static_teams.json`
+and `tests/fixtures/nba_scheduleleaguev2_2026_27.json` through the production
+importers and calendar functions. Documented in `backend/README.md`.
+
+**Now true:** The endpoint returns a real 200. Against the seeded database:
+league 1, season `2026-27`, 30 teams, 21 Monday-to-Sunday periods, 630 dense
+count rows, 20 non-zero team-games, `lineage.schedule` =
+`{refresh_id: 1, version: "9bcac1c60490b41a", source_game_count: 10,
+resolved_game_count: 10, persisted_team_row_count: 20, unresolved_game_ids: []}`,
+`lineage.scoring_period_projection.version` = `"22a8bac85a909ccd"`,
+`deadline_calendar` = `{id: 1, version: 1}`, `settings_snapshot` =
+`{id: 1, version: 1}`, `periods[20]` =
+`{period_number: 21, start_date: "2027-03-08", end_date: "2027-03-14",
+is_playoff: true}`, `teams[0]` = `{team_id: 1, nba_team_id: 1610612737,
+abbreviation: "ATL", name: "Atlanta Hawks"}`. That is the single thing PR #36
+never had, and the reason it was vetoed.
+
+The architect's finding is confirmed against real producer output, not just by
+reading: the seeded refresh summary is
+`{"team_schedule_rows": 20, "schedule_completeness": {...}}`, so three of the
+four flat keys `f4a9cdb` required — `source_game_count`, `resolved_game_count`,
+`unresolved_game_ids` — are absent from every refresh the producer writes. A
+literal rebase would have raised `schedule_grid_incomplete_evidence` on every
+real schedule, reproducing the veto exactly.
+
+Fail-closed behaviour is retained and each branch is regression-tested from a
+seeded, genuinely valid database with exactly one thing broken: no registered
+refresh and a stale-content refresh give `schedule_grid_not_current`; a legacy
+refresh with no completeness block, a malformed block, a non-object summary, a
+block claiming unresolved games, a deleted schedule row, and a verified season
+whose games fall in no scoring period give `schedule_grid_incomplete_evidence`;
+a grid with no rows gives `schedule_grid_incomplete`; a non-loopback caller
+gives 403 and an unknown league 404. A same-row-count mutation — one game moved
+to a new date on both `nba_games` and `team_schedule`, row count unchanged at
+20 — is refused as not current, which is the failure a row count cannot see.
+
+Ruff lint, Ruff format, strict mypy (134 source files) and the full offline
+backend suite (1,075 passed, 20 live deselected) are green, up from 1,051 on
+the 9d7e791 baseline this branch was cut from.
+
+**Could not verify:** Native PostgreSQL. Docker is unavailable on this machine
+and `TEST_DATABASE_URL` is unset, so the PostgreSQL lane is CI-only and is not
+claimed here. The two tests that open their own `TestClient` perform the shared
+fixture's drop-then-create, which is the exact isolation defect a prior session
+hit on Postgres, but that correctness is asserted by construction rather than
+observed. Nothing was run against a live NBA or Fantrax source; the seed and
+every test are offline by design. The seed's `--database-url` was exercised
+only against SQLite. `docs/mocks/nba-schedule-2026-27.json`, the fixture named
+in the brief, does not exist on main — `docs/mocks/` holds only `README.md` and
+`TEMPLATE.md`; the committed NBA schedule fixture under
+`backend/tests/fixtures/` was used instead, and that substitution was made
+without the coordinator's confirmation. The endpoint has never been exercised
+against a full 1,230-game season: the recorded fixture holds 10 resolved games
+on two dates, so the 630-row grid is dense but sparse in content, and no claim
+is made about response size or query cost at real season scale.
+
+**Next:** Exact-head backend, data-engineer, architect and independent code
+reviews; native PostgreSQL CI on the pushed head; one fresh PR, unmerged.
+PR #36 stays closed.
+
+---
+
+## 2026-08-20 — backend — Schedule grid review findings, and one real deadlock
+
+**Changed:** Acted on four exact-head independent reviews of
+`11f7efa724cb2c344292f6049198fb25a6c10c47`.
+
+The one that mattered: the route took the canonical NBA schedule lock **before**
+the league-settings lock, while `_locked_projection_context` and
+`_lock_calendar_inputs` — every other holder of both — take them the other way
+round. On PostgreSQL `acquire_transaction_lock` issues `pg_advisory_xact_lock`,
+a real blocking lock held to commit, so this read holding schedule and waiting
+for settings, against a concurrent `derive_deadline_calendar` or
+`project_scoring_periods` holding settings and waiting for schedule, is an ABBA
+deadlock: `40P01` surfacing as a 500 from a read endpoint and an aborted
+operator projection. SQLite degrades both to one database-wide write
+reservation, so the green local suite said nothing about it. The route now takes
+`lock_league_settings_scope` first, and a new test records the scope keys in
+order and asserts it. That test was mutation-checked: inverting the two calls
+fails it.
+
+Three smaller corrections. `main()` printed `--database-url` verbatim, so
+pointing the seed at PostgreSQL would have written the password to stdout, CI
+logs and anything pasted into an issue; it now renders with
+`hide_password=True`. The synthetic playoff evidence stamped
+`capture_ref="bridge_payload:..."`, which reads like a real capture; it is now
+`synthetic:schedule-grid-demo:playoffs`, and the docstring says plainly that the
+`observed` status is a lie the vocabulary forces, with containment as the only
+mitigation. `settings_document`'s justification was replaced with the checkable
+one: the recorded settings capture is season **2025-26** and cannot contain a
+2026-27 game date, so a recorded alternative exists and does not fit — which is
+the difference between this and ADR-006's rejected hand-written mock.
+
+Two claims were narrowed to what is actually enforced. `teams` is **not**
+snapshot-consistent with `counts` on PostgreSQL: `nba_teams` is written by
+`import_teams`, which takes no lineage lock, and READ COMMITTED gives each
+statement its own snapshot. The residual is bounded — `team_id` is a surrogate
+key with a unique `nba_team_id` and `import_teams` only refreshes
+`abbreviation`, `name` and `city`, so a fresher display label on the right team
+is possible and a count attributed to the wrong team is not. `periods` *is*
+consistent, because `scoring_periods` is written only under the projection lock
+this read holds.
+
+And two test defects. The newer-refresh test asserted only the shared 409 code,
+which `_locked_projection_context` also produces, so it would have passed with
+the route's own verification deleted; it now asserts the route's exact wording.
+`test_current_grid_does_not_commit_lineage_lock_reservations` is now
+`sqlite_only`: a lock reservation is only a *row write* on SQLite, so on
+PostgreSQL it passed while checking nothing.
+
+**Now true:** The endpoint still returns a real 200 against the seeded database.
+Ruff, format, strict mypy and 1,076 offline backend tests pass. On the prior
+head `11f7efa`, every CI check passed including **both** native PostgreSQL runs
+(7m32s and 11m19s) — so the PostgreSQL lane the previous entry could not claim
+locally is now observed, though the deadlock fix and these tests postdate it and
+need their own CI pass.
+
+The architect's review corrected the frozen contract rather than the code:
+**`X-Bridge-Error` is never a response header.** `api/app.py:113-120` reads it
+off the `HTTPException` and returns a fresh `JSONResponse` carrying only
+`X-Request-ID`; the code lands in `ErrorResponse.error`. Measured on all three
+status classes. The route and tests already matched reality; the contract text,
+`backend/README.md` and `docs/backlog.md` did not, and the frontend session was
+notified directly because it was coding against the header.
+
+The previous entry's claim that PR #36's tests "only ever asserted refusals" was
+**false** and is corrected in the test module's own docstring. `f4a9cdb`
+asserted 200 three times. They passed because a test-local `_register_schedule`
+helper wrote the summary itself in exactly the flat shape #36's reader wanted
+and `import_schedule` never writes — the tests played the producer. The lesson
+is therefore not "assert a 200", which #36 satisfied, but that the success-path
+state must be built by the production writer. Getting that wrong in the file
+whose stated purpose is not to repeat #36's epistemics is worth recording.
+
+`docs/backlog.md`'s header was recounted from the markers rather than carried
+forward: 37 done / 1 blocked / 64 pending / 102 total. The prior line claimed
+37/63 against an actual 36/64, and that drift predates this work.
+
+**Could not verify:** The deadlock itself. Reproducing it needs two concurrent
+PostgreSQL transactions, and Docker is unavailable here — the fix is argued from
+the lock keys and the eight call sites of `lock_refresh_scope` /
+`lock_league_settings_scope`, and regression-tested only at the level of
+*acquisition order*, not of an observed `40P01`. The new lock-order test would
+not catch a third scope being added out of order elsewhere. The `teams`
+snapshot-skew window is likewise reasoned, not observed; SQLite cannot produce
+it. Nothing was run against a live source. Two of the four reviews
+(`data-engineer`, `backend`) had not returned when these fixes were made, so
+their findings are not yet reflected.
+
+**Next:** Push, re-run CI including both PostgreSQL lanes on the new exact head,
+fold in the two outstanding reviews, and update PR #38. The architect owns three
+follow-ups: amending the frozen contract text, adding `dev/` to the ownership
+matrix, and recording `scheduled_game_counts` as a shared data-engineer/backend
+seam.
+
+---
+
+## 2026-08-20 — backend — Second review batch: fail-open labels, season type, neutral sites
+
+**Changed:** Folded in the `data-engineer` and `backend` exact-head reviews and
+two coordinator findings.
+
+The blocking one was the seed. `import_teams` and `import_schedule` write to
+`nba_teams`, `nba_games` and `team_schedule`, which are global, and register a
+season-scoped `nba-schedule` refresh carrying no league dimension — so the
+demo league's scoping was illusory and a ten-game fixture aimed at a working
+database would have become the current registered 2026-27 cohort for every
+consumer keyed to schedule version. `import_schedule`'s read-back protects a
+database already holding a full season; the exposed case was the realistic one,
+a database empty or partly populated for the season but already holding the
+operator's league. The seed now refuses any database holding a league it did
+not create or any out-of-cohort game for the season, before a single write.
+
+Second, the TBD filter was structurally invisible to the contract meant to
+catch it. It runs upstream of `parse_schedule`, and `source_game_count` only
+counts games still in the payload, so anything dropped vanished from both sides
+of the comparison at once — `import_schedule` was checking a doctored document
+against itself. Under-removal was loud, over-removal silent. If the NBA redrew
+the Cup and the fixture were re-recorded with six unassigned games, a filter bug
+would have imported a season six games short while registering
+`unresolved_game_ids: []`. The seed now parses the payload as recorded *and*
+filtered, refuses unless the delta is exactly the recorded unresolved games, and
+reports `as_recorded_source_game_count: 12` and
+`dropped_game_ids: ["0022601201", "0022601202"]` beside the imported 10.
+`backend/README.md` states the consequence, not just the mechanism: the served
+`source_game_count: 10` describes the filtered document, and
+`docs/adapters/nba-schedule.md` designates that state as one the real pipeline
+must not register.
+
+Third, `_grid_teams` and `_grid_periods` failed **open**. They selected labels
+`WHERE id IN (...)` and returned whatever came back, so a missing label row
+would have yielded a short list, silently broken the
+`len(counts) == len(teams) * len(periods)` density invariant the frontend is
+coding against, and rendered unlabelable cells. Everything else in this route
+fails closed; these two did not. Both now assert set equality and refuse with
+`schedule_grid_incomplete_evidence` naming the missing ids.
+
+Fourth, a latent scope defect: `verify_refresh` fingerprints the cohort at
+whatever `season_type` the completeness block names, while
+`scheduled_game_counts` counts `REGULAR` unconditionally. They agree today only
+because `import_schedule` hard-codes `REGULAR`. A playoff cohort registered
+under this artifact key would have verified one cohort, counted another, and
+returned 200 with a lineage block not describing the numbers beside it. Refused
+explicitly now.
+
+Also: a behavioural test for the advertised 422; detail-substring pins on two
+tests that asserted only a shared code and so could not say which branch fired;
+`assert seeded.league_id` deleted, which asserted an int was truthy; the two
+self-`TestClient` tests now take the database from the `test_database_url`
+fixture instead of hardcoding SQLite, so the 403 path and the
+development-environment 200 path finally run on the PostgreSQL lane, and their
+drop-then-create justification becomes true rather than merely harmless;
+`hoops_gm.dev` excluded from the wheel; the module docstring's "re-running is a
+no-op" corrected to "converges" — `refreshed_at` does move.
+
+**Now true:** Neutral-site games count for both teams, proven rather than
+reasoned. Lane C traced the historical 1,225-vs-1,230 defect to
+`LeagueGameFinder` repeating one `MATCHUP` string on both rows of a neutral-site
+game; this grid reads `ScheduleLeagueV2`, which publishes explicit
+`homeTeam.teamId`/`awayTeam.teamId`, and `import_schedule` writes two mirrored
+rows unconditionally. A regression injects an `isNeutral: true` Las Vegas game
+into a *copy* of the payload — the committed fixture is untouched and contains
+no neutral games — and asserts 22 persisted rows and both NBA team ids counted.
+
+Ruff, format, strict mypy (134 files) and 1,088 offline tests pass; Adapter gate
+281, Model gate 18, secret scan 281 files clean.
+
+**Could not verify:** The `teams` snapshot skew this closes is still not
+reproducible here — it needs two concurrent PostgreSQL transactions, and the new
+refusal is exercised by calling the helpers directly with a fabricated row
+rather than by racing a writer. Same for the lock-order fix: argued from the
+keys and call sites, regression-tested at acquisition order, never observed as a
+`40P01`. The seed's target guard is tested against a foreign league and an
+out-of-cohort game, not against a real partially-populated database. On SQLite
+this endpoint holds the database-wide write reservation for the whole request,
+across `verify_refresh`'s five-way join and the grid query, and the engine sets
+neither WAL nor `busy_timeout` — inherited from
+`require_current_scoring_period_projection`, but this is what first puts it
+behind an HTTP GET, and "reliable at 11:59pm on a lineup lock" is the bar. Not
+fixed here; it is an engine-level decision wider than this route.
+
+**Open disagreement, escalated not resolved:** the partner architect asks that a
+persisted-content fingerprint mismatch map to `schedule_grid_incomplete_evidence`
+rather than `schedule_grid_not_current`. I have not changed it, and the
+mechanism is in the reply to the coordinator: when `verify_refresh` returns
+`is_current == False` it has *not* raised — the block parsed, its arithmetic is
+self-consistent, and the canonical vocabulary calls that state `"stale"`
+(`CohortCheck.status`), not bad evidence. The operator actions differ, which is
+what the split is for. The primary owns the call.
+
+**Next:** Primary's ruling on the fingerprint-mismatch code; re-run exact-head
+reviews on the new head; CI including both PostgreSQL lanes.
+
+---
+
+## 2026-08-20 — backend — Third review batch: a guard that was inert, and a lock order I broke myself
+
+**Changed:** Acted on four exact-head reviews of `11f7efa` and `84ed9b1` plus
+two independent reviews commissioned by the coordinator. Six findings, three of
+them defects in fixes from the previous round.
+
+**The guard that was present, plausible and inert.** `require_safe_demo_target`
+scalar-selected `League.fantrax_league_id` — the very column its `or_()` tests
+for NULL. For a league with `fantrax_league_id IS NULL`, `session.scalar()`
+returned `None`, which the caller could not distinguish from "no foreign league
+found", so the refusal was skipped for exactly the row it was written to catch.
+`db/models/league.py` makes that column nullable on purpose, "so a league can
+exist locally before it is linked to Fantrax". Two reviewers reproduced it
+independently: the seed proceeded, writing 10 games, 20 `team_schedule` rows and
+registering the fixture as the current 2026-27 cohort. It now selects
+`(League.id, League.fantrax_league_id)` and tests the row.
+
+**A lock order I enforced in the route and then violated in my own seed.**
+`import_schedule` takes the `nba-schedule` scope; `import_league_settings`
+takes league-settings. Composed in the obvious order they acquire the two in the
+exact inverse of the order the route and the calendar functions use — so a
+re-seed racing a dashboard poll is `40P01` on PostgreSQL, and the workflow
+`backend/README.md` documents is precisely that race. Worse, the route's own
+comment claimed settings-before-schedule as a property of the codebase, which my
+seed had just made false. The league row and its settings lock are now taken
+before `import_schedule`.
+
+**The methodological point is bigger than the finding.** A static enumeration of
+all 44 lock call sites concluded the global order was acyclic and the fix
+complete. A reviewer who instrumented `acquire_transaction_lock` and *ran the
+seed* found the inversion in four lines of trace. Opposite conclusions; the one
+holding a trace was right. Composition-order defects are invisible to call-site
+reading because the order does not exist until two functions are composed at
+runtime. The new regression instruments the lock rather than reading the code.
+
+**A refusal that had already written to the database.** `create_all` ran before
+the guard, so pointing the seed at a real Alembic-built database behind head
+added the missing model tables, the seed then refused, and the next
+`alembic upgrade head` would fail with "relation already exists" — the tool
+whose headline property is that it refuses to touch a real database had already
+touched it. DDL is not rolled back by the session. Schema is now created only on
+a database with no `leagues` table.
+
+**A credential fix with a second hole.** `render_as_string(hide_password=True)`
+masks `URL.password` only; libpq accepts `password` and `sslpassword` as query
+arguments and SQLAlchemy forwards them, so
+`postgresql+psycopg://alice@host/db?password=...` rendered verbatim to stdout.
+Now stripped. Having fixed this path twice, the wiring is pinned at the seam:
+a test monkeypatches `redacted_url` and asserts the sentinel reaches stdout.
+
+**A test weaker than its name.** The lock-order regression asserted `taken[:2]`,
+which `_locked_projection_context` satisfies on its own — so deleting the
+route's acquisitions entirely left it green. It caught inversion, which was the
+bug I was fixing, and not absence, which is worse: `_verified_schedule_evidence`
+would then read lineage outside any lock and a concurrent `import_schedule`
+could replace the cohort between verification and count. My two reviewers
+disagreed on severity; this records the worse reading. It now asserts the full
+five-element sequence.
+
+**Now true:** Every new guard is mutation-checked, and the table is the
+evidence rather than the claim: lock acquisitions deleted, team set-equality
+deleted, period set-equality deleted, query-string masking removed, NULL
+`fantrax_league_id` reading as absent, `create_all` moved before the guard,
+the unresolved-survivor arm deleted, the seed's settings lock removed, and
+`main` no longer calling `redacted_url` — nine mutations, nine caught.
+
+**A mutation check that does not reproduce the bug is the same false comfort as
+a test that does not.** My first attempt at the NULL-league mutation passed,
+which proved nothing; the second reproduced the reported defect exactly and
+failed. Recording it because it is the kind of thing that normally goes
+unwritten for being embarrassing and non-blocking.
+
+The seed's console output and the API response counted different populations
+under similar names — `as_recorded_source_game_count: 12` beside a served
+`source_game_count: 10`. Renamed to `games_recorded_in_fixture`,
+`games_dropped_unresolved` and `games_imported_into_cohort`, with
+`api_lineage_schedule_source_game_count` printed explicitly so nobody has to
+guess which number the screen is showing.
+
+The 200 contract is unchanged and now proven so rather than asserted: the
+frontend lane diffed a live capture from `84ed9b1` against one from `11f7efa`
+and the entire diff was the `refreshed_at` timestamp. I re-verified after this
+batch — 630 counts, 20 team-games, 30 teams, 21 periods, version
+`9bcac1c60490b41a`, `teams[0]` ATL, `periods[20]` playoff.
+
+Ruff, format, strict mypy (134 files), 1,095 offline tests, Adapter gate 281,
+Model gate 18, secret scan 281 files. `error-code-observability` filed as a
+backlog item rather than mentioned: four of five refusals are 409 and the
+middleware logs status only, so an operator cannot tell `not_current` from
+`incomplete_evidence` in a log — the exact distinction the codes exist for.
+
+**Could not verify:** The earlier "flaky" test was **not** flaky and my
+capsys hypothesis was wrong. Two `JSONDecodeError`s during full-suite runs were
+concurrent access to this worktree by review agents `git archive`-ing it, which
+one reviewer independently observed and disclosed ("the test count moved under
+me mid-run"). Five consecutive clean runs with nothing else touching the tree.
+The capsys restructure was still right — parsing globally captured stdout
+couples a test to every other test's output — but it fixed a different problem
+than the one I attributed to it.
+
+No PostgreSQL deadlock was ever observed. Both lock-ordering fixes are argued
+from keys and call sites and regression-tested at *acquisition order*, never as
+a `40P01`; Docker is unavailable and `TEST_DATABASE_URL` unset. The `teams`
+snapshot-skew window is reasoned, not raced. The seed's target guard is tested
+against a foreign league, a NULL-keyed league and an out-of-cohort game, never
+against a real partially-populated database. The two newest refusal paths — the
+`season_type` guard and set-mismatch rejection — are unit-tested but have not
+been driven end-to-end through a browser. The route still holds SQLite's
+database-wide write reservation for the whole request with neither WAL nor
+`busy_timeout` set; that is engine-level and wider than this route, and is now
+stated in the route docstring rather than only here.
+
+**Next:** CI including both PostgreSQL lanes on the new head, then `backend`,
+`architect` and `code-review` on that exact head. `data-engineer` is exempt by
+the coordinator's scoping: the delta touches no parser, adapter, fixture or
+completeness production.
+
+---
+
+## 2026-08-20 — backend — Fourth review batch, and a false explanation corrected twice
+
+**Changed:** Acted on the exact-head `architect` review of `4b1ceef`.
+
+**The flaky-test explanation in the previous entry was wrong, and it was the
+second wrong explanation in a row.** I first blamed capsys; the previous entry
+retracted that and blamed review agents `git archive`-ing this worktree. The
+architect reproduced the failure and found the actual mechanism, which neither
+of mine could have caused: `git archive` reads the object database and writes
+outside the tree — it cannot inject text into a working-tree file.
+`backend/tests/test_secret_scan.py` writes a planted credential — a fake
+Fantrax user-secret key/value pair — **into the real committed fixture
+`nba_static_teams.json`** and restores it in a `finally`. That exact planted
+string was in the `JSONDecodeError` traceback. Any concurrent reader of that
+fixture — the seed, `test_importers.py`, another agent's pytest run in the same
+worktree — can observe the file mid-mutation.
+
+So the suite is unsafe to run alongside any other reader of the tree, and a
+hard kill during that window leaves a fake credential sitting in a tracked
+fixture. That is pre-existing and **not** a defect in this change; the fix
+(copy the fixture to `tmp_path`, or scan a temporary tree) is `backend`'s and
+is not attempted here, late in a review cycle, in a file three lanes touch.
+Filed as `secret-scan-fixture-isolation`.
+
+Confirmed twice more while writing this entry: a full-suite run overlapping a
+review agent's own pytest failed both secret-scan tests, and the fixture was
+intact afterwards — the `finally` restored it. Direct observation of the
+mechanism, not inference from its absence.
+
+And then the gate caught me with it. The first draft of this entry quoted the
+planted credential verbatim to name the evidence, which is itself a secret-
+shaped string in a tracked file, and `check_no_secrets.py` failed the build on
+`docs/handoff.md`. Describing the value rather than reproducing it is the fix.
+Worth recording because the instinct that caused it — cite the exact bytes so
+the claim is checkable — is the right instinct almost everywhere else in this
+document.
+
+The lesson is the one worth keeping: **"five consecutive clean runs with
+nothing else touching the tree" was consistent with all three hypotheses and
+therefore discriminated none of them.** I twice treated the disappearance of a
+symptom as identification of its cause. Only the reviewer who caught the
+failure in the act and read the offending bytes actually identified it. That is
+the same static-versus-executed axis as the lock inversion, applied to
+debugging rather than to review.
+
+**The seed no longer takes a lineage lock at all.** The previous fix added an
+explicit `lock_league_settings_scope` call; the architect pointed out a
+subtraction was available. `import_league_settings` reads no persisted
+schedule, so calling it *before* `import_schedule` makes the canonical order a
+consequence of call order and removes a `db/lineage.py` primitive from
+developer tooling — where it was exactly the shape that gets cargo-culted as
+"dev tools take lineage locks". The real rule is narrower and is now stated
+once, in the seed's docstring: anything composing two production writers
+inherits their lock order and must respect the global one. The runtime
+regression is unchanged and still fails when the two imports are swapped back.
+
+**A test whose completeness rested on an unasserted property.** Both lock-order
+regressions monkeypatch `hoops_gm.db.lineage.acquire_transaction_lock`, which
+captures every lineage lock only because `db/lineage.py` is its sole importer
+and `lock_refresh_scope` its sole caller. If any module later imported it from
+`db.session` directly, both recorders would go blind and both tests would stay
+green while asserting nothing — a test weaker than its name, which is precisely
+what those tests were rewritten to stop being. `test_lineage_locks_are_acquired_
+through_exactly_one_import` now pins it by AST rather than by substring, so a
+docstring mentioning the name does not satisfy it.
+
+`error-code-observability` was a `pending` item sitting in the `## Done`
+section; moved into `## Pending`. Totals are counted from markers so they were
+unaffected. **The count stated in the first draft of this paragraph was wrong**
+— see entry 6; `docs/backlog.md`'s own header is the authority, and it is
+right. Worth noting the brief I gave the reviewer asserted 38/64 — the file was
+right and my brief was wrong, which is a reminder that a number restated from
+memory is not evidence even when the file it describes is correct. Restating one
+three lines after writing that sentence is the sharper reminder.
+
+`schedule_grid_incomplete_evidence` is now documented as a **family** in the
+route and in `docs/backlog.md`. The frontend rendered "the schedule refresh
+cannot state what it imported" above a `detail` saying the refresh describes a
+playoffs cohort — a summary that is false in that condition. The refresh states
+what it imported perfectly well; what it imported is the wrong cohort. Backend
+wording was correct throughout, but a code covering two genuinely different
+conditions needs saying so, or the next consumer writes the same false sentence.
+
+**One "could not verify" is retired by the reviewers, not by me.** The
+`backend` reviewer synthesized a full season — 30 teams × 82 games = 1,230
+games, 2,460 `team_schedule` rows, imported through the production
+`parse_schedule`/`import_schedule` path — and measured the endpoint: **200 in
+~100 ms, 19 KB, counts summing to 2,460**, seed 0.9 s. The grid is teams ×
+periods, so payload size is essentially independent of game count; a real
+26-week season is ~780 rows and ~40 KB. My original caveat was more
+conservative than the facts required, which is its own small failure of the
+"state it so it can be checked" rule — a caveat broad enough to be unfalsifiable
+is not honesty, it is insurance. The query-cost half stands: `verify_refresh`'s
+five-way join runs over 2,460 rows rather than 20, and on SQLite that is ~100 ms
+of held write reservation per poll.
+
+Incidentally their synthetic payload's first version tripped the parser's
+EST/UTC sibling check on the 2026-11-01 DST boundary, with a precise
+`SourceContractError`. Unplanned evidence that the reconciliation
+`AGENTS.md` demands is doing real work.
+
+**On the seed reorder and test power**, since the `backend` review flagged the
+sequencing risk explicitly: removing `lock_league_settings_scope` from the seed
+did **not** weaken
+`test_seed_takes_lineage_locks_in_the_codebase_canonical_order`. It asserts the
+acquisition order, not the presence of a call, so it still fails when the two
+imports are swapped back — mutation-checked. That test remains the only thing
+standing between this repository and a repeat of the inversion that a static
+enumeration of 44 lock sites missed.
+
+`main()` previously exited with a raw traceback on two operator-error shapes
+that are not `DemoSeedRefused`: a database holding the demo Fantrax id under a
+different season, and a half-built schema. Both now exit 3 with a legible
+message, kept distinct from the by-design refusal's exit 2, and the exception
+type stays in the message so a genuine bug that happens to be a `ValueError`
+cannot be laundered into "fix your database".
+
+**Could not verify:** Everything the previous entry could not, unchanged — no
+PostgreSQL deadlock observed, both lock orders argued from keys and call sites
+and regression-tested at acquisition order only, the `teams` snapshot-skew
+window reasoned rather than raced, the seed's target guard never run against a
+real partially-populated database, and the `season_type` and set-mismatch
+refusals unit-tested but not driven through a browser. The full-season
+measurement above was performed by a reviewer against a **synthetic** 1,230-game
+cohort, not against a recorded NBA payload, and on SQLite only.
+
+Two caveats from entry 1 that entries 2 and 3 dropped, restored here rather
+than left abandoned. **The fixture substitution is still unconfirmed**:
+`docs/mocks/nba-schedule-2026-27.json`, named in the coordinator's brief, does
+not exist — `docs/mocks/` holds only `README.md` and `TEMPLATE.md` — and
+`backend/tests/fixtures/nba_scheduleleaguev2_2026_27.json` was substituted
+without confirmation. And entry 1's blanket "no claim about response size or
+query cost at real season scale" was **too broad on size**: the grid is teams ×
+periods and does not grow with game count, so a real season is roughly 30 × 24
+≈ 720 rows against 630 here. The *query cost* caveat stands unchanged —
+`verify_refresh`'s five-way join runs over 1,230 games rather than 10.
+
+The nine-mutation table in the previous entry lists mutations but not the tests
+that caught them, so auditing it means redoing all nine. Named here as the one
+claim in this record that asks to be trusted rather than checked.
+
+**Next:** CI on the new head, then `backend`, `architect` and `code-review` on
+that exact SHA. `data-engineer` remains exempt by the coordinator's scoping.
+
+---
+
+## 2026-08-20 — backend — Fourth-round review fixes
+
+**Changed:** Five findings from the exact-head `architect` review of `5426920`.
+No blocking findings; verdict was ship, and no fifth round.
+
+**Corrections to entry 5, which restated a number instead of counting it.**
+Entry 5 claims totals "recount to 37 done / 1 blocked / 65 pending / 103 total"
+in the same commit that added `secret-scan-fixture-isolation`. Wrong.
+`docs/backlog.md:5` is right and always was:
+
+```
+$ grep -c '^### `' docs/backlog.md                 # 104
+$ grep -c '^- \[x\] \*\*done\*\*' docs/backlog.md   # 37
+$ grep -c '^- \[ \] \*\*blocked' docs/backlog.md    # 1
+$ grep -c '^- \[ \] \*\*pending' docs/backlog.md    # 66
+```
+
+Three lines after warning that a number restated from memory is not evidence, I
+restated one. The durable count lives in the backlog header; entries must cite
+it, not repeat it.
+
+Entry 5 also quoted "19 KB" as the full-season payload. The reviewer measured
+that against a grid with roughly half the periods; a 630-row grid is 32,221
+bytes (~51 B/row), so the ~40 KB extrapolation is the sound figure and the bare
+19 KB is misleading. And "the frontend rendered…" is cross-session testimony
+from the frontend lane, not behaviour observable at any SHA here.
+
+**Code changes.** `schedule_grid_incomplete_evidence`'s docstring told consumers
+to "read `detail` or branch on it" — bad advice, because `detail` is free-form
+English with interpolated ids, and substring-matching it makes prose a contract
+surface that any rewording silently breaks. Replaced with: render a summary true
+of both members. Splitting the code or adding a discriminator is an open
+`architect` + `frontend` decision, not mine to take unilaterally with a frontend
+already stacked on five codes.
+
+`main()`'s new handler printed one line of English *instead of* the traceback,
+and the test asserted the traceback's absence — making the loss load-bearing.
+`ValueError` is a superclass of `json.JSONDecodeError`, the exact failure this
+unit spent two wrong explanations chasing. It now prints both, and the test
+asserts the message rather than the absence of the diagnostic.
+
+The canonical lock order was documented only in a dev tool and a route comment;
+it now lives in `lock_refresh_scope` and `lock_league_settings_scope`, which is
+what the next person composing two writers will actually read. The AST pin
+skipped `session.py` by basename; now by path.
+
+**Now true:** Ruff, format, strict mypy (134 files), 1,097 offline tests,
+secret scan 281 files — all green (`cd backend && ruff check . && ruff format
+--check . && mypy && pytest && python ../scripts/check_no_secrets.py`).
+
+**Could not verify:** Unchanged from entry 5. Additionally: `architect` reported
+another session bound port 8000 and an untracked `_mutplugin.py` appearing
+during its review — the same cross-session interference class as before, from
+the other direction.
+
+**Next:** `architect` owns three follow-ups — `dev/` and the
+`scheduled_game_counts` shared seam in `ownership.md`, and a Code-gate bullet
+requiring cross-cutting claims to be proved by execution rather than by reading.
+It declined to shape that as an ADR, which I agree with: it is a gate criterion
+in a document it owns. Entry 7 onward is held to ≤400 words, every number
+carrying the command that produced it.
+
+**Addendum to entry 6 — `backend` exact-head review of `5426920`.** No blocking
+findings; 12 mutations run, 12 caught. Three fixes, all mutation-checked:
+
+- `Database.from_settings` sat *above* the `try`, so the exit-3 handler named
+  exactly the right exception types and could never see them — a mistyped
+  `--database-url` (`NoSuchModuleError`, `ArgumentError`, both
+  `SQLAlchemyError`) escaped as a bare traceback. Moved inside.
+- `require_safe_demo_target` keyed on `fantrax_league_id` alone, so a league
+  carrying the demo id under another season passed the guard and failed later
+  inside the settings import. Safe — nothing was written — but the docstring
+  claimed a refusal it was not making. "Ours" now means id *and* season.
+- The AST pin's docstring claimed more than it checks: it catches an
+  `ImportFrom` (aliased or not) but not `import hoops_gm.db.session` plus
+  attribute access. Narrowed to what it does.
+
+`create_schema_only_on_a_fresh_database` now records that `has_table` resolves
+through PostgreSQL's `search_path`, so a non-default schema would read `False`
+and build a shadow table set — the failure it exists to close, arriving through
+schema resolution. Untested; no PostgreSQL available.
+
+On the payload size: the reviewer independently measured **36,430 bytes** for a
+720-row full-season grid, against the architect's 32,221 bytes for 630 rows.
+Both are ~50 B/row and consistent; the "19 KB" in entry 5 is the outlier and
+should not be quoted.
+
+Both reviewers again reported the worktree changing under them — I was editing
+while they read. That is three instances, and the fix is mine: hold the tree
+still, or review a checkpoint, while an exact-head review is in flight.
+
+**Addendum 2 to entry 6 — `code-review` exact-head review of `5426920`.** No
+blocking findings. Three fixes:
+
+- **A real fail-open.** `scheduled_game_counts` filters to active teams; the
+  verified cohort does not. Deactivating one team with schedule rows returned
+  **200** with `persisted_team_row_count: 20` beside counts summing to 18 — a
+  success-shaped partial answer, with nothing to signal the gap. The route now
+  compares the counted team set against the cohort's distinct
+  `team_schedule.team_id` and refuses with `schedule_grid_incomplete`. Latent
+  today (no production writer sets `is_active = False`), but the filter exists
+  so that they can.
+- The AST import pin missed three of six routes to the primitive, including the
+  ordinary `from hoops_gm.db import session` followed by attribute access —
+  which resolves at call time and is invisible to the monkeypatch both
+  lock-order tests rely on. Extended to catch module-object imports too.
+- The lock-order seed test seeded once. `import_league_settings` locks *before*
+  its identical-document early return, so only a re-seed exercises that path;
+  the test now seeds twice.
+
+**The pin was unfalsifiable and I nearly shipped it that way.** Weakening the
+detector left the real-tree assertion green, because no module uses the missed
+idioms today — so the mutation check "passed" while proving nothing, the same
+trap entry 5 recorded and I walked into again one layer up. The detector is now
+a named helper exercised against all six idioms in a synthetic tree; narrowing
+it fails `[from-package]`. **A tripwire for a future mistake cannot be validated
+by present-day code; it needs a synthetic example of the mistake.**
+
+Ruff, format, strict mypy (134 files), 1,106 offline tests, secret scan 281
+files — all green (`cd backend && ruff check . && ruff format --check . &&
+mypy && pytest && python ../scripts/check_no_secrets.py`).
