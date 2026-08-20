@@ -6275,14 +6275,14 @@ prove its cohort and source completeness from the response without independently
 selecting historical settings, calendars, or refresh rows. Focused tests cover
 loopback rejection and acceptance of an actual loopback proxy peer, exact
 response shape and lineage, deterministic ordering, a complete explicit-zero
-matrix, missing schedule-completeness evidence, unresolved Cup assignments,
-missing settings/calendar evidence, unknown period projection, stale NBA
-schedule lineage, stale settings lineage, mismatched materialized periods,
-empty-result refusal, and no committed write-on-read from SQLite lock
-reservations. The rebased local Code gate passes: Ruff and format checks, strict
-mypy, 944 tests with 18 live-smoke tests deselected, SQLite
-upgrade/check/downgrade through `0015` with no drift, and the tracked-file secret
-scan.
+matrix, missing/malformed schedule-completeness evidence, unresolved Cup
+assignments, missing settings/calendar evidence, unknown period projection,
+stale NBA schedule lineage, stale settings lineage, mismatched materialized
+periods, empty-result refusal, typed OpenAPI error schemas, and no committed
+write-on-read from SQLite lock reservations. The final rebased local Code gate
+passes: Ruff and format checks, strict mypy, 993 tests with 18 live-smoke tests
+deselected, SQLite upgrade/check/downgrade through `0015` with no drift, and the
+tracked-file secret scan.
 
 **Could not verify:** No local Docker or `TEST_DATABASE_URL` is available, so
 native Postgres execution remains for fresh CI. No authoritative current 2026-27

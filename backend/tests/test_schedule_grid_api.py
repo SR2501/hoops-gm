@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from hoops_gm.app import create_app
@@ -386,6 +386,27 @@ def test_current_grid_rejects_missing_schedule_completeness_evidence(
     assert "counts" not in body
 
 
+def test_current_grid_rejects_non_object_schedule_completeness_evidence(
+    app: FastAPI,
+    client: TestClient,
+) -> None:
+    league_id, _, projection = _seed_current_grid(app)
+    with app.state.database.session() as session:
+        session.execute(
+            update(RefreshRun)
+            .where(RefreshRun.id == projection.lineage.schedule_refresh_id)
+            .values(summary=None)
+        )
+
+    response = client.get(f"/api/v1/leagues/{league_id}/schedule-grid/current")
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"] == "schedule_grid_incomplete_evidence"
+    assert "malformed" in body["detail"]
+    assert "counts" not in body
+
+
 def test_current_grid_rejects_unresolved_game_assignments_without_partial_rows(
     app: FastAPI,
     client: TestClient,
@@ -497,3 +518,7 @@ def test_schedule_grid_contract_is_advertised_in_openapi(client: TestClient) -> 
     paths = client.get("/openapi.json").json()["paths"]
 
     assert "/api/v1/leagues/{league_id}/schedule-grid/current" in paths
+    responses = paths["/api/v1/leagues/{league_id}/schedule-grid/current"]["get"]["responses"]
+    for status in ("403", "404", "409", "422"):
+        schema = responses[status]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/ErrorResponse"}

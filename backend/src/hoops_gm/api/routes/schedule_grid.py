@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
+from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.calendar.scoring_periods import ScoringPeriodProjectionError
 from hoops_gm.db.models.league import League
@@ -80,13 +81,21 @@ def _schedule_completeness(
             f"schedule refresh {refresh_id} is unavailable",
         )
 
+    summary = refresh.summary
+    if not isinstance(summary, dict):
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} has malformed source-completeness evidence",
+        )
+
     required = {
         "source_game_count",
         "resolved_game_count",
         "team_schedule_rows",
         "unresolved_game_ids",
     }
-    missing = sorted(required - refresh.summary.keys())
+    missing = sorted(required - summary.keys())
     if missing:
         raise _error(
             409,
@@ -95,10 +104,10 @@ def _schedule_completeness(
             f"missing summary evidence: {', '.join(missing)}",
         )
 
-    source_game_count = refresh.summary["source_game_count"]
-    resolved_game_count = refresh.summary["resolved_game_count"]
-    team_schedule_rows = refresh.summary["team_schedule_rows"]
-    unresolved_game_ids = refresh.summary["unresolved_game_ids"]
+    source_game_count = summary["source_game_count"]
+    resolved_game_count = summary["resolved_game_count"]
+    team_schedule_rows = summary["team_schedule_rows"]
+    unresolved_game_ids = summary["unresolved_game_ids"]
     if (
         not isinstance(source_game_count, int)
         or isinstance(source_game_count, bool)
@@ -142,6 +151,12 @@ def _schedule_completeness(
 @router.get(
     "/current",
     response_model=ScheduleGridResponse,
+    responses={
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
     summary="The league's current raw team-by-scoring-period game-count grid",
 )
 def get_current_schedule_grid(

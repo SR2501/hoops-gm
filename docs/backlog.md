@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**37 done - 1 blocked - 63 pending - 101 total**
+**38 done - 1 blocked - 63 pending - 102 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
