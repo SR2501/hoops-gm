@@ -371,32 +371,90 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
     assert set(after.values()) == {sentinel}
 
 
+def _modules_reaching_lock_primitive(root: Path) -> list[str]:
+    """Modules under ``root`` that could reach ``acquire_transaction_lock``.
+
+    Counts any route to the primitive, not just the obvious one: an
+    ``ImportFrom`` binding the name (aliased or not), *or* an import of the
+    defining module in any form, since each of those permits attribute access
+    that resolves at call time and is therefore invisible to a monkeypatch of
+    ``hoops_gm.db.lineage.acquire_transaction_lock``.
+    """
+
+    defining_module = "hoops_gm.db.session"
+    found: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        # Compared by path, not by basename: a future `hoops_gm/<pkg>/session.py`
+        # importing the primitive would otherwise be invisible to this pin.
+        if relative == "db/session.py":
+            continue
+        reaches = False
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                if any(alias.name == "acquire_transaction_lock" for alias in node.names):
+                    reaches = True
+                if node.module == "hoops_gm.db" and any(
+                    alias.name == "session" for alias in node.names
+                ):
+                    reaches = True
+            elif isinstance(node, ast.Import) and any(
+                alias.name == defining_module for alias in node.names
+            ):
+                reaches = True
+        if reaches:
+            found.append(relative)
+    return found
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from hoops_gm.db.session import acquire_transaction_lock",
+        "from hoops_gm.db.session import acquire_transaction_lock as _lock",
+        "def f():\n    from hoops_gm.db.session import acquire_transaction_lock",
+        "import hoops_gm.db.session",
+        "import hoops_gm.db.session as dbs",
+        "from hoops_gm.db import session",
+    ],
+    ids=["from-import", "aliased", "function-local", "import", "import-as", "from-package"],
+)
+def test_the_lock_import_detector_catches_every_route_to_the_primitive(
+    tmp_path: Path, source: str
+) -> None:
+    """Prove the tripwire before trusting it.
+
+    The real-tree assertion below cannot demonstrate this: no module uses these
+    idioms today, so weakening the detector leaves that test green. An earlier
+    version of it caught only the first two forms — the three module-object
+    routes, including the ordinary `from hoops_gm.db import session`, walked
+    straight past.
+    """
+
+    (tmp_path / "db").mkdir()
+    (tmp_path / "db" / "session.py").write_text(
+        "def acquire_transaction_lock():\n    pass\n", encoding="utf-8"
+    )
+    (tmp_path / "innocent.py").write_text("# acquire_transaction_lock in a comment\n", "utf-8")
+    (tmp_path / "offender.py").write_text(source + "\n", encoding="utf-8")
+
+    assert _modules_reaching_lock_primitive(tmp_path) == ["offender.py"]
+
+
 def test_lineage_locks_are_acquired_through_exactly_one_import() -> None:
     """Both lock-order tests monkeypatch one name; pin that it is the only one.
 
     They patch `hoops_gm.db.lineage.acquire_transaction_lock`, which captures
-    every lineage lock only because `db/lineage.py` is the sole importer of it
-    and `lock_refresh_scope` the sole caller. If another module later imports it
-    from `db.session` directly, both recorders go blind and both tests stay
-    green while asserting nothing — a test weaker than its name, which is
-    exactly the failure those tests were rewritten to avoid.
+    every lineage lock only because `db/lineage.py` is the sole module that can
+    reach it and `lock_refresh_scope` the sole caller. If another module later
+    imported it, both recorders would go blind and both tests would stay green
+    while asserting nothing — a test weaker than its name, which is exactly the
+    failure those tests were rewritten to avoid.
     """
 
     src = Path(hoops_gm.__file__).resolve().parent
-    importers = []
-    for path in sorted(src.rglob("*.py")):
-        if path.name == "session.py":
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        imported = any(
-            isinstance(node, ast.ImportFrom)
-            and any(alias.name == "acquire_transaction_lock" for alias in node.names)
-            for node in ast.walk(tree)
-        )
-        if imported:
-            importers.append(path.relative_to(src).as_posix())
 
-    assert importers == ["db/lineage.py"]
+    assert _modules_reaching_lock_primitive(src) == ["db/lineage.py"]
     lineage_source = (src / "db" / "lineage.py").read_text(encoding="utf-8")
     call_sites = sum(
         1
@@ -797,6 +855,35 @@ def test_current_grid_rejects_a_non_integer_league_id(client: TestClient) -> Non
     assert "counts" not in response.json()
 
 
+def test_current_grid_refuses_a_grid_that_omits_a_scheduled_team(
+    app: FastAPI, client: TestClient
+) -> None:
+    """Deactivating one team must not silently shorten the grid.
+
+    `scheduled_game_counts` filters to active teams; the verified cohort and
+    `persisted_team_row_count` do not. Without this refusal the response
+    advertises a 20-row persisted cohort and ships counts accounting for 18,
+    with nothing to signal the gap — a success-shaped partial answer, which is
+    the one thing this endpoint promises never to return.
+    """
+
+    seeded = _seed(app)
+    with app.state.database.session() as session:
+        played = session.scalar(
+            select(TeamScheduleEntry.team_id).order_by(TeamScheduleEntry.team_id).limit(1)
+        )
+        assert played is not None
+        session.execute(update(NbaTeam).where(NbaTeam.id == played).values(is_active=False))
+
+    response = client.get(GRID_URL.format(league_id=seeded.league_id))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "schedule_grid_incomplete"
+    assert "contradict their own lineage block" in response.json()["detail"]
+    assert str(played) in response.json()["detail"]
+    assert "counts" not in response.json()
+
+
 def test_current_grid_never_returns_a_success_shaped_empty_grid(
     app: FastAPI, client: TestClient
 ) -> None:
@@ -950,7 +1037,6 @@ def test_seed_takes_lineage_locks_in_the_codebase_canonical_order(
     monkeypatch.setattr("hoops_gm.db.lineage.acquire_transaction_lock", _record)
 
     seeded = _seed(app)
-
     settings_scope = f"source\x00league-settings:{seeded.league_id}\x00{SEASON}"
     schedule_scope = f"schedule\x00{NBA_SCHEDULE_ARTIFACT_KEY}\x00{SEASON}"
     assert settings_scope in taken
@@ -958,6 +1044,16 @@ def test_seed_takes_lineage_locks_in_the_codebase_canonical_order(
     assert taken.index(settings_scope) < taken.index(schedule_scope), (
         f"seed acquired lineage scopes in the order {taken}, which inverts the codebase's "
         "league-settings-before-nba-schedule order"
+    )
+
+    # Seed a second time. The order holds on the first run partly because
+    # `import_league_settings` locks before its identical-document early return;
+    # only a re-seed exercises that return, so seeding once would leave the
+    # documented re-seed path unasserted.
+    taken.clear()
+    _seed(app)
+    assert taken.index(settings_scope) < taken.index(schedule_scope), (
+        f"re-seed acquired lineage scopes in the order {taken}"
     )
 
 
@@ -1107,9 +1203,9 @@ def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(
 ) -> None:
     """A half-built schema is an operator error, not a crash to be dumped.
 
-    Exit 3, distinct from the by-design refusal's exit 2, and the exception type
-    is kept in the message so a genuine bug that happens to be a `ValueError`
-    cannot be laundered into "fix your database".
+    Exit 3, distinct from the by-design refusal's exit 2, with a legible message
+    *and* the traceback — see the handler's comment for why the diagnostic is
+    kept rather than traded away for tidiness.
     """
 
     url = f"sqlite:///{(tmp_path / 'halfbuilt.db').as_posix()}"
@@ -1128,8 +1224,56 @@ def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("seed failed: ")
-    assert "Traceback" not in captured.err
+    assert "seed failed: " in captured.err
+    # Asserts the message is present, deliberately NOT that the traceback is
+    # absent. `ValueError` is a superclass of `json.JSONDecodeError` and
+    # `SQLAlchemyError` covers our own programming errors, so a genuine bug can
+    # reach this handler — and asserting the traceback away would make the loss
+    # of the diagnostic load-bearing.
+    assert "Traceback" in captured.err
+
+
+def test_seed_cli_reports_a_malformed_database_url_legibly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The commonest operator error, and the handler could not see it.
+
+    `Database.from_settings` used to be constructed above the `try`, so
+    `NoSuchModuleError` and `ArgumentError` — both `SQLAlchemyError` subclasses
+    raised by exactly that call — escaped as bare tracebacks.
+    """
+
+    capsys.readouterr()
+
+    assert main(["--database-url", "notadialect://host/db"]) == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "seed failed: " in captured.err
+
+
+def test_seed_refuses_a_league_carrying_the_demo_id_under_another_season(
+    app: FastAPI, client: TestClient
+) -> None:
+    """ "Ours" means the demo id *and* the demo season, not the id alone."""
+
+    with app.state.database.session() as session:
+        session.add(
+            League(
+                name="Demo id, wrong season",
+                season="2025-26",
+                fantrax_league_id="schedule-grid-demo",
+                scoring_type="h2h_categories",
+                draft_type="auction",
+            )
+        )
+
+    with pytest.raises(DemoSeedRefused, match="2025-26"):
+        _seed(app)
+
+    with app.state.database.session() as session:
+        assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
+        assert session.scalar(select(func.count()).select_from(RefreshRun)) == 0
 
 
 def test_seed_weekly_periods_cover_every_game_date_in_whole_weeks() -> None:

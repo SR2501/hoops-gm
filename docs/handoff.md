@@ -7231,10 +7231,12 @@ docstring mentioning the name does not satisfy it.
 
 `error-code-observability` was a `pending` item sitting in the `## Done`
 section; moved into `## Pending`. Totals are counted from markers so they were
-unaffected, and they still recount to 37 done / 1 blocked / 65 pending / 103
-total. Worth noting the brief I gave the reviewer asserted 38/64 — the file was
+unaffected. **The count stated in the first draft of this paragraph was wrong**
+— see entry 6; `docs/backlog.md`'s own header is the authority, and it is
+right. Worth noting the brief I gave the reviewer asserted 38/64 — the file was
 right and my brief was wrong, which is a reminder that a number restated from
-memory is not evidence even when the file it describes is correct.
+memory is not evidence even when the file it describes is correct. Restating one
+three lines after writing that sentence is the sharper reminder.
 
 `schedule_grid_incomplete_evidence` is now documented as a **family** in the
 route and in `docs/backlog.md`. The frontend rendered "the schedule refresh
@@ -7304,3 +7306,127 @@ claim in this record that asks to be trusted rather than checked.
 
 **Next:** CI on the new head, then `backend`, `architect` and `code-review` on
 that exact SHA. `data-engineer` remains exempt by the coordinator's scoping.
+
+---
+
+## 2026-08-20 — backend — Fourth-round review fixes
+
+**Changed:** Five findings from the exact-head `architect` review of `5426920`.
+No blocking findings; verdict was ship, and no fifth round.
+
+**Corrections to entry 5, which restated a number instead of counting it.**
+Entry 5 claims totals "recount to 37 done / 1 blocked / 65 pending / 103 total"
+in the same commit that added `secret-scan-fixture-isolation`. Wrong.
+`docs/backlog.md:5` is right and always was:
+
+```
+$ grep -c '^### `' docs/backlog.md                 # 104
+$ grep -c '^- \[x\] \*\*done\*\*' docs/backlog.md   # 37
+$ grep -c '^- \[ \] \*\*blocked' docs/backlog.md    # 1
+$ grep -c '^- \[ \] \*\*pending' docs/backlog.md    # 66
+```
+
+Three lines after warning that a number restated from memory is not evidence, I
+restated one. The durable count lives in the backlog header; entries must cite
+it, not repeat it.
+
+Entry 5 also quoted "19 KB" as the full-season payload. The reviewer measured
+that against a grid with roughly half the periods; a 630-row grid is 32,221
+bytes (~51 B/row), so the ~40 KB extrapolation is the sound figure and the bare
+19 KB is misleading. And "the frontend rendered…" is cross-session testimony
+from the frontend lane, not behaviour observable at any SHA here.
+
+**Code changes.** `schedule_grid_incomplete_evidence`'s docstring told consumers
+to "read `detail` or branch on it" — bad advice, because `detail` is free-form
+English with interpolated ids, and substring-matching it makes prose a contract
+surface that any rewording silently breaks. Replaced with: render a summary true
+of both members. Splitting the code or adding a discriminator is an open
+`architect` + `frontend` decision, not mine to take unilaterally with a frontend
+already stacked on five codes.
+
+`main()`'s new handler printed one line of English *instead of* the traceback,
+and the test asserted the traceback's absence — making the loss load-bearing.
+`ValueError` is a superclass of `json.JSONDecodeError`, the exact failure this
+unit spent two wrong explanations chasing. It now prints both, and the test
+asserts the message rather than the absence of the diagnostic.
+
+The canonical lock order was documented only in a dev tool and a route comment;
+it now lives in `lock_refresh_scope` and `lock_league_settings_scope`, which is
+what the next person composing two writers will actually read. The AST pin
+skipped `session.py` by basename; now by path.
+
+**Now true:** Ruff, format, strict mypy (134 files), 1,097 offline tests,
+secret scan 281 files — all green (`cd backend && ruff check . && ruff format
+--check . && mypy && pytest && python ../scripts/check_no_secrets.py`).
+
+**Could not verify:** Unchanged from entry 5. Additionally: `architect` reported
+another session bound port 8000 and an untracked `_mutplugin.py` appearing
+during its review — the same cross-session interference class as before, from
+the other direction.
+
+**Next:** `architect` owns three follow-ups — `dev/` and the
+`scheduled_game_counts` shared seam in `ownership.md`, and a Code-gate bullet
+requiring cross-cutting claims to be proved by execution rather than by reading.
+It declined to shape that as an ADR, which I agree with: it is a gate criterion
+in a document it owns. Entry 7 onward is held to ≤400 words, every number
+carrying the command that produced it.
+
+**Addendum to entry 6 — `backend` exact-head review of `5426920`.** No blocking
+findings; 12 mutations run, 12 caught. Three fixes, all mutation-checked:
+
+- `Database.from_settings` sat *above* the `try`, so the exit-3 handler named
+  exactly the right exception types and could never see them — a mistyped
+  `--database-url` (`NoSuchModuleError`, `ArgumentError`, both
+  `SQLAlchemyError`) escaped as a bare traceback. Moved inside.
+- `require_safe_demo_target` keyed on `fantrax_league_id` alone, so a league
+  carrying the demo id under another season passed the guard and failed later
+  inside the settings import. Safe — nothing was written — but the docstring
+  claimed a refusal it was not making. "Ours" now means id *and* season.
+- The AST pin's docstring claimed more than it checks: it catches an
+  `ImportFrom` (aliased or not) but not `import hoops_gm.db.session` plus
+  attribute access. Narrowed to what it does.
+
+`create_schema_only_on_a_fresh_database` now records that `has_table` resolves
+through PostgreSQL's `search_path`, so a non-default schema would read `False`
+and build a shadow table set — the failure it exists to close, arriving through
+schema resolution. Untested; no PostgreSQL available.
+
+On the payload size: the reviewer independently measured **36,430 bytes** for a
+720-row full-season grid, against the architect's 32,221 bytes for 630 rows.
+Both are ~50 B/row and consistent; the "19 KB" in entry 5 is the outlier and
+should not be quoted.
+
+Both reviewers again reported the worktree changing under them — I was editing
+while they read. That is three instances, and the fix is mine: hold the tree
+still, or review a checkpoint, while an exact-head review is in flight.
+
+**Addendum 2 to entry 6 — `code-review` exact-head review of `5426920`.** No
+blocking findings. Three fixes:
+
+- **A real fail-open.** `scheduled_game_counts` filters to active teams; the
+  verified cohort does not. Deactivating one team with schedule rows returned
+  **200** with `persisted_team_row_count: 20` beside counts summing to 18 — a
+  success-shaped partial answer, with nothing to signal the gap. The route now
+  compares the counted team set against the cohort's distinct
+  `team_schedule.team_id` and refuses with `schedule_grid_incomplete`. Latent
+  today (no production writer sets `is_active = False`), but the filter exists
+  so that they can.
+- The AST import pin missed three of six routes to the primitive, including the
+  ordinary `from hoops_gm.db import session` followed by attribute access —
+  which resolves at call time and is invisible to the monkeypatch both
+  lock-order tests rely on. Extended to catch module-object imports too.
+- The lock-order seed test seeded once. `import_league_settings` locks *before*
+  its identical-document early return, so only a re-seed exercises that path;
+  the test now seeds twice.
+
+**The pin was unfalsifiable and I nearly shipped it that way.** Weakening the
+detector left the real-tree assertion green, because no module uses the missed
+idioms today — so the mutation check "passed" while proving nothing, the same
+trap entry 5 recorded and I walked into again one layer up. The detector is now
+a named helper exercised against all six idioms in a synthetic tree; narrowing
+it fails `[from-package]`. **A tripwire for a future mistake cannot be validated
+by present-day code; it needs a synthetic example of the mistake.**
+
+Ruff, format, strict mypy (134 files), 1,106 offline tests, secret scan 281
+files — all green (`cd backend && ruff check . && ruff format --check . &&
+mypy && pytest && python ../scripts/check_no_secrets.py`).

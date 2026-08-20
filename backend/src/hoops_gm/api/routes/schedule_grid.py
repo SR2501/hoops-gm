@@ -57,6 +57,7 @@ from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.ingest.nba.schedule import ScheduledGameCount, scheduled_game_counts
 
 router = APIRouter(prefix="/leagues/{league_id}/schedule-grid", tags=["schedule-grid"])
@@ -200,11 +201,17 @@ def _verified_schedule_evidence(
     cannot state what it imported* — malformed, absent or self-contradicting
     evidence — and *it states what it imported perfectly well, but that is not
     the cohort this grid counts*, which is the season-type guard and the
-    refresh-identity check. The frontend found this the hard way, rendering
-    "the schedule refresh cannot state what it imported" above a ``detail``
-    saying the refresh describes a playoffs cohort: a summary that is simply
-    false in that condition. Consumers should read ``detail`` or branch on it
-    rather than treat the code as one message.
+    refresh-identity check. The frontend session reported rendering "the
+    schedule refresh cannot state what it imported" above a ``detail`` saying
+    the refresh describes a playoffs cohort: a summary that is simply false in
+    that condition.
+
+    **Until this is resolved, render a summary general enough to be true of
+    both** — not one that asserts either. ``detail`` is free-form English with
+    interpolated ids and is *not* a contract surface; substring-matching it
+    would make prose load-bearing and any rewording a silent breakage. Splitting
+    the code, or adding a machine-readable discriminator, is a cross-module
+    contract decision owned by ``architect`` with ``frontend``, and is open.
     """
 
     refresh = current_refresh(
@@ -451,6 +458,34 @@ def get_current_schedule_grid(
             f"{completeness.resolved_game_count} resolved game(s) for season "
             f"{response_season!r}, but none of them fall inside a scoring period of league "
             f"{response_league_id}",
+        )
+
+    # The verified cohort covers every persisted team row; `scheduled_game_counts`
+    # covers active teams only. Nothing above notices a team that has schedule
+    # rows but was dropped from the grid — the response would advertise a
+    # 20-row persisted cohort and ship counts accounting for 18, with no signal
+    # that anything is missing. No production writer deactivates a team today,
+    # but the filter exists so that they can, and a success-shaped partial
+    # answer is the one thing this endpoint promises never to return.
+    counted_team_ids = {row.team_id for row in rows}
+    scheduled_team_ids = set(
+        session.scalars(
+            select(TeamScheduleEntry.team_id)
+            .where(
+                TeamScheduleEntry.season == response_season,
+                TeamScheduleEntry.season_type == SeasonType.REGULAR,
+            )
+            .distinct()
+        )
+    )
+    omitted = sorted(scheduled_team_ids - counted_team_ids)
+    if omitted:
+        raise _error(
+            409,
+            "schedule_grid_incomplete",
+            f"teams {omitted} have {response_season} schedule rows inside the verified cohort "
+            "but are absent from the grid; refusing to serve counts that contradict their own "
+            "lineage block",
         )
 
     teams = _grid_teams(session, rows)

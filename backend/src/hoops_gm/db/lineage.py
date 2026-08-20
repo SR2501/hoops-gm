@@ -384,6 +384,18 @@ def lock_refresh_scope(
     and a strict consumer must call this before reading inputs; together those
     rules prevent a cohort from advancing between a consumer's final check and
     commit.
+
+    **Order matters as much as coverage.** The canonical acquisition order is
+    league-settings, then the NBA schedule, then any per-league derived scope
+    (scoring-period projection, context, models). On PostgreSQL these are real
+    blocking locks held to commit, so two callers taking the same pair in
+    opposite orders deadlock with ``40P01`` — and *anything composing two
+    production writers inherits their lock order and must respect the global
+    one*, which is easy to violate without ever calling this function. That is
+    not hypothetical: a developer seeding tool once composed ``import_schedule``
+    before ``import_league_settings`` and inverted the pair, and a static
+    enumeration of every call site here declared the ordering sound while
+    runtime instrumentation found the inversion immediately.
     """
 
     season_filter = RefreshRun.season.is_(None) if season is None else RefreshRun.season == season
@@ -408,7 +420,12 @@ def league_settings_artifact_key(league_id: int) -> str:
 
 
 def lock_league_settings_scope(session: Session, *, league_id: int, season: str) -> None:
-    """Serialize settings writers with calendar derivation and projection readers."""
+    """Serialize settings writers with calendar derivation and projection readers.
+
+    **First in the canonical order** — see :func:`lock_refresh_scope`. Any caller
+    that will also touch the NBA schedule scope, directly or through a writer it
+    composes, must take this one before that one.
+    """
 
     lock_refresh_scope(
         session,

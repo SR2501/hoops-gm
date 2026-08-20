@@ -290,7 +290,10 @@ returns the code in the body — verified, not assumed.)
 `schedule_grid_incomplete_evidence` is a **family**: some members mean "the
 refresh cannot state what it imported", others mean "it states what it imported
 perfectly well, but that is not the cohort this grid counts". A consumer
-rendering one fixed sentence for the code will be wrong for the second kind.
+rendering one fixed sentence for the code will be wrong for the second kind, and
+must not substring-match `detail`, which is free-form prose rather than a
+contract surface. Splitting the code or adding a machine-readable discriminator
+is an open `architect` + `frontend` decision.
 
 Operational, not merely safe: `python -m hoops_gm.dev.seed_schedule_grid`
 brings a local database to a verified state offline from the committed NBA

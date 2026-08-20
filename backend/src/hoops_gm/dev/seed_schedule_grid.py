@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from hashlib import sha256
@@ -252,22 +253,29 @@ def require_safe_demo_target(session: Session, *, cohort_game_ids: set[str]) -> 
     # first arm — and scalar-selecting that column would return `None` for it,
     # making the refusal skip the one row it was written to catch.
     foreign_league = session.execute(
-        select(League.id, League.fantrax_league_id)
+        select(League.id, League.fantrax_league_id, League.season)
         .where(
             or_(
                 League.fantrax_league_id.is_(None),
                 League.fantrax_league_id != FANTRAX_LEAGUE_ID,
+                # A row carrying the demo id under another season is not this
+                # seed's either. Without this the guard passed, `_league` adopted
+                # it, and the failure surfaced later inside the settings import
+                # as a season mismatch — safe, because nothing was written, but
+                # the docstring above claimed a refusal it was not making.
+                League.season != SEASON,
             )
         )
         .limit(1)
     ).first()
     if foreign_league is not None:
-        league_id, fantrax_league_id = foreign_league
+        league_id, fantrax_league_id, league_season = foreign_league
         raise DemoSeedRefused(
-            f"this database already holds league {league_id} ({fantrax_league_id!r}), which this "
-            "seed did not create. Seeding writes globally scoped nba_games/team_schedule rows and "
-            f"registers the season-scoped {SEASON} schedule cohort for every consumer. Point "
-            "--database-url at a throwaway database instead."
+            f"this database already holds league {league_id} ({fantrax_league_id!r}, season "
+            f"{league_season!r}), which this seed did not create. Seeding writes globally scoped "
+            "nba_games/team_schedule rows and registers the season-scoped "
+            f"{SEASON} schedule cohort for every consumer. Point --database-url at a throwaway "
+            "database instead."
         )
     foreign_game = session.scalar(
         select(NbaGame.nba_game_id)
@@ -507,6 +515,13 @@ def create_schema_only_on_a_fresh_database(database: Database) -> None:
     ``require_safe_demo_target``'s decision, and a genuinely half-built schema
     surfaces as a plain missing-table error rather than being silently
     completed.
+
+    **PostgreSQL caveat, unverified here.** ``has_table`` resolves through
+    ``search_path``. Against a database whose tables live in a non-default
+    schema this reads ``False`` and ``create_all`` would build a shadow set in
+    the default schema — the same "already wrote to a real database" failure
+    this exists to close, arriving through schema resolution instead of
+    ordering. No PostgreSQL was available to test it.
     """
 
     if inspect(database.engine).has_table(League.__tablename__):
@@ -531,10 +546,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    database = Database.from_settings(
-        Settings(environment="development", database_url=args.database_url, _env_file=None)
-    )
+    # Engine construction is inside the `try`, not above it: a mistyped
+    # `--database-url` is the commonest operator error here, and both of its
+    # failure modes (`NoSuchModuleError` for an unknown dialect, `ArgumentError`
+    # for an unparseable URL) are `SQLAlchemyError` subclasses raised by *this*
+    # call. Building the engine outside meant the handler named exactly the
+    # right exception and could never see it.
+    database: Database | None = None
     try:
+        database = Database.from_settings(
+            Settings(environment="development", database_url=args.database_url, _env_file=None)
+        )
         create_schema_only_on_a_fresh_database(database)
         with database.session() as session:
             result = seed_schedule_grid(session, fixtures_dir=args.fixtures_dir)
@@ -543,17 +565,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except (SQLAlchemyError, SourceContractError, ValueError) as exc:
         # Two operator-error shapes reach here rather than `DemoSeedRefused`,
-        # and both used to exit with a raw traceback: a database holding the
+        # and both used to exit with a bare traceback: a database holding the
         # demo Fantrax id under a different season (`ValueError` from the
         # settings import) and a half-built schema (`OperationalError`). Neither
-        # writes anything, so this is legibility rather than safety — but the
-        # exception type is kept in the message, because a bug that happens to
-        # be a `ValueError` must not be laundered into an operator-error
-        # message that tells them to fix their database.
+        # writes anything, so this is legibility rather than safety.
+        #
+        # **The traceback is printed as well as the message, not instead of
+        # it.** `ValueError` is a superclass of `json.JSONDecodeError` and
+        # `SQLAlchemyError` covers our own programming errors, so a genuine bug
+        # can land here — and in a developer tool, one line of English is
+        # strictly less than a stack trace. Suppressing it would buy legibility
+        # by deleting the diagnostic, which is the trade this repository has
+        # spent the day refusing everywhere else.
         print(f"seed failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc()
         return 3
     finally:
-        database.dispose()
+        if database is not None:
+            database.dispose()
 
     print(
         json.dumps(
