@@ -15,6 +15,18 @@ hand-rolled its own reader against flat summary keys the producer never wrote,
 which made the endpoint permanently unavailable while looking rigorous. A
 second verifier can only ever drift from the producer, so there is exactly
 one, and this route consumes it.
+
+**Two operational limits worth knowing before this sits behind a dashboard
+poll.** On SQLite the lineage locks are a write reservation, so this read holds
+the database-wide writer for the whole request — across ``verify_refresh``'s
+five-way join and the grid query — and the engine sets neither WAL nor
+``busy_timeout``. Contention therefore surfaces as an untyped 500 rather than
+as one of the five documented codes. And a refusal's code does not reach the
+server log: the middleware records ``status_code`` only, so four of the five
+refusals read identically as ``409`` to an operator, which is precisely the
+distinction the codes exist to make. Both are inherited and app-wide rather
+than introduced here; the second is tracked as ``error-code-observability`` in
+``docs/backlog.md``.
 """
 
 from __future__ import annotations

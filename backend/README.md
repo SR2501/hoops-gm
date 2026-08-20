@@ -195,15 +195,21 @@ those games are the upstream-drift evidence the Adapter gate keeps it for.
 **Read the served lineage accordingly.** The response says
 `source_game_count: 10, unresolved_game_ids: []`. That describes the *filtered*
 document, not the recorded source, which reports **12** games and names
-`0022601201` and `0022601202` as unresolved. The filter runs upstream of
-`parse_schedule`, so anything it drops disappears from both sides of
-`import_schedule`'s completeness comparison at once and the contract cannot see
-it — which is why the seed re-parses the payload as recorded, refuses unless the
-delta is exactly the unresolved games, and prints
-`as_recorded_source_game_count` and `dropped_game_ids` beside the imported
-count. `docs/adapters/nba-schedule.md` designates this state as one the real
-2026-27 pipeline must **not** register; the demo league exists so that refusal
-stays intact for the real one.
+`0022601201` and `0022601202` as unresolved. **The seed's console output and
+the API response therefore count different populations**, which is why the seed
+names them apart — `games_recorded_in_fixture: 12`,
+`games_dropped_unresolved: [...]`, `games_imported_into_cohort: 10` — and
+prints `api_lineage_schedule_source_game_count` explicitly so nobody has to
+guess which of the two the screen is showing. They differ by exactly the
+dropped games.
+
+The filter runs upstream of `parse_schedule`, so anything it drops disappears
+from both sides of `import_schedule`'s completeness comparison at once and the
+contract cannot see it — which is why the seed re-parses the payload as
+recorded, refuses unless the delta is exactly the unresolved games, and reports
+both numbers. `docs/adapters/nba-schedule.md` designates this state as one the
+real 2026-27 pipeline must **not** register; the demo league exists so that
+refusal stays intact for the real one.
 
 For the same reason the seed refuses to run against a database holding any
 league it did not create, or any 2026-27 game outside the fixture cohort:

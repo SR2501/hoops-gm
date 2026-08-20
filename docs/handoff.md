@@ -7041,3 +7041,122 @@ what the split is for. The primary owns the call.
 
 **Next:** Primary's ruling on the fingerprint-mismatch code; re-run exact-head
 reviews on the new head; CI including both PostgreSQL lanes.
+
+---
+
+## 2026-08-20 — backend — Third review batch: a guard that was inert, and a lock order I broke myself
+
+**Changed:** Acted on four exact-head reviews of `11f7efa` and `84ed9b1` plus
+two independent reviews commissioned by the coordinator. Six findings, three of
+them defects in fixes from the previous round.
+
+**The guard that was present, plausible and inert.** `require_safe_demo_target`
+scalar-selected `League.fantrax_league_id` — the very column its `or_()` tests
+for NULL. For a league with `fantrax_league_id IS NULL`, `session.scalar()`
+returned `None`, which the caller could not distinguish from "no foreign league
+found", so the refusal was skipped for exactly the row it was written to catch.
+`db/models/league.py` makes that column nullable on purpose, "so a league can
+exist locally before it is linked to Fantrax". Two reviewers reproduced it
+independently: the seed proceeded, writing 10 games, 20 `team_schedule` rows and
+registering the fixture as the current 2026-27 cohort. It now selects
+`(League.id, League.fantrax_league_id)` and tests the row.
+
+**A lock order I enforced in the route and then violated in my own seed.**
+`import_schedule` takes the `nba-schedule` scope; `import_league_settings`
+takes league-settings. Composed in the obvious order they acquire the two in the
+exact inverse of the order the route and the calendar functions use — so a
+re-seed racing a dashboard poll is `40P01` on PostgreSQL, and the workflow
+`backend/README.md` documents is precisely that race. Worse, the route's own
+comment claimed settings-before-schedule as a property of the codebase, which my
+seed had just made false. The league row and its settings lock are now taken
+before `import_schedule`.
+
+**The methodological point is bigger than the finding.** A static enumeration of
+all 44 lock call sites concluded the global order was acyclic and the fix
+complete. A reviewer who instrumented `acquire_transaction_lock` and *ran the
+seed* found the inversion in four lines of trace. Opposite conclusions; the one
+holding a trace was right. Composition-order defects are invisible to call-site
+reading because the order does not exist until two functions are composed at
+runtime. The new regression instruments the lock rather than reading the code.
+
+**A refusal that had already written to the database.** `create_all` ran before
+the guard, so pointing the seed at a real Alembic-built database behind head
+added the missing model tables, the seed then refused, and the next
+`alembic upgrade head` would fail with "relation already exists" — the tool
+whose headline property is that it refuses to touch a real database had already
+touched it. DDL is not rolled back by the session. Schema is now created only on
+a database with no `leagues` table.
+
+**A credential fix with a second hole.** `render_as_string(hide_password=True)`
+masks `URL.password` only; libpq accepts `password` and `sslpassword` as query
+arguments and SQLAlchemy forwards them, so
+`postgresql+psycopg://alice@host/db?password=...` rendered verbatim to stdout.
+Now stripped. Having fixed this path twice, the wiring is pinned at the seam:
+a test monkeypatches `redacted_url` and asserts the sentinel reaches stdout.
+
+**A test weaker than its name.** The lock-order regression asserted `taken[:2]`,
+which `_locked_projection_context` satisfies on its own — so deleting the
+route's acquisitions entirely left it green. It caught inversion, which was the
+bug I was fixing, and not absence, which is worse: `_verified_schedule_evidence`
+would then read lineage outside any lock and a concurrent `import_schedule`
+could replace the cohort between verification and count. My two reviewers
+disagreed on severity; this records the worse reading. It now asserts the full
+five-element sequence.
+
+**Now true:** Every new guard is mutation-checked, and the table is the
+evidence rather than the claim: lock acquisitions deleted, team set-equality
+deleted, period set-equality deleted, query-string masking removed, NULL
+`fantrax_league_id` reading as absent, `create_all` moved before the guard,
+the unresolved-survivor arm deleted, the seed's settings lock removed, and
+`main` no longer calling `redacted_url` — nine mutations, nine caught.
+
+**A mutation check that does not reproduce the bug is the same false comfort as
+a test that does not.** My first attempt at the NULL-league mutation passed,
+which proved nothing; the second reproduced the reported defect exactly and
+failed. Recording it because it is the kind of thing that normally goes
+unwritten for being embarrassing and non-blocking.
+
+The seed's console output and the API response counted different populations
+under similar names — `as_recorded_source_game_count: 12` beside a served
+`source_game_count: 10`. Renamed to `games_recorded_in_fixture`,
+`games_dropped_unresolved` and `games_imported_into_cohort`, with
+`api_lineage_schedule_source_game_count` printed explicitly so nobody has to
+guess which number the screen is showing.
+
+The 200 contract is unchanged and now proven so rather than asserted: the
+frontend lane diffed a live capture from `84ed9b1` against one from `11f7efa`
+and the entire diff was the `refreshed_at` timestamp. I re-verified after this
+batch — 630 counts, 20 team-games, 30 teams, 21 periods, version
+`9bcac1c60490b41a`, `teams[0]` ATL, `periods[20]` playoff.
+
+Ruff, format, strict mypy (134 files), 1,095 offline tests, Adapter gate 281,
+Model gate 18, secret scan 281 files. `error-code-observability` filed as a
+backlog item rather than mentioned: four of five refusals are 409 and the
+middleware logs status only, so an operator cannot tell `not_current` from
+`incomplete_evidence` in a log — the exact distinction the codes exist for.
+
+**Could not verify:** The earlier "flaky" test was **not** flaky and my
+capsys hypothesis was wrong. Two `JSONDecodeError`s during full-suite runs were
+concurrent access to this worktree by review agents `git archive`-ing it, which
+one reviewer independently observed and disclosed ("the test count moved under
+me mid-run"). Five consecutive clean runs with nothing else touching the tree.
+The capsys restructure was still right — parsing globally captured stdout
+couples a test to every other test's output — but it fixed a different problem
+than the one I attributed to it.
+
+No PostgreSQL deadlock was ever observed. Both lock-ordering fixes are argued
+from keys and call sites and regression-tested at *acquisition order*, never as
+a `40P01`; Docker is unavailable and `TEST_DATABASE_URL` unset. The `teams`
+snapshot-skew window is reasoned, not raced. The seed's target guard is tested
+against a foreign league, a NULL-keyed league and an out-of-cohort game, never
+against a real partially-populated database. The two newest refusal paths — the
+`season_type` guard and set-mismatch rejection — are unit-tested but have not
+been driven end-to-end through a browser. The route still holds SQLite's
+database-wide write reservation for the whole request with neither WAL nor
+`busy_timeout` set; that is engine-level and wider than this route, and is now
+stated in the route docstring rather than only here.
+
+**Next:** CI including both PostgreSQL lanes on the new head, then `backend`,
+`architect` and `code-review` on that exact head. `data-engineer` is exempt by
+the coordinator's scoping: the delta touches no parser, adapter, fixture or
+completeness production.

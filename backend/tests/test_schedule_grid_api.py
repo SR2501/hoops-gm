@@ -15,10 +15,12 @@ tests then start from that same seeded, genuinely valid database and break
 exactly one thing, so a 409 is evidence that the broken thing caused it rather
 than evidence the endpoint was never reachable in the first place.
 
-Two deliberately do not, and saying "every" would have been false: an endpoint
-that refuses because *nothing* is registered, and one that refuses because a
-league was never configured, have no valid state to break — an empty database is
-the state under test.
+A minority deliberately do not, and saying "every" would have been false. Four
+have no valid state to break: the unknown-league and non-integer-id cases touch
+an empty database or none at all, the no-registered-refresh case has a league
+and nothing else, and the no-settings case is hand-built partial state rather
+than seed-then-break. An earlier version of this docstring said "two", which
+was itself the kind of uncounted claim this file exists to avoid.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, update
+from sqlalchemy import func, inspect, select, update
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.routes.schedule_grid import _grid_periods, _grid_teams
@@ -58,7 +60,7 @@ from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
-from hoops_gm.db.session import acquire_transaction_lock
+from hoops_gm.db.session import Database, acquire_transaction_lock
 from hoops_gm.dev.seed_schedule_grid import (
     DEFAULT_FIXTURES_DIR,
     SCHEDULE_FIXTURE,
@@ -67,7 +69,9 @@ from hoops_gm.dev.seed_schedule_grid import (
     DemoSeedRefused,
     SeedResult,
     load_fixture,
+    main,
     reconcile_dropped_games,
+    redacted_url,
     resolved_schedule_payload,
     seed_schedule_grid,
     weekly_periods,
@@ -390,8 +394,20 @@ def test_current_grid_takes_lineage_locks_in_the_codebase_canonical_order(
 
     settings_scope = f"source\x00league-settings:{seeded.league_id}\x00{SEASON}"
     schedule_scope = f"schedule\x00{NBA_SCHEDULE_ARTIFACT_KEY}\x00{SEASON}"
-    assert taken[:2] == [settings_scope, schedule_scope]
-    assert taken.index(settings_scope) < taken.index(schedule_scope)
+    projection_scope = f"schedule\x00league-scoring-periods:{seeded.league_id}\x00{SEASON}"
+    # The whole sequence, not a prefix. `_locked_projection_context` takes the
+    # same two scopes in the same order later in the request, so asserting only
+    # `taken[:2]` would be satisfied by that call alone and would still pass
+    # with the route's own acquisitions deleted — leaving
+    # `_verified_schedule_evidence` reading lineage outside any lock, which is
+    # the reason they are there.
+    assert taken == [
+        settings_scope,
+        schedule_scope,
+        settings_scope,
+        schedule_scope,
+        projection_scope,
+    ]
 
 
 def test_schedule_grid_contract_is_advertised_in_openapi(client: TestClient) -> None:
@@ -604,7 +620,8 @@ def test_current_grid_refuses_a_team_id_it_cannot_label(app: FastAPI, client: Te
     seeded = _seed(app)
     with app.state.database.session() as session:
         rows = scheduled_game_counts(session, league_id=seeded.league_id, season=SEASON)
-        unlabelled = replace(rows[0], team_id=max(row.team_id for row in rows) + 1)
+        missing_team_id = max(row.team_id for row in rows) + 1
+        unlabelled = replace(rows[0], team_id=missing_team_id)
 
         with pytest.raises(HTTPException) as caught:
             _grid_teams(session, [unlabelled])
@@ -612,6 +629,8 @@ def test_current_grid_refuses_a_team_id_it_cannot_label(app: FastAPI, client: Te
     assert caught.value.status_code == 409
     assert caught.value.headers == {"X-Bridge-Error": "schedule_grid_incomplete_evidence"}
     assert "have no team row" in str(caught.value.detail)
+    # The message must name the id, or an operator cannot act on it.
+    assert str(missing_team_id) in str(caught.value.detail)
 
 
 def test_current_grid_refuses_a_period_number_it_cannot_date(
@@ -620,7 +639,8 @@ def test_current_grid_refuses_a_period_number_it_cannot_date(
     seeded = _seed(app)
     with app.state.database.session() as session:
         rows = scheduled_game_counts(session, league_id=seeded.league_id, season=SEASON)
-        undated = replace(rows[0], period_number=max(row.period_number for row in rows) + 1)
+        missing_period = max(row.period_number for row in rows) + 1
+        undated = replace(rows[0], period_number=missing_period)
 
         with pytest.raises(HTTPException) as caught:
             _grid_periods(session, league_id=seeded.league_id, rows=[undated])
@@ -628,6 +648,7 @@ def test_current_grid_refuses_a_period_number_it_cannot_date(
     assert caught.value.status_code == 409
     assert caught.value.headers == {"X-Bridge-Error": "schedule_grid_incomplete_evidence"}
     assert "has no row for" in str(caught.value.detail)
+    assert str(missing_period) in str(caught.value.detail)
 
 
 def test_current_grid_rejects_evidence_after_a_schedule_row_is_removed(
@@ -838,6 +859,208 @@ def test_seed_counts_a_neutral_site_game_for_both_teams(
     }
     # Both sides of the neutral game, not just the nominal home team.
     assert {home_nba_id, away_nba_id} <= counted
+
+
+def test_seed_refuses_a_database_holding_a_league_with_no_fantrax_id(
+    app: FastAPI, client: TestClient
+) -> None:
+    """`fantrax_league_id` is nullable, so a NULL row must not read as absent.
+
+    A league created before Fantrax pairing is exactly this shape, and scalar-
+    selecting the nullable column would return `None` for it — skipping the
+    refusal for the one row it was written to catch.
+    """
+
+    with app.state.database.session() as session:
+        league = League(
+            name="Unpaired league",
+            season=SEASON,
+            fantrax_league_id=None,
+            scoring_type="h2h_categories",
+            draft_type="auction",
+        )
+        session.add(league)
+
+    with pytest.raises(DemoSeedRefused, match="which this seed did not create"):
+        _seed(app)
+
+    with app.state.database.session() as session:
+        assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
+        assert session.scalar(select(func.count()).select_from(RefreshRun)) == 0
+
+
+def test_seed_takes_lineage_locks_in_the_codebase_canonical_order(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seed composes two importers that each lock a different scope.
+
+    `import_schedule` takes `nba-schedule`; `import_league_settings` takes
+    league-settings. Called in the obvious order they acquire the two in the
+    exact inverse of the order the route and the calendar functions use, and on
+    PostgreSQL a re-seed racing a dashboard poll is `40P01`. Static enumeration
+    of lock sites cannot see this — the ordering exists only when the two
+    functions are composed at runtime — so this test instruments the lock itself.
+    """
+
+    taken: list[str] = []
+
+    def _record(session: Session, *, scope_key: str, write_reservation: Any) -> None:
+        taken.append(scope_key)
+        acquire_transaction_lock(session, scope_key=scope_key, write_reservation=write_reservation)
+
+    monkeypatch.setattr("hoops_gm.db.lineage.acquire_transaction_lock", _record)
+
+    seeded = _seed(app)
+
+    settings_scope = f"source\x00league-settings:{seeded.league_id}\x00{SEASON}"
+    schedule_scope = f"schedule\x00{NBA_SCHEDULE_ARTIFACT_KEY}\x00{SEASON}"
+    assert settings_scope in taken
+    assert schedule_scope in taken
+    assert taken.index(settings_scope) < taken.index(schedule_scope), (
+        f"seed acquired lineage scopes in the order {taken}, which inverts the codebase's "
+        "league-settings-before-nba-schedule order"
+    )
+
+
+def test_seed_cli_prints_the_redacted_url_not_the_raw_one(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins `main` -> `redacted_url`, which is the wiring that keeps regressing.
+
+    Asserted at the seam rather than on a password substring, because a SQLite
+    URL has no credential to look for and this must not depend on the dialect.
+    This path has now been fixed twice — `URL.password`, then the libpq
+    query-argument hole — so it is the one most likely to be reverted.
+    """
+
+    monkeypatch.setattr(
+        "hoops_gm.dev.seed_schedule_grid.redacted_url", lambda _url: "REDACTED-BY-SEAM"
+    )
+    url = f"sqlite:///{(tmp_path / 'seed.db').as_posix()}"
+    capsys.readouterr()
+
+    assert main(["--database-url", url]) == 0
+
+    out = capsys.readouterr().out
+    assert "REDACTED-BY-SEAM" in out
+    assert url not in out
+
+
+def test_seed_cli_masks_credentials_in_both_url_positions() -> None:
+    """`render_as_string(hide_password=True)` masks userinfo only.
+
+    libpq takes `password`/`sslpassword` as query arguments and SQLAlchemy
+    forwards them, so a query-string credential is real and would otherwise be
+    printed to stdout verbatim.
+    """
+
+    masked = redacted_url(
+        "postgresql+psycopg://alice:userinfo-secret@db.example.com:5432/hoops"
+        "?password=query-secret&sslpassword=ssl-secret&sslmode=require"
+    )
+
+    assert "userinfo-secret" not in masked
+    assert "query-secret" not in masked
+    assert "ssl-secret" not in masked
+    assert "sslmode=require" in masked
+    assert "alice" in masked
+
+
+def test_seed_cli_refusal_exits_non_zero_without_a_traceback(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The refusal path is an operator message and an exit code, not a crash.
+
+    Deliberately does not parse captured stdout as JSON. The seed's own output
+    is already asserted through `SeedResult`, and reading the global capture
+    buffer couples this test to whatever else happened to write to it.
+    """
+
+    url = f"sqlite:///{(tmp_path / 'seed.db').as_posix()}"
+    database = Database.from_settings(
+        Settings(environment="development", database_url=url, _env_file=None)
+    )
+    try:
+        Base.metadata.create_all(database.engine)
+        with database.session() as session:
+            session.add(
+                League(
+                    name="Someone else's league",
+                    season=SEASON,
+                    fantrax_league_id="not-the-demo",
+                    scoring_type="h2h_categories",
+                    draft_type="auction",
+                )
+            )
+    finally:
+        database.dispose()
+    capsys.readouterr()
+
+    assert main(["--database-url", url]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "refusing to seed: " in captured.err
+    assert "not-the-demo" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_seed_cli_leaves_no_schema_behind_when_it_refuses(tmp_path: Path) -> None:
+    """A refusal must not have already written DDL to the operator's database.
+
+    `create_all` used to run before the guard, so pointing the seed at a real
+    Alembic-built database that was behind head added the missing model tables,
+    the seed then refused, and the next `alembic upgrade head` failed with
+    "relation already exists". The tool whose headline property is that it
+    refuses to touch a real database had already written to it.
+    """
+
+    url = f"sqlite:///{(tmp_path / 'partial.db').as_posix()}"
+    database = Database.from_settings(
+        Settings(environment="development", database_url=url, _env_file=None)
+    )
+    try:
+        Base.metadata.create_all(
+            database.engine, tables=[Base.metadata.tables[League.__tablename__]]
+        )
+        with database.session() as session:
+            session.add(
+                League(
+                    name="Someone else's league",
+                    season=SEASON,
+                    fantrax_league_id="not-the-demo",
+                    scoring_type="h2h_categories",
+                    draft_type="auction",
+                )
+            )
+    finally:
+        database.dispose()
+
+    assert main(["--database-url", url]) == 2
+
+    verify = Database.from_settings(
+        Settings(environment="development", database_url=url, _env_file=None)
+    )
+    try:
+        tables = set(inspect(verify.engine).get_table_names())
+    finally:
+        verify.dispose()
+    assert League.__tablename__ in tables
+    assert NbaGame.__tablename__ not in tables
+    assert TeamScheduleEntry.__tablename__ not in tables
+    assert RefreshRun.__tablename__ not in tables
+
+
+def test_seed_reconciliation_refuses_a_filter_that_leaves_unresolved_games(
+    tmp_path: Path,
+) -> None:
+    """The second arm: filtered, but something unassigned survived."""
+
+    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
+    del tmp_path
+
+    with pytest.raises(DemoSeedRefused, match="still reports unresolved games"):
+        reconcile_dropped_games(recorded, recorded)
 
 
 def test_seed_weekly_periods_cover_every_game_date_in_whole_weeks() -> None:

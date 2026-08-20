@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -68,6 +68,7 @@ from hoops_gm.calendar import (
 )
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
+from hoops_gm.db.lineage import lock_league_settings_scope
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
@@ -209,6 +210,13 @@ def reconcile_dropped_games(
             f"filtered payload still reports unresolved games {list(filtered.unresolved_game_ids)}"
         )
     if recorded.source_game_count - filtered.source_game_count != len(dropped):
+        # Unreachable against today's parser, and kept deliberately rather than
+        # presented as a live guard: `parse_schedule` maintains
+        # `source_game_count == len(games) + len(unresolved_game_ids)` exactly,
+        # so once the two checks above pass this arithmetic follows. It is the
+        # only check that would still hold if that invariant were relaxed — the
+        # two above compare resolved sets, and neither would notice a counter
+        # that stopped agreeing with them.
         raise DemoSeedRefused(
             f"recorded source reported {recorded.source_game_count} game(s) and the filtered "
             f"document {filtered.source_game_count}, a difference of "
@@ -237,8 +245,13 @@ def require_safe_demo_target(session: Session, *, cohort_game_ids: set[str]) -> 
     season but already holds the operator's real league.
     """
 
-    foreign_league = session.scalar(
-        select(League.fantrax_league_id)
+    # Selected as a row keyed on the non-nullable `League.id`, not as the
+    # nullable `fantrax_league_id` alone. A league created before Fantrax
+    # pairing has `fantrax_league_id IS NULL`, which is exactly the `or_()`'s
+    # first arm — and scalar-selecting that column would return `None` for it,
+    # making the refusal skip the one row it was written to catch.
+    foreign_league = session.execute(
+        select(League.id, League.fantrax_league_id)
         .where(
             or_(
                 League.fantrax_league_id.is_(None),
@@ -246,12 +259,13 @@ def require_safe_demo_target(session: Session, *, cohort_game_ids: set[str]) -> 
             )
         )
         .limit(1)
-    )
+    ).first()
     if foreign_league is not None:
+        league_id, fantrax_league_id = foreign_league
         raise DemoSeedRefused(
-            f"this database already holds league {foreign_league!r}, which this seed did not "
-            "create. Seeding writes globally scoped nba_games/team_schedule rows and registers "
-            f"the season-scoped {SEASON} schedule cohort for every consumer. Point "
+            f"this database already holds league {league_id} ({fantrax_league_id!r}), which this "
+            "seed did not create. Seeding writes globally scoped nba_games/team_schedule rows and "
+            f"registers the season-scoped {SEASON} schedule cohort for every consumer. Point "
             "--database-url at a throwaway database instead."
         )
     foreign_game = session.scalar(
@@ -390,11 +404,18 @@ def seed_schedule_grid(
 ) -> SeedResult:
     """Bring one database to the exact state the schedule grid requires.
 
-    Order is load-bearing three times over. Parsing happens before any write so
-    the target check can refuse before a row is touched; the deadline calendar
-    cites the current schedule refresh and settings snapshot by version, so both
-    must exist first; and the scoring-period projection then cites the activated
-    calendar.
+    Order is load-bearing four times over. Parsing happens before any write so
+    the target check can refuse before a row is touched. **The league row and
+    its settings-scope lock are taken before ``import_schedule``**, because
+    ``import_schedule`` takes the ``nba-schedule`` scope and
+    ``import_league_settings`` takes league-settings — composing them in the
+    obvious order would acquire the two in the exact inverse of the order the
+    rest of the codebase uses, and would deadlock a concurrent read of the
+    endpoint on PostgreSQL. That the seed is developer tooling is not an
+    exemption: it writes through the same locks, and the documented workflow is
+    to re-seed the very database being served. Then the deadline calendar cites
+    the current schedule refresh and settings snapshot by version, so both must
+    exist first; and the scoring-period projection cites the activated calendar.
     """
 
     recorded = parse_schedule(load_fixture(fixtures_dir, SCHEDULE_FIXTURE), season=SEASON)
@@ -408,10 +429,12 @@ def seed_schedule_grid(
         cohort_game_ids={record.game.nba_game_id for record in parsed.games},
     )
 
+    league = _league(session)
+    lock_league_settings_scope(session, league_id=league.id, season=SEASON)
+
     import_teams(session, parse_teams(load_fixture(fixtures_dir, TEAMS_FIXTURE)))
     import_schedule(session, parsed)
 
-    league = _league(session)
     game_dates = [record.game.game_date for record in parsed.games]
     periods = weekly_periods(min(game_dates), max(game_dates))
     document = settings_document(periods)
@@ -441,6 +464,48 @@ def seed_schedule_grid(
     )
 
 
+def redacted_url(database_url: str) -> str:
+    """A URL safe to print, including credentials carried in query parameters.
+
+    ``render_as_string(hide_password=True)`` masks ``URL.password`` and nothing
+    else. libpq accepts ``password`` and ``sslpassword`` as query arguments and
+    SQLAlchemy forwards them to the driver, so
+    ``postgresql+psycopg://alice@host/db?password=...`` is a working credential
+    that renders verbatim — into stdout, terminal scrollback and CI logs, which
+    is the sink this exists to protect.
+    """
+
+    url = make_url(database_url)
+    secret_keys = [key for key in url.query if "password" in key.lower()]
+    if secret_keys:
+        url = url.difference_update_query(secret_keys)
+        url = url.update_query_dict(dict.fromkeys(secret_keys, "***"))
+    return url.render_as_string(hide_password=True)
+
+
+def create_schema_only_on_a_fresh_database(database: Database) -> None:
+    """Build the schema, but only where there is none of ours to disturb.
+
+    ``require_safe_demo_target`` runs inside a session and is rolled back on
+    refusal — but DDL is not transactional in the same sense, and
+    ``create_all`` ran *before* it. Against an operator's real Alembic-built
+    database that is behind head, that added the missing model tables, the seed
+    then refused, and the next ``alembic upgrade head`` failed with "relation
+    already exists". The tool whose headline property is that it refuses to
+    touch a real database had already written to it.
+
+    So: if ``leagues`` exists, this database is not fresh and gets no DDL at
+    all. Whether the seed may proceed is then entirely
+    ``require_safe_demo_target``'s decision, and a genuinely half-built schema
+    surfaces as a plain missing-table error rather than being silently
+    completed.
+    """
+
+    if inspect(database.engine).has_table(League.__tablename__):
+        return
+    Base.metadata.create_all(database.engine)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -462,10 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         Settings(environment="development", database_url=args.database_url, _env_file=None)
     )
     try:
-        # Idempotent, and a no-op against a database Alembic already built.
-        # Migrations remain the production path; this only spares a developer
-        # one extra step on a throwaway file.
-        Base.metadata.create_all(database.engine)
+        create_schema_only_on_a_fresh_database(database)
         with database.session() as session:
             result = seed_schedule_grid(session, fixtures_dir=args.fixtures_dir)
     except DemoSeedRefused as exc:
@@ -477,20 +539,24 @@ def main(argv: list[str] | None = None) -> int:
     print(
         json.dumps(
             {
-                # Rendered with the password masked: the flag accepts any
-                # SQLAlchemy URL, and a PostgreSQL one carries a credential that
-                # would otherwise land in terminal scrollback and CI logs.
-                "database_url": make_url(args.database_url).render_as_string(hide_password=True),
+                # Masked: the flag accepts any SQLAlchemy URL, and a PostgreSQL
+                # one carries a credential — in the userinfo *or* the query
+                # string — that would otherwise land in terminal scrollback and
+                # CI logs.
+                "database_url": redacted_url(args.database_url),
                 "league_id": result.league_id,
                 "season": result.season,
                 "schedule_version": result.schedule_version,
-                # Reported next to the imported count on purpose. The registered
-                # completeness block describes the filtered document and says
-                # `source_game_count: 10`; the recorded source said 12 and named
-                # two unresolved games. Nothing else states that difference.
-                "as_recorded_source_game_count": result.as_recorded_source_game_count,
-                "dropped_game_ids": list(result.dropped_game_ids),
-                "resolved_game_count": result.resolved_game_count,
+                # Three counts of two different populations, named so they
+                # cannot be mistaken for each other. The API's
+                # `lineage.schedule.source_game_count` reports the *imported*
+                # number, not the recorded one — they differ by exactly the
+                # dropped games, and a reader debugging a discrepancy will reach
+                # for whichever number is printed on their terminal.
+                "games_recorded_in_fixture": result.as_recorded_source_game_count,
+                "games_dropped_unresolved": list(result.dropped_game_ids),
+                "games_imported_into_cohort": result.resolved_game_count,
+                "api_lineage_schedule_source_game_count": result.resolved_game_count,
                 "team_count": result.team_count,
                 "period_count": result.period_count,
                 "scheduled_team_games": result.scheduled_team_games,

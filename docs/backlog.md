@@ -2,11 +2,11 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**37 done - 1 blocked - 64 pending - 102 total**
+**37 done - 1 blocked - 65 pending - 103 total**
 
-(Counted from the status markers themselves, not carried forward: 102 `###`
-headings and 102 markers, 1:1. The previous line claimed 37 done / 63 pending
-against an actual 36 / 64, and that drift predates this entry.)
+(Counted from the status markers themselves, not carried forward: 103 `###`
+headings and 103 markers, 1:1. The line before this entry claimed 37 done / 63
+pending against an actual 36 / 64, and that drift predates this work.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -262,6 +262,21 @@ blowout calibration alone does not validate its magnitude; it belongs to
 - **Depends on:** `schedule-ingest`
 
 Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-trip length and structure. Direct input to the availability model.
+
+### `error-code-observability` - Logging the error code, not just the status
+
+- [ ] **pending**
+- **Depends on:** `backend-skeleton`
+
+`api/middleware.py` logs `status_code` and `app.py`'s HTTP exception handler
+logs nothing, so every typed refusal reads identically in the log. The schedule
+grid made this concrete: four of its five refusals are `409`, and
+`schedule_grid_not_current` and `schedule_grid_incomplete_evidence` demand
+different operator actions — re-import versus a refresh that can never populate
+the contract — yet an operator reading logs cannot tell them apart. Log the
+`ErrorResponse.error` code alongside the status. App-wide and pre-existing;
+surfaced here because this is the first route whose codes carry distinct
+operator actions.
 
 ### `schedule-grid-early` - Exposing the current raw schedule grid
 
