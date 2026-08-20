@@ -6261,14 +6261,16 @@ deadline calendar, and league-settings snapshot) plus the complete deterministic
 `period_number` x active `team_id` matrix of raw `games` counts, including
 explicit zeroes. Before returning rows, the route requires the current schedule
 refresh summary to prove that every source game is resolved into exactly two
-team-schedule rows and that no Cup assignment remains unresolved; that evidence
-is exposed in the schedule lineage on success. The route adds no schedule
-arithmetic, source work, or decision logic. It maps missing, malformed, stale,
-mismatched, unknown, unresolved, and empty current evidence to typed 404/409
-errors in the existing request-id envelope rather than returning a historical
-default, guessed period, partial matrix, or success-shaped empty payload. Added
-the canonical `schedule-grid-early` backlog item with
-`scoring-period-projection` as its dependency.
+team-schedule rows, that the returned grid contains at least one counted team
+game without exceeding the refresh's team-row count, and that no Cup assignment
+remains unresolved; that evidence is exposed in the schedule lineage on success.
+The route adds no schedule arithmetic, source work, or decision logic. It maps
+missing, malformed, stale, mismatched, unknown, unresolved, wholly zero, and
+empty current evidence to typed 404/409 errors in the existing request-id
+envelope rather than returning a historical default, guessed period, partial
+matrix, or success-shaped empty payload. Added the canonical
+`schedule-grid-early` backlog item with `scoring-period-projection` as its
+dependency.
 
 **Now true:** A frontend can read the current grid from one stable endpoint and
 prove its cohort and source completeness from the response without independently
@@ -6276,13 +6278,15 @@ selecting historical settings, calendars, or refresh rows. Focused tests cover
 loopback rejection and acceptance of an actual loopback proxy peer, exact
 response shape and lineage, deterministic ordering, a complete explicit-zero
 matrix, missing/malformed schedule-completeness evidence, unresolved Cup
-assignments, missing settings/calendar evidence, unknown period projection,
-stale NBA schedule lineage, stale settings lineage, mismatched materialized
-periods, empty-result refusal, typed OpenAPI error schemas, and no committed
-write-on-read from SQLite lock reservations. The final rebased local Code gate
-passes: Ruff and format checks, strict mypy, 993 tests with 18 live-smoke tests
-deselected, SQLite upgrade/check/downgrade through `0015` with no drift, and the
-tracked-file secret scan.
+assignments, empty source evidence, summary-claimed rows with a wholly zero grid,
+missing settings/calendar evidence, unknown period projection, stale NBA
+schedule lineage, stale settings lineage, mismatched materialized periods,
+unknown leagues, empty-result refusal, typed OpenAPI error schemas, stable
+response identity after lock release, and no committed write-on-read from
+SQLite lock reservations. The final rebased local Code gate passes: Ruff and
+format checks, strict mypy, 996 tests with 18 live-smoke tests deselected,
+SQLite upgrade/check/downgrade through `0015` with no drift, and the tracked-file
+secret scan.
 
 **Could not verify:** No local Docker or `TEST_DATABASE_URL` is available, so
 native Postgres execution remains for fresh CI. No authoritative current 2026-27

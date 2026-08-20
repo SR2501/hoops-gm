@@ -267,6 +267,13 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
         projection.lineage.schedule_refresh_id,
         projection.lineage.projection_refresh_id,
     ]
+    sentinel = datetime(2000, 1, 1, tzinfo=UTC)
+    with app.state.database.session() as session:
+        for refresh_id in refresh_ids:
+            refresh = session.get(RefreshRun, refresh_id)
+            assert refresh is not None
+            refresh.updated_at = sentinel
+
     with app.state.database.session() as session:
         before: dict[int, datetime] = {}
         for refresh_id in refresh_ids:
@@ -284,6 +291,7 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
             assert refresh is not None
             after[refresh_id] = refresh.updated_at
     assert after == before
+    assert set(after.values()) == {sentinel}
 
 
 def test_current_grid_rejects_non_loopback_callers(tmp_path: Path) -> None:
@@ -303,6 +311,15 @@ def test_current_grid_rejects_non_loopback_callers(tmp_path: Path) -> None:
 
     assert response.status_code == 403
     assert response.json()["error"] == "schedule_grid_local_only"
+
+
+def test_current_grid_returns_typed_not_found_for_unknown_leagues(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/v1/leagues/999999/schedule-grid/current")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "schedule_grid_league_not_found"
 
 
 def test_current_grid_accepts_a_loopback_proxy_peer_in_development(tmp_path: Path) -> None:
@@ -362,6 +379,46 @@ def test_current_grid_rejects_missing_settings_and_calendar(
 
     assert response.status_code == 409
     assert response.json()["error"] == "schedule_grid_not_current"
+    assert "counts" not in response.json()
+
+
+def test_current_grid_rejects_empty_source_evidence(
+    app: FastAPI,
+    client: TestClient,
+) -> None:
+    with app.state.database.session() as session:
+        league = _league(session)
+        league_id = league.id
+        _team(session, 1, "ONE")
+        _team(session, 2, "TWO")
+        _register_schedule(session)
+        _activate_current_periods(session, league)
+
+    response = client.get(f"/api/v1/leagues/{league_id}/schedule-grid/current")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "schedule_grid_incomplete_evidence"
+    assert "non-empty" in response.json()["detail"]
+    assert "counts" not in response.json()
+
+
+def test_current_grid_rejects_all_zero_grid_when_summary_claims_game_rows(
+    app: FastAPI,
+    client: TestClient,
+) -> None:
+    with app.state.database.session() as session:
+        league = _league(session)
+        league_id = league.id
+        _team(session, 1, "ONE")
+        _team(session, 2, "TWO")
+        _register_schedule(session, source_game_count=1, resolved_game_count=1)
+        _activate_current_periods(session, league)
+
+    response = client.get(f"/api/v1/leagues/{league_id}/schedule-grid/current")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "schedule_grid_incomplete_evidence"
+    assert "non-empty" in response.json()["detail"]
     assert "counts" not in response.json()
 
 

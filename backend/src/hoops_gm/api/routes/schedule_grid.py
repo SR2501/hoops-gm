@@ -72,6 +72,7 @@ def _schedule_completeness(
     session: Session,
     *,
     refresh_id: int,
+    counted_team_games: int,
 ) -> tuple[int, int, int, list[str]]:
     refresh = session.get(RefreshRun, refresh_id)
     if refresh is None:
@@ -140,6 +141,18 @@ def _schedule_completeness(
             f"schedule refresh {refresh_id} does not describe one resolved two-team row pair "
             "for every source game",
         )
+    if source_game_count == 0 or counted_team_games == 0:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} cannot prove a non-empty game-count grid",
+        )
+    if counted_team_games > team_schedule_rows:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} has fewer persisted team rows than the grid counts",
+        )
     return (
         source_game_count,
         resolved_game_count,
@@ -172,12 +185,14 @@ def get_current_schedule_grid(
     league = session.get(League, league_id)
     if league is None:
         raise _error(404, "schedule_grid_league_not_found", f"no league {league_id}")
+    response_league_id = league.id
+    response_season = league.season
 
     try:
         rows = scheduled_game_counts(
             session,
-            league_id=league.id,
-            season=league.season,
+            league_id=response_league_id,
+            season=response_season,
         )
     except ScoringPeriodProjectionError as exc:
         raise _error(409, "schedule_grid_not_current", str(exc)) from exc
@@ -186,16 +201,21 @@ def get_current_schedule_grid(
         raise _error(
             409,
             "schedule_grid_incomplete",
-            f"current schedule grid for league {league.id} has no rows",
+            f"current schedule grid for league {response_league_id} has no rows",
         )
 
     first = rows[0]
+    counted_team_games = sum(row.games for row in rows)
     (
         source_game_count,
         resolved_game_count,
         team_schedule_rows,
         unresolved_game_ids,
-    ) = _schedule_completeness(session, refresh_id=first.schedule_refresh_id)
+    ) = _schedule_completeness(
+        session,
+        refresh_id=first.schedule_refresh_id,
+        counted_team_games=counted_team_games,
+    )
 
     # The strict query reserves lineage scopes with transaction locks. This API
     # only returns copied dataclass values, so release those locks without
@@ -203,8 +223,8 @@ def get_current_schedule_grid(
     session.rollback()
 
     return ScheduleGridResponse(
-        league_id=league.id,
-        season=league.season,
+        league_id=response_league_id,
+        season=response_season,
         lineage=ScheduleGridLineage(
             schedule=ScheduleRefreshLineage(
                 refresh_id=first.schedule_refresh_id,
