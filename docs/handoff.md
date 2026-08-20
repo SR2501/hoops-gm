@@ -7430,3 +7430,871 @@ by present-day code; it needs a synthetic example of the mistake.**
 Ruff, format, strict mypy (134 files), 1,106 offline tests, secret scan 281
 files — all green (`cd backend && ruff check . && ruff format --check . &&
 mypy && pytest && python ../scripts/check_no_secrets.py`).
+## 2026-08-20 — data-engineer — Corrected representative injury cohort
+
+**Changed:** Regenerated the representative historical injury cohort from
+scratch against live NBA sources on the PR #37-corrected parser, after PR #37
+invalidated the 2026-08-19 artifact published by PR #30. Nothing was carried
+forward: every count, fingerprint, join and exclusion below was derived here.
+
+The defect's mechanism, stated so it can be disproven cheaply and verified on
+the exact 2025-26 `LeagueGameFinder` payload rather than inferred: both team
+rows of games `0022501229` and `0022501230` carry one identical `MATCHUP`
+string (`'NYK @ ORL'` and `'SAS @ OKC'`), where an ordinary game's rows are
+reciprocal (`0022500364`: `'SAC @ IND'` / `'IND vs. SAC'`). The old parser
+derived a row's side from the separator alone, so both rows resolved to the
+same side, the game never acquired a home team, and it was dropped. **The rows
+were always both present** — I initially told the coordinator the upstream had
+"healed" because the row histogram was 2-per-game, and that was wrong. Row
+cardinality was never the symptom; the parser fix is entirely load-bearing.
+
+Those two games are the *only* games played on 2025-12-13, so the omission cost
+a whole game date and an entire day of injury-report candidates that was
+therefore never swept.
+
+The operational sequence, run from `backend/` with `PYTHONPATH=./src` and
+`DATABASE_URL` pointing at a gitignored SQLite file:
+
+```powershell
+python -m alembic upgrade head
+python -m hoops_gm.ingest.backfill nba-identity --season 2025-26
+python -m hoops_gm.ingest.backfill season 2025-26 --with-participation `
+  --start 2025-12-08 --end 2026-01-04
+python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 120
+python -m hoops_gm.ingest.injury_report.backfill run 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 120
+python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 `
+  --start 2025-12-08 --end 2026-01-04
+python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 `
+  --out ../docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json
+```
+
+Step two is new. The NBA identity bootstrap was previously an undocumented
+interactive snippet, which meant the first step of regenerating a cohort was
+the one step no committed command described. It reproduced PR #30's 30 teams
+and 5,206 NBA-anchored players exactly.
+
+The manifest generator is also new, and it exists because PR #30's manifest was
+hand-assembled from ad-hoc queries. That made every number in it an assertion
+rather than a reproduction — which is precisely why a wrong scope survived two
+independent reviews. It reads no clock and generates no identifiers, so it is a
+pure function of persisted state.
+
+**Now true:** The corrected cohort is 173 games across 26 game dates, all with
+tip-offs, including `0022501229` (20 logs) and `0022501230` (19 logs) — 39
+player logs, exactly as PR #37 predicted. Season-wide production is now 1,230
+games and 26,651 box-score rows with **zero** skips, against 1,225 / 26,549 +
+102 skipped before; the 102 previously-skipped rows were exactly the logs of
+the five dropped games.
+
+Reconciled corrected figures, against the invalidated ones: candidates
+89 -> **91**, distinct mastheads 84 -> **86**, trusted entries in scope
+9,082 -> **9,225**, entries resolved to a player id 8,190 -> **8,306**,
+`NOT_YET_SUBMITTED` 783 -> **806**, listed-status 8,299 -> **8,419**, canonical
+player-games 1,934 -> **1,948**, joined participation outcomes 1,906 ->
+**1,918**. All 91 candidates completed with zero 403, 404 or contract failures;
+zero games were legacy-excluded or left with unresolved evidence. Cohort
+fingerprints: canonical observations
+`80b3e5637dbe8c84c997e60d2dcf020a8828e0b6e1804b6678213987c618f0b1`, joined
+outcomes `3227730fe6d07866aca81f4bc31efbbd953d6cab0ddcdb6350375fb949c78b44`,
+game-identity set
+`43afabfc080d35784b94100481477183b64e6d20ee63a27d58aca4b1f4ab8fee`.
+
+The cohort now refuses to publish unless **four** independent views of the
+window name exactly the same games: `LeagueGameFinder`, `PlayerGameLogs`
+windowed by its own `GAME_DATE`, `ScheduleLeagueV2` windowed by
+`gameDateTimeEst` reconciled against its UTC sibling, and persisted
+`nba_games`. All four agree at 173. A missing view is an exit-1 failure, not a
+smaller set of agreeing witnesses: an absent witness does not corroborate. A
+disagreement prints the offending game ids, never a count — the count is what
+let the first defect through.
+
+**A distribution changed, not just counts, and `quant` must know.** Maximum
+canonical lead time moves 540 -> 1,650 minutes. Traced to a single genuine
+observation: `Minix, Riley`, listed OUT on the 2025-12-12 17:30 ET report and
+never re-listed before `0022501230` tipped at 21:00 ET the following day, so
+his latest pre-tipoff row sits 27.5 hours out. Not a join defect — but any
+lead-time stratification built on the old 9-hour maximum is wrong.
+
+Two resolved observations now have no participation row (was one) and stay
+unknown under R35. Position evidence is unchanged in shape: 167 of 363 resolved
+players carry a source-observed G/F/C label (C 43, F 76, G 76), 196 remain
+position-unknown rather than inferred.
+
+Adapter gate: three new recorded fixtures hold whole real rows for six named
+games — both window boundaries, one date either side, and both 2025-12-13
+games — across `LeagueGameFinder`, `PlayerGameLogs` and `ScheduleLeagueV2`.
+Boundary games are in there on purpose: a windowing bug is invisible in a
+fixture whose every game sits comfortably inside the window. Fourteen offline
+contract tests pin the three extractors, the disagreement reporting, and the
+mechanism itself; two live smoke tests assert the four-view agreement and the
+survival of the two recovered games, failing loudly with named ids. Throttling,
+retry, caching and failure behaviour for the new consumer are documented in
+`docs/adapters/nba-stats.md`.
+
+Reproducibility is proven rather than claimed: two consecutive generations over
+the same state produced SHA-256
+`b18c18636112a3207dd9a9947299a15bdc5a053a24df0915facab8e7a48b79da` both times.
+Source fingerprints hash CRLF-normalised bytes; verified equal to
+`git cat-file blob HEAD:backend/src/hoops_gm/db/lineage.py | sha256`
+(`6073bc02…`), so they are invariant across checkout newline configuration —
+the defect PR #30 had to correct after publication. A committed test fails if
+the manifest fingerprints code that has since changed, because a fingerprint
+nobody checks is a comment.
+
+Also corrected: `docs/governance/risks.md` had **two rows both numbered R46**
+(bridge durable-persistence, and the `MATCHUP` reciprocity risk). Every future
+reference to "R46" was ambiguous. The `MATCHUP` row is renumbered R48; nothing
+outside that file referenced either.
+
+Local gates on the exact head: Ruff lint, Ruff format, strict mypy over 132
+files, and the full offline backend suite green.
+
+**Could not verify:** No native PostgreSQL locally — no Docker, `TEST_DATABASE_URL`
+unset — so PostgreSQL CI on the exact pushed head is required and is not claimed
+here. The independent exact-head data/evidence, code and privacy reviews had not
+run when this was written.
+
+The reconciliation proves the four views *agree*; it cannot prove they are
+jointly right. All four descend from NBA-operated infrastructure, so a
+league-side error upstream of all of them would be invisible to this check, and
+no non-NBA independent schedule source was consulted.
+
+I did not re-derive the 2024-25 season's equivalent cohort or check whether any
+other committed artifact was built on the 1,225-game scope; `quant`'s
+reliability-metrics model card already records a 2026-08-20 regeneration from
+complete 1,230-game cohorts, but I did not verify that claim myself.
+
+I could not verify why the 2025-12-13 game-day candidate behaves differently
+from other dates' — I observed 91 candidates and 86 mastheads without
+attributing each recovered masthead to its date.
+
+The two R35-silent observations cannot be classified without authoritative
+historical roster evidence. Blank source positions stay unknown. No DNP reason
+was inferred, no conversion rate, threshold, probability or calibration claim
+was computed, no paid source or Fantrax access was used, and no owner-only
+decision was made.
+
+**Next:** Independent exact-head data-engineering/evidence, code and privacy
+reviews; then one unmerged PR with native PostgreSQL CI required. Only after it
+merges may `quant` resume `injury-status-conversion` from this cohort — under
+the Model gate, preserving the unresolved identities, the two R35 unknowns, the
+blank positions and the new long lead-time tail as evidence rather than as
+outcomes.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review remediation
+
+**Changed:** Independent exact-head reviews of `6c5f085` found four issues in
+the regenerated cohort. The most important one invalidates a claim the *previous*
+cohort also made, so it is recorded here rather than quietly fixed.
+
+**Position evidence was a starting-lineup artifact, and is withdrawn.**
+`BoxScoreTraditionalV3` emits a non-empty `position` for exactly five players per
+team per game — the starters — always in the sequence `F,F,C,G,G`. Derived over
+all 346 team-games in the window: `labelled_players_per_team` is `{5: 346}` and
+`distinct_label_sequences` is `{"F,F,C,G,G": 346}`. So the field denotes a lineup
+slot, not a player attribute. A distribution over it is forced to roughly
+2F:2G:1C for any cohort, which is exactly the 76:76:43 both the invalidated
+manifest and my regeneration reported, and it can no more distinguish a diverse
+cohort from a skewed one than counting the number of players on a court can.
+
+Worse for this cohort specifically: an injury cohort's most central players are
+the ones least likely to have started, so "no label" was systematically the
+injured population. Reporting 196 players as "position-unknown rather than
+inferred" read a knowable fact — did not start — as missing evidence, and did so
+in the direction that flatters the cohort.
+
+Nothing about parsing the field was wrong. It is well-formed, type-correct and
+non-null, and it lies about what it denotes — the AGENTS.md rule that validation
+of form cannot catch errors of meaning, in the same family as `gameEt`. The
+manifest now reports the source behaviour with
+`positional_diversity_established: false`, and a contract test fails if the
+endpoint ever starts labelling every player.
+
+**Positional representativeness of this cohort is therefore not established.**
+The independent review that accepted the 2026-08-19 cohort listed position
+diversity among the evidence it reproduced; it reproduced the arithmetic
+correctly and the arithmetic was over the wrong thing.
+
+Three further fixes:
+
+- Four views that all found *zero* games agreed perfectly and witnessed nothing,
+  and the CLI published over them with exit 0. A mistyped window or a raw store
+  predating the requested range would have produced a manifest asserting
+  four-source agreement and `sha256_sorted_game_ids` equal to the digest of the
+  empty string. `witnessed` is now a separate property from `agreed`, checked
+  separately, with a test for the all-empty case.
+- `_position_evidence` silently skipped a game whose `BoxScoreTraditionalV3`
+  capture was absent. The raw store is prunable, so a pruned capture would have
+  shrunk a denominator invisibly while the manifest still claimed to be a pure
+  function of persisted state. Missing captures are now counted and named.
+- The `--season-type playoffs` option could never succeed: `parse_schedule`
+  filters to `002`-prefixed ids, so `ScheduleLeagueV2` cannot witness a playoff
+  game at all, and four independent views are unassemblable. Removed as a choice
+  rather than left to parse and then fail.
+
+Also removed nine untracked scratch files the reviewing agents left in the
+worktree (`backend/_rev*.py`), flagged by the privacy review because they were
+untracked *and* un-ignored and would have been swept into a `git add -A`.
+
+**Now true:** The privacy review found no secrets, credentials, Fantrax data or
+personal identifiers in any committed artifact, and confirmed `_capture_summary`
+is structurally independent of the raw store's parameter redaction rather than
+merely relying on it. It confirmed the secret scanner covers all four new JSON
+artifacts, and that `.gitignore` excludes the operational directories through
+generic directory patterns rather than path-specific accidents.
+
+The regenerated manifest is
+`260686d0f949c671057ee5d81aec0fd0c701f3f75d1748eeccfaab62202d0557`, reproduced
+byte-for-byte across two consecutive runs. Cohort scope, counts, joins and
+cross-source reconciliation are unchanged by this remediation — only the
+position section and the guards changed.
+
+**Could not verify:** Whether any *other* consumer of NBA position labels exists
+elsewhere in the repository and inherited the same misreading. I searched the
+cohort path only.
+
+The code review noted that `content_sha256` joins parts with an unprefixed
+newline, which is ambiguous in principle; it judged no reachable input can
+contain a newline, and I did not add a structural guarantee that none ever will.
+
+Local gates pass on the remediated tree, but the exact head has changed, so the
+prior reviews no longer cover it — they must be repeated. Native PostgreSQL
+remains CI-only.
+
+**Next:** Re-review at the replacement exact head, then require PostgreSQL CI
+before the PR is treated as mergeable.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round two: independence, reasons, lead time
+
+**Changed:** The independent evidence review returned CHANGES REQUIRED on a
+second meaning-level finding, and it is the more embarrassing of the two because
+I had already reported the wrong version of it upstream.
+
+**Four agreeing views are not four independent witnesses.** My artifact said
+each view "derives from its own source". Two do not. `persisted_nba_games` is
+written from the same `LeagueGameFinder` capture through the same parser that
+the reconciliation then reads, so it cannot disagree except via a persistence
+defect. `player_game_logs` was already required equal to `LeagueGameFinder` at
+season scope by `_require_matching_season_game_ids` before any row was written,
+so its season-level agreement is guaranteed by construction; what it
+independently witnesses is the *windowing*, decided from a `GAME_DATE` column
+the schedule query never supplied. The genuinely independent witness is
+`ScheduleLeagueV2` alone.
+
+The honest count is **one independent witness plus corroboration**, which is a
+smaller claim than the one I published and than the one the coordinator repeated
+in the owner's inbox on my report. A witness that cannot disagree is not a
+witness. `VIEW_INDEPENDENCE` now states each relationship, the manifest
+publishes it, and a test asserts the map covers every required view and that the
+two dependent ones say so explicitly — a map a reader can check rather than a
+sentence they have to trust.
+
+Worth recording what *did* hold: the reviewer constructed the mislabelled-
+timezone failure and confirmed it is detectable, because the reconciliation
+compares sets rather than counts. An ET-windowed and a naive-UTC-windowed
+schedule set are **both size 173 and differ in membership**. A count check would
+have passed it.
+
+**Reason codes were missing entirely, and they change how the cohort reads.**
+My own brief says capture reason codes, not just box scores; I shipped a status
+summary with no reason summary, and so did the invalidated cohort. Now derived:
+Injury/Illness 1,324, **G League 559**, Not With Team 23, a literal `-` 14,
+Personal Reasons 10, Rest 9, Concussion Protocol 4, League Suspension 3,
+Coach's Decision 1, Reconditioning 1. **Roughly 29% of canonical observations
+are two-way G League assignments, not injuries.** Anyone treating the 1,508
+`out` rows as an injury population is wrong about a large fraction of them, and
+nothing in the previous manifest would have told them.
+
+**Lead time now reports both numbers with their sets named.** Canonical
+observations: min 15, max 1,650. Joined participation outcomes: min 15, max
+**540**. The 1,650 row is `Minix, Riley`, and it is one of the two observations
+with no participation row, so it is excluded from the 1,918 joined outcomes —
+the joined maximum is unchanged from the invalidated cohort. My earlier framing
+of the tail as a precondition for `quant` was right in direction and wrong in
+the detail that matters: it would have sent them looking for a tail absent from
+the data they use. Reporting only the corrected number would have been the
+opposite error, so both are published and each is labelled with the set it
+describes. The structural note is the more useful one: the canonical rule
+retains a stale day-ahead row for any player dropped from the game-day report,
+so long lead times correlate with "was removed from the report", which is not a
+neutral property of the sample.
+
+**The defect class has a name the upstream publishes.** There are exactly five
+`isNeutral: true` regular-season games in 2025-26 — Mexico City, Berlin, London,
+and the two Las Vegas NBA Cup semifinals (`gameLabel: "Emirates NBA Cup"`,
+`arenaName: "T-Mobile Arena"`) — and they are precisely the five with repeated
+canonical `MATCHUP` strings. Not anomalies we happened to find: a recurring
+annual class of about five games that will appear again in 2026-27. Per the
+architect's call, the set equality is asserted in the **live smoke** as a drift
+detector, explicitly labelled so a red is not misread as a parser defect, while
+the correctness invariant — a repeated-`MATCHUP` game resolving to the right
+home and away teams — is asserted offline against the recorded fixtures, checked
+against the independently recorded `ScheduleLeagueV2` orientation rather than a
+hand-typed id.
+
+Three smaller fixes: the observation fingerprint keyed unresolved rows on an
+empty anchor, which collided 11 times across 1,948 records, so a substitution
+between two unresolved players in the same game and report would not have
+changed it — unresolved rows now carry their raw reported name and team, the
+only identity they have. `_participation_join`'s docstring claimed the join was
+"proved through stable source identity"; it is not, it is a surrogate-key join
+whose anchors are required to exist and are rendered into the fingerprint, and
+the weaker true statement replaces the defence that reads well and is not there.
+The CLI refusal path carried `# pragma: no cover` and had no test at all, so the
+guard cited in three documents as the safety property was itself never run; it
+is now `refusal_reason`, with tests for all three refusals.
+
+**Now true:** Manifest digest
+`3b690f0546a75345a3058ca64d7900884d6924df88c7942bc67dff81d32d8b7c`, reproduced
+byte-for-byte. The full offline suite passes with warnings-as-errors, Ruff and
+strict mypy clean. Cohort scope, counts, joins and reconciliation results are
+unchanged by this round — what changed is what the artifact *claims* about them.
+
+Both prior reviews independently reproduced every headline count from the
+gitignored operational state rather than reading the manifest, including
+byte-for-byte manifest reproduction, the 102-row skip arithmetic broken down per
+affected game, and the four-view agreement re-derived from raw gzip with no
+`hoops_gm` imports. The privacy review found no secrets, no Fantrax data and no
+personal identifiers, and confirmed `_capture_summary` is structurally
+independent of the raw store's parameter redaction rather than merely relying
+on it.
+
+**Could not verify:** Whether any other consumer of NBA position labels exists
+outside the cohort path and inherited the same starters-only misreading. I
+searched the cohort path only.
+
+Whether `report_timestamp` is masthead-derived rather than URL-slot-derived. The
+reviewer flagged that `source_url` says `..._2025-12-12_05PM.pdf` while the
+stored timestamp is 17:30 ET; it is load-bearing for every lead-time number and
+neither of us read the parser to confirm it.
+
+`content_sha256` joins parts with an unprefixed newline, which is ambiguous in
+principle. No reachable input can contain a newline today; I did not add a
+structural guarantee that none ever will.
+
+The reconciliation proves the views agree and, for three of the four, that
+agreement is partly structural. It cannot prove they are jointly right: all four
+descend from NBA-operated infrastructure, and no non-NBA schedule source was
+consulted.
+
+Local PostgreSQL remains unavailable, so PostgreSQL CI on the exact pushed head
+is required and is not claimed here. The exact head has changed again, so both
+prior reviews no longer cover it.
+
+**Next:** Re-review at the replacement exact head; PostgreSQL CI green; then the
+PR is mergeable. `injury-status-conversion` stays paused until it merges, and
+must then treat the G League share, the two lead-time maxima, the unresolved
+identities and the two R35 unknowns as evidence rather than as outcomes.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round three: a wrong number I published, and an alarm wired to the wrong thing
+
+**Changed:** Round-two remediation introduced two defects of exactly the class
+this branch exists to correct. Both were mine, both were caught by independent
+review, and both are worth recording rather than quietly patching.
+
+**I published a wrong number in bold.** The round-two handoff said "Roughly 29%
+of canonical observations are two-way G League assignments, not injuries." The
+source splits that bucket and I threw the split away: of the 559 G League rows,
+**455 are `Two-Way` (23.4%) and 104 are `On Assignment` (5.3%)**. A two-way
+contract and a standard-contract player sent down are different facts. Labelling
+the combined 28.7% "two-way" overstates the two-way share by 5.3 points — 23%
+relative — and because `_reason_evidence` discarded the tail, **no downstream
+reader could have detected or corrected it from the artifact**. The distinction
+existed in the source text at zero cost and I dropped it in the same function
+whose docstring motivated the section by naming it.
+
+The manifest now publishes `stated_reason_subcategories` for the low-cardinality
+heads. `Injury/Illness` is deliberately excluded: its second field is free
+clinical text with hundreds of distinct values, and enumerating it would put a
+per-player medical narrative in a committed artifact for no analytic gain.
+
+The granularity immediately paid for itself twice. `observations_with_no_stated_reason`
+published `0` beside a visible `"-": 14` bucket, which invited a reader to
+conclude every observation carried a stated reason; that is now
+`observations_with_empty_reason_text: 0` and
+`observations_with_placeholder_reason: 14`, the latter being the report's own
+placeholder. And one row reads `Rest - Left Knee Injury Management` — the house
+rule about laundered reasons appearing in the data rather than in a warning.
+
+**The position-drift alarm could not detect drift.** Round two added a test
+whose docstring said "FAILS IF: the source starts labelling every player… must
+be noticed and acted on, not absorbed". It asserted over the **committed
+manifest** — a static JSON file — and never touched `BoxScoreTraditionalV3` at
+all. Regenerating that manifest needs gitignored operational state only the
+operator has, so if the endpoint changed tomorrow the assertion would stay green
+indefinitely, inside a file marked `adapter_contract` and therefore running in
+the Adapter gate. I shipped an alarm wired to its own recorded output while
+telling the reader it watched the source.
+
+That is the same failure as `refusal_reason` being `pragma: no cover`, and as
+the fingerprint nobody checks — both of which I had just fixed in the same
+round. Now: parametrised offline assertions against both committed
+`BoxScoreTraditionalV3` fixtures (exactly five labels per team-side, sequence
+`F,F,C,G,G`, and a guard that the fixture has a bench at all so the asymmetry
+is observable), plus a live-smoke counterpart that says plainly a red there is
+*good news* and means the withdrawal should be revisited rather than preserved.
+The manifest-reading test is retained and its docstring now says it is not a
+drift alarm and names where the alarm actually lives.
+
+**Now true:** Manifest digest
+`359ed874c3052618721405baca4bfbf21fcca660b5c2e51eebc8a14292b39348`, reproduced
+byte-for-byte. The staleness guard added in round two did its job unprompted
+during this round: it failed the moment the generator changed and the manifest
+had not been regenerated, which is the first time one of these checks caught me
+rather than the other way round.
+
+The reviewer independently re-measured the fingerprint fix: the old scheme had
+11 collisions and 1,937 distinct records of 1,948; the new `nba:`/`raw:` scheme
+has **0 collisions, 1,948 of 1,948**. It also re-derived the full reason
+vocabulary across all 9,376 raw entries and confirmed the `" - "` split
+fragments nothing — 11 clean categories, summing exactly.
+
+**Resolved from a previous "Could not verify".** I recorded that I had not
+confirmed whether `report_timestamp` is masthead-derived rather than
+URL-slot-derived, and flagged it as load-bearing for every lead-time number.
+The reviewer read the parser: `parser.py:145` sets the canonical timestamp from
+`_verify_masthead`, which returns the masthead's own Eastern instant converted
+to UTC, and every entry is stamped with it. The `05PM` in the filename is only a
+request hint, tolerated to ±45 minutes because the legacy URL encodes the hour
+while the report publishes at `:30`. **Every lead-time number is masthead-based.**
+The apparent slot/stamp discrepancy is documented intended behaviour, not drift.
+
+**Could not verify:** Whether the `Two-Way` / `On Assignment` distinction is
+stable across seasons, or whether the NBA has used other G League
+sub-categories outside this window. I observed only these two, in 28 days.
+
+Whether any *other* published aggregate in this repository collapses a source
+distinction the way the G League bucket did. I checked the reason vocabulary
+because review pointed at it; I did not audit the manifest's other groupings for
+the same failure.
+
+The `Injury/Illness` exclusion is a judgement call about committing clinical
+text, not a measurement. If `quant` needs injury-type stratification, that is a
+deliberate decision to publish more, and it should be made explicitly rather
+than by widening this function.
+
+Local PostgreSQL remains unavailable; PostgreSQL CI on the exact pushed head is
+required and is not claimed here.
+
+**Next:** Re-review at the replacement exact head. The evidence and privacy
+re-reviews for round two had not returned when this was written.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round four: closing the last gaps
+
+**Changed:** The evidence re-review returned two blocking items and five smaller
+ones; the privacy re-review returned no security findings and one low-severity
+artifact accuracy item. All are addressed.
+
+**The only new parse of source text in the change had no test.** `git grep`
+found no occurrence of `reason_evidence` anywhere under `backend/tests/`. If the
+NBA changed its `" - "` separator to an en dash, every category key would become
+a whole reason line and the manifest would publish ten sentences as a
+vocabulary, with a green suite. Now seven tests, including the two-way /
+on-assignment distinction whose loss produced the wrong number in round three.
+
+The guard I reached for first **did not work, and that is worth recording**: I
+tried bounding category *length*, on the assumption that a whole reason line is
+longer than a category. It is not. The longest real category — "Return to
+Competition Reconditioning", 36 characters — is longer than the whole line
+"Injury/Illness - Left Ankle; Sprain" (35). The ranges overlap and the test
+failed against its own example. Cardinality discriminates instead, by an order
+of magnitude: a closed vocabulary of eleven categories against 253 distinct
+reason lines in this window. The bound is on the count, plus containment in the
+observed vocabulary, so a genuinely new NBA category also stops the build — that
+is news worth stopping for, not noise.
+
+**The retracted independence claim survived in four places the correction did
+not reach**, including `docs/governance/risks.md` R48, which is the durable
+governance record a future reader consults about this exact defect class, and
+the module docstring of the very test file whose last class disproves it. Both
+corrected, along with the `views` field comment and the fixture recorder's
+docstring. Retracting a claim in the places you happen to be editing is not
+retracting it.
+
+**Tip-off instants are now reconciled too.** Every lead time, and the pre-tipoff
+selection that defines a canonical observation at all, rests on
+`nba_games.tipoff_utc` — taken from `BoxScoreSummaryV3` alone. The
+reconciliation checked four views of *which games exist* and never checked *when
+they started*, though `ScheduleLeagueV2`'s `gameDateTimeUTC` was already parsed
+a few lines away. All **173 in-window tip-offs agree exactly, zero
+disagreements**, so there is no defect — but nothing would have noticed if that
+stopped being true, and a silent shift moves every lead time and can flip a row
+across the pre-tipoff boundary.
+
+**The fixture-reordering disclosure was described as committed and was not.** I
+wrote it into the recorder's note string and reported it as flowing into
+`tests/fixtures/manifest.json`, but materialising it requires re-running the
+recorder against the live source, which I had not done. The committed artifact
+still said only "No value edited". Caught independently by both reviewers, one
+of whom noted they had initially seen the new sentence in the *working tree* and
+only found the gap by reading the committed blob. Recorder re-run; the note is
+now in the artifact.
+
+Re-running it surfaced a small upstream finding worth keeping:
+**`LeagueGameFinder`'s row order is not stable across requests.** Two captures
+minutes apart returned the same twelve rows in a different order — verified as
+an identical multiset with identical headers and parameters. The parser is
+order-independent and a contract test already reverses the row set, so there is
+no impact, but a byte diff between re-recordings of that fixture is expected and
+is not evidence the payload changed. Now stated in the fixture's own note so the
+next person does not investigate it as drift.
+
+Two smaller fixes: the live-smoke drift detector grouped on
+`len(strings) == 1`, which also matches a game with a *single* row, so a
+truncated payload would have been reported as matchup drift rather than as
+truncation — now `len(rows) == 2 and len(set(strings)) == 1`. And the three
+cohort fixtures shared one `note` variable, so a LeagueGameFinder-specific
+sentence about row regrouping was about to be written onto the PlayerGameLogs
+and ScheduleLeagueV2 entries as well; each now carries its own.
+
+**The backlog checkbox is now honest about its own criterion.** The item
+requires the cohort be diverse across "multiple teams, positions, report
+statuses, and a genuine calendar span". Positional composition cannot be
+established from any source this project ingests, so the criterion is explicitly
+**waived with cause** in the entry rather than silently satisfied by a checked
+box. Team, date, status and stated-reason diversity are established.
+
+**Now true:** Manifest digest
+`3dd6e6359187dd86fd101f4cec419dda263b78c273ca4ee2a2f7479d2f0314e8`, reproduced
+byte-for-byte. Ruff, Ruff format, strict mypy over 132 files and the full
+offline suite with warnings-as-errors all pass.
+
+The reviewers independently reproduced, from the gitignored operational state
+rather than from the manifest: byte-for-byte manifest identity; all five source
+fingerprints against `git cat-file blob`; all three artifact hashes; the full
+reason vocabulary across 268 distinct raw values reducing to eleven heads with
+zero unexpected ones; the old fingerprint scheme's 11 collisions and the new
+scheme's zero; both lead-time distributions and the identity of both unjoined
+rows; the 171-shared-game status delta against the invalidated manifest; the
+single-report-timestamp 2025-12-12 claim; the five-game `isNeutral` set with
+arenas; and 173/173 tip-off agreement. One reviewer independently confirmed the
+CI failure at `6c5f085` from the job log rather than taking my explanation.
+
+**Resolved from previous "Could not verify":** PostgreSQL CI is **green at
+`0489f19`**, so the standing caution that it was unclaimed is now understated
+rather than overstated for that head. It must still be green at the final head.
+
+**Could not verify:** Whether the `Two-Way` / `On Assignment` split, or the
+eleven-category vocabulary, is stable across seasons. Both are properties of one
+28-day window.
+
+Whether any other published aggregate in this repository collapses a source
+distinction the way the G League bucket did. Review pointed at the reason
+vocabulary specifically; I did not audit the manifest's other groupings for the
+same failure, and the fact that this one was found by review rather than by me
+is not evidence the others are clean.
+
+`Concussion Protocol` appears both as a standalone category (4) and inside
+`Injury/Illness - Concussion Protocol; -`, so the standalone count undercounts
+concussion-related rows. That is what an un-normalised leading category means
+and the caveat says so, but a consumer could still read the 4 as a total.
+
+One `reason_raw` value carries non-ASCII mojibake in its detail portion. The
+head is unaffected and the manifest renders ASCII-safe, so nothing published is
+wrong, but the underlying capture has an encoding artifact I did not chase.
+
+The tip-off reconciliation compares two NBA endpoints. As with game identity, it
+cannot detect an error upstream of both.
+
+**Next:** Re-review at the replacement exact head, PostgreSQL CI green there, and
+then the PR is mergeable. I am not merging it.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round five, and a governance lesson worth more than the PR
+
+**A cross-cutting lesson first, because it generalises past this change.**
+
+**A correction lands where the author is looking.** I retracted the claim that
+the cohort's four reconciliation views were four independent sources. I
+corrected it in the module docstring, the manifest, the adapter doc and the
+handoff — every file I happened to have open. It survived in four more places,
+including `docs/governance/risks.md` R48, which is *the durable record a future
+reader consults about this exact defect class*, and the module docstring of the
+test file whose own final class disproves it. The strongest-looking statement of
+the wrong claim was left sitting in the most authoritative location.
+
+Round five found five more residual instances of the same sentence, one of them
+published verbatim into the manifest. A retraction is not a retraction until you
+search for the claim rather than edit around it. This has no gate and will not
+get one; it is a habit, and it is worth writing down because two independent
+reviewers and a coordinator all separately propagated the wrong version before
+anyone checked.
+
+**Changed:** The fourth-round evidence review returned two blocking items, both
+guard-level, and both my own failure mode a third time.
+
+**The tip-off reconciliation had no test, blocked nothing, and reintroduced a
+defect I had just fixed 450 lines above it.** It returned a bare `agreed`
+boolean, so 173 games whose instants were never compared reported
+`agreed: true` — the identical agreed-versus-witnessed confusion that
+`GameIdentityReconciliation` had been split into two properties to prevent, in
+the same commit that documented why. A disagreement about *when every game
+started* published with exit 0. Now a `TipoffReconciliation` dataclass with the
+same `agreed`/`witnessed` split, enforced through `refusal_reason` — a
+disagreement, an uncheckable state, or zero compared instants each refuse
+publication — with tests for all four branches and the manifest self-assertion
+that was missing.
+
+**The reason-vocabulary guard was wired to a committed file while telling the
+reader it watched the NBA.** Its failure messages said "the `' - '` separator has
+probably changed" and "the NBA added a category"; neither could cause a red,
+because the only place the bound was applied read a static artifact regenerable
+solely from gitignored state I possess. This is the third instance of the same
+shape in three rounds — after the position alarm and after `refusal_reason` —
+and I did not recognise it while writing it.
+
+The fix is a parse of the committed injury-report PDF plus a live-smoke
+assertion on freshly fetched bytes. **It found something on its first run**: the
+2025-11-01 report contains `Team Suspension`, a category that appears nowhere in
+the 28-day cohort window. My "closed vocabulary of eleven categories" was the
+vocabulary of one window, not of the source, and I would have gone on saying so.
+That is the alarm working, and it is also a caution now recorded in the adapter
+doc: treat any category list derived from a bounded window as a lower bound.
+
+**Now true:** Manifest digest
+`b2d1124c977b418ddf5ef4bd545dd5f2ced9365749cddc3a9a70c0a177f7f996`, reproduced
+byte-for-byte. Ruff, Ruff format, strict mypy over 132 files and the full
+offline suite with warnings-as-errors all pass.
+
+Five smaller review findings also fixed. Sub-category counts now sum to their
+category — `Rest` published one detail against a category of 9 and
+`Not With Team` an empty object against 23, because bare rows with no detail
+were dropped rather than bucketed; the same
+collapse-a-distinction-the-artifact-cannot-expose shape the section was created
+to fix. `_LOW_CARDINALITY_REASON_HEADS` now *measures* low cardinality instead
+of asserting it, so a future season in which a head grows a free-text tail is
+summarised by count rather than dumping source prose into a committed file.
+Fixture `byte_size` was the Windows CRLF working-tree size and unreproducible
+anywhere else — the exact checkout-dependence PR #30 had to correct in the
+source fingerprints, found again here; it is now the canonical LF size, verified
+equal to `git cat-file -s`. Entries recorded before the fix keep their stale
+values rather than being silently rewritten, because correcting a size without
+re-reading the bytes would assert something nobody measured. And the schedule
+fixture's note omitted that games were filtered *within* each retained date.
+
+**The G League finding is promoted from a table to a warning**, at the
+coordinator's direction and correctly: 506 of the 1,508 canonical `out`
+observations carry a G League reason. An injury resolves on a medical timeline
+and is partly predictable from history; an assignment resolves on a roster
+decision, can reverse overnight, and says nothing about the player's body. ADR-002
+separates production from availability because conflating quantities with
+different mechanisms yields confident wrong numbers — conflating two
+*availability* mechanisms inside one status code is the same error one level
+down, and it will be absorbed as injury signal if it reads as a footnote.
+
+**A new backlog item, and it is bigger than this cohort.** The reason the
+"positions" criterion had to be waived is that **this project has no player
+position data at all**. `player-position-eligibility` is filed, owned by
+`data-engineer`, Adapter-gated, covering both NBA position and Fantrax position
+eligibility as distinct quantities — an NBA position is a fact about the player,
+Fantrax eligibility is a fact about the league's rules applied to that player,
+and only the second decides whether a lineup is legal. In a 9-category H2H
+league, eligibility governs roster construction and therefore the draft board.
+The cohort waiver is one downstream consequence of that gap, not its cause.
+
+**Could not verify:** The two live-smoke tests added across these rounds — the
+position drift alarm, the `isNeutral` drift detector, the corrected `MATCHUP`
+predicate and the reason-vocabulary alarm — **have never executed**. The
+live-smoke job is nightly-on-default-branch and shows `skipped` in CI on this
+branch. I executed the `MATCHUP` predicate offline against the real full-season
+payload and the reviewer independently confirmed it, but the rest is unrun code
+until merge.
+
+Whether the eleven-plus-one reason vocabulary is complete for the source. It was
+eleven until a test looked outside the window, and I have not swept the season.
+
+Whether the `Two-Way` / `On Assignment` split, or any of the sub-vocabularies,
+is stable across seasons. All are properties of one 28-day window.
+
+Whether any other published aggregate in this repository collapses a source
+distinction the way the G League bucket did. Three rounds of review found three
+instances of one failure shape in my own work; that is not evidence the rest of
+the repository is clean, and I did not audit it.
+
+The tip-off check's independence is operational rather than structural.
+`import_schedule` can also write `tipoff_utc` from `ScheduleLeagueV2` and has no
+production caller today, but nothing records the provenance of a persisted
+instant — so if that path ever acquires one, the check silently becomes a
+comparison of one endpoint against itself while still claiming two. Disclosed in
+the manifest's own method string rather than only here.
+
+`Concussion Protocol` appears both as a standalone category and inside
+`Injury/Illness - Concussion Protocol; -`, so the standalone count of 4
+undercounts concussion-related rows. That is what an un-normalised leading
+category means, and the caveat says so, but a reader could still take the 4 as a
+total.
+
+An earlier entry in this file quotes manifest digest `359ed874…` as "now true";
+no committed state ever had it. Rounds three and four landed in one commit and
+the digest moved before it was pushed. The narrative is chronologically honest;
+the present tense is not, and it is left standing rather than rewritten because
+this file is append-only.
+
+**Next:** Fifth-round independent review at the replacement exact head, then
+PostgreSQL CI green at that head specifically. I am not merging.
+
+---
+
+## 2026-08-20 — data-engineer — Round five review: APPROVE, and the last corrections
+
+**Changed:** The fifth-round independent evidence review returned **APPROVE** with
+no blocking findings, having independently reproduced byte-for-byte manifest
+identity, the reason vocabulary across all 87 retained raw PDF captures
+(9,535 parsed rows, 11 heads, union with the fixture's 7 = exactly the 12 in the
+constant), all four re-recorded fixture sizes against `git cat-file -s`, every
+sub-count sum, and **PostgreSQL CI green at the exact head**. Five non-blocking
+items are closed here rather than deferred.
+
+**A fourth reachable tip-off state existed and my assertion did not pin it.**
+Partial coverage — `compared > 0` with games absent — publishes legitimately,
+and `games_compared == scope.games_with_tipoff` holds in that state too, because
+both count games that *have* an instant. Now pinned by asserting
+`games_missing_tipoff == 0` and an empty `games_without_both_instants`. The
+review was right that this is disclosure rather than defect; it was also right
+that a self-assertion which cannot distinguish full from partial is not an
+assertion about coverage.
+
+**`tipoffs` was an optional parameter of `refusal_reason`, which is an omissible
+guard.** Nothing tested that `main` passed it, because `main` is
+`pragma: no cover`; only `build_cohort_evidence` requiring it keyword-only saved
+me. Now required, with a test that an identity failure is reported before a
+tip-off failure — ordering selects the message and never the outcome, but it
+should still be sane, because an instant comparison over a game set you do not
+agree on is not interpretable.
+
+**Two documented failure rows were missing, and the reviewer's ruling was
+sharper than my reading.** I argued the new behaviour matched the existing
+"Views disagree → Exit 1" row. Half right: the contradiction was gone, but that
+row promises the failure names *which view lacks which game ids*, and a tip-off
+disagreement prints two instants instead. Two of the three new refusals mapped
+to no row at all. `docs/adapters/nba-stats.md` now carries all three.
+
+**The 18 pre-existing fixture entries still carry Windows CRLF byte sizes**, and
+leaving them stale was upheld — rewriting a provenance figure without re-reading
+the bytes asserts a measurement nobody made. But the caveat lived only in a
+docstring, so a reader of the artifact saw 18 wrong numbers with no marker. Each
+entry recorded from now on carries `byte_size_basis: canonical_lf_bytes`;
+absence of that key is the marker.
+
+**The reason vocabulary exists in two files** because a live smoke must not
+import from a test module. An offline test now asserts the two copies are equal,
+since duplication that nothing checks is how two copies of a fact stop being the
+same fact.
+
+**The backlog item's dependency pointed the wrong way**, and the reviewer caught
+a real ordering problem: `player-position-eligibility` declared
+`Depends on: player-identity`, while `player-identity` is specified to match on
+"normalized name + team + **position**". With no position data in the project,
+that third field does not exist — so ordering position behind identity leaves
+the highest-risk foundational item permanently short of one of the three fields
+it was designed around. The NBA-position half now depends on nothing and should
+land first; only Fantrax eligibility, being per-player-per-league, needs the
+crosswalk.
+
+**Correcting my own round-five entry.** It says "the two live-smoke tests added
+across these rounds". There are **four** new live-smoke test functions —
+`test_every_independent_view_names_the_same_173_games`,
+`test_the_two_recovered_neutral_site_games_are_still_there`,
+`test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games`,
+`test_the_position_field_is_still_only_populated_for_starters` — plus a new
+assertion inside a fifth, existing one. In a paragraph whose entire point is
+that this code has never executed, the count should be right. The entry stands
+as written because this file is append-only; this is the correction.
+
+Also: the last unqualified "independent" in `test_live_smoke.py` now points at
+`VIEW_INDEPENDENCE`. It was true there — those three views really are fetched
+live and none comes from the ingest path — but it was the last bare use of a
+word this branch spent two rounds retracting, and a reader arriving mid-
+retraction should not have to work out which sense is meant.
+
+**Now true:** Manifest digest
+`f31a1d8722160f0ad4e5c2a4a4a569e7702664f5a554552beb6084b534fbc358`, reproduced
+byte-for-byte. Ruff, Ruff format, strict mypy over 132 files and the full
+offline suite with warnings-as-errors all pass.
+
+**Could not verify:** The four new live-smoke tests and the new reason-vocabulary
+assertion have still never executed anywhere. The live-smoke job is
+nightly-on-default-branch and shows `skipped` on this branch; it will first run
+after merge. The `MATCHUP` predicate was executed offline against the real
+full-season payload by both me and the reviewer, so that one is evidenced by
+other means; the other four are not.
+
+`Rest - Left Knee Injury Management` (n=1) is clinical text published under a
+head whose allowlist rationale is "do not commit clinical text". Two distinct
+values keeps it under the cap. The privacy review accepted it and no name is
+attached, but the stated rationale and the artifact disagree by one row, and I
+have left it rather than special-casing.
+
+The reason vocabulary is now attested by every byte corpus this repository
+holds — 87 raw captures plus the committed fixture — and by nothing beyond them.
+Season-stability of the vocabulary, and of the `Two-Way`/`On Assignment` split,
+remains unverified.
+
+**Next:** PostgreSQL CI green at this replacement head, then the coordinator
+merges. I am not merging.
+
+---
+
+## 2026-08-20 — data-engineer — Open item on merge: the first nightly run is the real test
+
+**This is the one thing to look at tomorrow morning.** Recorded as its own entry
+rather than inside a "could not verify" list, at the coordinator's direction,
+because an item buried in a disclosure paragraph is an item nobody actions.
+
+Four live-smoke tests added by this branch **have never executed anywhere**:
+
+- `test_every_independent_view_names_the_same_173_games`
+- `test_the_two_recovered_neutral_site_games_are_still_there`
+- `test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games`
+- `test_the_position_field_is_still_only_populated_for_starters`
+
+plus a new reason-vocabulary assertion inside the existing
+`test_a_known_historical_report_is_still_reachable_and_parses`.
+
+The live-smoke job is nightly-on-default-branch and shows `skipped` on this
+branch, so **the three alarms this PR is proudest of are, until merge, untested
+claims**. That is not an oversight to be fixed before merging — they cannot be
+exercised without merging — but it does mean the first nightly run after merge
+is their first real execution, and it should be read deliberately rather than
+glanced at.
+
+One exception: the corrected `MATCHUP` predicate was executed offline against
+the real full-season payload, by me and independently by the reviewer, so that
+one is evidenced by other means.
+
+**How to read a red one.** These are not all the same kind of test, and the
+right response differs:
+
+- `test_the_position_field_is_still_only_populated_for_starters` red is **good
+  news**. It means `BoxScoreTraditionalV3` started labelling more than the
+  starting five, real positional evidence became available, and
+  `position_evidence`'s withdrawal should be revisited rather than preserved.
+- `test_drift_detector_...neutral_site_games` red is a **drift signal about how
+  the NBA writes matchup strings**, not a parser defect. The parser resolves
+  both shapes and is covered offline.
+- The reason-vocabulary assertion red means either the NBA added a category —
+  record it, the way `Team Suspension` was recorded — or the `" - "` separator
+  changed, in which case the cohort manifest's reason breakdown is whole reason
+  lines masquerading as a vocabulary.
+- `test_every_independent_view_names_the_same_173_games` red is the serious one:
+  the cohort's denominator is wrong and every availability number derived from
+  it is suspect.
+
+**Could not verify:** That any of the above is what actually happens, which is
+the entire point of the entry.
+
+**Next:** Whoever reviews the first post-merge nightly run should append the
+outcome here, including "all green", because a silent pass is exactly how an
+alarm nobody reads becomes an alarm nobody notices is broken.

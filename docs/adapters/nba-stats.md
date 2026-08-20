@@ -203,6 +203,29 @@ games and exact game-ID equality with `PlayerGameLogs`. A loose “more than
 1,000” assertion previously accepted the 1,225-game cohort and could not detect
 this defect.
 
+### Cohort-window reconciliation (`cohort_evidence`)
+
+`hoops_gm.ingest.injury_report.cohort_evidence` adds one more consumer of this
+source, with the same throttle, retry and cache behaviour as every other — it
+uses the same `NbaStatsClient`, so no separate rate budget exists.
+
+| Concern | Behaviour |
+|---|---|
+| **Requests** | Zero on a normal regeneration: the three views are read from retained captures. Exactly one throttled request per view the store has never seen, and only with `--allow-fetch`. |
+| **Cache** | Reads whatever the raw store holds for each endpoint's exact parameter set. A cohort manifest is meant to describe the sweep that produced it, so a stale-but-retained capture is the correct input, not a defect. |
+| **A view is absent** | Exit 1, naming the missing views. Publishing a cohort over an absent witness is exactly the failure the reconciliation exists to prevent, so fewer agreeing views is never treated as agreement. |
+| **Views disagree** | Exit 1, printing which view lacks which game ids. Never a count — the count is what let the first defect survive review. |
+| **Tip-off instants disagree** | Exit 1, printing both instants for each disagreeing game. `BoxScoreSummaryV3` and `ScheduleLeagueV2` must agree on when a game started, because every lead time and the pre-tipoff rule that defines the dataset rest on it. |
+| **No `ScheduleLeagueV2` capture retained** | Exit 1. The tip-off comparison is not skipped when its witness is missing; an unverified instant is not published as a verified one. |
+| **Zero games, or zero tip-off instants, compared** | Exit 1. Views that all found nothing agree perfectly and witness nothing — `agreed` and `witnessed` are separate questions and both are checked. |
+| **Source down / garbage** | Only reachable under `--allow-fetch`, where the shared client's `SourceUnavailable` / `SourceContractError` behaviour above applies unchanged. |
+
+The manifest it writes reads no clock and generates no identifiers, so it is a
+pure function of the persisted database, the raw store and the operational
+report files: regenerating over the same state reproduces it byte for byte. A
+fresh live sweep necessarily does not, because capture timestamps record when
+requests were made.
+
 ---
 
 ## Backfill cost

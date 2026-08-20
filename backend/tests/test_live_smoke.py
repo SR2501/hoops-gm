@@ -43,6 +43,12 @@ from hoops_gm.ingest.injury_report import (
     parse_injury_report_pdf,
     report_url,
 )
+from hoops_gm.ingest.injury_report.cohort_evidence import (
+    GameIdentityReconciliation,
+    _league_game_finder_ids,
+    _player_game_log_ids,
+    _schedule_league_ids,
+)
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     parse_box_score_summary_v3,
@@ -74,12 +80,41 @@ pytestmark = pytest.mark.live_smoke
 #: Live calls bypass the cache entirely. A smoke test served from a capture is
 #: a contract test wearing a disguise, and would report the source as healthy
 #: long after it stopped answering.
-from datetime import UTC, datetime, timedelta  # noqa: E402
+from datetime import UTC, date, datetime, timedelta  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
 _EASTERN = ZoneInfo("America/New_York")
 _BBM_PRIVATE_CSV_ENV = "HOOPS_GM_BBM_PROJECTION_CSV"
+
+#: The representative historical injury cohort's window. Mirrors the committed
+#: manifest's scope, so a live drift in the window's game slate turns this red
+#: rather than leaving the manifest quietly stale.
+COHORT_SEASON = "2025-26"
+COHORT_START = date(2025, 12, 8)
+COHORT_END = date(2026, 1, 4)
+
+#: The closed vocabulary the injury report prints before its own " - "
+#: separator, observed across all 9,376 raw entries in the cohort window plus
+#: ``Team Suspension`` from the recorded 2025-11-01 report, which the cohort
+#: window does not contain. Kept here rather than imported from the offline test
+#: that also uses it, because a live smoke must not depend on a test module.
+KNOWN_REASON_CATEGORIES = frozenset(
+    {
+        "-",
+        "Coach's Decision",
+        "Concussion Protocol",
+        "G League",
+        "Injury/Illness",
+        "League Suspension",
+        "NOT YET SUBMITTED",
+        "Not With Team",
+        "Personal Reasons",
+        "Rest",
+        "Return to Competition Reconditioning",
+        "Team Suspension",
+    }
+)
 
 
 @pytest.fixture
@@ -459,6 +494,171 @@ class TestNbaStatsIsAlive:
             _default_endpoint_factory("BoxScoreSummaryV2", game_id=FIXTURE_MIDSEASON_GAME_ID)
 
 
+class TestTheCohortWindowStillReconcilesAcrossSources:
+    """The check that would have caught the invalidated cohort before it shipped.
+
+    Three live views of the same window, required to be equal. Each applies the
+    window using its own date field: ``LeagueGameFinder``'s ``GAME_DATE``,
+    ``PlayerGameLogs``' own ``GAME_DATE``, and ``ScheduleLeagueV2``'s Eastern
+    ``gameDateTimeEst`` reconciled against its UTC sibling. Three requests,
+    throttled at ~1 req/s by the client.
+
+    These three *are* independently fetched here, unlike the four-view set the
+    cohort manifest publishes — that one includes ``persisted_nba_games``, which
+    is the same ``LeagueGameFinder`` bytes through the same parser. See
+    ``VIEW_INDEPENDENCE`` in ``hoops_gm.ingest.injury_report.cohort_evidence``
+    before carrying the word "independent" between the two contexts.
+    """
+
+    def test_every_independent_view_names_the_same_173_games(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the cohort's game-identity set stopped being agreed upstream.
+
+        A disagreement here means the representative historical injury cohort's
+        denominator is wrong, which silently poisons every availability number
+        derived from it. The failure names the offending ids because the count
+        alone is what made the first defect survive review.
+        """
+        views = {
+            "league_game_finder": _league_game_finder_ids(
+                nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+            "player_game_logs": _player_game_log_ids(
+                nba.player_game_logs(season=COHORT_SEASON, max_age=NO_CACHE),
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+            "schedule_league_v2": _schedule_league_ids(
+                nba.schedule_league(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+        }
+        reconciliation = GameIdentityReconciliation(start=COHORT_START, end=COHORT_END, views=views)
+
+        assert reconciliation.agreed, (
+            "independent views of the cohort window disagree on which games exist: "
+            f"{reconciliation.disagreements()}"
+        )
+        assert len(reconciliation.union) == 173, (
+            f"the cohort window now holds {len(reconciliation.union)} games, not 173. "
+            "The committed cohort manifest's denominator is stale or the schedule moved."
+        )
+
+    def test_the_two_recovered_neutral_site_games_are_still_there(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: a repeated-canonical-``MATCHUP`` game disappears again.
+
+        These two are the only games played on 2025-12-13, so losing them costs
+        a whole game date, which is exactly how the invalidated cohort came to
+        cover 25 dates while believing it covered the window.
+        """
+        games = {
+            game.nba_game_id: game
+            for game in parse_league_game_finder(
+                nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+            )
+        }
+        for game_id in ("0022501229", "0022501230"):
+            assert game_id in games, f"{game_id} is absent from LeagueGameFinder again"
+            assert games[game_id].game_date == date(2025, 12, 13)
+
+    def test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """**A drift detector, not a correctness invariant. Read this before fixing it red.**
+
+        The five 2025-26 games whose two ``LeagueGameFinder`` rows repeat one
+        canonical ``MATCHUP`` string are exactly the five the published schedule
+        marks ``isNeutral: true`` — the two December NBA Cup knockouts in Las
+        Vegas plus the Mexico City, Berlin and London games. That turns the
+        defect class from "anomalies we happened to find" into one the upstream
+        itself names, and it recurs every season.
+
+        It couples two endpoints, so a red here does **not** mean the parser is
+        wrong. The NBA could start writing reciprocal strings for neutral-site
+        games, or repeat a ``MATCHUP`` for some unrelated reason, and the
+        relationship would break while every line of our code stayed correct.
+        The correctness invariant — that a repeated-``MATCHUP`` game still
+        resolves to the right home and away teams — is asserted offline against
+        recorded fixtures in ``test_adapter_contracts.py`` and
+        ``test_cohort_evidence.py``, where it can block a merge. This one lives
+        here precisely because it cannot.
+        """
+        payload = nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        headers = table["headers"]
+        game_id_at = headers.index("GAME_ID")
+        matchup_at = headers.index("MATCHUP")
+        by_game: dict[str, list[str]] = {}
+        for row in table["rowSet"]:
+            by_game.setdefault(str(row[game_id_at]), []).append(str(row[matchup_at]))
+        # Both conditions, not just the second. `len(set(strings)) == 1` alone
+        # also matches a game with a *single* row, so a truncated payload would
+        # be reported as matchup drift rather than as truncation. That cannot
+        # happen today -- the histogram is 2-per-game for all 1,230 and
+        # parse_league_game_finder rejects one-sided games loudly -- but the
+        # predicate should say what it means.
+        repeated = {
+            game_id
+            for game_id, strings in by_game.items()
+            if len(strings) == 2 and len(set(strings)) == 1
+        }
+
+        schedule = nba.schedule_league(season=COHORT_SEASON, max_age=NO_CACHE)
+        neutral = {
+            str(game["gameId"])
+            for entry in schedule["leagueSchedule"]["gameDates"]
+            for game in entry.get("games") or ()
+            if str(game.get("gameId", "")).startswith("002") and game.get("isNeutral")
+        }
+
+        assert repeated == neutral, (
+            "the repeated-canonical-MATCHUP class no longer coincides with the schedule's own "
+            f"isNeutral flag. repeated-only={sorted(repeated - neutral)}, "
+            f"neutral-only={sorted(neutral - repeated)}. This is a DRIFT signal about how the "
+            "NBA writes matchup strings, not a parser defect -- the parser resolves both shapes "
+            "and is covered offline. Investigate before assuming either set is wrong."
+        )
+
+    def test_the_position_field_is_still_only_populated_for_starters(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: ``BoxScoreTraditionalV3`` starts labelling every player.
+
+        The cohort manifest withdraws its positional-diversity claim on the
+        grounds that this field is a starting-lineup slot, not a player
+        attribute — exactly five labels per team, always ``F,F,C,G,G``. That
+        withdrawal is only correct while the source behaves this way.
+
+        A red here is **good news**: it means real positional evidence became
+        available, and `position_evidence` should be revisited rather than left
+        standing. It is in the live smoke rather than the Adapter gate because
+        the offline fixtures can only ever show what the source did when it was
+        recorded.
+        """
+        body = nba.box_score_traditional(FIXTURE_MIDSEASON_GAME_ID, max_age=NO_CACHE)[
+            "boxScoreTraditional"
+        ]
+
+        for side in ("homeTeam", "awayTeam"):
+            players = body[side]["players"]
+            non_blank = [
+                label for label in (str(p.get("position") or "").strip() for p in players) if label
+            ]
+            assert non_blank == ["F", "F", "C", "G", "G"], (
+                f"{side} of game {FIXTURE_MIDSEASON_GAME_ID} labels {len(non_blank)} of "
+                f"{len(players)} players as {non_blank}. The cohort manifest's withdrawal of "
+                "positional evidence assumes exactly the five starters are labelled; if that "
+                "changed, the withdrawal should be revisited, not preserved."
+            )
+
+
 # ==========================================================================
 # The crosswalk, end to end
 # ==========================================================================
@@ -549,6 +749,27 @@ class TestInjuryReportIsAlive:
             "Injury-Report_2025-12-01_01PM.pdf",
         )
         assert len(result.entries) > 0, "a real evening-before report had zero entries"
+
+        # The reason-vocabulary drift alarm, on live bytes. The cohort manifest
+        # publishes a category breakdown derived by splitting on the report's
+        # own " - " separator, and 559 of 1,948 canonical observations are
+        # G League rather than injuries -- a number a consumer will act on. If
+        # the NBA switched that separator to an en dash, every reason *line*
+        # would become its own "category" and the offline tests could not
+        # notice: the fixture holds old bytes and the manifest is a static
+        # artifact. This is the only check that sees tomorrow's payload.
+        heads = {
+            entry.reason_raw.strip().split(" - ", 1)[0].strip()
+            for entry in result.entries
+            if entry.reason_raw.strip()
+        }
+        assert heads <= KNOWN_REASON_CATEGORIES, (
+            f"unrecognised injury-report reason categories: "
+            f"{sorted(heads - KNOWN_REASON_CATEGORIES)}. Either the NBA added a category -- "
+            "real news, record it in docs/handoff.md -- or the ' - ' separator changed and the "
+            "cohort manifest's reason breakdown is now whole reason lines masquerading as a "
+            "vocabulary."
+        )
 
     def test_a_known_active_era_report_is_still_reachable_and_parses(
         self, injury_report: InjuryReportClient

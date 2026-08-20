@@ -1,99 +1,283 @@
 {
-  "current_status": "invalidated_pending_regeneration",
-  "schedule_completeness_impact": {
-    "corrected_expected_games": 173,
-    "corrected_game_dates": 26,
-    "corrected_player_log_only_schedule_anomalies_in_window": 2,
-    "independent_scope_crosscheck_required": "The regenerated cohort must reconcile its in-window LeagueGameFinder game IDs against PlayerGameLogs or ScheduleLeagueV2. The invalidated preflight derived expected and observed completeness from the same defective parser.",
-    "omitted_game_date": "2025-12-13",
-    "omitted_game_date_was_never_swept": true,
-    "omitted_game_ids": [
-      "0022501229",
-      "0022501230"
-    ],
-    "omitted_player_game_logs": 39,
-    "reason": "The LeagueGameFinder parser used for the frozen preflight assigned both official team rows to one side when both rows repeated the canonical MATCHUP string. The accepted 171-game scope therefore omitted two official 2025-12-13 games inside the requested window.",
-    "required_action": "Regenerate the bounded participation, injury-report coverage, canonical observation, join, and privacy-safe provenance artifacts from the corrected 173-game, 26-date scope before injury-status-conversion may consume this cohort."
-  },
   "canonical_observations": {
-    "distinct_nba_game_ids": 171,
-    "distinct_report_timestamps": 33,
+    "distinct_nba_game_ids": 173,
+    "distinct_report_timestamps": 35,
     "distinct_resolved_nba_player_ids": 363,
     "distinct_team_labels": 30,
     "lead_time_minutes": {
-      "maximum": 540,
+      "maximum": 1650,
       "minimum": 15
     },
-    "resolved_player_id": 1907,
-    "sha256_sorted_stable_records": "9fe70210367d229f711b34bc5b99d779534172fd0e218a335ce67f79d406765d",
+    "resolved_player_id": 1920,
+    "sha256_sorted_stable_records": "6ca4d37f3dd97226141d43f0c6c1b97053d742e7629f63c4104b8b040aec278b",
     "status_counts": {
-      "available": 206,
-      "doubtful": 22,
-      "out": 1495,
+      "available": 209,
+      "doubtful": 21,
+      "out": 1508,
       "probable": 59,
-      "questionable": 152
+      "questionable": 151
     },
-    "total_player_games": 1934,
-    "unresolved_player_id": 27
+    "total_player_games": 1948,
+    "unresolved_player_id": 28
   },
-  "generated_at_utc": "2026-08-19T21:16:13.970049+00:00",
-  "independent_review": {
-    "code_review": "Approved with no actionable findings.",
-    "data_engineering_evidence_review": "Approved as representative enough to unblock the separately Model-gated injury-status-conversion task.",
-    "evidence_reproduced": [
-      "Windows working-tree source hashes (later corrected to canonical Git blob hashes) and operational artifact SHA-256 identities",
-      "171-game/25-date/all-team scope",
-      "season-wide production versus bounded participation separation",
-      "trusted-entry cascade arithmetic",
-      "canonical status and joined-outcome arithmetic",
-      "NBA-only stable identity anchors",
-      "empty Fantrax and write-path tables"
+  "cross_source_reconciliation": {
+    "agreed": true,
+    "counts": {
+      "league_game_finder": 173,
+      "persisted_nba_games": 173,
+      "player_game_logs": 173,
+      "schedule_league_v2": 173
+    },
+    "disagreements": {},
+    "end_game_date": "2026-01-04",
+    "game_ids": [
+      "0022500009",
+      "0022500010",
+      "0022500011",
+      "0022500012",
+      "0022500013",
+      "0022500364",
+      "0022500365",
+      "0022500366",
+      "0022500367",
+      "0022500368",
+      "0022500369",
+      "0022500370",
+      "0022500371",
+      "0022500372",
+      "0022500373",
+      "0022500374",
+      "0022500375",
+      "0022500376",
+      "0022500377",
+      "0022500378",
+      "0022500379",
+      "0022500380",
+      "0022500381",
+      "0022500382",
+      "0022500383",
+      "0022500384",
+      "0022500385",
+      "0022500386",
+      "0022500387",
+      "0022500388",
+      "0022500389",
+      "0022500390",
+      "0022500391",
+      "0022500392",
+      "0022500393",
+      "0022500394",
+      "0022500395",
+      "0022500396",
+      "0022500397",
+      "0022500398",
+      "0022500399",
+      "0022500400",
+      "0022500401",
+      "0022500402",
+      "0022500403",
+      "0022500404",
+      "0022500405",
+      "0022500406",
+      "0022500407",
+      "0022500408",
+      "0022500409",
+      "0022500410",
+      "0022500411",
+      "0022500412",
+      "0022500413",
+      "0022500414",
+      "0022500415",
+      "0022500416",
+      "0022500417",
+      "0022500418",
+      "0022500419",
+      "0022500420",
+      "0022500421",
+      "0022500422",
+      "0022500423",
+      "0022500424",
+      "0022500425",
+      "0022500426",
+      "0022500427",
+      "0022500428",
+      "0022500429",
+      "0022500430",
+      "0022500431",
+      "0022500432",
+      "0022500433",
+      "0022500434",
+      "0022500435",
+      "0022500436",
+      "0022500437",
+      "0022500438",
+      "0022500439",
+      "0022500440",
+      "0022500441",
+      "0022500442",
+      "0022500443",
+      "0022500444",
+      "0022500445",
+      "0022500446",
+      "0022500447",
+      "0022500448",
+      "0022500449",
+      "0022500450",
+      "0022500451",
+      "0022500452",
+      "0022500453",
+      "0022500454",
+      "0022500455",
+      "0022500456",
+      "0022500457",
+      "0022500458",
+      "0022500459",
+      "0022500460",
+      "0022500461",
+      "0022500462",
+      "0022500463",
+      "0022500464",
+      "0022500465",
+      "0022500466",
+      "0022500467",
+      "0022500468",
+      "0022500469",
+      "0022500470",
+      "0022500471",
+      "0022500472",
+      "0022500473",
+      "0022500474",
+      "0022500475",
+      "0022500476",
+      "0022500477",
+      "0022500478",
+      "0022500479",
+      "0022500480",
+      "0022500481",
+      "0022500482",
+      "0022500483",
+      "0022500484",
+      "0022500485",
+      "0022500486",
+      "0022500487",
+      "0022500488",
+      "0022500489",
+      "0022500490",
+      "0022500491",
+      "0022500492",
+      "0022500493",
+      "0022500494",
+      "0022500495",
+      "0022500496",
+      "0022500497",
+      "0022500498",
+      "0022500499",
+      "0022500500",
+      "0022500501",
+      "0022501201",
+      "0022501202",
+      "0022501203",
+      "0022501204",
+      "0022501205",
+      "0022501206",
+      "0022501207",
+      "0022501208",
+      "0022501209",
+      "0022501210",
+      "0022501211",
+      "0022501212",
+      "0022501213",
+      "0022501214",
+      "0022501215",
+      "0022501216",
+      "0022501217",
+      "0022501218",
+      "0022501219",
+      "0022501220",
+      "0022501221",
+      "0022501222",
+      "0022501223",
+      "0022501224",
+      "0022501225",
+      "0022501226",
+      "0022501227",
+      "0022501228",
+      "0022501229",
+      "0022501230"
     ],
-    "reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a",
-    "reviewer_did_not_rehit_live_source_for_resume": true
+    "independence": {
+      "league_game_finder": "The schedule source itself. The set the other three are checked against, not an independent check on it.",
+      "persisted_nba_games": "NOT source-independent. These rows were written from the same LeagueGameFinder capture through the same parser, so this view cannot disagree except via a persistence defect. Retained as a persistence check, which is a real but different claim from corroboration.",
+      "player_game_logs": "A separate endpoint windowed by its own GAME_DATE, but its season-level agreement with LeagueGameFinder was already required by backfill_season before any row was written (_require_matching_season_game_ids), so season-scope agreement here is guaranteed by construction. What it independently witnesses is the *windowing*: which of those games fall inside the requested dates, decided from a column the schedule query never supplied.",
+      "schedule_league_v2": "The only view independent of the ingest path. A separate endpoint, separately captured, whose Eastern game date is derived from gameDateTimeEst reconciled against its UTC sibling. This is the witness that could actually have caught the omission."
+    },
+    "method": "All views are required to be equal as SETS, not as counts -- a count check passes a window that is the right size and the wrong membership. Each view applies the window using its own date field, but they are NOT four independent sources: persisted_nba_games derives from the database, written from the same LeagueGameFinder payload and parser this reconciliation reads, and player_game_logs was already required equal to LeagueGameFinder at season scope before any row was written. Read 'independence' below before treating four agreeing views as four witnesses; only schedule_league_v2 is independent of the ingest path. Row counts and clean parsing prove nothing about completeness.",
+    "sha256_sorted_game_ids": "43afabfc080d35784b94100481477183b64e6d20ee63a27d58aca4b1f4ab8fee",
+    "start_game_date": "2025-12-08",
+    "witnessed": true
+  },
+  "cross_source_tipoff_reconciliation": {
+    "agreed": true,
+    "checked": true,
+    "disagreements": {},
+    "games_compared": 173,
+    "games_without_both_instants": [],
+    "method": "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured endpoints in this build. Every lead time and the pre-tipoff selection itself depend on this instant, so an unchecked shift would move every number in the cohort silently. Note the independence here is operational rather than structural: hoops_gm.ingest.importers.import_schedule can also write tipoff_utc from ScheduleLeagueV2, and has no production caller today, but nothing records the provenance of a persisted instant -- so if that path ever acquires one, this becomes a comparison of one endpoint against itself.",
+    "unavailable_reason": null,
+    "witnessed": true
   },
   "kind": "injury_conversion_cohort_population_evidence",
   "limitations": [
-    "No DNP reason was inferred and no injury-status conversion rate was fit or reported.",
-    "One resolved injury observation has no participation row and remains unknown because the authoritative ledger can be silent for full absences (R35).",
-    "Position coverage uses only non-empty G/F/C labels observed in the same window's BoxScoreTraditionalV3 captures; blank labels remain unknown and were not inferred.",
-    "Raw PDFs, JSON captures, checkpoint, coverage report, expected-game report, and SQLite database remain gitignored operational state. This provenance and aggregate manifest is the repository-safe evidence."
+    "Evidence only. No injury-status conversion rate, threshold, probability or calibration claim is fit or reported here; that is the separately Model-gated quant deliverable.",
+    "A report observation with no participation row stays unknown. The authoritative ledger can be silent for a full absence, and silence is never converted into an outcome.",
+    "Reachability is bounded by the candidate anchors documented in docs/adapters/nba-injury-report.md: a report published far from an anchor instant is not recovered and is not claimed to be.",
+    "Raw PDFs and JSON captures, the checkpoint, the coverage and expected-game reports and the SQLite database remain gitignored operational state. This manifest is the repository-safe evidence derived from them.",
+    "Capture timestamps in source_capture_summary record when requests were made. They are provenance, not reproducible values: a fresh live sweep necessarily produces different ones."
   ],
   "operational_artifacts": {
-    "alembic_revision": "0014",
     "files": {
       "injury_backfill_2025-26_regular.json": {
-        "bytes": 31830,
-        "sha256": "bf0e320700d4fc85e3523c45fd16b3231f26d550452ccdb50dc9414b20ec2210"
+        "bytes": 32318,
+        "sha256": "acbde352ca517d88c8b8d1da0d89706b5a3aa3159aa25af39cb5e820895d15ce"
       },
       "injury_backfill_2025-26_regular_coverage.json": {
-        "bytes": 80855,
-        "sha256": "889f927e4ac6e2e1c6ff747e7076ec1a035eb8f36979e915e583689b7e844417"
+        "bytes": 82262,
+        "sha256": "adf0a43cc5e3c4da7d545cd1dcc77e6980cef5a4a3034741ca536d6ab7fd5826"
       },
       "injury_backfill_2025-26_regular_expected_games.json": {
         "bytes": 176,
-        "sha256": "13e3a8574a2da1639d7a6858e7f16be2c48b64ba350bdd6d7ae7aee6f5bd5f75"
+        "sha256": "54576ea2cfe1f62717bffae2d735d07805d6e96db4610919ae511271411e89a6"
       }
     }
   },
   "operator": {
-    "base_repository_head": "9c4ebac9a4a937594fb6ce18256d5269fe5dee93",
-    "bounded_participation_git_blob_sha256": "cb1e1c165781ab3a0fcd18c5d60338b5d6fb29d9fdcf150e4d32a541b4d0f7d3",
-    "bounded_participation_test_git_blob_sha256": "74683ea889640855ecb2c3e0ea74c363dd5c307a12eb9a91a6613bf459f46a5a",
     "commands": [
       "python -m alembic upgrade head",
+      "python -m hoops_gm.ingest.backfill nba-identity --season 2025-26",
       "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation --start 2025-12-08 --end 2026-01-04",
-      "python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 100",
-      "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 100",
-      "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-12-08 --end 2026-01-04"
+      "python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 120",
+      "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-12-08 --end 2026-01-04 --max-requests 120",
+      "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-12-08 --end 2026-01-04",
+      "python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 --start 2025-12-08 --end 2026-01-04 --out ../docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json"
     ],
-    "identity_bootstrap": "NbaStatsClient.static_teams plus CommonAllPlayers(season=2025-26, only_current=False), imported through parse_teams/import_teams and parse_common_all_players/import_nba_players before the bounded participation command",
-    "source_fingerprint_method": "SHA-256 of canonical Git blob bytes from reviewed_commit, resolved with git rev-parse <commit>:<path> and read with git cat-file blob <blob-id>",
-    "source_fingerprint_reviewed_commit": "4e89cc5f59c31656508183a2939a82d03a92ec1a"
+    "manifest_is_a_pure_function_of_persisted_state": true,
+    "source_fingerprint_method": "SHA-256 of each file's bytes with CRLF normalised to LF, which equals the SHA-256 of the committed Git blob for a file Git stores with LF endings and is invariant across checkout newline configuration and operating system.",
+    "source_fingerprints": {
+      "backend/src/hoops_gm/db/lineage.py": "8181cf7ea6091dcd4e634b8335dae8d3410550758f45c02c28899d5f2bcb1865",
+      "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
+      "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "4c93e41605f779dd54e663436101b739ded141e40a3bf3855bbcd9f3b77d21ee",
+      "backend/src/hoops_gm/ingest/nba/parsers.py": "5dfd9aab6ed8e03d5c04136a1e46ff80db318ebc3bb56304741d9cdd669a15e9"
+    }
   },
   "participation_join": {
-    "joined_player_games": 1906,
-    "key": [
+    "join_is_on_local_surrogate_keys": true,
+    "joined_lead_time_minutes": {
+      "maximum": 540,
+      "minimum": 15
+    },
+    "joined_player_games": 1918,
+    "key_rendered_in_fingerprint": [
       "nba_games.nba_game_id",
       "player_external_ids[source=nba].external_id"
     ],
@@ -104,157 +288,176 @@
     "missing_rows_are_not_inferred_as_nonparticipation": true,
     "participation_outcome_counts": {
       "did_not_dress": 125,
-      "did_not_play": 72,
-      "inactive": 1408,
+      "did_not_play": 73,
+      "inactive": 1418,
       "not_with_team": 10,
-      "played": 291
+      "played": 292
     },
-    "participation_rows_in_scope": 5980,
+    "participation_rows_in_scope": 6049,
     "resolved_observations_without_nba_anchor": 0,
-    "resolved_observations_without_participation_row": 1,
-    "sha256_sorted_joined_stable_records": "b4dbf93d6b9163bb4370def1a1d425ae800d50da543fa6568170d1ee486ad27b",
-    "stable_record_sample": [
-      {
-        "game_date": "2025-12-23",
-        "lead_time_minutes": 195,
-        "nba_game_id": "0022500421",
-        "nba_player_id": "1641815",
-        "participation_outcome": "inactive",
-        "report_timestamp": "2025-12-23T23:45:00+00:00",
-        "status": "out"
-      },
-      {
-        "game_date": "2025-12-22",
-        "lead_time_minutes": 195,
-        "nba_game_id": "0022500407",
-        "nba_player_id": "1630591",
-        "participation_outcome": "inactive",
-        "report_timestamp": "2025-12-22T23:45:00+00:00",
-        "status": "doubtful"
-      },
-      {
-        "game_date": "2025-12-20",
-        "lead_time_minutes": 285,
-        "nba_game_id": "0022500395",
-        "nba_player_id": "1642353",
-        "participation_outcome": "did_not_play",
-        "report_timestamp": "2025-12-20T22:45:00+00:00",
-        "status": "questionable"
-      },
-      {
-        "game_date": "2025-12-25",
-        "lead_time_minutes": 315,
-        "nba_game_id": "0022500011",
-        "nba_player_id": "203939",
-        "participation_outcome": "did_not_play",
-        "report_timestamp": "2025-12-25T16:45:00+00:00",
-        "status": "probable"
-      },
-      {
-        "game_date": "2025-12-26",
-        "lead_time_minutes": 15,
-        "nba_game_id": "0022500423",
-        "nba_player_id": "1631243",
-        "participation_outcome": "played",
-        "report_timestamp": "2025-12-26T23:45:00+00:00",
-        "status": "available"
-      }
-    ]
+    "resolved_observations_without_participation_row": 2,
+    "sha256_sorted_joined_stable_records": "3227730fe6d07866aca81f4bc31efbbd953d6cab0ddcdb6350375fb949c78b44"
   },
   "position_evidence": {
-    "canonical_observations_with_source_observed_position": 586,
-    "canonical_observations_without_source_observed_position": 1321,
-    "distinct_resolved_players": 363,
-    "distinct_resolved_players_by_observed_label": {
-      "C": 43,
-      "F": 76,
-      "G": 76
+    "distinct_label_sequences": {
+      "F,F,C,G,G": 346
     },
-    "distinct_resolved_players_with_source_observed_position": 167,
-    "distinct_resolved_players_without_source_observed_position": 196,
-    "method": "Non-empty BoxScoreTraditionalV3 position labels observed for the same stable NBA player id in this exact 171-game window; a player may have more than one observed label, and blank labels stay unknown.",
-    "sha256_sorted_player_position_mapping": "40d5f9f552b4c947b8913bf3eedde3effe0c1e1008a22cc99e2326df776c87ef"
+    "finding": "BoxScoreTraditionalV3 emits a non-empty position only for the five starters of each team, always in the sequence F,F,C,G,G. The field denotes a starting-lineup slot, not a player attribute, so a distribution over it is forced to 2F:2G:1C for any cohort and cannot establish positional diversity. A blank is 'did not start this game', which is knowable, not 'position unknown'.",
+    "games_with_box_score_capture": 173,
+    "games_without_box_score_capture": [],
+    "labelled_players_per_team": {
+      "5": 346
+    },
+    "positional_diversity_established": false,
+    "supersedes": "The invalidated cohort's position_evidence section reported 167 of 363 players with an observed G/F/C label (C 43, F 76, G 76) and 196 as position-unknown. Those figures are a starting-lineup artifact and must not be used as evidence of cohort composition.",
+    "what_would_be_needed": "A source that prints a position for every player on a roster, ingested as its own adapter under the Adapter gate. Not attempted here."
   },
-  "schema_version": 1,
+  "reason_evidence": {
+    "caveat": "Raw source text, grouped by the category the report itself printed before its own ' - ' separator. Not a normalised code, not a clinical claim, and not evidence that a stated reason is the real one -- 'Rest' is routinely laundered as a minor ailment.",
+    "observations_with_empty_reason_text": 0,
+    "observations_with_placeholder_reason": 14,
+    "stated_reason_categories": {
+      "-": 14,
+      "Coach's Decision": 1,
+      "Concussion Protocol": 4,
+      "G League": 559,
+      "Injury/Illness": 1324,
+      "League Suspension": 3,
+      "Not With Team": 23,
+      "Personal Reasons": 10,
+      "Rest": 9,
+      "Return to Competition Reconditioning": 1
+    },
+    "stated_reason_subcategories": {
+      "Coach's Decision": {
+        "(no detail given)": 1
+      },
+      "Concussion Protocol": {
+        "(no detail given)": 4
+      },
+      "G League": {
+        "On Assignment": 104,
+        "Two-Way": 455
+      },
+      "League Suspension": {
+        "(no detail given)": 3
+      },
+      "Not With Team": {
+        "(no detail given)": 23
+      },
+      "Personal Reasons": {
+        "(no detail given)": 10
+      },
+      "Rest": {
+        "(no detail given)": 8,
+        "Left Knee Injury Management": 1
+      },
+      "Return to Competition Reconditioning": {
+        "(no detail given)": 1
+      }
+    }
+  },
+  "schema_version": 2,
   "scope": {
-    "candidate_attempts": 89,
     "end_game_date": "2026-01-04",
-    "expected_games": 171,
-    "fifteen_minute_regime_game_dates": 13,
-    "game_dates": 25,
+    "expected_games": 173,
+    "game_dates": 26,
+    "games_in_scope": 173,
     "games_missing_tipoff": 0,
-    "games_with_tipoff": 171,
-    "legacy_regime_game_dates": 12,
-    "mastheads_recovered": 84,
-    "nba_teams": 30,
-    "player_log_only_schedule_anomalies_in_window_reported_by_invalidated_preflight": 0,
+    "games_with_tipoff": 173,
     "season": "2025-26",
     "season_type": "regular",
-    "selection_basis": "Inclusive four-week window centered on the 2025-12-22 NBA injury-report archive format/cadence boundary; selected from the official schedule before the per-game/PDF sweep, not from known-success report dates.",
+    "selection_basis": "Inclusive four-week window centred on the 2025-12-22 NBA injury-report archive format/cadence boundary, selected from the official schedule before any per-game or PDF sweep. Unchanged from the invalidated cohort: the window was never the defect. What changed is that the corrected LeagueGameFinder parser no longer drops a game whose two official team rows repeat one canonical MATCHUP string, so the window now yields every official game it always contained.",
     "start_game_date": "2025-12-08"
   },
   "source_capture_summary": {
     "nba_injury_report/InjuryReportPdf": {
-      "captures": 84,
-      "distinct_content_sha256": 84,
-      "first_fetched_at": "2026-08-19T21:11:46.622854+00:00",
-      "last_fetched_at": "2026-08-19T21:14:43.655395+00:00",
-      "sha256_sorted_capture_identity": "112857e73ae205ec52524ed2931b699bab0e70ba70fa8bf0a23cb42dd5cf2725",
-      "total_uncompressed_bytes": 6726072
+      "captures": 87,
+      "distinct_content_sha256": 86,
+      "first_fetched_at": "2026-08-20T14:20:03.562983+00:00",
+      "last_fetched_at": "2026-08-20T15:17:30.299939+00:00",
+      "sha256_sorted_capture_identity": "1be23aed964b4889fd31ee76712f4c730e280249931153a25e1caead421140ec",
+      "total_uncompressed_bytes": 6956648
     },
     "nba_stats/BoxScoreSummaryV3": {
-      "captures": 171,
-      "distinct_content_sha256": 171,
-      "first_fetched_at": "2026-08-19T21:05:17.594493+00:00",
-      "last_fetched_at": "2026-08-19T21:11:32.190294+00:00",
-      "sha256_sorted_capture_identity": "94db206a5f7b42dbc47ddaf2057aaf39c43578b67b5608203427ba6d70aa3cf2",
-      "total_uncompressed_bytes": 2987525
+      "captures": 173,
+      "distinct_content_sha256": 173,
+      "first_fetched_at": "2026-08-20T14:12:16.809370+00:00",
+      "last_fetched_at": "2026-08-20T14:18:35.239600+00:00",
+      "sha256_sorted_capture_identity": "6103ab65d226881a6a0c03e77a6dff8a0a374838fa93d9d81484068fd04466df",
+      "total_uncompressed_bytes": 3036916
     },
     "nba_stats/BoxScoreTraditionalV3": {
-      "captures": 171,
-      "distinct_content_sha256": 171,
-      "first_fetched_at": "2026-08-19T21:05:16.370834+00:00",
-      "last_fetched_at": "2026-08-19T21:11:31.113048+00:00",
-      "sha256_sorted_capture_identity": "fba8eace1b11888bf6c1d167c63b710c3b078bb96351235a376f24fcec1acd40",
-      "total_uncompressed_bytes": 3360882
+      "captures": 173,
+      "distinct_content_sha256": 173,
+      "first_fetched_at": "2026-08-20T14:12:15.915350+00:00",
+      "last_fetched_at": "2026-08-20T14:18:34.126158+00:00",
+      "sha256_sorted_capture_identity": "0f3ce52c91522ae601196c44e9e33be967f06156c43aecbdadf192da5987273e",
+      "total_uncompressed_bytes": 3402347
     },
     "nba_stats/CommonAllPlayers": {
       "captures": 1,
       "distinct_content_sha256": 1,
-      "first_fetched_at": "2026-08-19T21:04:54.095987+00:00",
-      "last_fetched_at": "2026-08-19T21:04:54.095987+00:00",
-      "sha256_sorted_capture_identity": "d1fc886945350fd7d3c9791c81977045344690f1706449adc94d43db69df10f5",
+      "first_fetched_at": "2026-08-20T14:11:49.207733+00:00",
+      "last_fetched_at": "2026-08-20T14:11:49.207733+00:00",
+      "sha256_sorted_capture_identity": "85738d5e3df90fa3a2a984ac29d3a8d05f38a62f9dfb1fad3d5eeaf4a293770f",
       "total_uncompressed_bytes": 723120
     },
     "nba_stats/LeagueGameFinder": {
       "captures": 1,
       "distinct_content_sha256": 1,
-      "first_fetched_at": "2026-08-19T21:02:20.149888+00:00",
-      "last_fetched_at": "2026-08-19T21:02:20.149888+00:00",
-      "sha256_sorted_capture_identity": "7568eb12700d280fdf366b1f291d14c2a9d8fd5e1ed950ac80c9d2436ca10e27",
+      "first_fetched_at": "2026-08-20T14:12:08.318095+00:00",
+      "last_fetched_at": "2026-08-20T14:12:08.318095+00:00",
+      "sha256_sorted_capture_identity": "5d4669137c754e0462054268cb57fad74a35077290b6d4b076a11ba1c4791987",
       "total_uncompressed_bytes": 461424
     },
     "nba_stats/PlayerGameLogs": {
       "captures": 1,
       "distinct_content_sha256": 1,
-      "first_fetched_at": "2026-08-19T21:05:11.205595+00:00",
-      "last_fetched_at": "2026-08-19T21:05:11.205595+00:00",
-      "sha256_sorted_capture_identity": "9e1659a1c8139d4f8c3bc0632e7c77ad48717f106ab373e6a9888829a75d14ba",
+      "first_fetched_at": "2026-08-20T14:12:09.969625+00:00",
+      "last_fetched_at": "2026-08-20T14:12:09.969625+00:00",
+      "sha256_sorted_capture_identity": "26a09357464f35e3f6996296745537a3b000720b1a70982c6a7e9f1c20500677",
       "total_uncompressed_bytes": 11844159
+    },
+    "nba_stats/ScheduleLeagueV2": {
+      "captures": 1,
+      "distinct_content_sha256": 1,
+      "first_fetched_at": "2026-08-20T14:29:44.416188+00:00",
+      "last_fetched_at": "2026-08-20T14:29:44.416188+00:00",
+      "sha256_sorted_capture_identity": "1d6f86a03a2a1334653bec3b1f40793bd700c0b7514257724a879f77b424b912",
+      "total_uncompressed_bytes": 4770257
     }
+  },
+  "supersedes": {
+    "invalidated_by": "PR #37",
+    "invalidated_cohort": "171 games across 25 game dates",
+    "omitted_game_date": "2025-12-13",
+    "omitted_game_ids": [
+      "0022501229",
+      "0022501230"
+    ],
+    "omitted_player_game_logs": 39,
+    "reason": "The LeagueGameFinder parser behind the invalidated cohort built a game only when both reciprocal team rows were recognised, and assigned both rows to one side when they repeated the canonical MATCHUP string, so an unpaired entry was silently dropped. Every figure in the invalidated manifest was recomputed here from corrected sources rather than carried forward."
   },
   "trusted_entry_cascade": {
     "candidate_forbidden_403": 0,
     "candidate_not_available_404": 0,
     "candidate_quarantined_unscoped": 0,
-    "entries_in_scope": 9082,
-    "entries_not_yet_submitted": 783,
-    "entries_resolved_game_id": 9082,
-    "entries_resolved_player_id": 8190,
-    "entries_with_listed_status": 8299,
+    "candidates_attempted": 91,
+    "canonical_player_games": 1948,
+    "canonical_player_games_player_resolved": 1920,
+    "entries_in_scope": 9225,
+    "entries_legacy_excluded": 0,
+    "entries_not_yet_submitted": 806,
+    "entries_resolved_game_id": 9225,
+    "entries_resolved_player_id": 8306,
+    "entries_with_listed_status": 8419,
+    "expected_games": 173,
     "games_legacy_excluded": 0,
-    "games_observed": 171,
+    "games_observed": 173,
     "games_unresolved_evidence": 0,
-    "listed_entries_unresolved_player_id": 109
+    "mastheads_recovered": 86,
+    "missing_from_ingest": 0,
+    "unresolved_game_id_sample": []
   }
 }

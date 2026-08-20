@@ -2,11 +2,13 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**37 done - 1 blocked - 66 pending - 104 total**
+**38 done - 1 blocked - 66 pending - 105 total**
 
-(Counted from the status markers themselves, not carried forward: 104 `###`
-headings and 104 markers, 1:1. The line before this entry claimed 37 done / 63
-pending against an actual 36 / 64, and that drift predates this work.)
+(Counted from the status markers themselves, not carried forward: 105 `###`
+headings and 105 markers, 1:1. Recounted at this head after two lanes merged —
+neither lane's pre-merge header was used as an input, because both were computed
+before the other's items landed. The header before that claimed 37 done / 63
+pending against an actual 36 / 64, and that drift predates both lanes.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -195,6 +197,21 @@ Historical per-player, per-game participation reconstructed from box scores and 
 - **Depends on:** `fantrax-official-adapter`, `nba-stats-ingest`
 
 Crosswalk resolver joining Fantrax IDs, NBA IDs and projection-CSV name strings. Fantrax exposes no NBA.com player id, so there is no anchor pair; matches begin with normalized name + team + position and retain per-field three-valued evidence, confidence, and manual overrides. Ship an unmatched-players report and a manual-override UI. Highest-risk foundational item - needs its own test suite.
+
+### `player-position-eligibility` - Ingesting player position and Fantrax position eligibility
+
+- [ ] **pending**
+- **Depends on:** *(nothing, for the NBA-position half)*; `player-identity` for the Fantrax-eligibility half
+
+**The dependency deliberately does not point at `player-identity` for the whole item.** `player-identity` specifies matching on "normalized name + team + **position**" — with no position data in the project, that third field does not exist, so ordering all position work behind identity would leave the highest-risk foundational item permanently short of one of the three fields it was specified to use. The NBA-position half needs no crosswalk and should land first; only Fantrax eligibility, which is per-player-per-league, needs the crosswalk.
+
+**This project currently has no player position data at all.** Surfaced 2026-08-20 by the injury-cohort regeneration: the only position-shaped field this project ingests is `BoxScoreTraditionalV3.position`, which is emitted for exactly five players per team per game — the starting lineup — always in the sequence `F,F,C,G,G`, and blank for everyone else. It is a lineup slot, not a player attribute. Verified over all 346 team-games of the cohort window; a distribution over it is forced to 2F:2G:1C for any cohort whatsoever.
+
+That is load-bearing well beyond availability evidence. This is a 9-category head-to-head Fantrax league, where **position eligibility governs roster construction, lineup legality and therefore the entire draft board** — a draft tool that cannot tell a centre from a point guard is not a draft tool. Fantrax eligibility is also its own quantity: it is league-configured, multi-position, can differ from any single NBA-published position, and changes during a season as a player accrues games at a new slot.
+
+Ingest a source that states a position for every rostered player, plus Fantrax's own eligibility per player per league, keeping the two distinct rather than collapsing them — an NBA position is a fact about the player, Fantrax eligibility is a fact about the league's rules applied to that player, and only the second determines whether a lineup is legal. Adapter gate applies: recorded fixture, offline contract test, live smoke that may fail loudly, documented throttling and failure behaviour. Landing the NBA-position half also feeds back into `player-identity`'s confidence, which was specified to corroborate on position and has never been able to.
+
+The `injury-conversion-cohort-population` waiver of its own "positions" criterion is one downstream consequence of this gap, not the reason for this item.
 
 ### `playoff-schedule` - Analysing fantasy playoff week schedules
 
@@ -623,7 +640,7 @@ G-score per arXiv 2307.02188, absorbing both production variance and availabilit
 
 ### `injury-conversion-cohort-population` - Populating a representative historical injury-report/participation cohort
 
-- [ ] **pending** - The 2026-08-19 artifact is invalidated pending regeneration. Corrected `LeagueGameFinder` reconciliation proves `2025-12-08..2026-01-04` contains 173 games, not 171: `0022501229` and `0022501230` on 2025-12-13 were omitted despite having both official team rows, removing 39 production logs plus their participation and injury-report evidence. Regenerate the bounded cohort, fingerprints, manifest, and independent reviews before marking done. The prior artifact remains preserved as historical evidence and is explicitly non-consumable by `injury-status-conversion`.
+- [x] **done** - Regenerated 2026-08-20 from corrected sources after PR #37 invalidated the 2026-08-19 artifact, through five rounds of independent exact-head review (evidence, code, extract privacy). The corrected bounded cohort is 173 games across 26 game dates in `2025-12-08..2026-01-04`, including `0022501229` and `0022501230` on 2025-12-13 and their 39 production logs. Every count and fingerprint was recomputed; nothing was carried forward. The manifest is the deterministic output of a committed generator (`hoops_gm.ingest.injury_report.cohort_evidence`) rather than hand-assembled; it **refuses to publish** unless four views of the window name exactly the same games as sets *and* two endpoints agree on all 173 tip-off instants, and it publishes a map of which views are actually independent of the ingest path (only `ScheduleLeagueV2` is). **The item's own "multiple positions" criterion is explicitly waived, with cause:** review established that `BoxScoreTraditionalV3.position` is emitted only for the five starters, always as `F,F,C,G,G`, so it is a lineup slot rather than a player attribute and positional composition cannot be established from any source this project currently ingests. Establishing it needs a new adapter under the Adapter gate and is not a precondition for the observation-layer cohort. Team, date, status and stated-reason diversity are established. The 2026-08-19 artifact remains preserved in history and stays non-consumable.
 - **Depends on:** `injury-report-historical-backfill`, `participation-ledger`
 
 Run the bounded, resumable `injury-report-historical-backfill` operator tool at scale against the live NBA official injury-report archive — within its own rate-limit and request-budget bounds — to populate an actual multi-date, multi-game historical cohort of canonical pregame observations joined against the participation ledger's realized outcomes: large and diverse enough (multiple teams, positions, report statuses, and a genuine calendar span, not a handful of adjacent dates) to be evidence-ready for `injury-status-conversion`. Tracked as its own explicit dependency, separate from the operator tool itself, precisely because "the tool exists and passes its tests" and "a representative cohort has been populated with it" are different claims — conflating them is what let `injury-status-conversion` appear structurally ready (every backlog dependency it listed marked done) while the cohort it actually needs did not exist. The only live-archive run performed to date produced a deliberately small, non-representative sample (22 of 527 games, spanning a handful of dates) used to validate the backfill tool's own mechanics, not to seed this item. Done only once that representative cohort exists, is committed as real fetched evidence (never fabricated or extrapolated), and has been independently reviewed for actual representativeness — team/date/status-code coverage, no lookahead, and no selection bias toward easy-to-fetch dates.

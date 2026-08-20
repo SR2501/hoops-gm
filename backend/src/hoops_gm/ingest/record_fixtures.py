@@ -29,13 +29,23 @@ import hashlib
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
+
+#: Stamped on every entry recorded from 2026-08-20 onward. An entry without it
+#: was recorded before the basis was corrected: for a text fixture that means a
+#: Windows CRLF working-tree ``byte_size``, which is too large. Binary fixtures
+#: are unaffected either way, since Git stores their bytes unchanged — the
+#: marker means "recorded under the canonical basis", not "everything unstamped
+#: is wrong". Per-entry rather than a top-level note so the marker sits next to
+#: the number it qualifies, and so it does not become a manifest key that is not
+#: a fixture.
+_CANONICAL_LF = "canonical_lf_bytes"
 
 #: A completed game from 2024-25 with both a DNP and a DND comment, chosen so
 #: the participation parser is exercised on real reason text rather than on an
@@ -80,11 +90,29 @@ def _write(name: str, payload: Any, *, meta: dict[str, Any]) -> None:
     manifest = _load_manifest()
     manifest[name] = {
         "captured_at": datetime.now(UTC).isoformat(),
-        "byte_size": path.stat().st_size,
+        "byte_size": _canonical_byte_size(path),
+        "byte_size_basis": _CANONICAL_LF,
         **meta,
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    print(f"  wrote {name} ({path.stat().st_size:,} bytes)")
+    print(f"  wrote {name} ({path.stat().st_size:,} bytes on disk)")
+
+
+def _canonical_byte_size(path: Path) -> int:
+    """Size of the file's canonical (LF) bytes, not the working tree's.
+
+    ``path.stat().st_size`` counts CRLF on a Windows checkout while Git stores
+    LF, so a recorded size is unreproducible on any other platform — the exact
+    checkout-dependence PR #30 had to correct in the cohort manifest's source
+    fingerprints, found again here by independent review. This value equals
+    ``git cat-file -s`` for any file Git stores with LF endings.
+
+    Entries recorded before this fix retain their working-tree sizes until their
+    fixture is next re-recorded; the values are stale, not silently corrected,
+    because rewriting them without re-capturing would assert a size for bytes
+    nobody re-read.
+    """
+    return len(path.read_bytes().replace(b"\r\n", b"\n"))
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -495,6 +523,170 @@ def record_nba() -> None:
 
 
 # --------------------------------------------------------------------------
+# Cohort-window cross-source reconciliation
+# --------------------------------------------------------------------------
+
+#: The window the representative historical injury cohort is drawn from.
+FIXTURE_COHORT_SEASON = "2025-26"
+FIXTURE_COHORT_START = "2025-12-08"
+FIXTURE_COHORT_END = "2026-01-04"
+
+#: Games chosen to make the cohort's game-identity reconciliation checkable
+#: offline, in this order: one date before the window, the window's first date,
+#: the two neutral-site 2025-12-13 games whose ``LeagueGameFinder`` rows repeat
+#: one canonical ``MATCHUP`` string (the pair PR #37's parser fix recovered and
+#: the invalidated cohort silently dropped, taking the whole of 2025-12-13 with
+#: them because they are the *only* two games on that date), the window's last
+#: date, and one date after it. Boundary games are included precisely because a
+#: windowing bug is invisible in a fixture that contains no boundary.
+FIXTURE_COHORT_GAME_IDS = (
+    "0022500357",  # 2025-12-07, before the window
+    "0022500364",  # 2025-12-08, first in-window date
+    "0022501229",  # 2025-12-13, repeated canonical MATCHUP "NYK @ ORL"
+    "0022501230",  # 2025-12-13, repeated canonical MATCHUP "SAS @ OKC"
+    "0022500494",  # 2026-01-04, last in-window date
+    "0022500502",  # 2026-01-05, after the window
+)
+
+
+def _select_rows_by_game_id(
+    payload: dict[str, Any], *, result_set: str, game_ids: Sequence[str]
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Retain whole rows for named games, editing no value."""
+    selected = json.loads(json.dumps(payload))
+    original: dict[str, int] = {}
+    wanted = set(game_ids)
+    for entry in selected.get("resultSets", []):
+        rows = entry.get("rowSet")
+        headers = entry.get("headers")
+        if not isinstance(rows, list) or not isinstance(headers, list):
+            continue
+        original[entry.get("name", "?")] = len(rows)
+        if entry.get("name") != result_set:
+            continue
+        index = headers.index("GAME_ID")
+        entry["rowSet"] = [row for row in rows if str(row[index]) in wanted]
+    return selected, original
+
+
+def _select_schedule_game_dates(
+    payload: dict[str, Any], *, game_ids: Sequence[str]
+) -> tuple[dict[str, Any], int]:
+    """Retain only the ``gameDates`` entries holding the named games."""
+    selected = json.loads(json.dumps(payload))
+    league_schedule = selected.get("leagueSchedule")
+    if not isinstance(league_schedule, dict):
+        raise ValueError("ScheduleLeagueV2 fixture source lacks leagueSchedule")
+    dates = league_schedule.get("gameDates")
+    if not isinstance(dates, list):
+        raise ValueError("ScheduleLeagueV2 fixture source lacks gameDates")
+    original = sum(len(entry.get("games") or ()) for entry in dates)
+    wanted = set(game_ids)
+    retained = []
+    for entry in dates:
+        games = [game for game in (entry.get("games") or ()) if str(game.get("gameId")) in wanted]
+        if games:
+            retained.append({**entry, "games": games})
+    league_schedule["gameDates"] = retained
+    return selected, original
+
+
+def record_cohort_reconciliation() -> None:
+    """Capture the three additional views the cohort's identity set is checked against.
+
+    Not "the views it is proved by": only ``ScheduleLeagueV2`` is independent of
+    the ingest path. See ``VIEW_INDEPENDENCE`` in
+    ``hoops_gm.ingest.injury_report.cohort_evidence``.
+    """
+    from hoops_gm.ingest.nba import NbaStatsClient
+
+    print("nba_stats cohort reconciliation:")
+    client = NbaStatsClient()
+    base_note = (
+        "Whole real rows/objects retained for six named games spanning both window "
+        "boundaries and the two neutral-site 2025-12-13 games. No value edited."
+    )
+    league_game_finder_note = (
+        f"{base_note} Rows are regrouped so each game's two rows are adjacent and games appear "
+        "in the order named above; the row set is identical to the source's, only its order "
+        "differs, and the parser is order-independent by construction (a contract test reverses "
+        "the row set and asserts the same result). Verified 2026-08-20: the source's own row "
+        "order is NOT stable across requests -- two captures minutes apart returned the same "
+        "twelve rows in a different order -- so a byte diff between re-recordings of this "
+        "fixture is expected and is not evidence the payload changed."
+    )
+
+    payload = client.league_game_finder(season=FIXTURE_COHORT_SEASON)
+    trimmed, original = _select_league_game_finder_games(payload, list(FIXTURE_COHORT_GAME_IDS))
+    _write(
+        "nba_leaguegamefinder_cohort_window_2025_26.json",
+        trimmed,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "LeagueGameFinder",
+            "params": {
+                "season_nullable": FIXTURE_COHORT_SEASON,
+                "season_type_nullable": "Regular Season",
+            },
+            "trimmed": True,
+            "original_row_counts": original,
+            "kept_rows_per_result_set": len(FIXTURE_COHORT_GAME_IDS) * 2,
+            "note": league_game_finder_note,
+        },
+    )
+
+    payload = client.player_game_logs(season=FIXTURE_COHORT_SEASON)
+    trimmed, original = _select_rows_by_game_id(
+        payload, result_set="PlayerGameLogs", game_ids=FIXTURE_COHORT_GAME_IDS
+    )
+    kept_logs = sum(
+        len(entry.get("rowSet") or ())
+        for entry in trimmed.get("resultSets", [])
+        if entry.get("name") == "PlayerGameLogs"
+    )
+    _write(
+        "nba_playergamelogs_cohort_window_2025_26.json",
+        trimmed,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "PlayerGameLogs",
+            "params": {"season_nullable": FIXTURE_COHORT_SEASON},
+            "trimmed": True,
+            "original_row_counts": original,
+            "kept_rows_per_result_set": kept_logs,
+            "note": (
+                f"{base_note} This endpoint carries its own GAME_DATE, which is what makes it "
+                "an independent witness to the window rather than a restatement of the schedule "
+                "query."
+            ),
+        },
+    )
+
+    payload = client.schedule_league(season=FIXTURE_COHORT_SEASON)
+    trimmed_schedule, original_games = _select_schedule_game_dates(
+        payload, game_ids=FIXTURE_COHORT_GAME_IDS
+    )
+    _write(
+        "nba_scheduleleaguev2_cohort_window_2025_26.json",
+        trimmed_schedule,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "ScheduleLeagueV2",
+            "params": {"league_id": "00", "season": FIXTURE_COHORT_SEASON},
+            "trimmed": True,
+            "original_row_counts": {"leagueSchedule.gameDates.games": original_games},
+            "kept_rows_per_result_set": len(FIXTURE_COHORT_GAME_IDS),
+            "note": (
+                f"{base_note} Only the gameDates entries holding the named games are retained, "
+                "and within each retained entry only the named games -- 2025-12-08 had a full "
+                "slate and appears here with one game. Each retained game object is the "
+                "source's own, unmodified."
+            ),
+        },
+    )
+
+
+# --------------------------------------------------------------------------
 # NBA official injury report
 # --------------------------------------------------------------------------
 
@@ -547,12 +739,13 @@ def _never() -> Any:
 
 
 COMMANDS: dict[str, Callable[[], None]] = {
+    "cohort-reconciliation": record_cohort_reconciliation,
     "fantrax": record_fantrax,
     "fantrax-league-settings": record_fantrax_league_settings,
     "nba": record_nba,
     "injury_report": record_injury_report,
 }
-ALL_COMMANDS = ("fantrax", "nba")
+ALL_COMMANDS = ("fantrax", "nba", "cohort-reconciliation")
 
 
 def main(argv: list[str] | None = None) -> int:
