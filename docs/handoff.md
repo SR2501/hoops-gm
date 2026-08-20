@@ -8552,3 +8552,102 @@ rather than the gates alone.
 the 200 and at least one refusal in a browser against the merged route, then
 open with base `main` and take a fresh exact-head review round on the rebased
 head.
+
+---
+
+## 2026-08-20 — frontend — Schedule grid: round four, and two corrections to the correction
+
+**Changed:** A fourth exact-head review round on `50a3777` returned **no
+must-fix from any of the three reviewers**. What follows is the small set of
+record corrections it produced, which are the only things of substance left.
+
+**Now true — correcting the entry above, twice.**
+
+**First, my correction over-corrected.** The previous entry says the season mean
+change "was an improvement, not a repair". `code-review` is right that this
+invites a future reader to conclude the season cell was fine at `4006767` and
+the change was cosmetic. It was not fine. At that head the cell was a bare
+`<td className="grid__cell grid__cell--mean">` with no `data-state` and no
+partial class, dividing a numerator summed over reported cells by every team.
+On a dense response it produced the correct `0.7`; on a holed one it understated
+and said nothing about it — which is the unmarked-partial defect all three
+reviewers raised, unrepaired for the season column specifically. So the cell
+genuinely was defective and the change genuinely was a repair. What was false
+was my *diagnosis* of it — the team-periods denominator and the `0.0` render —
+not the need for the fix.
+
+**Second, the Chromium correction was itself imprecise, and the two reviewers
+were describing different fixes.** Sticky *positioning* on a `<th>` under
+`border-collapse: collapse` began working in Chromium 91 (May 2021, TablesNG);
+sticky *border painting* under `collapse` was fixed later, around Chromium 121.
+The previous entry flattened these into one date being wrong. The consequence
+matters: if border painting is fixed in current Chromium, the border-grid
+argument is satisfied there too, and the surviving reason for
+`border-collapse: separate` is cross-engine — `w3c/csswg-drafts#3136` is still
+open, so Firefox and WebKit are not guaranteed to match. The CSS comment already
+cites the csswg issue rather than a browser version, so the code was standing on
+the durable ground; only the handoff needed fixing.
+
+**Third, and not mine: two reviewers ratified a false claim without checking
+it.** `architect` and `code-review` both endorsed my round-three account of the
+season-mean defect — one calling it a "good catch" — and both have since
+recorded that they computed forward from my prose rather than reading the prior
+commit. One `git show` disproved it. `architect`'s generalisation is worth
+keeping: **a self-reported defect is the claim a reviewer is least likely to
+check, because admitting fault reads as credible, and that is exactly
+backwards.** The failure here was mutual, and the asymmetry is the part that
+generalises beyond this branch.
+
+**Fourth, a claim I wrote in the last commit is also wrong, and the browser
+settles it.** The `--grid-foot-row` comment said the row height was "fixed here
+rather than left to emerge from font size, padding and line-height". On a table
+cell `height` is a *minimum*, not a cap: a label wrapping to two lines would
+grow the row past the offset regardless. `white-space: nowrap` is what actually
+forecloses that, and the comment did not mention it — so someone tidying
+`nowrap` as redundant would have reintroduced the seam. Corrected.
+
+`architect` also flagged that my measurements did not close: 26px rows against
+what they computed as a 28px offset. Resolved by measurement rather than
+argument — `:root` in `styles.css` sets `font-size: 15px`, not the 16px the
+arithmetic assumed, so `1.75rem` is 26.25px against a natural row of 26.5px.
+The rows overlap by a quarter pixel rather than gapping, which is the safe
+direction, and `offsetHeight` reporting 26 is the rounded 26.25. Setting
+`--grid-foot-row: 3rem` in the live page grows the row to 45px and moves the
+offset to 45px together, confirming the two are genuinely coupled and that
+`height` binds upward.
+
+Also closed this round: the season *sum*'s partial marking now has a
+`data-state` assertion — it was the one derived cell whose marker was unpinned.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 75 tests across 8 files.
+
+**Could not verify:** Everything in the two entries above still stands. Added:
+
+The `height`-is-a-minimum reasoning is asserted from the spec and from a
+devtools experiment that grew the row; the *wrap* case it guards against was
+never reproduced, because it needs magnitudes the seeded fixture cannot produce.
+`white-space: nowrap` is therefore believed rather than observed to be the
+binding guard.
+
+The quarter-pixel overlap is measured at one root font size in one browser at
+one zoom level. Nothing checks it at browser zoom, at a user-set root size, or
+in Firefox or WebKit — and since the whole reason for `border-collapse:
+separate` is now cross-engine, the engines that argument is about are the ones
+never tested.
+
+**Next:** Unchanged, and the one instruction not to let slide on the rebase:
+**re-capture the recorded fixture and read its `git diff`; do not merely re-run
+it.** A committed JSON file passes whether or not the backend changed, which is
+the single failure mode a recorded fixture is uniquely bad at, and backend #38
+has moved since `11f7efa` with a `season_type` guard and a set-mismatch
+rejection. Then re-verify the 200 and at least one refusal in a browser against
+the merged route, take a fresh exact-head review round, and open with base
+`main`.
+
+**Standing observation across four rounds:** every defect that mattered was in
+prose, not in code — a comment's worked example, a commit message's date, a CSS
+comment's mechanism, a claimed repair, and a reviewer's ratification of it. The
+tests were green throughout and would have stayed green through all of it. That
+is the argument for this review apparatus, and also for a narrower habit worth
+more than the apparatus: re-derive any number or mechanism that appears in
+prose, at the moment you write it, from the code beside it.

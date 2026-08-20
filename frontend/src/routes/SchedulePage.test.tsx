@@ -245,6 +245,7 @@ describe('the schedule grid', () => {
     // the only input on which that differs from the simpler expression.
     const seasonMean = screen.getByTestId('league-mean-season')
     expect(screen.getByTestId('league-total-season')).toHaveTextContent('22')
+    expect(screen.getByTestId('league-total-season')).toHaveAttribute('data-state', 'partial')
     expect(seasonMean).toHaveTextContent('8.0')
     expect(seasonMean).toHaveAttribute('data-state', 'partial')
     expect(seasonMean).toHaveAccessibleName(/over the 2 of 3 with a complete row/)
