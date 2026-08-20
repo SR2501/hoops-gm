@@ -6145,3 +6145,59 @@ absence of ordered picks for auction and keep all price, market, strategy, and
 recommendation behavior in their separately gated downstream units. Require
 exact-head CI and independent code/quant plus backend-seam review before merge;
 do not merge or self-approve from this session.
+
+---
+
+## 2026-08-19 — frontend — Response-state integrity hardening
+
+**Changed:** Hardened the existing frontend response/state seam without changing
+backend code or adding a schema dependency. `apiFetch` now requires an endpoint
+response contract, rejects invalid JSON and malformed 2xx bodies as
+`invalid_response`, strictly validates the stable backend error envelope, and
+retains response/request context on `ApiError`. The three existing endpoint
+functions validate their complete response shapes. Readiness remains the one
+documented exception to the backend schema claim that every non-2xx uses
+`ErrorResponse`: `/health/ready` intentionally returns its typed
+`ReadinessResponse` under HTTP 503. The frontend now recognizes that exact
+degraded body, preserves it on `ApiError.body`, uses the backend's `degraded`
+status as the code, keeps the backend detail, and takes the request id from
+`X-Request-ID`.
+
+`AsyncBoundary` now schedules one timeout for the exact configured stale
+deadline, clears it on replacement/unmount, and does not poll. A failed refresh
+continues to show the last good data while exposing the failure detail, code and
+request id. Initial-load failures display the same context. A route-level
+`RenderErrorBoundary` around the current route table prevents an unexpected
+render exception from blanking the app, reports the exception to the console,
+renders an actionable fallback with request context when available, resets on
+route changes, and offers an explicit retry.
+
+Added focused tests for typed readiness 503 handling, strict error envelopes,
+invalid JSON and malformed 2xx responses, the exact fake-timer stale transition
+with a single scheduled check, last-good/refresh-failure retention with no
+unhandled rejection, request-id/code display, and render-exception fallback and
+recovery. Rebasing onto current `origin/main`
+`79a5e3e3d0c317374e90a58a9a9f5a0ecccefe13` was clean and touched no frontend
+file. On that base, frontend ESLint, strict TypeScript checking, all 19 tests,
+the production Vite build, the tracked-file secret scan (264 files), and the
+Impeccable mechanical UI detector all pass.
+
+**Now true:** A successful HTTP status is not sufficient evidence for any
+existing frontend endpoint; malformed payloads become visible contract errors
+before route rendering. Readiness degradation no longer loses its typed backend
+detail or request correlation. Fresh data visibly crosses into stale state at
+the configured deadline without periodic wakeups. Refresh failure cannot erase
+the last good payload or make it look current, and an unforeseen render throw
+cannot leave a blank route.
+
+**Could not verify:** No live browser/backend pair was run in this worktree, so
+the evidence is the backend's committed readiness contract plus jsdom tests and
+the production build, not a manual failure injection against a running service.
+GitHub CI has not run on this branch yet. The retry control can recover when the
+underlying render condition is transient or has changed; a deterministic render
+bug will correctly return to the visible fallback rather than pretending the
+view recovered.
+
+**Next:** Obtain fresh independent frontend, code, and backend-contract reviews
+against the exact committed head. If clear, push and open a focused Code-gate
+PR, require CI, and leave merge/approval to the coordinator.

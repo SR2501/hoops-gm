@@ -18,17 +18,25 @@ const BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? ''
 
 const DEFAULT_TIMEOUT_MS = 8000
 
-export class ApiError extends Error {
+export class ApiError<TBody = unknown> extends Error {
   readonly status: number
   readonly code: string
   readonly requestId: string | null
+  readonly body: TBody | null
 
-  constructor(status: number, code: string, detail: string, requestId: string | null) {
+  constructor(
+    status: number,
+    code: string,
+    detail: string,
+    requestId: string | null,
+    body: TBody | null = null,
+  ) {
     super(detail)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.requestId = requestId
+    this.body = body
   }
 
   /** True when retrying might plausibly help. */
@@ -42,8 +50,25 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
     typeof value === 'object' &&
     value !== null &&
     'error' in value &&
-    typeof value.error === 'string'
+    typeof value.error === 'string' &&
+    'detail' in value &&
+    typeof value.detail === 'string' &&
+    'request_id' in value &&
+    (typeof value.request_id === 'string' || value.request_id === null)
   )
+}
+
+export interface ApiErrorContext {
+  status: number
+  statusText: string
+  requestId: string | null
+  path: string
+}
+
+export interface ResponseContract<T> {
+  isSuccess: (value: unknown) => value is T
+  invalidResponseDetail: string
+  errorFromResponse?: (value: unknown, context: ApiErrorContext) => ApiError | null
 }
 
 export interface RequestOptions {
@@ -53,7 +78,11 @@ export interface RequestOptions {
   body?: unknown
 }
 
-export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function apiFetch<T>(
+  path: string,
+  contract: ResponseContract<T>,
+  options: RequestOptions = {},
+): Promise<T> {
   const { signal, timeoutMs = DEFAULT_TIMEOUT_MS, method = 'GET', body } = options
 
   const timeoutController = new AbortController()
@@ -90,14 +119,60 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   const requestId = response.headers.get('X-Request-ID')
-  const payload: unknown = await response.json().catch(() => null)
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    if (response.ok) {
+      throw new ApiError(
+        response.status,
+        'invalid_response',
+        `${contract.invalidResponseDetail} The response was not valid JSON.`,
+        requestId,
+      )
+    }
+    payload = null
+  }
 
   if (!response.ok) {
     if (isErrorBody(payload)) {
-      throw new ApiError(response.status, payload.error, payload.detail, payload.request_id)
+      throw new ApiError<ApiErrorBody>(
+        response.status,
+        payload.error,
+        payload.detail,
+        payload.request_id ?? requestId,
+        payload,
+      )
     }
-    throw new ApiError(response.status, 'http_error', response.statusText, requestId)
+
+    const endpointError = contract.errorFromResponse?.(payload, {
+      status: response.status,
+      statusText: response.statusText,
+      requestId,
+      path,
+    })
+    if (endpointError) {
+      throw endpointError
+    }
+
+    throw new ApiError(
+      response.status,
+      'http_error',
+      response.statusText || `Backend request failed with HTTP ${String(response.status)}.`,
+      requestId,
+      payload,
+    )
   }
 
-  return payload as T
+  if (!contract.isSuccess(payload)) {
+    throw new ApiError(
+      response.status,
+      'invalid_response',
+      contract.invalidResponseDetail,
+      requestId,
+      payload,
+    )
+  }
+
+  return payload
 }

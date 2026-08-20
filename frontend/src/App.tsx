@@ -1,5 +1,6 @@
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
+import { RenderErrorBoundary } from './components/RenderErrorBoundary'
 import { DashboardPage } from './routes/DashboardPage'
 import { NotFoundPage } from './routes/NotFoundPage'
 import { SystemPage } from './routes/SystemPage'
@@ -11,13 +12,17 @@ import { SystemPage } from './routes/SystemPage'
  * trade lab — is a sibling of these, added by its owning phase.
  */
 export function App() {
+  const location = useLocation()
+
   return (
-    <Routes>
-      <Route element={<AppLayout />}>
-        <Route index element={<DashboardPage />} />
-        <Route path="system" element={<SystemPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-    </Routes>
+    <RenderErrorBoundary resetKey={location.key}>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route index element={<DashboardPage />} />
+          <Route path="system" element={<SystemPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </RenderErrorBoundary>
   )
 }

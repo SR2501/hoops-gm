@@ -197,6 +197,7 @@ a:focus-visible {
 .state__meta {
   font-size: 0.8rem;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* Stale data must look stale. A number computed from an old injury report is
@@ -212,6 +213,29 @@ a:focus-visible {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
   font-size: 0.85rem;
+}
+
+.stale-banner > span {
+  min-width: 0;
+}
+
+.stale-banner__detail {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.stale-banner button {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.render-error {
+  max-width: 48rem;
+}
+
+.render-error h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 1.25rem;
 }
 
 /* --- Page ----------------------------------------------------------------- */

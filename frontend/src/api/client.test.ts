@@ -1,5 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError, apiFetch } from './client'
+import { ApiError, apiFetch, type ResponseContract } from './client'
+
+interface StatusBody {
+  status: string
+}
+
+const STATUS_CONTRACT = {
+  isSuccess: (value: unknown): value is StatusBody =>
+    typeof value === 'object' &&
+    value !== null &&
+    'status' in value &&
+    typeof value.status === 'string',
+  invalidResponseDetail: 'The response did not contain a status.',
+} satisfies ResponseContract<StatusBody>
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -16,7 +29,7 @@ describe('apiFetch', () => {
       vi.fn(() => Promise.resolve(jsonResponse({ status: 'ok', version: '0.1.0' }))),
     )
 
-    await expect(apiFetch<{ status: string }>('/health')).resolves.toEqual({
+    await expect(apiFetch('/health', STATUS_CONTRACT)).resolves.toEqual({
       status: 'ok',
       version: '0.1.0',
     })
@@ -35,7 +48,9 @@ describe('apiFetch', () => {
       ),
     )
 
-    const error = await apiFetch('/api/v1/nope').catch((cause: unknown) => cause)
+    const error = await apiFetch('/api/v1/nope', STATUS_CONTRACT).catch(
+      (cause: unknown) => cause,
+    )
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
@@ -50,7 +65,7 @@ describe('apiFetch', () => {
       vi.fn(() => Promise.resolve(new Response('<html>gateway</html>', { status: 502 }))),
     )
 
-    const error = await apiFetch('/health').catch((cause: unknown) => cause)
+    const error = await apiFetch('/health', STATUS_CONTRACT).catch((cause: unknown) => cause)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).isTransient).toBe(true)
@@ -62,7 +77,7 @@ describe('apiFetch', () => {
       vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
     )
 
-    const error = await apiFetch('/health').catch((cause: unknown) => cause)
+    const error = await apiFetch('/health', STATUS_CONTRACT).catch((cause: unknown) => cause)
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(0)
@@ -83,7 +98,9 @@ describe('apiFetch', () => {
       ),
     )
 
-    const error = await apiFetch('/health', { timeoutMs: 5 }).catch((cause: unknown) => cause)
+    const error = await apiFetch('/health', STATUS_CONTRACT, { timeoutMs: 5 }).catch(
+      (cause: unknown) => cause,
+    )
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('timeout')
@@ -103,11 +120,32 @@ describe('apiFetch', () => {
       ),
     )
 
-    const pending = apiFetch('/health', { signal: controller.signal }).catch(
+    const pending = apiFetch('/health', STATUS_CONTRACT, { signal: controller.signal }).catch(
       (cause: unknown) => cause,
     )
     controller.abort()
 
     await expect(pending).resolves.not.toBeInstanceOf(ApiError)
+  })
+
+  it('rejects invalid JSON on a successful response with request context', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('<html>not json</html>', {
+            status: 200,
+            headers: { 'X-Request-ID': 'req-invalid-json' },
+          }),
+        ),
+      ),
+    )
+
+    const error = await apiFetch('/health', STATUS_CONTRACT).catch((cause: unknown) => cause)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('invalid_response')
+    expect((error as ApiError).requestId).toBe('req-invalid-json')
+    expect((error as ApiError).message).toContain('not valid JSON')
   })
 })

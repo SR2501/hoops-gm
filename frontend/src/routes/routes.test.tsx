@@ -72,7 +72,12 @@ describe('the dashboard shell', () => {
     mockFetch({
       '/health/ready': {
         status: 503,
-        body: { error: 'http_error', detail: 'database check failed', request_id: null },
+        body: {
+          status: 'degraded',
+          database: 'unavailable',
+          detail: 'database check failed: OperationalError',
+        },
+        headers: { 'X-Request-ID': 'req-ready-route' },
       },
       '/api/v1/meta': { body: META },
       '/health': { body: HEALTH },
@@ -81,6 +86,27 @@ describe('the dashboard shell', () => {
     renderWithRouter(<App />, { route: '/system' })
 
     expect(await screen.findByText(/Could not load readiness/)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('database check failed: OperationalError')
+    expect(screen.getByRole('alert')).toHaveTextContent('Code degraded')
+    expect(screen.getByRole('alert')).toHaveTextContent('Request req-ready-route')
+  })
+
+  it('renders malformed 2xx metadata as an explicit contract error', async () => {
+    mockFetch({
+      '/health/ready': { body: READY },
+      '/api/v1/meta': {
+        body: { ...META, entity_groups: 'identity' },
+        headers: { 'X-Request-ID': 'req-bad-meta-route' },
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />)
+
+    expect(await screen.findByText(/Could not load service metadata/)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('did not match the expected backend contract')
+    expect(screen.getByRole('alert')).toHaveTextContent('Code invalid_response')
+    expect(screen.getByRole('alert')).toHaveTextContent('Request req-bad-meta-route')
   })
 
   it('renders a not-found page for an unknown route', async () => {
