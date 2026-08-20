@@ -59,6 +59,25 @@ describe('apiFetch', () => {
     expect((error as ApiError).isTransient).toBe(false)
   })
 
+  it('falls back to the response header when an error body request id is null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse(
+            { error: 'internal_error', detail: 'Backend failed', request_id: null },
+            { status: 500, headers: { 'X-Request-ID': 'req-header-fallback' } },
+          ),
+        ),
+      ),
+    )
+
+    const error = await apiFetch('/health', STATUS_CONTRACT).catch((cause: unknown) => cause)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).requestId).toBe('req-header-fallback')
+  })
+
   it('never resolves silently on a non-2xx without an envelope', async () => {
     vi.stubGlobal(
       'fetch',
@@ -106,6 +125,22 @@ describe('apiFetch', () => {
     expect((error as ApiError).code).toBe('timeout')
   })
 
+  it('keeps the timeout active while reading a stalled response body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(stalledJsonResponse(init?.signal)),
+      ),
+    )
+
+    const error = await apiFetch('/health', STATUS_CONTRACT, { timeoutMs: 5 }).catch(
+      (cause: unknown) => cause,
+    )
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('timeout')
+  })
+
   it('propagates a caller-initiated abort untouched', async () => {
     const controller = new AbortController()
     vi.stubGlobal(
@@ -126,6 +161,25 @@ describe('apiFetch', () => {
     controller.abort()
 
     await expect(pending).resolves.not.toBeInstanceOf(ApiError)
+  })
+
+  it('propagates a caller abort that happens while reading the response body', async () => {
+    const controller = new AbortController()
+    const reason = new DOMException('Caller stopped the request', 'AbortError')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(stalledJsonResponse(init?.signal)),
+      ),
+    )
+
+    const pending = apiFetch('/health', STATUS_CONTRACT, {
+      signal: controller.signal,
+    }).catch((cause: unknown) => cause)
+    await Promise.resolve()
+    controller.abort(reason)
+
+    await expect(pending).resolves.toBe(reason)
   })
 
   it('rejects invalid JSON on a successful response with request context', async () => {
@@ -149,3 +203,21 @@ describe('apiFetch', () => {
     expect((error as ApiError).message).toContain('not valid JSON')
   })
 })
+
+function stalledJsonResponse(signal?: AbortSignal | null): Response {
+  const body = new ReadableStream({
+    start(controller) {
+      signal?.addEventListener(
+        'abort',
+        () => {
+          controller.error(signal.reason)
+        },
+        { once: true },
+      )
+    },
+  })
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}

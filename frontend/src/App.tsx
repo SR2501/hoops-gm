@@ -1,7 +1,5 @@
-import type { ReactNode } from 'react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
-import { RenderErrorBoundary } from './components/RenderErrorBoundary'
 import { DashboardPage } from './routes/DashboardPage'
 import { NotFoundPage } from './routes/NotFoundPage'
 import { SystemPage } from './routes/SystemPage'
@@ -16,36 +14,10 @@ export function App() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route
-          index
-          element={
-            <RouteBoundary>
-              <DashboardPage />
-            </RouteBoundary>
-          }
-        />
-        <Route
-          path="system"
-          element={
-            <RouteBoundary>
-              <SystemPage />
-            </RouteBoundary>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            <RouteBoundary>
-              <NotFoundPage />
-            </RouteBoundary>
-          }
-        />
+        <Route index element={<DashboardPage />} />
+        <Route path="system" element={<SystemPage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   )
-}
-
-function RouteBoundary({ children }: { children: ReactNode }) {
-  const location = useLocation()
-  return <RenderErrorBoundary resetKey={location.key}>{children}</RenderErrorBoundary>
 }

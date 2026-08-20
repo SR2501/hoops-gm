@@ -92,87 +92,105 @@ export async function apiFetch<T>(
 
   const signals = signal ? [signal, timeoutController.signal] : [timeoutController.signal]
 
-  let response: Response
   try {
-    // Built explicitly rather than with undefined-valued keys, because
-    // exactOptionalPropertyTypes treats an explicit undefined as a real value.
-    const init: RequestInit = { method, signal: AbortSignal.any(signals) }
-    if (body !== undefined) {
-      init.headers = { 'Content-Type': 'application/json' }
-      init.body = JSON.stringify(body)
-    }
-    response = await fetch(`${BASE_URL}${path}`, init)
-  } catch (cause) {
-    // A caller-initiated abort is not an error worth dressing up.
-    if (signal?.aborted) throw cause
-    const timedOut = cause instanceof DOMException && cause.name === 'TimeoutError'
-    throw new ApiError(
-      0,
-      timedOut ? 'timeout' : 'unreachable',
-      timedOut
-        ? `The backend did not answer within ${String(timeoutMs)}ms.`
-        : 'Could not reach the backend. Is it running on 127.0.0.1:8000?',
-      null,
-    )
-  } finally {
-    clearTimeout(timer)
-  }
-
-  const requestId = response.headers.get('X-Request-ID')
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch {
-    if (response.ok) {
+    let response: Response
+    try {
+      // Built explicitly rather than with undefined-valued keys, because
+      // exactOptionalPropertyTypes treats an explicit undefined as a real value.
+      const init: RequestInit = { method, signal: AbortSignal.any(signals) }
+      if (body !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' }
+        init.body = JSON.stringify(body)
+      }
+      response = await fetch(`${BASE_URL}${path}`, init)
+    } catch (cause) {
+      if (signal?.aborted) {
+        throw signal.reason ?? cause
+      }
+      if (timeoutController.signal.aborted) {
+        throw timeoutError(timeoutMs)
+      }
       throw new ApiError(
-        response.status,
-        'invalid_response',
-        `${contract.invalidResponseDetail} The response was not valid JSON.`,
-        requestId,
+        0,
+        'unreachable',
+        'Could not reach the backend. Is it running on 127.0.0.1:8000?',
+        null,
       )
     }
-    payload = null
-  }
 
-  if (!response.ok) {
-    if (isErrorBody(payload)) {
-      throw new ApiError<ApiErrorBody>(
+    const requestId = response.headers.get('X-Request-ID')
+    let payload: unknown
+    try {
+      payload = await response.json()
+    } catch (cause) {
+      if (signal?.aborted) {
+        throw signal.reason ?? cause
+      }
+      if (timeoutController.signal.aborted) {
+        throw timeoutError(timeoutMs)
+      }
+      if (response.ok) {
+        throw new ApiError(
+          response.status,
+          'invalid_response',
+          `${contract.invalidResponseDetail} The response was not valid JSON.`,
+          requestId,
+        )
+      }
+      payload = null
+    }
+
+    if (!response.ok) {
+      if (isErrorBody(payload)) {
+        throw new ApiError<ApiErrorBody>(
+          response.status,
+          payload.error,
+          payload.detail,
+          payload.request_id ?? requestId,
+          payload,
+        )
+      }
+
+      const endpointError = contract.errorFromResponse?.(payload, {
+        status: response.status,
+        statusText: response.statusText,
+        requestId,
+        path,
+      })
+      if (endpointError) {
+        throw endpointError
+      }
+
+      throw new ApiError(
         response.status,
-        payload.error,
-        payload.detail,
-        payload.request_id ?? requestId,
+        'http_error',
+        response.statusText || `Backend request failed with HTTP ${String(response.status)}.`,
+        requestId,
         payload,
       )
     }
 
-    const endpointError = contract.errorFromResponse?.(payload, {
-      status: response.status,
-      statusText: response.statusText,
-      requestId,
-      path,
-    })
-    if (endpointError) {
-      throw endpointError
+    if (!contract.isSuccess(payload)) {
+      throw new ApiError(
+        response.status,
+        'invalid_response',
+        contract.invalidResponseDetail,
+        requestId,
+        payload,
+      )
     }
 
-    throw new ApiError(
-      response.status,
-      'http_error',
-      response.statusText || `Backend request failed with HTTP ${String(response.status)}.`,
-      requestId,
-      payload,
-    )
+    return payload
+  } finally {
+    clearTimeout(timer)
   }
+}
 
-  if (!contract.isSuccess(payload)) {
-    throw new ApiError(
-      response.status,
-      'invalid_response',
-      contract.invalidResponseDetail,
-      requestId,
-      payload,
-    )
-  }
-
-  return payload
+function timeoutError(timeoutMs: number): ApiError {
+  return new ApiError(
+    0,
+    'timeout',
+    `The backend did not answer within ${String(timeoutMs)}ms.`,
+    null,
+  )
 }

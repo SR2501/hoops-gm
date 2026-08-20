@@ -77,16 +77,18 @@ export function AsyncBoundary<T>({
   // A failed refresh that leaves older data on screen is exactly the case
   // where the screen must say so rather than look current.
   const refreshFailed = status === 'error'
+  const refreshPending = status === 'loading'
   const failureCode = error instanceof ApiError ? error.code : null
   const failureRequestId = error instanceof ApiError ? error.requestId : null
   const dataIsEmpty = isEmpty?.(data) ?? false
 
   return (
     <>
-      {(isStale || refreshFailed) && (
+      {(isStale || refreshFailed || refreshPending) && (
         <p className="stale-banner" role="status">
           <span>
             {refreshFailed ? 'Refresh failed. ' : ''}
+            {refreshPending ? 'Refreshing. ' : ''}
             Showing data from {fetchedAt?.toLocaleTimeString() ?? 'an earlier load'}.
             {refreshFailed && error ? (
               <span className="stale-banner__detail">
@@ -96,8 +98,8 @@ export function AsyncBoundary<T>({
               </span>
             ) : null}
           </span>
-          <button type="button" onClick={reload}>
-            Refresh
+          <button type="button" onClick={reload} disabled={refreshPending}>
+            {refreshPending ? 'Refreshing…' : 'Refresh'}
           </button>
         </p>
       )}

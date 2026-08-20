@@ -6177,10 +6177,12 @@ invalid JSON and malformed 2xx responses, the exact fake-timer stale transition
 with a single scheduled check, last-good/refresh-failure retention with no
 unhandled rejection (including when the retained result is empty),
 request-id/code display, and render-exception fallback and recovery. Rebasing
-onto current `origin/main`
-`79a5e3e3d0c317374e90a58a9a9f5a0ecccefe13` was clean and touched no frontend
-file. On that base, frontend ESLint, strict TypeScript checking, all 21 tests,
-the production Vite build, the tracked-file secret scan (268 files), and the
+onto final current `origin/main`
+`bcfb2d68df97238a6f97c03bb38e4f952a5282dd` touched no frontend file; its
+append-only handoff entry was preserved before this entry during the only
+conflict resolution. On that base, frontend ESLint, strict TypeScript checking,
+all 25 tests,
+the production Vite build, the tracked-file secret scan (271 files), and the
 Impeccable mechanical UI detector all pass.
 
 The first exact-head independent frontend review found three concrete gaps in
@@ -6192,6 +6194,17 @@ fixed before publication. Empty results now retain the explicit failure,
 backend health distinguishes reachability from response errors and shows
 detail/code/request id, and each page is bounded inside the persistent shell so
 navigation remains an escape path.
+
+The next exact-head review found that the request timeout stopped when response
+headers arrived rather than after the body and contract validation, caller
+aborts during body parsing could be misclassified, retained data temporarily
+lost refresh context while a retry was pending, and route protection depended
+on each future route remembering a wrapper. Those findings were also reproduced
+and fixed before publication. The same abort signal and timeout now cover the
+complete response lifecycle; tests pin stalled-body timeout and caller abort
+after headers. Retained data visibly says `Refreshing` during retry, and the
+persistent `AppLayout` owns one boundary around `Outlet`, so every current and
+future child route is protected automatically while navigation remains usable.
 
 **Now true:** A successful HTTP status is not sufficient evidence for any
 existing frontend endpoint; malformed payloads become visible contract errors

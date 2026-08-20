@@ -97,6 +97,9 @@ describe('AsyncBoundary', () => {
     await waitFor(() => {
       expect(request).toBe(2)
     })
+    expect(screen.getByText('last good value')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing.')
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
 
     await act(async () => {
       second.reject(
@@ -123,7 +126,7 @@ describe('AsyncBoundary', () => {
       reload: vi.fn(),
     }
 
-    render(
+    const { rerender } = render(
       <AsyncBoundary state={state} isEmpty={(data) => data.length === 0}>
         {(data) => <p>{data.join(', ')}</p>}
       </AsyncBoundary>,
@@ -132,5 +135,17 @@ describe('AsyncBoundary', () => {
     expect(screen.getByText('Nothing to show yet.')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Code refresh_unavailable.')
     expect(screen.getByRole('status')).toHaveTextContent('Request req-empty-refresh.')
+
+    rerender(
+      <AsyncBoundary
+        state={{ ...state, status: 'loading' }}
+        isEmpty={(data) => data.length === 0}
+      >
+        {(data) => <p>{data.join(', ')}</p>}
+      </AsyncBoundary>,
+    )
+
+    expect(screen.getByText('Nothing to show yet.')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing.')
   })
 })

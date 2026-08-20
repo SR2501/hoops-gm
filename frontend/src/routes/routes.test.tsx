@@ -1,7 +1,10 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { Route, Routes } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
+import { ApiError } from '../api/client'
+import { AppLayout } from '../components/AppLayout'
 import { mockFetch, renderWithRouter } from '../test/helpers'
 
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
@@ -136,5 +139,29 @@ describe('the dashboard shell', () => {
     renderWithRouter(<App />, { route: '/no-such-page' })
 
     expect(await screen.findByRole('heading', { name: 'Not found' })).toBeInTheDocument()
+  })
+
+  it('keeps shell navigation available and resets the boundary on route change', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockFetch({ '/health': { body: HEALTH } })
+
+    function BrokenRoute(): never {
+      throw new ApiError(500, 'render_failed', 'Route render failed.', 'req-route-render')
+    }
+
+    renderWithRouter(
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route index element={<BrokenRoute />} />
+          <Route path="system" element={<p>Recovered through navigation</p>} />
+        </Route>
+      </Routes>,
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Route render failed.')
+    await userEvent.click(screen.getByRole('link', { name: 'System' }))
+
+    expect(await screen.findByText('Recovered through navigation')).toBeInTheDocument()
+    expect(screen.queryByText('Route render failed.')).not.toBeInTheDocument()
   })
 })

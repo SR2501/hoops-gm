@@ -10,10 +10,11 @@
  * visible without going looking for it.
  */
 
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getHealth } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
+import { RenderErrorBoundary } from './RenderErrorBoundary'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
 
 export function AppLayout() {
   const health = useAsync((options) => getHealth(options), [])
+  const location = useLocation()
 
   return (
     <div className="shell">
@@ -58,7 +60,9 @@ export function AppLayout() {
       </aside>
 
       <main className="shell__main">
-        <Outlet />
+        <RenderErrorBoundary resetKey={location.key}>
+          <Outlet />
+        </RenderErrorBoundary>
       </main>
     </div>
   )
