@@ -10,8 +10,9 @@ neither lane's pre-merge header was used as an input, because both were computed
 before the other's items landed. The header before that claimed 37 done / 63
 pending against an actual 36 / 64, and that drift predates both lanes.)
 **38 done - 1 blocked - 67 pending - 106 total**
+**38 done - 1 blocked - 68 pending - 107 total**
 
-(Counted from the status markers themselves, not carried forward: 106 `###` headings and 106 markers, 1:1.)
+(Counted from the status markers themselves, not carried forward: 107 `###` headings and 107 markers, 1:1.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -867,6 +868,39 @@ Deferred from 2026-08-20 by the coordinator with the mechanism stated: building
 it while backend PR #38 was in final review would have restarted the review
 clock on an otherwise-ready head, and the risk it mitigates has no active source
 until the next increment is scheduled against this contract.
+
+### `schedule-grid-refusal-discriminant` - Distinguishing nine conditions that share one refusal code
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-early`, `schedule-grid-ui`
+
+`schedule_grid_incomplete_evidence` is raised from nine places in
+`backend/src/hoops_gm/api/routes/schedule_grid.py`, on four different objects:
+the refresh's completeness evidence, the cohort it describes, the league's team
+rows, and the league's scoring calendar. They call for different operator
+actions — a refresh that cannot state its completeness needs the schedule
+re-importing, while a scoring period the league has no row for needs the
+calendar corrected, and re-importing the schedule will never create one.
+
+A consumer given only the code cannot tell which. The dashboard currently names
+all three families in one message and defers to the backend's `detail` prose for
+which applies, which is honest but is the weakest form of the information: it
+cannot be branched on, and it puts the burden on the reader at the moment they
+are least able to carry it.
+
+This has already produced two defects on the frontend, both caught in review
+rather than by any test. Copy written against one condition asserted that the
+refresh "cannot state what it imported" and was rendered directly above a
+backend detail saying it had stated it and imported a playoffs cohort. The
+correction then asserted a single remedy — re-import the schedule — which is a
+confident, wrong instruction for the three conditions rooted in the league's own
+data. Each was true of the condition it was written against.
+
+Owned by `backend`. Either split the code so each family has its own, or add a
+machine-readable discriminant to the error body alongside `error`. Gate: Code.
+The frontend must not recover specificity by matching on `detail` text — that is
+the form-over-meaning coupling `AGENTS.md` warns about and would break silently
+on a reword.
 
 ### `schedule-grid-reference-distribution` - Comparing a team's period count against its own normal
 

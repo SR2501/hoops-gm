@@ -21,6 +21,23 @@
  * `schedule_grid_not_current` actually arrives — the schedule is re-ingested
  * while a grid is open — and it is the path where "these counts are from a
  * superseded cohort" is the most decision-bearing sentence on the page.
+ *
+ * **One code, nine backend conditions.** `schedule_grid_incomplete_evidence` is
+ * raised from nine places in `schedule_grid.py`, on four different objects: the
+ * refresh's completeness evidence, the cohort it describes, the league's team
+ * rows, and the league's scoring calendar. No single string can be both
+ * specific and true across all of them, so the copy here names the families and
+ * defers to the backend's own wording for which applies — and says outright
+ * that the remedy differs, because re-importing the schedule cannot create a
+ * missing scoring period. An earlier version asserted that remedy for every
+ * condition, which was a confident instruction that would have sent an operator
+ * to re-run an import three of the nine conditions do not respond to.
+ *
+ * Do not branch on the backend's prose to recover specificity. Matching on
+ * detail text is the form-over-meaning coupling AGENTS.md warns about and would
+ * break silently on a reword. The clean fix is a code split or a
+ * machine-readable discriminant in the body; it is `backend`'s, and is recorded
+ * in `docs/backlog.md` as `schedule-grid-refusal-discriminant`.
  */
 
 import { ApiError } from './client'
@@ -42,15 +59,15 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
   schedule_grid_not_current: {
     summary:
-      'The schedule changed after this version was recorded, so the counts no longer describe current reality. Verification worked and returned a clear verdict — nothing here is unknown, it is simply out of date. The grid is withheld rather than shown from a superseded cohort.',
+      "The evidence is well-formed but no longer describes current reality: the schedule may have changed after this version was recorded, or the league's scoring-period projection may be stale. Verification worked and returned a clear verdict — nothing here is unknown, it is simply out of date, so the grid is withheld rather than served from a superseded cohort.",
     action:
-      'Re-import the schedule to refresh it, so the registered refresh and the games it counts are the same cohort again.',
+      "Read the backend's wording below and act on what it names: re-import the schedule, or re-run the scoring-period projection. Both bring the registered version and the rows it describes back into step.",
   },
   schedule_grid_incomplete_evidence: {
     summary:
-      'The schedule evidence could not be verified for this grid: either the refresh cannot state what it imported, or what it did import is not the cohort this grid counts. This is not a claim that the schedule is wrong — it is that nothing on record can show it is right for these numbers.',
+      "The backend could not verify the evidence behind the counts it was asked for, so it served none. Which check failed differs: the schedule refresh may be unable to account for what it imported, it may have imported a different cohort from the one this grid counts, or the counted rows may not line up with this league's teams and scoring periods. This is not a claim that the schedule is wrong — it is that nothing on record establishes the counts this request asked for.",
     action:
-      "The backend's own wording below says which of the two applies. Re-import the schedule so the refresh records its completeness for the regular-season cohort, then reload.",
+      "Read the backend's wording below: it names the check that failed, and the remedy is not the same for each. A refresh that cannot state its completeness needs the schedule re-importing; a team or scoring period with no row needs the league's team data or calendar corrected, and re-importing the schedule will not create one.",
   },
   schedule_grid_incomplete: {
     summary:

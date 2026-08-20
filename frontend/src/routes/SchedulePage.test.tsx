@@ -451,13 +451,13 @@ describe('schedule grid refusals', () => {
       code: 'schedule_grid_not_current',
       status: 409,
       detail: 'registered version no longer matches',
-      expect: /changed after this version was recorded/,
+      expect: /no longer describes current reality/,
     },
     {
       code: 'schedule_grid_incomplete_evidence',
       status: 409,
       detail: 'carries no schedule_completeness block',
-      expect: /could not be verified for this grid/,
+      expect: /could not verify the evidence behind the counts/,
     },
     {
       code: 'schedule_grid_incomplete',
@@ -491,15 +491,13 @@ describe('schedule grid refusals', () => {
     })
   }
 
-  it('covers both backend conditions that share the incomplete-evidence code', async () => {
-    // The backend reaches this one code by two different routes: a refresh that
-    // carries no completeness block, and a refresh that carries one describing
-    // the wrong cohort. Both were driven end to end against the real service.
-    // The second is why this copy no longer says the refresh "cannot state what
-    // it imported" — in that case it states it perfectly well, and what it
-    // imported is a playoffs cohort this grid does not count. A summary that
-    // contradicts the backend's own wording underneath it is worse than a
-    // vague one.
+  it('covers every backend condition that shares the incomplete-evidence code', async () => {
+    // The backend raises this one code from nine places, on four different
+    // objects: the refresh's completeness evidence, the cohort it describes,
+    // the league's team rows, and the league's scoring calendar. Two were
+    // driven end to end against the real service; this pins that the copy is
+    // true of the families rather than of the one condition it was written
+    // against, which is how it went wrong the first time.
     mockFetch({
       [GRID_PATH]: refusal(
         409,
@@ -513,12 +511,20 @@ describe('schedule grid refusals', () => {
 
     const panel = await screen.findByRole('alert')
     const summary = within(panel).getByTestId('async-error-summary')
-    expect(summary).toHaveTextContent(/could not be verified for this grid/)
-    // True of both conditions, and false of neither.
-    expect(summary).toHaveTextContent(/not the cohort this grid counts/)
-    expect(summary).not.toHaveTextContent(/^The schedule refresh cannot state what it imported/)
-    // The backend's wording is what disambiguates, so the action points at it.
-    expect(within(panel).getByTestId('async-error-action')).toHaveTextContent(/own wording below/)
+    const action = within(panel).getByTestId('async-error-action')
+
+    // All three families named, so no condition is misdescribed.
+    expect(summary).toHaveTextContent(/unable to account for what it imported/)
+    expect(summary).toHaveTextContent(/different cohort from the one this grid counts/)
+    expect(summary).toHaveTextContent(/not line up with this league's teams and scoring periods/)
+
+    // The action must not assert a single remedy. Three of the nine conditions
+    // are about the league's calendar or team rows, and re-importing the
+    // schedule does not create a missing scoring period — an earlier version
+    // told the operator to do exactly that.
+    expect(action).toHaveTextContent(/the remedy is not the same for each/)
+    expect(action).toHaveTextContent(/re-importing the schedule will not create one/i)
+
     expect(panel).toHaveTextContent("describes a 'playoffs' cohort")
   })
 
@@ -541,9 +547,10 @@ describe('schedule grid refusals', () => {
     // would send the operator down the wrong path.
     const notCurrent = SCHEDULE_GRID_ERRORS.schedule_grid_not_current
     const noEvidence = SCHEDULE_GRID_ERRORS.schedule_grid_incomplete_evidence
-    expect(notCurrent?.summary).toMatch(/changed after this version was recorded/)
-    expect(notCurrent?.action).toMatch(/[Rr]e-import/)
-    expect(noEvidence?.summary).toMatch(/nothing on record can show it is right/)
+    expect(notCurrent?.summary).toMatch(/no longer describes current reality/)
+    expect(notCurrent?.summary).toMatch(/scoring-period projection may be stale/)
+    expect(notCurrent?.action).toMatch(/[Rr]e-import the schedule, or re-run the scoring-period projection/)
+    expect(noEvidence?.summary).toMatch(/nothing on record establishes the counts/)
   })
 
   it('does not read the code from a header the browser never receives', async () => {

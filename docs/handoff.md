@@ -8852,3 +8852,91 @@ exact-head round follows the final rebase regardless.
 **Next:** Unchanged and blocked only on the merge. Rebase onto merged `main`,
 re-run the 1:1 marker check, re-capture and diff, re-verify both browser states,
 fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — One code, nine conditions: the copy was wrong twice more
+
+**Changed:** A focused review round on the corrected `incomplete_evidence`
+message — requested while blocked on the merge, because that copy had landed
+after all four full rounds and had been seen by nobody — found the correction
+itself defective, and the same defect in a second code.
+
+**`schedule_grid_incomplete_evidence` is raised from nine places**, not the
+seven I listed, on four different objects: the refresh's completeness evidence,
+the cohort it describes, the league's team rows, and the league's scoring
+calendar. Verified by line number against `schedule_grid.py` — 194, 215, 224,
+230, 246, 257, 302, 339, 430, 437.
+
+My corrected copy asserted a single remedy: *"Re-import the schedule so the
+refresh records its completeness for the regular-season cohort."* For three of
+those conditions — a team with no team row, a scoring period the league has no
+row for, and resolved games falling inside no scoring period — **re-importing
+the schedule cannot help.** The fault is in the league's own data, and the
+operator would have run the import, received the identical 409, and learned
+nothing. The previous wording was already wrong for those three, but genericly
+so; mine was wrong with more confidence, which is worse. I fixed the
+misdirection for the one condition I drove and sharpened it for three I did not.
+
+The copy now names all three families and says outright that the remedy differs,
+including that re-importing will not create a missing scoring period.
+
+**The same defect was live in `schedule_grid_not_current`, and a real response
+proved it.** Attempting to reach the league-calendar condition, I deleted a
+scoring period and got instead
+`scoring periods for league 1 do not match active deadline calendar version 1;
+run scoring-period projection`. My summary said *"The schedule changed after
+this version was recorded"* — false. The schedule had not changed; the
+scoring-period projection was stale. The coordinator's amended definition of
+this code covers both, and my wording had narrowed it to one. Now: *"the
+schedule may have changed after this version was recorded, or the league's
+scoring-period projection may be stale"*, with the action naming both remedies.
+
+**Now true:** Both corrected messages verified against the real service, each
+rendered above a backend detail it no longer contradicts:
+
+- `not_current` over *"…do not match active deadline calendar version 1; run
+  scoring-period projection"* — the action now names that remedy explicitly.
+- `incomplete_evidence` over *"…describes a 'playoffs' cohort…"*.
+
+`docs/backlog.md` gains `schedule-grid-refusal-discriminant`, owned by
+`backend`, gated Code: split the code or add a machine-readable discriminant to
+the body. Prose cannot be both specific and true across nine conditions on four
+objects, and the frontend must not recover specificity by matching on `detail`
+text — that is the form-over-meaning coupling AGENTS.md warns about and would
+break silently on a reword. Backlog recounted: 38 done / 1 blocked / 68 pending
+/ 107 total, 107 headings to 107 markers.
+
+Also fixed, and it was on a 40-minute fuse: the recorded fixture's age assertion
+hardcoded `2026-08-27T18:00:00Z` as its reference instant, which left **53
+minutes** of margin against the next re-capture. Any recording taken after
+18:00Z would have made `days` 6 and failed a test on a change that broke
+nothing. The reference is now derived from the recording itself, plus a
+boundary assertion so the derivation is not vacuous.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** The three league-data conditions at `:302`, `:339` and
+`:437` still have not been driven end to end, and I now know why it is hard:
+deleting a scoring period trips the earlier `not_current` projection check
+first, so reaching them needs a database that is inconsistent in one specific
+way while consistent in every other — which the seed cannot produce and which I
+judged not worth manufacturing by hand. Lane A's mutation table pins the backend
+behaviour, so these are **not unguarded, only unrendered**. The copy is now
+written to be true of them rather than verified against them, which is weaker
+and is the honest description.
+
+The `:430` condition is documented unreachable by the backend and was not
+considered further.
+
+**The generalisation, now with three instances rather than one:** a message
+written against one condition and reviewed by three specialists was false of a
+second; its correction was false of three more; and the same defect was sitting
+in a neighbouring code the whole time. None of it was catchable by a green test,
+and each was found only by rendering a real refusal and reading the sentence
+above the backend's own words. **When one wire code spans several conditions,
+the message is an untested assertion about every condition you did not drive.**
+
+**Next:** Unchanged. Blocked on the merge of backend #38. Rebase onto merged
+`main`, re-run the 1:1 marker check, re-capture and diff the fixture, re-verify
+the browser states, fresh exact-head review round, open with base `main`.

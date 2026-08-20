@@ -32,7 +32,7 @@ import recorded from '../test/fixtures/schedule-grid-current.recorded.json'
 import { isScheduleGrid } from '../api/endpoints'
 import type { ScheduleGrid } from '../api/types'
 import { ScheduleGridTable } from './ScheduleGridTable'
-import { buildScheduleGridModel, describeRefreshAge } from './scheduleGridModel'
+import { buildScheduleGridModel, DAY_MS, describeRefreshAge } from './scheduleGridModel'
 
 const grid = recorded as unknown as ScheduleGrid
 
@@ -74,12 +74,25 @@ describe('the recorded schedule grid response', () => {
     // A UTC designator, not `Z` specifically — `+00:00` is equally correct and
     // pinning the serializer's choice would fail on a change that broke nothing.
     expect(grid.lineage.schedule.refreshed_at).toMatch(/(Z|[+-]\d{2}:\d{2})$/)
-    const age = describeRefreshAge(
-      grid.lineage.schedule.refreshed_at,
-      new Date('2026-08-27T18:00:00Z'),
-    )
+
+    // The reference instant is derived from the recording rather than
+    // hardcoded. A fixed date makes this assertion depend on what o'clock
+    // somebody happened to hit record: the previous hardcoded
+    // `2026-08-27T18:00:00Z` left 53 minutes of margin against the next
+    // re-capture, and would have failed on a recording taken an hour later
+    // while nothing was actually broken.
+    const recorded = Date.parse(grid.lineage.schedule.refreshed_at)
+    expect(Number.isNaN(recorded)).toBe(false)
+
+    const sevenDaysOn = new Date(recorded + 7 * DAY_MS + 3_600_000)
+    const age = describeRefreshAge(grid.lineage.schedule.refreshed_at, sevenDaysOn)
     expect(age.days).toBe(7)
     expect(age.label).toBe('refreshed 7 days ago')
+
+    // And the boundary either side of it, so the derivation is not vacuous.
+    expect(describeRefreshAge(grid.lineage.schedule.refreshed_at, new Date(recorded)).label).toBe(
+      'refreshed today',
+    )
   })
 
   it('renders 30 teams and 21 periods with the seeded counts', () => {
