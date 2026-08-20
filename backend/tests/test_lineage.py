@@ -31,6 +31,7 @@ from hoops_gm.db.lineage import (
     record_refresh,
     schedule_completeness,
     schedule_content_version,
+    verify_refresh,
 )
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
@@ -406,6 +407,26 @@ def test_check_cohort_still_byte_compares_a_manually_registered_schedule(session
     assert result.current_version == "manual-schedule-v1"
 
 
+def test_verify_refresh_does_not_apply_nba_completeness_to_a_derived_schedule_stream(
+    session: Any,
+) -> None:
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="league-scoring-periods:1",
+        version="projection-v1",
+        source="calendar",
+        season="2026-27",
+        summary={SCHEDULE_COMPLETENESS_SUMMARY_KEY: None},
+    )
+
+    verification = verify_refresh(session, run)
+
+    assert verification.is_current is True
+    assert verification.current_version == "projection-v1"
+    assert verification.observed_content_version is None
+
+
 def test_schedule_completeness_rejects_a_corrupt_block(session: Any) -> None:
     """Present-but-malformed is a corrupt registry, not an old one.
 
@@ -443,8 +464,16 @@ def test_schedule_completeness_distinguishes_present_null_from_an_absent_legacy_
         ({"unresolved_game_ids": ["0022600001"]}, "unresolved game id"),
         ({"source_game_count": 6}, "source game"),
         ({"persisted_team_row_count": 11}, "persisted team row"),
+        (
+            {
+                "source_game_count": 0,
+                "resolved_game_count": 0,
+                "persisted_team_row_count": 0,
+            },
+            "impossible all-zero refresh",
+        ),
     ],
-    ids=["negative", "unresolved", "source-vs-resolved", "rows-vs-games"],
+    ids=["negative", "unresolved", "source-vs-resolved", "rows-vs-games", "all-zero"],
 )
 def test_schedule_completeness_rejects_logically_inconsistent_metadata(
     session: Any, overrides: dict[str, Any], expected: str
@@ -734,6 +763,53 @@ def test_lineage_http_fails_loudly_for_present_null_schedule_metadata(app: FastA
                             "artifact_key": NBA_SCHEDULE_ARTIFACT_KEY,
                             "season": "2026-27",
                             "version": "invalid-metadata",
+                        }
+                    ]
+                },
+            ),
+        ]
+
+    for response in responses:
+        assert response.status_code == 500
+        assert response.json()["error"] == "internal_error"
+
+
+def test_lineage_http_fails_loudly_for_an_all_zero_schedule_refresh(app: FastAPI) -> None:
+    with TestClient(app, raise_server_exceptions=False) as client:
+        Base.metadata.drop_all(app.state.database.engine)
+        Base.metadata.create_all(app.state.database.engine)
+        with app.state.database.session() as session:
+            empty_version = schedule_content_version(session, season="2026-27")
+            record_refresh(
+                session,
+                artifact_type=RefreshArtifactType.SCHEDULE,
+                artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+                version=empty_version,
+                source="operator",
+                season="2026-27",
+                summary={
+                    SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                        "season": "2026-27",
+                        "season_type": "regular",
+                        "source_game_count": 0,
+                        "resolved_game_count": 0,
+                        "unresolved_game_ids": [],
+                        "persisted_team_row_count": 0,
+                    }
+                },
+            )
+
+        responses = [
+            client.get("/api/v1/lineage/current"),
+            client.post(
+                "/api/v1/lineage/validate",
+                json={
+                    "claims": [
+                        {
+                            "artifact_type": "schedule",
+                            "artifact_key": NBA_SCHEDULE_ARTIFACT_KEY,
+                            "season": "2026-27",
+                            "version": empty_version,
                         }
                     ]
                 },

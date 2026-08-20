@@ -812,7 +812,7 @@ def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session
         season="2025-26",
     )
 
-    with pytest.raises(RuntimeError, match=r"'2026-27' has no current NBA schedule refresh"):
+    with pytest.raises(RuntimeError, match="stale NBA schedule"):
         scheduled_game_counts(session, league_id=league.id, season="2026-27")
 
 

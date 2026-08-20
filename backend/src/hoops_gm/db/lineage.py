@@ -156,6 +156,11 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a non-integer count")
     if any(value < 0 for value in counts):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a negative count")
+    if source_game_count == resolved_game_count == persisted_team_row_count == 0:
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports an impossible all-zero refresh; "
+            "a registered schedule refresh must contain at least one source game"
+        )
     if unresolved:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records {len(unresolved)} unresolved game id(s); "
@@ -473,14 +478,16 @@ class RefreshVerification:
 def verify_refresh(session: Session, run: RefreshRun) -> RefreshVerification:
     """Verify that ``run`` still describes its persisted artifact.
 
-    For a schedule refresh registered with completeness metadata, that is the
-    fingerprint recomputed from the persisted ``team_schedule`` rows — not the
-    label stored on the row. The registered label is current only when those
-    values match. If they differ, ``current_version`` is ``None``: the observed
-    hash is unregistered evidence, not a newly current version. Rows without
-    completeness metadata (legacy imports, manual registrations, every
-    non-schedule artifact) retain the original byte-comparison contract,
-    because there is nothing this module can honestly recompute them from.
+    For the canonical ``nba-schedule`` refresh registered with completeness
+    metadata, that is the fingerprint recomputed from the persisted
+    ``team_schedule`` rows — not the label stored on the row. The registered
+    label is current only when those values match. If they differ,
+    ``current_version`` is ``None``: the observed hash is unregistered evidence,
+    not a newly current version. Rows without completeness metadata (legacy
+    imports and manual registrations), derived schedule-typed streams under
+    other artifact keys, and every non-schedule artifact retain the original
+    byte-comparison contract, because there is nothing this module can honestly
+    recompute them from.
 
     **Fail closed on inconsistent evidence.** A completeness block that
     contradicts itself or the refresh row it sits on is not weaker evidence,
@@ -492,7 +499,10 @@ def verify_refresh(session: Session, run: RefreshRun) -> RefreshVerification:
     fact the fingerprint of a smaller — or empty — one.
     """
 
-    if run.artifact_type is not RefreshArtifactType.SCHEDULE:
+    if (
+        run.artifact_type is not RefreshArtifactType.SCHEDULE
+        or run.artifact_key != NBA_SCHEDULE_ARTIFACT_KEY
+    ):
         return RefreshVerification(run.version, None, run.version, True)
     completeness = schedule_completeness(run.summary)
     if completeness is None:

@@ -6609,3 +6609,93 @@ without adding refresh automation, consistent with the original
 and independent code approval on the replacement exact head, then publish one
 unmerged PR and require native PostgreSQL CI. Injury-status conversion remains
 blocked until its invalidated 173-game/26-date cohort is regenerated.
+
+---
+
+## 2026-08-20 — backend — Final canonical schedule verification fixes
+
+**Changed:** A present `schedule_completeness` block now rejects the impossible
+all-zero source/resolved/persisted cohort while `schedule_content_version` still
+fingerprints an empty scope for diagnostics. Canonical `nba-schedule` verification
+is now required before deadline-calendar derivation, activation, current reads,
+and scoring-period projection/current reads trust or stamp its refresh version.
+Writers retain the existing season-scoped locks. Derived schedule-typed streams
+under other artifact keys keep byte-comparison semantics and are not checked
+against `team_schedule`.
+
+**Now true:** Focused regressions prove malformed evidence is translated through
+the existing calendar domain errors, and same-row-count schedule mutations block
+deadline-calendar derivation, activation, HTTP publication, scoring-period
+projection, and current-projection reads. Focused Ruff lint/format, strict mypy
+(130 source files), and calendar/lineage/API tests pass.
+
+**Could not verify:** Native PostgreSQL, concurrent lock behavior on PostgreSQL,
+the full offline backend suite, live adapter smokes, and GitHub CI were not run in
+this session. No schema, migration, model math, or external-source behavior
+changed.
+
+**Next:** Run the exact uncommitted head through the full SQLite/PostgreSQL CI
+lanes and independent final review. The quant-owned
+`availability/absence_splits.py` remains untouched for the next specialist.
+
+---
+
+## 2026-08-20 — quant — Final absence-split schedule verification fix
+
+**Changed:** Absence-split computation/publication and current retrieval now take
+the canonical season-scoped schedule refresh lock, verify the registered
+`nba-schedule` refresh against persisted content, translate stale or malformed
+evidence through `AbsenceSplitInputError`, and stamp/select only the verified
+registered current version. Legacy refreshes without completeness metadata retain
+exactly `verify_refresh`'s byte-comparison behavior. No split math, threshold,
+schema, or API changed.
+
+**Now true:** Focused regressions mutate schedule dates without changing row
+count and prove both publication and current retrieval fail closed; malformed
+completeness evidence also stays inside the absence-split domain error. Focused
+Ruff lint/format, strict mypy (130 source files), all absence-split tests, and all
+18 `model_backtest` marker tests pass.
+
+**Could not verify:** Native PostgreSQL and its concurrent advisory-lock behavior,
+the full offline backend suite, live adapter smokes, and GitHub CI were not run.
+No model evidence regeneration was needed because model methods, parameters,
+cohorts, and outputs are unchanged.
+
+**Next:** Run the exact uncommitted head through the full SQLite/PostgreSQL CI
+lanes and independent final review before committing.
+
+---
+
+## 2026-08-20 — data-engineer, backend, quant — Canonical schedule verification integration
+
+**Changed:** Integrated the two final rejected-head findings across ownership
+boundaries. An all-zero completeness block can no longer validate a schedule
+that the producer itself refuses, while an empty-scope hash remains available
+only as diagnostic content. Every existing consumer of the canonical
+`nba-schedule` stream now verifies persisted content before trusting or
+stamping the registered version: broad and exact lineage API checks,
+`/lineage/current`, schedule-context, reliability, deadline calendars,
+scoring-period projections, and absence splits. Writers use the existing
+season-scoped refresh lock; derived schedule-typed artifact keys are not
+misinterpreted as NBA schedule rows.
+
+**Now true:** Same-row-count mutation regressions cover publication and current
+reads across all six downstream surfaces. Ruff, format, strict mypy, and all
+1,049 offline backend tests pass. The complete Adapter gate passes 281 tests,
+the Model gate passes 18, SQLite upgrades/checks/downgrades through `0015`, and
+the 277-file secret scan is clean. On this final code content, both documented
+Model evidence commands reproduced the committed v2 artifacts byte-for-byte,
+and the three live NBA smokes again reconciled 1,230 regular-season IDs, 84
+playoff IDs, and all ten independent repeated-canonical orientations. No model
+math, threshold, cohort fingerprint, metric, or injury artifact changed.
+
+**Could not verify:** Native PostgreSQL and its advisory-lock behavior remain
+unavailable locally because Docker is absent and `TEST_DATABASE_URL` is unset;
+fresh PR CI is required. The `ScheduleLeagueV2` coherent-subset limitation
+documented above remains: its returned-entry count has no independent total in
+that endpoint.
+
+**Next:** Commit this integration, obtain fresh exact-head backend,
+data-engineer, quant, and independent code approvals, then publish one unmerged
+PR. Injury-status conversion remains paused pending complete regeneration of
+the invalidated 173-game/26-date cohort.

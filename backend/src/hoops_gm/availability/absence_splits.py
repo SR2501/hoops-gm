@@ -20,7 +20,12 @@ from typing import Final, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY
+from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    current_refresh,
+    lock_refresh_scope,
+    verify_refresh,
+)
 from hoops_gm.db.models.availability import (
     AbsenceSplit,
     AbsenceSplitComputationRun,
@@ -104,6 +109,12 @@ class _SplitDraft:
     provenance: dict[str, object]
 
 
+@dataclass(frozen=True)
+class _VerifiedScheduleRefresh:
+    run: RefreshRun
+    version: str
+
+
 def compute_absence_splits(
     session: Session,
     *,
@@ -119,7 +130,8 @@ def compute_absence_splits(
     pair removed by corrected input cannot survive through a stale row.
     """
 
-    schedule_refresh = _schedule_refresh(session, season)
+    _lock_schedule_refresh(session, season)
+    schedule_refresh = _verified_schedule_refresh(session, season)
     if schedule_refresh is None:
         raise AbsenceSplitInputError(
             f"no registered schedule refresh for {season}; source cohort is unknowable"
@@ -288,7 +300,7 @@ def compute_absence_splits(
         evidence_version=evidence_version,
         input_fingerprint=fingerprint,
         schedule_version=schedule_refresh.version,
-        schedule_refreshed_at=schedule_refresh.refreshed_at,
+        schedule_refreshed_at=schedule_refresh.run.refreshed_at,
         computed_at=when,
         result_count=len(drafts),
         skipped_one_sided_pairs=skipped,
@@ -333,7 +345,8 @@ def latest_absence_splits(
 ) -> tuple[AbsenceSplit, ...]:
     """Rows from exactly the latest successful current-schedule run."""
 
-    schedule_refresh = _schedule_refresh(session, season)
+    _lock_schedule_refresh(session, season)
+    schedule_refresh = _verified_schedule_refresh(session, season)
     if schedule_refresh is None:
         raise AbsenceSplitInputError(
             f"no registered schedule refresh for {season}; current splits are unknowable"
@@ -366,17 +379,39 @@ def _rows_for_run(session: Session, run_id: int) -> tuple[AbsenceSplit, ...]:
     )
 
 
-def _schedule_refresh(session: Session, season: str) -> RefreshRun | None:
-    return session.scalar(
-        select(RefreshRun)
-        .where(
-            RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE,
-            RefreshRun.artifact_key == NBA_SCHEDULE_ARTIFACT_KEY,
-            RefreshRun.season == season,
-        )
-        .order_by(RefreshRun.refreshed_at.desc(), RefreshRun.id.desc())
-        .limit(1)
+def _lock_schedule_refresh(session: Session, season: str) -> None:
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
     )
+
+
+def _verified_schedule_refresh(
+    session: Session,
+    season: str,
+) -> _VerifiedScheduleRefresh | None:
+    run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
+    )
+    if run is None:
+        return None
+    try:
+        verification = verify_refresh(session, run)
+    except ValueError as exc:
+        raise AbsenceSplitInputError(
+            f"NBA schedule evidence for {season} is malformed: {exc}"
+        ) from exc
+    if not verification.is_current or verification.current_version is None:
+        raise AbsenceSplitInputError(
+            f"NBA schedule evidence for {season} is stale: registered version "
+            f"{verification.registered_version!r} no longer matches persisted schedule content"
+        )
+    return _VerifiedScheduleRefresh(run=run, version=verification.current_version)
 
 
 def _require_schedule_entry(
