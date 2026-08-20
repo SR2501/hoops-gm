@@ -191,7 +191,7 @@ function isScheduleGridCount(value: unknown): value is ScheduleGridCount {
  * data" marker and says how many it found, which is the difference between
  * finding out and not.
  */
-function isScheduleGrid(value: unknown): value is ScheduleGrid {
+export function isScheduleGrid(value: unknown): value is ScheduleGrid {
   return (
     isRecord(value) &&
     typeof value.league_id === 'number' &&

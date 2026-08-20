@@ -357,7 +357,14 @@ a:focus-visible {
      scrollport — but without a max-height its scrollport is as tall as its
      content, it never scrolls, and `position: sticky; top: 0` can never
      engage. Thirty teams do not fit on a laptop, so the period numbers must
-     stay put while the rows move under them. */
+     stay put while the rows move under them.
+
+     The 18rem budgets for everything above the grid at the default window: the
+     page heading, the lede, the lineage summary and the key. It is a constant
+     rather than a measurement, so opening the lineage disclosure or wrapping
+     the key onto a second line pushes the bottom of the grid below the fold
+     and produces an inner scrollport inside the page scroll. Acceptable for a
+     single-user tool; the honest fix is a flex column with `min-height: 0`. */
   max-height: calc(100vh - 18rem);
   min-height: 12rem;
   overflow: auto;
@@ -367,11 +374,15 @@ a:focus-visible {
 }
 
 .grid {
-  /* `separate` rather than `collapse` on purpose: with a collapsing border
-     model the browser owns the borders rather than the cells, and
-     `position: sticky` on a `th` is ignored. Each cell draws its own right and
-     bottom edge instead, which renders the same 1px lines and lets the header
-     row and team column actually stick. */
+  /* `separate` rather than `collapse`, but not for the reason folklore gives:
+     sticky `th` under a collapsing border model works in current engines, and
+     a live measurement on this grid confirmed the header pins either way. What
+     `collapse` does break is border *painting* — collapsed borders resolve onto
+     the table's border grid rather than onto the cell box, so a pinned header's
+     bottom rule does not travel with it and the rows scroll out from under a
+     header with no separator. With `separate` and zero spacing each cell owns
+     its own right and bottom edge, the lines render identically, and they stick
+     with the cell. See w3c/csswg-drafts#3136. */
   border-collapse: separate;
   border-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -515,10 +526,31 @@ a:focus-visible {
   vertical-align: super;
 }
 
+/* The baseline rows pin to the bottom of the scrollport for the same reason the
+   period numbers pin to the top: with roughly half the teams visible at a time,
+   a baseline you can only see by scrolling to the end is a baseline you cannot
+   compare a team against. The mean row exists precisely for that comparison. */
 .grid tfoot th,
 .grid tfoot td {
+  position: sticky;
+  z-index: 1;
   border-top: 1px solid var(--border);
   border-bottom: none;
+  background: var(--bg-sunken);
+}
+
+.grid tfoot tr:first-child th,
+.grid tfoot tr:first-child td {
+  bottom: 1.75rem;
+}
+
+.grid tfoot tr:last-child th,
+.grid tfoot tr:last-child td {
+  bottom: 0;
+}
+
+.grid tfoot .grid__team {
+  z-index: 2;
 }
 
 .grid__integrity {

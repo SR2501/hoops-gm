@@ -200,6 +200,38 @@ describe('the schedule grid', () => {
     expect(await screen.findByTestId('league-total-1')).toHaveTextContent('6')
     expect(screen.getByTestId('league-mean-1')).toHaveTextContent('2.0')
     expect(screen.getByTestId('league-mean-3')).toHaveTextContent('2.7')
+    expect(screen.getByTestId('league-mean-1')).toHaveAttribute('data-state', 'complete')
+    // The season column is the mean of the Total column: 14 games over 3 teams.
+    expect(screen.getByTestId('league-mean-season')).toHaveTextContent('4.7')
+  })
+
+  it('does not let a missing team quietly drag the per-team mean down', async () => {
+    // The numerator sums only the teams that reported. Dividing it by every
+    // team would understate the mean by exactly the missing share — and
+    // understate it in the direction that makes each team's own count read as
+    // relatively healthier than it is. Here CLE's period-1 count of 2 is
+    // dropped: the honest mean over the two teams that did report is 4.0, not
+    // 6/3 = 2.0.
+    const holed = scheduleGrid({
+      counts: scheduleGrid().counts.filter(
+        (count) => !(count.team_id === 3 && count.period_number === 1),
+      ),
+    })
+    holed.counts = holed.counts.map((count) =>
+      count.period_number === 1 && count.team_id === 1 ? { ...count, games: 4 } : count,
+    )
+    mockFetch({ [GRID_PATH]: { body: holed }, '/health': { body: HEALTH } })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const mean = await screen.findByTestId('league-mean-1')
+    expect(mean).toHaveTextContent('4.0')
+    expect(mean).toHaveAttribute('data-state', 'partial')
+    // Marked on screen, next to the sum that is also marked — not a bare
+    // number sitting beside a flagged sibling, which would read as checked.
+    expect(mean).toHaveTextContent('+?')
+    expect(screen.getByTestId('league-total-1')).toHaveAttribute('data-state', 'partial')
+    expect(mean).toHaveAccessibleName(/over the 2 of 3 that reported/)
   })
 
   it('marks fantasy playoff periods, which are not interchangeable with regular ones', async () => {

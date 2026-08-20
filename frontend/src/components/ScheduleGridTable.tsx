@@ -26,9 +26,15 @@ interface ScheduleGridTableProps {
 }
 
 export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
-  const { rows, periods, periodTotals, periodMissing, teamCount } = model
+  const { rows, periods, periodTotals, periodReportingTeams, periodMissing, teamCount } = model
   const seasonTotal = periodTotals.reduce((sum, value) => sum + value, 0)
   const anyMissing = model.integrity.missingCells > 0
+
+  // The season mean is the mean of the Total column, so its denominator is
+  // teams with a complete row — not team-periods, and not teams whose own
+  // total is itself short a period.
+  const completeRows = rows.filter((row) => row.missingCells === 0)
+  const completeRowTotal = completeRows.reduce((sum, row) => sum + row.total, 0)
 
   return (
     <div className="grid-scroll">
@@ -137,18 +143,22 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
               Per team
             </th>
             {periods.map((period, index) => (
-              <td
+              <MeanCell
                 key={period.period_number}
-                className="grid__cell grid__cell--mean"
-                data-testid={`league-mean-${String(period.period_number)}`}
-                aria-label={`Period ${String(
-                  period.period_number,
-                )} mean games per team: ${formatMean(periodTotals[index] ?? 0, teamCount)}`}
-              >
-                {formatMean(periodTotals[index] ?? 0, teamCount)}
-              </td>
+                total={periodTotals[index] ?? 0}
+                reporting={periodReportingTeams[index] ?? 0}
+                expected={teamCount}
+                testId={`league-mean-${String(period.period_number)}`}
+                label={`Period ${String(period.period_number)} mean games per team`}
+              />
             ))}
-            <td className="grid__cell grid__cell--mean">{formatMean(seasonTotal, teamCount)}</td>
+            <MeanCell
+              total={completeRowTotal}
+              reporting={completeRows.length}
+              expected={teamCount}
+              testId="league-mean-season"
+              label="Season mean games per team"
+            />
           </tr>
         </tfoot>
       </table>
@@ -160,13 +170,56 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
  * The league mean, so "is this team's 2 unusual for this period?" does not
  * require dividing by 30 in your head under a pick clock.
  *
- * Still descriptive: the integers the backend sent, divided by the number of
- * teams it sent. No reference set is chosen and nothing is compared against a
- * threshold, which is what would make it a model output rather than arithmetic.
+ * The denominator is the teams that **reported** in that period, not every team
+ * the response named. Summing over the reporters and dividing by everyone
+ * produces a quotient that is the mean of no set at all — understated by
+ * exactly the missing share, and understated in the direction that makes every
+ * team's own count read as relatively healthier than it is. Where teams are
+ * missing the cell says so, because a mean over a set the reader cannot see is
+ * not the same number as a mean over the whole league.
+ *
+ * Still descriptive within a single period: integers the backend sent, divided
+ * by how many of them there were. No reference set is chosen, because the set
+ * is "whoever reported"; nothing is compared against a threshold; and both
+ * operands are on screen. Aggregating *across* periods would be a different
+ * matter entirely — that acquires the playoff/partial/sparse-week choices that
+ * make `schedule-grid-reference-distribution` a Model-gated `quant` item.
  */
-function formatMean(total: number, teamCount: number): string {
-  if (teamCount === 0) return '—'
-  return (total / teamCount).toFixed(1)
+function MeanCell({ total, reporting, expected, testId, label }: MeanCellProps) {
+  const partial = reporting < expected
+  const value = reporting === 0 ? '—' : (total / reporting).toFixed(1)
+  const description = partial
+    ? `${label}: ${value}, over the ${String(reporting)} of ${String(
+        expected,
+      )} that reported`
+    : `${label}: ${value}`
+
+  return (
+    <td
+      className={`grid__cell grid__cell--mean${partial ? ' grid__total--partial' : ''}`}
+      data-testid={testId}
+      data-state={partial ? 'partial' : 'complete'}
+      aria-label={description}
+      {...(partial ? { title: description } : {})}
+    >
+      {value}
+      {partial ? (
+        <span className="grid__partial-mark" aria-hidden="true">
+          +?
+        </span>
+      ) : null}
+    </td>
+  )
+}
+
+interface MeanCellProps {
+  total: number
+  /** Teams that actually reported — the honest denominator. */
+  reporting: number
+  /** Teams that should have reported, so a shortfall can be named. */
+  expected: number
+  testId: string
+  label: string
 }
 
 interface TotalCellProps {

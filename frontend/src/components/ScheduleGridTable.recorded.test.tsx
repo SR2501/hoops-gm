@@ -9,9 +9,19 @@
  * assumptions meet something the backend actually produced.
  *
  * It also settles a question that was guessed at in review: the recorded
- * `refreshed_at` is `2026-08-20T15:10:39.334171Z`, with a `Z` suffix and
+ * `refreshed_at` is `2026-08-20T15:10:39.334171Z` — a `Z` suffix with
  * microsecond precision, not the `+00:00` form the Pydantic model was assumed
- * to emit. Both parse, but the recorded one is the one that is true.
+ * to emit. The test below asserts a UTC designator rather than `Z`
+ * specifically, because `+00:00` would be equally correct and equally
+ * parseable; pinning the serializer's choice would fail on a change that broke
+ * nothing.
+ *
+ * **What this recording cannot check.** The seed produces 20 non-zero
+ * team-games, so 610 of its 630 cells are `0`. It exercises no three-digit
+ * league sum, no four-digit season total, no `+?` marker and no column width
+ * under realistic magnitudes — precisely the layout questions a recording is
+ * otherwise best placed to answer. A second capture against a fully ingested
+ * 1,230-game season is worth taking when one exists.
  *
  * If the endpoint's shape changes, this fails here rather than in a browser.
  */
@@ -19,6 +29,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import recorded from '../test/fixtures/schedule-grid-current.recorded.json'
+import { isScheduleGrid } from '../api/endpoints'
 import type { ScheduleGrid } from '../api/types'
 import { ScheduleGridTable } from './ScheduleGridTable'
 import { buildScheduleGridModel, describeRefreshAge } from './scheduleGridModel'
@@ -26,6 +37,14 @@ import { buildScheduleGridModel, describeRefreshAge } from './scheduleGridModel'
 const grid = recorded as unknown as ScheduleGrid
 
 describe('the recorded schedule grid response', () => {
+  it('is accepted by the validator that guards the real request', () => {
+    // The assertion the whole fixture exists for. Everything else in this file
+    // checks fields chosen by hand; this checks the predicate production
+    // actually runs, so a renamed or retyped field fails here even if no
+    // hand-written assertion happens to touch it.
+    expect(isScheduleGrid(recorded)).toBe(true)
+  })
+
   it('is dense, exactly as the contract states', () => {
     const model = buildScheduleGridModel(grid)
 
@@ -52,10 +71,9 @@ describe('the recorded schedule grid response', () => {
   })
 
   it('has a timestamp the age calculation can actually read', () => {
-    // The wire form is `Z`, not `+00:00`. Asserted against the recording so a
-    // change in serialisation is caught here rather than shown as
-    // "age unknown" in the corner of a page nobody is looking at.
-    expect(grid.lineage.schedule.refreshed_at).toMatch(/Z$/)
+    // A UTC designator, not `Z` specifically — `+00:00` is equally correct and
+    // pinning the serializer's choice would fail on a change that broke nothing.
+    expect(grid.lineage.schedule.refreshed_at).toMatch(/(Z|[+-]\d{2}:\d{2})$/)
     const age = describeRefreshAge(
       grid.lineage.schedule.refreshed_at,
       new Date('2026-08-27T18:00:00Z'),
@@ -79,9 +97,18 @@ describe('the recorded schedule grid response', () => {
     // Zeros are the common case in this recording and every one is explicit.
     expect(screen.getByTestId('cell-1-1')).toHaveTextContent('0')
     expect(screen.getByTestId('cell-1-1')).toHaveAttribute('data-state', 'zero')
-    expect(screen.queryAllByTestId(/^cell-/).filter((cell) => cell.textContent === '')).toHaveLength(
-      0,
-    )
+
+    // A census rather than an emptiness check: every one of the 630 cells is a
+    // real count, and none fell through to the no-data marker. An emptiness
+    // filter could never fail, since both branches render a glyph.
+    const states = screen.getAllByTestId(/^cell-/).map((cell) => cell.dataset.state)
+    expect(states).toHaveLength(630)
+    expect(new Set(states)).toEqual(new Set(['zero', 'count']))
+
+    // Totals and means are complete, so none of them carries a shortfall mark.
+    const derived = screen.getAllByTestId(/^(team-total-|league-total-|league-mean-)/)
+    expect(derived.every((cell) => cell.dataset.state === 'complete')).toBe(true)
+    expect(derived.every((cell) => (cell.textContent ?? '') !== '')).toBe(true)
 
     // Period 21 is a fantasy playoff period in the seeded calendar.
     expect(screen.getByTestId('period-header-21')).toHaveTextContent('PO')

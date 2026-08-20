@@ -48,9 +48,10 @@ interface AsyncBoundaryProps<T> {
    * both.
    *
    * The backend's raw wording is still shown, so a failure can be quoted and
-   * correlated to a server log line exactly.
+   * correlated to a server log line exactly. Called only when there is an
+   * error, so an implementation never has to handle `null`.
    */
-  describeError?: (error: Error | null) => ErrorDescription
+  describeError?: (error: Error) => ErrorDescription
 }
 
 export function AsyncBoundary<T>({
@@ -73,7 +74,7 @@ export function AsyncBoundary<T>({
     )
   }
 
-  const described = describeError?.(error) ?? null
+  const described = error ? (describeError?.(error) ?? null) : null
   const backendWording = error?.message ?? null
   const code = error instanceof ApiError ? error.code : null
   const requestId = error instanceof ApiError ? error.requestId : null

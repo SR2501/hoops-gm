@@ -38,7 +38,7 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   schedule_grid_league_not_found: {
     summary: 'This database has no such league, so there are no scoring periods to count games into.',
     action:
-      'Check the league id in the URL, or seed the database — `python -m hoops_gm.dev.seed_schedule_grid` creates league 1 for the 2026-27 season.',
+      'Check the league id in the URL, or seed a demo database — see `backend/README.md` for the offline seed path.',
   },
   schedule_grid_not_current: {
     summary:
@@ -78,17 +78,18 @@ const TRANSPORT_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
 }
 
-export interface ScheduleGridErrorDescription extends ScheduleGridErrorCopy {
-  /** The machine-readable code, from the response body. */
-  code: string | null
-}
+/**
+ * The description `AsyncBoundary` renders. Just the words — the code and the
+ * request id are read off the `ApiError` by the boundary itself, so carrying
+ * them here as well would be a second copy nothing reads.
+ */
+export type ScheduleGridErrorDescription = ScheduleGridErrorCopy
 
 export function describeScheduleGridError(error: Error | null): ScheduleGridErrorDescription {
   if (!(error instanceof ApiError)) {
     return {
       summary: error?.message ?? 'The schedule grid failed to load for an unrecorded reason.',
       action: 'Retry. If it recurs, check the browser console and the backend logs.',
-      code: null,
     }
   }
 
@@ -108,6 +109,5 @@ export function describeScheduleGridError(error: Error | null): ScheduleGridErro
     action:
       copy?.action ??
       'Quote the code and request id below when reporting it; both appear in the backend log for the same request.',
-    code: error.code,
   }
 }

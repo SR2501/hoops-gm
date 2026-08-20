@@ -41,10 +41,20 @@ export interface ScheduleGridIntegrity {
 export interface ScheduleGridModel {
   rows: ScheduleGridRow[]
   periods: ScheduleGridPeriod[]
-  /** Teams the response labelled — the denominator for a per-team mean. */
+  /** Teams the response labelled. */
   teamCount: number
   /** League-wide games in each period. ADR-012 requires the baseline be shown. */
   periodTotals: number[]
+  /**
+   * Teams that actually reported a count in each period.
+   *
+   * The denominator for a per-period mean, and it is deliberately not
+   * `teamCount`. Dividing a numerator summed over the teams that reported by a
+   * denominator counting every team produces a number that is the mean of no
+   * set at all — biased low by exactly the missing share, and biased in the
+   * direction that makes every team's own count look healthier than it is.
+   */
+  periodReportingTeams: number[]
   /** Periods where at least one team's count was not sent. */
   periodMissing: boolean[]
   integrity: ScheduleGridIntegrity
@@ -76,6 +86,7 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
   }
 
   const periodTotals = grid.periods.map(() => 0)
+  const periodReportingTeams = grid.periods.map(() => 0)
   const periodMissing = grid.periods.map(() => false)
   let missingCells = 0
 
@@ -93,6 +104,7 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
       }
       total += games
       periodTotals[index] = (periodTotals[index] ?? 0) + games
+      periodReportingTeams[index] = (periodReportingTeams[index] ?? 0) + 1
       return games
     })
 
@@ -104,6 +116,7 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
     periods: grid.periods,
     teamCount: grid.teams.length,
     periodTotals,
+    periodReportingTeams,
     periodMissing,
     integrity: {
       missingCells,

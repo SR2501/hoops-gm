@@ -83,7 +83,7 @@ function ScheduleGridView({
       <ScheduleLineage lineage={grid.lineage} now={now} />
 
       {!integrity.isDense ? (
-        <p className="state state--error grid__integrity" role="alert" data-testid="grid-integrity">
+        <p className="state state--error grid__integrity" role="status" data-testid="grid-integrity">
           This grid is not complete.
           {integrity.missingCells > 0
             ? ` ${String(integrity.missingCells)} of ${String(
@@ -112,11 +112,12 @@ function ScheduleGridView({
           <span className="grid__playoff-badge">PO</span> fantasy playoff period
         </span>
         <span className="grid__key-item">
-          <span className="grid__key-swatch">+?</span> total is missing at least one period
+          <span className="grid__cell grid__total grid__total--partial grid__key-swatch">+?</span>{' '}
+          total or mean is missing at least one period
         </span>
         <span className="grid__key-item">
-          League row: team-games in that period. Per team: the same divided by{' '}
-          {model.teamCount} teams.
+          League row: team-games in that period. Per team: the same divided by the teams that
+          reported it, {model.teamCount} at full strength.
         </span>
       </p>
 
