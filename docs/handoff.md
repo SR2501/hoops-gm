@@ -6396,3 +6396,90 @@ against that exact head, publish one coherent PR only if they are clear, and
 require every blocking CI lane including native Postgres. Separately regenerate
 the invalidated 173-game injury cohort before `injury-status-conversion`
 resumes; do not use or repair the active injury branch from this work.
+
+---
+
+## 2026-08-19 — backend — Schedule completeness persistence and lineage seam
+
+**Changed:** `import_schedule` now takes the whole `ScheduleParseResult`
+(which gained a `season` field, so an empty or wholly unresolved parse can
+still say which season it refused) instead of a bare sequence of games, and
+fails closed instead of skipping. It raises `SourceContractError` and registers
+nothing when the source reported unresolved-team games, when
+`source_game_count` disagrees with the resolved count, when a referenced NBA
+team is missing, when a persisted `nba_games` row contradicts the parsed source
+on season/season type/Eastern date/home/away, or when the rows read back
+afterwards are not exactly two mirrored rows per parsed game on the parsed
+dates — including when the season already holds regular-season rows outside the
+parsed cohort. **Nothing is deleted**: a leftover row is inconsistent evidence,
+the importer cannot tell a postponement from a truncated payload, and deletion
+would cascade through `opponent_context.team_schedule_id` into `quant`'s tables
+irreversibly. The refresh summary records `schedule_completeness` — `season`,
+`season_type`, `source_game_count`, `resolved_game_count`,
+`unresolved_game_ids`, `persisted_team_row_count` — under the existing
+`RefreshRun.summary` JSON, so no migration was needed. The flat
+`team_schedule_rows` key is retained alongside it for readers that predate the
+block.
+
+`hoops_gm.db.lineage.schedule_content_version` is now the single definition of
+"what version is this schedule": a fingerprint over the persisted
+`team_schedule` rows keyed on **stable NBA identifiers** (`nba_game_id`,
+both `nba_team_id`s, season, season type, Eastern `game_date`, `is_home`),
+sorted in Python so the label does not depend on database collation.
+`import_schedule` stamps with it and `check_cohort` recomputes with it through
+`effective_current_version`, so the two cannot drift.
+
+**Now true:** The previous fingerprint was computed over surrogate primary
+keys, which are stable precisely while the facts under them change; and
+`check_cohort` compared the claimed string against the *stored* label, so a
+same-row-count mutation of `team_schedule` left the old version reported
+`current` and any consumer stamping it was claiming a cohort that no longer
+existed. Both are closed and covered by
+`test_same_row_count_schedule_mutation_is_never_reported_current`, which drives
+the same canonical function the standard `/api/v1/lineage/validate`
+`schedule_version` path already delegates to (the route was not touched).
+
+Completeness metadata is now held to its own arithmetic rather than merely its
+shape. A block that is present but has a negative count, leftover unresolved
+IDs, `source_game_count != resolved_game_count`, `persisted_team_row_count !=
+2 * resolved_game_count`, a season other than its refresh row's, or a version
+fingerprinting a cohort of a different size than it claims, raises instead of
+degrading to a string comparison — so `effective_current_version` cannot return
+a verified-looking version from evidence that already contradicts itself. Only
+an *absent* block keeps the legacy byte comparison, covered by
+`test_check_cohort_still_byte_compares_a_manually_registered_schedule`.
+
+Fourteen focused SQLite tests (seventeen cases) across `test_schedule.py` and
+`test_lineage.py`: auditable summary, unresolved refusal, missing team
+mappings, source/resolved count disagreement, contradictory `nba_games` row,
+exact mirrored row evidence, out-of-cohort refusal, re-import convergence,
+same-count mutation detection, corrupt block, four logical-inconsistency cases,
+wrong-season block, forged verified-looking version, empty-cohort stability.
+The full Code gate passes locally: Ruff, format, strict mypy, and 1,020 offline
+tests. The complete offline Adapter gate passes 270 tests and the Model gate
+passes 18. SQLite upgrades/checks/downgrades through `0015`; the tracked-file
+secret scan is clean across 277 files. The three schedule-specific live smokes
+again reconcile 1,230 regular-season IDs, 84 playoff IDs, and all ten
+repeated-canonical orientations. Both documented Model evidence commands were
+rerun after this seam change: schedule-context v2 reproduced byte-for-byte, and
+reliability v2 reproduced JSON-semantically exactly (its generator changed only
+the Windows checkout's CRLF bytes to LF, which Git normalization removed).
+
+**Could not verify:** Postgres. Docker is not installed here and
+`TEST_DATABASE_URL` is unset, so the SQL is Postgres-portable by construction
+(no dialect branches, ordering done in Python, JSON summary only) but was
+executed on SQLite only — CI's native Postgres lane is the real evidence.
+No route code was touched.
+
+**Limitation, not an open question:** the recorded 2026–27 payload contains six
+NBA Cup games whose teams are still TBD, so under this contract that season
+registers no schedule cohort until the NBA resolves them, and scoring-period
+projection and everything keyed to a schedule version refuse until it does.
+That is the chosen behaviour — a season denominator quietly six games short is
+worse than a loud refusal — and it is not a decision left dangling here. The
+schedule tests build a fully resolved payload from the fixture rather than
+editing it, so the fixture keeps its drift evidence.
+
+**Next:** Re-ingest any database written by the previous surrogate-key
+fingerprint — every schedule version registered before this change was computed
+over different bytes and will not match.

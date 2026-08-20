@@ -21,11 +21,16 @@ from sqlalchemy.exc import OperationalError
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
 from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     check_cohort,
     content_fingerprint,
     current_refresh,
+    effective_current_version,
     lock_refresh_scope,
     record_refresh,
+    schedule_completeness,
+    schedule_content_version,
 )
 from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.db.models.lineage import RefreshRun
@@ -371,6 +376,168 @@ def test_check_cohort_evaluates_a_full_cohort_independently_per_artifact(session
     assert by_type[RefreshArtifactType.SCHEDULE] == "current"
     assert by_type[RefreshArtifactType.MODEL] == "stale"
     assert by_type[RefreshArtifactType.PROJECTION] == "unknown"
+
+
+def test_check_cohort_still_byte_compares_a_manually_registered_schedule(session: Any) -> None:
+    """Legacy and hand-registered rows keep the original contract.
+
+    A refresh registered without completeness metadata has no recorded cohort
+    scope to recompute from — the honest answer is the stored label, not a
+    fingerprint over rows that may have nothing to do with it. Deployments and
+    tests that register a schedule version by hand must keep working.
+    """
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version="manual-schedule-v1",
+        source="operator",
+        season="2026-27",
+        summary={"note": "registered by hand"},
+    )
+
+    [result] = check_cohort(session, schedule_version="manual-schedule-v1")
+
+    assert schedule_completeness({"note": "registered by hand"}) is None
+    assert result.status == "current"
+    assert result.current_version == "manual-schedule-v1"
+
+
+def test_schedule_completeness_rejects_a_corrupt_block(session: Any) -> None:
+    """Present-but-malformed is a corrupt registry, not an old one.
+
+    Falling back to the weaker string comparison there would silently turn an
+    unverifiable refresh into a verified-looking one, which is the exact
+    direction of failure this seam exists to close.
+    """
+    del session
+
+    with pytest.raises(ValueError, match="source_game_count"):
+        schedule_completeness(
+            {
+                SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                    "season": "2026-27",
+                    "season_type": "regular",
+                    "resolved_game_count": 1230,
+                    "unresolved_game_ids": [],
+                    "persisted_team_row_count": 2460,
+                }
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"source_game_count": -1, "persisted_team_row_count": -2}, "negative count"),
+        ({"unresolved_game_ids": ["0022600001"]}, "unresolved game id"),
+        ({"source_game_count": 6}, "source game"),
+        ({"persisted_team_row_count": 11}, "persisted team row"),
+    ],
+    ids=["negative", "unresolved", "source-vs-resolved", "rows-vs-games"],
+)
+def test_schedule_completeness_rejects_logically_inconsistent_metadata(
+    session: Any, overrides: dict[str, Any], expected: str
+) -> None:
+    """A block whose arithmetic cannot describe one import is wrong, not weak.
+
+    Every one of these is a shape the importer can never produce, so reading
+    one back means the registry was written by something else. Fail closed:
+    the alternative is answering "current" from numbers that already
+    contradict each other.
+    """
+    del session
+    block: dict[str, Any] = {
+        "season": "2026-27",
+        "season_type": "regular",
+        "source_game_count": 5,
+        "resolved_game_count": 5,
+        "unresolved_game_ids": [],
+        "persisted_team_row_count": 10,
+    }
+    block.update(overrides)
+
+    with pytest.raises(ValueError, match=expected):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
+
+
+def test_effective_current_version_refuses_a_block_scoped_to_another_season(
+    session: Any,
+) -> None:
+    """The block must describe the refresh row it is attached to.
+
+    A refresh scoped to 2026-27 carrying completeness metadata for 2025-26
+    would otherwise be validated against a different season's rows entirely —
+    the claim would be checked, just against the wrong facts.
+    """
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version="whatever",
+        source="operator",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2025-26",
+                "season_type": "regular",
+                "source_game_count": 5,
+                "resolved_game_count": 5,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 10,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="scoped to season"):
+        effective_current_version(session, run)
+    with pytest.raises(ValueError, match="scoped to season"):
+        check_cohort(session, schedule_version="whatever")
+
+
+def test_effective_current_version_refuses_a_forged_verified_looking_version(
+    session: Any,
+) -> None:
+    """Metadata claiming a cohort the fingerprint does not cover is refused.
+
+    This is the one way a self-consistent block could still lie: register the
+    fingerprint of an *empty* cohort while claiming ten persisted rows, and
+    the recomputed version matches the stored label. It would then read as a
+    verified refresh over a season that has no schedule at all.
+    """
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=schedule_content_version(session, season="2026-27"),
+        source="operator",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2026-27",
+                "season_type": "regular",
+                "source_game_count": 5,
+                "resolved_game_count": 5,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 10,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="fingerprints 0"):
+        effective_current_version(session, run)
+
+
+def test_schedule_content_version_is_empty_cohort_stable(session: Any) -> None:
+    """An empty cohort still has a version, and it is not a claimed one.
+
+    Deleting every row must not make an old registered version validate again
+    by accident, so the scope header is fingerprinted even with no rows.
+    """
+    empty = schedule_content_version(session, season="2026-27")
+
+    assert empty == schedule_content_version(session, season="2026-27")
+    assert empty != schedule_content_version(session, season="2025-26")
 
 
 # --------------------------------------------------------------------------

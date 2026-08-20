@@ -42,8 +42,15 @@ class ScheduleGameRecord:
 
 @dataclass(frozen=True)
 class ScheduleParseResult:
-    """Resolved games plus explicitly reported games whose teams are TBD."""
+    """Resolved games plus explicitly reported games whose teams are TBD.
 
+    ``season`` is carried on the result rather than inferred from ``games`` so
+    that an empty or wholly unresolved parse is still self-describing: the
+    importer has to be able to say *which* season it refused to register a
+    refresh for, and a season derived from zero records cannot say that.
+    """
+
+    season: str
     games: tuple[ScheduleGameRecord, ...]
     unresolved_game_ids: tuple[str, ...]
     source_game_count: int
@@ -294,7 +301,12 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
 
     if len({record.game.nba_game_id for record in records}) != len(records):
         raise _contract("duplicate gameId in schedule")
-    return ScheduleParseResult(tuple(records), tuple(unresolved), source_count)
+    return ScheduleParseResult(
+        season=season,
+        games=tuple(records),
+        unresolved_game_ids=tuple(unresolved),
+        source_game_count=source_count,
+    )
 
 
 def scheduled_game_counts(
