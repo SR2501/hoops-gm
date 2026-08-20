@@ -24,17 +24,32 @@ _SEASON_DATES = {
     "2024-25": "2024-10-22",
     "2025-26": "2025-10-21",
 }
+_SEASON_IDS = {
+    "2023-24": "22023",
+    "2024-25": "22024",
+    "2025-26": "22025",
+}
+_GAME_IDS = {
+    "2023-24": "0022300001",
+    "2024-25": "0022400001",
+    "2025-26": "0022500001",
+}
 
 
 class _SyntheticEvidenceClient:
     def league_game_finder(self, *, season: str) -> object:
-        game_id = f"game-{season}"
+        game_id = _GAME_IDS[season]
         return {
+            "parameters": {
+                "Season": season,
+                "SeasonType": "Regular Season",
+            },
             "resultSets": [
                 {
                     "name": "LeagueGameFinderResults",
                     "headers": [
                         "GAME_ID",
+                        "SEASON_ID",
                         "TEAM_ID",
                         "TEAM_ABBREVIATION",
                         "GAME_DATE",
@@ -42,11 +57,27 @@ class _SyntheticEvidenceClient:
                         "PTS",
                     ],
                     "rowSet": [
-                        [game_id, 1, "HOM", _SEASON_DATES[season], "HOM vs. AWY", 110],
-                        [game_id, 2, "AWY", _SEASON_DATES[season], "AWY @ HOM", 100],
+                        [
+                            game_id,
+                            _SEASON_IDS[season],
+                            1,
+                            "HOM",
+                            _SEASON_DATES[season],
+                            "HOM vs. AWY",
+                            110,
+                        ],
+                        [
+                            game_id,
+                            _SEASON_IDS[season],
+                            2,
+                            "AWY",
+                            _SEASON_DATES[season],
+                            "AWY @ HOM",
+                            100,
+                        ],
                     ],
                 }
-            ]
+            ],
         }
 
     def player_game_logs(self, *, season: str) -> object:
@@ -76,7 +107,7 @@ class _SyntheticEvidenceClient:
                     "rowSet": [
                         [
                             10,
-                            f"game-{season}",
+                            _GAME_IDS[season],
                             1,
                             30,
                             "30:00",

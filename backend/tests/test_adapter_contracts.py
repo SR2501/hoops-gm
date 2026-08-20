@@ -42,6 +42,10 @@ from hoops_gm.ingest.nba import (
     parse_player_game_logs,
     parse_teams,
 )
+from hoops_gm.ingest.record_fixtures import (
+    _league_game_finder_fixture_ids,
+    _select_league_game_finder_games,
+)
 
 pytestmark = pytest.mark.adapter_contract
 
@@ -458,6 +462,31 @@ class TestNbaGamesAndLogs:
                 season_type=season_type,
             )
 
+    def test_missing_declared_source_scope_is_rejected(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        del payload["parameters"]
+
+        with pytest.raises(SourceContractError, match="lacks declared"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_row_season_scope_must_match_requested_scope(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        season_id = table["headers"].index("SEASON_ID")
+        table["rowSet"][0][season_id] = "42024"
+
+        with pytest.raises(SourceContractError, match="row SEASON_ID"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_game_id_must_be_canonical_for_the_requested_scope(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        game_id = table["headers"].index("GAME_ID")
+        table["rowSet"][0][game_id] = "game-2024-25"
+
+        with pytest.raises(SourceContractError, match="noncanonical GAME_ID"):
+            parse_league_game_finder(payload, season="2024-25")
+
     def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
         payload = load("nba_leaguegamefinder_trimmed.json")
         table = payload["resultSets"][0]
@@ -762,8 +791,8 @@ class TestBoxScoreV3:
             )
         }
         scheduled = games.get(summary_game.nba_game_id)
-        if scheduled is not None:
-            assert scheduled.game_date == summary_game.game_date
+        assert scheduled is not None
+        assert scheduled.game_date == summary_game.game_date
 
     def test_a_payload_without_the_v3_body_is_a_contract_error(self) -> None:
         with pytest.raises(SourceContractError):
@@ -775,6 +804,35 @@ class TestBoxScoreV3:
 # ==========================================================================
 # The fixtures themselves
 # ==========================================================================
+
+
+class TestNbaFixtureRecording:
+    def test_league_game_finder_boundary_keeps_only_complete_game_groups(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+
+        game_ids = _league_game_finder_fixture_ids(
+            payload,
+            boundary_rows=3,
+            required_game_ids=(),
+        )
+        selected, original = _select_league_game_finder_games(payload, game_ids)
+
+        assert game_ids == ["0022400633"]
+        assert original == {"LeagueGameFinderResults": 4}
+        assert len(selected["resultSets"][0]["rowSet"]) == 2
+
+    def test_required_cross_endpoint_game_is_added_as_a_complete_group(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+
+        game_ids = _league_game_finder_fixture_ids(
+            payload,
+            boundary_rows=2,
+            required_game_ids=("0022401188",),
+        )
+        selected, _original = _select_league_game_finder_games(payload, game_ids)
+
+        assert game_ids == ["0022400633", "0022401188"]
+        assert len(selected["resultSets"][0]["rowSet"]) == 4
 
 
 class TestFixtureManifest:

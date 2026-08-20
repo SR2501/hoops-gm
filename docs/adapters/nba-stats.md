@@ -86,12 +86,14 @@ model evidence.
 The parser now matches each row's `TEAM_ABBREVIATION` against both named sides
 of `MATCHUP`. Reciprocal and repeated-canonical rows reconcile to the same
 home/away identity. Duplicate side rows, contradictory matchup orientation,
-date disagreement, season/type scope disagreement, and same-team home/away
-identity raise `SourceContractError`. A one-sided response also raises with the
+date disagreement, missing or contradictory payload/row season scope,
+noncanonical season/type-specific `GAME_ID`, and same-team home/away identity
+raise `SourceContractError`. A one-sided response also raises with the
 unsupported side named; it is never silently dropped and no opponent ID or
-score is invented. Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE`
-remains the NBA's Eastern local date, and this endpoint still supplies no
-tip-off instant.
+score is invented. Recorded fixtures select whole game groups rather than a
+raw row boundary, so fixture generation cannot manufacture an incomplete pair.
+Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE` remains the NBA's
+Eastern local date, and this endpoint still supplies no tip-off instant.
 
 ### Inactive players are absent from the traditional box score
 
@@ -180,8 +182,9 @@ game tipping after 7pm Eastern, which is most of them, and disagrees with
 | **One bad game** | Does not abort a backfill. Failures are counted, named with their game ids, and reported at the end with a non-zero exit code. |
 
 The live `LeagueGameFinder` smoke test requires exactly 1,230 regular-season
-games. A loose “more than 1,000” assertion previously accepted the 1,225-game
-cohort and could not detect this defect.
+games and exact game-ID equality with `PlayerGameLogs`. A loose “more than
+1,000” assertion previously accepted the 1,225-game cohort and could not detect
+this defect.
 
 ---
 

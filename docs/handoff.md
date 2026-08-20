@@ -6324,15 +6324,19 @@ evidence is green. This session must not merge or self-approve it.
 
 **Changed:** Reproduced the `LeagueGameFinder` defect from live official
 2024-25 and 2025-26 payloads on exact base `7136740`, then restacked onto exact
-`origin/main` `79a5e3e`. The ten omitted games were not one-sided source
+`origin/main` `bcfb2d6`. The ten omitted games were not one-sided source
 records: both team rows existed, but both repeated one canonical `MATCHUP`
 string (for example, both rows for `0022400633` say `IND @ SAS`). The parser
 treated the separator as the current row's side, assigned both rows to one side,
 and silently dropped the game. It now reconciles each row's
 `TEAM_ABBREVIATION` against both matchup sides, preserves stable `GAME_ID`
 ordering and Eastern `GAME_DATE`, and raises on incomplete, duplicate,
-contradictory, same-team, malformed, or wrong season/type records. Added a
-privacy-safe recorded fixture, contract coverage, and an exact-1,230 live smoke.
+contradictory, same-team, malformed, wrong season/type, or noncanonical game-ID
+records. Fixture recording now retains complete game groups instead of cutting
+at an arbitrary row boundary, and deterministically records both the real
+repeated-canonical anomaly and the cross-endpoint Eastern-date comparison game.
+Added privacy-safe recorded fixtures, contract coverage, and an exact-identity
+live smoke against `PlayerGameLogs`.
 
 Regenerated and versioned both affected Model-gate artifacts without changing
 math, thresholds, partitions, or release rules. Schedule-context v2 restores
@@ -6349,9 +6353,14 @@ still fails its calibration sign-reversal veto and remains unreleased.
 
 **Now true:** `LeagueGameFinder` and `PlayerGameLogs` reconcile 1,230/1,230
 game IDs in all three evidence seasons. The full backend gate passes (Ruff,
-format, strict mypy, 938 default tests), the focused live NBA smoke returns
-exactly 1,230 games, SQLite upgrades/checks/downgrades through `0015`, and the
-tracked-file secret scan is clean. No model threshold or method changed.
+format, strict mypy, 991 offline tests), the complete Adapter and Model gates
+pass, the focused live NBA smoke returns the exact same 1,230 game IDs from both
+official endpoints, live 2024-25 playoff scope parses 84 canonical `00424...`
+games, SQLite upgrades/checks/downgrades through `0015`, and the tracked-file
+secret scan is clean. Re-running both documented evidence commands on the
+rebased code reproduced the committed schedule-context and reliability JSON
+semantically exactly, including every fingerprint and metric. No model
+threshold or method changed.
 
 The corrected `2025-12-08..2026-01-04` injury-conversion scope contains 173
 games, not 171. Omitted games `0022501229` and `0022501230` are both on

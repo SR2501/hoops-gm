@@ -48,6 +48,7 @@ from hoops_gm.ingest.nba import (
     parse_box_score_summary_v3,
     parse_common_all_players,
     parse_league_game_finder,
+    parse_player_game_logs,
     parse_teams,
 )
 from hoops_gm.ingest.projections import (
@@ -332,9 +333,19 @@ class TestNbaStatsIsAlive:
             nba.league_game_finder(season=FIXTURE_STATS_SEASON, max_age=NO_CACHE),
             season=FIXTURE_STATS_SEASON,
         )
+        logs = parse_player_game_logs(
+            nba.player_game_logs(season=FIXTURE_STATS_SEASON, max_age=NO_CACHE)
+        )
+        game_ids = {game.nba_game_id for game in games}
+        player_log_game_ids = {log.nba_game_id for log in logs}
         assert len(games) == 1230, (
             f"parsed {len(games)} games for {FIXTURE_STATS_SEASON}; the official regular "
             "season contains 1,230. Treat schedule, participation, and model cohorts as suspect."
+        )
+        assert game_ids == player_log_game_ids, (
+            "LeagueGameFinder and PlayerGameLogs game identities disagree: "
+            f"schedule-only={sorted(game_ids - player_log_game_ids)}, "
+            f"logs-only={sorted(player_log_game_ids - game_ids)}"
         )
 
     def test_the_inactive_list_is_still_populated_for_a_midseason_game(

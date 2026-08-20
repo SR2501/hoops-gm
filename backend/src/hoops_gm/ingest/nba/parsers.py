@@ -314,6 +314,10 @@ def _text_or_none(value: Any) -> str | None:
 # --------------------------------------------------------------------------
 
 _MATCHUP = re.compile(r"^(?P<team>[A-Z]{2,4})\s+(?P<separator>vs\.|@)\s+(?P<opponent>[A-Z]{2,4})$")
+_LEAGUE_GAME_FINDER_SCOPE = {
+    "regular": ("Regular Season", "2", "002"),
+    "playoffs": ("Playoffs", "4", "004"),
+}
 
 
 def parse_league_game_finder(
@@ -327,7 +331,7 @@ def parse_league_game_finder(
     the separator alone does not identify which side the current row describes.
     """
     endpoint = "LeagueGameFinder"
-    _validate_league_game_finder_scope(
+    expected_season_id, expected_game_id_prefix = _validate_league_game_finder_scope(
         payload,
         season=season,
         season_type=season_type,
@@ -336,17 +340,41 @@ def parse_league_game_finder(
     table = require_table(
         result_tables(payload, endpoint=endpoint), "LeagueGameFinderResults", endpoint=endpoint
     )
-    table.require("GAME_ID", "TEAM_ID", "TEAM_ABBREVIATION", "GAME_DATE", "MATCHUP")
+    table.require(
+        "SEASON_ID",
+        "GAME_ID",
+        "TEAM_ID",
+        "TEAM_ABBREVIATION",
+        "GAME_DATE",
+        "MATCHUP",
+    )
 
     games: dict[str, dict[str, Any]] = {}
     for row in table.rows:
+        season_id = _text_or_none(table.get(row, "SEASON_ID"))
         game_id = _text_or_none(table.get(row, "GAME_ID"))
         team_id = as_int(table.get(row, "TEAM_ID"))
         team_abbreviation = _text_or_none(table.get(row, "TEAM_ABBREVIATION"))
         matchup = str(table.get(row, "MATCHUP") or "")
-        if game_id is None or team_id is None or team_abbreviation is None:
+        if season_id is None or game_id is None or team_id is None or team_abbreviation is None:
             raise SourceContractError(
-                "LeagueGameFinder row lacks GAME_ID, TEAM_ID, or TEAM_ABBREVIATION",
+                "LeagueGameFinder row lacks SEASON_ID, GAME_ID, TEAM_ID, or TEAM_ABBREVIATION",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        if season_id != expected_season_id:
+            raise SourceContractError(
+                f"row SEASON_ID {season_id!r} does not match requested "
+                f"{season}/{season_type} scope {expected_season_id!r}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        expected_game_id = re.compile(
+            rf"^{re.escape(expected_game_id_prefix)}{re.escape(season[2:4])}\d{{5}}$"
+        )
+        if expected_game_id.fullmatch(game_id) is None:
+            raise SourceContractError(
+                f"noncanonical GAME_ID {game_id!r} for requested {season}/{season_type}",
                 source=SOURCE,
                 endpoint=endpoint,
             )
@@ -448,31 +476,50 @@ def _validate_league_game_finder_scope(
     season: str,
     season_type: str,
     endpoint: str,
-) -> None:
+) -> tuple[str, str]:
     if not isinstance(payload, dict):
-        return
+        raise SourceContractError(
+            "payload is not an object with declared request scope",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
     parameters = payload.get("parameters")
     if not isinstance(parameters, dict):
-        return
+        raise SourceContractError(
+            "payload lacks declared LeagueGameFinder request parameters",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    scope = _LEAGUE_GAME_FINDER_SCOPE.get(season_type)
+    if scope is None:
+        raise SourceContractError(
+            f"unsupported requested season type {season_type!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    expected_type, season_id_prefix, game_id_prefix = scope
+    if re.fullmatch(r"\d{4}-\d{2}", season) is None:
+        raise SourceContractError(
+            f"noncanonical requested season {season!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
     declared_season = _text_or_none(parameters.get("Season"))
-    if declared_season is not None and declared_season != season:
+    if declared_season != season:
         raise SourceContractError(
             f"payload season {declared_season!r} does not match requested season {season!r}",
             source=SOURCE,
             endpoint=endpoint,
         )
-    expected_type = {
-        "regular": "Regular Season",
-        "playoffs": "Playoffs",
-    }.get(season_type, season_type)
     declared_type = _text_or_none(parameters.get("SeasonType"))
-    if declared_type is not None and declared_type.casefold() != expected_type.casefold():
+    if declared_type is None or declared_type.casefold() != expected_type.casefold():
         raise SourceContractError(
             f"payload season type {declared_type!r} does not match requested "
             f"season type {season_type!r}",
             source=SOURCE,
             endpoint=endpoint,
         )
+    return f"{season_id_prefix}{season[:4]}", game_id_prefix
 
 
 # --------------------------------------------------------------------------

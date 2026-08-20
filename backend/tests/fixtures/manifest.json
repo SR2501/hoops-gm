@@ -156,27 +156,28 @@
     "source": "nba_injury_report",
     "trimmed": false
   },
-  "nba_leaguegamefinder_trimmed.json": {
-    "byte_size": 44871,
-    "captured_at": "2026-08-17T13:30:51.196190+00:00",
+  "nba_leaguegamefinder_reconciliation.json": {
+    "byte_size": 3808,
+    "captured_at": "2026-08-20T02:51:54.476014+00:00",
     "endpoint": "LeagueGameFinder",
-    "kept_rows_per_result_set": 116,
-    "note": "Whole rows removed. No value edited; incomplete game groups at the trim boundary were removed so the fixture preserves the source's reciprocal-row contract.",
+    "kept_rows_per_result_set": 4,
+    "note": "Whole real rows retained for one ordinary reciprocal game and one game where both team rows repeat the same canonical MATCHUP. No value edited.",
     "original_row_counts": {
       "LeagueGameFinderResults": 2460
     },
     "params": {
-      "season_nullable": "2024-25"
+      "season_nullable": "2024-25",
+      "season_type_nullable": "Regular Season"
     },
     "source": "nba_stats",
     "trimmed": true
   },
-  "nba_leaguegamefinder_reconciliation.json": {
-    "byte_size": 2993,
-    "captured_at": "2026-08-20T02:32:00+00:00",
+  "nba_leaguegamefinder_trimmed.json": {
+    "byte_size": 45603,
+    "captured_at": "2026-08-20T02:51:54.453265+00:00",
     "endpoint": "LeagueGameFinder",
-    "kept_rows_per_result_set": 4,
-    "note": "Whole real rows retained for one ordinary reciprocal game and one game where both team rows repeat the same canonical MATCHUP. No value edited.",
+    "kept_rows_per_result_set": 118,
+    "note": "Whole rows removed; only complete two-row game groups are retained. Required cross-endpoint game 0022400306 is included. No value edited.",
     "original_row_counts": {
       "LeagueGameFinderResults": 2460
     },
