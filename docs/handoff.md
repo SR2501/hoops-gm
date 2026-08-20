@@ -8940,3 +8940,63 @@ the message is an untested assertion about every condition you did not drive.**
 **Next:** Unchanged. Blocked on the merge of backend #38. Rebase onto merged
 `main`, re-run the 1:1 marker check, re-capture and diff the fixture, re-verify
 the browser states, fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased onto `5426920`; the fuse the review found was real by ten seconds
+
+**Changed:** Rebased forward again onto backend PR #38's third head `5426920`
+("Remove the seed's lock call rather than guard the ordering"), after confirming
+`4b1ceef` is still an ancestor. Re-seeded, re-captured, re-verified.
+
+**Now true:** The 200 contract is stable across a **third** consecutive backend
+head, proved by capture-and-diff each time. The whole fixture delta is again the
+`refreshed_at` timestamp; every other byte identical.
+
+**The review finding about the hardcoded age reference was not theoretical — it
+fired.** The reviewer calculated that the previous assertion, which compared the
+recording against a hardcoded `2026-08-27T18:00:00Z`, had 53 minutes of margin
+left and would break on any re-capture taken after `18:00:00Z`. This re-capture
+timestamped at **`2026-08-20T18:00:09.927941Z`** — nine and a half seconds past
+that boundary. Verified rather than asserted:
+
+```
+hardcoded reference would give days = 6 (test expects 7 -> FAIL)
+derived reference gives days = 7 (PASS)
+```
+
+Had the fix not landed an hour earlier, the suite would now be red on a schedule
+grid that is completely correct, with a failure message about refresh age. The
+lesson is not that the margin was thin; it is that **an assertion whose truth
+depends on what o'clock a fixture was recorded is not testing what it claims
+to**, and nothing about it looks wrong until the clock crosses.
+
+The backlog 1:1 marker check fired for the second time on this rebase, again
+catching `git rerere` replaying a stale status line — 107 stated against 108
+actual. Second consecutive rebase where the check caught the same class of
+failure. It is no longer a hypothetical safeguard.
+
+Browser re-verified at this head: 30 rows x 23 columns, zeros explicit and the
+same colour as counts, league totals 6 / 14 / 20, season mean 0.7, `PO` on
+period 21, lineage `Schedule 9bcac1c60490b41a — refreshed today`, first team and
+the Mean row on screen together, no alerts.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files. Backlog
+recounted: 38 done / 1 blocked / 69 pending / 108 total, 108 headings to 108
+markers.
+
+**Could not verify:** Unchanged from the previous entries, and the list is not
+repeated. Nothing new was introduced by this rebase; the only frontend delta is
+the fixture timestamp.
+
+Three rebases onto three backend heads have each produced a timestamp-only
+fixture diff. That is evidence the 200 contract is stable, and it is *not*
+evidence the fixture would catch a change to it — nothing has yet exercised the
+capture-and-diff loop against a backend that actually changed the response
+shape, so the loop's sensitivity is assumed rather than demonstrated.
+
+**Next:** Unchanged and blocked only on the merge of backend #38. On the signal:
+rebase onto merged `main`, re-run the 1:1 marker check (it has now caught
+something on two of two rebases, so treat it as expected to fire), re-capture and
+diff the fixture, re-verify the browser states, fresh exact-head review round,
+open with base `main`.

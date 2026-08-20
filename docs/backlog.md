@@ -11,8 +11,9 @@ before the other's items landed. The header before that claimed 37 done / 63
 pending against an actual 36 / 64, and that drift predates both lanes.)
 **38 done - 1 blocked - 67 pending - 106 total**
 **38 done - 1 blocked - 68 pending - 107 total**
+**38 done - 1 blocked - 69 pending - 108 total**
 
-(Counted from the status markers themselves, not carried forward: 107 `###` headings and 107 markers, 1:1.)
+(Counted from the status markers themselves, not carried forward: 108 `###` headings and 108 markers, 1:1.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
