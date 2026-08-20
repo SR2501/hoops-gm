@@ -37,6 +37,12 @@ from typing import Any
 FIXTURE_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
 
+#: Stamped on every entry recorded from 2026-08-20 onward. Entries without it
+#: carry a Windows CRLF working-tree ``byte_size`` and are therefore too large.
+#: Per-entry rather than a top-level note so the marker sits next to the number
+#: it qualifies, and so it does not become a manifest key that is not a fixture.
+_CANONICAL_LF = "canonical_lf_bytes"
+
 #: A completed game from 2024-25 with both a DNP and a DND comment, chosen so
 #: the participation parser is exercised on real reason text rather than on an
 #: all-played box score.
@@ -81,6 +87,7 @@ def _write(name: str, payload: Any, *, meta: dict[str, Any]) -> None:
     manifest[name] = {
         "captured_at": datetime.now(UTC).isoformat(),
         "byte_size": _canonical_byte_size(path),
+        "byte_size_basis": _CANONICAL_LF,
         **meta,
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

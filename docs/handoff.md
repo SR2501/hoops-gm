@@ -8144,3 +8144,103 @@ this file is append-only.
 
 **Next:** Fifth-round independent review at the replacement exact head, then
 PostgreSQL CI green at that head specifically. I am not merging.
+
+---
+
+## 2026-08-20 — data-engineer — Round five review: APPROVE, and the last corrections
+
+**Changed:** The fifth-round independent evidence review returned **APPROVE** with
+no blocking findings, having independently reproduced byte-for-byte manifest
+identity, the reason vocabulary across all 87 retained raw PDF captures
+(9,535 parsed rows, 11 heads, union with the fixture's 7 = exactly the 12 in the
+constant), all four re-recorded fixture sizes against `git cat-file -s`, every
+sub-count sum, and **PostgreSQL CI green at the exact head**. Five non-blocking
+items are closed here rather than deferred.
+
+**A fourth reachable tip-off state existed and my assertion did not pin it.**
+Partial coverage — `compared > 0` with games absent — publishes legitimately,
+and `games_compared == scope.games_with_tipoff` holds in that state too, because
+both count games that *have* an instant. Now pinned by asserting
+`games_missing_tipoff == 0` and an empty `games_without_both_instants`. The
+review was right that this is disclosure rather than defect; it was also right
+that a self-assertion which cannot distinguish full from partial is not an
+assertion about coverage.
+
+**`tipoffs` was an optional parameter of `refusal_reason`, which is an omissible
+guard.** Nothing tested that `main` passed it, because `main` is
+`pragma: no cover`; only `build_cohort_evidence` requiring it keyword-only saved
+me. Now required, with a test that an identity failure is reported before a
+tip-off failure — ordering selects the message and never the outcome, but it
+should still be sane, because an instant comparison over a game set you do not
+agree on is not interpretable.
+
+**Two documented failure rows were missing, and the reviewer's ruling was
+sharper than my reading.** I argued the new behaviour matched the existing
+"Views disagree → Exit 1" row. Half right: the contradiction was gone, but that
+row promises the failure names *which view lacks which game ids*, and a tip-off
+disagreement prints two instants instead. Two of the three new refusals mapped
+to no row at all. `docs/adapters/nba-stats.md` now carries all three.
+
+**The 18 pre-existing fixture entries still carry Windows CRLF byte sizes**, and
+leaving them stale was upheld — rewriting a provenance figure without re-reading
+the bytes asserts a measurement nobody made. But the caveat lived only in a
+docstring, so a reader of the artifact saw 18 wrong numbers with no marker. Each
+entry recorded from now on carries `byte_size_basis: canonical_lf_bytes`;
+absence of that key is the marker.
+
+**The reason vocabulary exists in two files** because a live smoke must not
+import from a test module. An offline test now asserts the two copies are equal,
+since duplication that nothing checks is how two copies of a fact stop being the
+same fact.
+
+**The backlog item's dependency pointed the wrong way**, and the reviewer caught
+a real ordering problem: `player-position-eligibility` declared
+`Depends on: player-identity`, while `player-identity` is specified to match on
+"normalized name + team + **position**". With no position data in the project,
+that third field does not exist — so ordering position behind identity leaves
+the highest-risk foundational item permanently short of one of the three fields
+it was designed around. The NBA-position half now depends on nothing and should
+land first; only Fantrax eligibility, being per-player-per-league, needs the
+crosswalk.
+
+**Correcting my own round-five entry.** It says "the two live-smoke tests added
+across these rounds". There are **four** new live-smoke test functions —
+`test_every_independent_view_names_the_same_173_games`,
+`test_the_two_recovered_neutral_site_games_are_still_there`,
+`test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games`,
+`test_the_position_field_is_still_only_populated_for_starters` — plus a new
+assertion inside a fifth, existing one. In a paragraph whose entire point is
+that this code has never executed, the count should be right. The entry stands
+as written because this file is append-only; this is the correction.
+
+Also: the last unqualified "independent" in `test_live_smoke.py` now points at
+`VIEW_INDEPENDENCE`. It was true there — those three views really are fetched
+live and none comes from the ingest path — but it was the last bare use of a
+word this branch spent two rounds retracting, and a reader arriving mid-
+retraction should not have to work out which sense is meant.
+
+**Now true:** Manifest digest
+`f31a1d8722160f0ad4e5c2a4a4a569e7702664f5a554552beb6084b534fbc358`, reproduced
+byte-for-byte. Ruff, Ruff format, strict mypy over 132 files and the full
+offline suite with warnings-as-errors all pass.
+
+**Could not verify:** The four new live-smoke tests and the new reason-vocabulary
+assertion have still never executed anywhere. The live-smoke job is
+nightly-on-default-branch and shows `skipped` on this branch; it will first run
+after merge. The `MATCHUP` predicate was executed offline against the real
+full-season payload by both me and the reviewer, so that one is evidenced by
+other means; the other four are not.
+
+`Rest - Left Knee Injury Management` (n=1) is clinical text published under a
+head whose allowlist rationale is "do not commit clinical text". Two distinct
+values keeps it under the cap. The privacy review accepted it and no name is
+attached, but the stated rationale and the artifact disagree by one row, and I
+have left it rather than special-casing.
+
+The reason vocabulary is now attested by every byte corpus this repository
+holds — 87 raw captures plus the committed fixture — and by nothing beyond them.
+Season-stability of the vocabulary, and of the `Two-Way`/`On Assignment` split,
+remains unverified.
+
+**Next:** PostgreSQL CI green at this replacement head, then the coordinator
+merges. I am not merging.

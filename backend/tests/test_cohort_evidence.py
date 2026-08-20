@@ -356,9 +356,16 @@ class TestTheRefusalPathIsExercised:
         views.update(overrides)
         return views
 
+    def _healthy_tipoffs(self) -> TipoffReconciliation:
+        """A tip-off state that never refuses, so these tests isolate identity."""
+        return TipoffReconciliation(compared=len(IN_WINDOW), absent=(), disagreements={})
+
     def test_a_complete_agreeing_populated_reconciliation_is_publishable(self) -> None:
         assert (
-            refusal_reason(GameIdentityReconciliation(start=START, end=END, views=self._views()))
+            refusal_reason(
+                GameIdentityReconciliation(start=START, end=END, views=self._views()),
+                self._healthy_tipoffs(),
+            )
             is None
         )
 
@@ -366,7 +373,10 @@ class TestTheRefusalPathIsExercised:
         views = self._views()
         del views["schedule_league_v2"]
 
-        reason = refusal_reason(GameIdentityReconciliation(start=START, end=END, views=views))
+        reason = refusal_reason(
+            GameIdentityReconciliation(start=START, end=END, views=views),
+            self._healthy_tipoffs(),
+        )
 
         assert reason is not None
         assert "schedule_league_v2" in reason
@@ -378,7 +388,8 @@ class TestTheRefusalPathIsExercised:
                 start=START,
                 end=END,
                 views=self._views(schedule_league_v2=("0022500364", "0022500494")),
-            )
+            ),
+            self._healthy_tipoffs(),
         )
 
         assert reason is not None
@@ -390,11 +401,30 @@ class TestTheRefusalPathIsExercised:
         reason = refusal_reason(
             GameIdentityReconciliation(
                 start=START, end=END, views=dict.fromkeys(RECONCILIATION_VIEWS, ())
-            )
+            ),
+            self._healthy_tipoffs(),
         )
 
         assert reason is not None
         assert "zero games" in reason
+
+    def test_an_identity_failure_is_reported_before_a_tipoff_failure(self) -> None:
+        """Ordering selects the message, never the outcome — but it should still be sane.
+
+        An instant comparison over a game set you do not agree on is not
+        interpretable, so identity must be reported first.
+        """
+        reason = refusal_reason(
+            GameIdentityReconciliation(
+                start=START,
+                end=END,
+                views=self._views(schedule_league_v2=("0022500364",)),
+            ),
+            TipoffReconciliation(compared=0, absent=("0022500364",), disagreements={}),
+        )
+
+        assert reason is not None
+        assert "game identity disagreement" in reason
 
 
 class TestTipoffDisagreementBlocksPublication:
@@ -470,6 +500,18 @@ class TestTipoffDisagreementBlocksPublication:
         assert section["witnessed"] is True
         assert section["disagreements"] == {}
         assert section["games_compared"] == manifest["scope"]["games_with_tipoff"]
+
+    def test_partial_tipoff_coverage_is_pinned_rather_than_merely_disclosed(
+        self, manifest: Any
+    ) -> None:
+        """The fourth reachable state, named by review: `compared > 0` with games absent.
+
+        `games_compared` equals `scope.games_with_tipoff` even under partial
+        coverage, because both count games that *have* an instant — so that
+        assertion alone does not distinguish full from partial. This one does.
+        """
+        assert manifest["scope"]["games_missing_tipoff"] == 0
+        assert manifest["cross_source_tipoff_reconciliation"]["games_without_both_instants"] == []
 
 
 class TestTheIndependenceMapIsCheckableRatherThanTrusted:
@@ -809,6 +851,17 @@ class TestTheReasonVocabularyIsWatchedAtTheSource:
             "source without updating the vocabulary."
         )
         assert len(heads) <= _MAX_PLAUSIBLE_REASON_CATEGORIES
+
+    def test_the_live_smoke_shares_this_exact_vocabulary(self) -> None:
+        """The constant is duplicated on purpose; divergence must not be silent.
+
+        The live smoke cannot import from a test module, so the vocabulary
+        exists in two places. Duplication that nothing checks is how two copies
+        of a fact stop being the same fact.
+        """
+        from test_live_smoke import KNOWN_REASON_CATEGORIES
+
+        assert KNOWN_REASON_CATEGORIES == _KNOWN_REASON_CATEGORIES
 
 
 class TestSourceFingerprintsAreCheckoutIndependent:

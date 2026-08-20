@@ -1105,7 +1105,7 @@ def _participation_join(
 
 def refusal_reason(
     reconciliation: GameIdentityReconciliation,
-    tipoffs: TipoffReconciliation | None = None,
+    tipoffs: TipoffReconciliation,
 ) -> str | None:
     """Why this cohort may not be published, or ``None`` if it may.
 
@@ -1123,6 +1123,11 @@ def refusal_reason(
     which meant a disagreement about *when every game started* published with
     exit 0 — caught by review, and the reason they are enforced here rather than
     merely summarised.
+
+    ``tipoffs`` is required rather than defaulted. It was optional when first
+    introduced, and an optional guard is an omissible one: nothing tested that
+    the call site passed it, because ``main`` is ``pragma: no cover``. Required
+    is the difference between a guard and a suggestion.
     """
     missing = sorted(set(RECONCILIATION_VIEWS) - set(reconciliation.views))
     if missing:
@@ -1143,8 +1148,6 @@ def refusal_reason(
             "perfectly and witness nothing; check the requested window and that the raw store "
             "holds captures covering it."
         )
-    if tipoffs is None:
-        return None
     if not tipoffs.checked:
         return (
             f"tip-off instants could not be reconciled ({tipoffs.unavailable_reason}). Every "

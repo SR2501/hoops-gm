@@ -169,7 +169,8 @@
   },
   "nba_leaguegamefinder_cohort_window_2025_26.json": {
     "byte_size": 6255,
-    "captured_at": "2026-08-20T16:42:12.901010+00:00",
+    "byte_size_basis": "canonical_lf_bytes",
+    "captured_at": "2026-08-20T17:08:24.454096+00:00",
     "endpoint": "LeagueGameFinder",
     "kept_rows_per_result_set": 12,
     "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. Rows are regrouped so each game's two rows are adjacent and games appear in the order named above; the row set is identical to the source's, only its order differs, and the parser is order-independent by construction (a contract test reverses the row set and asserts the same result). Verified 2026-08-20: the source's own row order is NOT stable across requests -- two captures minutes apart returned the same twelve rows in a different order -- so a byte diff between re-recordings of this fixture is expected and is not evidence the payload changed.",
@@ -233,7 +234,8 @@
   },
   "nba_playergamelogs_cohort_window_2025_26.json": {
     "byte_size": 105585,
-    "captured_at": "2026-08-20T16:42:14.648490+00:00",
+    "byte_size_basis": "canonical_lf_bytes",
+    "captured_at": "2026-08-20T17:08:26.038697+00:00",
     "endpoint": "PlayerGameLogs",
     "kept_rows_per_result_set": 129,
     "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. This endpoint carries its own GAME_DATE, which is what makes it an independent witness to the window rather than a restatement of the schedule query.",
@@ -306,7 +308,8 @@
   },
   "nba_scheduleleaguev2_cohort_window_2025_26.json": {
     "byte_size": 32464,
-    "captured_at": "2026-08-20T16:42:20.143395+00:00",
+    "byte_size_basis": "canonical_lf_bytes",
+    "captured_at": "2026-08-20T17:08:31.170845+00:00",
     "endpoint": "ScheduleLeagueV2",
     "kept_rows_per_result_set": 6,
     "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. Only the gameDates entries holding the named games are retained, and within each retained entry only the named games -- 2025-12-08 had a full slate and appears here with one game. Each retained game object is the source's own, unmodified.",

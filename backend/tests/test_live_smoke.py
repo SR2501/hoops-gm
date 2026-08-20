@@ -497,11 +497,17 @@ class TestNbaStatsIsAlive:
 class TestTheCohortWindowStillReconcilesAcrossSources:
     """The check that would have caught the invalidated cohort before it shipped.
 
-    Three independent live views of the same window, required to be equal. Each
-    applies the window using its own date field: ``LeagueGameFinder``'s
-    ``GAME_DATE``, ``PlayerGameLogs``' own ``GAME_DATE``, and
-    ``ScheduleLeagueV2``'s Eastern ``gameDateTimeEst`` reconciled against its UTC
-    sibling. Three requests, throttled at ~1 req/s by the client.
+    Three live views of the same window, required to be equal. Each applies the
+    window using its own date field: ``LeagueGameFinder``'s ``GAME_DATE``,
+    ``PlayerGameLogs``' own ``GAME_DATE``, and ``ScheduleLeagueV2``'s Eastern
+    ``gameDateTimeEst`` reconciled against its UTC sibling. Three requests,
+    throttled at ~1 req/s by the client.
+
+    These three *are* independently fetched here, unlike the four-view set the
+    cohort manifest publishes — that one includes ``persisted_nba_games``, which
+    is the same ``LeagueGameFinder`` bytes through the same parser. See
+    ``VIEW_INDEPENDENCE`` in ``hoops_gm.ingest.injury_report.cohort_evidence``
+    before carrying the word "independent" between the two contexts.
     """
 
     def test_every_independent_view_names_the_same_173_games(self, nba: NbaStatsClient) -> None:
