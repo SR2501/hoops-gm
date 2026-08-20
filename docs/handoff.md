@@ -8793,3 +8793,62 @@ only driving each path does.
 backlog 1:1 marker check as a matter of course rather than an exception (Lane C
 is actively adding items), re-capture the fixture and read the diff, re-verify
 the browser states, fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased forward onto `4b1ceef`, and the seed's names are fixed
+
+**Changed:** Rebased again onto backend PR #38's new head `4b1ceef`, having
+first confirmed `84ed9b1` is still an ancestor — fast-forward onto real history,
+not a rebase onto a rewritten one. Same two append conflicts in `docs/`, now
+resolved by a script rather than by hand, because this recurs on every rebase
+and hand-resolving a status line is how the count drifts in the first place.
+
+**Now true:** The fixture was re-captured and diffed again. The entire delta
+against `4b1ceef` is one line — the `refreshed_at` timestamp. `source_game_count`
+10, `resolved_game_count` 10, `persisted_team_row_count` 20, 30 teams, 21
+periods, 630 counts, both versions unchanged. That is the second consecutive
+backend head across which the 200 contract has been proved stable by capture and
+diff rather than assumed.
+
+Lane A acted on the seed-naming finding reported from here. The seed summary now
+reads `games_recorded_in_fixture: 12`, `games_dropped_unresolved: [...]`,
+`games_imported_into_cohort: 10` and — the useful one —
+`api_lineage_schedule_source_game_count: 10`. The two populations that
+previously shared the name `source_game_count` are now named for what each
+counts, and the one the screen displays says so in its key. Reported across an
+ownership boundary and fixed by its owner, which is the intended shape.
+
+Both browser states re-verified at this head: the grid renders 30 rows x 23
+columns with league totals 6 / 14 / 20, season mean 0.7, `PO` on period 21,
+lineage `Schedule 9bcac1c60490b41a — refreshed today`, zero and non-zero cells
+the same colour, ATL and the Mean row on screen together, no alerts. And the
+`season_type` refusal still displays its corrected copy with the backend's own
+wording quoted beneath it.
+
+The backlog 1:1 check earned its keep on this rebase. `git rerere` replayed the
+earlier resolution and carried a stale status line forward — 105 against an
+actual 106 — which the headings-to-markers comparison caught immediately. The
+line now reads 38 done / 1 blocked / 67 pending / 106 total, 106 headings to 106
+markers. This is exactly the failure the check exists for, and it happened on
+the first rebase after the check was introduced.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** As before, with one correction the coordinator supplied
+and which is more accurate than either half alone: the set-mismatch condition —
+the third path to `schedule_grid_incomplete_evidence` — is **not unguarded, only
+unrendered**. Lane A's mutation table covers set-equality deletion at the API
+layer, so the backend behaviour is pinned; what has never been exercised is the
+browser route to it. The seed cannot produce that state by construction and
+hand-editing the schema to manufacture it was judged a worse trade than
+recording the gap.
+
+Nothing has been reviewed at this head. The frontend diff since the last
+reviewed head is the fixture timestamp, the docs resolutions and the corrected
+`incomplete_evidence` copy — but that is an argument, not a review, and a fresh
+exact-head round follows the final rebase regardless.
+
+**Next:** Unchanged and blocked only on the merge. Rebase onto merged `main`,
+re-run the 1:1 marker check, re-capture and diff, re-verify both browser states,
+fresh exact-head review round, open with base `main`.
