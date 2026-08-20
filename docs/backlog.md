@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**37 done - 1 blocked - 63 pending - 101 total**
+**38 done - 1 blocked - 63 pending - 102 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -258,6 +258,36 @@ blowout calibration alone does not validate its magnitude; it belongs to
 - **Depends on:** `schedule-ingest`
 
 Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-trip length and structure. Direct input to the availability model.
+
+### `schedule-grid-early` - Exposing the current raw schedule grid
+
+- [x] **done**
+- **Depends on:** `scoring-period-projection`
+
+Loopback-only `GET /api/v1/leagues/{league_id}/schedule-grid/current` over
+`scheduled_game_counts`: the complete ordered active-team x scoring-period raw
+count matrix including explicit zeroes, plus the `teams` and `periods` a
+browser screen needs to label its own rows and columns, plus the exact current
+NBA schedule, scoring-period projection, deadline-calendar and
+settings-snapshot lineage. `teams` and `periods` are read inside the same
+transaction and lock scope as `counts`, so a screen can never render one
+lineage's numbers against another lineage's headers. No classifications,
+rankings, recommendations or schedule recomputation cross this boundary
+(ADR-009).
+
+Completeness evidence comes from `db/lineage.py`'s `verify_refresh` and
+`schedule_completeness` — the canonical verifier the producer stamps against —
+never from a second reader in the route. Missing, stale, unverifiable or
+self-contradicting evidence, a wholly zero grid, an empty grid, a non-loopback
+caller and an unknown league each fail closed with a typed `X-Bridge-Error`
+code and no partial data.
+
+Operational, not merely safe: `python -m hoops_gm.dev.seed_schedule_grid`
+brings a local database to a verified state offline from the committed NBA
+fixtures, through the production importers, and the endpoint returns a real
+200 against it (see `backend/README.md`). The first attempt at this item was
+fail-closed but permanently unavailable, which is why the seed path is part of
+the deliverable rather than a convenience.
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 

@@ -24,6 +24,10 @@ Run it::
 Re-running it against the same database is a no-op: every step is idempotent,
 and the registered schedule version is a fingerprint of the persisted rows, so
 an unchanged re-seed converges rather than advancing "current".
+
+A relative SQLite path is anchored to the repo root rather than the working
+directory (``Settings._resolve_relative_sqlite_path``), so the command above
+writes ``<repo>/schedule_grid_demo.db``. ``*.db`` is gitignored.
 """
 
 from __future__ import annotations

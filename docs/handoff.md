@@ -6766,3 +6766,85 @@ Local SQLite cannot reproduce shared external-database residue by construction.
 
 **Next:** Push the correction and require both duplicate native PostgreSQL
 workflow runs to pass before treating the PR as complete.
+
+---
+
+## 2026-08-20 — backend — Schedule grid API, operational rather than merely safe
+
+**Changed:** Ported the vetoed schedule-grid endpoint onto current main as a
+rewrite, not a rebase. `GET /api/v1/leagues/{league_id}/schedule-grid/current`
+is loopback-only and returns the dense active-team x scoring-period raw game
+count matrix with explicit zeroes, its four lineage blocks, and two new
+sections: `teams` (`team_id`, `nba_team_id`, `abbreviation`, `name`) and
+`periods` (`period_number`, `start_date`, `end_date`, `is_playoff`). Both are
+read inside the same transaction and lock scope as `counts`, so a screen can
+never label one lineage's numbers with another lineage's headers.
+`scheduled_game_counts` alone emits bare integer team ids and no period dates,
+so a browser could not honestly label its own rows.
+
+The hand-rolled `_schedule_completeness()` from `f4a9cdb` is deleted. Evidence
+now comes from `db/lineage.py`'s `schedule_completeness()` and
+`verify_refresh()` — the same seam the producer stamps against — and the route
+takes the canonical schedule lock before reading, so the refresh it verifies is
+the one `scheduled_game_counts` counts under.
+
+`hoops_gm.dev.seed_schedule_grid` is new: an offline, rerunnable path that
+brings a database to a verified state from `tests/fixtures/nba_static_teams.json`
+and `tests/fixtures/nba_scheduleleaguev2_2026_27.json` through the production
+importers and calendar functions. Documented in `backend/README.md`.
+
+**Now true:** The endpoint returns a real 200. Against the seeded database:
+league 1, season `2026-27`, 30 teams, 21 Monday-to-Sunday periods, 630 dense
+count rows, 20 non-zero team-games, `lineage.schedule` =
+`{refresh_id: 1, version: "9bcac1c60490b41a", source_game_count: 10,
+resolved_game_count: 10, persisted_team_row_count: 20, unresolved_game_ids: []}`,
+`lineage.scoring_period_projection.version` = `"22a8bac85a909ccd"`,
+`deadline_calendar` = `{id: 1, version: 1}`, `settings_snapshot` =
+`{id: 1, version: 1}`, `periods[20]` =
+`{period_number: 21, start_date: "2027-03-08", end_date: "2027-03-14",
+is_playoff: true}`, `teams[0]` = `{team_id: 1, nba_team_id: 1610612737,
+abbreviation: "ATL", name: "Atlanta Hawks"}`. That is the single thing PR #36
+never had, and the reason it was vetoed.
+
+The architect's finding is confirmed against real producer output, not just by
+reading: the seeded refresh summary is
+`{"team_schedule_rows": 20, "schedule_completeness": {...}}`, so three of the
+four flat keys `f4a9cdb` required — `source_game_count`, `resolved_game_count`,
+`unresolved_game_ids` — are absent from every refresh the producer writes. A
+literal rebase would have raised `schedule_grid_incomplete_evidence` on every
+real schedule, reproducing the veto exactly.
+
+Fail-closed behaviour is retained and each branch is regression-tested from a
+seeded, genuinely valid database with exactly one thing broken: no registered
+refresh and a stale-content refresh give `schedule_grid_not_current`; a legacy
+refresh with no completeness block, a malformed block, a non-object summary, a
+block claiming unresolved games, a deleted schedule row, and a verified season
+whose games fall in no scoring period give `schedule_grid_incomplete_evidence`;
+a grid with no rows gives `schedule_grid_incomplete`; a non-loopback caller
+gives 403 and an unknown league 404. A same-row-count mutation — one game moved
+to a new date on both `nba_games` and `team_schedule`, row count unchanged at
+20 — is refused as not current, which is the failure a row count cannot see.
+
+Ruff lint, Ruff format, strict mypy (134 source files) and the full offline
+backend suite (1,075 passed, 20 live deselected) are green, up from 1,051 on
+the 9d7e791 baseline this branch was cut from.
+
+**Could not verify:** Native PostgreSQL. Docker is unavailable on this machine
+and `TEST_DATABASE_URL` is unset, so the PostgreSQL lane is CI-only and is not
+claimed here. The two tests that open their own `TestClient` perform the shared
+fixture's drop-then-create, which is the exact isolation defect a prior session
+hit on Postgres, but that correctness is asserted by construction rather than
+observed. Nothing was run against a live NBA or Fantrax source; the seed and
+every test are offline by design. The seed's `--database-url` was exercised
+only against SQLite. `docs/mocks/nba-schedule-2026-27.json`, the fixture named
+in the brief, does not exist on main — `docs/mocks/` holds only `README.md` and
+`TEMPLATE.md`; the committed NBA schedule fixture under
+`backend/tests/fixtures/` was used instead, and that substitution was made
+without the coordinator's confirmation. The endpoint has never been exercised
+against a full 1,230-game season: the recorded fixture holds 10 resolved games
+on two dates, so the 630-row grid is dense but sparse in content, and no claim
+is made about response size or query cost at real season scale.
+
+**Next:** Exact-head backend, data-engineer, architect and independent code
+reviews; native PostgreSQL CI on the pushed head; one fresh PR, unmerged.
+PR #36 stays closed.
