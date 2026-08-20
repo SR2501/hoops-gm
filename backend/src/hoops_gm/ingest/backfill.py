@@ -306,6 +306,36 @@ def _with_key(resolution: Resolution, key: str) -> Resolution:
 
 
 # --------------------------------------------------------------------------
+# NBA identity anchors
+# --------------------------------------------------------------------------
+
+
+def backfill_nba_identity(
+    session: Session,
+    *,
+    nba: NbaStatsClient,
+    season: str,
+    progress: Callable[[str], None] = print,
+) -> BackfillResult:
+    """Import the NBA-side identity anchors every other ingest step depends on.
+
+    Teams and canonical NBA player ids have to exist before games, box scores or
+    participation can be attached to anything. This was previously an
+    undocumented interactive snippet, which meant the first step of regenerating
+    a cohort was the one step no committed command described.
+    """
+    result = BackfillResult()
+    result.steps["teams"] = import_teams(session, parse_teams(nba.static_teams()))
+    progress(f"  teams: {result.steps['teams']}")
+    result.steps["nba players"] = import_nba_players(
+        session,
+        parse_common_all_players(nba.common_all_players(season=season, only_current=False)),
+    )
+    progress(f"  nba players: {result.steps['nba players']}")
+    return result
+
+
+# --------------------------------------------------------------------------
 # Season
 # --------------------------------------------------------------------------
 
@@ -497,6 +527,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     crosswalk = subparsers.add_parser("crosswalk", help="build the NBA/Fantrax crosswalk")
     crosswalk.add_argument("--season", default="2026-27", help="the CURRENT season")
 
+    nba_identity = subparsers.add_parser(
+        "nba-identity",
+        help="import NBA teams and canonical NBA player ids (run before any season backfill)",
+    )
+    nba_identity.add_argument("--season", default="2026-27", help="CommonAllPlayers season")
+
     season = subparsers.add_parser("season", help="backfill one season")
     season.add_argument("season", help="e.g. 2024-25")
     season.add_argument(
@@ -607,6 +643,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     with database.session() as session:
         if args.command == "crosswalk":
             result = build_crosswalk(session, nba=nba, fantrax=fantrax, season=args.season)
+        elif args.command == "nba-identity":
+            result = backfill_nba_identity(session, nba=nba, season=args.season)
         else:
             result = backfill_season(
                 session,

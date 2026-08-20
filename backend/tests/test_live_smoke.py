@@ -43,6 +43,12 @@ from hoops_gm.ingest.injury_report import (
     parse_injury_report_pdf,
     report_url,
 )
+from hoops_gm.ingest.injury_report.cohort_evidence import (
+    GameIdentityReconciliation,
+    _league_game_finder_ids,
+    _player_game_log_ids,
+    _schedule_league_ids,
+)
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     parse_box_score_summary_v3,
@@ -74,12 +80,19 @@ pytestmark = pytest.mark.live_smoke
 #: Live calls bypass the cache entirely. A smoke test served from a capture is
 #: a contract test wearing a disguise, and would report the source as healthy
 #: long after it stopped answering.
-from datetime import UTC, datetime, timedelta  # noqa: E402
+from datetime import UTC, date, datetime, timedelta  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 NO_CACHE = timedelta(0)
 _EASTERN = ZoneInfo("America/New_York")
 _BBM_PRIVATE_CSV_ENV = "HOOPS_GM_BBM_PROJECTION_CSV"
+
+#: The representative historical injury cohort's window. Mirrors the committed
+#: manifest's scope, so a live drift in the window's game slate turns this red
+#: rather than leaving the manifest quietly stale.
+COHORT_SEASON = "2025-26"
+COHORT_START = date(2025, 12, 8)
+COHORT_END = date(2026, 1, 4)
 
 
 @pytest.fixture
@@ -457,6 +470,75 @@ class TestNbaStatsIsAlive:
 
         with pytest.raises(SourceContractError):
             _default_endpoint_factory("BoxScoreSummaryV2", game_id=FIXTURE_MIDSEASON_GAME_ID)
+
+
+class TestTheCohortWindowStillReconcilesAcrossSources:
+    """The check that would have caught the invalidated cohort before it shipped.
+
+    Three independent live views of the same window, required to be equal. Each
+    applies the window using its own date field: ``LeagueGameFinder``'s
+    ``GAME_DATE``, ``PlayerGameLogs``' own ``GAME_DATE``, and
+    ``ScheduleLeagueV2``'s Eastern ``gameDateTimeEst`` reconciled against its UTC
+    sibling. Three requests, throttled at ~1 req/s by the client.
+    """
+
+    def test_every_independent_view_names_the_same_173_games(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the cohort's game-identity set stopped being agreed upstream.
+
+        A disagreement here means the representative historical injury cohort's
+        denominator is wrong, which silently poisons every availability number
+        derived from it. The failure names the offending ids because the count
+        alone is what made the first defect survive review.
+        """
+        views = {
+            "league_game_finder": _league_game_finder_ids(
+                nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+            "player_game_logs": _player_game_log_ids(
+                nba.player_game_logs(season=COHORT_SEASON, max_age=NO_CACHE),
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+            "schedule_league_v2": _schedule_league_ids(
+                nba.schedule_league(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+                start=COHORT_START,
+                end=COHORT_END,
+            ),
+        }
+        reconciliation = GameIdentityReconciliation(start=COHORT_START, end=COHORT_END, views=views)
+
+        assert reconciliation.agreed, (
+            "independent views of the cohort window disagree on which games exist: "
+            f"{reconciliation.disagreements()}"
+        )
+        assert len(reconciliation.union) == 173, (
+            f"the cohort window now holds {len(reconciliation.union)} games, not 173. "
+            "The committed cohort manifest's denominator is stale or the schedule moved."
+        )
+
+    def test_the_two_recovered_neutral_site_games_are_still_there(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: a repeated-canonical-``MATCHUP`` game disappears again.
+
+        These two are the only games played on 2025-12-13, so losing them costs
+        a whole game date, which is exactly how the invalidated cohort came to
+        cover 25 dates while believing it covered the window.
+        """
+        games = {
+            game.nba_game_id: game
+            for game in parse_league_game_finder(
+                nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE),
+                season=COHORT_SEASON,
+            )
+        }
+        for game_id in ("0022501229", "0022501230"):
+            assert game_id in games, f"{game_id} is absent from LeagueGameFinder again"
+            assert games[game_id].game_date == date(2025, 12, 13)
 
 
 # ==========================================================================

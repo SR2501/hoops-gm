@@ -13,6 +13,7 @@ from hoops_gm.ingest.backfill import (
     _validate_summary_game_identity,
 )
 from hoops_gm.ingest.errors import SourceContractError
+from hoops_gm.ingest.importers import ImportCounts
 from hoops_gm.ingest.nba.client import NbaStatsClient
 from hoops_gm.ingest.nba.models import NbaGameRecord, PlayerBoxScoreRecord
 
@@ -165,3 +166,44 @@ def test_season_backfill_reconciles_both_sources_before_any_write(
             nba=cast(NbaStatsClient, Source()),
             season="2025-26",
         )
+
+
+def test_nba_identity_backfill_imports_teams_before_players(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anchors must be imported in dependency order, from official NBA identity only."""
+
+    class Source:
+        def static_teams(self) -> object:
+            return "teams-payload"
+
+        def common_all_players(self, *, season: str, only_current: bool) -> object:
+            assert season == "2025-26"
+            assert only_current is False
+            return "players-payload"
+
+    order: list[str] = []
+    monkeypatch.setattr(backfill, "parse_teams", lambda payload: [payload])
+    monkeypatch.setattr(backfill, "parse_common_all_players", lambda payload: [payload])
+
+    def record(name: str) -> Any:
+        def importer(session: Session, records: Any) -> ImportCounts:
+            del session
+            order.append(f"{name}:{records[0]}")
+            return ImportCounts(created=len(records))
+
+        return importer
+
+    monkeypatch.setattr(backfill, "import_teams", record("teams"))
+    monkeypatch.setattr(backfill, "import_nba_players", record("players"))
+
+    result = backfill.backfill_nba_identity(
+        cast(Session, object()),
+        nba=cast(NbaStatsClient, Source()),
+        season="2025-26",
+        progress=lambda _: None,
+    )
+
+    assert order == ["teams:teams-payload", "players:players-payload"]
+    assert result.steps["teams"].created == 1
+    assert result.steps["nba players"].created == 1

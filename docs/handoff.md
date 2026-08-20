@@ -7430,3 +7430,156 @@ by present-day code; it needs a synthetic example of the mistake.**
 Ruff, format, strict mypy (134 files), 1,106 offline tests, secret scan 281
 files — all green (`cd backend && ruff check . && ruff format --check . &&
 mypy && pytest && python ../scripts/check_no_secrets.py`).
+## 2026-08-20 — data-engineer — Corrected representative injury cohort
+
+**Changed:** Regenerated the representative historical injury cohort from
+scratch against live NBA sources on the PR #37-corrected parser, after PR #37
+invalidated the 2026-08-19 artifact published by PR #30. Nothing was carried
+forward: every count, fingerprint, join and exclusion below was derived here.
+
+The defect's mechanism, stated so it can be disproven cheaply and verified on
+the exact 2025-26 `LeagueGameFinder` payload rather than inferred: both team
+rows of games `0022501229` and `0022501230` carry one identical `MATCHUP`
+string (`'NYK @ ORL'` and `'SAS @ OKC'`), where an ordinary game's rows are
+reciprocal (`0022500364`: `'SAC @ IND'` / `'IND vs. SAC'`). The old parser
+derived a row's side from the separator alone, so both rows resolved to the
+same side, the game never acquired a home team, and it was dropped. **The rows
+were always both present** — I initially told the coordinator the upstream had
+"healed" because the row histogram was 2-per-game, and that was wrong. Row
+cardinality was never the symptom; the parser fix is entirely load-bearing.
+
+Those two games are the *only* games played on 2025-12-13, so the omission cost
+a whole game date and an entire day of injury-report candidates that was
+therefore never swept.
+
+The operational sequence, run from `backend/` with `PYTHONPATH=./src` and
+`DATABASE_URL` pointing at a gitignored SQLite file:
+
+```powershell
+python -m alembic upgrade head
+python -m hoops_gm.ingest.backfill nba-identity --season 2025-26
+python -m hoops_gm.ingest.backfill season 2025-26 --with-participation `
+  --start 2025-12-08 --end 2026-01-04
+python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 120
+python -m hoops_gm.ingest.injury_report.backfill run 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 --max-requests 120
+python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 `
+  --start 2025-12-08 --end 2026-01-04
+python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 `
+  --start 2025-12-08 --end 2026-01-04 `
+  --out ../docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json
+```
+
+Step two is new. The NBA identity bootstrap was previously an undocumented
+interactive snippet, which meant the first step of regenerating a cohort was
+the one step no committed command described. It reproduced PR #30's 30 teams
+and 5,206 NBA-anchored players exactly.
+
+The manifest generator is also new, and it exists because PR #30's manifest was
+hand-assembled from ad-hoc queries. That made every number in it an assertion
+rather than a reproduction — which is precisely why a wrong scope survived two
+independent reviews. It reads no clock and generates no identifiers, so it is a
+pure function of persisted state.
+
+**Now true:** The corrected cohort is 173 games across 26 game dates, all with
+tip-offs, including `0022501229` (20 logs) and `0022501230` (19 logs) — 39
+player logs, exactly as PR #37 predicted. Season-wide production is now 1,230
+games and 26,651 box-score rows with **zero** skips, against 1,225 / 26,549 +
+102 skipped before; the 102 previously-skipped rows were exactly the logs of
+the five dropped games.
+
+Reconciled corrected figures, against the invalidated ones: candidates
+89 -> **91**, distinct mastheads 84 -> **86**, trusted entries in scope
+9,082 -> **9,225**, entries resolved to a player id 8,190 -> **8,306**,
+`NOT_YET_SUBMITTED` 783 -> **806**, listed-status 8,299 -> **8,419**, canonical
+player-games 1,934 -> **1,948**, joined participation outcomes 1,906 ->
+**1,918**. All 91 candidates completed with zero 403, 404 or contract failures;
+zero games were legacy-excluded or left with unresolved evidence. Cohort
+fingerprints: canonical observations
+`80b3e5637dbe8c84c997e60d2dcf020a8828e0b6e1804b6678213987c618f0b1`, joined
+outcomes `3227730fe6d07866aca81f4bc31efbbd953d6cab0ddcdb6350375fb949c78b44`,
+game-identity set
+`43afabfc080d35784b94100481477183b64e6d20ee63a27d58aca4b1f4ab8fee`.
+
+The cohort now refuses to publish unless **four** independent views of the
+window name exactly the same games: `LeagueGameFinder`, `PlayerGameLogs`
+windowed by its own `GAME_DATE`, `ScheduleLeagueV2` windowed by
+`gameDateTimeEst` reconciled against its UTC sibling, and persisted
+`nba_games`. All four agree at 173. A missing view is an exit-1 failure, not a
+smaller set of agreeing witnesses: an absent witness does not corroborate. A
+disagreement prints the offending game ids, never a count — the count is what
+let the first defect through.
+
+**A distribution changed, not just counts, and `quant` must know.** Maximum
+canonical lead time moves 540 -> 1,650 minutes. Traced to a single genuine
+observation: `Minix, Riley`, listed OUT on the 2025-12-12 17:30 ET report and
+never re-listed before `0022501230` tipped at 21:00 ET the following day, so
+his latest pre-tipoff row sits 27.5 hours out. Not a join defect — but any
+lead-time stratification built on the old 9-hour maximum is wrong.
+
+Two resolved observations now have no participation row (was one) and stay
+unknown under R35. Position evidence is unchanged in shape: 167 of 363 resolved
+players carry a source-observed G/F/C label (C 43, F 76, G 76), 196 remain
+position-unknown rather than inferred.
+
+Adapter gate: three new recorded fixtures hold whole real rows for six named
+games — both window boundaries, one date either side, and both 2025-12-13
+games — across `LeagueGameFinder`, `PlayerGameLogs` and `ScheduleLeagueV2`.
+Boundary games are in there on purpose: a windowing bug is invisible in a
+fixture whose every game sits comfortably inside the window. Fourteen offline
+contract tests pin the three extractors, the disagreement reporting, and the
+mechanism itself; two live smoke tests assert the four-view agreement and the
+survival of the two recovered games, failing loudly with named ids. Throttling,
+retry, caching and failure behaviour for the new consumer are documented in
+`docs/adapters/nba-stats.md`.
+
+Reproducibility is proven rather than claimed: two consecutive generations over
+the same state produced SHA-256
+`b18c18636112a3207dd9a9947299a15bdc5a053a24df0915facab8e7a48b79da` both times.
+Source fingerprints hash CRLF-normalised bytes; verified equal to
+`git cat-file blob HEAD:backend/src/hoops_gm/db/lineage.py | sha256`
+(`6073bc02…`), so they are invariant across checkout newline configuration —
+the defect PR #30 had to correct after publication. A committed test fails if
+the manifest fingerprints code that has since changed, because a fingerprint
+nobody checks is a comment.
+
+Also corrected: `docs/governance/risks.md` had **two rows both numbered R46**
+(bridge durable-persistence, and the `MATCHUP` reciprocity risk). Every future
+reference to "R46" was ambiguous. The `MATCHUP` row is renumbered R48; nothing
+outside that file referenced either.
+
+Local gates on the exact head: Ruff lint, Ruff format, strict mypy over 132
+files, and the full offline backend suite green.
+
+**Could not verify:** No native PostgreSQL locally — no Docker, `TEST_DATABASE_URL`
+unset — so PostgreSQL CI on the exact pushed head is required and is not claimed
+here. The independent exact-head data/evidence, code and privacy reviews had not
+run when this was written.
+
+The reconciliation proves the four views *agree*; it cannot prove they are
+jointly right. All four descend from NBA-operated infrastructure, so a
+league-side error upstream of all of them would be invisible to this check, and
+no non-NBA independent schedule source was consulted.
+
+I did not re-derive the 2024-25 season's equivalent cohort or check whether any
+other committed artifact was built on the 1,225-game scope; `quant`'s
+reliability-metrics model card already records a 2026-08-20 regeneration from
+complete 1,230-game cohorts, but I did not verify that claim myself.
+
+I could not verify why the 2025-12-13 game-day candidate behaves differently
+from other dates' — I observed 91 candidates and 86 mastheads without
+attributing each recovered masthead to its date.
+
+The two R35-silent observations cannot be classified without authoritative
+historical roster evidence. Blank source positions stay unknown. No DNP reason
+was inferred, no conversion rate, threshold, probability or calibration claim
+was computed, no paid source or Fantrax access was used, and no owner-only
+decision was made.
+
+**Next:** Independent exact-head data-engineering/evidence, code and privacy
+reviews; then one unmerged PR with native PostgreSQL CI required. Only after it
+merges may `quant` resume `injury-status-conversion` from this cohort — under
+the Model gate, preserving the unresolved identities, the two R35 unknowns, the
+blank positions and the new long lead-time tail as evidence rather than as
+outcomes.

@@ -1016,36 +1016,110 @@ live in it.
 
 ---
 
-## Historical cohort populated on 2026-08-19 — invalidated pending regeneration
+## Historical cohort — regenerated 2026-08-20 from corrected sources
 
 The privacy-safe provenance manifest is
 [`nba-injury-report-cohort-2025-12-08--2026-01-04.json`](nba-injury-report-cohort-2025-12-08--2026-01-04.json).
 The window was selected from the official schedule before fetching its reports:
-four inclusive weeks centered on the 2025-12-22 archive format/cadence boundary.
-The original artifact claimed 171 games. Corrected `LeagueGameFinder`
-reconciliation proves the window contains 173: games `0022501229` and
-`0022501230`, both on 2025-12-13, were silently omitted even though both official
-team rows existed. Those games carry 39 `PlayerGameLogs` rows before any
-participation-only observations are counted.
+four inclusive weeks centred on the 2025-12-22 archive format/cadence boundary.
+The window is unchanged from the invalidated cohort, because the window was
+never the defect.
 
-All 89 bounded candidates completed without 403, 404, or contract failure. They
-resolved to 84 distinct mastheads, 1,934 canonical player-games, and 1,906
-authoritative participation joins. The join is represented and fingerprinted by
-stable `nba_game_id` plus NBA-source player external id; local surrogate ids are
-not evidence identity. One resolved `OUT` observation has no participation row
-and remains unknown under R35 rather than being inferred as a nonappearance.
+### What was wrong, and what the mechanism actually was
 
-The manifest commits no raw NBA document or operational database. It records
-source-capture timestamps and SHA-256 identities, checkpoint/coverage artifact
-hashes, exclusion counts, unresolved identity counts, position evidence, and
-status-diverse stable-key samples. Raw PDFs, NBA JSON, checkpoint, coverage,
-expected-game evidence, and SQLite state remain under the existing gitignored
-`data/`/`.live_evidence*` policy.
+The 2026-08-19 cohort claimed 171 games across 25 game dates. It contained 173
+across 26. `LeagueGameFinder` returns two team rows per game, and the parser
+behind that cohort decided which side a row described from the `MATCHUP`
+separator alone. For an ordinary game the two rows carry reciprocal strings, so
+the separator is sufficient. For a neutral-site game both rows repeat one
+canonical string. Verified on the exact 2025-26 payload — the two recovered
+games, and an ordinary in-window game for contrast:
 
-The old source captures remain useful historical evidence, but the cohort is no
-longer conversion-ready. Its bounded participation import, expected-game
-preflight, injury coverage, canonical observations, joins, fingerprints, and
-privacy-safe manifest must be regenerated against all 173 games. Until that
-happens, `injury-conversion-cohort-population` is pending again and
-`injury-status-conversion` remains blocked. No status-to-play rate may use the
-171-game artifact.
+```text
+0022501229  ORL  'NYK @ ORL'        <- both rows, one string
+0022501229  NYK  'NYK @ ORL'
+0022501230  SAS  'SAS @ OKC'        <- both rows, one string
+0022501230  OKC  'SAS @ OKC'
+
+0022500364  SAC  'SAC @ IND'        <- ordinary: reciprocal strings
+0022500364  IND  'IND vs. SAC'
+```
+
+Both rows resolved to the same side, the game never acquired a home team, and
+it was dropped without a word. Those two games are the *only* games played on
+2025-12-13, so the omission removed an entire game date — which is why the
+cohort was short a date as well as two games. They carry 39 `PlayerGameLogs`
+rows, and the season-wide import that fed the cohort skipped 102 log rows in
+total for the five games affected across 2025-26.
+
+Nothing failed. The parse was clean, 1,225 was a plausible number, and the
+manifest asserted it. Only an independent endpoint saying 1,230 found it.
+
+### The corrected cohort
+
+Regenerated end to end against live sources on 2026-08-20 with the corrected
+parser. Every figure below was derived from the regenerated state, not carried
+forward:
+
+| | Invalidated | Corrected |
+|---|---|---|
+| Games in window | 171 | **173** |
+| Game dates | 25 | **26** |
+| Candidates attempted | 89 | **91** |
+| Distinct mastheads | 84 | **86** |
+| Trusted entries in scope | 9,082 | **9,225** |
+| Canonical player-games | 1,934 | **1,948** |
+| Joined participation outcomes | 1,906 | **1,918** |
+
+All 91 bounded candidates completed with zero 403, 404 or contract failures.
+Every one of the 173 games has an ingested tip-off and a canonical pregame
+observation; nothing was legacy-excluded and no game carried unresolved
+evidence. The join is fingerprinted by stable `nba_game_id` plus NBA-source
+player external id; local surrogate ids are never evidence identity. Two
+resolved observations have no participation row and remain unknown under R35
+rather than being inferred as nonappearance.
+
+### The check that would have caught it
+
+`hoops_gm.ingest.injury_report.cohort_evidence` refuses to emit a manifest
+unless four independent views of the window name exactly the same games:
+`LeagueGameFinder`, `PlayerGameLogs` (windowed by its own `GAME_DATE`),
+`ScheduleLeagueV2` (windowed by `gameDateTimeEst` reconciled against
+`gameDateTimeUTC`), and the rows actually persisted in `nba_games`. All four
+agree at 173. A missing view is a failure, not a smaller set of agreeing
+witnesses — an absent witness does not corroborate.
+
+The reconciliation runs offline against recorded fixtures
+(`tests/test_cohort_evidence.py`) containing whole real rows for six games:
+both window boundaries, one date either side of them, and both 2025-12-13
+games. It also runs live (`tests/test_live_smoke.py`), where a disagreement
+names the offending game ids rather than reporting a count.
+
+### Reproducibility
+
+The manifest is a pure function of the persisted database, the raw-payload
+store and the operational report files. It reads no clock and generates no
+identifiers, so regenerating it over retained state reproduces it byte for
+byte. The exact commands are listed in the manifest's own `operator.commands`.
+
+A fresh *live sweep* cannot reproduce it, because capture timestamps record
+when requests were made. Those are provenance, not reproducible values, and the
+manifest says so rather than leaving a reader to discover it.
+
+### What is not committed
+
+No raw NBA document and no operational database. The manifest records capture
+timestamps and SHA-256 identities, artifact hashes, exclusion counts,
+unresolved identity counts and position evidence. Raw PDFs, NBA JSON, the
+checkpoint, coverage and expected-game evidence, and SQLite state remain under
+the existing gitignored `data/` / `.live_evidence*` policy. Source-file
+fingerprints hash CRLF-normalised bytes, so they are identical on any checkout
+and equal the committed Git blob digest.
+
+### What this cohort still does not license
+
+No status-to-play rate, threshold, probability or calibration claim. Those are
+`injury-status-conversion`, a separately Model-gated `quant` deliverable, and it
+must consume this cohort preserving the unresolved identities, the two R35
+unknowns and blank source positions as missing evidence rather than as negative
+outcomes.

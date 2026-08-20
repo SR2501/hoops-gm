@@ -167,6 +167,22 @@
     "source": "nba_injury_report",
     "trimmed": false
   },
+  "nba_leaguegamefinder_cohort_window_2025_26.json": {
+    "byte_size": 6745,
+    "captured_at": "2026-08-20T14:41:51.089380+00:00",
+    "endpoint": "LeagueGameFinder",
+    "kept_rows_per_result_set": 12,
+    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited.",
+    "original_row_counts": {
+      "LeagueGameFinderResults": 2460
+    },
+    "params": {
+      "season_nullable": "2025-26",
+      "season_type_nullable": "Regular Season"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
   "nba_leaguegamefinder_playoffs.json": {
     "byte_size": 3815,
     "captured_at": "2026-08-20T03:49:56.734511+00:00",
@@ -211,6 +227,21 @@
     "params": {
       "season_nullable": "2024-25",
       "season_type_nullable": "Regular Season"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
+  "nba_playergamelogs_cohort_window_2025_26.json": {
+    "byte_size": 114978,
+    "captured_at": "2026-08-20T14:41:52.608757+00:00",
+    "endpoint": "PlayerGameLogs",
+    "kept_rows_per_result_set": 129,
+    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. This endpoint carries its own GAME_DATE, which is what makes it an independent witness to the window rather than a restatement of the schedule query.",
+    "original_row_counts": {
+      "PlayerGameLogs": 26651
+    },
+    "params": {
+      "season_nullable": "2025-26"
     },
     "source": "nba_stats",
     "trimmed": true
@@ -269,6 +300,22 @@
     "params": {
       "league_id": "00",
       "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
+  "nba_scheduleleaguev2_cohort_window_2025_26.json": {
+    "byte_size": 33591,
+    "captured_at": "2026-08-20T14:41:57.461216+00:00",
+    "endpoint": "ScheduleLeagueV2",
+    "kept_rows_per_result_set": 6,
+    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited.",
+    "original_row_counts": {
+      "leagueSchedule.gameDates.games": 1400
+    },
+    "params": {
+      "league_id": "00",
+      "season": "2025-26"
     },
     "source": "nba_stats",
     "trimmed": true
