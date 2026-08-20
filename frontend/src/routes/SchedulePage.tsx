@@ -80,7 +80,11 @@ function ScheduleGridView({
 
   return (
     <>
-      <ScheduleLineage lineage={grid.lineage} now={now} />
+      <ScheduleLineage
+        lineage={grid.lineage}
+        now={now}
+        countedTeamGames={model.periodTotals.reduce((sum, value) => sum + value, 0)}
+      />
 
       {!integrity.isDense ? (
         <p className="state state--error grid__integrity" role="status" data-testid="grid-integrity">

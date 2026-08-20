@@ -32,7 +32,10 @@ function scheduleGrid(overrides: Partial<ScheduleGrid> = {}): ScheduleGrid {
         refreshed_at: '2026-08-20T12:00:00Z',
         source_game_count: 10,
         resolved_game_count: 10,
-        persisted_team_row_count: 20,
+        // Coherent with the counts below: 6 + 0 + 8 = 14 team-games. The
+        // fixture previously claimed 20 while counting 14, which nothing
+        // noticed because nothing compared them.
+        persisted_team_row_count: 14,
         unresolved_game_ids: [],
       },
       scoring_period_projection: {
@@ -270,13 +273,41 @@ describe('the schedule grid', () => {
     const lineage = await screen.findByTestId('schedule-lineage')
     expect(lineage).toHaveTextContent('9bcac1c60490b41a')
     expect(within(lineage).getByTestId('schedule-game-counts')).toHaveTextContent(
-      '10 from source · 10 resolved · 20 team rows persisted',
+      '10 from source · 10 resolved · 14 team rows persisted · 14 counted in this grid',
     )
+    // Agreeing counts raise nothing.
+    expect(screen.queryByTestId('lineage-persisted-mismatch')).not.toBeInTheDocument()
     // The raw timestamp is shown verbatim, so a mislabelled one stays checkable.
     expect(within(lineage).getByTestId('schedule-refreshed-at')).toHaveTextContent(
       '2026-08-20T12:00:00Z',
     )
     expect(lineage).toHaveTextContent('22a8bac85a909ccd')
+  })
+
+  it('shows a persisted row count that disagrees with what the grid counted', async () => {
+    // The shape of a real fail-open found in backend review: a 200 advertising
+    // more persisted rows than the counts it served add up to. This does not
+    // claim a fault — a persisted game outside every scoring period is counted
+    // by one number and not the other — but a reader can only notice the gap if
+    // both are on the same line.
+    const base = scheduleGrid()
+    const mismatched = scheduleGrid({
+      lineage: {
+        ...base.lineage,
+        schedule: { ...base.lineage.schedule, persisted_team_row_count: 20 },
+      },
+    })
+    mockFetch({ [GRID_PATH]: { body: mismatched }, '/health': { body: HEALTH } })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    await screen.findByTestId('schedule-grid')
+    const note = screen.getByTestId('lineage-persisted-mismatch')
+    expect(note).toHaveTextContent('persisted 20 team rows')
+    expect(note).toHaveTextContent('counts 14 team-games')
+    expect(note).toHaveTextContent('not necessarily a fault')
+    // The grid still renders — this is information, not a refusal.
+    expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
   })
 
   it('says when the schedule cohort itself is older than the weekly re-ingest cadence', async () => {
