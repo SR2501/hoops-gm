@@ -6353,7 +6353,7 @@ still fails its calibration sign-reversal veto and remains unreleased.
 
 **Now true:** `LeagueGameFinder` and `PlayerGameLogs` reconcile 1,230/1,230
 game IDs in all three evidence seasons. The full backend gate passes (Ruff,
-format, strict mypy, 991 offline tests), the complete Adapter and Model gates
+format, strict mypy, 997 offline tests), the complete Adapter and Model gates
 pass, the focused live NBA smoke returns the exact same 1,230 game IDs from both
 official endpoints, live 2024-25 playoff scope parses 84 canonical `00424...`
 games, SQLite upgrades/checks/downgrades through `0015`, and the tracked-file
@@ -6379,6 +6379,13 @@ coverage files are gitignored operational state and were not available in this
 worktree; the required 173-game regeneration was not attempted here. Fresh
 exact-head data-engineer, quant, and code reviews are still required before
 publication. No merge or self-approval occurred.
+
+Any database populated by the defective parser must re-ingest 2024-25 and
+2025-26 before serving v2 schedule context; a scoring-time fingerprint identifies
+the rows present but does not independently prove schedule completeness. The
+invalidated injury cohort also missed the entire 2025-12-13 report date, so its
+regeneration scope is 173 games across 26 dates and must independently reconcile
+the expected slate against `PlayerGameLogs` or `ScheduleLeagueV2`.
 
 **Next:** Commit the complete correction, obtain all three independent reviews
 against that exact head, publish one coherent PR only if they are clear, and

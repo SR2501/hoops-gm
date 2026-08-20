@@ -2,13 +2,18 @@
   "current_status": "invalidated_pending_regeneration",
   "schedule_completeness_impact": {
     "corrected_expected_games": 173,
+    "corrected_game_dates": 26,
+    "corrected_player_log_only_schedule_anomalies_in_window": 2,
+    "independent_scope_crosscheck_required": "The regenerated cohort must reconcile its in-window LeagueGameFinder game IDs against PlayerGameLogs or ScheduleLeagueV2. The invalidated preflight derived expected and observed completeness from the same defective parser.",
+    "omitted_game_date": "2025-12-13",
+    "omitted_game_date_was_never_swept": true,
     "omitted_game_ids": [
       "0022501229",
       "0022501230"
     ],
     "omitted_player_game_logs": 39,
     "reason": "The LeagueGameFinder parser used for the frozen preflight assigned both official team rows to one side when both rows repeated the canonical MATCHUP string. The accepted 171-game scope therefore omitted two official 2025-12-13 games inside the requested window.",
-    "required_action": "Regenerate the bounded participation, injury-report coverage, canonical observation, join, and privacy-safe provenance artifacts from the corrected 173-game scope before injury-status-conversion may consume this cohort."
+    "required_action": "Regenerate the bounded participation, injury-report coverage, canonical observation, join, and privacy-safe provenance artifacts from the corrected 173-game, 26-date scope before injury-status-conversion may consume this cohort."
   },
   "canonical_observations": {
     "distinct_nba_game_ids": 171,
@@ -182,7 +187,7 @@
     "legacy_regime_game_dates": 12,
     "mastheads_recovered": 84,
     "nba_teams": 30,
-    "player_log_only_schedule_anomalies_in_window": 0,
+    "player_log_only_schedule_anomalies_in_window_reported_by_invalidated_preflight": 0,
     "season": "2025-26",
     "season_type": "regular",
     "selection_basis": "Inclusive four-week window centered on the 2025-12-22 NBA injury-report archive format/cadence boundary; selected from the official schedule before the per-game/PDF sweep, not from known-success report dates.",

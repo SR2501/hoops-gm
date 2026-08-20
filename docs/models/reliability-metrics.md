@@ -148,8 +148,12 @@ the adapter assumed each team row carried a reciprocal `MATCHUP` string. The
 official source instead repeats one canonical matchup on both rows for those
 games. Adapter reconciliation now identifies each row by its team abbreviation,
 and bidirectional game-ID coverage is 100% in all three seasons. The mismatch
-ceiling remains a fail-loud drift guard, not permission to release another
-reduced cohort.
+ceiling remains a drift guard, not permission to release another reduced cohort;
+its 1% tolerance did not catch this 0.41% game-ID loss, so the evidence contract
+also requires literal 100% bidirectional coverage. Affected examples include
+neutral-site Paris and NBA Cup games, so the restored rows are not assumed to be
+a random sample and nominal home/away must not be interpreted as home-court
+advantage.
 
 Reproduce the live study with:
 

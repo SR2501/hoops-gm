@@ -92,6 +92,10 @@ raise `SourceContractError`. A one-sided response also raises with the
 unsupported side named; it is never silently dropped and no opponent ID or
 score is invented. Recorded fixtures select whole game groups rather than a
 raw row boundary, so fixture generation cannot manufacture an incomplete pair.
+One repeated-canonical game is also checked against `BoxScoreSummaryV3`'s
+independent home/away team IDs, rather than treating cardinality as proof of
+correct orientation. Season backfill supports only the source's `Regular
+Season` and `Playoffs` labels; every other label is rejected before a request.
 Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE` remains the NBA's
 Eastern local date, and this endpoint still supplies no tip-off instant.
 

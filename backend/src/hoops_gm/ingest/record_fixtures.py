@@ -42,6 +42,10 @@ MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
 #: all-played box score.
 FIXTURE_GAME_ID = "0022400306"
 
+#: A real neutral-site game whose two LeagueGameFinder rows repeat the same
+#: canonical matchup. Its summary supplies independent home/away team IDs.
+FIXTURE_RECONCILIATION_GAME_ID = "0022400633"
+
 #: A mid-season 2025-26 game. This one exists specifically to pin the finding
 #: that ``BoxScoreSummaryV2``'s inactive list is empty for every 2025-26 date
 #: after opening night while V3's is correct. A contract test asserts a
@@ -376,7 +380,7 @@ def record_nba() -> None:
     )
     reconciliation, original = _select_league_game_finder_games(
         payload,
-        ["0022400633", "0022401188"],
+        [FIXTURE_RECONCILIATION_GAME_ID, "0022401188"],
     )
     _write(
         "nba_leaguegamefinder_reconciliation.json",
@@ -394,6 +398,20 @@ def record_nba() -> None:
             "note": (
                 "Whole real rows retained for one ordinary reciprocal game and one game "
                 "where both team rows repeat the same canonical MATCHUP. No value edited."
+            ),
+        },
+    )
+    _write(
+        f"nba_boxscoresummaryv3_{FIXTURE_RECONCILIATION_GAME_ID}_reconciliation.json",
+        client.box_score_summary(FIXTURE_RECONCILIATION_GAME_ID),
+        meta={
+            "source": "nba_stats",
+            "endpoint": "BoxScoreSummaryV3",
+            "params": {"game_id": FIXTURE_RECONCILIATION_GAME_ID},
+            "trimmed": False,
+            "note": (
+                "Independent home/away anchor for the repeated-canonical "
+                "LeagueGameFinder matchup fixture."
             ),
         },
     )

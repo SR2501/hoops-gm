@@ -20,6 +20,7 @@ EVIDENCE = (
     / "releases"
     / "schedule_context_blowout_v2.json"
 )
+HISTORICAL_EVIDENCE = EVIDENCE.with_name("schedule_context_blowout_v1.json")
 
 
 def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
@@ -122,3 +123,9 @@ def test_release_digest_is_independent_of_json_line_endings() -> None:
     _crlf_payload, crlf_digest = release_registry._decode_release_artifact(crlf_artifact)
 
     assert lf_digest == crlf_digest
+
+
+def test_retired_v1_evidence_remains_integrity_pinned() -> None:
+    _payload, digest = release_registry._decode_release_artifact(HISTORICAL_EVIDENCE.read_bytes())
+
+    assert digest == "160c729a78b415ce387bfa67233a6dcf7d6e4a70552f2eb1156c219504919afe"

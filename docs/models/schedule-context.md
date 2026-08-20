@@ -154,7 +154,7 @@ python -m hoops_gm.schedule_context.backtest
 ```
 
 CI validates the committed evidence contract; it does not call the external NBA
-source or independently recreate the 3,680 source games. The command above is
+source or independently recreate the 3,690 source games. The command above is
 the reproducibility path, and a changed upstream result must produce a new
 evidence/model version rather than editing an existing release in place.
 
@@ -165,6 +165,11 @@ The final training cohort fingerprint is `415fbf126685d4b4` over 1,230 completed
 separately as well. These identities cover game ID, date, teams, and final score,
 so an upstream correction changes the evidence and requires a new release rather
 than silently preserving the old calibration claim.
+
+Databases populated by the pre-v2 adapter must re-ingest the affected seasons
+before serving v2 context. A scoring-time source fingerprint identifies the rows
+present in that database; it does not independently prove the database contains
+all 1,230 official games.
 
 ## Provenance, history, and rejection rules
 
@@ -203,7 +208,7 @@ data that fit the model and the observations used to score a future fixture.
 
 ## Known failure modes
 
-The 2024-25 training blowout rate is 34.12%; that is not a permanent league
+The 2024-25 training blowout rate is 34.20%; that is not a permanent league
 constant. Pace, parity, officiating, schedule policy, and late-season incentives
 can shift the base rate even when the feature distribution appears similar.
 V2 has one held-out season and no automated online calibration monitor. The

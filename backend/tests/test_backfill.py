@@ -2,7 +2,10 @@ from datetime import date
 
 import pytest
 
-from hoops_gm.ingest.backfill import _participation_games_in_scope
+from hoops_gm.ingest.backfill import (
+    _league_game_finder_season_type,
+    _participation_games_in_scope,
+)
 from hoops_gm.ingest.nba.models import NbaGameRecord
 
 
@@ -60,3 +63,18 @@ def test_participation_scope_rejects_inverted_dates() -> None:
 def test_participation_scope_rejects_negative_limit() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         _participation_games_in_scope([], start=None, end=None, limit_games=-1)
+
+
+@pytest.mark.parametrize(
+    ("source_label", "parsed"),
+    [("Regular Season", "regular"), ("Playoffs", "playoffs")],
+)
+def test_league_game_finder_season_type_maps_only_supported_labels(
+    source_label: str, parsed: str
+) -> None:
+    assert _league_game_finder_season_type(source_label) == parsed
+
+
+def test_league_game_finder_season_type_rejects_unsupported_labels() -> None:
+    with pytest.raises(ValueError, match="unsupported NBA season type 'Pre Season'"):
+        _league_game_finder_season_type("Pre Season")

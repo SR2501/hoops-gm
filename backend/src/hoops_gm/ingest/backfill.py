@@ -323,11 +323,12 @@ def backfill_season(
 ) -> BackfillResult:
     """Backfill one season's games, box scores and — optionally — participation."""
     result = BackfillResult()
+    parsed_season_type = _league_game_finder_season_type(season_type)
 
     games = parse_league_game_finder(
         nba.league_game_finder(season=season, season_type=season_type),
         season=season,
-        season_type="regular" if season_type == "Regular Season" else "playoffs",
+        season_type=parsed_season_type,
     )
     result.steps["games"] = import_games(session, games)
     progress(f"  games: {result.steps['games']}")
@@ -387,6 +388,19 @@ def backfill_season(
     return result
 
 
+def _league_game_finder_season_type(season_type: str) -> str:
+    """Map the two supported source labels without treating every other value as playoffs."""
+    parsed = {
+        "Regular Season": "regular",
+        "Playoffs": "playoffs",
+    }.get(season_type)
+    if parsed is None:
+        raise ValueError(
+            f"unsupported NBA season type {season_type!r}; expected 'Regular Season' or 'Playoffs'"
+        )
+    return parsed
+
+
 def _participation_games_in_scope(
     games: Sequence[NbaGameRecord],
     *,
@@ -422,7 +436,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
 
     season = subparsers.add_parser("season", help="backfill one season")
     season.add_argument("season", help="e.g. 2024-25")
-    season.add_argument("--season-type", default="Regular Season")
+    season.add_argument(
+        "--season-type",
+        choices=("Regular Season", "Playoffs"),
+        default="Regular Season",
+    )
     season.add_argument("--with-participation", action="store_true")
     season.add_argument("--start", type=date.fromisoformat, default=None)
     season.add_argument("--end", type=date.fromisoformat, default=None)

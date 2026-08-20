@@ -402,6 +402,14 @@ class TestNbaGamesAndLogs:
         games = parse_league_game_finder(
             load("nba_leaguegamefinder_reconciliation.json"), season="2024-25"
         )
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        game_id = table["headers"].index("GAME_ID")
+        matchup = table["headers"].index("MATCHUP")
+        team_abbreviation = table["headers"].index("TEAM_ABBREVIATION")
+        anomaly_rows = [row for row in table["rowSet"] if row[game_id] == "0022400633"]
+        assert {row[matchup] for row in anomaly_rows} == {"IND @ SAS"}
+        assert len({row[team_abbreviation] for row in anomaly_rows}) == 2
 
         assert [game.nba_game_id for game in games] == ["0022400633", "0022401188"]
         repeated = games[0]
@@ -486,6 +494,22 @@ class TestNbaGamesAndLogs:
 
         with pytest.raises(SourceContractError, match="noncanonical GAME_ID"):
             parse_league_game_finder(payload, season="2024-25")
+
+    def test_playoffs_scope_accepts_canonical_season_and_game_ids(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["parameters"]["SeasonType"] = "Playoffs"
+        table = payload["resultSets"][0]
+        game_id = table["headers"].index("GAME_ID")
+        season_id = table["headers"].index("SEASON_ID")
+        table["rowSet"] = table["rowSet"][:2]
+        for row in table["rowSet"]:
+            row[game_id] = "0042400101"
+            row[season_id] = "42024"
+
+        games = parse_league_game_finder(payload, season="2024-25", season_type="playoffs")
+
+        assert [game.nba_game_id for game in games] == ["0042400101"]
+        assert games[0].season_type == "playoffs"
 
     def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
         payload = load("nba_leaguegamefinder_trimmed.json")
@@ -793,6 +817,22 @@ class TestBoxScoreV3:
         scheduled = games.get(summary_game.nba_game_id)
         assert scheduled is not None
         assert scheduled.game_date == summary_game.game_date
+
+    def test_repeated_canonical_matchup_orientation_agrees_with_summary(self) -> None:
+        games = {
+            game.nba_game_id: game
+            for game in parse_league_game_finder(
+                load("nba_leaguegamefinder_reconciliation.json"), season="2024-25"
+            )
+        }
+        summary_game, _ = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022400633_reconciliation.json")
+        )
+
+        assert summary_game is not None
+        scheduled = games[summary_game.nba_game_id]
+        assert scheduled.home_team_id == summary_game.home_team_id
+        assert scheduled.away_team_id == summary_game.away_team_id
 
     def test_a_payload_without_the_v3_body_is_a_contract_error(self) -> None:
         with pytest.raises(SourceContractError):

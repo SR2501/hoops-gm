@@ -76,8 +76,8 @@
       "seasonYear",
       "startDate"
     ],
-    "source": "fantrax_official",
     "sanitized": true,
+    "source": "fantrax_official",
     "trimmed": false
   },
   "fantrax_getplayerids_nba.json": {
@@ -98,6 +98,17 @@
     "note": "Inactive lists under homeTeam.inactives / awayTeam.inactives.",
     "params": {
       "game_id": "0022400306"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
+  "nba_boxscoresummaryv3_0022400633_reconciliation.json": {
+    "byte_size": 28660,
+    "captured_at": "2026-08-20T03:28:25.648732+00:00",
+    "endpoint": "BoxScoreSummaryV3",
+    "note": "Independent home/away anchor for the repeated-canonical LeagueGameFinder matchup fixture.",
+    "params": {
+      "game_id": "0022400633"
     },
     "source": "nba_stats",
     "trimmed": false
