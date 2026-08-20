@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
@@ -14,6 +15,7 @@ from hoops_gm.api.security import require_loopback_host
 from hoops_gm.calendar.scoring_periods import ScoringPeriodProjectionError
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.ingest.nba.schedule import scheduled_game_counts
 
 router = APIRouter(prefix="/leagues/{league_id}/schedule-grid", tags=["schedule-grid"])
@@ -72,6 +74,7 @@ def _schedule_completeness(
     session: Session,
     *,
     refresh_id: int,
+    season: str,
     counted_team_games: int,
 ) -> tuple[int, int, int, list[str]]:
     refresh = session.get(RefreshRun, refresh_id)
@@ -147,6 +150,18 @@ def _schedule_completeness(
             "schedule_grid_incomplete_evidence",
             f"schedule refresh {refresh_id} cannot prove a non-empty game-count grid",
         )
+    persisted_team_schedule_rows = session.scalar(
+        select(func.count())
+        .select_from(TeamScheduleEntry)
+        .where(TeamScheduleEntry.season == season)
+    )
+    if persisted_team_schedule_rows != team_schedule_rows:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} claims {team_schedule_rows} team rows but "
+            f"{persisted_team_schedule_rows} currently exist for season {season!r}",
+        )
     if counted_team_games > team_schedule_rows:
         raise _error(
             409,
@@ -214,6 +229,7 @@ def get_current_schedule_grid(
     ) = _schedule_completeness(
         session,
         refresh_id=first.schedule_refresh_id,
+        season=response_season,
         counted_team_games=counted_team_games,
     )
 

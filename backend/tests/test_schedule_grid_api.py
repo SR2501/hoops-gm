@@ -422,6 +422,26 @@ def test_current_grid_rejects_all_zero_grid_when_summary_claims_game_rows(
     assert "counts" not in response.json()
 
 
+def test_current_grid_rejects_refresh_evidence_after_a_schedule_row_is_removed(
+    app: FastAPI,
+    client: TestClient,
+) -> None:
+    league_id, _, _ = _seed_current_grid(app)
+    with app.state.database.session() as session:
+        entry = session.scalar(select(TeamScheduleEntry).limit(1))
+        assert entry is not None
+        session.delete(entry)
+
+    response = client.get(f"/api/v1/leagues/{league_id}/schedule-grid/current")
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"] == "schedule_grid_incomplete_evidence"
+    assert "claims 2 team rows" in body["detail"]
+    assert "1 currently exist" in body["detail"]
+    assert "counts" not in body
+
+
 def test_current_grid_rejects_missing_schedule_completeness_evidence(
     app: FastAPI,
     client: TestClient,
