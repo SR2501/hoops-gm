@@ -862,6 +862,7 @@ def test_current_deadline_calendar_endpoint_refuses_a_same_row_count_schedule_mu
     app: FastAPI,
 ) -> None:
     with TestClient(app, raise_server_exceptions=False) as client:
+        Base.metadata.drop_all(app.state.database.engine)
         Base.metadata.create_all(app.state.database.engine)
         with app.state.database.session() as session:
             league = _league(session)

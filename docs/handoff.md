@@ -6741,3 +6741,28 @@ official sources exist.
 independent code approval, publish one unmerged PR, and require native
 PostgreSQL CI. Injury-status conversion remains paused for complete 173-game
 cohort regeneration.
+
+---
+
+## 2026-08-20 — backend — PostgreSQL endpoint-test isolation
+
+**Changed:** Native PostgreSQL CI reached the full 1,051-test suite and exposed
+one test-only isolation defect in the new deadline-calendar mutation endpoint
+regression. That test opened its own `TestClient` to disable exception raising
+but called only `create_all`; unlike the shared client fixture, it did not first
+drop rows committed by earlier endpoint tests. PostgreSQL reuses one external
+database across tests and correctly rejected the duplicate
+`(fantrax_league_id, season)` row, while SQLite's per-test file hid the issue.
+The regression now performs the same drop/create setup as the documented
+shared fixture before seeding its league.
+
+**Now true:** Both failed PostgreSQL jobs had the same single failure:
+1,048 tests passed, two platform-specific tests skipped, 20 live tests
+deselected, and only this duplicate test fixture row failed. Product code,
+schedule evidence, and model artifacts were not implicated.
+
+**Could not verify:** The isolation correction has not yet run in GitHub CI.
+Local SQLite cannot reproduce shared external-database residue by construction.
+
+**Next:** Push the correction and require both duplicate native PostgreSQL
+workflow runs to pass before treating the PR as complete.
