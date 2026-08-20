@@ -42,6 +42,10 @@ from hoops_gm.ingest.nba import (
     parse_player_game_logs,
     parse_teams,
 )
+from hoops_gm.ingest.record_fixtures import (
+    _league_game_finder_fixture_ids,
+    _select_league_game_finder_games,
+)
 
 pytestmark = pytest.mark.adapter_contract
 
@@ -385,12 +389,7 @@ class TestNbaGamesAndLogs:
     def test_games_collapse_to_one_record_with_home_and_away_the_right_way_round(
         self,
     ) -> None:
-        """``MATCHUP`` is the only thing distinguishing the two rows per game.
-
-        ``"LAL vs. POR"`` is the home row and ``"LAL @ POR"`` the away one.
-        Collapsing on GAME_ID without reading it makes home and away depend on
-        row order.
-        """
+        """Home and away are derived from matchup abbreviations, never row order."""
         games = parse_league_game_finder(
             load("nba_leaguegamefinder_trimmed.json"), season="2024-25"
         )
@@ -398,6 +397,158 @@ class TestNbaGamesAndLogs:
         for game in games:
             assert game.home_team_id != game.away_team_id
         assert len({g.nba_game_id for g in games}) == len(games)
+
+    def test_canonical_matchup_repetition_reconciles_by_team_abbreviation(self) -> None:
+        games = parse_league_game_finder(
+            load("nba_leaguegamefinder_reconciliation.json"), season="2024-25"
+        )
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        game_id = table["headers"].index("GAME_ID")
+        matchup = table["headers"].index("MATCHUP")
+        team_abbreviation = table["headers"].index("TEAM_ABBREVIATION")
+        anomaly_rows = [row for row in table["rowSet"] if row[game_id] == "0022400633"]
+        assert {row[matchup] for row in anomaly_rows} == {"IND @ SAS"}
+        assert len({row[team_abbreviation] for row in anomaly_rows}) == 2
+
+        assert [game.nba_game_id for game in games] == ["0022400633", "0022401188"]
+        repeated = games[0]
+        assert repeated.away_team_id == 1610612754
+        assert repeated.home_team_id == 1610612759
+        assert repeated.away_score == 136
+        assert repeated.home_score == 98
+        assert repeated.game_date == date(2025, 1, 25)
+        assert repeated.tipoff_utc is None
+
+    def test_row_order_does_not_change_game_order_or_reconciliation(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"].reverse()
+
+        games = parse_league_game_finder(payload, season="2024-25")
+
+        assert [game.nba_game_id for game in games] == ["0022400633", "0022401188"]
+        assert games[0].away_team_id == 1610612754
+        assert games[0].home_team_id == 1610612759
+
+    def test_one_sided_game_fails_loudly_instead_of_disappearing(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"] = payload["resultSets"][0]["rowSet"][:1]
+
+        with pytest.raises(SourceContractError, match="incomplete reciprocal rows"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_duplicate_side_row_is_rejected_even_when_identical(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"].append(payload["resultSets"][0]["rowSet"][0].copy())
+
+        with pytest.raises(SourceContractError, match="duplicate away team row"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_conflicting_canonical_matchup_is_rejected(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        matchup = table["headers"].index("MATCHUP")
+        table["rowSet"][1][matchup] = "IND vs. SAS"
+
+        with pytest.raises(SourceContractError, match="conflicting home/away MATCHUP"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    @pytest.mark.parametrize(
+        ("season", "season_type", "message"),
+        [
+            ("2025-26", "regular", "payload season"),
+            ("2024-25", "playoffs", "payload season type"),
+        ],
+    )
+    def test_declared_source_scope_must_match_requested_scope(
+        self, season: str, season_type: str, message: str
+    ) -> None:
+        with pytest.raises(SourceContractError, match=message):
+            parse_league_game_finder(
+                load("nba_leaguegamefinder_reconciliation.json"),
+                season=season,
+                season_type=season_type,
+            )
+
+    def test_missing_declared_source_scope_is_rejected(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        del payload["parameters"]
+
+        with pytest.raises(SourceContractError, match="lacks declared"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    @pytest.mark.parametrize(
+        ("parameter", "value"),
+        [
+            ("DateFrom", "01/01/2025"),
+            ("DateTo", "01/31/2025"),
+            ("GameID", "0022400633"),
+            ("TeamID", 1610612754),
+            ("VsTeamID", 1610612759),
+        ],
+    )
+    def test_narrowed_source_scope_cannot_masquerade_as_a_full_season(
+        self, parameter: str, value: object
+    ) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["parameters"][parameter] = value
+
+        with pytest.raises(SourceContractError, match=rf"narrowed.*{parameter}"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    @pytest.mark.parametrize(
+        ("parameter", "value", "message"),
+        [
+            ("LeagueID", "10", "not NBA league"),
+            ("PlayerOrTeam", "P", "not scoped to team rows"),
+        ],
+    )
+    def test_non_nba_or_non_team_source_scope_is_rejected(
+        self, parameter: str, value: object, message: str
+    ) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["parameters"][parameter] = value
+
+        with pytest.raises(SourceContractError, match=message):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_row_season_scope_must_match_requested_scope(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        season_id = table["headers"].index("SEASON_ID")
+        table["rowSet"][0][season_id] = "42024"
+
+        with pytest.raises(SourceContractError, match="row SEASON_ID"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_game_id_must_be_canonical_for_the_requested_scope(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        game_id = table["headers"].index("GAME_ID")
+        table["rowSet"][0][game_id] = "game-2024-25"
+
+        with pytest.raises(SourceContractError, match="noncanonical GAME_ID"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_points_column_is_required_for_completed_game_evidence(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        points = table["headers"].index("PTS")
+        table["headers"][points] = "POINTS"
+
+        with pytest.raises(SourceContractError, match=r"missing columns.*PTS"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_playoffs_scope_accepts_canonical_season_and_game_ids(self) -> None:
+        games = parse_league_game_finder(
+            load("nba_leaguegamefinder_playoffs.json"),
+            season="2024-25",
+            season_type="playoffs",
+        )
+
+        assert games
+        assert all(game.nba_game_id.startswith("00424") for game in games)
+        assert all(game.season_type == "playoffs" for game in games)
 
     def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
         payload = load("nba_leaguegamefinder_trimmed.json")
@@ -703,8 +854,24 @@ class TestBoxScoreV3:
             )
         }
         scheduled = games.get(summary_game.nba_game_id)
-        if scheduled is not None:
-            assert scheduled.game_date == summary_game.game_date
+        assert scheduled is not None
+        assert scheduled.game_date == summary_game.game_date
+
+    def test_repeated_canonical_matchup_orientation_agrees_with_summary(self) -> None:
+        games = {
+            game.nba_game_id: game
+            for game in parse_league_game_finder(
+                load("nba_leaguegamefinder_reconciliation.json"), season="2024-25"
+            )
+        }
+        summary_game, _ = parse_box_score_summary_v3(
+            load("nba_boxscoresummaryv3_0022400633_reconciliation.json")
+        )
+
+        assert summary_game is not None
+        scheduled = games[summary_game.nba_game_id]
+        assert scheduled.home_team_id == summary_game.home_team_id
+        assert scheduled.away_team_id == summary_game.away_team_id
 
     def test_a_payload_without_the_v3_body_is_a_contract_error(self) -> None:
         with pytest.raises(SourceContractError):
@@ -716,6 +883,35 @@ class TestBoxScoreV3:
 # ==========================================================================
 # The fixtures themselves
 # ==========================================================================
+
+
+class TestNbaFixtureRecording:
+    def test_league_game_finder_boundary_keeps_only_complete_game_groups(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+
+        game_ids = _league_game_finder_fixture_ids(
+            payload,
+            boundary_rows=3,
+            required_game_ids=(),
+        )
+        selected, original = _select_league_game_finder_games(payload, game_ids)
+
+        assert game_ids == ["0022400633"]
+        assert original == {"LeagueGameFinderResults": 4}
+        assert len(selected["resultSets"][0]["rowSet"]) == 2
+
+    def test_required_cross_endpoint_game_is_added_as_a_complete_group(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+
+        game_ids = _league_game_finder_fixture_ids(
+            payload,
+            boundary_rows=2,
+            required_game_ids=("0022401188",),
+        )
+        selected, _original = _select_league_game_finder_games(payload, game_ids)
+
+        assert game_ids == ["0022400633", "0022401188"]
+        assert len(selected["resultSets"][0]["rowSet"]) == 4
 
 
 class TestFixtureManifest:

@@ -17,7 +17,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from hoops_gm.api.deps import SessionDep
-from hoops_gm.db.lineage import CohortStatus, check_cohort, current_refresh
+from hoops_gm.db.lineage import (
+    CohortStatus,
+    check_cohort,
+    check_refresh_claim,
+    verify_refresh,
+)
 from hoops_gm.db.models.enums import RefreshArtifactType
 from hoops_gm.db.models.lineage import RefreshRun
 
@@ -25,7 +30,7 @@ router = APIRouter(prefix="/lineage", tags=["lineage"])
 
 
 class CurrentRefreshResponse(BaseModel):
-    """The latest registered refresh for one artifact type."""
+    """The latest registered refresh that still verifies as current."""
 
     artifact_type: RefreshArtifactType
     artifact_key: str
@@ -66,6 +71,8 @@ class CohortCheckResponse(BaseModel):
     season: str | None
     claimed_version: str
     status: CohortStatus
+    #: None when persisted facts invalidate the latest registered refresh.
+    #: A recomputed but unregistered content hash is never returned as current.
     current_version: str | None
     current_refreshed_at: datetime | None
 
@@ -81,7 +88,7 @@ class CohortResponse(BaseModel):
 @router.get(
     "/current",
     response_model=list[CurrentRefreshResponse],
-    summary="The current refresh registered for each keyed artifact scope",
+    summary="The verified current refresh for each keyed artifact scope",
 )
 def list_current(session: SessionDep) -> list[CurrentRefreshResponse]:
     rows = session.scalars(
@@ -100,6 +107,9 @@ def list_current(session: SessionDep) -> list[CurrentRefreshResponse]:
         if scope in seen:
             continue
         seen.add(scope)
+        verification = verify_refresh(session, run)
+        if not verification.is_current:
+            continue
         responses.append(
             CurrentRefreshResponse(
                 artifact_type=run.artifact_type,
@@ -149,28 +159,22 @@ def validate(payload: CohortRequest, session: SessionDep) -> CohortResponse:
         )
     ]
     for claim in payload.claims:
-        current = current_refresh(
+        result = check_refresh_claim(
             session,
-            claim.artifact_type,
+            artifact_type=claim.artifact_type,
             artifact_key=claim.artifact_key,
+            claimed_version=claim.version,
             season=claim.season,
         )
-        status: CohortStatus
-        if current is None:
-            status = "unknown"
-        elif current.version == claim.version:
-            status = "current"
-        else:
-            status = "stale"
         checks.append(
             CohortCheckResponse(
                 artifact_type=claim.artifact_type,
                 artifact_key=claim.artifact_key,
                 season=claim.season,
                 claimed_version=claim.version,
-                status=status,
-                current_version=current.version if current is not None else None,
-                current_refreshed_at=(current.refreshed_at if current is not None else None),
+                status=result.status,
+                current_version=result.current_version,
+                current_refreshed_at=result.current_refreshed_at,
             )
         )
     accepted = bool(checks) and all(check.status == "current" for check in checks)

@@ -87,7 +87,7 @@ def run_backtest() -> dict[str, object]:
         held_out_end=date(2026, 4, 12),
     )
     return {
-        "evidence_version": "schedule-context-blowout-v1",
+        "evidence_version": "schedule-context-blowout-v2",
         "source": "nba_api:LeagueGameFinder",
         "season_type": "regular",
         "selection": {

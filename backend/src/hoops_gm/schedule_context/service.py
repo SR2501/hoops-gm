@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from hoops_gm.db.lineage import (
     current_refresh,
     lock_refresh_scope,
     record_refresh,
+    verify_refresh,
 )
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.lineage import RefreshRun
@@ -137,6 +138,12 @@ class SourceSnapshot:
     logs: tuple[PlayerGameLog, ...]
 
 
+@dataclass(frozen=True)
+class _VerifiedRefresh:
+    run: RefreshRun
+    version: str
+
+
 def context_source_version(session: Session) -> str:
     """Fingerprint the exact completed scores and player-log fields in storage."""
 
@@ -180,14 +187,12 @@ def publish_schedule_context_cohorts(
     release = load_blowout_release(blowout_model_version)
     blowout_model = release.model
     _lock_claim_scopes(session, season=season)
-    schedule = current_refresh(
+    schedule = _require_current(
         session,
-        RefreshArtifactType.SCHEDULE,
+        artifact_type=RefreshArtifactType.SCHEDULE,
         artifact_key=SCHEDULE_KEY,
         season=season,
     )
-    if schedule is None:
-        raise StaleContextCohortError(f"no registered schedule cohort for {season}")
     source_version = context_source_version(session)
     when = refreshed_at or datetime.now(UTC)
     record_refresh(
@@ -314,6 +319,7 @@ def compute_schedule_context(
         raise StaleContextCohortError("opponent derivation does not match its claim")
     if config.off_night_model_version != claim.off_night_model_version:
         raise StaleContextCohortError("off-night derivation does not match its claim")
+    verified_claim = replace(claim, schedule_version=schedule_refresh.version)
 
     schedule_entries = session.scalars(
         select(TeamScheduleEntry)
@@ -340,9 +346,9 @@ def compute_schedule_context(
         session,
         entries=schedule_entries,
         season=season,
-        claim=claim,
+        claim=verified_claim,
         config=config,
-        refreshed_at=schedule_refresh.refreshed_at,
+        refreshed_at=schedule_refresh.run.refreshed_at,
         computed_at=when,
         coverage=coverage,
         counts=counts,
@@ -351,14 +357,14 @@ def compute_schedule_context(
         session,
         prepared_profiles=prepared_profiles,
         season=season,
-        claim=claim,
+        claim=verified_claim,
         blowout_model=blowout_model,
-        refreshed_at=schedule_refresh.refreshed_at,
+        refreshed_at=schedule_refresh.run.refreshed_at,
         computed_at=when,
         coverage=coverage,
         counts=counts,
     )
-    _recheck_claim(session, season=season, claim=claim)
+    _recheck_claim(session, season=season, claim=verified_claim)
     session.flush()
     return counts
 
@@ -504,9 +510,9 @@ def _require_current(
     *,
     artifact_type: RefreshArtifactType,
     artifact_key: str,
-    version: str,
+    version: str | None = None,
     season: str | None,
-) -> RefreshRun:
+) -> _VerifiedRefresh:
     current = current_refresh(
         session,
         artifact_type,
@@ -517,12 +523,23 @@ def _require_current(
         raise StaleContextCohortError(
             f"no current {artifact_type.value}:{artifact_key} cohort for season {season}"
         )
-    if current.version != version:
+    try:
+        verification = verify_refresh(session, current)
+    except ValueError as exc:
+        raise StaleContextCohortError(
+            f"cannot verify current {artifact_type.value}:{artifact_key} cohort for season {season}"
+        ) from exc
+    if not verification.is_current or verification.current_version is None:
+        raise StaleContextCohortError(
+            f"registered {artifact_type.value}:{artifact_key} cohort "
+            f"{verification.registered_version} is no longer current for season {season}"
+        )
+    if version is not None and verification.current_version != version:
         raise StaleContextCohortError(
             f"stale {artifact_type.value}:{artifact_key} cohort "
-            f"{version}; current is {current.version}"
+            f"{version}; current is {verification.current_version}"
         )
-    return current
+    return _VerifiedRefresh(current, verification.current_version)
 
 
 def _recheck_claim(

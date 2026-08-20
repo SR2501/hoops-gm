@@ -1,14 +1,14 @@
 # Reliability metrics evidence card
 
 **Owner:** quant
-**Version:** 1
+**Version:** 2
 **Status:** active for descriptive scorecards only. Observed participation is
 incomplete under R35; player-specific blowout suppression is rejected; no
 composite reliability grade is defined.
 
 ## Output boundary
 
-V1 keeps two evidence layers separate:
+V2 keeps two evidence layers separate:
 
 1. **Observed participation evidence** reports direct play/non-play observations,
    a calendar-month trend, and direct back-to-back observations. It is not a
@@ -45,7 +45,7 @@ unknown, or stale claims. Each scorecard carries the exact schedule, source,
 derivation, window, and computation time plus the contributing game-log and
 participation row IDs.
 
-No result table, migration, API, or UI is part of v1.
+No result table, migration, API, or UI is part of v2.
 
 ## Observed participation method
 
@@ -96,7 +96,7 @@ with similar percentage.
 ## Chronological evaluation
 
 The checked evidence is
-`backend/tests/model_evidence/reliability_metrics_v1.json`. Its complete
+`backend/tests/model_evidence/reliability_metrics_v2.json`. Its complete
 parameter contract is version `b055dfbf67bb5127`, and the artifact is bound to
 runtime descriptive derivation `f4ce099a5e84e0f8`. Tests literal-lock every
 protocol value and verify both versions against executable code.
@@ -108,10 +108,10 @@ protocol value and verify both versions against executable code.
 
 Stability eligibility requires at least 20 player games in both adjacent
 seasons. Stability reports Spearman correlation and next-season MAE versus a
-training-season league-median baseline. The final transition contains 357
-eligible players. Minutes CV has Spearman 0.729 and player-specific MAE 0.124,
+training-season league-median baseline. The corrected final transition contains
+358 eligible players. Minutes CV has Spearman 0.728 and player-specific MAE 0.124,
 versus 0.149 for the league-median baseline. Across category SDs, Spearman ranges
-from 0.589 to 0.782; every player-specific MAE is lower than its corresponding
+from 0.591 to 0.782; every player-specific MAE is lower than its corresponding
 league-median baseline MAE. This supports displaying the historical statistics,
 not wording them as forecasts.
 
@@ -119,18 +119,18 @@ Percentile coverage uses every player observed in both adjacent seasons rather
 than the 20-game stability threshold: 464 players in the final transition.
 Results are reported overall and in declared 1-19, 20-39, 40-59, and 60+
 training-sample bands. The sparse band is therefore measured, not an empty
-placeholder: its final FG-impact p20/p80 coverage is 0.292/0.680 across 55
+placeholder: its final FG-impact p20/p80 coverage is 0.294/0.684 across 55
 players. Overall FG-impact coverage is 0.226/0.777. Zero-heavy counting
 categories depart even further from nominal coverage because ties at zero make
 an empirical p20 include substantially more than 20% of later observations.
-V1 therefore labels every value an observed percentile, exposes its sample
+V2 therefore labels every value an observed percentile, exposes its sample
 count, and makes no calibrated predictive-interval claim.
 
 The coordinator approved the partitions, thresholds, and calibration veto
 before the successful outcome run. However, the implementation and evidence
 first enter git together. The artifact records
 `immutable_repository_preregistration=false`; this repository cannot
-independently prove prospective registration. V1 is chronological held-out
+independently prove prospective registration. V2 is chronological held-out
 evidence under a predeclared plan, not an immutably preregistered experiment.
 Any future release must commit its protocol separately before evaluating its
 final holdout.
@@ -140,25 +140,29 @@ final holdout.
 | Season | Parsed games | Player-log game IDs | Included logs | Excluded logs | Fingerprint |
 |---|---:|---:|---:|---:|---|
 | 2023-24 | 1,230 | 1,230 | 26,401 | 0 | `4ecfda8e09653886` |
-| 2024-25 | 1,225 | 1,230 | 26,188 | 118 | `2a15ae8aa6114395` |
-| 2025-26 | 1,225 | 1,230 | 26,549 | 102 | `0b67fa26c1e30f9c` |
+| 2024-25 | 1,230 | 1,230 | 26,306 | 0 | `34a836176d535b4b` |
+| 2025-26 | 1,230 | 1,230 | 26,651 | 0 | `b7301976c833738f` |
 
-The existing `LeagueGameFinder` parser produced no two-sided home/away record
-for five game IDs in each of 2024-25 and 2025-26 even though `PlayerGameLogs`
-contains those games. The evidence runner does not silently reparse
-adapter-owned source rows. It records every excluded ID and log count in the
-fingerprint. It also records parsed games with no player logs. Bidirectional
-coverage is bounded at 100%, and the run fails if either player-log-only or
-parsed-game-only IDs exceed 1% of their respective source set. The retained
-cohorts cover 99.59% of player-log game IDs and 100% of parsed games. This is a
-known source limitation, not evidence that the excluded games are ignorable.
+The v1 evidence excluded five game IDs in each of 2024-25 and 2025-26 because
+the adapter assumed each team row carried a reciprocal `MATCHUP` string. The
+official source instead repeats one canonical matchup on both rows for those
+games. Adapter reconciliation now identifies each row by its team abbreviation,
+and bidirectional game-ID coverage is 100% in all three seasons. The mismatch
+ceiling remains a drift guard, not permission to release another reduced cohort;
+its 1% tolerance did not catch this 0.41% game-ID loss, so the evidence contract
+also asserts literal 100% bidirectional coverage in the committed Model-gate
+tests. Affected examples include neutral-site Paris and NBA Cup games, so the
+restored rows are not assumed to be a random sample and nominal home/away must
+not be interpreted as home-court advantage. Retired v1 evidence remains in the
+repository as historical evidence and is integrity-pinned; it is not a runtime
+release.
 
 Reproduce the live study with:
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path 'backend\src').Path
 python -m hoops_gm.availability.reliability_backtest `
-  --output backend\tests\model_evidence\reliability_metrics_v1.json
+  --output backend\tests\model_evidence\reliability_metrics_v2.json
 ```
 
 CI validates the committed evidence contract and fingerprints; it does not call
@@ -179,8 +183,8 @@ calibration-bin sign reversal, and sign stability above 0.5.
 
 | Held-out season | Players | Candidate MAE | Zero MAE | Improvement 95% CI | Slope | Sign stability |
 |---|---:|---:|---:|---:|---:|---:|
-| 2024-25 | 351 | 2.646 | 2.947 | -0.006 to 0.577 | 0.278 | 0.689 |
-| 2025-26 | 346 | 2.426 | 2.910 | 0.203 to 0.739 | 0.360 | 0.731 |
+| 2024-25 | 351 | 2.659 | 2.946 | -0.014 to 0.567 | 0.270 | 0.684 |
+| 2025-26 | 346 | 2.409 | 2.903 | 0.212 to 0.749 | 0.360 | 0.728 |
 
 The candidate lowered average error, but selection uncertainty included zero.
 More importantly, in both transitions the highest predicted-delta bin was
@@ -189,7 +193,7 @@ reversal vetoes release even though the aggregate final-holdout MAE improved.
 No suppression number is emitted at runtime and no final-margin association is
 treated as causal.
 
-## Known failure modes and what v1 cannot see
+## Known failure modes and what v2 cannot see
 
 - missing roster intervals and incomplete participation imports;
 - trades, coaching changes, role changes, and rotation changes;
@@ -213,3 +217,4 @@ dispersion into a grade, or feed either descriptive object directly into value.
 | Version | Date | Change | Evaluation effect |
 |---|---|---|---|
 | 1 | 2026-08-19 | Initial observed-only participation and played-game consistency scorecard. | Descriptive output accepted; blowout suppression rejected; composite undefined. |
+| 2 | 2026-08-20 | Regenerated from complete 1,230-game source cohorts after adapter reconciliation restored 118 and 102 player logs. | Descriptive output remains accepted; blowout suppression remains rejected on calibration sign reversal; composite remains undefined. |

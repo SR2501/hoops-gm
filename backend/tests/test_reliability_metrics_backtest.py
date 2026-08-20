@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,34 +19,69 @@ from hoops_gm.availability.reliability import (
 
 pytestmark = pytest.mark.model_backtest
 
-EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "reliability_metrics_v1.json"
+EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "reliability_metrics_v2.json"
+HISTORICAL_EVIDENCE = EVIDENCE.with_name("reliability_metrics_v1.json")
 _SEASON_DATES = {
     "2023-24": "2023-10-24",
     "2024-25": "2024-10-22",
     "2025-26": "2025-10-21",
 }
+_SEASON_IDS = {
+    "2023-24": "22023",
+    "2024-25": "22024",
+    "2025-26": "22025",
+}
+_GAME_IDS = {
+    "2023-24": "0022300001",
+    "2024-25": "0022400001",
+    "2025-26": "0022500001",
+}
 
 
 class _SyntheticEvidenceClient:
     def league_game_finder(self, *, season: str) -> object:
-        game_id = f"game-{season}"
+        game_id = _GAME_IDS[season]
         return {
+            "parameters": {
+                "LeagueID": "00",
+                "PlayerOrTeam": "T",
+                "Season": season,
+                "SeasonType": "Regular Season",
+            },
             "resultSets": [
                 {
                     "name": "LeagueGameFinderResults",
                     "headers": [
                         "GAME_ID",
+                        "SEASON_ID",
                         "TEAM_ID",
+                        "TEAM_ABBREVIATION",
                         "GAME_DATE",
                         "MATCHUP",
                         "PTS",
                     ],
                     "rowSet": [
-                        [game_id, 1, _SEASON_DATES[season], "HOM vs. AWY", 110],
-                        [game_id, 2, _SEASON_DATES[season], "AWY @ HOM", 100],
+                        [
+                            game_id,
+                            _SEASON_IDS[season],
+                            1,
+                            "HOM",
+                            _SEASON_DATES[season],
+                            "HOM vs. AWY",
+                            110,
+                        ],
+                        [
+                            game_id,
+                            _SEASON_IDS[season],
+                            2,
+                            "AWY",
+                            _SEASON_DATES[season],
+                            "AWY @ HOM",
+                            100,
+                        ],
                     ],
                 }
-            ]
+            ],
         }
 
     def player_game_logs(self, *, season: str) -> object:
@@ -75,7 +111,7 @@ class _SyntheticEvidenceClient:
                     "rowSet": [
                         [
                             10,
-                            f"game-{season}",
+                            _GAME_IDS[season],
                             1,
                             30,
                             "30:00",
@@ -100,6 +136,15 @@ class _SyntheticEvidenceClient:
 
 def _evidence() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(EVIDENCE.read_text(encoding="utf-8")))
+
+
+def test_retired_v1_evidence_remains_integrity_pinned() -> None:
+    payload = json.loads(HISTORICAL_EVIDENCE.read_text(encoding="utf-8"))
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    assert sha256(canonical).hexdigest() == (
+        "254eac10d358f87a4e21aab4f88d9204eba829cc7c461b246a73aa5861707911"
+    )
 
 
 def _expected_protocol() -> dict[str, object]:
@@ -217,41 +262,28 @@ def test_reliability_evidence_uses_chronological_partitions() -> None:
     )
     assert {season: row["fingerprint"] for season, row in cohorts.items()} == {
         "2023-24": "4ecfda8e09653886",
-        "2024-25": "2a15ae8aa6114395",
-        "2025-26": "0b67fa26c1e30f9c",
+        "2024-25": "34a836176d535b4b",
+        "2025-26": "b7301976c833738f",
     }
 
 
-def test_source_exclusions_are_bounded_and_auditable() -> None:
+def test_source_game_id_coverage_is_complete_and_auditable() -> None:
     evidence = _evidence()
-    maximum_excluded = evidence["protocol"]["maximum_source_game_id_mismatch_fraction"]
     cohorts = evidence["source_cohorts"]
 
-    assert cohorts["2023-24"]["parsed_game_coverage_of_player_logs"] == 1.0
-    assert cohorts["2024-25"]["player_log_only_game_ids"] == [
-        "0022400147",
-        "0022400621",
-        "0022400633",
-        "0022401229",
-        "0022401230",
-    ]
-    assert cohorts["2025-26"]["player_log_only_game_ids"] == [
-        "0022500147",
-        "0022500578",
-        "0022500602",
-        "0022501229",
-        "0022501230",
-    ]
     for cohort in cohorts.values():
+        assert cohort["parsed_completed_games"] == 1230
         assert cohort["source_game_ids_with_player_logs"] == 1230
         for field in (
             "parsed_game_coverage_of_player_logs",
             "player_log_coverage_of_parsed_games",
         ):
-            assert 1 - maximum_excluded <= cohort[field] <= 1
+            assert cohort[field] == 1.0
+        assert cohort["player_log_only_game_ids"] == []
+        assert cohort["player_log_only_reason"] is None
         assert cohort["parsed_game_only_ids"] == []
         assert cohort["parsed_game_only_reason"] is None
-        assert bool(cohort["player_log_only_game_ids"]) == bool(cohort["player_log_only_reason"])
+        assert cohort["excluded_player_game_logs"] == 0
 
 
 def test_source_game_id_guard_rejects_truncation_in_either_direction() -> None:
@@ -284,7 +316,7 @@ def test_descriptive_metrics_report_stability_and_percentile_coverage() -> None:
     evidence = _evidence()
     final = evidence["final"]
 
-    assert final["eligible_players"] == 357
+    assert final["eligible_players"] == 358
     assert final["percentile_players_considered"] == 464
     assert set(final["stability"]) == {
         "ast_sd",

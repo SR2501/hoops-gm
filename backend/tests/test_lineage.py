@@ -8,27 +8,36 @@ docstring for that boundary.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
 from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     check_cohort,
     content_fingerprint,
     current_refresh,
+    effective_current_version,
     lock_refresh_scope,
     record_refresh,
+    schedule_completeness,
+    schedule_content_version,
+    verify_refresh,
 )
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
+from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.models.schedule import TeamScheduleEntry
+from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
 
 # --------------------------------------------------------------------------
@@ -373,6 +382,203 @@ def test_check_cohort_evaluates_a_full_cohort_independently_per_artifact(session
     assert by_type[RefreshArtifactType.PROJECTION] == "unknown"
 
 
+def test_check_cohort_still_byte_compares_a_manually_registered_schedule(session: Any) -> None:
+    """Legacy and hand-registered rows keep the original contract.
+
+    A refresh registered without completeness metadata has no recorded cohort
+    scope to recompute from — the honest answer is the stored label, not a
+    fingerprint over rows that may have nothing to do with it. Deployments and
+    tests that register a schedule version by hand must keep working.
+    """
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version="manual-schedule-v1",
+        source="operator",
+        season="2026-27",
+        summary={"note": "registered by hand"},
+    )
+
+    [result] = check_cohort(session, schedule_version="manual-schedule-v1")
+
+    assert schedule_completeness({"note": "registered by hand"}) is None
+    assert result.status == "current"
+    assert result.current_version == "manual-schedule-v1"
+
+
+def test_verify_refresh_does_not_apply_nba_completeness_to_a_derived_schedule_stream(
+    session: Any,
+) -> None:
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="league-scoring-periods:1",
+        version="projection-v1",
+        source="calendar",
+        season="2026-27",
+        summary={SCHEDULE_COMPLETENESS_SUMMARY_KEY: None},
+    )
+
+    verification = verify_refresh(session, run)
+
+    assert verification.is_current is True
+    assert verification.current_version == "projection-v1"
+    assert verification.observed_content_version is None
+
+
+def test_schedule_completeness_rejects_a_corrupt_block(session: Any) -> None:
+    """Present-but-malformed is a corrupt registry, not an old one.
+
+    Falling back to the weaker string comparison there would silently turn an
+    unverifiable refresh into a verified-looking one, which is the exact
+    direction of failure this seam exists to close.
+    """
+    del session
+
+    with pytest.raises(ValueError, match="source_game_count"):
+        schedule_completeness(
+            {
+                SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                    "season": "2026-27",
+                    "season_type": "regular",
+                    "resolved_game_count": 1230,
+                    "unresolved_game_ids": [],
+                    "persisted_team_row_count": 2460,
+                }
+            }
+        )
+
+
+def test_schedule_completeness_distinguishes_present_null_from_an_absent_legacy_key() -> None:
+    assert schedule_completeness({"note": "legacy"}) is None
+
+    with pytest.raises(ValueError, match="is not an object"):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: None})
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"source_game_count": -1, "persisted_team_row_count": -2}, "negative count"),
+        ({"unresolved_game_ids": ["0022600001"]}, "unresolved game id"),
+        ({"source_game_count": 6}, "source game"),
+        ({"persisted_team_row_count": 11}, "persisted team row"),
+        (
+            {
+                "source_game_count": 0,
+                "resolved_game_count": 0,
+                "persisted_team_row_count": 0,
+            },
+            "impossible all-zero refresh",
+        ),
+    ],
+    ids=["negative", "unresolved", "source-vs-resolved", "rows-vs-games", "all-zero"],
+)
+def test_schedule_completeness_rejects_logically_inconsistent_metadata(
+    session: Any, overrides: dict[str, Any], expected: str
+) -> None:
+    """A block whose arithmetic cannot describe one import is wrong, not weak.
+
+    Every one of these is a shape the importer can never produce, so reading
+    one back means the registry was written by something else. Fail closed:
+    the alternative is answering "current" from numbers that already
+    contradict each other.
+    """
+    del session
+    block: dict[str, Any] = {
+        "season": "2026-27",
+        "season_type": "regular",
+        "source_game_count": 5,
+        "resolved_game_count": 5,
+        "unresolved_game_ids": [],
+        "persisted_team_row_count": 10,
+    }
+    block.update(overrides)
+
+    with pytest.raises(ValueError, match=expected):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
+
+
+def test_effective_current_version_refuses_a_block_scoped_to_another_season(
+    session: Any,
+) -> None:
+    """The block must describe the refresh row it is attached to.
+
+    A refresh scoped to 2026-27 carrying completeness metadata for 2025-26
+    would otherwise be validated against a different season's rows entirely —
+    the claim would be checked, just against the wrong facts.
+    """
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version="whatever",
+        source="operator",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2025-26",
+                "season_type": "regular",
+                "source_game_count": 5,
+                "resolved_game_count": 5,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 10,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="scoped to season"):
+        effective_current_version(session, run)
+    with pytest.raises(ValueError, match="scoped to season"):
+        check_cohort(session, schedule_version="whatever")
+
+
+def test_effective_current_version_refuses_a_forged_verified_looking_version(
+    session: Any,
+) -> None:
+    """Metadata claiming a cohort the fingerprint does not cover is refused.
+
+    This is the one way a self-consistent block could still lie: register the
+    fingerprint of an *empty* cohort while claiming ten persisted rows, and
+    the recomputed version matches the stored label. It would then read as a
+    verified refresh over a season that has no schedule at all.
+    """
+    run = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=schedule_content_version(session, season="2026-27"),
+        source="operator",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2026-27",
+                "season_type": "regular",
+                "source_game_count": 5,
+                "resolved_game_count": 5,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 10,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="fingerprints 0"):
+        effective_current_version(session, run)
+
+
+def test_schedule_content_version_is_empty_cohort_stable(session: Any) -> None:
+    """An empty cohort still has a version, and it is not a claimed one.
+
+    Deleting every row must not make an old registered version validate again
+    by accident, so the scope header is fingerprinted even with no rows.
+    """
+    empty = schedule_content_version(session, season="2026-27")
+
+    assert empty == schedule_content_version(session, season="2026-27")
+    assert empty != schedule_content_version(session, season="2025-26")
+
+
 # --------------------------------------------------------------------------
 # HTTP contract
 # --------------------------------------------------------------------------
@@ -487,6 +693,134 @@ def test_lineage_validate_accepts_an_exact_keyed_season_claim(
     ]
 
 
+def test_lineage_http_never_promotes_an_unregistered_schedule_fingerprint(
+    app: FastAPI,
+    client: TestClient,
+) -> None:
+    with app.state.database.session() as session:
+        run = _register_test_schedule(session)
+        registered_version = run.version
+        game = session.scalar(select(NbaGame))
+        assert game is not None
+        game.game_date = game.game_date + timedelta(days=1)
+        for entry in session.scalars(
+            select(TeamScheduleEntry).where(TeamScheduleEntry.game_id == game.id)
+        ):
+            entry.game_date = game.game_date
+        session.flush()
+        observed_version = schedule_content_version(session, season="2026-27")
+
+    for claimed_version in (registered_version, observed_version):
+        response = client.post(
+            "/api/v1/lineage/validate",
+            json={
+                "claims": [
+                    {
+                        "artifact_type": "schedule",
+                        "artifact_key": NBA_SCHEDULE_ARTIFACT_KEY,
+                        "season": "2026-27",
+                        "version": claimed_version,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        [check] = response.json()["checks"]
+        assert check["status"] == "stale"
+        assert check["current_version"] is None
+        assert check["current_refreshed_at"] is None
+        assert response.json()["accepted"] is False
+
+    current_response = client.get("/api/v1/lineage/current")
+    assert current_response.status_code == 200
+    assert current_response.json() == []
+
+
+def test_lineage_http_fails_loudly_for_present_null_schedule_metadata(app: FastAPI) -> None:
+    with TestClient(app, raise_server_exceptions=False) as client:
+        Base.metadata.drop_all(app.state.database.engine)
+        Base.metadata.create_all(app.state.database.engine)
+        with app.state.database.session() as session:
+            record_refresh(
+                session,
+                artifact_type=RefreshArtifactType.SCHEDULE,
+                artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+                version="invalid-metadata",
+                source="operator",
+                season="2026-27",
+                summary={SCHEDULE_COMPLETENESS_SUMMARY_KEY: None},
+            )
+
+        responses = [
+            client.get("/api/v1/lineage/current"),
+            client.post(
+                "/api/v1/lineage/validate",
+                json={
+                    "claims": [
+                        {
+                            "artifact_type": "schedule",
+                            "artifact_key": NBA_SCHEDULE_ARTIFACT_KEY,
+                            "season": "2026-27",
+                            "version": "invalid-metadata",
+                        }
+                    ]
+                },
+            ),
+        ]
+
+    for response in responses:
+        assert response.status_code == 500
+        assert response.json()["error"] == "internal_error"
+
+
+def test_lineage_http_fails_loudly_for_an_all_zero_schedule_refresh(app: FastAPI) -> None:
+    with TestClient(app, raise_server_exceptions=False) as client:
+        Base.metadata.drop_all(app.state.database.engine)
+        Base.metadata.create_all(app.state.database.engine)
+        with app.state.database.session() as session:
+            empty_version = schedule_content_version(session, season="2026-27")
+            record_refresh(
+                session,
+                artifact_type=RefreshArtifactType.SCHEDULE,
+                artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+                version=empty_version,
+                source="operator",
+                season="2026-27",
+                summary={
+                    SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                        "season": "2026-27",
+                        "season_type": "regular",
+                        "source_game_count": 0,
+                        "resolved_game_count": 0,
+                        "unresolved_game_ids": [],
+                        "persisted_team_row_count": 0,
+                    }
+                },
+            )
+
+        responses = [
+            client.get("/api/v1/lineage/current"),
+            client.post(
+                "/api/v1/lineage/validate",
+                json={
+                    "claims": [
+                        {
+                            "artifact_type": "schedule",
+                            "artifact_key": NBA_SCHEDULE_ARTIFACT_KEY,
+                            "season": "2026-27",
+                            "version": empty_version,
+                        }
+                    ]
+                },
+            ),
+        ]
+
+    for response in responses:
+        assert response.status_code == 500
+        assert response.json()["error"] == "internal_error"
+
+
 def test_lineage_validate_reports_stale_and_unknown(app: FastAPI, client: TestClient) -> None:
     with app.state.database.session() as session:
         record_refresh(
@@ -529,3 +863,62 @@ def test_lineage_contract_is_advertised_in_openapi(client: TestClient) -> None:
 
     assert "/api/v1/lineage/current" in paths
     assert "/api/v1/lineage/validate" in paths
+
+
+def _register_test_schedule(session: Any) -> RefreshRun:
+    home = NbaTeam(nba_team_id=1, abbreviation="HME", name="Home")
+    away = NbaTeam(nba_team_id=2, abbreviation="AWY", name="Away")
+    session.add_all([home, away])
+    session.flush()
+    game = NbaGame(
+        nba_game_id="0022600001",
+        season="2026-27",
+        season_type=SeasonType.REGULAR,
+        game_date=date(2026, 10, 20),
+        home_team_id=home.id,
+        away_team_id=away.id,
+    )
+    session.add(game)
+    session.flush()
+    session.add_all(
+        [
+            TeamScheduleEntry(
+                season="2026-27",
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=home.id,
+                opponent_team_id=away.id,
+                game_date=game.game_date,
+                is_home=True,
+            ),
+            TeamScheduleEntry(
+                season="2026-27",
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=away.id,
+                opponent_team_id=home.id,
+                game_date=game.game_date,
+                is_home=False,
+            ),
+        ]
+    )
+    session.flush()
+    version = schedule_content_version(session, season="2026-27")
+    return record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=version,
+        source="test",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2026-27",
+                "season_type": "regular",
+                "source_game_count": 1,
+                "resolved_game_count": 1,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 2,
+            }
+        },
+    )

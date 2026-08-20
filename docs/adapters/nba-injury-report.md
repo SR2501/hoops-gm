@@ -1016,14 +1016,17 @@ live in it.
 
 ---
 
-## Representative historical cohort populated on 2026-08-19
+## Historical cohort populated on 2026-08-19 — invalidated pending regeneration
 
 The privacy-safe provenance manifest is
 [`nba-injury-report-cohort-2025-12-08--2026-01-04.json`](nba-injury-report-cohort-2025-12-08--2026-01-04.json).
 The window was selected from the official schedule before fetching its reports:
 four inclusive weeks centered on the 2025-12-22 archive format/cadence boundary.
-It covers 171 games, 25 game dates, all 30 teams, both URL eras, all five player
-status values, and source-observed G/F/C labels without filling blank positions.
+The original artifact claimed 171 games. Corrected `LeagueGameFinder`
+reconciliation proves the window contains 173: games `0022501229` and
+`0022501230`, both on 2025-12-13, were silently omitted even though both official
+team rows existed. Those games carry 39 `PlayerGameLogs` rows before any
+participation-only observations are counted.
 
 All 89 bounded candidates completed without 403, 404, or contract failure. They
 resolved to 84 distinct mastheads, 1,934 canonical player-games, and 1,906
@@ -1038,3 +1041,11 @@ hashes, exclusion counts, unresolved identity counts, position evidence, and
 status-diverse stable-key samples. Raw PDFs, NBA JSON, checkpoint, coverage,
 expected-game evidence, and SQLite state remain under the existing gitignored
 `data/`/`.live_evidence*` policy.
+
+The old source captures remain useful historical evidence, but the cohort is no
+longer conversion-ready. Its bounded participation import, expected-game
+preflight, injury coverage, canonical observations, joins, fingerprints, and
+privacy-safe manifest must be regenerated against all 173 games. Until that
+happens, `injury-conversion-cohort-population` is pending again and
+`injury-status-conversion` remains blocked. No status-to-play rate may use the
+171-game artifact.

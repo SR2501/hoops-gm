@@ -18,15 +18,17 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     SCHEDULE_CONTEXT_SOURCE_KEY,
-    content_fingerprint,
+    ScheduleCompleteness,
     lock_league_settings_scope,
     lock_refresh_scope,
     record_refresh,
+    schedule_content_version,
 )
 from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
@@ -45,6 +47,7 @@ from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.resolver import Resolution
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.injury_report.models import InjuryReportEntryRecord
 from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
@@ -54,7 +57,9 @@ from hoops_gm.ingest.nba.models import (
     NbaTeamRecord,
     PlayerBoxScoreRecord,
 )
-from hoops_gm.ingest.nba.schedule import ScheduleGameRecord
+from hoops_gm.ingest.nba.schedule import ENDPOINT as SCHEDULE_ENDPOINT
+from hoops_gm.ingest.nba.schedule import SOURCE as SCHEDULE_SOURCE
+from hoops_gm.ingest.nba.schedule import ScheduleParseResult
 
 
 @dataclass
@@ -452,96 +457,367 @@ def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCo
     return counts
 
 
-def import_schedule(session: Session, records: Sequence[ScheduleGameRecord]) -> ImportCounts:
-    """Write resolved games and their two per-team schedule rows idempotently."""
-    for season in sorted({record.game.season for record in records}):
-        lock_refresh_scope(
-            session,
-            artifact_type=RefreshArtifactType.SCHEDULE,
-            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
-            season=season,
-        )
-    counts = import_games(session, [record.game for record in records])
+def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCounts:
+    """Write one parsed season's schedule and register its refresh cohort.
+
+    Takes the whole :class:`ScheduleParseResult`, not just its games, because
+    the completeness evidence lives on the result: how many regular-season
+    games the source reported, how many resolved to real teams, and which game
+    IDs did not. Without that the importer can persist a partial slate and
+    register it as a complete cohort, which is the silent-degradation failure
+    the Adapter gate exists to prevent — the schedule is the denominator of
+    every expected-games number downstream.
+
+    **Fail closed.** Nothing is registered, and the caller's transaction is
+    left to roll back, when any of the following holds:
+
+    * the source reported game IDs whose teams are still TBD;
+    * the source's own game count disagrees with the resolved count;
+    * a referenced NBA team is not present in the database;
+    * a persisted ``nba_games`` row disagrees with the parsed source about the
+      game's season, season type, Eastern date, or which teams played;
+    * the rows actually persisted for the season are not exactly two per
+      parsed game, on the right dates, with the right home/away orientation —
+      including when rows for that season sit *outside* the parsed cohort.
+
+    Those last two checks are deliberately performed by reading back what was
+    written rather than by trusting the write path, because "the importer
+    thinks it wrote 2,460 rows" and "2,460 correct rows are in the table" are
+    different claims and only the second one matters to a consumer.
+
+    **Nothing is deleted here.** An out-of-cohort row for this season is
+    inconsistent evidence, and inconsistent evidence is refused, not silently
+    reconciled: deleting it would cascade into ``quant``'s derived
+    ``opponent_context`` and cannot be undone by re-running the import. The
+    refusal leaves both the extra row and the operator's options intact.
+    """
+
+    season = parsed.season
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
+    )
+    _require_complete_schedule_source(parsed)
+
     teams = {team.nba_team_id: team.id for team in session.scalars(select(NbaTeam))}
-    games = {game.nba_game_id: game for game in session.scalars(select(NbaGame))}
+    _require_known_teams(parsed, teams=teams)
+
+    # The final exact-cohort check necessarily runs after writes. Keep those
+    # writes inside a savepoint so a caller may catch SourceContractError and
+    # still safely commit unrelated outer-transaction work.
+    with session.begin_nested():
+        return _persist_schedule_cohort(session, parsed, teams=teams)
+
+
+def _persist_schedule_cohort(
+    session: Session,
+    parsed: ScheduleParseResult,
+    *,
+    teams: dict[int, int],
+) -> ImportCounts:
+    season = parsed.season
+    counts = import_games(session, [record.game for record in parsed.games])
+    games = _require_persisted_game_identity(session, parsed, teams=teams)
+
+    expected: dict[tuple[int, int], tuple[int, date, bool]] = {}
+    for record in parsed.games:
+        game_id = games[record.game.nba_game_id]
+        home_id = teams[record.home_nba_team_id]
+        away_id = teams[record.away_nba_team_id]
+        expected[(game_id, home_id)] = (away_id, record.game.game_date, True)
+        expected[(game_id, away_id)] = (home_id, record.game.game_date, False)
+
     existing = {
         (entry.game_id, entry.team_id): entry
-        for entry in session.scalars(select(TeamScheduleEntry))
+        for entry in session.scalars(
+            select(TeamScheduleEntry).where(
+                TeamScheduleEntry.game_id.in_({game_id for game_id, _ in expected})
+            )
+        )
     }
 
-    for record in records:
-        game = games.get(record.game.nba_game_id)
-        home_id = teams.get(record.home_nba_team_id)
-        away_id = teams.get(record.away_nba_team_id)
-        if game is None or home_id is None or away_id is None:
-            counts.skipped += 1
-            continue
-        for team_id, opponent_id, is_home in (
-            (home_id, away_id, True),
-            (away_id, home_id, False),
-        ):
-            entry = existing.get((game.id, team_id))
-            if entry is None:
-                session.add(
-                    TeamScheduleEntry(
-                        season=record.game.season,
-                        season_type=SeasonType.REGULAR,
-                        game_id=game.id,
-                        team_id=team_id,
-                        opponent_team_id=opponent_id,
-                        game_date=record.game.game_date,
-                        is_home=is_home,
-                    )
+    for (game_id, team_id), (opponent_id, game_date, is_home) in expected.items():
+        entry = existing.get((game_id, team_id))
+        if entry is None:
+            session.add(
+                TeamScheduleEntry(
+                    season=season,
+                    season_type=SeasonType.REGULAR,
+                    game_id=game_id,
+                    team_id=team_id,
+                    opponent_team_id=opponent_id,
+                    game_date=game_date,
+                    is_home=is_home,
                 )
-                counts.created += 1
-            else:
-                entry.season = record.game.season
-                entry.season_type = SeasonType.REGULAR
-                entry.opponent_team_id = opponent_id
-                entry.game_date = record.game.game_date
-                entry.is_home = is_home
-                counts.updated += 1
+            )
+            counts.created += 1
+        else:
+            entry.season = season
+            entry.season_type = SeasonType.REGULAR
+            entry.opponent_team_id = opponent_id
+            entry.game_date = game_date
+            entry.is_home = is_home
+            counts.updated += 1
+
     session.flush()
-    _register_schedule_refresh(session, records)
+
+    persisted_team_row_count = _require_exact_persisted_schedule(session, parsed)
+    _register_schedule_refresh(
+        session,
+        parsed,
+        persisted_team_row_count=persisted_team_row_count,
+    )
     session.flush()
     return counts
 
 
-def _register_schedule_refresh(session: Session, records: Sequence[ScheduleGameRecord]) -> None:
-    """Stamp a schedule refresh cohort from the season(s) just imported.
+def _require_complete_schedule_source(parsed: ScheduleParseResult) -> None:
+    """Refuse a source cohort that does not account for every game it reported."""
 
-    The version is a content fingerprint over the current ``team_schedule``
-    rows for each season touched, so a re-import that changes nothing
-    converges on the same version rather than advancing "current" for no
-    reason — the same idempotency guarantee ``import_schedule`` already gives
-    its own rows, applied one level up to the refresh registry
-    ``schedule-context`` consumers (``quant``) key their own
-    ``schedule_version`` stamps against. See ``hoops_gm.db.lineage``.
-    """
-    seasons = {record.game.season for record in records}
-    for season in sorted(seasons):
-        rows = session.scalars(
-            select(TeamScheduleEntry)
-            .where(TeamScheduleEntry.season == season)
-            .order_by(TeamScheduleEntry.game_id, TeamScheduleEntry.team_id)
-        ).all()
-        if not rows:
-            continue
-        fingerprint_parts = [
-            f"{row.game_id}:{row.team_id}:{row.opponent_team_id}:"
-            f"{row.game_date.isoformat()}:{row.is_home}"
-            for row in rows
-        ]
-        version = content_fingerprint(fingerprint_parts)
-        record_refresh(
-            session,
-            artifact_type=RefreshArtifactType.SCHEDULE,
-            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
-            version=version,
-            source="nba_api:ScheduleLeagueV2",
-            season=season,
-            summary={"team_schedule_rows": len(rows)},
+    season = parsed.season
+    if parsed.unresolved_game_ids:
+        shown = ", ".join(parsed.unresolved_game_ids[:5])
+        raise _schedule_contract(
+            f"season {season} reports {len(parsed.unresolved_game_ids)} game(s) with unresolved "
+            f"teams ({shown}); a schedule cohort is only registered once every reported game "
+            "has both teams assigned"
         )
+    if not parsed.games:
+        raise _schedule_contract(
+            f"season {season} parsed to zero regular-season games; refusing to register an "
+            "empty schedule cohort"
+        )
+    if parsed.source_game_count != len(parsed.games):
+        raise _schedule_contract(
+            f"season {season} source reported {parsed.source_game_count} regular-season games "
+            f"but {len(parsed.games)} resolved"
+        )
+    wrong_season = sorted(
+        {record.game.season for record in parsed.games if record.game.season != season}
+    )
+    if wrong_season:
+        raise _schedule_contract(f"season {season} parse result contains games for {wrong_season}")
+    game_ids = [record.game.nba_game_id for record in parsed.games]
+    if len(set(game_ids)) != len(game_ids):
+        raise _schedule_contract(f"season {season} parse result contains duplicate game IDs")
+
+
+def _require_known_teams(parsed: ScheduleParseResult, *, teams: dict[int, int]) -> None:
+    """Refuse a cohort referencing NBA teams that are not in the database.
+
+    ``import_games`` skips a game whose teams are unknown, which is the right
+    behaviour for a bulk backfill and the wrong behaviour here: a skipped game
+    is two missing ``team_schedule`` rows, and a schedule missing two rows is
+    still a perfectly plausible-looking schedule.
+    """
+
+    missing_teams = sorted(
+        {
+            nba_team_id
+            for record in parsed.games
+            for nba_team_id in (record.home_nba_team_id, record.away_nba_team_id)
+            if nba_team_id not in teams
+        }
+    )
+    if missing_teams:
+        raise _schedule_contract(
+            f"season {parsed.season} references NBA team id(s) {missing_teams} that "
+            "are not in the database; import teams before the schedule"
+        )
+
+
+def _require_persisted_game_identity(
+    session: Session, parsed: ScheduleParseResult, *, teams: dict[int, int]
+) -> dict[str, int]:
+    """Require every persisted ``nba_games`` row to match the parsed source.
+
+    ``import_games`` deliberately does not rewrite a game's core identity: it
+    keys on ``nba_game_id`` and, for an existing row, only refreshes scores,
+    tip-off and status. That is right for a box-score backfill — a later
+    source must not be able to move a game to a different date or a different
+    pair of teams — but it means a pre-existing row that contradicts the
+    schedule survives the import untouched, and ``team_schedule`` would then
+    be written against a game ``nba_games`` describes differently.
+
+    Two tables silently disagreeing about who played whom, and when, is worse
+    than either being missing, so a contradiction is refused here rather than
+    reconciled. Returns the ``nba_game_id`` → surrogate id map the caller
+    needs, so the read is not repeated.
+    """
+
+    nba_team_ids = {row_id: nba_team_id for nba_team_id, row_id in teams.items()}
+    persisted = {
+        game.nba_game_id: game
+        for game in session.scalars(
+            select(NbaGame).where(
+                NbaGame.nba_game_id.in_(record.game.nba_game_id for record in parsed.games)
+            )
+        )
+    }
+
+    missing: list[str] = []
+    contradictions: list[str] = []
+    for record in parsed.games:
+        game = persisted.get(record.game.nba_game_id)
+        if game is None:
+            missing.append(record.game.nba_game_id)
+            continue
+        observed = (
+            game.season,
+            game.season_type,
+            game.game_date,
+            nba_team_ids.get(game.home_team_id),
+            nba_team_ids.get(game.away_team_id),
+        )
+        wanted = (
+            record.game.season,
+            SeasonType(record.game.season_type),
+            record.game.game_date,
+            record.home_nba_team_id,
+            record.away_nba_team_id,
+        )
+        if observed != wanted:
+            contradictions.append(f"{record.game.nba_game_id}: {observed} != {wanted}")
+
+    if missing:
+        raise _schedule_contract(
+            f"season {parsed.season} has {len(missing)} parsed game(s) with no persisted "
+            f"nba_games row ({', '.join(sorted(missing)[:5])})"
+        )
+    if contradictions:
+        raise _schedule_contract(
+            f"season {parsed.season} has {len(contradictions)} persisted nba_games row(s) that "
+            "contradict the parsed schedule on (season, season_type, date, home, away): "
+            f"{'; '.join(sorted(contradictions)[:3])}"
+        )
+    return {nba_game_id: game.id for nba_game_id, game in persisted.items()}
+
+
+def _require_exact_persisted_schedule(session: Session, parsed: ScheduleParseResult) -> int:
+    """Read the cohort back and require it to equal the parsed source exactly.
+
+    Compared on stable NBA identifiers, so the check means "the right games
+    between the right teams on the right dates", not "the right number of
+    rows". Rows for this season's regular-season scope that the parsed cohort
+    does not contain fail here too, and are deliberately *not* deleted: a
+    cancelled or rescheduled fixture is a real editorial question, and
+    ``opponent_context.team_schedule_id`` cascades, so quietly resolving it
+    here would destroy ``quant``'s derived rows on the strength of one
+    possibly-truncated payload. Returns the persisted row count for the
+    refresh summary.
+    """
+
+    expected: set[tuple[str, int, int, date, bool]] = {
+        (record.game.nba_game_id, team_id, opponent_id, record.game.game_date, is_home)
+        for record in parsed.games
+        for team_id, opponent_id, is_home in (
+            (record.home_nba_team_id, record.away_nba_team_id, True),
+            (record.away_nba_team_id, record.home_nba_team_id, False),
+        )
+    }
+
+    team = aliased(NbaTeam)
+    opponent = aliased(NbaTeam)
+    observed_rows = session.execute(
+        select(
+            NbaGame.nba_game_id,
+            team.nba_team_id,
+            opponent.nba_team_id,
+            TeamScheduleEntry.game_date,
+            TeamScheduleEntry.is_home,
+        )
+        .join(NbaGame, NbaGame.id == TeamScheduleEntry.game_id)
+        .join(team, team.id == TeamScheduleEntry.team_id)
+        .join(opponent, opponent.id == TeamScheduleEntry.opponent_team_id)
+        .where(
+            TeamScheduleEntry.season == parsed.season,
+            TeamScheduleEntry.season_type == SeasonType.REGULAR,
+        )
+    ).all()
+    observed = {
+        (nba_game_id, team_nba_id, opponent_nba_id, game_date, bool(is_home))
+        for nba_game_id, team_nba_id, opponent_nba_id, game_date, is_home in observed_rows
+    }
+    if len(observed_rows) != len(observed):
+        raise _schedule_contract(
+            f"season {parsed.season} persisted {len(observed_rows)} schedule rows that are not "
+            "distinct on (game, team, opponent, date, home)"
+        )
+    if observed != expected:
+        missing = sorted(str(row) for row in expected - observed)[:3]
+        extra = sorted(str(row) for row in observed - expected)[:3]
+        raise _schedule_contract(
+            f"season {parsed.season} persisted schedule does not match the parsed cohort: "
+            f"expected {len(expected)} rows for {len(parsed.games)} games, found "
+            f"{len(observed_rows)}; missing={missing}, unexpected={extra}"
+        )
+    return len(observed_rows)
+
+
+def _register_schedule_refresh(
+    session: Session,
+    parsed: ScheduleParseResult,
+    *,
+    persisted_team_row_count: int,
+) -> None:
+    """Stamp the schedule refresh cohort for the season just imported.
+
+    The version is ``schedule_content_version`` over the persisted
+    ``team_schedule`` rows — the same function ``check_cohort`` recomputes
+    with, so a registered version and a validated version can never be
+    computed two different ways. A re-import that changes nothing converges on
+    the same version rather than advancing "current" for no reason, the same
+    idempotency guarantee ``import_schedule`` already gives its own rows,
+    applied one level up to the registry ``schedule-context`` consumers
+    (``quant``) key their ``schedule_version`` stamps against. See
+    ``hoops_gm.db.lineage``.
+    """
+
+    completeness = ScheduleCompleteness(
+        season=parsed.season,
+        season_type=SeasonType.REGULAR,
+        source_game_count=parsed.source_game_count,
+        resolved_game_count=len(parsed.games),
+        unresolved_game_ids=parsed.unresolved_game_ids,
+        persisted_team_row_count=persisted_team_row_count,
+    )
+    version = schedule_content_version(
+        session,
+        season=parsed.season,
+        season_type=SeasonType.REGULAR,
+    )
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=version,
+        source="nba_api:ScheduleLeagueV2",
+        season=parsed.season,
+        summary={
+            # Kept flat as well as inside the completeness block: existing
+            # readers of the refresh summary predate the block.
+            "team_schedule_rows": persisted_team_row_count,
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: completeness.as_summary(),
+        },
+    )
+
+
+def _schedule_contract(message: str) -> SourceContractError:
+    """The schedule source's completeness contract was not met.
+
+    ``SourceContractError`` rather than a persistence-specific exception: every
+    condition raised here means the payload we were handed does not describe a
+    complete season, which is upstream drift and must be as loud as a parser
+    rejecting a changed field (ADR-006).
+    """
+
+    return SourceContractError(
+        message,
+        source=SCHEDULE_SOURCE,
+        endpoint=SCHEDULE_ENDPOINT,
+    )
 
 
 def import_box_scores(session: Session, records: Sequence[PlayerBoxScoreRecord]) -> ImportCounts:

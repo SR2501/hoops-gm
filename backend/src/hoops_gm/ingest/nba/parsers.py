@@ -314,6 +314,10 @@ def _text_or_none(value: Any) -> str | None:
 # --------------------------------------------------------------------------
 
 _MATCHUP = re.compile(r"^(?P<team>[A-Z]{2,4})\s+(?P<separator>vs\.|@)\s+(?P<opponent>[A-Z]{2,4})$")
+_LEAGUE_GAME_FINDER_SCOPE = {
+    "regular": ("Regular Season", "2", "002"),
+    "playoffs": ("Playoffs", "4", "004"),
+}
 
 
 def parse_league_game_finder(
@@ -321,25 +325,60 @@ def parse_league_game_finder(
 ) -> list[NbaGameRecord]:
     """Parse ``LeagueGameFinder`` into one record per game, not per team.
 
-    The endpoint returns two rows per game, one from each team's point of view,
-    and the ``MATCHUP`` string is the only thing distinguishing home from away:
-    ``"LAL vs. POR"`` is the home row, ``"LAL @ POR"`` the away row. Collapsing
-    on ``GAME_ID`` without reading it produces games whose home and away teams
-    depend on row order.
+    The endpoint normally returns reciprocal matchup strings, but some official
+    games repeat one canonical string on both team rows. The row's team
+    abbreviation must therefore be matched against both sides of ``MATCHUP``;
+    the separator alone does not identify which side the current row describes.
     """
     endpoint = "LeagueGameFinder"
+    expected_season_id, expected_game_id_prefix = _validate_league_game_finder_scope(
+        payload,
+        season=season,
+        season_type=season_type,
+        endpoint=endpoint,
+    )
     table = require_table(
         result_tables(payload, endpoint=endpoint), "LeagueGameFinderResults", endpoint=endpoint
     )
-    table.require("GAME_ID", "TEAM_ID", "GAME_DATE", "MATCHUP")
+    table.require(
+        "SEASON_ID",
+        "GAME_ID",
+        "TEAM_ID",
+        "TEAM_ABBREVIATION",
+        "GAME_DATE",
+        "MATCHUP",
+        "PTS",
+    )
 
     games: dict[str, dict[str, Any]] = {}
     for row in table.rows:
+        season_id = _text_or_none(table.get(row, "SEASON_ID"))
         game_id = _text_or_none(table.get(row, "GAME_ID"))
         team_id = as_int(table.get(row, "TEAM_ID"))
+        team_abbreviation = _text_or_none(table.get(row, "TEAM_ABBREVIATION"))
         matchup = str(table.get(row, "MATCHUP") or "")
-        if game_id is None or team_id is None:
-            continue
+        if season_id is None or game_id is None or team_id is None or team_abbreviation is None:
+            raise SourceContractError(
+                "LeagueGameFinder row lacks SEASON_ID, GAME_ID, TEAM_ID, or TEAM_ABBREVIATION",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        if season_id != expected_season_id:
+            raise SourceContractError(
+                f"row SEASON_ID {season_id!r} does not match requested "
+                f"{season}/{season_type} scope {expected_season_id!r}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        expected_game_id = re.compile(
+            rf"^{re.escape(expected_game_id_prefix)}{re.escape(season[2:4])}\d{{5}}$"
+        )
+        if expected_game_id.fullmatch(game_id) is None:
+            raise SourceContractError(
+                f"noncanonical GAME_ID {game_id!r} for requested {season}/{season_type}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
         match = _MATCHUP.match(matchup.strip())
         if match is None:
             raise SourceContractError(
@@ -347,23 +386,76 @@ def parse_league_game_finder(
                 source=SOURCE,
                 endpoint=endpoint,
             )
-        is_home = match["separator"] == "vs."
+        if match["separator"] == "vs.":
+            home_abbreviation = match["team"]
+            away_abbreviation = match["opponent"]
+        else:
+            home_abbreviation = match["opponent"]
+            away_abbreviation = match["team"]
+        if team_abbreviation == home_abbreviation:
+            side = "home"
+        elif team_abbreviation == away_abbreviation:
+            side = "away"
+        else:
+            raise SourceContractError(
+                f"team abbreviation {team_abbreviation!r} is not present in MATCHUP "
+                f"{matchup!r} for game {game_id}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+
+        game_date = as_date(table.get(row, "GAME_DATE"), endpoint=endpoint)
         entry = games.setdefault(
             game_id,
-            {"date": as_date(table.get(row, "GAME_DATE"), endpoint=endpoint)},
+            {
+                "date": game_date,
+                "home_abbreviation": home_abbreviation,
+                "away_abbreviation": away_abbreviation,
+            },
         )
-        entry["home_id" if is_home else "away_id"] = team_id
-        entry["home_pts" if is_home else "away_pts"] = as_int(table.get(row, "PTS"))
+        if entry["date"] != game_date:
+            raise SourceContractError(
+                f"conflicting GAME_DATE values for game {game_id}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        if (
+            entry["home_abbreviation"] != home_abbreviation
+            or entry["away_abbreviation"] != away_abbreviation
+        ):
+            raise SourceContractError(
+                f"conflicting home/away MATCHUP values for game {game_id}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        id_key = f"{side}_id"
+        if id_key in entry:
+            raise SourceContractError(
+                f"duplicate {side} team row for game {game_id}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        entry[id_key] = team_id
+        entry[f"{side}_pts"] = as_int(table.get(row, "PTS"))
 
     records: list[NbaGameRecord] = []
     for game_id, entry in sorted(games.items()):
         home_id = entry.get("home_id")
         away_id = entry.get("away_id")
         if home_id is None or away_id is None:
-            # One-sided rows happen when a filter narrows to a single team.
-            # Skipped rather than invented: a game with a guessed opponent is
-            # worse than a game we know we are missing.
-            continue
+            missing_side = "home" if home_id is None else "away"
+            raise SourceContractError(
+                f"incomplete reciprocal rows for game {game_id}: {missing_side} team id "
+                "and score are unsupported; refusing to invent or drop the game",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        if home_id == away_id:
+            raise SourceContractError(
+                f"home and away resolve to the same team id for game {game_id}",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
         records.append(
             NbaGameRecord(
                 nba_game_id=game_id,
@@ -377,6 +469,82 @@ def parse_league_game_finder(
             )
         )
     return records
+
+
+def _validate_league_game_finder_scope(
+    payload: Any,
+    *,
+    season: str,
+    season_type: str,
+    endpoint: str,
+) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        raise SourceContractError(
+            "payload is not an object with declared request scope",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, dict):
+        raise SourceContractError(
+            "payload lacks declared LeagueGameFinder request parameters",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    scope = _LEAGUE_GAME_FINDER_SCOPE.get(season_type)
+    if scope is None:
+        raise SourceContractError(
+            f"unsupported requested season type {season_type!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    expected_type, season_id_prefix, game_id_prefix = scope
+    if re.fullmatch(r"\d{4}-\d{2}", season) is None:
+        raise SourceContractError(
+            f"noncanonical requested season {season!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    declared_season = _text_or_none(parameters.get("Season"))
+    if declared_season != season:
+        raise SourceContractError(
+            f"payload season {declared_season!r} does not match requested season {season!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    declared_type = _text_or_none(parameters.get("SeasonType"))
+    if declared_type is None or declared_type.casefold() != expected_type.casefold():
+        raise SourceContractError(
+            f"payload season type {declared_type!r} does not match requested "
+            f"season type {season_type!r}",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    if _text_or_none(parameters.get("LeagueID")) != "00":
+        raise SourceContractError(
+            f"payload league {parameters.get('LeagueID')!r} is not NBA league '00'",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    if _text_or_none(parameters.get("PlayerOrTeam")) != "T":
+        raise SourceContractError(
+            "payload is not scoped to team rows",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    full_season_scope = {"Season", "SeasonType", "LeagueID", "PlayerOrTeam"}
+    narrowed = sorted(
+        key
+        for key, value in parameters.items()
+        if key not in full_season_scope and value not in (None, "")
+    )
+    if narrowed:
+        raise SourceContractError(
+            "payload declares narrowed LeagueGameFinder scope through " + ", ".join(narrowed),
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    return f"{season_id_prefix}{season[:4]}", game_id_prefix
 
 
 # --------------------------------------------------------------------------

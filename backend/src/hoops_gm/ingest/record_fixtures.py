@@ -42,6 +42,10 @@ MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
 #: all-played box score.
 FIXTURE_GAME_ID = "0022400306"
 
+#: A real neutral-site game whose two LeagueGameFinder rows repeat the same
+#: canonical matchup. Its summary supplies independent home/away team IDs.
+FIXTURE_RECONCILIATION_GAME_ID = "0022400633"
+
 #: A mid-season 2025-26 game. This one exists specifically to pin the finding
 #: that ``BoxScoreSummaryV2``'s inactive list is empty for every 2025-26 date
 #: after opening night while V3's is correct. A contract test asserts a
@@ -100,6 +104,88 @@ def _trim_result_set(payload: dict[str, Any], keep: int) -> tuple[dict[str, Any]
             original[entry.get("name", "?")] = len(rows)
             entry["rowSet"] = rows[:keep]
     return trimmed, original
+
+
+def _select_league_game_finder_games(
+    payload: dict[str, Any], game_ids: list[str]
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Retain complete game groups in explicit order from a real source payload."""
+    selected = json.loads(json.dumps(payload))
+    original: dict[str, int] = {}
+    for entry in selected.get("resultSets", []):
+        rows = entry.get("rowSet")
+        headers = entry.get("headers")
+        if not isinstance(rows, list) or not isinstance(headers, list):
+            continue
+        original[entry.get("name", "?")] = len(rows)
+        if entry.get("name") != "LeagueGameFinderResults":
+            continue
+        try:
+            game_id_index = headers.index("GAME_ID")
+        except ValueError as exc:
+            raise ValueError("LeagueGameFinder fixture source lacks GAME_ID") from exc
+        by_game_id: dict[str, list[Any]] = {}
+        for row in rows:
+            if not isinstance(row, list) or game_id_index >= len(row):
+                raise ValueError("LeagueGameFinder fixture source has a malformed row")
+            by_game_id.setdefault(str(row[game_id_index]), []).append(row)
+        retained: list[Any] = []
+        for game_id in game_ids:
+            game_rows = by_game_id.get(game_id)
+            if game_rows is None:
+                raise ValueError(f"LeagueGameFinder fixture source lacks game {game_id}")
+            if len(game_rows) != 2:
+                raise ValueError(
+                    f"LeagueGameFinder fixture game {game_id} has {len(game_rows)} rows, not 2"
+                )
+            retained.extend(game_rows)
+        entry["rowSet"] = retained
+    return selected, original
+
+
+def _league_game_finder_fixture_ids(
+    payload: dict[str, Any], *, boundary_rows: int, required_game_ids: tuple[str, ...]
+) -> list[str]:
+    """Choose only complete groups from a row boundary, then append required games."""
+    table = next(
+        (
+            entry
+            for entry in payload.get("resultSets", [])
+            if entry.get("name") == "LeagueGameFinderResults"
+        ),
+        None,
+    )
+    if not isinstance(table, dict):
+        raise ValueError("LeagueGameFinder fixture source lacks its result set")
+    headers = table.get("headers")
+    rows = table.get("rowSet")
+    if not isinstance(headers, list) or not isinstance(rows, list):
+        raise ValueError("LeagueGameFinder fixture result set is malformed")
+    try:
+        game_id_index = headers.index("GAME_ID")
+    except ValueError as exc:
+        raise ValueError("LeagueGameFinder fixture source lacks GAME_ID") from exc
+    all_counts: dict[str, int] = {}
+    boundary_counts: dict[str, int] = {}
+    boundary_order: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, list) or game_id_index >= len(row):
+            raise ValueError("LeagueGameFinder fixture source has a malformed row")
+        game_id = str(row[game_id_index])
+        all_counts[game_id] = all_counts.get(game_id, 0) + 1
+        if index < boundary_rows:
+            boundary_counts[game_id] = boundary_counts.get(game_id, 0) + 1
+            if game_id not in boundary_order:
+                boundary_order.append(game_id)
+    selected = [
+        game_id
+        for game_id in boundary_order
+        if all_counts[game_id] == 2 and boundary_counts[game_id] == 2
+    ]
+    for game_id in required_game_ids:
+        if game_id not in selected:
+            selected.append(game_id)
+    return selected
 
 
 # --------------------------------------------------------------------------
@@ -267,18 +353,95 @@ def record_nba() -> None:
     )
 
     payload = client.league_game_finder(season=FIXTURE_STATS_SEASON)
-    trimmed, original = _trim_result_set(payload, keep=120)
+    fixture_game_ids = _league_game_finder_fixture_ids(
+        payload,
+        boundary_rows=120,
+        required_game_ids=(FIXTURE_GAME_ID,),
+    )
+    trimmed, original = _select_league_game_finder_games(payload, fixture_game_ids)
     _write(
         "nba_leaguegamefinder_trimmed.json",
         trimmed,
         meta={
             "source": "nba_stats",
             "endpoint": "LeagueGameFinder",
-            "params": {"season_nullable": FIXTURE_STATS_SEASON},
+            "params": {
+                "season_nullable": FIXTURE_STATS_SEASON,
+                "season_type_nullable": "Regular Season",
+            },
             "trimmed": True,
             "original_row_counts": original,
-            "kept_rows_per_result_set": 120,
-            "note": "Whole rows removed from the end. No value edited.",
+            "kept_rows_per_result_set": len(fixture_game_ids) * 2,
+            "note": (
+                "Whole rows removed; only complete two-row game groups are retained. "
+                f"Required cross-endpoint game {FIXTURE_GAME_ID} is included. No value edited."
+            ),
+        },
+    )
+    reconciliation, original = _select_league_game_finder_games(
+        payload,
+        [FIXTURE_RECONCILIATION_GAME_ID, "0022401188"],
+    )
+    _write(
+        "nba_leaguegamefinder_reconciliation.json",
+        reconciliation,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "LeagueGameFinder",
+            "params": {
+                "season_nullable": FIXTURE_STATS_SEASON,
+                "season_type_nullable": "Regular Season",
+            },
+            "trimmed": True,
+            "original_row_counts": original,
+            "kept_rows_per_result_set": 4,
+            "note": (
+                "Whole real rows retained for one ordinary reciprocal game and one game "
+                "where both team rows repeat the same canonical MATCHUP. No value edited."
+            ),
+        },
+    )
+    playoff_payload = client.league_game_finder(
+        season=FIXTURE_STATS_SEASON,
+        season_type="Playoffs",
+    )
+    playoff_game_ids = _league_game_finder_fixture_ids(
+        playoff_payload,
+        boundary_rows=4,
+        required_game_ids=(),
+    )
+    playoff_trimmed, playoff_original = _select_league_game_finder_games(
+        playoff_payload,
+        playoff_game_ids,
+    )
+    _write(
+        "nba_leaguegamefinder_playoffs.json",
+        playoff_trimmed,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "LeagueGameFinder",
+            "params": {
+                "season_nullable": FIXTURE_STATS_SEASON,
+                "season_type_nullable": "Playoffs",
+            },
+            "trimmed": True,
+            "original_row_counts": playoff_original,
+            "kept_rows_per_result_set": len(playoff_game_ids) * 2,
+            "note": "Whole real rows retained as complete playoff game groups. No value edited.",
+        },
+    )
+    _write(
+        f"nba_boxscoresummaryv3_{FIXTURE_RECONCILIATION_GAME_ID}_reconciliation.json",
+        client.box_score_summary(FIXTURE_RECONCILIATION_GAME_ID),
+        meta={
+            "source": "nba_stats",
+            "endpoint": "BoxScoreSummaryV3",
+            "params": {"game_id": FIXTURE_RECONCILIATION_GAME_ID},
+            "trimmed": False,
+            "note": (
+                "Independent home/away anchor for the repeated-canonical "
+                "LeagueGameFinder matchup fixture."
+            ),
         },
     )
 

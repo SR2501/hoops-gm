@@ -6,6 +6,7 @@ import math
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.availability import (
@@ -18,7 +19,11 @@ from hoops_gm.availability import (
     compute_reliability_scorecards,
     publish_reliability_cohorts,
 )
-from hoops_gm.db.lineage import record_refresh
+from hoops_gm.db.lineage import (
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    record_refresh,
+    schedule_content_version,
+)
 from hoops_gm.db.models import (
     DnpReason,
     ExternalSource,
@@ -30,6 +35,7 @@ from hoops_gm.db.models import (
     PlayerGameLog,
     PlayerParticipation,
     RefreshArtifactType,
+    RefreshRun,
     SeasonType,
     TeamScheduleEntry,
 )
@@ -172,6 +178,53 @@ def _register_schedule(session: Session, version: str = "schedule-v1") -> None:
         season=SEASON,
         refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
+
+
+def _register_verifiable_schedule(session: Session) -> str:
+    entries = session.scalars(
+        select(TeamScheduleEntry).where(
+            TeamScheduleEntry.season == SEASON,
+            TeamScheduleEntry.season_type == SeasonType.REGULAR,
+        )
+    ).all()
+    game_count = len({entry.game_id for entry in entries})
+    assert len(entries) == game_count * 2
+    version = schedule_content_version(session, season=SEASON)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version=version,
+        source="test:canonical-schedule",
+        season=SEASON,
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": SEASON,
+                "season_type": "regular",
+                "source_game_count": game_count,
+                "resolved_game_count": game_count,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": len(entries),
+            }
+        },
+        refreshed_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    return version
+
+
+def _mutate_schedule_date_without_changing_row_count(
+    session: Session,
+    *,
+    game: NbaGame,
+) -> None:
+    game.game_date = game.game_date.replace(day=game.game_date.day + 1)
+    entries = session.scalars(
+        select(TeamScheduleEntry).where(TeamScheduleEntry.game_id == game.id)
+    ).all()
+    assert len(entries) == 2
+    for entry in entries:
+        entry.game_date = game.game_date
+    session.flush()
 
 
 def _scorecard(
@@ -555,6 +608,51 @@ def test_changed_source_after_publication_is_rejected(session: Session) -> None:
     session.flush()
 
     with pytest.raises(StaleReliabilityCohortError, match="observations changed"):
+        compute_reliability_scorecards(session, claim=claim)
+
+
+def test_reliability_publication_rejects_same_row_count_schedule_mutation(
+    session: Session,
+) -> None:
+    home, away = _teams(session)
+    game = _game(session, number=91, game_date=date(2026, 5, 11), home=home, away=away)
+    player = _player(session, "Unpublished Reliability")
+    _log(session, player=player, game=game, team=home)
+    obsolete_version = _register_verifiable_schedule(session)
+    _mutate_schedule_date_without_changing_row_count(session, game=game)
+
+    with pytest.raises(StaleReliabilityCohortError, match="no longer current"):
+        publish_reliability_cohorts(
+            session,
+            season=SEASON,
+            as_of_date=game.game_date,
+        )
+
+    assert (
+        session.scalar(
+            select(RefreshRun.id).where(RefreshRun.artifact_type != RefreshArtifactType.SCHEDULE)
+        )
+        is None
+    )
+    assert schedule_content_version(session, season=SEASON) != obsolete_version
+
+
+def test_reliability_output_rejects_same_row_count_mutation_after_publication(
+    session: Session,
+) -> None:
+    home, away = _teams(session)
+    game = _game(session, number=92, game_date=date(2026, 5, 12), home=home, away=away)
+    player = _player(session, "Obsolete Reliability")
+    _log(session, player=player, game=game, team=home)
+    _register_verifiable_schedule(session)
+    claim = publish_reliability_cohorts(
+        session,
+        season=SEASON,
+        as_of_date=game.game_date,
+    )
+    _mutate_schedule_date_without_changing_row_count(session, game=game)
+
+    with pytest.raises(StaleReliabilityCohortError, match="no longer current"):
         compute_reliability_scorecards(session, claim=claim)
 
 

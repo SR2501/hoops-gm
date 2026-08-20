@@ -1,0 +1,1208 @@
+{
+  "availability_evaluation": {
+    "calibration_reported": false,
+    "reason": "PlayerGameLogs contains played games only. The observation ledger still lacks authoritative historical roster intervals and per-game ingestion-completeness evidence, so R35 forbids treating silence as absence.",
+    "status": "blocked_incomplete_labels"
+  },
+  "blind_spots": [
+    "full absences represented only by missing participation rows",
+    "historical roster membership and per-game participation completeness",
+    "trades, coaching changes, and role or rotation changes",
+    "undisclosed injuries, personal matters, and front-office intent",
+    "DNP reasons that relabel rest or load management as minor ailments",
+    "final margin is an outcome, not a causal player-level garbage-time treatment",
+    "survivorship among players with enough games in adjacent seasons",
+    "rookies and players returning from long absences"
+  ],
+  "evidence_version": "reliability-metrics-v2",
+  "final": {
+    "blowout_suppression": {
+      "calibration_bins": [
+        {
+          "observed_mean_delta_minutes": -3.3663742127996676,
+          "players": 86,
+          "predicted_mean_delta_minutes": -5.088330763893015
+        },
+        {
+          "observed_mean_delta_minutes": -2.580578703370508,
+          "players": 87,
+          "predicted_mean_delta_minutes": -2.9475458160153702
+        },
+        {
+          "observed_mean_delta_minutes": -1.5930523865513393,
+          "players": 86,
+          "predicted_mean_delta_minutes": -1.2708479354975513
+        },
+        {
+          "observed_mean_delta_minutes": -0.7805934224762269,
+          "players": 87,
+          "predicted_mean_delta_minutes": 1.8985557779195648
+        }
+      ],
+      "calibration_intercept": -1.4133629924850935,
+      "calibration_sign_reversal": true,
+      "calibration_slope": 0.36027348766917866,
+      "candidate_mae": 2.408772549922593,
+      "eligible_players": 346,
+      "mae_improvement_bootstrap_95": [
+        0.21199863587451034,
+        0.7493319119248316
+      ],
+      "mean_mae_improvement": 0.4938135086836203,
+      "release_reason": "one or more pre-registered held-out rules failed",
+      "release_rule_passed": false,
+      "sign_stability": 0.7283236994219653,
+      "zero_effect_mae": 2.902586058606213
+    },
+    "eligible_players": 358,
+    "minimum_games_each_season": 20,
+    "percentile_coverage": {
+      "ast": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.36194713425804764,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.45951283739302173,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.716919025674786,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.36431560071727437,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.7471607890017932,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.39300202839756593,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8062880324543611,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.3339645944833265,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8108686702346645,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7941638314577336,
+        "upper_target": 0.8
+      },
+      "blk": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.6863822734013784,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.7445687952600395,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.8617511520737328,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.7405857740585774,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.8586371787208608,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.6842461122379987,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8874239350912779,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.6652120214079869,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8863729930012351,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8809648434092296,
+        "upper_target": 0.8
+      },
+      "fg3m": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.4849952019541132,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.6372613561553654,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.7913100724160632,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.5023909145248058,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.7922893006575015,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.531947261663286,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8378972278566599,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.4382873610539317,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8661177439275421,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.843103899502748,
+        "upper_target": 0.8
+      },
+      "fg_pct": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.22581348687080172,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.29427254772876893,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.6840026333113891,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.230424387328153,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.7513448894202033,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.21889790398918188,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.7753549695740365,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.2193495265541375,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.7964594483326471,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7769781034633167,
+        "upper_target": 0.8
+      },
+      "ft_pct": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.4303410974439501,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.5457537853851218,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.803818301514154,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.5173341303048417,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.8066347878063359,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.4398242055442867,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8377281947261663,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.3873198847262248,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8123507616303005,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8174997819070051,
+        "upper_target": 0.8
+      },
+      "pts": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.26751286748669634,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.3337722185648453,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.685319289005925,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.2647937836222355,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.6879856545128512,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.28600405679513186,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.7420554428668019,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.2509674763277069,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.7725813091807329,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7465759399808078,
+        "upper_target": 0.8
+      },
+      "reb": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.31841577248538777,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.3739302172481896,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.7267939433838051,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.2943813508667065,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.7355050806933652,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.30054090601757943,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.7846517917511833,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.3268011527377522,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8433100041169206,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.804719532408619,
+        "upper_target": 0.8
+      },
+      "stl": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.5027915903341185,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.6260697827518104,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.7761685319289006,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.5385534967124925,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.8338314405260012,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.5273833671399595,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8460108181203516,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.4655413750514615,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.869164265129683,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8518712378958387,
+        "upper_target": 0.8
+      },
+      "to": {
+        "holdout_observations": 22926,
+        "lower_observed": 0.43391782255953937,
+        "lower_target": 0.2,
+        "players": 464,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1519,
+            "label": "1-19",
+            "lower_observed": 0.5938117182356814,
+            "lower_target": 0.2,
+            "players": 55,
+            "upper_observed": 0.783410138248848,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 3346,
+            "label": "20-39",
+            "lower_observed": 0.4829647340107591,
+            "lower_target": 0.2,
+            "players": 84,
+            "upper_observed": 0.8123132098027496,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5916,
+            "label": "40-59",
+            "lower_observed": 0.4629817444219067,
+            "lower_target": 0.2,
+            "players": 118,
+            "upper_observed": 0.8324881676808654,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 12145,
+            "label": "60+",
+            "lower_observed": 0.3862494853849321,
+            "lower_target": 0.2,
+            "players": 207,
+            "upper_observed": 0.8530259365994236,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8371717700427462,
+        "upper_target": 0.8
+      }
+    },
+    "percentile_players_considered": 464,
+    "stability": {
+      "ast_sd": {
+        "league_median_baseline": 1.5199403815116663,
+        "league_median_baseline_mae": 0.5154755913813727,
+        "player_specific_mae": 0.34687871937633374,
+        "players": 358,
+        "spearman": 0.7388769641867563
+      },
+      "blk_sd": {
+        "league_median_baseline": 0.6182175920245406,
+        "league_median_baseline_mae": 0.23508958760742854,
+        "player_specific_mae": 0.15260202331480585,
+        "players": 358,
+        "spearman": 0.7580675196052714
+      },
+      "fg3m_sd": {
+        "league_median_baseline": 1.212112420568916,
+        "league_median_baseline_mae": 0.40864272743371616,
+        "player_specific_mae": 0.23198699249311217,
+        "players": 358,
+        "spearman": 0.7817012745964431
+      },
+      "fg_pct_sd": {
+        "league_median_baseline": 1.3314140276886963,
+        "league_median_baseline_mae": 0.3183777257379784,
+        "player_specific_mae": 0.25286066291086207,
+        "players": 358,
+        "spearman": 0.6810245612071255
+      },
+      "ft_pct_sd": {
+        "league_median_baseline": 0.542224391968475,
+        "league_median_baseline_mae": 0.20571865712424925,
+        "player_specific_mae": 0.13345884028743146,
+        "players": 358,
+        "spearman": 0.7475510519795912
+      },
+      "minutes_cv": {
+        "league_median_baseline": 0.28083733490959595,
+        "league_median_baseline_mae": 0.14882006118606866,
+        "player_specific_mae": 0.12391916639873572,
+        "players": 358,
+        "spearman": 0.72778789858951
+      },
+      "pts_sd": {
+        "league_median_baseline": 5.804147924436412,
+        "league_median_baseline_mae": 1.2806077670639193,
+        "player_specific_mae": 1.0296642387491304,
+        "players": 358,
+        "spearman": 0.6537628387593191
+      },
+      "reb_sd": {
+        "league_median_baseline": 2.320768218665541,
+        "league_median_baseline_mae": 0.5876291455758277,
+        "player_specific_mae": 0.43255359768500384,
+        "players": 358,
+        "spearman": 0.6914717600238067
+      },
+      "stl_sd": {
+        "league_median_baseline": 0.8980805242564844,
+        "league_median_baseline_mae": 0.18250474301223718,
+        "player_specific_mae": 0.1674625668618258,
+        "players": 358,
+        "spearman": 0.5906607719362901
+      },
+      "to_sd": {
+        "league_median_baseline": 1.0866974055951635,
+        "league_median_baseline_mae": 0.2777464191976415,
+        "player_specific_mae": 0.22747968507293445,
+        "players": 358,
+        "spearman": 0.6721444592061132
+      }
+    },
+    "stage": "final_holdout"
+  },
+  "protocol": {
+    "blowout_effect": "mean player minutes in margin>=15 games minus mean player minutes in all other games",
+    "blowout_margin": 15,
+    "blowout_release_rule": "both chronological transitions must pass: candidate MAE < zero-effect MAE; player-block bootstrap 95% improvement interval lower bound > 0; calibration slope > 0; no calibration-bin sign reversal; sign stability > 0.5",
+    "bootstrap_interval_quantiles": [
+      0.025,
+      0.975
+    ],
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 250119,
+    "bootstrap_unit": "player-level paired MAE improvement",
+    "calibration_bin_count": 4,
+    "calibration_bin_method": "equal-count bins sorted by predicted delta",
+    "declared_partitions": {
+      "development": "2023-24",
+      "final_holdout": "2025-26",
+      "final_training": "2024-25",
+      "selection": "2024-25"
+    },
+    "lower_percentile": 0.2,
+    "maximum_source_game_id_mismatch_fraction": 0.01,
+    "minimum_blowout_games": 5,
+    "minimum_non_blowout_games": 10,
+    "minimum_player_games": 20,
+    "percentile_coverage_rule": "fraction of holdout values <= the player's training Type-7 quantile",
+    "percentile_player_eligibility": "all players in both adjacent seasons with non-empty training and holdout values for the category; no minimum-game threshold",
+    "percentile_sample_size_bands": [
+      {
+        "label": "1-19",
+        "maximum": 19,
+        "minimum": 1
+      },
+      {
+        "label": "20-39",
+        "maximum": 39,
+        "minimum": 20
+      },
+      {
+        "label": "40-59",
+        "maximum": 59,
+        "minimum": 40
+      },
+      {
+        "label": "60+",
+        "maximum": null,
+        "minimum": 60
+      }
+    ],
+    "source_game_id_coverage_rule": "fail if either player-log-only ids / player-log ids or parsed-game-only ids / parsed-game ids exceeds the ceiling",
+    "stability_metrics": [
+      "spearman",
+      "player_specific_mae",
+      "training_league_median_baseline_mae"
+    ],
+    "upper_percentile": 0.8
+  },
+  "protocol_provenance": {
+    "immutable_repository_preregistration": false,
+    "limitation": "the implementation and evidence first enter git together, so the repository cannot independently prove prospective registration",
+    "status": "coordinator_approved_before_successful_outcome_run"
+  },
+  "protocol_version": "b055dfbf67bb5127",
+  "runtime_derivation_version": "f4ce099a5e84e0f8",
+  "runtime_release": {
+    "blowout_suppression": "rejected",
+    "blowout_suppression_reason": "selection and/or final holdout failed the predeclared rule",
+    "composite_grade": "not_defined"
+  },
+  "season_type": "regular",
+  "selection": {
+    "blowout_suppression": {
+      "calibration_bins": [
+        {
+          "observed_mean_delta_minutes": -2.9954306155794255,
+          "players": 87,
+          "predicted_mean_delta_minutes": -5.676613223482292
+        },
+        {
+          "observed_mean_delta_minutes": -2.9428070798518733,
+          "players": 88,
+          "predicted_mean_delta_minutes": -3.4584611811160597
+        },
+        {
+          "observed_mean_delta_minutes": -0.7737735411855268,
+          "players": 88,
+          "predicted_mean_delta_minutes": -1.3767591219233806
+        },
+        {
+          "observed_mean_delta_minutes": -1.1940439314641864,
+          "players": 88,
+          "predicted_mean_delta_minutes": 1.7234307167239609
+        }
+      ],
+      "calibration_intercept": -1.3837201112180737,
+      "calibration_sign_reversal": true,
+      "calibration_slope": 0.2697028797571982,
+      "candidate_mae": 2.659498006904916,
+      "eligible_players": 351,
+      "mae_improvement_bootstrap_95": [
+        -0.013787688607619504,
+        0.5674555160203407
+      ],
+      "mean_mae_improvement": 0.2864400805656672,
+      "release_reason": "one or more pre-registered held-out rules failed",
+      "release_rule_passed": false,
+      "sign_stability": 0.6837606837606838,
+      "zero_effect_mae": 2.9459380874705827
+    },
+    "eligible_players": 357,
+    "minimum_games_each_season": 20,
+    "percentile_coverage": {
+      "ast": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.3547214959897195,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.45246690734055356,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.7178098676293622,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.4362224039247751,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.7935404742436631,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.3604247104247104,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8268339768339769,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.32525039536109646,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.818284509375706,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8101652855940089,
+        "upper_target": 0.8
+      },
+      "blk": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.6856028714494616,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.746690734055355,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.851985559566787,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.7636958299264105,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.8630417007358954,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.7102316602316602,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8733590733590734,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.6539649069960087,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.8963024324120792,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.88416714671866,
+        "upper_target": 0.8
+      },
+      "fg3m": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.47259272388886425,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.6173285198555957,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.7683513838748496,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.5331152902698283,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.802943581357318,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.502895752895753,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8359073359073359,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.4315083967166202,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.8437382333007003,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8319670315061816,
+        "upper_target": 0.8
+      },
+      "fg_pct": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.217973146630035,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.30505415162454874,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.6913357400722022,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.2313982011447261,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.7440719542109566,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.20945945945945946,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.7758687258687259,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.2079222833044657,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.7874839972889525,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7730314175566092,
+        "upper_target": 0.8
+      },
+      "ft_pct": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.42717241990517124,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.5673886883273165,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.7990373044524669,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.5715453802125919,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.8229762878168438,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.43996138996138995,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.7922779922779922,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.37804051509902853,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.7707658709240154,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7834448531040901,
+        "upper_target": 0.8
+      },
+      "pts": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.26645101254043513,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.31167268351383876,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.6209386281588448,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.2796402289452167,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.7342600163532298,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.28185328185328185,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.772007722007722,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.2523533398599292,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.7801792303637322,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.761598794700226,
+        "upper_target": 0.8
+      },
+      "reb": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.29357025745557674,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.34957882069795426,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.6395908543922985,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.3029435813573181,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.7567457072771873,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.29498069498069496,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8156370656370656,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.28428345507944874,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.8074403193011522,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.7914654141002349,
+        "upper_target": 0.8
+      },
+      "stl": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.5004652811627598,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.6064981949458483,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.7767749699157641,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.6095666394112838,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.7886345053147997,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.5430501930501931,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8409266409266409,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.4504857293470894,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.8459221326907147,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8334736562236894,
+        "upper_target": 0.8
+      },
+      "to": {
+        "holdout_observations": 22567,
+        "lower_observed": 0.4330216688084371,
+        "lower_target": 0.2,
+        "players": 447,
+        "sample_size_bands": [
+          {
+            "holdout_observations": 1662,
+            "label": "1-19",
+            "lower_observed": 0.5409145607701564,
+            "lower_target": 0.2,
+            "players": 57,
+            "upper_observed": 0.6901323706377858,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 2446,
+            "label": "20-39",
+            "lower_observed": 0.535977105478332,
+            "lower_target": 0.2,
+            "players": 62,
+            "upper_observed": 0.8094848732624693,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 5180,
+            "label": "40-59",
+            "lower_observed": 0.48301158301158303,
+            "lower_target": 0.2,
+            "players": 107,
+            "upper_observed": 0.8534749034749035,
+            "upper_target": 0.8
+          },
+          {
+            "holdout_observations": 13279,
+            "label": "60+",
+            "lower_observed": 0.3810527901197379,
+            "lower_target": 0.2,
+            "players": 221,
+            "upper_observed": 0.8447172226824309,
+            "upper_target": 0.8
+          }
+        ],
+        "upper_observed": 0.8315239065892676,
+        "upper_target": 0.8
+      }
+    },
+    "percentile_players_considered": 447,
+    "stability": {
+      "ast_sd": {
+        "league_median_baseline": 1.5860799009725741,
+        "league_median_baseline_mae": 0.5360081506189364,
+        "player_specific_mae": 0.33720182560399004,
+        "players": 357,
+        "spearman": 0.7646365685103006
+      },
+      "blk_sd": {
+        "league_median_baseline": 0.6315264483164706,
+        "league_median_baseline_mae": 0.22653970903026058,
+        "player_specific_mae": 0.14460554742543535,
+        "players": 357,
+        "spearman": 0.7753371834931249
+      },
+      "fg3m_sd": {
+        "league_median_baseline": 1.147093189244068,
+        "league_median_baseline_mae": 0.4298782450144212,
+        "player_specific_mae": 0.22191675842326886,
+        "players": 357,
+        "spearman": 0.8327687683330536
+      },
+      "fg_pct_sd": {
+        "league_median_baseline": 1.3207033505563175,
+        "league_median_baseline_mae": 0.3242746836754458,
+        "player_specific_mae": 0.21997700940204956,
+        "players": 357,
+        "spearman": 0.7832638547855273
+      },
+      "ft_pct_sd": {
+        "league_median_baseline": 0.5403024305663066,
+        "league_median_baseline_mae": 0.20293534908768052,
+        "player_specific_mae": 0.12276469345520763,
+        "players": 357,
+        "spearman": 0.7814998650627715
+      },
+      "minutes_cv": {
+        "league_median_baseline": 0.27977134946065957,
+        "league_median_baseline_mae": 0.16675361353673618,
+        "player_specific_mae": 0.10703245720715508,
+        "players": 357,
+        "spearman": 0.8211106299276977
+      },
+      "pts_sd": {
+        "league_median_baseline": 5.667748814421527,
+        "league_median_baseline_mae": 1.300731605767694,
+        "player_specific_mae": 0.9643310436606688,
+        "players": 357,
+        "spearman": 0.7240990426677231
+      },
+      "reb_sd": {
+        "league_median_baseline": 2.252266340298229,
+        "league_median_baseline_mae": 0.5820254662152482,
+        "player_specific_mae": 0.4106833608945452,
+        "players": 357,
+        "spearman": 0.7330212337067349
+      },
+      "stl_sd": {
+        "league_median_baseline": 0.8468599159080074,
+        "league_median_baseline_mae": 0.19138869957476567,
+        "player_specific_mae": 0.1591885190059583,
+        "players": 357,
+        "spearman": 0.6810648972709832
+      },
+      "to_sd": {
+        "league_median_baseline": 1.0534535157112106,
+        "league_median_baseline_mae": 0.2944257631303035,
+        "player_specific_mae": 0.19921396805379796,
+        "players": 357,
+        "spearman": 0.7582508363437902
+      }
+    },
+    "stage": "selection"
+  },
+  "source": "nba_api:LeagueGameFinder+PlayerGameLogs",
+  "source_cohorts": {
+    "2023-24": {
+      "excluded_player_game_logs": 0,
+      "fingerprint": "4ecfda8e09653886",
+      "first_game_date": "2023-10-24",
+      "first_game_id": "0022300061",
+      "last_game_date": "2024-04-14",
+      "last_game_id": "0022301200",
+      "parsed_completed_games": 1230,
+      "parsed_game_coverage_of_player_logs": 1.0,
+      "parsed_game_only_ids": [],
+      "parsed_game_only_reason": null,
+      "player_game_logs": 26401,
+      "player_log_coverage_of_parsed_games": 1.0,
+      "player_log_only_game_ids": [],
+      "player_log_only_reason": null,
+      "players": 572,
+      "source_game_ids_with_player_logs": 1230
+    },
+    "2024-25": {
+      "excluded_player_game_logs": 0,
+      "fingerprint": "34a836176d535b4b",
+      "first_game_date": "2024-10-22",
+      "first_game_id": "0022400061",
+      "last_game_date": "2025-04-13",
+      "last_game_id": "0022401200",
+      "parsed_completed_games": 1230,
+      "parsed_game_coverage_of_player_logs": 1.0,
+      "parsed_game_only_ids": [],
+      "parsed_game_only_reason": null,
+      "player_game_logs": 26306,
+      "player_log_coverage_of_parsed_games": 1.0,
+      "player_log_only_game_ids": [],
+      "player_log_only_reason": null,
+      "players": 569,
+      "source_game_ids_with_player_logs": 1230
+    },
+    "2025-26": {
+      "excluded_player_game_logs": 0,
+      "fingerprint": "b7301976c833738f",
+      "first_game_date": "2025-10-21",
+      "first_game_id": "0022500001",
+      "last_game_date": "2026-04-12",
+      "last_game_id": "0022501200",
+      "parsed_completed_games": 1230,
+      "parsed_game_coverage_of_player_logs": 1.0,
+      "parsed_game_only_ids": [],
+      "parsed_game_only_reason": null,
+      "player_game_logs": 26651,
+      "player_log_coverage_of_parsed_games": 1.0,
+      "player_log_only_game_ids": [],
+      "player_log_only_reason": null,
+      "players": 582,
+      "source_game_ids_with_player_logs": 1230
+    }
+  }
+}

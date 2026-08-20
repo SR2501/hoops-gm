@@ -6,9 +6,14 @@ from typing import Any
 import pytest
 from sqlalchemy import func, select
 
-from hoops_gm.db.lineage import record_refresh
+from hoops_gm.db.lineage import (
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    record_refresh,
+    schedule_content_version,
+)
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam, Player
+from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.schedule_context import OffNightSlate, OpponentContext
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
@@ -406,6 +411,54 @@ def _publish_test_claim(
     return model, claim
 
 
+def _register_verifiable_schedule(session: Any) -> str:
+    entries = session.scalars(
+        select(TeamScheduleEntry).where(
+            TeamScheduleEntry.season == "2026-27",
+            TeamScheduleEntry.season_type == SeasonType.REGULAR,
+        )
+    ).all()
+    game_count = len({entry.game_id for entry in entries})
+    assert len(entries) == game_count * 2
+    version = schedule_content_version(session, season="2026-27")
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key="nba-schedule",
+        version=version,
+        source="test:canonical-schedule",
+        season="2026-27",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": "2026-27",
+                "season_type": "regular",
+                "source_game_count": game_count,
+                "resolved_game_count": game_count,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": len(entries),
+            }
+        },
+        refreshed_at=datetime(2026, 8, 19, tzinfo=UTC),
+    )
+    return version
+
+
+def _mutate_schedule_date_without_changing_row_count(session: Any) -> None:
+    entries = session.scalars(
+        select(TeamScheduleEntry)
+        .where(TeamScheduleEntry.season == "2026-27")
+        .order_by(TeamScheduleEntry.game_id, TeamScheduleEntry.team_id)
+    ).all()
+    assert entries
+    game = session.get(NbaGame, entries[0].game_id)
+    assert game is not None
+    game.game_date += timedelta(days=1)
+    for entry in entries:
+        if entry.game_id == game.id:
+            entry.game_date = game.game_date
+    session.flush()
+
+
 def test_context_service_persists_explainable_versioned_outputs(session: Any) -> None:
     games, config = _load_context_database(session)
     _model, claim = _publish_test_claim(session, games, config)
@@ -453,6 +506,49 @@ def test_context_service_persists_explainable_versioned_outputs(session: Any) ->
     assert slate.streaming_window_score is None
     assert slate.source_version == claim.source_version
     assert slate.input_snapshot["opponent_context_coverage"]["eligible_fixture_rows"] == 4
+
+
+def test_context_publication_rejects_same_row_count_schedule_mutation(session: Any) -> None:
+    _games, config = _load_context_database(session)
+    obsolete_version = _register_verifiable_schedule(session)
+    _mutate_schedule_date_without_changing_row_count(session)
+
+    with pytest.raises(StaleContextCohortError, match="no longer current"):
+        publish_schedule_context_cohorts(
+            session,
+            season="2026-27",
+            config=config,
+        )
+
+    assert session.scalar(select(func.count(OffNightSlate.id))) == 0
+    assert session.scalar(select(func.count(OpponentContext.id))) == 0
+    assert (
+        session.scalar(
+            select(func.count(RefreshRun.id)).where(
+                RefreshRun.artifact_type != RefreshArtifactType.SCHEDULE
+            )
+        )
+        == 0
+    )
+    assert schedule_content_version(session, season="2026-27") != obsolete_version
+
+
+def test_context_output_rejects_same_row_count_mutation_after_publication(session: Any) -> None:
+    games, config = _load_context_database(session)
+    _register_verifiable_schedule(session)
+    _model, claim = _publish_test_claim(session, games, config)
+    _mutate_schedule_date_without_changing_row_count(session)
+
+    with pytest.raises(StaleContextCohortError, match="no longer current"):
+        compute_schedule_context(
+            session,
+            season="2026-27",
+            claim=claim,
+            config=config,
+        )
+
+    assert session.scalar(select(func.count(OffNightSlate.id))) == 0
+    assert session.scalar(select(func.count(OpponentContext.id))) == 0
 
 
 def test_context_service_rejects_a_superseded_schedule_cohort(session: Any) -> None:
@@ -694,7 +790,9 @@ def test_only_the_gate_passed_blowout_release_can_be_published(session: Any) -> 
     release = load_blowout_release(RELEASED_BLOWOUT_MODEL_VERSION)
     assert release.model.version == RELEASED_BLOWOUT_MODEL_VERSION
     assert release.model.source_version == release.training_source_fingerprint
-    assert release.holdout_source_fingerprint == "e992a314295c442a"
+    assert release.holdout_source_fingerprint == "227986453d8e33cd"
+    with pytest.raises(UnreleasedBlowoutModelError):
+        load_blowout_release("4809af29ed135f6f")
 
 
 def test_three_player_subset_is_not_a_complete_team_box_score() -> None:

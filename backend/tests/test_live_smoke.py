@@ -48,6 +48,7 @@ from hoops_gm.ingest.nba import (
     parse_box_score_summary_v3,
     parse_common_all_players,
     parse_league_game_finder,
+    parse_player_game_logs,
     parse_teams,
 )
 from hoops_gm.ingest.projections import (
@@ -332,10 +333,76 @@ class TestNbaStatsIsAlive:
             nba.league_game_finder(season=FIXTURE_STATS_SEASON, max_age=NO_CACHE),
             season=FIXTURE_STATS_SEASON,
         )
-        assert len(games) > 1000, (
-            f"only {len(games)} games for {FIXTURE_STATS_SEASON}; a full NBA regular "
-            "season is 1,230"
+        logs = parse_player_game_logs(
+            nba.player_game_logs(season=FIXTURE_STATS_SEASON, max_age=NO_CACHE)
         )
+        game_ids = {game.nba_game_id for game in games}
+        player_log_game_ids = {log.nba_game_id for log in logs}
+        assert len(games) == 1230, (
+            f"parsed {len(games)} games for {FIXTURE_STATS_SEASON}; the official regular "
+            "season contains 1,230. Treat schedule, participation, and model cohorts as suspect."
+        )
+        assert game_ids == player_log_game_ids, (
+            "LeagueGameFinder and PlayerGameLogs game identities disagree: "
+            f"schedule-only={sorted(game_ids - player_log_game_ids)}, "
+            f"logs-only={sorted(player_log_game_ids - game_ids)}"
+        )
+
+    def test_a_full_postseason_uses_canonical_playoff_scope(self, nba: NbaStatsClient) -> None:
+        games = parse_league_game_finder(
+            nba.league_game_finder(
+                season=FIXTURE_STATS_SEASON,
+                season_type="Playoffs",
+                max_age=NO_CACHE,
+            ),
+            season=FIXTURE_STATS_SEASON,
+            season_type="playoffs",
+        )
+        logs = parse_player_game_logs(
+            nba.player_game_logs(
+                season=FIXTURE_STATS_SEASON,
+                season_type="Playoffs",
+                max_age=NO_CACHE,
+            )
+        )
+
+        assert len(games) == 84
+        assert {game.nba_game_id for game in games} == {log.nba_game_id for log in logs}
+
+    def test_repeated_canonical_games_agree_with_independent_orientation(
+        self, nba: NbaStatsClient
+    ) -> None:
+        affected = {
+            "2024-25": (
+                "0022400147",
+                "0022400621",
+                "0022400633",
+                "0022401229",
+                "0022401230",
+            ),
+            "2025-26": (
+                "0022500147",
+                "0022500578",
+                "0022500602",
+                "0022501229",
+                "0022501230",
+            ),
+        }
+        for season, game_ids in affected.items():
+            schedule = {
+                game.nba_game_id: game
+                for game in parse_league_game_finder(
+                    nba.league_game_finder(season=season, max_age=NO_CACHE),
+                    season=season,
+                )
+            }
+            for game_id in game_ids:
+                summary, _ = parse_box_score_summary_v3(
+                    nba.box_score_summary(game_id, max_age=NO_CACHE)
+                )
+                assert summary is not None
+                assert schedule[game_id].home_team_id == summary.home_team_id
+                assert schedule[game_id].away_team_id == summary.away_team_id
 
     def test_the_inactive_list_is_still_populated_for_a_midseason_game(
         self, nba: NbaStatsClient

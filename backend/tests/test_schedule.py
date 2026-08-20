@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, date, datetime, time
+from dataclasses import replace
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from hoops_gm.calendar import (
     ScoringPeriodProjectionResult,
@@ -21,10 +22,14 @@ from hoops_gm.calendar import (
 )
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     check_cohort,
     current_refresh,
     lock_refresh_scope,
     record_refresh,
+    schedule_completeness,
+    schedule_content_version,
+    verify_refresh,
 )
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
@@ -32,7 +37,12 @@ from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.ingest.errors import SourceContractError
-from hoops_gm.ingest.importers import import_league_settings, import_schedule, import_teams
+from hoops_gm.ingest.importers import (
+    import_games,
+    import_league_settings,
+    import_schedule,
+    import_teams,
+)
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
     PlayoffRules,
@@ -43,6 +53,7 @@ from hoops_gm.ingest.league_settings import (
 from hoops_gm.ingest.nba import (
     NbaStatsClient,
     NbaTeamRecord,
+    ScheduleParseResult,
     build_schedule_density,
     parse_schedule,
     parse_teams,
@@ -57,6 +68,41 @@ EASTERN = ZoneInfo("America/New_York")
 
 def load(name: str) -> Any:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def resolved_schedule_payload() -> Any:
+    """The recorded payload with the TBD Cup games dropped.
+
+    The recorded fixture deliberately contains games whose teams the NBA has
+    not assigned yet, and ``import_schedule`` refuses to register a cohort
+    that does not account for every game the source reported. A fully resolved
+    slate is therefore built here rather than by editing the fixture, which
+    would destroy the very drift evidence the Adapter gate keeps it for.
+    """
+
+    payload = load("nba_scheduleleaguev2_2026_27.json")
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        game_date["games"] = [
+            game
+            for game in game_date["games"]
+            if game["homeTeam"]["teamId"] != 0 and game["awayTeam"]["teamId"] != 0
+        ]
+    return payload
+
+
+def import_schedule_teams(session: Session, result: Any) -> None:
+    team_ids = {
+        team_id
+        for record in result.games
+        for team_id in (record.home_nba_team_id, record.away_nba_team_id)
+    }
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
+            for team_id in sorted(team_ids)
+        ],
+    )
 
 
 def test_schedule_fixture_resolves_games_and_reconciles_the_two_time_fields() -> None:
@@ -116,19 +162,13 @@ def test_schedule_client_uses_the_official_schedule_endpoint() -> None:
 
 
 def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(session: Any) -> None:
-    result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
     team_ids = {
         team_id
         for record in result.games
         for team_id in (record.home_nba_team_id, record.away_nba_team_id)
     }
-    import_teams(
-        session,
-        [
-            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
-            for team_id in sorted(team_ids)
-        ],
-    )
+    import_schedule_teams(session, result)
     league = League(
         name="Test league",
         season="2026-27",
@@ -139,8 +179,8 @@ def test_schedule_import_is_idempotent_and_counts_against_scoring_periods(sessio
     session.add(league)
     session.flush()
 
-    first = import_schedule(session, result.games)
-    second = import_schedule(session, result.games)
+    first = import_schedule(session, result)
+    second = import_schedule(session, result)
     projection = _project_periods(
         session,
         league,
@@ -178,21 +218,10 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
     otherwise go stale for no reason every time the importer merely confirms
     what it already knew.
     """
-    result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
-    team_ids = {
-        team_id
-        for record in result.games
-        for team_id in (record.home_nba_team_id, record.away_nba_team_id)
-    }
-    import_teams(
-        session,
-        [
-            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
-            for team_id in sorted(team_ids)
-        ],
-    )
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
 
-    import_schedule(session, result.games)
+    import_schedule(session, result)
     first_run = current_refresh(
         session,
         RefreshArtifactType.SCHEDULE,
@@ -203,7 +232,7 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
     assert first_run.season == "2026-27"
     assert first_run.summary["team_schedule_rows"] == 20
 
-    import_schedule(session, result.games)
+    import_schedule(session, result)
     second_run = current_refresh(
         session,
         RefreshArtifactType.SCHEDULE,
@@ -243,6 +272,342 @@ def test_schedule_import_registers_a_refresh_that_converges_on_re_import(session
         check_cohort(session, schedule_version=stale_density[0].schedule_version)[0].status
         == "stale"
     )
+
+
+def test_schedule_refresh_summary_records_auditable_source_completeness(session: Any) -> None:
+    """ "Why is this the current schedule cohort" must be answerable from the row.
+
+    The counts the source itself reported, what resolved, what did not, and
+    what was actually persisted — without them, a refresh row asserts a
+    complete season on nothing but the importer's word.
+    """
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+
+    import_schedule(session, result)
+    run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+
+    assert run is not None
+    assert run.source == "nba_api:ScheduleLeagueV2"
+    assert run.summary[SCHEDULE_COMPLETENESS_SUMMARY_KEY] == {
+        "season": "2026-27",
+        "season_type": "regular",
+        "source_game_count": 10,
+        "resolved_game_count": 10,
+        "unresolved_game_ids": [],
+        "persisted_team_row_count": 20,
+    }
+    completeness = schedule_completeness(run.summary)
+    assert completeness is not None
+    assert completeness.season_type is SeasonType.REGULAR
+    assert completeness.source_game_count == completeness.resolved_game_count
+    assert run.version == schedule_content_version(session, season="2026-27")
+
+
+def test_schedule_import_refuses_a_cohort_with_unresolved_games(session: Any) -> None:
+    """A slate the source itself could not fully resolve is not a season.
+
+    The recorded payload reports two NBA Cup games whose teams are still TBD.
+    Persisting the other ten and registering them as the current cohort would
+    hand every downstream expected-games number a denominator that is short by
+    two games and carries no marker saying so.
+    """
+    result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
+    import_schedule_teams(session, result)
+
+    with pytest.raises(SourceContractError, match="unresolved teams"):
+        import_schedule(session, result)
+
+    assert session.scalars(select(TeamScheduleEntry)).all() == []
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SCHEDULE,
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+            season="2026-27",
+        )
+        is None
+    )
+
+
+def test_schedule_import_refuses_a_source_count_that_disagrees_with_resolved_games(
+    session: Any,
+) -> None:
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+
+    with pytest.raises(SourceContractError, match=r"source reported 11.*but 10 resolved"):
+        import_schedule(session, replace(result, source_game_count=11))
+
+    assert session.scalars(select(TeamScheduleEntry)).all() == []
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SCHEDULE,
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+            season="2026-27",
+        )
+        is None
+    )
+
+
+def test_schedule_import_refuses_games_whose_teams_are_not_in_the_database(session: Any) -> None:
+    """A missing mapping used to be two silently absent rows, not an error."""
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    all_team_ids = sorted(
+        {
+            team_id
+            for record in result.games
+            for team_id in (record.home_nba_team_id, record.away_nba_team_id)
+        }
+    )
+    import_teams(
+        session,
+        [
+            NbaTeamRecord(team_id, f"T{team_id % 10_000_000:07d}", f"Team {team_id}")
+            for team_id in all_team_ids[:-1]
+        ],
+    )
+
+    with pytest.raises(SourceContractError, match="are not in"):
+        import_schedule(session, result)
+
+    assert session.scalars(select(TeamScheduleEntry)).all() == []
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SCHEDULE,
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+            season="2026-27",
+        )
+        is None
+    )
+
+
+def test_schedule_import_persists_exactly_two_mirrored_rows_per_parsed_game(session: Any) -> None:
+    """The persisted cohort is checked on stable NBA ids, not on row counts."""
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+
+    import_schedule(session, result)
+
+    observed = _persisted_schedule_rows(session, "2026-27")
+    expected = {
+        (record.game.nba_game_id, home, away, record.game.game_date, is_home)
+        for record in result.games
+        for home, away, is_home in (
+            (record.home_nba_team_id, record.away_nba_team_id, True),
+            (record.away_nba_team_id, record.home_nba_team_id, False),
+        )
+    }
+
+    assert observed == expected
+    assert len(observed) == 2 * len(result.games)
+
+
+def test_schedule_import_refuses_rows_that_fall_outside_the_parsed_cohort(session: Any) -> None:
+    """Inconsistent evidence is refused, not synchronised away.
+
+    A payload that no longer lists a game the database already holds might be
+    a real postponement or a truncated response, and the importer cannot tell
+    which. Deleting the leftover rows would cascade into ``quant``'s derived
+    ``opponent_context`` and could not be undone by re-running the import, so
+    the refresh simply does not register: both the rows and the operator's
+    options survive, and the previously registered cohort stays current
+    because it still describes the database exactly.
+    """
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+    import_schedule(session, result)
+    before = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+    assert before is not None
+    registered_version = before.version
+    original_tipoff = result.games[0].game.tipoff_utc
+    assert original_tipoff is not None
+    changed_first = replace(
+        result.games[0],
+        game=replace(result.games[0].game, tipoff_utc=original_tipoff + timedelta(hours=1)),
+    )
+
+    shortened = ScheduleParseResult(
+        season=result.season,
+        games=(changed_first, *result.games[1:-1]),
+        unresolved_game_ids=(),
+        source_game_count=len(result.games) - 1,
+    )
+
+    with pytest.raises(SourceContractError, match="does not match the parsed cohort"):
+        import_schedule(session, shortened)
+    session.commit()
+
+    after = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+    assert after is not None
+    assert after.version == registered_version, "a refused import must not register a refresh"
+    assert len(_persisted_schedule_rows(session, "2026-27")) == 2 * len(result.games)
+    assert check_cohort(session, schedule_version=registered_version)[0].status == "current"
+    persisted_game = session.scalar(
+        select(NbaGame).where(NbaGame.nba_game_id == result.games[0].game.nba_game_id)
+    )
+    assert persisted_game is not None
+    assert persisted_game.tipoff_utc == original_tipoff
+
+
+def test_schedule_import_refuses_a_persisted_game_that_contradicts_the_source(
+    session: Any,
+) -> None:
+    """``nba_games`` and ``team_schedule`` must never disagree about a fixture.
+
+    ``import_games`` deliberately never rewrites a game's core identity, so a
+    pre-existing row saying the game is a day later survives the import
+    untouched — and without this check ``team_schedule`` would be written with
+    the source's date against a game ``nba_games`` dates differently. Two
+    tables quietly contradicting each other about when a game is played is
+    worse than either being absent.
+    """
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+    contradicted = result.games[0].game
+    import_games(
+        session,
+        [replace(contradicted, game_date=contradicted.game_date + timedelta(days=1))],
+    )
+
+    with pytest.raises(SourceContractError, match="contradict the parsed schedule"):
+        import_schedule(session, result)
+
+    assert session.scalars(select(TeamScheduleEntry)).all() == []
+    assert (
+        current_refresh(
+            session,
+            RefreshArtifactType.SCHEDULE,
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+            season="2026-27",
+        )
+        is None
+    )
+
+
+def test_same_row_count_schedule_mutation_is_never_reported_current(session: Any) -> None:
+    """The failure this whole seam exists for.
+
+    A fingerprint over surrogate primary keys, or a version compared only as a
+    stored string, both report "current" after the facts underneath change —
+    the row count is identical and the registry never noticed. ``check_cohort``
+    recomputes from the persisted rows instead, so the old label can no longer
+    be validated.
+    """
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+    import_schedule(session, result)
+    run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+    assert run is not None
+    registered_version = run.version
+    assert check_cohort(session, schedule_version=registered_version)[0].status == "current"
+
+    before = session.scalars(select(TeamScheduleEntry)).all()
+    mutated = sorted(before, key=lambda entry: (entry.game_id, entry.team_id))[0]
+    mutated_game = session.get(NbaGame, mutated.game_id)
+    assert mutated_game is not None
+    mutated_game.game_date = mutated_game.game_date + timedelta(days=1)
+    for entry in before:
+        if entry.game_id == mutated.game_id:
+            entry.game_date = mutated_game.game_date
+    session.flush()
+
+    [check] = check_cohort(session, schedule_version=registered_version)
+    after = session.scalars(select(TeamScheduleEntry)).all()
+
+    assert len(after) == len(before), "the mutation must not change the row count"
+    assert check.status == "stale"
+    assert check.current_version is None
+    observed_version = schedule_content_version(session, season="2026-27")
+    verification = verify_refresh(session, run)
+    assert verification.is_current is False
+    assert verification.current_version is None
+    assert verification.observed_content_version == observed_version
+    [observed_claim] = check_cohort(session, schedule_version=observed_version)
+    assert observed_claim.status == "stale"
+    assert observed_claim.current_version is None
+    # The registry itself is untouched: detection comes from recomputing the
+    # content, not from a producer having registered something new.
+    assert run.version == registered_version
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    ["season", "season_type", "game_date", "home_away"],
+)
+def test_schedule_serializer_refuses_nba_game_identity_that_contradicts_team_schedule(
+    session: Any,
+    contradiction: str,
+) -> None:
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+    import_schedule(session, result)
+    game = session.scalar(select(NbaGame).order_by(NbaGame.nba_game_id))
+    assert game is not None
+
+    if contradiction == "season":
+        game.season = "2025-26"
+    elif contradiction == "season_type":
+        game.season_type = SeasonType.PLAYOFFS
+    elif contradiction == "game_date":
+        game.game_date = game.game_date + timedelta(days=1)
+    else:
+        game.home_team_id, game.away_team_id = game.away_team_id, game.home_team_id
+    session.flush()
+
+    with pytest.raises(ValueError, match="contradicts team_schedule"):
+        schedule_content_version(session, season="2026-27")
+
+
+def _persisted_schedule_rows(
+    session: Session, season: str
+) -> set[tuple[str, int, int, date, bool]]:
+    """The persisted cohort keyed on stable NBA identifiers."""
+
+    team = aliased(NbaTeam)
+    opponent = aliased(NbaTeam)
+    rows = session.execute(
+        select(
+            NbaGame.nba_game_id,
+            team.nba_team_id,
+            opponent.nba_team_id,
+            TeamScheduleEntry.game_date,
+            TeamScheduleEntry.is_home,
+        )
+        .join(NbaGame, NbaGame.id == TeamScheduleEntry.game_id)
+        .join(team, team.id == TeamScheduleEntry.team_id)
+        .join(opponent, opponent.id == TeamScheduleEntry.opponent_team_id)
+        .where(
+            TeamScheduleEntry.season == season,
+            TeamScheduleEntry.season_type == SeasonType.REGULAR,
+        )
+    ).all()
+    return {
+        (nba_game_id, team_nba_id, opponent_nba_id, game_date, bool(is_home))
+        for nba_game_id, team_nba_id, opponent_nba_id, game_date, is_home in rows
+    }
 
 
 def test_playoff_schedule_counts_complete_league_scoped_team_period_grid(
@@ -459,7 +824,7 @@ def test_scheduled_game_counts_reject_a_different_season_cohort(session: Session
         season="2025-26",
     )
 
-    with pytest.raises(RuntimeError, match=r"'2026-27' has no current NBA schedule refresh"):
+    with pytest.raises(RuntimeError, match="stale NBA schedule"):
         scheduled_game_counts(session, league_id=league.id, season="2026-27")
 
 

@@ -12,13 +12,13 @@ the full rationale.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,9 +32,21 @@ from hoops_gm.calendar.deadline_calendar import (
 )
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
-from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
-from hoops_gm.db.models import League, LeagueDeadlineCalendar, LeagueSettingsSnapshot
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    record_refresh,
+    schedule_content_version,
+)
+from hoops_gm.db.models import (
+    League,
+    LeagueDeadlineCalendar,
+    LeagueSettingsSnapshot,
+    NbaGame,
+    NbaTeam,
+    TeamScheduleEntry,
+)
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
@@ -195,6 +207,76 @@ def _register_schedule(
     )
 
 
+def _register_verified_schedule(session: Session) -> NbaGame:
+    home = NbaTeam(nba_team_id=1610612701, abbreviation="HME", name="Home")
+    away = NbaTeam(nba_team_id=1610612702, abbreviation="AWY", name="Away")
+    session.add_all([home, away])
+    session.flush()
+    game = NbaGame(
+        nba_game_id="0022500001",
+        season=SEASON,
+        season_type=SeasonType.REGULAR,
+        game_date=date(2025, 10, 21),
+        home_team_id=home.id,
+        away_team_id=away.id,
+    )
+    session.add(game)
+    session.flush()
+    session.add_all(
+        [
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=home.id,
+                opponent_team_id=away.id,
+                game_date=game.game_date,
+                is_home=True,
+            ),
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=away.id,
+                opponent_team_id=home.id,
+                game_date=game.game_date,
+                is_home=False,
+            ),
+        ]
+    )
+    session.flush()
+    version = schedule_content_version(session, season=SEASON)
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=version,
+        season=SEASON,
+        source="test",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": SEASON,
+                "season_type": "regular",
+                "source_game_count": 1,
+                "resolved_game_count": 1,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 2,
+            }
+        },
+        refreshed_at=datetime(2026, 8, 18, tzinfo=UTC),
+    )
+    return game
+
+
+def _mutate_schedule_date_without_changing_row_count(session: Session, game: NbaGame) -> None:
+    game.game_date += timedelta(days=1)
+    for entry in session.scalars(
+        select(TeamScheduleEntry).where(TeamScheduleEntry.game_id == game.id)
+    ):
+        entry.game_date = game.game_date
+    session.flush()
+
+
 # --------------------------------------------------------------------------
 # ORM contract
 # --------------------------------------------------------------------------
@@ -323,6 +405,37 @@ def test_deriving_fails_closed_when_no_schedule_refresh_exists(session: Session)
     _write_settings(session, league, _document())
 
     with pytest.raises(DeadlineCalendarLineageError, match="no registered schedule refresh"):
+        derive_deadline_calendar(session, league)
+
+
+def test_deriving_wraps_malformed_schedule_evidence_in_its_domain_error(
+    session: Session,
+) -> None:
+    league = _league(session)
+    _write_settings(session, league, _document())
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=schedule_content_version(session, season=SEASON),
+        season=SEASON,
+        source="test",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": SEASON,
+                "season_type": "regular",
+                "source_game_count": 0,
+                "resolved_game_count": 0,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 0,
+            }
+        },
+    )
+
+    with pytest.raises(
+        DeadlineCalendarLineageError,
+        match=r"schedule evidence.*malformed.*impossible all-zero refresh",
+    ):
         derive_deadline_calendar(session, league)
 
 
@@ -600,6 +713,25 @@ def test_new_schedule_lineage_opens_the_next_version_without_altering_the_prior_
     assert first.calendar.schedule_version == "sched-1"
 
 
+def test_calendar_paths_reject_a_same_row_count_schedule_mutation(session: Session) -> None:
+    league = _league(session)
+    _write_settings(session, league, _document())
+    game = _register_verified_schedule(session)
+    calendar = derive_deadline_calendar(session, league).calendar
+    activate_deadline_calendar(session, league, calendar.version)
+    assert session.query(TeamScheduleEntry).count() == 2
+
+    _mutate_schedule_date_without_changing_row_count(session, game)
+    assert session.query(TeamScheduleEntry).count() == 2
+
+    with pytest.raises(DeadlineCalendarLineageError, match=r"schedule evidence.*stale"):
+        derive_deadline_calendar(session, league)
+    with pytest.raises(DeadlineCalendarStaleActivationError, match=r"schedule evidence.*stale"):
+        activate_deadline_calendar(session, league, calendar.version)
+    with pytest.raises(DeadlineCalendarStaleActivationError, match=r"schedule evidence.*stale"):
+        current_deadline_calendar(session, league)
+
+
 # --------------------------------------------------------------------------
 # activate_deadline_calendar / current_deadline_calendar
 # --------------------------------------------------------------------------
@@ -724,6 +856,27 @@ def test_current_deadline_calendar_endpoint_returns_the_active_calendar(
     assert body["season_start_date"] == "2025-10-21"
     unsupported = body["unsupported_rules"]
     assert unsupported["trade_deadline"]["value"] is None
+
+
+def test_current_deadline_calendar_endpoint_refuses_a_same_row_count_schedule_mutation(
+    app: FastAPI,
+) -> None:
+    with TestClient(app, raise_server_exceptions=False) as client:
+        Base.metadata.drop_all(app.state.database.engine)
+        Base.metadata.create_all(app.state.database.engine)
+        with app.state.database.session() as session:
+            league = _league(session)
+            league_id = league.id
+            _write_settings(session, league, _document())
+            game = _register_verified_schedule(session)
+            calendar = derive_deadline_calendar(session, league).calendar
+            activate_deadline_calendar(session, league, calendar.version)
+            _mutate_schedule_date_without_changing_row_count(session, game)
+
+        response = client.get(f"/api/v1/leagues/{league_id}/deadline-calendar/current")
+
+    assert response.status_code == 500
+    assert response.json()["error"] == "internal_error"
 
 
 def test_deadline_calendar_contract_is_advertised_in_openapi(client: TestClient) -> None:

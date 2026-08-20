@@ -138,7 +138,7 @@ def run_backtest(client: ReliabilityBacktestClient | None = None) -> dict[str, o
         selection_blowout["release_rule_passed"] and final_blowout["release_rule_passed"]
     )
     return {
-        "evidence_version": "reliability-metrics-v1",
+        "evidence_version": "reliability-metrics-v2",
         "source": "nba_api:LeagueGameFinder+PlayerGameLogs",
         "season_type": "regular",
         "runtime_derivation_version": ReliabilityConfig().derivation_version,
@@ -434,8 +434,7 @@ def _cohort_metadata(cohort: SeasonCohort) -> dict[str, object]:
         "parsed_game_only_ids": list(cohort.parsed_game_only_ids),
         "excluded_player_game_logs": cohort.excluded_player_game_logs,
         "player_log_only_reason": (
-            "PlayerGameLogs game ids without a two-sided home/away result from "
-            "the existing LeagueGameFinder parser"
+            "PlayerGameLogs game ids absent from the parsed LeagueGameFinder two-sided game set"
             if cohort.player_log_only_game_ids
             else None
         ),

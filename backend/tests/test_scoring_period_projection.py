@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -21,8 +21,10 @@ from hoops_gm.calendar import (
 )
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     current_refresh,
     record_refresh,
+    schedule_content_version,
 )
 from hoops_gm.db.models import (
     FantasyTeam,
@@ -30,10 +32,13 @@ from hoops_gm.db.models import (
     LeagueDeadlineCalendar,
     LeagueSettingsSnapshot,
     Matchup,
+    NbaGame,
+    NbaTeam,
     RefreshRun,
     ScoringPeriod,
+    TeamScheduleEntry,
 )
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.ingest.importers import import_league_settings
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
@@ -140,6 +145,75 @@ def _register_schedule(
         season=SEASON,
         refreshed_at=refreshed_at,
     )
+
+
+def _register_verified_schedule(session: Session) -> RefreshRun:
+    home = NbaTeam(nba_team_id=1610612801, abbreviation="HME", name="Home")
+    away = NbaTeam(nba_team_id=1610612802, abbreviation="AWY", name="Away")
+    session.add_all([home, away])
+    session.flush()
+    game = NbaGame(
+        nba_game_id="0022600001",
+        season=SEASON,
+        season_type=SeasonType.REGULAR,
+        game_date=date(2026, 10, 20),
+        home_team_id=home.id,
+        away_team_id=away.id,
+    )
+    session.add(game)
+    session.flush()
+    session.add_all(
+        [
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=home.id,
+                opponent_team_id=away.id,
+                game_date=game.game_date,
+                is_home=True,
+            ),
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=away.id,
+                opponent_team_id=home.id,
+                game_date=game.game_date,
+                is_home=False,
+            ),
+        ]
+    )
+    session.flush()
+    version = schedule_content_version(session, season=SEASON)
+    return record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=version,
+        source="test",
+        season=SEASON,
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": SEASON,
+                "season_type": "regular",
+                "source_game_count": 1,
+                "resolved_game_count": 1,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": 2,
+            }
+        },
+        refreshed_at=datetime(2026, 8, 18, tzinfo=UTC),
+    )
+
+
+def _mutate_schedule_date_without_changing_row_count(session: Session, game: NbaGame) -> None:
+    game.game_date += timedelta(days=1)
+    for entry in session.scalars(
+        select(TeamScheduleEntry).where(TeamScheduleEntry.game_id == game.id)
+    ):
+        entry.game_date = game.game_date
+    session.flush()
 
 
 def _activate_current_calendar(
@@ -507,6 +581,50 @@ def test_projection_rejects_a_stale_active_calendar_after_schedule_refresh(
 
     with pytest.raises(ScoringPeriodProjectionError, match="stale NBA schedule"):
         require_current_scoring_period_projection(session, league)
+
+
+def test_projection_wraps_malformed_schedule_evidence_in_its_domain_error(
+    session: Session,
+) -> None:
+    league = _league(session)
+    schedule = _register_schedule(session)
+    _activate_current_calendar(session, league, _document())
+    schedule.summary = {
+        SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+            "season": SEASON,
+            "season_type": "regular",
+            "source_game_count": 0,
+            "resolved_game_count": 0,
+            "unresolved_game_ids": [],
+            "persisted_team_row_count": 0,
+        }
+    }
+    session.flush()
+
+    with pytest.raises(
+        ScoringPeriodProjectionError,
+        match=r"schedule evidence.*malformed.*impossible all-zero refresh",
+    ):
+        project_scoring_periods(session, league)
+
+
+def test_projection_paths_reject_a_same_row_count_schedule_mutation(session: Session) -> None:
+    league = _league(session)
+    schedule = _register_verified_schedule(session)
+    _activate_current_calendar(session, league, _document())
+    project_scoring_periods(session, league)
+    game = session.scalar(select(NbaGame).where(NbaGame.season == SEASON))
+    assert game is not None
+    assert session.query(TeamScheduleEntry).count() == 2
+
+    _mutate_schedule_date_without_changing_row_count(session, game)
+    assert session.query(TeamScheduleEntry).count() == 2
+
+    with pytest.raises(ScoringPeriodProjectionError, match=r"schedule evidence.*stale"):
+        project_scoring_periods(session, league)
+    with pytest.raises(ScoringPeriodProjectionError, match=r"schedule evidence.*stale"):
+        require_current_scoring_period_projection(session, league)
+    assert schedule.version != schedule_content_version(session, season=SEASON)
 
 
 def test_current_projection_rejects_manual_row_mutation(session: Session) -> None:

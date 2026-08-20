@@ -23,6 +23,7 @@ from hoops_gm.calendar.deadline_calendar import (
     SCHEMA_VERSION as DEADLINE_CALENDAR_SCHEMA_VERSION,
 )
 from hoops_gm.calendar.deadline_calendar import (
+    DeadlineCalendarStaleActivationError,
     current_deadline_calendar,
     scoring_period_windows,
 )
@@ -33,6 +34,7 @@ from hoops_gm.db.lineage import (
     lock_league_settings_scope,
     lock_refresh_scope,
     record_refresh,
+    verify_refresh,
 )
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.enums import RefreshArtifactType
@@ -249,7 +251,10 @@ def _locked_projection_context(session: Session, league: League) -> _ProjectionC
         season=league.season,
     )
 
-    calendar = current_deadline_calendar(session, league)
+    try:
+        calendar = current_deadline_calendar(session, league)
+    except DeadlineCalendarStaleActivationError as exc:
+        raise ScoringPeriodProjectionError(f"stale NBA schedule: {exc}") from exc
     if calendar is None:
         raise ScoringPeriodProjectionError(
             f"league {league.id} has no active deadline calendar to project"
@@ -271,6 +276,17 @@ def _locked_projection_context(session: Session, league: League) -> _ProjectionC
     if schedule_refresh is None:
         raise ScoringPeriodProjectionError(
             f"season {league.season!r} has no current NBA schedule refresh"
+        )
+    try:
+        schedule_verification = verify_refresh(session, schedule_refresh)
+    except ValueError as exc:
+        raise ScoringPeriodProjectionError(
+            f"NBA schedule evidence for season {league.season!r} is malformed: {exc}"
+        ) from exc
+    if not schedule_verification.is_current:
+        raise ScoringPeriodProjectionError(
+            f"NBA schedule evidence for season {league.season!r} is stale: registered version "
+            f"{schedule_refresh.version!r} no longer matches persisted schedule content"
         )
 
     periods = _validate_and_project(

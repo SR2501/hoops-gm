@@ -1,8 +1,8 @@
 # Schedule-context model card
 
 **Owner:** quant
-**Version:** 1
-**Status:** active — descriptive context is available. Blowout probability v1
+**Version:** 2
+**Status:** active — descriptive context is available. Blowout probability v2
 met the release calibration rule for display as context, but its improvement
 over baseline is small and it is not approved to adjust minutes, valuation, or
 automated decisions. Garbage-time suppression remains disabled.
@@ -57,7 +57,7 @@ For each team fixture, use only games before the fixture date:
 - FG and FT retain summed makes and attempts plus the derived rate. Bare
   percentages are never averaged.
 
-Only regular-season games enter v1 because its calibration cohorts contain only
+Only regular-season games enter v2 because its calibration cohorts contain only
 regular-season games. A team-game box score is complete only when summed player
 seconds equal 240 minutes plus 25 minutes per overtime, both teams have equal
 totals, at least five players recorded positive minutes, and no player exceeds
@@ -81,7 +81,7 @@ rather than manufacturing a league-average fallback; `input_snapshot` marks
 60 days before the fixture. Trades and rotation changes make those opening-week
 profiles materially less trustworthy.
 
-### Blowout probability v1
+### Blowout probability v2
 
 The feature is the absolute gap between the two teams' trailing 15-game average
 point margins, computed before the game result enters either history. Three
@@ -90,8 +90,8 @@ probability is its empirical blowout rate with beta(1, 1) smoothing.
 
 This is intentionally simple. The feature's discrimination is weak. It has
 slightly lower held-out squared probability error than the constant-rate
-baseline, but its aggregate ECE (3.23%) is slightly worse than the constant
-baseline's absolute held-out rate gap (3.11%). A more complex model is not
+baseline, but its aggregate ECE (3.47%) is slightly worse than the constant
+baseline's absolute held-out rate gap (2.95%). A more complex model is not
 justified until independent inputs add measurable held-out value.
 
 ## Training window
@@ -104,15 +104,15 @@ evaluated once on untouched 2025–26 regular-season games.
 
 | Metric | Held-out result |
 |---|---:|
-| Training examples | 1,146 |
-| Held-out examples | 1,225 |
-| Brier score | 0.23314 |
-| Constant-rate baseline Brier | 0.23464 |
-| Expected calibration error | 0.03229 |
+| Training examples | 1,152 |
+| Held-out examples | 1,230 |
+| Brier score | 0.23298 |
+| Constant-rate baseline Brier | 0.23437 |
+| Expected calibration error | 0.03469 |
 
-The 2024-25 source cohort contains 1,225 games, but refitting produces 1,146
-training examples: 79 early games are cold-start drops because both teams do not
-yet have the required same-season margin history. All 1,225 holdout games produce
+The corrected 2024-25 source cohort contains 1,230 games, but refitting produces
+1,152 training examples: 78 early games are cold-start drops because both teams
+do not yet have the required same-season margin history. All 1,230 holdout games produce
 examples because evaluation carries the 2024-25 history across the offseason
 into 2025-26. This is also an explicit fit/serve asymmetry: fitting starts the
 training season cold, while production scoring may carry prior regular-season
@@ -123,22 +123,22 @@ Calibration bins:
 
 | Predicted | Observed | Games |
 |---:|---:|---:|
-| 0.3281 | 0.3444 | 453 |
-| 0.3307 | 0.3267 | 352 |
-| 0.3672 | 0.4405 | 420 |
+| 0.3238 | 0.3436 | 454 |
+| 0.3368 | 0.3268 | 355 |
+| 0.3679 | 0.4394 | 421 |
 
 The release rule enforced by the gate is Brier better than the training-rate
-baseline and ECE at most 0.04. V1 passes both, but the Brier improvement is only
-0.00150 and no significance claim is made. The highest-risk bin still
-underpredicts by 7.3 percentage points. The gap is statistically significant
-under a binomial normal approximation (`z = 3.12`, two-sided `p ~= 0.002`), not
+baseline and ECE at most 0.04. V2 passes both, but the Brier improvement is only
+0.00139 and no significance claim is made. The highest-risk bin still
+underpredicts by 7.2 percentage points. The gap is statistically significant
+under a binomial normal approximation (`z = 3.04`, two-sided `p ~= 0.002`), not
 just visually large, so consumers must show the probability rather than
 translate it into a confident garbage-time minutes penalty.
 
 The checked evidence is
-`backend/src/hoops_gm/schedule_context/releases/schedule_context_blowout_v1.json`.
+`backend/src/hoops_gm/schedule_context/releases/schedule_context_blowout_v2.json`.
 That is also the packaged production release artifact: publication accepts only
-its allowlisted model version (`4809af29ed135f6f`) and loads the parameters from
+its allowlisted model version (`e273cfbe4b599b16`) and loads the parameters from
 that file. The registry parses it and pins a SHA-256 over canonical sorted,
 compact JSON, so content changes are rejected while CRLF/LF checkout differences
 do not create false mismatches. The loader independently derives the model
@@ -154,17 +154,22 @@ python -m hoops_gm.schedule_context.backtest
 ```
 
 CI validates the committed evidence contract; it does not call the external NBA
-source or independently recreate the 3,680 source games. The command above is
+source or independently recreate the 3,690 source games. The command above is
 the reproducibility path, and a changed upstream result must produce a new
-evidence/model version rather than editing v1 in place.
+evidence/model version rather than editing an existing release in place.
 
-The final training cohort fingerprint is `ea3f00ea22a4d703` over 1,225 completed
+The final training cohort fingerprint is `415fbf126685d4b4` over 1,230 completed
 2024-25 games. The untouched evidence cohort fingerprint is
-`e992a314295c442a` over 1,225 completed 2025-26 games (2025-10-21 through
+`227986453d8e33cd` over 1,230 completed 2025-26 games (2025-10-21 through
 2026-04-12). Selection training and validation cohorts are fingerprinted
 separately as well. These identities cover game ID, date, teams, and final score,
 so an upstream correction changes the evidence and requires a new release rather
 than silently preserving the old calibration claim.
+
+Databases populated by the pre-v2 adapter must re-ingest the affected seasons
+before serving v2 context. A scoring-time source fingerprint identifies the rows
+present in that database; it does not independently prove the database contains
+all 1,230 official games.
 
 ## Provenance, history, and rejection rules
 
@@ -203,14 +208,14 @@ data that fit the model and the observations used to score a future fixture.
 
 ## Known failure modes
 
-The 2024-25 training blowout rate is 34.12%; that is not a permanent league
+The 2024-25 training blowout rate is 34.20%; that is not a permanent league
 constant. Pace, parity, officiating, schedule policy, and late-season incentives
 can shift the base rate even when the feature distribution appears similar.
-V1 has one held-out season and no automated online calibration monitor. The
+V2 has one held-out season and no automated online calibration monitor. The
 service records model, training, holdout, and scoring-source cohorts, but it does
 not detect a live calibration drift threshold or automatically recalibrate.
 
-V1 is intentionally allowed to serve 2026-27 **display-only** context; there is
+V2 is intentionally allowed to serve 2026-27 **display-only** context; there is
 no 2025-26-only season guard. That does not make its calibration current.
 Before promoting it into any recommendation, minutes adjustment, valuation, or
 automation, `quant` must re-run the time-ordered gate on a newly fingerprinted
@@ -236,3 +241,4 @@ not published.
 | Version | Date | Change | Evaluation effect |
 |---|---|---|---|
 | 1 | 2026-08-18 | Initial display-only schedule-context release. | Brier 0.23314 and ECE 0.03229 on the untouched 2025–26 cohort; no approval for minutes, valuation, or automated decisions. |
+| 2 | 2026-08-20 | Refit after `LeagueGameFinder` reconciliation restored five omitted games in each of 2024-25 and 2025-26. V1 is retained as historical evidence but removed from the runtime allowlist. | Brier 0.23298 and ECE 0.03469 on all 1,230 held-out games; display-only release remains approved and all stronger uses remain prohibited. |

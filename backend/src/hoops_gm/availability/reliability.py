@@ -23,6 +23,7 @@ from hoops_gm.db.lineage import (
     current_refresh,
     lock_refresh_scope,
     record_refresh,
+    verify_refresh,
 )
 from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import (
@@ -254,6 +255,12 @@ class _Observation:
     participation_id: int | None
 
 
+@dataclass(frozen=True)
+class _VerifiedRefresh:
+    run: RefreshRun
+    version: str
+
+
 def publish_reliability_cohorts(
     session: Session,
     *,
@@ -389,8 +396,8 @@ def compute_reliability_scorecards(
 
     density = build_schedule_density(
         snapshot.schedule_entries,
-        schedule_version=claim.schedule_version,
-        schedule_refreshed_at=schedule_refresh.refreshed_at,
+        schedule_version=schedule_refresh.version,
+        schedule_refreshed_at=schedule_refresh.run.refreshed_at,
     )
     density_by_team_game = {(row.team_id, row.game_id): row.is_back_to_back for row in density}
     observations = _observations(snapshot, density_by_team_game=density_by_team_game)
@@ -411,8 +418,8 @@ def compute_reliability_scorecards(
         season_type=claim.season_type,
         window_start=claim.window_start,
         as_of_date=claim.as_of_date,
-        schedule_version=claim.schedule_version,
-        schedule_refreshed_at=schedule_refresh.refreshed_at,
+        schedule_version=schedule_refresh.version,
+        schedule_refreshed_at=schedule_refresh.run.refreshed_at,
         source_version=claim.source_version,
         derivation_version=claim.derivation_version,
         computed_at=when,
@@ -937,7 +944,7 @@ def _require_current(
     artifact_key: str,
     season: str,
     version: str | None = None,
-) -> RefreshRun:
+) -> _VerifiedRefresh:
     current = current_refresh(
         session,
         artifact_type,
@@ -948,12 +955,23 @@ def _require_current(
         raise StaleReliabilityCohortError(
             f"no current {artifact_type.value}:{artifact_key} cohort for season {season}"
         )
-    if version is not None and current.version != version:
+    try:
+        verification = verify_refresh(session, current)
+    except ValueError as exc:
+        raise StaleReliabilityCohortError(
+            f"cannot verify current {artifact_type.value}:{artifact_key} cohort for season {season}"
+        ) from exc
+    if not verification.is_current or verification.current_version is None:
+        raise StaleReliabilityCohortError(
+            f"registered {artifact_type.value}:{artifact_key} cohort "
+            f"{verification.registered_version} is no longer current for season {season}"
+        )
+    if version is not None and verification.current_version != version:
         raise StaleReliabilityCohortError(
             f"stale {artifact_type.value}:{artifact_key} cohort {version}; "
-            f"current is {current.version}"
+            f"current is {verification.current_version}"
         )
-    return current
+    return _VerifiedRefresh(current, verification.current_version)
 
 
 def _aware_utc(value: datetime, *, field: str) -> datetime:

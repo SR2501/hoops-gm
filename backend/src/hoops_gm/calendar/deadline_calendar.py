@@ -37,6 +37,7 @@ from hoops_gm.db.lineage import (
     current_refresh,
     lock_league_settings_scope,
     lock_refresh_scope,
+    verify_refresh,
 )
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.enums import RefreshArtifactType
@@ -120,7 +121,11 @@ def derive_deadline_calendar(
             f"target league/season={league.fantrax_league_id!r}/{league.season!r}"
         )
 
-    schedule_refresh = _current_schedule_refresh(session, league.season)
+    schedule_refresh = _verified_schedule_refresh(
+        session,
+        league.season,
+        error_type=DeadlineCalendarLineageError,
+    )
     if schedule_refresh is None:
         raise DeadlineCalendarLineageError(
             f"no registered schedule refresh for season {league.season}; "
@@ -207,7 +212,11 @@ def activate_deadline_calendar(
             f"league {league.id} settings lineage has moved past calendar version {version}"
         )
 
-    current_schedule = _current_schedule_refresh(session, target.season)
+    current_schedule = _verified_schedule_refresh(
+        session,
+        target.season,
+        error_type=DeadlineCalendarStaleActivationError,
+    )
     if current_schedule is None or current_schedule.version != target.schedule_version:
         raise DeadlineCalendarStaleActivationError(
             f"schedule lineage for {target.season} has moved past calendar version {version}"
@@ -235,10 +244,23 @@ def activate_deadline_calendar(
 
 
 def current_deadline_calendar(session: Session, league: League) -> LeagueDeadlineCalendar | None:
-    """The league's currently active calendar, or ``None`` if none has been activated."""
-    return session.scalar(
+    """Return the active calendar only while its canonical schedule still verifies."""
+    calendar = session.scalar(
         select(LeagueDeadlineCalendar).where(LeagueDeadlineCalendar.current_for_league == league.id)
     )
+    if calendar is None:
+        return None
+    schedule_refresh = _verified_schedule_refresh(
+        session,
+        calendar.season,
+        error_type=DeadlineCalendarStaleActivationError,
+    )
+    if schedule_refresh is None or schedule_refresh.version != calendar.schedule_version:
+        raise DeadlineCalendarStaleActivationError(
+            f"schedule lineage for {calendar.season} has moved past active calendar "
+            f"version {calendar.version}"
+        )
+    return calendar
 
 
 def _season_label(season_year: int) -> str:
@@ -263,6 +285,29 @@ def _current_schedule_refresh(session: Session, season: str) -> RefreshRun | Non
         artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
         season=season,
     )
+
+
+def _verified_schedule_refresh(
+    session: Session,
+    season: str,
+    *,
+    error_type: type[DeadlineCalendarLineageError] | type[DeadlineCalendarStaleActivationError],
+) -> RefreshRun | None:
+    """Return canonical schedule lineage only while its persisted facts still match."""
+
+    run = _current_schedule_refresh(session, season)
+    if run is None:
+        return None
+    try:
+        verification = verify_refresh(session, run)
+    except ValueError as exc:
+        raise error_type(f"NBA schedule evidence for {season} is malformed: {exc}") from exc
+    if not verification.is_current:
+        raise error_type(
+            f"NBA schedule evidence for {season} is stale: registered version "
+            f"{run.version!r} no longer matches persisted schedule content"
+        )
+    return run
 
 
 def _lock_calendar_inputs(session: Session, league: League) -> None:

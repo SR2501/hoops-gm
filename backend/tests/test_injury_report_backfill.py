@@ -53,6 +53,7 @@ from hoops_gm.ingest.injury_report.backfill import (
     _expected_coverage_matches_scope,
     _expected_schedule_season_type_label,
     _floor_to_quarter_hour_et,
+    _internal_schedule_season_type_label,
     _merge_coverage,
     _persist_coverage,
     build_plan,
@@ -4555,6 +4556,13 @@ def test_expected_schedule_season_type_label_rejects_preseason_and_play_in() -> 
         _expected_schedule_season_type_label(SeasonType.PRESEASON)
     with pytest.raises(ValueError, match="not yet supported"):
         _expected_schedule_season_type_label(SeasonType.PLAY_IN)
+
+
+def test_internal_schedule_season_type_label_refuses_to_guess() -> None:
+    assert _internal_schedule_season_type_label("Regular Season") == "regular"
+    assert _internal_schedule_season_type_label("Playoffs") == "playoffs"
+    with pytest.raises(ValueError, match="unsupported LeagueGameFinder season type"):
+        _internal_schedule_season_type_label("Pre Season")
 
 
 def test_expected_coverage_matches_scope_rejects_a_different_date_range() -> None:

@@ -14,7 +14,12 @@ from hoops_gm.availability import (
     compute_absence_splits,
     latest_absence_splits,
 )
-from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
+from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    record_refresh,
+    schedule_content_version,
+)
 from hoops_gm.db.models import (
     AbsenceSplit,
     AbsenceSplitComputationRun,
@@ -69,16 +74,27 @@ def _game(
     )
     session.add(game)
     session.flush()
-    session.add(
-        TeamScheduleEntry(
-            season=SEASON,
-            season_type=SeasonType.REGULAR,
-            game_id=game.id,
-            team_id=team.id,
-            opponent_team_id=opponent.id,
-            game_date=game_date,
-            is_home=True,
-        )
+    session.add_all(
+        [
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=team.id,
+                opponent_team_id=opponent.id,
+                game_date=game_date,
+                is_home=True,
+            ),
+            TeamScheduleEntry(
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_id=game.id,
+                team_id=opponent.id,
+                opponent_team_id=team.id,
+                game_date=game_date,
+                is_home=False,
+            ),
+        ]
     )
     session.flush()
     return game
@@ -114,6 +130,56 @@ def _register_schedule(session: Session, version: str = "schedule-test-v1") -> N
         source="test",
         refreshed_at=datetime(2026, 8, 18, tzinfo=UTC),
     )
+
+
+def _register_verified_schedule(session: Session) -> None:
+    game_count = len(
+        session.scalars(
+            select(NbaGame).where(
+                NbaGame.season == SEASON,
+                NbaGame.season_type == SeasonType.REGULAR,
+            )
+        ).all()
+    )
+    team_row_count = len(
+        session.scalars(
+            select(TeamScheduleEntry).where(
+                TeamScheduleEntry.season == SEASON,
+                TeamScheduleEntry.season_type == SeasonType.REGULAR,
+            )
+        ).all()
+    )
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=schedule_content_version(session, season=SEASON),
+        season=SEASON,
+        source="test",
+        summary={
+            SCHEDULE_COMPLETENESS_SUMMARY_KEY: {
+                "season": SEASON,
+                "season_type": SeasonType.REGULAR.value,
+                "source_game_count": game_count,
+                "resolved_game_count": game_count,
+                "unresolved_game_ids": [],
+                "persisted_team_row_count": team_row_count,
+            }
+        },
+        refreshed_at=datetime(2026, 8, 18, tzinfo=UTC),
+    )
+
+
+def _mutate_schedule_date_without_changing_row_count(
+    session: Session,
+    game: NbaGame,
+) -> None:
+    game.game_date += timedelta(days=1)
+    for entry in session.scalars(
+        select(TeamScheduleEntry).where(TeamScheduleEntry.game_id == game.id)
+    ):
+        entry.game_date = game.game_date
+    session.flush()
 
 
 def _log(
@@ -429,6 +495,63 @@ def test_schedule_lineage_is_required_before_computation(session: Session) -> No
 
     with pytest.raises(AbsenceSplitInputError, match="schedule refresh"):
         compute_absence_splits(session, season=SEASON)
+
+
+def test_same_row_count_schedule_mutation_blocks_computation_publication(
+    session: Session,
+) -> None:
+    team, opponent = _teams(session)
+    games = _games(session, team, opponent, 3, start=date(2026, 3, 20))
+    _register_verified_schedule(session)
+    original_row_count = len(session.scalars(select(TeamScheduleEntry)).all())
+
+    _mutate_schedule_date_without_changing_row_count(session, games[0])
+
+    assert len(session.scalars(select(TeamScheduleEntry)).all()) == original_row_count
+    with pytest.raises(AbsenceSplitInputError, match=r"schedule evidence.*stale"):
+        compute_absence_splits(session, season=SEASON)
+    assert session.scalars(select(AbsenceSplitComputationRun)).all() == []
+
+
+def test_same_row_count_schedule_mutation_blocks_current_retrieval(session: Session) -> None:
+    team, opponent = _teams(session)
+    games = _games(session, team, opponent, 1, start=date(2026, 3, 25))
+    _register_verified_schedule(session)
+    published = compute_absence_splits(session, season=SEASON)
+    original_row_count = len(session.scalars(select(TeamScheduleEntry)).all())
+
+    _mutate_schedule_date_without_changing_row_count(session, games[0])
+
+    assert len(session.scalars(select(TeamScheduleEntry)).all()) == original_row_count
+    with pytest.raises(AbsenceSplitInputError, match=r"schedule evidence.*stale"):
+        latest_absence_splits(session, season=SEASON)
+    assert session.get(AbsenceSplitComputationRun, published.computation_run.id) is not None
+
+
+def test_malformed_schedule_verification_uses_absence_split_domain_error(
+    session: Session,
+) -> None:
+    team, opponent = _teams(session)
+    _games(session, team, opponent, 1, start=date(2026, 3, 30))
+    record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=schedule_content_version(session, season=SEASON),
+        season=SEASON,
+        source="test",
+        summary={SCHEDULE_COMPLETENESS_SUMMARY_KEY: {"season": SEASON}},
+    )
+
+    for operation in (
+        lambda: compute_absence_splits(session, season=SEASON),
+        lambda: latest_absence_splits(session, season=SEASON),
+    ):
+        with pytest.raises(
+            AbsenceSplitInputError, match=r"schedule evidence.*malformed"
+        ) as exc_info:
+            operation()
+        assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_a_b_a_recomputation_reactivates_the_final_a_cohort(session: Session) -> None:

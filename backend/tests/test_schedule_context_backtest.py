@@ -18,8 +18,9 @@ EVIDENCE = (
     / "hoops_gm"
     / "schedule_context"
     / "releases"
-    / "schedule_context_blowout_v1.json"
+    / "schedule_context_blowout_v2.json"
 )
+HISTORICAL_EVIDENCE = EVIDENCE.with_name("schedule_context_blowout_v1.json")
 
 
 def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
@@ -34,19 +35,19 @@ def test_schedule_context_blowout_has_a_real_time_ordered_holdout() -> None:
     assert date.fromisoformat(backtest["training_cutoff"]) < date.fromisoformat(
         backtest["held_out_start"]
     )
-    assert backtest["held_out_examples"] == 1225
-    assert sum(row["count"] for row in backtest["calibration_bins"]) == 1225
+    assert backtest["held_out_examples"] == 1230
+    assert sum(row["count"] for row in backtest["calibration_bins"]) == 1230
     assert final["source_cohorts"]["training"] == {
-        "completed_games": 1225,
-        "fingerprint": "ea3f00ea22a4d703",
+        "completed_games": 1230,
+        "fingerprint": "415fbf126685d4b4",
         "first_game_date": "2024-10-22",
         "first_game_id": "0022400061",
         "last_game_date": "2025-04-13",
         "last_game_id": "0022401200",
     }
     assert final["source_cohorts"]["held_out"] == {
-        "completed_games": 1225,
-        "fingerprint": "e992a314295c442a",
+        "completed_games": 1230,
+        "fingerprint": "227986453d8e33cd",
         "first_game_date": "2025-10-21",
         "first_game_id": "0022500001",
         "last_game_date": "2026-04-12",
@@ -122,3 +123,9 @@ def test_release_digest_is_independent_of_json_line_endings() -> None:
     _crlf_payload, crlf_digest = release_registry._decode_release_artifact(crlf_artifact)
 
     assert lf_digest == crlf_digest
+
+
+def test_retired_v1_evidence_remains_integrity_pinned() -> None:
+    _payload, digest = release_registry._decode_release_artifact(HISTORICAL_EVIDENCE.read_bytes())
+
+    assert digest == "160c729a78b415ce387bfa67233a6dcf7d6e4a70552f2eb1156c219504919afe"

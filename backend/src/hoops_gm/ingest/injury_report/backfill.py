@@ -755,10 +755,24 @@ def _expected_schedule_season_type_label(season_type: SeasonType) -> str:
     )
 
 
+def _internal_schedule_season_type_label(season_type_label: str) -> str:
+    """Validate the source label before requesting and parsing the expected slate."""
+    parsed = {
+        "Regular Season": "regular",
+        "Playoffs": "playoffs",
+    }.get(season_type_label)
+    if parsed is None:
+        raise ValueError(
+            f"unsupported LeagueGameFinder season type label {season_type_label!r}; "
+            "expected 'Regular Season' or 'Playoffs'"
+        )
+    return parsed
+
+
 def default_expected_game_fetcher(nba: NbaStatsClient) -> ExpectedGameFetcher:
     def _fetch(season: str, season_type_label: str) -> Sequence[NbaGameRecord]:
+        internal_type = _internal_schedule_season_type_label(season_type_label)
         payload = nba.league_game_finder(season=season, season_type=season_type_label)
-        internal_type = "regular" if season_type_label == "Regular Season" else "playoffs"
         return parse_league_game_finder(payload, season=season, season_type=internal_type)
 
     return _fetch

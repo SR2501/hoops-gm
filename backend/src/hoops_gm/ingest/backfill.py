@@ -52,7 +52,7 @@ from hoops_gm.db.session import Database
 from hoops_gm.identity import IdentityResolver, ResolvableRecord, render_summary, to_csv
 from hoops_gm.identity.report import partition
 from hoops_gm.identity.resolver import Resolution
-from hoops_gm.ingest.errors import SourceError
+from hoops_gm.ingest.errors import SourceContractError, SourceError
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
 from hoops_gm.ingest.importers import (
     ImportCounts,
@@ -73,6 +73,7 @@ from hoops_gm.ingest.league_settings import (
 from hoops_gm.ingest.nba import (
     NbaGameRecord,
     NbaStatsClient,
+    PlayerBoxScoreRecord,
     combine_game_participation,
     parse_box_score_summary_v3,
     parse_box_score_traditional_v3,
@@ -323,16 +324,19 @@ def backfill_season(
 ) -> BackfillResult:
     """Backfill one season's games, box scores and — optionally — participation."""
     result = BackfillResult()
+    parsed_season_type = _league_game_finder_season_type(season_type)
 
     games = parse_league_game_finder(
         nba.league_game_finder(season=season, season_type=season_type),
         season=season,
-        season_type="regular" if season_type == "Regular Season" else "playoffs",
+        season_type=parsed_season_type,
     )
+    logs = parse_player_game_logs(nba.player_game_logs(season=season, season_type=season_type))
+    _require_matching_season_game_ids(games, logs, season=season, season_type=season_type)
+
     result.steps["games"] = import_games(session, games)
     progress(f"  games: {result.steps['games']}")
 
-    logs = parse_player_game_logs(nba.player_game_logs(season=season, season_type=season_type))
     result.steps["box scores"] = import_box_scores(session, logs)
     progress(f"  box scores: {result.steps['box scores']}")
 
@@ -362,11 +366,12 @@ def backfill_season(
             summary_game, summary = parse_box_score_summary_v3(
                 nba.box_score_summary(game.nba_game_id)
             )
+            summary_game = _validate_summary_game_identity(game, summary_game)
             # ``LeagueGameFinder`` gives a local date and no instant;
             # ``BoxScoreSummaryV3`` gives ``gameTimeUTC``. Rest-day and
             # back-to-back detection need the instant, so it is written back
             # while the per-game endpoint is being fetched anyway.
-            if summary_game is not None and summary_game.tipoff_utc is not None:
+            if summary_game.tipoff_utc is not None:
                 import_games(session, [replace(game, tipoff_utc=summary_game.tipoff_utc)])
             counts = import_participation(
                 session, combine_game_participation(dressed, summary), lookups=lookups
@@ -385,6 +390,78 @@ def backfill_season(
 
     result.steps["participation"] = totals
     return result
+
+
+def _validate_summary_game_identity(
+    schedule_game: NbaGameRecord,
+    summary_game: NbaGameRecord | None,
+) -> NbaGameRecord:
+    """Fail when the independent per-game endpoint contradicts schedule identity."""
+    if summary_game is None:
+        raise SourceContractError(
+            f"BoxScoreSummaryV3 lacks home/away identity for game {schedule_game.nba_game_id}",
+            source="nba_stats",
+            endpoint="BoxScoreSummaryV3",
+        )
+    fields = (
+        "nba_game_id",
+        "game_date",
+        "home_team_id",
+        "away_team_id",
+        "home_score",
+        "away_score",
+    )
+    conflicts = [
+        f"{field}={getattr(schedule_game, field)!r}/{getattr(summary_game, field)!r}"
+        for field in fields
+        if getattr(schedule_game, field) != getattr(summary_game, field)
+    ]
+    if conflicts:
+        raise SourceContractError(
+            f"BoxScoreSummaryV3 contradicts LeagueGameFinder for "
+            f"{schedule_game.nba_game_id}: {', '.join(conflicts)}",
+            source="nba_stats",
+            endpoint="BoxScoreSummaryV3",
+        )
+    return summary_game
+
+
+def _require_matching_season_game_ids(
+    games: Sequence[NbaGameRecord],
+    logs: Sequence[PlayerBoxScoreRecord],
+    *,
+    season: str,
+    season_type: str,
+) -> None:
+    """Require both whole-season sources to name exactly the same games."""
+
+    schedule_ids = {game.nba_game_id for game in games}
+    player_log_ids = {log.nba_game_id for log in logs}
+    if schedule_ids == player_log_ids and schedule_ids:
+        return
+
+    schedule_only = sorted(schedule_ids - player_log_ids)
+    player_log_only = sorted(player_log_ids - schedule_ids)
+    raise SourceContractError(
+        f"{season} {season_type} game identity mismatch: "
+        f"LeagueGameFinder={len(schedule_ids)}, PlayerGameLogs={len(player_log_ids)}, "
+        f"schedule_only={schedule_only[:10]}, player_log_only={player_log_only[:10]}",
+        source="nba_stats",
+        endpoint="LeagueGameFinder+PlayerGameLogs",
+    )
+
+
+def _league_game_finder_season_type(season_type: str) -> str:
+    """Map the two supported source labels without treating every other value as playoffs."""
+    parsed = {
+        "Regular Season": "regular",
+        "Playoffs": "playoffs",
+    }.get(season_type)
+    if parsed is None:
+        raise ValueError(
+            f"unsupported NBA season type {season_type!r}; expected 'Regular Season' or 'Playoffs'"
+        )
+    return parsed
 
 
 def _participation_games_in_scope(
@@ -422,7 +499,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
 
     season = subparsers.add_parser("season", help="backfill one season")
     season.add_argument("season", help="e.g. 2024-25")
-    season.add_argument("--season-type", default="Regular Season")
+    season.add_argument(
+        "--season-type",
+        choices=("Regular Season", "Playoffs"),
+        default="Regular Season",
+    )
     season.add_argument("--with-participation", action="store_true")
     season.add_argument("--start", type=date.fromisoformat, default=None)
     season.add_argument("--end", type=date.fromisoformat, default=None)
