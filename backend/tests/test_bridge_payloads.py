@@ -143,16 +143,21 @@ def test_payload_commit_failure_rolls_back_and_never_returns_201(app: FastAPI) -
             class_=CommitFailingSession,
         )
         _auth(app)
+        failed_envelope = {**_envelope(), "dedupeKey": "POST:commit-failure:rollback-proof"}
 
         response = failing_client.post(
             "/api/v1/bridge/payloads",
-            json=_envelope(),
+            json=failed_envelope,
             headers={"X-Bridge-Secret": SECRET},
         )
 
         database.session_factory = original_factory
         with database.session() as session:
-            persisted = session.scalars(select(BridgePayload)).all()
+            persisted = session.scalars(
+                select(BridgePayload).where(
+                    BridgePayload.dedupe_key == failed_envelope["dedupeKey"]
+                )
+            ).all()
 
     assert response.status_code == 500
     assert response.json()["error"] == "internal_error"

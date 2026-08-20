@@ -6047,6 +6047,14 @@ ordering after commit, injected commit failure, rollback and zero-row outcome,
 retry after failure, concurrent equivalent capture coalescing, manual UI
 timing, exact storage-acknowledgement validation, and all five standard XHR
 ready-state constants plus prototype/`instanceof` behavior in both wrappers.
+
+The first fresh backend review after the final rebase found that the
+commit-failure test's zero-row assertion selected the entire table. That was
+valid under per-test SQLite files but not under CI's shared Postgres URL, where
+earlier module tests may leave unrelated committed rows. The production fix
+was unaffected. The regression now submits a request-unique dedupe key and
+asserts that no row with that identity exists, so it proves rollback without
+assuming global table emptiness.
 The full local Code gate passes: Ruff and formatting clean, strict mypy clean,
 981 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
 passed, the userscript production build completed, the tracked-file secret
