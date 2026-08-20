@@ -6278,10 +6278,11 @@ was unaffected. The regression now submits a request-unique dedupe key and
 asserts that no row with that identity exists, so it proves rollback without
 assuming global table emptiness.
 
-**Now true:** The branch was rebased without conflict onto exact `origin/main`
-`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`. Its reviewed code/test head before
-this final handoff-only update was
-`b193ee347959c868ade6303693c7c2f2dcf32116`. Regressions cover response-start
+**Now true:** The branch was rebased onto exact `origin/main`
+`2b9a4102f0450a32c16e1015c30947edca6b673e`. The one handoff-only conflict was
+resolved by preserving the complete merged frontend entry and appending this
+bridge entry after it. The rebased code/test head before the final handoff-only
+updates is `ab5d7a5fb1be8bf9a2ce950739bc8f27b05f0843`. Regressions cover response-start
 ordering after commit, injected commit failure, rollback and zero-row outcome,
 retry after failure, concurrent equivalent capture coalescing, manual UI
 timing, exact storage-acknowledgement validation, and all five standard XHR
@@ -6289,20 +6290,19 @@ ready-state constants plus prototype/`instanceof` behavior in both wrappers.
 The full local Code gate passes: Ruff and formatting clean, strict mypy clean,
 981 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
 passed, the userscript production build completed, the tracked-file secret
-scan found no secrets in 267 files, and a fresh SQLite migration lifecycle
+scan found no secrets in 272 files, and a fresh SQLite migration lifecycle
 upgraded through `0015`, reported no model drift, and downgraded to base. A
 shared-database reproduction of the corrected bridge payload module passed
 13/13 tests.
 
-Fresh exact-head backend, bridge, and independent code reviews found no further
-findings after the shared-table correction. Push run `32327621520` and
-pull-request run `32327624552` both passed every blocking check, including both
-native Postgres full-suite/migration lanes, both SQLite migration jobs, backend
-and userscript Code gates, recorded-fixture and Model gates, CodeQL, frontend,
-and secret scanning. Live-smoke jobs skipped by design. Adapter and Automation
-gates do not apply to this change: it adds no external-source adapter and
-remains a response-only read path with no action protocol, executor, click,
-submit, or write capability.
+Before the final rebase, fresh backend, bridge, and independent code reviews
+found no further findings after the shared-table correction, and both CI event
+runs passed every blocking check, including native Postgres. Those exact SHAs
+and runs are superseded by the final rebase and are not current-head evidence;
+the rebased head still requires fresh exact-head reviews and CI. Adapter and
+Automation gates do not apply to this change: it adds no external-source
+adapter and remains a response-only read path with no action protocol,
+executor, click, submit, or write capability.
 
 **Could not verify:** The XHR compatibility mechanism is exercised in both
 JavaScript worlds, but no live Fantrax page path reading the constructor
@@ -6313,5 +6313,7 @@ entered diagnostics. Native Postgres could not run locally because Docker is
 not installed and `TEST_DATABASE_URL` is unset; the two successful GitHub CI
 lanes above are the exact-head Postgres evidence.
 
-**Next:** The coordinator may evaluate the pull request for merge. This session
-did not merge or self-approve it.
+**Next:** Obtain fresh backend, bridge, and independent code reviews and require
+all blocking CI jobs, including both native Postgres lanes, on the final
+published head. The coordinator may evaluate the pull request only after that
+evidence is green. This session must not merge or self-approve it.
