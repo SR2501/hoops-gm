@@ -372,13 +372,25 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
 
 
 def _modules_reaching_lock_primitive(root: Path) -> list[str]:
-    """Modules under ``root`` that could reach ``acquire_transaction_lock``.
+    """Modules under ``root`` matching one of six routes to the primitive.
 
-    Counts any route to the primitive, not just the obvious one: an
-    ``ImportFrom`` binding the name (aliased or not), *or* an import of the
-    defining module in any form, since each of those permits attribute access
-    that resolves at call time and is therefore invisible to a monkeypatch of
+    **Enumerated, not exhaustive**, and the distinction is load-bearing because
+    this helper is the tripwire two other tests depend on. It matches an
+    ``ImportFrom`` binding the name (aliased or not, including function-local),
+    and three imports of the defining module: ``import hoops_gm.db.session``,
+    the same with an alias, and ``from hoops_gm.db import session``. Each of
+    those permits attribute access that resolves at call time and is therefore
+    invisible to a monkeypatch of
     ``hoops_gm.db.lineage.acquire_transaction_lock``.
+
+    It does **not** match a shorter package import — ``import hoops_gm.db``,
+    ``from hoops_gm import db``, or ``import hoops_gm`` — followed by
+    ``…db.session.acquire_transaction_lock(...)``. Those reach the primitive
+    for real: ``db/lineage.py`` imports the submodule, so Python binds
+    ``session`` onto the package for the whole process and the attribute chain
+    resolves. No module in this repository uses them, which is why the pin is
+    adequate today and why this paragraph exists rather than a broader matcher
+    added late.
     """
 
     defining_module = "hoops_gm.db.session"
@@ -445,11 +457,15 @@ def test_lineage_locks_are_acquired_through_exactly_one_import() -> None:
     """Both lock-order tests monkeypatch one name; pin that it is the only one.
 
     They patch `hoops_gm.db.lineage.acquire_transaction_lock`, which captures
-    every lineage lock only because `db/lineage.py` is the sole module that can
-    reach it and `lock_refresh_scope` the sole caller. If another module later
+    every lineage lock only because `db/lineage.py` is the only module reaching
+    it and `lock_refresh_scope` the sole caller. If another module later
     imported it, both recorders would go blind and both tests would stay green
     while asserting nothing — a test weaker than its name, which is exactly the
     failure those tests were rewritten to avoid.
+
+    What this pins is narrower than that sentence: no module matches the six
+    routes `_modules_reaching_lock_primitive` enumerates. See its docstring for
+    the three shorter package-import forms it does not match.
     """
 
     src = Path(hoops_gm.__file__).resolve().parent
