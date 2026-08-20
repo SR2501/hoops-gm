@@ -2,7 +2,11 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**38 done - 1 blocked - 63 pending - 102 total**
+**37 done - 1 blocked - 64 pending - 102 total**
+
+(Counted from the status markers themselves, not carried forward: 102 `###`
+headings and 102 markers, 1:1. The previous line claimed 37 done / 63 pending
+against an actual 36 / 64, and that drift predates this entry.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -279,8 +283,10 @@ Completeness evidence comes from `db/lineage.py`'s `verify_refresh` and
 `schedule_completeness` — the canonical verifier the producer stamps against —
 never from a second reader in the route. Missing, stale, unverifiable or
 self-contradicting evidence, a wholly zero grid, an empty grid, a non-loopback
-caller and an unknown league each fail closed with a typed `X-Bridge-Error`
-code and no partial data.
+caller and an unknown league each fail closed with a typed code in
+`ErrorResponse.error` and no partial data. (`X-Bridge-Error` is the internal
+route-to-handler transport, not a response header: `api/app.py` consumes it and
+returns the code in the body — verified, not assumed.)
 
 Operational, not merely safe: `python -m hoops_gm.dev.seed_schedule_grid`
 brings a local database to a verified state offline from the committed NBA

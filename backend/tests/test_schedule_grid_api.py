@@ -1,27 +1,43 @@
 """The schedule-grid API: one operational proof, and one test per refusal.
 
-The shape of this file is deliberate. Every fail-closed case starts from the
-**same seeded, genuinely valid database** and breaks exactly one thing, so a
-409 is evidence that the broken thing caused it rather than evidence that the
-endpoint was never reachable in the first place. The previous version of this
-endpoint was permanently unavailable and its tests all passed, because they
-only ever asserted refusals.
+The shape of this file is deliberate, and the reason is narrower than it looks.
+PR #36's tests *did* assert 200 — three times — and still shipped an endpoint
+that could never return one. They passed because a test-local helper wrote the
+refresh summary itself, in the flat shape #36's hand-rolled reader wanted and
+``import_schedule`` has never written. **The tests played the producer.**
+
+So the rule here is not "assert a 200", which #36 already satisfied. It is that
+the success-path database state is built by the **production writers** —
+``hoops_gm.dev.seed_schedule_grid`` calling ``import_teams``,
+``import_schedule``, ``import_league_settings``, ``derive_deadline_calendar``
+and ``project_scoring_periods`` — and never by this file. **Most** refusal
+tests then start from that same seeded, genuinely valid database and break
+exactly one thing, so a 409 is evidence that the broken thing caused it rather
+than evidence the endpoint was never reachable in the first place.
+
+Two deliberately do not, and saying "every" would have been false: an endpoint
+that refuses because *nothing* is registered, and one that refuses because a
+league was never configured, have no valid state to break — an empty database is
+the state under test.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from hoops_gm.api.routes.schedule_grid import _grid_periods, _grid_teams
 from hoops_gm.app import create_app
 from hoops_gm.calendar import (
     ScoringPeriodProjectionResult,
@@ -36,19 +52,22 @@ from hoops_gm.db.lineage import (
     SCHEDULE_COMPLETENESS_SUMMARY_KEY,
     record_refresh,
 )
-from hoops_gm.db.models.enums import RefreshArtifactType
+from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
 from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
+from hoops_gm.db.session import acquire_transaction_lock
 from hoops_gm.dev.seed_schedule_grid import (
     DEFAULT_FIXTURES_DIR,
     SCHEDULE_FIXTURE,
     SEASON,
     TEAMS_FIXTURE,
+    DemoSeedRefused,
     SeedResult,
     load_fixture,
+    reconcile_dropped_games,
     resolved_schedule_payload,
     seed_schedule_grid,
     weekly_periods,
@@ -62,7 +81,7 @@ from hoops_gm.ingest.league_settings import (
     parse_official_league_settings,
 )
 from hoops_gm.ingest.nba.parsers import parse_teams
-from hoops_gm.ingest.nba.schedule import parse_schedule
+from hoops_gm.ingest.nba.schedule import parse_schedule, scheduled_game_counts
 
 EASTERN = ZoneInfo("America/New_York")
 GRID_URL = "/api/v1/leagues/{league_id}/schedule-grid/current"
@@ -317,10 +336,19 @@ def test_seeding_twice_converges_rather_than_advancing_lineage(
     assert response.json()["lineage"]["schedule"]["version"] == first.schedule_version
 
 
+@pytest.mark.sqlite_only
 def test_current_grid_does_not_commit_lineage_lock_reservations(
     app: FastAPI, client: TestClient
 ) -> None:
-    """A read must not advance any refresh row's own audit timestamps."""
+    """A read must not advance any refresh row's own audit timestamps.
+
+    SQLite-only by construction, not by convenience. A lineage lock is a real
+    write there — ``acquire_transaction_lock`` issues a no-op UPDATE to take the
+    database-wide write reservation — so ``updated_at`` moves unless the route
+    rolls back. On PostgreSQL the same call is ``pg_advisory_xact_lock``, which
+    touches no row, so this test would pass with the rollback deleted and would
+    be advertising a guarantee it was not checking.
+    """
 
     seeded = _seed(app)
     sentinel = datetime(2000, 1, 1, tzinfo=UTC)
@@ -335,6 +363,35 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
         after = dict(session.execute(select(RefreshRun.id, RefreshRun.updated_at)).all())
     assert after == before
     assert set(after.values()) == {sentinel}
+
+
+def test_current_grid_takes_lineage_locks_in_the_codebase_canonical_order(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """League settings before the NBA schedule, or PostgreSQL can deadlock.
+
+    ``_locked_projection_context`` and ``_lock_calendar_inputs`` both take these
+    two scopes settings-first. On PostgreSQL each is a ``pg_advisory_xact_lock``
+    held to commit, so a reader taking them schedule-first while a calendar
+    derivation holds settings is a textbook ABBA deadlock — and SQLite cannot
+    show it, because its lock degrades to one database-wide reservation.
+    """
+
+    seeded = _seed(app)
+    taken: list[str] = []
+
+    def _record(session: Session, *, scope_key: str, write_reservation: Any) -> None:
+        taken.append(scope_key)
+        acquire_transaction_lock(session, scope_key=scope_key, write_reservation=write_reservation)
+
+    monkeypatch.setattr("hoops_gm.db.lineage.acquire_transaction_lock", _record)
+
+    assert client.get(GRID_URL.format(league_id=seeded.league_id)).status_code == 200
+
+    settings_scope = f"source\x00league-settings:{seeded.league_id}\x00{SEASON}"
+    schedule_scope = f"schedule\x00{NBA_SCHEDULE_ARTIFACT_KEY}\x00{SEASON}"
+    assert taken[:2] == [settings_scope, schedule_scope]
+    assert taken.index(settings_scope) < taken.index(schedule_scope)
 
 
 def test_schedule_grid_contract_is_advertised_in_openapi(client: TestClient) -> None:
@@ -352,18 +409,33 @@ def test_schedule_grid_contract_is_advertised_in_openapi(client: TestClient) -> 
 # --------------------------------------------------------------------------
 
 
-def test_current_grid_rejects_non_loopback_callers(tmp_path: Path) -> None:
-    settings = Settings(
-        environment="development",
-        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
-        bridge_secret_path=tmp_path / "bridge_secret",
-        _env_file=None,
+def _development_app(tmp_path: Path, test_database_url: str | None) -> FastAPI:
+    """An app outside ``environment="test"``, on whichever database CI is using.
+
+    ``require_loopback_host``'s escape hatch is keyed on the test environment,
+    so the 403 path and the genuine-peer 200 path can only be reached from an
+    app configured as ``development``. Taking the database from the session
+    fixture rather than hardcoding SQLite is what lets both paths run on the
+    PostgreSQL lane — and it is what makes the drop-then-create below load
+    bearing, since ``TEST_DATABASE_URL`` points every test at one shared
+    external database where an earlier test's rows would otherwise survive.
+    """
+
+    return create_app(
+        Settings(
+            environment="development",
+            database_url=test_database_url or f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+            bridge_secret_path=tmp_path / "bridge_secret",
+            _env_file=None,
+        )
     )
-    app = create_app(settings)
+
+
+def test_current_grid_rejects_non_loopback_callers(
+    tmp_path: Path, test_database_url: str | None
+) -> None:
+    app = _development_app(tmp_path, test_database_url)
     with TestClient(app) as client:
-        # Same drop/create as the shared ``client`` fixture: against Postgres
-        # every test shares one external database, and creating without
-        # dropping inherits an earlier test's rows.
         Base.metadata.drop_all(app.state.database.engine)
         Base.metadata.create_all(app.state.database.engine)
         seeded = _seed(app)
@@ -376,15 +448,9 @@ def test_current_grid_rejects_non_loopback_callers(tmp_path: Path) -> None:
 
 
 def test_current_grid_serves_a_loopback_proxy_peer_outside_test_environment(
-    tmp_path: Path,
+    tmp_path: Path, test_database_url: str | None
 ) -> None:
-    settings = Settings(
-        environment="development",
-        database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
-        bridge_secret_path=tmp_path / "bridge_secret",
-        _env_file=None,
-    )
-    app = create_app(settings)
+    app = _development_app(tmp_path, test_database_url)
     with TestClient(app, client=("127.0.0.1", 5173)) as client:
         Base.metadata.drop_all(app.state.database.engine)
         Base.metadata.create_all(app.state.database.engine)
@@ -428,6 +494,9 @@ def test_current_grid_rejects_a_league_with_no_settings_or_calendar(
 
     assert response.status_code == 409
     assert _error_of(response) == "schedule_grid_not_current"
+    # Pins the branch: schedule staleness reaches the same code, so the code
+    # alone cannot say which fired.
+    assert "no active deadline calendar" in response.json()["detail"]
     assert "counts" not in response.json()
 
 
@@ -502,7 +571,63 @@ def test_current_grid_rejects_completeness_claiming_unresolved_games(
     assert response.status_code == 409
     assert _error_of(response) == "schedule_grid_incomplete_evidence"
     assert "unresolved" in response.json()["detail"]
-    assert seeded.league_id
+    assert "counts" not in response.json()
+
+
+def test_current_grid_rejects_a_non_regular_season_cohort(app: FastAPI, client: TestClient) -> None:
+    """`verify_refresh` fingerprints the block's season type; counts are REGULAR.
+
+    They agree today only because `import_schedule` hard-codes REGULAR. A
+    playoff cohort registered under this artifact key would otherwise verify one
+    cohort and count another, and return 200 with a lineage block that does not
+    describe the numbers beside it.
+    """
+
+    seeded = _seed(app)
+    with app.state.database.session() as session:
+        refresh = _schedule_refresh(session)
+        block = dict(refresh.summary[SCHEDULE_COMPLETENESS_SUMMARY_KEY])  # type: ignore[call-overload]
+        block["season_type"] = SeasonType.PLAYOFFS.value
+        refresh.summary = {**refresh.summary, SCHEDULE_COMPLETENESS_SUMMARY_KEY: block}
+
+    response = client.get(GRID_URL.format(league_id=seeded.league_id))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "schedule_grid_incomplete_evidence"
+    assert "regular-season games only" in response.json()["detail"]
+    assert "counts" not in response.json()
+
+
+def test_current_grid_refuses_a_team_id_it_cannot_label(app: FastAPI, client: TestClient) -> None:
+    """A partially-labelled grid still looks like an answer, so refuse instead."""
+
+    seeded = _seed(app)
+    with app.state.database.session() as session:
+        rows = scheduled_game_counts(session, league_id=seeded.league_id, season=SEASON)
+        unlabelled = replace(rows[0], team_id=max(row.team_id for row in rows) + 1)
+
+        with pytest.raises(HTTPException) as caught:
+            _grid_teams(session, [unlabelled])
+
+    assert caught.value.status_code == 409
+    assert caught.value.headers == {"X-Bridge-Error": "schedule_grid_incomplete_evidence"}
+    assert "have no team row" in str(caught.value.detail)
+
+
+def test_current_grid_refuses_a_period_number_it_cannot_date(
+    app: FastAPI, client: TestClient
+) -> None:
+    seeded = _seed(app)
+    with app.state.database.session() as session:
+        rows = scheduled_game_counts(session, league_id=seeded.league_id, season=SEASON)
+        undated = replace(rows[0], period_number=max(row.period_number for row in rows) + 1)
+
+        with pytest.raises(HTTPException) as caught:
+            _grid_periods(session, league_id=seeded.league_id, rows=[undated])
+
+    assert caught.value.status_code == 409
+    assert caught.value.headers == {"X-Bridge-Error": "schedule_grid_incomplete_evidence"}
+    assert "has no row for" in str(caught.value.detail)
 
 
 def test_current_grid_rejects_evidence_after_a_schedule_row_is_removed(
@@ -574,6 +699,10 @@ def test_current_grid_rejects_a_newer_schedule_refresh_that_does_not_verify(
 
     assert response.status_code == 409
     assert _error_of(response) == "schedule_grid_not_current"
+    # The route's own wording, not `_locked_projection_context`'s. Both map to
+    # this code, so a looser assertion would still pass with the route's
+    # verification deleted.
+    assert "no longer matches the persisted schedule content" in response.json()["detail"]
     assert "not-the-content-fingerprint" in response.json()["detail"]
 
 
@@ -595,6 +724,17 @@ def test_current_grid_rejects_scoring_periods_that_no_longer_match_the_calendar(
 
     assert response.status_code == 409
     assert _error_of(response) == "schedule_grid_not_current"
+    assert "do not match active deadline calendar" in response.json()["detail"]
+
+
+def test_current_grid_rejects_a_non_integer_league_id(client: TestClient) -> None:
+    """The advertised 422 is behaviour, not just an OpenAPI entry."""
+
+    response = client.get(GRID_URL.format(league_id="not-a-league"))
+
+    assert response.status_code == 422
+    assert _error_of(response) == "validation_error"
+    assert "counts" not in response.json()
 
 
 def test_current_grid_never_returns_a_success_shaped_empty_grid(
@@ -643,6 +783,63 @@ def test_current_grid_rejects_a_wholly_zero_grid(app: FastAPI, client: TestClien
 # --------------------------------------------------------------------------
 
 
+def test_seed_counts_a_neutral_site_game_for_both_teams(
+    app: FastAPI, client: TestClient, tmp_path: Path
+) -> None:
+    """Neutral-site games are a recurring annual class, not an edge case.
+
+    NBA Cup knockouts in Las Vegas plus the international slate are roughly five
+    regular-season games every year, and they are what the historical
+    1,225-vs-1,230 defect turned out to be: `LeagueGameFinder` repeats the same
+    `MATCHUP` string on both team rows, so a parser deriving the side from the
+    separator resolved both rows identically and lost the game.
+
+    This grid cannot inherit that defect, and the mechanism is worth stating
+    rather than assuming. `parse_schedule` reads `ScheduleLeagueV2`, which
+    carries explicit `homeTeam.teamId` and `awayTeam.teamId` objects — no
+    `MATCHUP` string exists on this path — and `import_schedule` writes two
+    mirrored `team_schedule` rows per game unconditionally. The test proves it
+    against a payload carrying `isNeutral: true` rather than trusting that
+    reading.
+    """
+
+    payload = load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE)
+    neutral_date = payload["leagueSchedule"]["gameDates"][0]
+    template = neutral_date["games"][0]
+    home_nba_id, away_nba_id = 1610612747, 1610612744  # LAL, GSW: in neither existing game
+    neutral_date["games"].append(
+        {
+            **template,
+            "gameId": "0022600099",
+            "gameLabel": "Emirates NBA Cup",
+            "isNeutral": True,
+            "arenaName": "T-Mobile Arena",
+            "arenaCity": "Las Vegas",
+            "homeTeam": {**template["homeTeam"], "teamId": home_nba_id, "teamTricode": "LAL"},
+            "awayTeam": {**template["awayTeam"], "teamId": away_nba_id, "teamTricode": "GSW"},
+        }
+    )
+    (tmp_path / SCHEDULE_FIXTURE).write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / TEAMS_FIXTURE).write_text(
+        json.dumps(load_fixture(DEFAULT_FIXTURES_DIR, TEAMS_FIXTURE)), encoding="utf-8"
+    )
+
+    with app.state.database.session() as session:
+        seeded = seed_schedule_grid(session, fixtures_dir=tmp_path)
+
+    assert seeded.resolved_game_count == 11
+    body = client.get(GRID_URL.format(league_id=seeded.league_id)).json()
+    assert body["lineage"]["schedule"]["persisted_team_row_count"] == 22
+    nba_id_by_team_id = {team["team_id"]: team["nba_team_id"] for team in body["teams"]}
+    counted = {
+        nba_id_by_team_id[row["team_id"]]
+        for row in body["counts"]
+        if row["period_number"] == 1 and row["games"] > 0
+    }
+    # Both sides of the neutral game, not just the nominal home team.
+    assert {home_nba_id, away_nba_id} <= counted
+
+
 def test_seed_weekly_periods_cover_every_game_date_in_whole_weeks() -> None:
     periods = weekly_periods(date(2026, 10, 20), date(2027, 3, 14))
 
@@ -653,6 +850,108 @@ def test_seed_weekly_periods_cover_every_game_date_in_whole_weeks() -> None:
     assert all(end - start == (periods[0][2] - periods[0][1]) for _, start, end, _ in periods)
     assert [number for number, _, _, _ in periods] == list(range(1, len(periods) + 1))
     assert [is_playoff for _, _, _, is_playoff in periods][-2:] == [True, True]
+
+
+@pytest.mark.parametrize(
+    ("first", "last"),
+    [
+        (date(2026, 10, 19), date(2026, 10, 25)),  # one Mon-Sun week
+        (date(2026, 10, 19), date(2026, 11, 1)),  # exactly two weeks
+    ],
+)
+def test_seed_refuses_a_span_too_short_to_have_a_playoff_tail(first: date, last: date) -> None:
+    """Otherwise the naive tail slice marks the entire season as playoffs."""
+
+    with pytest.raises(DemoSeedRefused, match="playoff weeks are a tail"):
+        weekly_periods(first, last)
+
+
+def test_seed_reconciliation_refuses_a_filter_that_drops_a_resolved_game() -> None:
+    """The check that makes over-removal loud instead of silent.
+
+    The TBD filter runs upstream of `parse_schedule`, so a dropped game vanishes
+    from both sides of `import_schedule`'s completeness comparison at once. If
+    the NBA redrew the Cup and the fixture were re-recorded with six unassigned
+    games, a filter bug could silently import a season six games short and still
+    register `unresolved_game_ids: []`.
+    """
+
+    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
+    payload = resolved_schedule_payload(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE))
+    payload["leagueSchedule"]["gameDates"][0]["games"].pop()
+    over_filtered = parse_schedule(payload, season=SEASON)
+
+    with pytest.raises(DemoSeedRefused, match="changed the resolved cohort"):
+        reconcile_dropped_games(recorded, over_filtered)
+
+
+def test_seed_reconciliation_reports_exactly_the_recorded_unresolved_games() -> None:
+    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
+    filtered = parse_schedule(
+        resolved_schedule_payload(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE)),
+        season=SEASON,
+    )
+
+    assert reconcile_dropped_games(recorded, filtered) == ("0022601201", "0022601202")
+    assert recorded.source_game_count == 12
+    assert filtered.source_game_count == 10
+
+
+def test_seed_result_reports_the_as_recorded_source_count_beside_the_imported_one(
+    app: FastAPI, client: TestClient
+) -> None:
+    """The registered block describes the filtered document; this states so."""
+
+    seeded = _seed(app)
+
+    assert seeded.resolved_game_count == 10
+    assert seeded.as_recorded_source_game_count == 12
+    assert seeded.dropped_game_ids == ("0022601201", "0022601202")
+
+
+def test_seed_refuses_a_database_holding_a_league_it_did_not_create(
+    app: FastAPI, client: TestClient
+) -> None:
+    """`nba_games`, `team_schedule` and the schedule refresh are not league-scoped.
+
+    Aiming the seed at the operator's working database would make a ten-game
+    fixture the current registered season cohort for every consumer keyed to
+    schedule version.
+    """
+
+    with app.state.database.session() as session:
+        _league(session, fantrax_league_id="the-operators-real-league")
+
+    with pytest.raises(DemoSeedRefused, match="the-operators-real-league"):
+        _seed(app)
+
+    with app.state.database.session() as session:
+        assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
+        assert session.scalar(select(func.count()).select_from(TeamScheduleEntry)) == 0
+        assert session.scalar(select(func.count()).select_from(RefreshRun)) == 0
+
+
+def test_seed_refuses_a_database_holding_an_out_of_cohort_game_for_the_season(
+    app: FastAPI, client: TestClient
+) -> None:
+    seeded = _seed(app)
+    with app.state.database.session() as session:
+        team_ids = list(session.scalars(select(NbaTeam.id).order_by(NbaTeam.id).limit(2)))
+        session.add(
+            NbaGame(
+                nba_game_id="0022699999",
+                season=SEASON,
+                season_type=SeasonType.REGULAR,
+                game_date=date(2027, 1, 5),
+                home_team_id=team_ids[0],
+                away_team_id=team_ids[1],
+            )
+        )
+
+    with pytest.raises(DemoSeedRefused, match="0022699999"):
+        _seed(app)
+
+    assert seeded.league_id
 
 
 def test_seed_reports_a_missing_fixture_directory_rather_than_failing_obscurely(

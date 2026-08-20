@@ -52,7 +52,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/pair` | Loopback-only exchange of `X-Hoops-GM-Pairing-Code` for the bearer secret. |
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
-| `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed `X-Bridge-Error` code rather than serving partial or unverifiable counts. |
+| `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -174,16 +174,47 @@ It seeds 30 teams, the 10 resolved games in
 `tests/fixtures/nba_scheduleleaguev2_2026_27.json`, and 21 Monday-to-Sunday
 scoring periods covering them, so the grid returns 630 dense count rows with
 20 team-games. Re-running it converges rather than advancing "current": the
-registered schedule version is a fingerprint of the persisted rows.
+registered schedule version is a fingerprint of the persisted rows. It is not
+a strict no-op — the refresh's `refreshed_at` moves to the wall clock.
+
+It **refuses** to run against a database holding any league it did not create,
+or any 2026-27 game outside the fixture cohort. Schema is built with
+`Base.metadata.create_all`, not Alembic, so the demo database is model-built
+rather than migration-built; that is fine for a throwaway file and wrong for
+anything else.
 
 A relative SQLite path is anchored to the **repo root**, not the working
 directory (`Settings._resolve_relative_sqlite_path`), so the file above lands
 at `../schedule_grid_demo.db`. `*.db` is gitignored.
 
 Nothing here reaches the network. The two unassigned Emirates NBA Cup games in
-the recorded payload are dropped in memory, exactly as
+the recorded payload are dropped **in memory**, exactly as
 `tests/test_schedule.py` does — the fixture itself is never edited, because
 those games are the upstream-drift evidence the Adapter gate keeps it for.
+
+**Read the served lineage accordingly.** The response says
+`source_game_count: 10, unresolved_game_ids: []`. That describes the *filtered*
+document, not the recorded source, which reports **12** games and names
+`0022601201` and `0022601202` as unresolved. The filter runs upstream of
+`parse_schedule`, so anything it drops disappears from both sides of
+`import_schedule`'s completeness comparison at once and the contract cannot see
+it — which is why the seed re-parses the payload as recorded, refuses unless the
+delta is exactly the unresolved games, and prints
+`as_recorded_source_game_count` and `dropped_game_ids` beside the imported
+count. `docs/adapters/nba-schedule.md` designates this state as one the real
+2026-27 pipeline must **not** register; the demo league exists so that refusal
+stays intact for the real one.
+
+For the same reason the seed refuses to run against a database holding any
+league it did not create, or any 2026-27 game outside the fixture cohort:
+`nba_games`, `team_schedule` and the `nba-schedule` refresh are global and
+season-scoped, with no league dimension, so a ten-game fixture aimed at a
+working database would become the current registered cohort for every consumer.
+
+The demo's scoring periods are Monday-to-Sunday weeks derived from the NBA game
+dates, not a real Fantrax calendar, and its playoff weeks are synthesized — the
+settings contract cannot express "authoritatively zero playoff periods". Do not
+read the demo as evidence that a real league's calendar joins correctly.
 
 ## Migrations
 
