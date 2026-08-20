@@ -9317,3 +9317,76 @@ dataset where it cannot fire. None was caught by a test, because in each case
 the test was written from the same assumption as the code.
 
 **Next:** Report the three fixes and open the PR with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased onto `56adf2f` after #39; the recount caught a fourth stale header
+
+**Changed:** Rebased onto `main` at `56adf2f`, after Lane C's #39 merged. This is
+the first rebase where another lane's `docs/` entries were in play rather than
+only the backend's, and both files conflicted.
+
+**Now true — the two checks the coordinator asked for, both run:**
+
+`docs/handoff.md` entries were counted, not eyeballed, and the set difference
+taken **both ways** against snapshots of each side recorded before the rebase:
+
+```
+total ## headings at final head: 161   (expected 135 base + 6 Lane A + 8 Lane C + 12 mine)
+missing from mine: 0
+missing from main: 0
+duplicates:        0
+```
+
+So no lane's entries were eaten and none were doubled. Recording the two heading
+sets *before* starting the rebase is what made this checkable afterwards; doing
+it from memory would have been the same guess in a different costume.
+
+`docs/backlog.md` was recounted at the final head, and it caught a fourth stale
+header — the same class as the previous three, arriving by a new route. Dropping
+conflict markers is the right resolution for append-only prose and the **wrong**
+one for a single derived line: it kept *both* sides, leaving four status lines
+in the file, and a wrapped parenthetical from Lane C orphaned mid-sentence. The
+recount is what surfaced it. One line now: **39 done / 1 blocked / 69 pending /
+109 total**, with 109 headings to 109 markers, zero duplicates — which is Lane
+C's authoritative post-merge 38/1/66/105 plus my one done and three pending,
+exactly as predicted before measuring.
+
+Neither lane's pre-merge header was usable as an input, because each was
+computed before the other's items landed. That is now stated in the file so the
+next lane does not try to reconcile them.
+
+**Capture-and-compare against the new `main`: byte-identical, including the
+timestamp.** `56adf2f..HEAD` touches no backend file, so nothing could have
+moved, and the fixture was therefore *not* re-captured — comparing without
+replacing is the verification, and replacing on an unchanged route destroys the
+baseline. This is the check the coordinator asked for after `main` moved a
+fingerprinted file under Lane C: my only artefact deriving from backend source
+is the recorded response, and it is confirmed identical rather than assumed so.
+
+Browser re-verified on `56adf2f`: 30 rows x 23 columns, zeros explicit and the
+same computed colour as counts, league 6 / 14 / 20, season mean 0.7, lineage
+`10 from source · 10 resolved · 20 team rows persisted · 20 counted in this
+grid`, `PO` on period 21, first team and Mean row on screen together, no alerts.
+
+PR scope against `main`: 17 frontend files, 2 docs, **zero backend**.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 77 tests across 8 files.
+
+**Could not verify:** Everything in the previous entries stands and is not
+repeated. Added by this rebase: nothing was re-reviewed at this head. The delta
+from the approved head is the two docs resolutions and no source change, which
+is checkable — `git diff --name-only` shows only `docs/` — but the three
+approvals were given at `aeff3bf`, not here.
+
+On the coordinator's AST-equivalence correction: I have no equivalence check of
+that kind, so nothing of mine is exposed to it. The nearest analogue is the
+capture-and-compare loop, and its limits are already recorded — it sees a
+renamed field, a changed value and a missing row, and is structurally blind to a
+change of meaning under an unchanged shape. Worth noting the two failures are
+the same shape: `ast.dump` cannot see comments, a recording cannot see meaning,
+and in both cases the check passes while the thing it was trusted to catch goes
+by. **Line-span containment is to AST-compare what driving a real refusal is to
+reading the copy** — the check that looks at what the other one cannot.
+
+**Next:** PR is open against `main`. Nothing outstanding in this lane.

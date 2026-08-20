@@ -2,18 +2,14 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**38 done - 1 blocked - 66 pending - 105 total**
+**39 done - 1 blocked - 69 pending - 109 total**
 
-(Counted from the status markers themselves, not carried forward: 105 `###`
-headings and 105 markers, 1:1. Recounted at this head after two lanes merged —
-neither lane's pre-merge header was used as an input, because both were computed
-before the other's items landed. The header before that claimed 37 done / 63
-pending against an actual 36 / 64, and that drift predates both lanes.)
-**38 done - 1 blocked - 67 pending - 106 total**
-**38 done - 1 blocked - 68 pending - 107 total**
-**38 done - 1 blocked - 69 pending - 108 total**
+(Counted from the status markers themselves at this head, not carried forward from
+either lane: 109 `###` headings and 109 markers, 1:1, no duplicates. Neither
+pre-merge header was a usable input, because each was computed before the other
+lane's items landed. An earlier header claimed 37 done / 63 pending against an
+actual 36 / 64, and that drift predates all three lanes.)
 
-(Counted from the status markers themselves, not carried forward: 108 `###` headings and 108 markers, 1:1.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
