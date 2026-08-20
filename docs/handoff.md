@@ -6237,12 +6237,14 @@ cannot leave a blank route.
 **Could not verify:** No live browser/backend pair was run in this worktree, so
 the evidence is the backend's committed readiness contract plus jsdom tests and
 the production build, not a manual failure injection against a running service.
-GitHub CI is running on PR #35; secret scanning and userscript checks were green
-at handoff time, while frontend, backend, Postgres, migration, Adapter, Model,
-and CodeQL lanes were still in progress. The retry control can recover when the
-underlying render condition is transient or has changed; a deterministic render
-bug will correctly return to the visible fallback rather than pretending the
-view recovered.
+On the reviewed code head, every reported blocking PR #35 lane except the native
+Postgres suite was green at handoff time; Postgres was still in progress and the
+non-blocking live-smoke lane skipped by design. Publishing this docs-only
+closeout will trigger a fresh CI run, which the coordinator must evaluate rather
+than inheriting this snapshot. The retry control can recover when the underlying
+render condition is transient or has changed; a deterministic render bug will
+correctly return to the visible fallback rather than pretending the view
+recovered.
 
 **Next:** The coordinator should require every blocking PR #35 check to pass,
 then review and merge independently. This session must not merge or self-approve.
