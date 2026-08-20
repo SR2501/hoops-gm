@@ -1,15 +1,20 @@
 from dataclasses import replace
 from datetime import date
+from typing import Any, cast
 
 import pytest
+from sqlalchemy.orm import Session
 
+from hoops_gm.ingest import backfill
 from hoops_gm.ingest.backfill import (
     _league_game_finder_season_type,
     _participation_games_in_scope,
+    _require_matching_season_game_ids,
     _validate_summary_game_identity,
 )
 from hoops_gm.ingest.errors import SourceContractError
-from hoops_gm.ingest.nba.models import NbaGameRecord
+from hoops_gm.ingest.nba.client import NbaStatsClient
+from hoops_gm.ingest.nba.models import NbaGameRecord, PlayerBoxScoreRecord
 
 
 def _game(game_id: str, game_date: date) -> NbaGameRecord:
@@ -93,4 +98,70 @@ def test_summary_identity_must_agree_with_schedule_identity() -> None:
         _validate_summary_game_identity(
             schedule,
             replace(summary, home_team_id=2, away_team_id=1),
+        )
+
+
+def _log(game_id: str) -> PlayerBoxScoreRecord:
+    return PlayerBoxScoreRecord(
+        nba_player_id=10,
+        nba_game_id=game_id,
+        nba_team_id=1,
+        player_name="Test Player",
+    )
+
+
+def test_season_sources_must_name_exactly_the_same_games() -> None:
+    games = [
+        _game("0022500001", date(2025, 10, 21)),
+        _game("0022500002", date(2025, 10, 22)),
+    ]
+
+    _require_matching_season_game_ids(
+        games,
+        [_log("0022500001"), _log("0022500002"), _log("0022500002")],
+        season="2025-26",
+        season_type="Regular Season",
+    )
+
+    with pytest.raises(
+        SourceContractError,
+        match=r"LeagueGameFinder=2, PlayerGameLogs=2.*0022500002.*0022500003",
+    ):
+        _require_matching_season_game_ids(
+            games,
+            [_log("0022500001"), _log("0022500003")],
+            season="2025-26",
+            season_type="Regular Season",
+        )
+
+
+def test_season_backfill_reconciles_both_sources_before_any_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Source:
+        def league_game_finder(self, *, season: str, season_type: str) -> object:
+            del season, season_type
+            return object()
+
+        def player_game_logs(self, *, season: str, season_type: str) -> object:
+            del season, season_type
+            return object()
+
+    games = [_game("0022500001", date(2025, 10, 21))]
+    logs = [_log("0022500002")]
+    monkeypatch.setattr(backfill, "parse_league_game_finder", lambda *args, **kwargs: games)
+    monkeypatch.setattr(backfill, "parse_player_game_logs", lambda *args, **kwargs: logs)
+
+    def unexpected_write(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise AssertionError("season persistence ran before source reconciliation")
+
+    monkeypatch.setattr(backfill, "import_games", unexpected_write)
+    monkeypatch.setattr(backfill, "import_box_scores", unexpected_write)
+
+    with pytest.raises(SourceContractError, match="game identity mismatch"):
+        backfill.backfill_season(
+            cast(Session, object()),
+            nba=cast(NbaStatsClient, Source()),
+            season="2025-26",
         )

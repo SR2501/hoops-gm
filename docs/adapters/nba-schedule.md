@@ -65,7 +65,10 @@ Nothing is deleted. A leftover row is inconsistent evidence, and the importer
 cannot tell a real postponement from a truncated response; deleting it would
 cascade into `quant`'s `opponent_context` and could not be undone by re-running
 the import. The refusal leaves the rows, the previously registered cohort, and
-the operator's options intact.
+the operator's options intact. All writes and the final persisted-cohort
+readback run inside a savepoint: if a library caller catches the refusal and
+commits unrelated outer-transaction work, schedule/game mutations attempted by
+the rejected import are still rolled back.
 
 On success the refresh row records the season, season type, source game count,
 resolved count, unresolved IDs, and `persisted_team_row_count` under

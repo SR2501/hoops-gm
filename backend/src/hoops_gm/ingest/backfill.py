@@ -73,6 +73,7 @@ from hoops_gm.ingest.league_settings import (
 from hoops_gm.ingest.nba import (
     NbaGameRecord,
     NbaStatsClient,
+    PlayerBoxScoreRecord,
     combine_game_participation,
     parse_box_score_summary_v3,
     parse_box_score_traditional_v3,
@@ -330,10 +331,12 @@ def backfill_season(
         season=season,
         season_type=parsed_season_type,
     )
+    logs = parse_player_game_logs(nba.player_game_logs(season=season, season_type=season_type))
+    _require_matching_season_game_ids(games, logs, season=season, season_type=season_type)
+
     result.steps["games"] = import_games(session, games)
     progress(f"  games: {result.steps['games']}")
 
-    logs = parse_player_game_logs(nba.player_game_logs(season=season, season_type=season_type))
     result.steps["box scores"] = import_box_scores(session, logs)
     progress(f"  box scores: {result.steps['box scores']}")
 
@@ -421,6 +424,31 @@ def _validate_summary_game_identity(
             endpoint="BoxScoreSummaryV3",
         )
     return summary_game
+
+
+def _require_matching_season_game_ids(
+    games: Sequence[NbaGameRecord],
+    logs: Sequence[PlayerBoxScoreRecord],
+    *,
+    season: str,
+    season_type: str,
+) -> None:
+    """Require both whole-season sources to name exactly the same games."""
+
+    schedule_ids = {game.nba_game_id for game in games}
+    player_log_ids = {log.nba_game_id for log in logs}
+    if schedule_ids == player_log_ids and schedule_ids:
+        return
+
+    schedule_only = sorted(schedule_ids - player_log_ids)
+    player_log_only = sorted(player_log_ids - schedule_ids)
+    raise SourceContractError(
+        f"{season} {season_type} game identity mismatch: "
+        f"LeagueGameFinder={len(schedule_ids)}, PlayerGameLogs={len(player_log_ids)}, "
+        f"schedule_only={schedule_only[:10]}, player_log_only={player_log_only[:10]}",
+        source="nba_stats",
+        endpoint="LeagueGameFinder+PlayerGameLogs",
+    )
 
 
 def _league_game_finder_season_type(season_type: str) -> str:

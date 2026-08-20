@@ -105,7 +105,10 @@ Participation backfill also compares every fetched `BoxScoreSummaryV3` game ID,
 Eastern date, designated teams, and score against its `LeagueGameFinder` row and
 records a loud per-game source failure on any contradiction. The live smoke
 checks the independent home/away anchor for all ten known repeated-canonical
-games.
+games. Production season backfill parses both whole-season sources before any
+write, rejects an empty `LeagueGameFinder` cohort, and requires exact game-ID
+set equality with `PlayerGameLogs`; player logs for a game omitted from the
+schedule can no longer degrade into a successful import with skipped rows.
 Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE` remains the NBA's
 Eastern local date, and this endpoint still supplies no tip-off instant.
 

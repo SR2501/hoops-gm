@@ -503,6 +503,21 @@ def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCoun
 
     teams = {team.nba_team_id: team.id for team in session.scalars(select(NbaTeam))}
     _require_known_teams(parsed, teams=teams)
+
+    # The final exact-cohort check necessarily runs after writes. Keep those
+    # writes inside a savepoint so a caller may catch SourceContractError and
+    # still safely commit unrelated outer-transaction work.
+    with session.begin_nested():
+        return _persist_schedule_cohort(session, parsed, teams=teams)
+
+
+def _persist_schedule_cohort(
+    session: Session,
+    parsed: ScheduleParseResult,
+    *,
+    teams: dict[int, int],
+) -> ImportCounts:
+    season = parsed.season
     counts = import_games(session, [record.game for record in parsed.games])
     games = _require_persisted_game_identity(session, parsed, teams=teams)
 

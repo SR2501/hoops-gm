@@ -432,16 +432,23 @@ def test_schedule_import_refuses_rows_that_fall_outside_the_parsed_cohort(sessio
     )
     assert before is not None
     registered_version = before.version
+    original_tipoff = result.games[0].game.tipoff_utc
+    assert original_tipoff is not None
+    changed_first = replace(
+        result.games[0],
+        game=replace(result.games[0].game, tipoff_utc=original_tipoff + timedelta(hours=1)),
+    )
 
     shortened = ScheduleParseResult(
         season=result.season,
-        games=result.games[:-1],
+        games=(changed_first, *result.games[1:-1]),
         unresolved_game_ids=(),
         source_game_count=len(result.games) - 1,
     )
 
     with pytest.raises(SourceContractError, match="does not match the parsed cohort"):
         import_schedule(session, shortened)
+    session.commit()
 
     after = current_refresh(
         session,
@@ -453,6 +460,11 @@ def test_schedule_import_refuses_rows_that_fall_outside_the_parsed_cohort(sessio
     assert after.version == registered_version, "a refused import must not register a refresh"
     assert len(_persisted_schedule_rows(session, "2026-27")) == 2 * len(result.games)
     assert check_cohort(session, schedule_version=registered_version)[0].status == "current"
+    persisted_game = session.scalar(
+        select(NbaGame).where(NbaGame.nba_game_id == result.games[0].game.nba_game_id)
+    )
+    assert persisted_game is not None
+    assert persisted_game.tipoff_utc == original_tipoff
 
 
 def test_schedule_import_refuses_a_persisted_game_that_contradicts_the_source(

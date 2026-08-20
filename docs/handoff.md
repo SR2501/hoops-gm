@@ -6699,3 +6699,44 @@ that endpoint.
 data-engineer, quant, and independent code approvals, then publish one unmerged
 PR. Injury-status conversion remains paused pending complete regeneration of
 the invalidated 173-game/26-date cohort.
+
+---
+
+## 2026-08-20 — data-engineer, backend — Producer atomicity and cross-source completeness
+
+**Changed:** Closed two final producer findings from rejected head `543a41c`.
+Production `backfill_season` now fetches and parses both `LeagueGameFinder` and
+`PlayerGameLogs`, requires non-empty exact game-ID set equality, and only then
+writes games or box scores. The offline ordering regression supplies
+contradictory source sets and makes both write functions fatal if reached,
+proving the rejection occurs before persistence. `LeagueGameFinder` itself now
+rejects a full-season response with zero parsed games.
+
+`import_schedule` now encloses game/team-row writes, exact persisted-cohort
+readback, and refresh registration in a database savepoint after its
+non-mutating preflight. If the final readback rejects extra or contradictory
+rows, a caller can catch `SourceContractError` and commit unrelated outer work
+without committing any schedule mutation attempted by the rejected import.
+The regression changes an included game's tipoff, submits a shortened cohort,
+catches the expected refusal, commits, and proves the original tipoff, full row
+set, refresh version, and current status all survive.
+
+**Now true:** The production backfill enforces the same exact cross-source
+identity equality that reproduced the original 1,225/1,230 defect; the live
+smoke is no longer the only place with that guarantee. Ruff, format, strict
+mypy, and all 1,052 offline backend tests pass. The complete Adapter gate passes
+282 tests and the Model gate passes 18. SQLite upgrades/checks/downgrades
+through `0015`, and the 277-file secret scan is clean. Both Model evidence
+commands again reproduced byte-for-byte, and live scope again returned 1,230
+regular games, 84 playoff games, and all ten independent anomaly orientations.
+
+**Could not verify:** Native PostgreSQL savepoint and advisory-lock behavior
+remain CI-only because Docker and `TEST_DATABASE_URL` are unavailable. The
+documented `ScheduleLeagueV2` coherent-subset limit remains unchanged; the new
+exact source equality applies to completed-game historical backfill, where both
+official sources exist.
+
+**Next:** Commit, obtain fresh exact-head backend, data-engineer, quant, and
+independent code approval, publish one unmerged PR, and require native
+PostgreSQL CI. Injury-status conversion remains paused for complete 173-game
+cohort regeneration.
