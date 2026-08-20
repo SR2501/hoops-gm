@@ -70,10 +70,10 @@ describe('the dashboard shell', () => {
     expect(screen.getByTestId('backend-status')).toHaveTextContent('Request req-bad-health')
   })
 
-  it('treats a proxy-generated 500 with no backend request id as unreachable', async () => {
+  it('treats a proxy-generated 5xx with no backend request id as unreachable', async () => {
     mockFetch({
       '/api/v1/meta': { body: META },
-      '/health': { status: 500, body: null },
+      '/health': { status: 502, body: null },
     })
 
     renderWithRouter(<App />)

@@ -6207,7 +6207,7 @@ persistent `AppLayout` owns one boundary around `Outlet`, so every current and
 future child route is protected automatically while navigation remains usable.
 
 The final frontend review had no blockers but identified operator-facing edge
-cases worth fixing before publication: Vite's proxy-generated 500 when the
+cases worth fixing before publication: a Vite proxy-generated 5xx when the
 backend is down has no backend request id and was labelled as a generic backend
 error; shell health never aged or offered retry; a body-read timeout discarded
 an already-received request id; disabling the pending refresh button dropped
