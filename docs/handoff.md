@@ -6020,6 +6020,8 @@ profiles. No self-approval occurred.
 rates. It must keep games played outside the blend: availability remains the
 separate future fusion seam required by ADR-002.
 
+---
+
 ## 2026-08-19 — quant — Deterministic per-game projection blending contract
 
 **Changed:** Implemented `projection-blending` as a migration-free domain/service
