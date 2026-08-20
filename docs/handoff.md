@@ -6020,66 +6020,6 @@ profiles. No self-approval occurred.
 rates. It must keep games played outside the blend: availability remains the
 separate future fusion seam required by ADR-002.
 
----
-
-## 2026-08-19 — backend, bridge — Durable read-only bridge capture acknowledgement
-
-**Changed:** Corrected two independently reproduced browser-bridge boundary
-defects without expanding endpoints, permissions, capture scope, pairing, or
-Fantrax actions. `POST /api/v1/bridge/payloads` now owns a complete
-`Database.session()` scope inside the handler, so commit or rollback finishes
-before the handler can return HTTP 201; an injected commit failure now returns
-the normal request-id-bearing 500 envelope and leaves zero
-`bridge_payloads` rows. Userscript 0.5.1 accepts capture success only from an
-exact HTTP 201 response carrying `{status: "stored", id: <positive integer>}`,
-coalesces concurrent equivalent deliveries onto one in-flight promise, and
-adds a key to bounded dedupe only after that promise is durably acknowledged.
-Transport, non-201, malformed-acknowledgement, and commit failures release
-in-flight state for a later natural or manual retry. The manual command now
-waits for that acknowledgement before saying the page was stored and reports
-failure otherwise. Both isolated- and page-world XMLHttpRequest wrappers
-inherit the original constructor's static constants while preserving the
-original prototype and genuine native instances.
-
-**Now true:** The branch was rebased without conflict onto exact `origin/main`
-`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`. Regressions cover response-start
-ordering after commit, injected commit failure, rollback and zero-row outcome,
-retry after failure, concurrent equivalent capture coalescing, manual UI
-timing, exact storage-acknowledgement validation, and all five standard XHR
-ready-state constants plus prototype/`instanceof` behavior in both wrappers.
-
-The first fresh backend review after the final rebase found that the
-commit-failure test's zero-row assertion selected the entire table. That was
-valid under per-test SQLite files but not under CI's shared Postgres URL, where
-earlier module tests may leave unrelated committed rows. The production fix
-was unaffected. The regression now submits a request-unique dedupe key and
-asserts that no row with that identity exists, so it proves rollback without
-assuming global table emptiness.
-The full local Code gate passes: Ruff and formatting clean, strict mypy clean,
-981 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
-passed, the userscript production build completed, the tracked-file secret
-scan found no secrets in 267 files, and a fresh SQLite migration lifecycle
-upgraded through `0015`, reported no model drift, and downgraded to base.
-Adapter and Automation gates do not apply: this change adds no external-source
-adapter and remains a response-only read path with no action protocol,
-executor, click, submit, or write capability.
-
-**Could not verify:** Docker is not installed and `TEST_DATABASE_URL` is unset,
-so native Postgres commit-failure behavior, the full Postgres suite, and the
-Postgres migration lifecycle require fresh GitHub CI on the published exact
-head. The XHR compatibility mechanism is exercised in both JavaScript worlds,
-but no live Fantrax page path reading the constructor constants was observed;
-the reported live trigger remains unverified and no live Fantrax claim is
-made. No browser check was attempted against private league data, so no
-payload, cookie, secret, or private league identifier entered diagnostics.
-
-**Next:** Obtain fresh exact-head backend, bridge, and independent code reviews,
-then publish only if they remain clear. Require all blocking CI jobs, including
-both native Postgres lanes, to pass before reporting the PR ready. Do not merge
-or self-approve.
-
----
-
 ## 2026-08-19 — quant — Deterministic per-game projection blending contract
 
 **Changed:** Implemented `projection-blending` as a migration-free domain/service
@@ -6306,3 +6246,69 @@ recovered.
 
 **Next:** The coordinator should require every blocking PR #35 check to pass,
 then review and merge independently. This session must not merge or self-approve.
+
+---
+
+## 2026-08-19 — backend, bridge — Durable read-only bridge capture acknowledgement
+
+**Changed:** Corrected two independently reproduced browser-bridge boundary
+defects without expanding endpoints, permissions, capture scope, pairing, or
+Fantrax actions. `POST /api/v1/bridge/payloads` now owns a complete
+`Database.session()` scope inside the handler, so commit or rollback finishes
+before the handler can return HTTP 201; an injected commit failure now returns
+the normal request-id-bearing 500 envelope and leaves zero
+`bridge_payloads` rows. Userscript 0.5.1 accepts capture success only from an
+exact HTTP 201 response carrying `{status: "stored", id: <positive integer>}`,
+coalesces concurrent equivalent deliveries onto one in-flight promise, and
+adds a key to bounded dedupe only after that promise is durably acknowledged.
+Transport, non-201, malformed-acknowledgement, and commit failures release
+in-flight state for a later natural or manual retry. The manual command now
+waits for that acknowledgement before saying the page was stored and reports
+failure otherwise. Both isolated- and page-world XMLHttpRequest wrappers
+inherit the original constructor's static constants while preserving the
+original prototype and genuine native instances.
+
+The first fresh backend review after the final rebase found that the
+commit-failure test's zero-row assertion selected the entire table. That was
+valid under per-test SQLite files but not under CI's shared Postgres URL, where
+earlier module tests may leave unrelated committed rows. The production fix
+was unaffected. The regression now submits a request-unique dedupe key and
+asserts that no row with that identity exists, so it proves rollback without
+assuming global table emptiness.
+
+**Now true:** The branch was rebased without conflict onto exact `origin/main`
+`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`; its published exact head is
+`b193ee347959c868ade6303693c7c2f2dcf32116`. Regressions cover response-start
+ordering after commit, injected commit failure, rollback and zero-row outcome,
+retry after failure, concurrent equivalent capture coalescing, manual UI
+timing, exact storage-acknowledgement validation, and all five standard XHR
+ready-state constants plus prototype/`instanceof` behavior in both wrappers.
+The full local Code gate passes: Ruff and formatting clean, strict mypy clean,
+981 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
+passed, the userscript production build completed, the tracked-file secret
+scan found no secrets in 267 files, and a fresh SQLite migration lifecycle
+upgraded through `0015`, reported no model drift, and downgraded to base. A
+shared-database reproduction of the corrected bridge payload module passed
+13/13 tests.
+
+Fresh exact-head backend, bridge, and independent code reviews found no further
+findings after the shared-table correction. Push run `32327621520` and
+pull-request run `32327624552` both passed every blocking check, including both
+native Postgres full-suite/migration lanes, both SQLite migration jobs, backend
+and userscript Code gates, recorded-fixture and Model gates, CodeQL, frontend,
+and secret scanning. Live-smoke jobs skipped by design. Adapter and Automation
+gates do not apply to this change: it adds no external-source adapter and
+remains a response-only read path with no action protocol, executor, click,
+submit, or write capability.
+
+**Could not verify:** The XHR compatibility mechanism is exercised in both
+JavaScript worlds, but no live Fantrax page path reading the constructor
+constants was observed; the reported live trigger remains unverified and no
+live Fantrax claim is made. No browser check was attempted against private
+league data, so no payload, cookie, secret, or private league identifier
+entered diagnostics. Native Postgres could not run locally because Docker is
+not installed and `TEST_DATABASE_URL` is unset; the two successful GitHub CI
+lanes above are the exact-head Postgres evidence.
+
+**Next:** The coordinator may evaluate the pull request for merge. This session
+did not merge or self-approve it.
