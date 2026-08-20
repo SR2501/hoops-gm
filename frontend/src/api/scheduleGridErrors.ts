@@ -71,9 +71,9 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
   schedule_grid_incomplete: {
     summary:
-      'The schedule verified cleanly but produced no game counts at all for this league, so there is no grid to draw.',
+      'The schedule verified cleanly, but the grid assembled from it does not hold together: either it produced no counts at all for this league, or it left out a team that has schedule rows inside the verified cohort. The backend refuses to serve counts that contradict their own lineage rather than showing a grid quietly short a team.',
     action:
-      "Check that the league's scoring period calendar covers the season the schedule was imported for.",
+      "Read the backend's wording below. No counts at all points at the league's scoring calendar not covering the season the schedule was imported for; a team present in the schedule but absent from the grid points at that team being marked inactive while still holding rows.",
   },
 }
 

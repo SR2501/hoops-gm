@@ -9155,3 +9155,71 @@ obvious. It was obvious here and I did not run it.
 **Next:** Unchanged, blocked only on the merge. Final rebase will use
 `git -c rerere.enabled=false`, stage the two docs files by path, and recompute
 the backlog total at the final head rather than mid-sequence.
+
+---
+
+## 2026-08-20 — frontend — On merged `main`, and a third refusal code was misdescribed
+
+**Changed:** Rebased onto merged `main` (`959a795`). The merge added no content
+over `2091975`, so the rebase was conflict-free; recount at the final head gives
+38 done / 1 blocked / 69 pending / 108 total, 108 headings to 108 markers, tree
+clean, zero markers.
+
+**The coordinator's note that merged `main` carries a refusal path new since my
+last capture turned out to matter.** `schedule_grid_incomplete` now has **two**
+raisers, not one: the original `not rows` case, and a new one at
+`schedule_grid.py:485` — a team holding schedule rows inside the verified cohort
+but absent from the grid, because it is marked inactive.
+
+I drove it: deactivated team 2 in a copy of the seeded database and got
+
+> `teams [2] have 2026-27 schedule rows inside the verified cohort but are
+> absent from the grid; refusing to serve counts that contradict their own
+> lineage block`
+
+My copy for that code read *"produced no game counts at all for this league, so
+there is no grid to draw"* — **false here.** There are counts; they are short a
+team whose rows exist. That is the third code on this screen whose message was
+written against one condition and was false of another, and the third time
+driving the condition rather than reasoning about it is what found it.
+
+Both conditions are now named, with an action that points at the backend's
+wording and gives the different remedy for each: no counts at all points at the
+league's scoring calendar; a team present in the schedule but missing from the
+grid points at it being inactive while still holding rows. Verified in the
+browser against the merged route, rendered above the backend detail it no longer
+contradicts.
+
+**Now true:** Capture-and-compare against merged `main` — the response is
+identical to the previous capture in every field but `refreshed_at`, which moved
+only because the seed re-ran. The fixture was updated because something did
+move; where nothing moves, comparing without replacing is the verification and
+replacing destroys the baseline.
+
+The 200 re-verified in a browser on merged `main`: 30 rows x 23 columns, zeros
+explicit and the same computed colour as counts, league 6 / 14 / 20, season mean
+0.7, lineage reading `10 from source · 10 resolved · 20 team rows persisted ·
+20 counted in this grid`, `PO` on period 21, first team and Mean row on screen
+together, no alerts.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, **78 tests across 8 files**.
+
+**Could not verify:** The three league-data conditions under
+`schedule_grid_incomplete_evidence` remain unrendered, for the reason already
+recorded — reaching them needs a database inconsistent in exactly one way and
+consistent in every other, which the seed cannot produce. The `403
+schedule_grid_local_only` path is still unit-test-only; every request in this
+session came from loopback.
+
+**Five refusal conditions have now been driven end to end** — missing
+completeness block, wrong cohort, stale scoring-period projection, deactivated
+team, unknown league — and **three of the five falsified the copy that was
+already written for their code.** That ratio is the argument for
+`schedule-grid-refusal-discriminant` more than any reasoning about it: when a
+message is written for a code rather than for a condition, the base rate of it
+being wrong about some other condition of that code appears to be better than
+even.
+
+**Next:** Fresh exact-head review round on the rebased head, then open the PR
+with base `main`. If #39 lands first, one more rebase — recount from the merged
+file rather than reconciling either side's header, per Lane C.

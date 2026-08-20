@@ -494,7 +494,7 @@ describe('schedule grid refusals', () => {
       code: 'schedule_grid_incomplete',
       status: 409,
       detail: 'grid has no rows',
-      expect: /no game counts at all/,
+      expect: /does not hold together/,
     },
   ]
 
@@ -563,6 +563,31 @@ describe('schedule grid refusals', () => {
     expect(action).toHaveTextContent(/re-importing the schedule will not create one/i)
 
     expect(panel).toHaveTextContent("describes a 'playoffs' cohort")
+  })
+
+  it('covers both conditions that raise the incomplete code', async () => {
+    // Merged main added a second raiser: a team holding schedule rows inside
+    // the verified cohort but absent from the grid, because it is marked
+    // inactive. Driven end to end against the merged route. The old copy said
+    // the grid "produced no game counts at all", which is false there — there
+    // are counts, they are just short a team whose rows exist.
+    mockFetch({
+      [GRID_PATH]: refusal(
+        409,
+        'schedule_grid_incomplete',
+        'teams [2] have 2026-27 schedule rows inside the verified cohort but are absent from the grid; refusing to serve counts that contradict their own lineage block',
+      ),
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const panel = await screen.findByRole('alert')
+    const summary = within(panel).getByTestId('async-error-summary')
+    expect(summary).toHaveTextContent(/no counts at all for this league/)
+    expect(summary).toHaveTextContent(/left out a team that has schedule rows/)
+    expect(within(panel).getByTestId('async-error-action')).toHaveTextContent(/marked inactive/)
+    expect(panel).toHaveTextContent('teams [2] have 2026-27 schedule rows')
   })
 
   it('gives every documented code its own summary and its own action', () => {
