@@ -259,6 +259,13 @@ blowout calibration alone does not validate its magnitude; it belongs to
 
 Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-trip length and structure. Direct input to the availability model.
 
+### `schedule-grid-early` - Exposing the current raw schedule grid
+
+- [x] **done**
+- **Depends on:** `scoring-period-projection`
+
+Loopback-only `GET /api/v1/leagues/{league_id}/schedule-grid/current` contract over `scheduled_game_counts`, returning the complete ordered active-team x scoring-period raw count matrix (including explicit zeroes) with exact current NBA schedule, scoring-period projection, deadline-calendar, and settings-snapshot lineage. Missing, stale, mismatched, unknown, or empty current evidence fails closed; no classifications, rankings, recommendations, or schedule recomputation enter this boundary.
+
 ### `schedule-ingest` - Ingesting the NBA season schedule
 
 - [x] **done**
