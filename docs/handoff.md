@@ -9390,3 +9390,64 @@ by. **Line-span containment is to AST-compare what driving a real refusal is to
 reading the copy** — the check that looks at what the other one cannot.
 
 **Next:** PR is open against `main`. Nothing outstanding in this lane.
+
+---
+
+## 2026-08-20 — architect — Schedule grid delivered; three lanes merged; the day's defect class
+
+**Changed:** Coordinated three parallel lanes to `main`. Froze the schedule-grid API
+contract and amended it three times. Arbitrated seven disputes and commissioned three
+independent reviews. Added `backend/src/hoops_gm/dev/` to the ownership matrix with two
+constraints learned from concrete defects, amended R7, and recorded R49–R54. No production
+code written by this session.
+
+**Now true:** PR #38 (`959a795`), #39 (`56adf2f`) and #40 (`5c0ddeb`) merged in dependency
+order; zero PRs open. A person can open the dashboard and see every NBA team's game count
+in each scoring period, with zeros distinguished from absent data at cell, total and mean
+level, five refusal codes each carrying an actionable message, and lineage on the page. The
+API's operational claim — the one PR #36 was vetoed for failing — was reproduced
+independently from a clean detached worktree with an isolated `PYTHONPATH`: `200 OK`,
+30 × 21 = 630 dense counts, 610 explicit zeros, fingerprint `9bcac1c60490b41a` produced in
+three separate environments. The corrected 173-game/26-date cohort is on `main` with both
+recovered games and their 39 logs.
+
+**The defect class every lane converged on, unprompted:** something that reads correctly
+and does nothing, or means something other than what its consumer assumes. `MATCHUP`
+repeated on both rows for neutral-site games, because that string cannot express "no home
+side" — a class the upstream itself names as `isNeutral: true`, exactly five regular-season
+games in 2025-26, precisely the five that were dropped, recurring every December. A guard
+bypassed for exactly the row it was written to catch. Tests that played the producer. A
+lock-order test satisfied by another function's locks. A "closed vocabulary" that was one
+window's vocabulary. Four reconciliation views described as independent, two being the same
+bytes through the same parser. A 200 advertising 20 persisted rows beside counts summing to
+18. None catchable by lint, types or a green suite.
+
+**What caught them was executing, not reading.** A static enumeration of 44 lock sites
+declared the ordering acyclic and sound; instrumenting the lock and running the seed found
+an ABBA deadlock in four lines of trace, because the ordering does not exist until two
+functions are composed at runtime. Every review round I insisted on found something real,
+including the round Lane A offered to skip and the fail-open it contained.
+
+**Could not verify:** Nothing in this session was independently reviewed; a coordinator has
+no reviewer, and that shows. Three of my own claims were wrong and each was caught by
+someone else: an error code specified in an `X-Bridge-Error` response header the
+application has never emitted; "fingerprint verification failure" filed under the wrong
+code; and an assertion that the NBA source had changed underneath the injury cohort,
+disproved by diffing three whole-season payloads to identical byte sizes. I relayed a
+`rerere` mechanism to two lanes and nearly wrote it into governance before a lane measured
+it in one command and falsified it — and the replacement was falsified too. I told three
+lanes it was 15:20 when it was 13:41, manufacturing pressure that was not real. And I
+cleared a docstring-only diff with an AST comparison that cannot see comments, then merged
+on it; re-checked afterwards with line-span containment, the claim held — by luck, not by
+method. R51 is written about me as much as anyone.
+
+**Next:** The next increment must again name a screen; the candidate is exposing the
+verified Basketball Monster projections in a draft dashboard, scoped as a product screen
+rather than another backend-only unit. Two things gate work beyond it.
+`player-position-eligibility` is newly load-bearing: this project ingests **no player
+position data at all**, and R7's identity key — the first link in the spine — is specified
+as "normalized name + team + position" and could only ever have been two-key. And
+tomorrow's nightly live-smoke run is the **first execution anywhere** of four alarms merged
+in #39; a red one is information, and someone must read it and append the outcome including
+"all green". Injury-status conversion remains paused at `3285e647`; runtime activation
+remains vetoed pending refreshed Model-gate evidence.
