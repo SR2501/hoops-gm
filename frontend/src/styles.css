@@ -140,6 +140,23 @@ a:focus-visible {
   max-width: 68rem;
 }
 
+/* A dense data table is not prose and should not inherit the reading column.
+   Measured on the real 2026-27 season: 25 scoring periods make the grid
+   1004px wide, inside a 960px content box, inside `max-width: 68rem` — while
+   the shell around it was 1286px, so 266px sat unused and the table scrolled
+   sideways for no reason. The reading measure is right for the dashboard's
+   paragraphs and wrong for 27 columns of counts.
+
+   Scoped with `:has()` so only a page actually containing a grid widens;
+   prose pages keep the 68rem measure. This does not abolish horizontal
+   scroll and is not meant to — a league whose calendar projects enough
+   periods will still overflow, and scrolling is the correct answer then.
+   What it removes is scrolling caused by our own layout rather than by the
+   data. */
+.shell__main:has(.grid-scroll) {
+  max-width: 82rem;
+}
+
 /* --- Navigation ----------------------------------------------------------- */
 
 .nav {
