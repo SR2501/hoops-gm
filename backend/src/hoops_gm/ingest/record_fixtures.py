@@ -37,10 +37,14 @@ from typing import Any
 FIXTURE_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
 
-#: Stamped on every entry recorded from 2026-08-20 onward. Entries without it
-#: carry a Windows CRLF working-tree ``byte_size`` and are therefore too large.
-#: Per-entry rather than a top-level note so the marker sits next to the number
-#: it qualifies, and so it does not become a manifest key that is not a fixture.
+#: Stamped on every entry recorded from 2026-08-20 onward. An entry without it
+#: was recorded before the basis was corrected: for a text fixture that means a
+#: Windows CRLF working-tree ``byte_size``, which is too large. Binary fixtures
+#: are unaffected either way, since Git stores their bytes unchanged — the
+#: marker means "recorded under the canonical basis", not "everything unstamped
+#: is wrong". Per-entry rather than a top-level note so the marker sits next to
+#: the number it qualifies, and so it does not become a manifest key that is not
+#: a fixture.
 _CANONICAL_LF = "canonical_lf_bytes"
 
 #: A completed game from 2024-25 with both a DNP and a DND comment, chosen so

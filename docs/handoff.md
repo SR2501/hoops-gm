@@ -8244,3 +8244,57 @@ remains unverified.
 
 **Next:** PostgreSQL CI green at this replacement head, then the coordinator
 merges. I am not merging.
+
+---
+
+## 2026-08-20 — data-engineer — Open item on merge: the first nightly run is the real test
+
+**This is the one thing to look at tomorrow morning.** Recorded as its own entry
+rather than inside a "could not verify" list, at the coordinator's direction,
+because an item buried in a disclosure paragraph is an item nobody actions.
+
+Four live-smoke tests added by this branch **have never executed anywhere**:
+
+- `test_every_independent_view_names_the_same_173_games`
+- `test_the_two_recovered_neutral_site_games_are_still_there`
+- `test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games`
+- `test_the_position_field_is_still_only_populated_for_starters`
+
+plus a new reason-vocabulary assertion inside the existing
+`test_a_known_historical_report_is_still_reachable_and_parses`.
+
+The live-smoke job is nightly-on-default-branch and shows `skipped` on this
+branch, so **the three alarms this PR is proudest of are, until merge, untested
+claims**. That is not an oversight to be fixed before merging — they cannot be
+exercised without merging — but it does mean the first nightly run after merge
+is their first real execution, and it should be read deliberately rather than
+glanced at.
+
+One exception: the corrected `MATCHUP` predicate was executed offline against
+the real full-season payload, by me and independently by the reviewer, so that
+one is evidenced by other means.
+
+**How to read a red one.** These are not all the same kind of test, and the
+right response differs:
+
+- `test_the_position_field_is_still_only_populated_for_starters` red is **good
+  news**. It means `BoxScoreTraditionalV3` started labelling more than the
+  starting five, real positional evidence became available, and
+  `position_evidence`'s withdrawal should be revisited rather than preserved.
+- `test_drift_detector_...neutral_site_games` red is a **drift signal about how
+  the NBA writes matchup strings**, not a parser defect. The parser resolves
+  both shapes and is covered offline.
+- The reason-vocabulary assertion red means either the NBA added a category —
+  record it, the way `Team Suspension` was recorded — or the `" - "` separator
+  changed, in which case the cohort manifest's reason breakdown is whole reason
+  lines masquerading as a vocabulary.
+- `test_every_independent_view_names_the_same_173_games` red is the serious one:
+  the cohort's denominator is wrong and every availability number derived from
+  it is suspect.
+
+**Could not verify:** That any of the above is what actually happens, which is
+the entire point of the entry.
+
+**Next:** Whoever reviews the first post-merge nightly run should append the
+outcome here, including "all green", because a silent pass is exactly how an
+alarm nobody reads becomes an alarm nobody notices is broken.
