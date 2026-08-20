@@ -332,9 +332,9 @@ class TestNbaStatsIsAlive:
             nba.league_game_finder(season=FIXTURE_STATS_SEASON, max_age=NO_CACHE),
             season=FIXTURE_STATS_SEASON,
         )
-        assert len(games) > 1000, (
-            f"only {len(games)} games for {FIXTURE_STATS_SEASON}; a full NBA regular "
-            "season is 1,230"
+        assert len(games) == 1230, (
+            f"parsed {len(games)} games for {FIXTURE_STATS_SEASON}; the official regular "
+            "season contains 1,230. Treat schedule, participation, and model cohorts as suspect."
         )
 
     def test_the_inactive_list_is_still_populated_for_a_midseason_game(

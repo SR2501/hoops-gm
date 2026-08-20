@@ -385,12 +385,7 @@ class TestNbaGamesAndLogs:
     def test_games_collapse_to_one_record_with_home_and_away_the_right_way_round(
         self,
     ) -> None:
-        """``MATCHUP`` is the only thing distinguishing the two rows per game.
-
-        ``"LAL vs. POR"`` is the home row and ``"LAL @ POR"`` the away one.
-        Collapsing on GAME_ID without reading it makes home and away depend on
-        row order.
-        """
+        """Home and away are derived from matchup abbreviations, never row order."""
         games = parse_league_game_finder(
             load("nba_leaguegamefinder_trimmed.json"), season="2024-25"
         )
@@ -398,6 +393,70 @@ class TestNbaGamesAndLogs:
         for game in games:
             assert game.home_team_id != game.away_team_id
         assert len({g.nba_game_id for g in games}) == len(games)
+
+    def test_canonical_matchup_repetition_reconciles_by_team_abbreviation(self) -> None:
+        games = parse_league_game_finder(
+            load("nba_leaguegamefinder_reconciliation.json"), season="2024-25"
+        )
+
+        assert [game.nba_game_id for game in games] == ["0022400633", "0022401188"]
+        repeated = games[0]
+        assert repeated.away_team_id == 1610612754
+        assert repeated.home_team_id == 1610612759
+        assert repeated.away_score == 136
+        assert repeated.home_score == 98
+        assert repeated.game_date == date(2025, 1, 25)
+        assert repeated.tipoff_utc is None
+
+    def test_row_order_does_not_change_game_order_or_reconciliation(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"].reverse()
+
+        games = parse_league_game_finder(payload, season="2024-25")
+
+        assert [game.nba_game_id for game in games] == ["0022400633", "0022401188"]
+        assert games[0].away_team_id == 1610612754
+        assert games[0].home_team_id == 1610612759
+
+    def test_one_sided_game_fails_loudly_instead_of_disappearing(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"] = payload["resultSets"][0]["rowSet"][:1]
+
+        with pytest.raises(SourceContractError, match="incomplete reciprocal rows"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_duplicate_side_row_is_rejected_even_when_identical(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["resultSets"][0]["rowSet"].append(payload["resultSets"][0]["rowSet"][0].copy())
+
+        with pytest.raises(SourceContractError, match="duplicate away team row"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    def test_conflicting_canonical_matchup_is_rejected(self) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        table = payload["resultSets"][0]
+        matchup = table["headers"].index("MATCHUP")
+        table["rowSet"][1][matchup] = "IND vs. SAS"
+
+        with pytest.raises(SourceContractError, match="conflicting home/away MATCHUP"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    @pytest.mark.parametrize(
+        ("season", "season_type", "message"),
+        [
+            ("2025-26", "regular", "payload season"),
+            ("2024-25", "playoffs", "payload season type"),
+        ],
+    )
+    def test_declared_source_scope_must_match_requested_scope(
+        self, season: str, season_type: str, message: str
+    ) -> None:
+        with pytest.raises(SourceContractError, match=message):
+            parse_league_game_finder(
+                load("nba_leaguegamefinder_reconciliation.json"),
+                season=season,
+                season_type=season_type,
+            )
 
     def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
         payload = load("nba_leaguegamefinder_trimmed.json")

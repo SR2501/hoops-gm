@@ -36,13 +36,14 @@ class _SyntheticEvidenceClient:
                     "headers": [
                         "GAME_ID",
                         "TEAM_ID",
+                        "TEAM_ABBREVIATION",
                         "GAME_DATE",
                         "MATCHUP",
                         "PTS",
                     ],
                     "rowSet": [
-                        [game_id, 1, _SEASON_DATES[season], "HOM vs. AWY", 110],
-                        [game_id, 2, _SEASON_DATES[season], "AWY @ HOM", 100],
+                        [game_id, 1, "HOM", _SEASON_DATES[season], "HOM vs. AWY", 110],
+                        [game_id, 2, "AWY", _SEASON_DATES[season], "AWY @ HOM", 100],
                     ],
                 }
             ]

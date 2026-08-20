@@ -70,6 +70,29 @@ take `league_id_nullable`. Getting it wrong raises a `TypeError` from the
 constructor, which the wrapper reports as a contract error. Every call site is
 exercised by a live smoke test rather than trusted.
 
+### `LeagueGameFinder` matchup strings are not always reciprocal
+
+The endpoint returns two team rows per game, but the `MATCHUP` text is not
+reliably written from each row's point of view. Ten real games across 2024-25
+and 2025-26 repeat the same canonical matchup on both rows. For example, both
+the Indiana and San Antonio rows for game `0022400633` say `IND @ SAS`.
+
+The old parser treated `@` as proof that the current row was the away row. Both
+rows therefore overwrote the away side, the home side remained absent, and the
+game was silently dropped. That produced 1,225 parsed game IDs against 1,230
+`PlayerGameLogs` IDs in both seasons, excluding 118 and 102 player logs from
+model evidence.
+
+The parser now matches each row's `TEAM_ABBREVIATION` against both named sides
+of `MATCHUP`. Reciprocal and repeated-canonical rows reconcile to the same
+home/away identity. Duplicate side rows, contradictory matchup orientation,
+date disagreement, season/type scope disagreement, and same-team home/away
+identity raise `SourceContractError`. A one-sided response also raises with the
+unsupported side named; it is never silently dropped and no opponent ID or
+score is invented. Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE`
+remains the NBA's Eastern local date, and this endpoint still supplies no
+tip-off instant.
+
 ### Inactive players are absent from the traditional box score
 
 `BoxScoreTraditionalV3` lists only players who **dressed** — those who played,
@@ -155,6 +178,10 @@ game tipping after 7pm Eastern, which is most of them, and disagrees with
 | **Source down** | `requests` transport exceptions → `SourceUnavailable`, retried. |
 | **Returns garbage** | Anything else escaping `nba_api` → `SourceContractError` naming the endpoint and parameters. Never retried. |
 | **One bad game** | Does not abort a backfill. Failures are counted, named with their game ids, and reported at the end with a non-zero exit code. |
+
+The live `LeagueGameFinder` smoke test requires exactly 1,230 regular-season
+games. A loose “more than 1,000” assertion previously accepted the 1,225-game
+cohort and could not detect this defect.
 
 ---
 
