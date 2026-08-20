@@ -9000,3 +9000,72 @@ rebase onto merged `main`, re-run the 1:1 marker check (it has now caught
 something on two of two rebases, so treat it as expected to fire), re-capture and
 diff the fixture, re-verify the browser states, fresh exact-head review round,
 open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Negative control on the capture-and-diff loop
+
+**Changed:** No product code. The coordinator asked me to retire my own
+strongest caveat with evidence: three rebases had produced three
+timestamp-only fixture diffs, which is evidence the 200 contract is stable but
+*not* evidence the loop would notice if it were not. The loop was trusted,
+load-bearing and had never once been observed failing — the same category as
+every vacuous alarm found across the lanes today.
+
+So I perturbed the real route locally, three ways, ran the full loop each time —
+capture from the running service, write the fixture, `git diff`, run the suite —
+and reverted. Nothing was committed; the working tree was verified clean
+afterwards by `git status --porcelain`.
+
+**Now true — the loop is demonstrated sensitive on structure, value and
+cardinality, not assumed:**
+
+**1. Field rename.** `is_playoff` → `playoff` in `ScheduleGridPeriod`.
+Diff: `21 insertions, 21 deletions`, showing `-"is_playoff": false` /
+`+"playoff": false`. Tests: `is accepted by the validator that guards the real
+request` failed — `isScheduleGrid(recorded)` returned `false` — and the render
+assertion failed with the `PO` badge absent. This is the case the exported
+validator was added for, and it is now shown to work rather than argued to.
+
+**2. Changed count.** One added game in period 5.
+Diff: `30 insertions, 30 deletions`, showing `-"games": 0` / `+"games": 1`.
+Test failure: `expected 50 to be 20`. The season total assertion located the
+magnitude of the change, not merely its existence.
+
+**3. Broken density.** One `counts` row dropped, 629 instead of 630.
+Diff: `5 deletions` — the smallest of the three, and still unambiguous.
+Test failure: `expected [...] to have a length of 630 but got 629`, plus the
+`data-state` census.
+
+In all three the `git diff` named *what* changed rather than only *that*
+something did, which is the property that makes reading the diff worth more than
+re-running the suite.
+
+**Could not verify:** The control covers the three shapes I could produce by
+editing the response construction: a renamed field, a changed value, a missing
+row. It does not cover a change of *meaning* under an unchanged shape — a field
+that keeps its name and type while counting a different population, which is
+precisely the `MATCHUP` / `X-Bridge-Error` / `source_game_count` failure this
+project has hit four times today. A recording cannot detect that, because the
+bytes look identical to the correct answer. The loop's sensitivity is now
+demonstrated for the failures it can see and remains structurally blind to the
+one that has actually occurred most often here.
+
+Nor does it cover the capture step's own failure modes: a service that returns a
+cached or stale response, or a capture taken against the wrong database, would
+produce a clean diff and prove nothing. Every capture in this session was taken
+immediately after a restart against a freshly seeded database, which is a
+convention, not a guard.
+
+**Why this is recorded even though nothing shipped:** the argument for doing it
+was that every vacuous alarm found today — a position alarm asserting over a
+committed manifest, a reason-vocabulary alarm that structurally could not see
+the change it claimed to detect, a lock test satisfied by another function's
+locks, `rerere` replaying a resolution correct for different inputs — shared one
+property: **the mechanism had never been observed failing when it should.** A
+verifier that has only ever been seen passing is indistinguishable from one that
+cannot fail. Twenty minutes of deliberate breakage is the cheapest way to tell
+the two apart, and it should be the default for anything load-bearing rather
+than something a coordinator has to ask for.
+
+**Next:** Unchanged, blocked only on the merge of backend #38.
