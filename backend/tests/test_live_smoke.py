@@ -369,6 +369,41 @@ class TestNbaStatsIsAlive:
         assert len(games) == 84
         assert {game.nba_game_id for game in games} == {log.nba_game_id for log in logs}
 
+    def test_repeated_canonical_games_agree_with_independent_orientation(
+        self, nba: NbaStatsClient
+    ) -> None:
+        affected = {
+            "2024-25": (
+                "0022400147",
+                "0022400621",
+                "0022400633",
+                "0022401229",
+                "0022401230",
+            ),
+            "2025-26": (
+                "0022500147",
+                "0022500578",
+                "0022500602",
+                "0022501229",
+                "0022501230",
+            ),
+        }
+        for season, game_ids in affected.items():
+            schedule = {
+                game.nba_game_id: game
+                for game in parse_league_game_finder(
+                    nba.league_game_finder(season=season, max_age=NO_CACHE),
+                    season=season,
+                )
+            }
+            for game_id in game_ids:
+                summary, _ = parse_box_score_summary_v3(
+                    nba.box_score_summary(game_id, max_age=NO_CACHE)
+                )
+                assert summary is not None
+                assert schedule[game_id].home_team_id == summary.home_team_id
+                assert schedule[game_id].away_team_id == summary.away_team_id
+
     def test_the_inactive_list_is_still_populated_for_a_midseason_game(
         self, nba: NbaStatsClient
     ) -> None:

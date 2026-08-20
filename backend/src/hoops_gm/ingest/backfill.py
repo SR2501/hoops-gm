@@ -52,7 +52,7 @@ from hoops_gm.db.session import Database
 from hoops_gm.identity import IdentityResolver, ResolvableRecord, render_summary, to_csv
 from hoops_gm.identity.report import partition
 from hoops_gm.identity.resolver import Resolution
-from hoops_gm.ingest.errors import SourceError
+from hoops_gm.ingest.errors import SourceContractError, SourceError
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient
 from hoops_gm.ingest.importers import (
     ImportCounts,
@@ -363,11 +363,12 @@ def backfill_season(
             summary_game, summary = parse_box_score_summary_v3(
                 nba.box_score_summary(game.nba_game_id)
             )
+            summary_game = _validate_summary_game_identity(game, summary_game)
             # ``LeagueGameFinder`` gives a local date and no instant;
             # ``BoxScoreSummaryV3`` gives ``gameTimeUTC``. Rest-day and
             # back-to-back detection need the instant, so it is written back
             # while the per-game endpoint is being fetched anyway.
-            if summary_game is not None and summary_game.tipoff_utc is not None:
+            if summary_game.tipoff_utc is not None:
                 import_games(session, [replace(game, tipoff_utc=summary_game.tipoff_utc)])
             counts = import_participation(
                 session, combine_game_participation(dressed, summary), lookups=lookups
@@ -386,6 +387,40 @@ def backfill_season(
 
     result.steps["participation"] = totals
     return result
+
+
+def _validate_summary_game_identity(
+    schedule_game: NbaGameRecord,
+    summary_game: NbaGameRecord | None,
+) -> NbaGameRecord:
+    """Fail when the independent per-game endpoint contradicts schedule identity."""
+    if summary_game is None:
+        raise SourceContractError(
+            f"BoxScoreSummaryV3 lacks home/away identity for game {schedule_game.nba_game_id}",
+            source="nba_stats",
+            endpoint="BoxScoreSummaryV3",
+        )
+    fields = (
+        "nba_game_id",
+        "game_date",
+        "home_team_id",
+        "away_team_id",
+        "home_score",
+        "away_score",
+    )
+    conflicts = [
+        f"{field}={getattr(schedule_game, field)!r}/{getattr(summary_game, field)!r}"
+        for field in fields
+        if getattr(schedule_game, field) != getattr(summary_game, field)
+    ]
+    if conflicts:
+        raise SourceContractError(
+            f"BoxScoreSummaryV3 contradicts LeagueGameFinder for "
+            f"{schedule_game.nba_game_id}: {', '.join(conflicts)}",
+            source="nba_stats",
+            endpoint="BoxScoreSummaryV3",
+        )
+    return summary_game
 
 
 def _league_game_finder_season_type(season_type: str) -> str:

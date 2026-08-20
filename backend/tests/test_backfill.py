@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -5,7 +6,9 @@ import pytest
 from hoops_gm.ingest.backfill import (
     _league_game_finder_season_type,
     _participation_games_in_scope,
+    _validate_summary_game_identity,
 )
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.nba.models import NbaGameRecord
 
 
@@ -78,3 +81,16 @@ def test_league_game_finder_season_type_maps_only_supported_labels(
 def test_league_game_finder_season_type_rejects_unsupported_labels() -> None:
     with pytest.raises(ValueError, match="unsupported NBA season type 'Pre Season'"):
         _league_game_finder_season_type("Pre Season")
+
+
+def test_summary_identity_must_agree_with_schedule_identity() -> None:
+    schedule = _game("0022500001", date(2025, 10, 21))
+    summary = replace(schedule, tipoff_utc=None)
+
+    _validate_summary_game_identity(schedule, summary)
+
+    with pytest.raises(SourceContractError, match="home_team_id=1/2"):
+        _validate_summary_game_identity(
+            schedule,
+            replace(summary, home_team_id=2, away_team_id=1),
+        )
