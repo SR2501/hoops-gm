@@ -6277,7 +6277,8 @@ asserts that no row with that identity exists, so it proves rollback without
 assuming global table emptiness.
 
 **Now true:** The branch was rebased without conflict onto exact `origin/main`
-`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`; its published exact head is
+`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`. Its reviewed code/test head before
+this final handoff-only update was
 `b193ee347959c868ade6303693c7c2f2dcf32116`. Regressions cover response-start
 ordering after commit, injected commit failure, rollback and zero-row outcome,
 retry after failure, concurrent equivalent capture coalescing, manual UI
