@@ -197,7 +197,10 @@ class GameIdentityReconciliation:
 
     start: date
     end: date
-    #: ``{view name: sorted game ids}``, every view derived from its own source.
+    #: ``{view name: sorted game ids}``. See :data:`VIEW_INDEPENDENCE` for what
+    #: each view is and is not independent of — they are **not** four
+    #: independent sources, and an earlier version of this comment said they
+    #: were.
     views: Mapping[str, tuple[str, ...]]
 
     @property
@@ -570,6 +573,7 @@ def _reason_evidence(
     """
     categories: Counter[str] = Counter()
     empty = 0
+    placeholder = 0
     for obs in observations:
         raw = obs.reason_raw.strip()
         if not raw:
@@ -578,6 +582,8 @@ def _reason_evidence(
         # The source writes "Injury/Illness - Left knee soreness"; the leading
         # token before the first " - " is the category it chose.
         head = raw.split(" - ", 1)[0].strip()
+        if head == "-":
+            placeholder += 1
         categories[head] += 1
     return {
         "caveat": (
@@ -585,8 +591,125 @@ def _reason_evidence(
             "' - ' separator. Not a normalised code, not a clinical claim, and not evidence that "
             "a stated reason is the real one -- 'Rest' is routinely laundered as a minor ailment."
         ),
-        "observations_with_no_stated_reason": empty,
+        "observations_with_empty_reason_text": empty,
+        # Distinct from the above, and reported separately because reporting only
+        # the former published a `0` beside a visible "-" bucket of 14 and invited
+        # a reader to conclude every observation carried a stated reason. The
+        # report prints a literal "-" as its own placeholder for "none given".
+        "observations_with_placeholder_reason": placeholder,
         "stated_reason_categories": dict(sorted(categories.items())),
+        # The leading category alone conflates things the source already
+        # distinguishes at zero extra cost. "G League - Two-Way" (a two-way
+        # contract) and "G League - On Assignment" (a standard-contract player
+        # sent down) are different facts, and collapsing them let a downstream
+        # reader label the whole bucket "two-way" with no way to detect the
+        # error from the artifact. Found by independent review. Sub-categories
+        # are the source's own second field, again un-normalised.
+        "stated_reason_subcategories": {
+            head: dict(
+                sorted(
+                    Counter(
+                        obs.reason_raw.strip().split(" - ", 1)[1].strip()
+                        for obs in observations
+                        if obs.reason_raw.strip().split(" - ", 1)[0].strip() == head
+                        and " - " in obs.reason_raw.strip()
+                    ).items()
+                )
+            )
+            for head in sorted(_LOW_CARDINALITY_REASON_HEADS & set(categories))
+        },
+    }
+
+
+#: Reason categories whose second field is a small closed vocabulary worth
+#: publishing. ``Injury/Illness`` is deliberately excluded: its tail is free
+#: clinical text with hundreds of distinct values, and enumerating it would put
+#: a per-player medical narrative in a committed artifact for no analytic gain.
+_LOW_CARDINALITY_REASON_HEADS: Final[frozenset[str]] = frozenset(
+    {
+        "G League",
+        "Not With Team",
+        "Personal Reasons",
+        "Rest",
+        "League Suspension",
+        "Coach's Decision",
+        "Concussion Protocol",
+        "Return to Competition Reconditioning",
+    }
+)
+
+
+def _tipoff_reconciliation(
+    session: Session,
+    *,
+    season: str,
+    season_type: SeasonType,
+    start: date,
+    end: date,
+    store: RawPayloadStore,
+) -> dict[str, Any]:
+    """Check the *instants*, not only the identities.
+
+    Every lead time in this cohort, and the pre-tipoff selection that defines a
+    canonical observation at all, rests on ``nba_games.tipoff_utc`` — which
+    ``backfill_season`` takes from ``BoxScoreSummaryV3`` alone. The
+    game-identity reconciliation checks four views of *which games exist* and
+    never checked *when they started*, even though ``ScheduleLeagueV2``'s
+    ``gameDateTimeUTC`` is already parsed a few lines away.
+
+    A silent tip-off shift moves every lead time and can flip a row across the
+    pre-tipoff boundary, turning a post-game row into evidence. Independent
+    review pointed out the witness was already in memory and unused; this is the
+    cheapest available extension of the reconciliation, and it is reported
+    rather than merely asserted so a future disagreement is visible in the
+    artifact instead of only in a test.
+    """
+    ref = store.latest(
+        source=NBA_SOURCE, endpoint="ScheduleLeagueV2", params={"league_id": "00", "season": season}
+    )
+    if ref is None:
+        return {"checked": False, "reason": "no ScheduleLeagueV2 capture retained"}
+
+    published = {
+        record.game.nba_game_id: record.game.tipoff_utc
+        for record in parse_schedule(ref.read_json(), season=season).games
+    }
+    persisted = session.scalars(
+        select(NbaGame).where(
+            NbaGame.season == season,
+            NbaGame.season_type == season_type,
+            NbaGame.game_date >= start,
+            NbaGame.game_date <= end,
+        )
+    )
+
+    compared = 0
+    absent: list[str] = []
+    disagreements: dict[str, dict[str, str]] = {}
+    for game in persisted:
+        expected = published.get(game.nba_game_id)
+        if expected is None or game.tipoff_utc is None:
+            absent.append(game.nba_game_id)
+            continue
+        compared += 1
+        if expected != game.tipoff_utc:
+            disagreements[game.nba_game_id] = {
+                "box_score_summary_v3": game.tipoff_utc.isoformat(),
+                "schedule_league_v2": expected.isoformat(),
+            }
+
+    return {
+        "agreed": not disagreements,
+        "checked": True,
+        "disagreements": dict(sorted(disagreements.items())),
+        "games_compared": compared,
+        "games_without_both_instants": sorted(absent),
+        "method": (
+            "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against "
+            "ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured "
+            "endpoints. Every lead time and the pre-tipoff selection itself depend on this "
+            "instant, so an unchecked shift would move every number in the cohort silently."
+        ),
     }
 
 
@@ -682,6 +805,14 @@ def build_cohort_evidence(
             "unresolved_player_id": sum(1 for obs in observations if obs.player_id is None),
         },
         "cross_source_reconciliation": reconciliation.as_summary(),
+        "cross_source_tipoff_reconciliation": _tipoff_reconciliation(
+            session,
+            season=season,
+            season_type=season_type,
+            start=start,
+            end=end,
+            store=store,
+        ),
         "kind": MANIFEST_KIND,
         "limitations": [
             "Evidence only. No injury-status conversion rate, threshold, probability or "

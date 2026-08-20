@@ -216,6 +216,14 @@
     "start_game_date": "2025-12-08",
     "witnessed": true
   },
+  "cross_source_tipoff_reconciliation": {
+    "agreed": true,
+    "checked": true,
+    "disagreements": {},
+    "games_compared": 173,
+    "games_without_both_instants": [],
+    "method": "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured endpoints. Every lead time and the pre-tipoff selection itself depend on this instant, so an unchecked shift would move every number in the cohort silently."
+  },
   "kind": "injury_conversion_cohort_population_evidence",
   "limitations": [
     "Evidence only. No injury-status conversion rate, threshold, probability or calibration claim is fit or reported here; that is the separately Model-gated quant deliverable.",
@@ -256,7 +264,7 @@
       "backend/src/hoops_gm/db/lineage.py": "6073bc0226cabd4ffd3a04bd5d4f810164b2073b4ad71b250af10d4b7fd89390",
       "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "9e5065c2f38e1261c1cf76786b74cc21ef2ff80a254f969675c90ca76ddb463b",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "5e66aff2a74566c21b0cde75412db6ff03bd6594807bfc41a851a60a068f9044",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "5dfd9aab6ed8e03d5c04136a1e46ff80db318ebc3bb56304741d9cdd669a15e9"
     }
   },
@@ -304,7 +312,8 @@
   },
   "reason_evidence": {
     "caveat": "Raw source text, grouped by the category the report itself printed before its own ' - ' separator. Not a normalised code, not a clinical claim, and not evidence that a stated reason is the real one -- 'Rest' is routinely laundered as a minor ailment.",
-    "observations_with_no_stated_reason": 0,
+    "observations_with_empty_reason_text": 0,
+    "observations_with_placeholder_reason": 14,
     "stated_reason_categories": {
       "-": 14,
       "Coach's Decision": 1,
@@ -316,6 +325,21 @@
       "Personal Reasons": 10,
       "Rest": 9,
       "Return to Competition Reconditioning": 1
+    },
+    "stated_reason_subcategories": {
+      "Coach's Decision": {},
+      "Concussion Protocol": {},
+      "G League": {
+        "On Assignment": 104,
+        "Two-Way": 455
+      },
+      "League Suspension": {},
+      "Not With Team": {},
+      "Personal Reasons": {},
+      "Rest": {
+        "Left Knee Injury Management": 1
+      },
+      "Return to Competition Reconditioning": {}
     }
   },
   "schema_version": 2,

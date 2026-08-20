@@ -7,12 +7,19 @@ took an independent endpoint reporting 1,230 games where the schedule parser had
 produced 1,225 to find it.
 
 These tests pin the mechanism that makes that class of defect loud instead of
-silent: three mutually independent views of the same window, each deriving the
-game-identity set from its own source and its own date field, required to be
-*equal*. They run against recorded fixtures containing whole real rows for six
-named games — one before the window, the window's first date, the two
+silent: four views of the same window, required to be equal **as sets, not as
+counts** — a count check passes a window that is the right size and the wrong
+membership. They run against recorded fixtures containing whole real rows for
+six named games — one before the window, the window's first date, the two
 neutral-site 2025-12-13 games the defective parser dropped, the window's last
 date, and one after it.
+
+**They are not four independent witnesses**, and saying so was the second
+meaning-level error independent review caught here. ``persisted_nba_games`` is
+the same ``LeagueGameFinder`` bytes through the same parser; ``player_game_logs``
+was already required equal to ``LeagueGameFinder`` at season scope before any row
+was written, so only its *windowing* is independent. See ``VIEW_INDEPENDENCE``,
+and :class:`TestTheIndependenceMapIsCheckableRatherThanTrusted` below.
 
 Boundary games are in the fixtures on purpose. A windowing bug is invisible in a
 fixture whose every game sits comfortably inside the window.
@@ -23,6 +30,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,6 +41,7 @@ from hoops_gm.ingest.injury_report.cohort_evidence import (
     GameIdentityReconciliation,
     _league_game_finder_ids,
     _player_game_log_ids,
+    _reason_evidence,
     _schedule_league_ids,
     content_sha256,
     refusal_reason,
@@ -57,6 +66,33 @@ IN_WINDOW = ("0022500364", "0022500494", "0022501229", "0022501230")
 #: The two it does not. Present in every fixture so a view that ignores its own
 #: date field fails here rather than in a season's worth of evidence.
 OUT_OF_WINDOW = ("0022500357", "0022500502")
+
+#: The report uses a closed vocabulary for the category it prints before its own
+#: separator; eleven distinct values appear across all 9,376 raw entries in this
+#: window. A separator change would turn every distinct reason *line* into its
+#: own "category", so a cardinality bound catches the drift that a length bound
+#: cannot — the longest real category (36 chars) is longer than some whole
+#: reason lines (35).
+_MAX_PLAUSIBLE_REASON_CATEGORIES = 20
+
+#: Observed across all 9,376 raw entries in the 2025-12-08..2026-01-04 window.
+#: An unrecognised value is either real NBA news or separator drift, and both
+#: are worth stopping for.
+_KNOWN_REASON_CATEGORIES = frozenset(
+    {
+        "-",
+        "Coach's Decision",
+        "Concussion Protocol",
+        "G League",
+        "Injury/Illness",
+        "League Suspension",
+        "NOT YET SUBMITTED",
+        "Not With Team",
+        "Personal Reasons",
+        "Rest",
+        "Return to Competition Reconditioning",
+    }
+)
 
 
 def load(name: str) -> Any:
@@ -395,10 +431,14 @@ class TestPositionEvidenceReportsTheSourceRatherThanADistribution:
         assert "distinct_resolved_players_by_observed_label" not in position
 
     def test_exactly_five_players_per_team_carry_a_label(self, manifest: Any) -> None:
-        """FAILS IF: the source starts labelling every player.
+        """What the published artifact records. **Not a drift alarm.**
 
-        That would be good news and would make real positional evidence
-        possible — but it must be noticed and acted on, not absorbed.
+        This reads a static committed file, so it cannot notice the endpoint
+        changing — regenerating the manifest needs gitignored operational state.
+        The alarm that watches the source lives in
+        :class:`TestThePositionFieldIsWatchedAtTheSourceNotOnlyInTheManifest`
+        and in ``test_live_smoke.py``. Independent review caught this test
+        claiming otherwise.
         """
         assert list(manifest["position_evidence"]["labelled_players_per_team"]) == ["5"]
 
@@ -458,6 +498,183 @@ class TestTheCommittedManifestStillDescribesThisCode:
                 f"{game_id} is missing from the committed cohort — this is the exact "
                 "omission that invalidated the previous one"
             )
+
+
+class TestThePositionFieldIsWatchedAtTheSourceNotOnlyInTheManifest:
+    """The alarm, pointed at something that can actually change.
+
+    The manifest-reading tests above assert what the *published artifact* says.
+    They cannot detect a change in the endpoint, because regenerating the
+    manifest needs gitignored operational state only the operator has — so if
+    ``BoxScoreTraditionalV3`` started labelling every player tomorrow, those
+    tests would stay green forever while the manifest kept publishing
+    ``positional_diversity_established: false`` as current source behaviour.
+
+    Independent review caught that the round which added
+    "must be noticed and acted on, not absorbed" had shipped an alarm wired to
+    the wrong thing — the same class as ``refusal_reason`` being untested and a
+    fingerprint nobody checks. These assertions run against the committed
+    box-score fixtures instead, and the live counterpart is in
+    ``test_live_smoke.py``.
+    """
+
+    @pytest.mark.parametrize(
+        "fixture",
+        [
+            "nba_boxscoretraditionalv3_0022400306.json",
+            "nba_boxscoretraditionalv3_0022500560_midseason.json",
+        ],
+    )
+    def test_only_the_five_starters_carry_a_position_in_a_recorded_box_score(
+        self, fixture: str
+    ) -> None:
+        """FAILS IF: the recorded evidence stops supporting the withdrawal.
+
+        Every team-side in a real captured box score labels exactly five
+        players, and always the same slot sequence. That is what makes the
+        field a lineup slot rather than a player attribute, and it is the whole
+        basis for withdrawing the positional-diversity claim.
+        """
+        body = load(fixture)["boxScoreTraditional"]
+
+        for side in ("homeTeam", "awayTeam"):
+            players = body[side]["players"]
+            labelled = [str(p.get("position") or "").strip() for p in players]
+            non_blank = [label for label in labelled if label]
+
+            assert len(players) > 5, "a fixture with no bench cannot show the asymmetry"
+            assert len(non_blank) == 5, (
+                f"{fixture} {side} labels {len(non_blank)} players, not 5. If the source now "
+                "labels everyone, real positional evidence became possible and the withdrawal "
+                "in position_evidence should be revisited rather than left standing."
+            )
+            assert non_blank == ["F", "F", "C", "G", "G"]
+
+
+class TestTheReasonParseIsPinned:
+    """The only new parse of raw source text in this change, tested.
+
+    Independent review found ``_reason_evidence`` had no test at all — no
+    fixture, no unit, nothing in the manifest assertions. It splits on the
+    report's own ``" - "`` separator and publishes the result as evidence, so if
+    the NBA switched to an en dash or ``": "`` the categories would silently
+    collapse into ten full sentences and the manifest would publish them with a
+    green suite. That is drift producing a wrong number quietly, which is the
+    failure this whole change exists to prevent.
+    """
+
+    def _observation(self, reason: str) -> Any:
+        return SimpleNamespace(reason_raw=reason)
+
+    def test_the_source_separator_splits_category_from_detail(self) -> None:
+        evidence = _reason_evidence(
+            [
+                self._observation("G League - Two-Way"),
+                self._observation("G League - Two-Way"),
+                self._observation("G League - On Assignment"),
+                self._observation("Injury/Illness - Left Ankle; Sprain"),
+            ]
+        )
+
+        assert evidence["stated_reason_categories"] == {"G League": 3, "Injury/Illness": 1}
+        assert evidence["stated_reason_subcategories"]["G League"] == {
+            "On Assignment": 1,
+            "Two-Way": 2,
+        }
+
+    def test_two_way_and_on_assignment_are_not_collapsed(self) -> None:
+        """The distinction whose loss made a published number wrong.
+
+        A two-way contract and a standard-contract player sent down are
+        different roster facts. Collapsing them let a handoff entry call the
+        whole G League bucket "two-way", overstating it by 5.3 points of the
+        cohort with no way for a reader to detect the error from the artifact.
+        """
+        evidence = _reason_evidence(
+            [self._observation("G League - Two-Way")] * 455
+            + [self._observation("G League - On Assignment")] * 104
+        )
+
+        assert evidence["stated_reason_categories"]["G League"] == 559
+        assert evidence["stated_reason_subcategories"]["G League"] == {
+            "On Assignment": 104,
+            "Two-Way": 455,
+        }
+
+    def test_injury_detail_is_counted_but_never_enumerated(self) -> None:
+        """Free clinical text stays out of a committed artifact."""
+        evidence = _reason_evidence(
+            [
+                self._observation("Injury/Illness - Left Ankle; Sprain"),
+                self._observation("Injury/Illness - Right Knee; Soreness"),
+            ]
+        )
+
+        assert evidence["stated_reason_categories"]["Injury/Illness"] == 2
+        assert "Injury/Illness" not in evidence["stated_reason_subcategories"]
+
+    def test_the_reports_placeholder_is_distinguished_from_an_empty_string(self) -> None:
+        """``-`` means "nothing to state"; an empty field means the column was absent."""
+        evidence = _reason_evidence(
+            [self._observation("-"), self._observation(""), self._observation("Rest")]
+        )
+
+        assert evidence["observations_with_placeholder_reason"] == 1
+        assert evidence["observations_with_empty_reason_text"] == 1
+        assert evidence["stated_reason_categories"] == {"-": 1, "Rest": 1}
+
+    def test_a_laundered_reason_keeps_the_heading_the_source_chose(self) -> None:
+        """``Rest - Left Knee Injury Management`` is a real observed row.
+
+        The house rule says stated reasons are not to be trusted. This is that
+        rule visible in the data: the source itself files injury management
+        under Rest. The parse must not "helpfully" reclassify it.
+        """
+        evidence = _reason_evidence([self._observation("Rest - Left Knee Injury Management")])
+
+        assert evidence["stated_reason_categories"] == {"Rest": 1}
+        assert evidence["stated_reason_subcategories"]["Rest"] == {"Left Knee Injury Management": 1}
+
+    def test_a_changed_separator_would_be_visible_rather_than_silent(self) -> None:
+        """FAILS IF: the guard below stops discriminating.
+
+        Length is *not* a usable discriminator, which is worth recording
+        because it was my first attempt and it failed: the longest real category
+        ("Return to Competition Reconditioning", 36 characters) is longer than a
+        whole reason line such as "Injury/Illness - Left Ankle; Sprain" (35).
+        The two ranges overlap, so a length bound cannot tell them apart.
+
+        Cardinality discriminates by an order of magnitude. The report uses a
+        closed vocabulary of about ten categories, while the tail is free text
+        with 253 distinct values in this window alone. If the separator changed,
+        every distinct line would become its own "category".
+        """
+        broken = _reason_evidence(
+            [
+                self._observation(f"Injury/Illness \u2013 Ailment {n}")
+                for n in range(_MAX_PLAUSIBLE_REASON_CATEGORIES + 5)
+            ]
+        )
+
+        assert len(broken["stated_reason_categories"]) > _MAX_PLAUSIBLE_REASON_CATEGORIES
+
+    def test_the_committed_manifest_categories_still_look_like_categories(
+        self, manifest: Any
+    ) -> None:
+        published = manifest["reason_evidence"]["stated_reason_categories"]
+
+        assert published, "the manifest publishes no reason categories at all"
+        assert len(published) <= _MAX_PLAUSIBLE_REASON_CATEGORIES, (
+            f"the manifest publishes {len(published)} distinct reason categories. The report "
+            "uses a closed vocabulary of about ten; this many means the ' - ' separator has "
+            "probably changed and whole reason lines are being published as categories."
+        )
+        assert set(published) <= _KNOWN_REASON_CATEGORIES, (
+            f"unrecognised reason category: {sorted(set(published) - _KNOWN_REASON_CATEGORIES)}. "
+            "Either the NBA added a category -- which is real news worth recording in "
+            "docs/handoff.md -- or the separator changed."
+        )
+        assert published["Injury/Illness"] > published["G League"] > 0
 
 
 class TestSourceFingerprintsAreCheckoutIndependent:

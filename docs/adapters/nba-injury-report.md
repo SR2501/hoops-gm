@@ -1142,7 +1142,7 @@ invalidated cohort omitted entirely. It matters more than it looks:
 | Injury/Illness | 1,324 |
 | **G League** | **559** |
 | Not With Team | 23 |
-| `-` (literal dash) | 14 |
+| `-` (the report's own placeholder) | 14 |
 | Personal Reasons | 10 |
 | Rest | 9 |
 | Concussion Protocol | 4 |
@@ -1150,15 +1150,37 @@ invalidated cohort omitted entirely. It matters more than it looks:
 | Coach's Decision | 1 |
 | Return to Competition Reconditioning | 1 |
 
-**Roughly 29% of the cohort's canonical observations are two-way G League
-assignments, not injuries.** A consumer treating the 1,508 `out` rows as an
-injury population would be wrong about a large fraction of them. Nine rows say
-"Rest" outright, which — per the house rule that stated reasons are not to be
-trusted — is a floor, not a count.
+**559 observations — 28.7% — are G League, not injuries.** The source splits
+that bucket further and the manifest now publishes the split, because
+collapsing it let an earlier draft of this document label the whole 559
+"two-way" and gave a reader no way to detect the error from the artifact:
 
-These are raw source strings grouped by the category the report printed before
-its own separator. They are evidence of what was said, never facts about an
-injury.
+| G League sub-category | n | Share of all canonical observations |
+|---|---|---|
+| Two-Way | 455 | 23.4% |
+| On Assignment | 104 | 5.3% |
+
+A two-way contract and a standard-contract player sent down are different
+facts. A consumer treating the 1,508 `out` rows as an injury population is
+wrong about a large fraction of them either way — 506 of those rows carry a
+G League reason — but wrong by a different amount depending on which question
+is being asked.
+
+Two smaller things the granularity exposes. The 14 `-` rows are the report's
+own placeholder for "no reason given", reported separately from
+`observations_with_empty_reason_text` (0) so a reader does not read the zero as
+"every observation states a reason". And one row reads
+`Rest - Left Knee Injury Management`: a single record in which the source
+itself puts injury management under the Rest heading, which is the house rule
+about laundered reasons showing up in the data rather than in a warning.
+
+`Injury/Illness` is deliberately not sub-split. Its second field is free
+clinical text with hundreds of distinct values, and enumerating it would put a
+per-player medical narrative in a committed artifact for no analytic gain.
+
+These are raw source strings grouped by the categories the report printed
+around its own separator. They are evidence of what was said, never facts about
+an injury.
 
 ### Reproducibility
 

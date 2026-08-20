@@ -169,10 +169,10 @@
   },
   "nba_leaguegamefinder_cohort_window_2025_26.json": {
     "byte_size": 6745,
-    "captured_at": "2026-08-20T14:41:51.089380+00:00",
+    "captured_at": "2026-08-20T16:02:44.484403+00:00",
     "endpoint": "LeagueGameFinder",
     "kept_rows_per_result_set": 12,
-    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited.",
+    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. Rows are regrouped so each game's two rows are adjacent and games appear in the order named above; the row set is identical to the source's, only its order differs, and the parser is order-independent by construction (a contract test reverses the row set and asserts the same result). Verified 2026-08-20: the source's own row order is NOT stable across requests -- two captures minutes apart returned the same twelve rows in a different order -- so a byte diff between re-recordings of this fixture is expected and is not evidence the payload changed.",
     "original_row_counts": {
       "LeagueGameFinderResults": 2460
     },
@@ -233,7 +233,7 @@
   },
   "nba_playergamelogs_cohort_window_2025_26.json": {
     "byte_size": 114978,
-    "captured_at": "2026-08-20T14:41:52.608757+00:00",
+    "captured_at": "2026-08-20T16:02:46.432411+00:00",
     "endpoint": "PlayerGameLogs",
     "kept_rows_per_result_set": 129,
     "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. This endpoint carries its own GAME_DATE, which is what makes it an independent witness to the window rather than a restatement of the schedule query.",
@@ -306,10 +306,10 @@
   },
   "nba_scheduleleaguev2_cohort_window_2025_26.json": {
     "byte_size": 33591,
-    "captured_at": "2026-08-20T14:41:57.461216+00:00",
+    "captured_at": "2026-08-20T16:02:52.744880+00:00",
     "endpoint": "ScheduleLeagueV2",
     "kept_rows_per_result_set": 6,
-    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited.",
+    "note": "Whole real rows/objects retained for six named games spanning both window boundaries and the two neutral-site 2025-12-13 games. No value edited. Only the gameDates entries holding the named games are retained; each retained game object is the source's own, unmodified.",
     "original_row_counts": {
       "leagueSchedule.gameDates.games": 1400
     },

@@ -564,18 +564,28 @@ def _select_schedule_game_dates(
 
 
 def record_cohort_reconciliation() -> None:
-    """Capture the three independent views the cohort's identity set is proved by."""
+    """Capture the three additional views the cohort's identity set is checked against.
+
+    Not "the views it is proved by": only ``ScheduleLeagueV2`` is independent of
+    the ingest path. See ``VIEW_INDEPENDENCE`` in
+    ``hoops_gm.ingest.injury_report.cohort_evidence``.
+    """
     from hoops_gm.ingest.nba import NbaStatsClient
 
     print("nba_stats cohort reconciliation:")
     client = NbaStatsClient()
-    note = (
+    base_note = (
         "Whole real rows/objects retained for six named games spanning both window "
-        "boundaries and the two neutral-site 2025-12-13 games. No value edited. "
-        "LeagueGameFinder rows are regrouped so each game's two rows are adjacent and games "
-        "appear in the order named above; the row set is identical to the source's, only its "
-        "order differs, and the parser is order-independent by construction (a contract test "
-        "reverses the row set and asserts the same result)."
+        "boundaries and the two neutral-site 2025-12-13 games. No value edited."
+    )
+    league_game_finder_note = (
+        f"{base_note} Rows are regrouped so each game's two rows are adjacent and games appear "
+        "in the order named above; the row set is identical to the source's, only its order "
+        "differs, and the parser is order-independent by construction (a contract test reverses "
+        "the row set and asserts the same result). Verified 2026-08-20: the source's own row "
+        "order is NOT stable across requests -- two captures minutes apart returned the same "
+        "twelve rows in a different order -- so a byte diff between re-recordings of this "
+        "fixture is expected and is not evidence the payload changed."
     )
 
     payload = client.league_game_finder(season=FIXTURE_COHORT_SEASON)
@@ -593,7 +603,7 @@ def record_cohort_reconciliation() -> None:
             "trimmed": True,
             "original_row_counts": original,
             "kept_rows_per_result_set": len(FIXTURE_COHORT_GAME_IDS) * 2,
-            "note": note,
+            "note": league_game_finder_note,
         },
     )
 
@@ -617,8 +627,8 @@ def record_cohort_reconciliation() -> None:
             "original_row_counts": original,
             "kept_rows_per_result_set": kept_logs,
             "note": (
-                f"{note} This endpoint carries its own GAME_DATE, which is what makes it an "
-                "independent witness to the window rather than a restatement of the schedule "
+                f"{base_note} This endpoint carries its own GAME_DATE, which is what makes it "
+                "an independent witness to the window rather than a restatement of the schedule "
                 "query."
             ),
         },
@@ -638,7 +648,10 @@ def record_cohort_reconciliation() -> None:
             "trimmed": True,
             "original_row_counts": {"leagueSchedule.gameDates.games": original_games},
             "kept_rows_per_result_set": len(FIXTURE_COHORT_GAME_IDS),
-            "note": note,
+            "note": (
+                f"{base_note} Only the gameDates entries holding the named games are retained; "
+                "each retained game object is the source's own, unmodified."
+            ),
         },
     )
 

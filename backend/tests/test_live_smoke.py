@@ -567,10 +567,20 @@ class TestTheCohortWindowStillReconcilesAcrossSources:
         headers = table["headers"]
         game_id_at = headers.index("GAME_ID")
         matchup_at = headers.index("MATCHUP")
-        by_game: dict[str, set[str]] = {}
+        by_game: dict[str, list[str]] = {}
         for row in table["rowSet"]:
-            by_game.setdefault(str(row[game_id_at]), set()).add(str(row[matchup_at]))
-        repeated = {game_id for game_id, strings in by_game.items() if len(strings) == 1}
+            by_game.setdefault(str(row[game_id_at]), []).append(str(row[matchup_at]))
+        # Both conditions, not just the second. `len(set(strings)) == 1` alone
+        # also matches a game with a *single* row, so a truncated payload would
+        # be reported as matchup drift rather than as truncation. That cannot
+        # happen today -- the histogram is 2-per-game for all 1,230 and
+        # parse_league_game_finder rejects one-sided games loudly -- but the
+        # predicate should say what it means.
+        repeated = {
+            game_id
+            for game_id, strings in by_game.items()
+            if len(strings) == 2 and len(set(strings)) == 1
+        }
 
         schedule = nba.schedule_league(season=COHORT_SEASON, max_age=NO_CACHE)
         neutral = {
@@ -587,6 +597,38 @@ class TestTheCohortWindowStillReconcilesAcrossSources:
             "NBA writes matchup strings, not a parser defect -- the parser resolves both shapes "
             "and is covered offline. Investigate before assuming either set is wrong."
         )
+
+    def test_the_position_field_is_still_only_populated_for_starters(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: ``BoxScoreTraditionalV3`` starts labelling every player.
+
+        The cohort manifest withdraws its positional-diversity claim on the
+        grounds that this field is a starting-lineup slot, not a player
+        attribute — exactly five labels per team, always ``F,F,C,G,G``. That
+        withdrawal is only correct while the source behaves this way.
+
+        A red here is **good news**: it means real positional evidence became
+        available, and `position_evidence` should be revisited rather than left
+        standing. It is in the live smoke rather than the Adapter gate because
+        the offline fixtures can only ever show what the source did when it was
+        recorded.
+        """
+        body = nba.box_score_traditional(FIXTURE_MIDSEASON_GAME_ID, max_age=NO_CACHE)[
+            "boxScoreTraditional"
+        ]
+
+        for side in ("homeTeam", "awayTeam"):
+            players = body[side]["players"]
+            non_blank = [
+                label for label in (str(p.get("position") or "").strip() for p in players) if label
+            ]
+            assert non_blank == ["F", "F", "C", "G", "G"], (
+                f"{side} of game {FIXTURE_MIDSEASON_GAME_ID} labels {len(non_blank)} of "
+                f"{len(players)} players as {non_blank}. The cohort manifest's withdrawal of "
+                "positional evidence assumes exactly the five starters are labelled; if that "
+                "changed, the withdrawal should be revisited, not preserved."
+            )
 
 
 # ==========================================================================
