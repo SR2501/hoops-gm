@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**35 done - 1 blocked - 65 pending - 101 total**
+**36 done - 1 blocked - 64 pending - 101 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -95,6 +95,22 @@ SQLAlchemy setup with Alembic migrations and session management. Implement core 
 - **Depends on:** `league-settings-ingest`, `schedule-ingest`
 
 Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time — including when scoring periods themselves are unknown (no `[]` fallback), on out-of-order season/period bounds, and on duplicate period numbers; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. `trade_deadline.deadline_at`/`keepers.deadline_at` are validated offset-aware ISO 8601 at the ingest domain-type boundary, and the read endpoint is loopback-only (bridge-derived values, not a public dashboard fact). A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it. `LeagueDeadlineCalendar` remains the authoritative source-truth calendar; `ScoringPeriod` is now its fail-closed current Eastern-date materialization with separate keyed refresh lineage — see `scoring-period-projection`.
+
+### `draft-format-abstraction` - Abstracting snake and auction draft formats
+
+- [x] **done**
+- **Depends on:** `scoring-profiles`
+
+Immutable snake, linear, and auction configuration is derived exclusively from
+the current `League.draft_type`, `team_count`, `roster_size`, and
+`auction_budget` facts. Unknown formats, missing or nonpositive roster shape,
+missing/nonpositive/non-finite auction budgets, and budgets attached to ordered
+drafts all fail closed. Snake and linear expose explicit one-indexed
+round/pick/team-slot ordering; auction exposes only its stated per-team budget
+and roster shape because current league facts do not establish nomination or
+bidding order. No historical defaults, market evidence, valuation, price,
+inflation, scarcity, recommendation, API, or persistence behavior enters this
+Code-gate-only layer.
 
 ### `fantrax-official-adapter` - Building the official Fantrax API adapter
 
@@ -488,13 +504,6 @@ Docker Compose setup, SQLite to Postgres migration path, and a backup/restore ru
 - **Depends on:** `auction-values`, `layer-purity`, `risk-adjusted-valuation`
 
 One versioned, reproducible run on the morning of 18 October producing our own rankings and dollar values end-to-end from our own projections and availability, with no external ranking anywhere in the lineage (ADR-008). The version is recorded so it is always knowable exactly which numbers we walked in with. Must be rehearsed during the mock window, not attempted for the first time on the day.
-
-### `draft-format-abstraction` - Abstracting snake and auction draft formats
-
-- [ ] **pending**
-- **Depends on:** `scoring-profiles`
-
-Snake and auction as first-class draft formats alongside scoring profiles. They are not variants of each other - snake optimises pick-by-pick value against ADP and scarcity, auction is a constrained budget-allocation problem with live price discovery. Neither may be a special case bolted onto the other.
 
 ### `draft-recommender` - Building the draft recommendation engine
 
