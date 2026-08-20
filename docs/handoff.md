@@ -9069,3 +9069,89 @@ the two apart, and it should be the default for anything load-bearing rather
 than something a coordinator has to ask for.
 
 **Next:** Unchanged, blocked only on the merge of backend #38.
+
+---
+
+## 2026-08-20 — frontend — The `rerere` diagnosis was wrong, twice, and the second correction was wrong too
+
+**Changed:** No product code. A correction to a mechanism claim I published
+twice and the coordinator relayed to another lane.
+
+**What I claimed:** that `git rerere` "silently replayed a stale status line"
+during two rebases, carrying 105 against an actual 106 and later 107 against
+108. I called it "unexamined inheritance with a cache" and it was recorded in
+the risk register on my say-so.
+
+**What Lane C measured, and I confirmed independently:**
+
+```
+git config --show-origin --get rerere.enabled  → true  (repository config)
+git config --get rerere.autoupdate             → unset
+<git-common-dir>/rr-cache                      → 65 recorded resolutions
+```
+
+With `autoupdate` unset, rerere writes a recorded resolution into the working
+tree but leaves the path **unmerged in the index**, so git still stops and asks.
+It cannot silently complete a conflicted merge. My claim was wrong in the
+mechanism.
+
+**But the replacement diagnosis — "the file already looked resolved and
+`git add -A` took it unread" — does not fit my incidents either.** I staged
+those two files **by path** after running a resolver over them, not with
+`git add -A`. So neither published explanation accounts for what happened here.
+
+**What actually happened, verified rather than reasoned:**
+
+- The rebase stopped **once**, at the commit that genuinely conflicted, and then
+  reported `Rebasing (8/10)`, `(9/10)`, `(10/10)` with no further prompt.
+  Commits 4–7 and 8–10 did not conflict at all — and **rerere only acts on
+  conflicts**, so it was not the agent for any of them. That alone falsifies
+  the original claim.
+- Post-rebase commit `81b176a` adds **one** `###` heading to `docs/backlog.md`
+  and changes the status line **zero** times.
+- Its pre-rebase counterpart `50a3777` is still in the object store, and its
+  diff is `-**39 done … 104 total**` / `+**39 done … 105 total**`.
+
+So that commit's *heading* applied and its *status-line update* did not. The
+mechanism, stated as the inference it is: my resolver ran at the conflicting
+commit and wrote a status line already ending `105 total`; the later commit's
+hunk wanted to change a line ending `104 total` into one ending `105 total`, and
+git treated that change as already present. The total held the target value for
+a different reason, and the update was dropped as redundant while the thing the
+total counts kept growing.
+
+**The general shape is the same as the rest of the day and is worth more than
+either wrong version of it:** a derived quantity was resolved at an intermediate
+point in a sequence whose later steps also changed it, and it ended up correct
+for a tree that no longer existed. Not a cache replaying, not an unread file —
+**a number that was right when it was written and stale by the time it was
+committed.**
+
+**Now true — the mitigation changes accordingly.** Staging by path was already
+being done and did not help. Disabling rerere for the final rebase is harmless
+and I will do it as the coordinator suggests, but on this evidence it will not
+be what saves the count. What saves it is: **recompute the derived total at the
+final head, after the rebase completes, never during it.** The 1:1
+headings-to-markers check is the thing that actually caught both incidents, and
+it caught them at the final head, which is why it worked.
+
+**Could not verify:** The "treated as already present" step is an inference from
+the observed inputs and outputs, not from instrumenting git's merge. I did not
+re-run the rebase with `rerere.enabled=false` to demonstrate the same drop
+occurs without the cache — which would be the decisive experiment, and is the
+negative control I would want if this mattered more than it does. The
+falsification that *is* decisive is narrower and sufficient: rerere acts only on
+conflicts, and no conflict occurred on the commits whose update went missing.
+
+**The thing worth carrying:** this is the third mechanism claim about the same
+incident, and the first two were confident, plausible and wrong — one of them
+mine, published, relayed to another lane, and written into the risk register
+before anyone measured a `git config`. The measurement took one command. **A
+mechanism claim that nobody has run a command against is a guess wearing the
+grammar of a finding**, and this project's rule about stating claims in a form
+that lets someone disprove them cheaply exists precisely so that the command is
+obvious. It was obvious here and I did not run it.
+
+**Next:** Unchanged, blocked only on the merge. Final rebase will use
+`git -c rerere.enabled=false`, stage the two docs files by path, and recompute
+the backlog total at the final head rather than mid-sequence.
