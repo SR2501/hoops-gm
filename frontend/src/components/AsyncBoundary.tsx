@@ -24,6 +24,16 @@ interface AsyncBoundaryProps<T> {
   /** Age past which the data is shown as stale. Omit for data that cannot go stale. */
   staleAfterMs?: number
   label?: string
+  /**
+   * Replaces the default error panel.
+   *
+   * The default panel shows the backend's own wording, which is right for a
+   * generic surface but wrong where an endpoint fails closed on several
+   * distinct conditions that call for different actions. A view that can say
+   * something more useful passes this; everything else keeps the default, so
+   * there is still exactly one error convention rather than two.
+   */
+  renderError?: (error: Error | null, reload: () => void) => ReactNode
 }
 
 export function AsyncBoundary<T>({
@@ -33,6 +43,7 @@ export function AsyncBoundary<T>({
   emptyMessage = 'Nothing to show yet.',
   staleAfterMs,
   label = 'data',
+  renderError,
 }: AsyncBoundaryProps<T>) {
   const { status, data, error, fetchedAt, reload } = state
   const isStale = useIsStale(fetchedAt, staleAfterMs)
@@ -46,6 +57,9 @@ export function AsyncBoundary<T>({
   }
 
   if (status === 'error' && data === null) {
+    if (renderError) {
+      return <>{renderError(error, reload)}</>
+    }
     const detail = error instanceof ApiError ? error.message : (error?.message ?? 'Unknown error')
     const code = error instanceof ApiError ? error.code : null
     const requestId = error instanceof ApiError ? error.requestId : null

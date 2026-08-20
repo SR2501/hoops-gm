@@ -153,4 +153,46 @@ describe('AsyncBoundary', () => {
     expect(screen.getByText('Nothing to show yet.')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing.')
   })
+
+  it('lets a view replace the error panel without losing the default for everyone else', () => {
+    const error = new ApiError(409, 'some_code', 'Backend wording.', 'req-custom')
+    const reload = vi.fn()
+    const state: AsyncState<string> = {
+      status: 'error',
+      data: null,
+      error,
+      fetchedAt: null,
+      reload,
+    }
+
+    const { rerender } = render(
+      <AsyncBoundary state={state} label="the thing">
+        {(data) => <p>{data}</p>}
+      </AsyncBoundary>,
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load the thing.')
+
+    rerender(
+      <AsyncBoundary
+        state={state}
+        label="the thing"
+        renderError={(cause, retry) => (
+          <div role="alert">
+            <p>A more specific explanation.</p>
+            <button type="button" onClick={retry}>
+              Try again
+            </button>
+            <span>{cause?.message}</span>
+          </div>
+        )}
+      >
+        {(data) => <p>{data}</p>}
+      </AsyncBoundary>,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('A more specific explanation.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Backend wording.')
+    expect(screen.queryByText('Could not load the thing.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
 })

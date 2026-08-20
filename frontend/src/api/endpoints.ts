@@ -12,7 +12,16 @@ import {
   type RequestOptions,
   type ResponseContract,
 } from './client'
-import type { Health, Meta, Readiness } from './types'
+import type {
+  Health,
+  Meta,
+  Readiness,
+  ScheduleGrid,
+  ScheduleGridCount,
+  ScheduleGridLineage,
+  ScheduleGridPeriod,
+  ScheduleGridTeam,
+} from './types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -89,4 +98,116 @@ export function getReadiness(options?: RequestOptions): Promise<Readiness> {
 
 export function getMeta(options?: RequestOptions): Promise<Meta> {
   return apiFetch('/api/v1/meta', META_CONTRACT, options)
+}
+
+/* --- Schedule grid (ADR-012) ---------------------------------------------- */
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+}
+
+function isScheduleRefreshLineage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.refresh_id === 'number' &&
+    typeof value.version === 'string' &&
+    typeof value.refreshed_at === 'string' &&
+    typeof value.source_game_count === 'number' &&
+    typeof value.resolved_game_count === 'number' &&
+    typeof value.persisted_team_row_count === 'number' &&
+    isStringArray(value.unresolved_game_ids)
+  )
+}
+
+function isProjectionRefreshLineage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.refresh_id === 'number' &&
+    typeof value.version === 'string' &&
+    typeof value.refreshed_at === 'string'
+  )
+}
+
+function isRecordLineage(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === 'number' && typeof value.version === 'number'
+}
+
+function isScheduleGridLineage(value: unknown): value is ScheduleGridLineage {
+  return (
+    isRecord(value) &&
+    isScheduleRefreshLineage(value.schedule) &&
+    isProjectionRefreshLineage(value.scoring_period_projection) &&
+    isRecordLineage(value.deadline_calendar) &&
+    isRecordLineage(value.settings_snapshot)
+  )
+}
+
+function isScheduleGridTeam(value: unknown): value is ScheduleGridTeam {
+  return (
+    isRecord(value) &&
+    typeof value.team_id === 'number' &&
+    typeof value.nba_team_id === 'number' &&
+    typeof value.abbreviation === 'string' &&
+    typeof value.name === 'string'
+  )
+}
+
+function isScheduleGridPeriod(value: unknown): value is ScheduleGridPeriod {
+  return (
+    isRecord(value) &&
+    typeof value.period_number === 'number' &&
+    typeof value.start_date === 'string' &&
+    typeof value.end_date === 'string' &&
+    typeof value.is_playoff === 'boolean'
+  )
+}
+
+function isScheduleGridCount(value: unknown): value is ScheduleGridCount {
+  return (
+    isRecord(value) &&
+    typeof value.period_number === 'number' &&
+    typeof value.team_id === 'number' &&
+    typeof value.games === 'number'
+  )
+}
+
+/**
+ * Shape only. Density is deliberately *not* asserted here.
+ *
+ * The contract says `counts` is dense, and if it ever is not, rejecting the
+ * whole response would replace a visible hole with a blank screen and a
+ * generic contract error. The grid renders a missing cell as an explicit "no
+ * data" marker and says how many it found, which is the difference between
+ * finding out and not.
+ */
+function isScheduleGrid(value: unknown): value is ScheduleGrid {
+  return (
+    isRecord(value) &&
+    typeof value.league_id === 'number' &&
+    typeof value.season === 'string' &&
+    isScheduleGridLineage(value.lineage) &&
+    Array.isArray(value.teams) &&
+    value.teams.every(isScheduleGridTeam) &&
+    Array.isArray(value.periods) &&
+    value.periods.every(isScheduleGridPeriod) &&
+    Array.isArray(value.counts) &&
+    value.counts.every(isScheduleGridCount)
+  )
+}
+
+const SCHEDULE_GRID_CONTRACT = {
+  isSuccess: isScheduleGrid,
+  invalidResponseDetail:
+    'The schedule grid response did not match the expected backend contract.',
+} satisfies ResponseContract<ScheduleGrid>
+
+export function getScheduleGrid(
+  leagueId: number,
+  options?: RequestOptions,
+): Promise<ScheduleGrid> {
+  return apiFetch(
+    `/api/v1/leagues/${String(leagueId)}/schedule-grid/current`,
+    SCHEDULE_GRID_CONTRACT,
+    options,
+  )
 }

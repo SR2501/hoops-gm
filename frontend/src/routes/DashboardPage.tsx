@@ -6,13 +6,14 @@
  * charts is the fastest way to lose track of what has really been built.
  */
 
+import { Link } from 'react-router-dom'
 import { AsyncBoundary } from '../components/AsyncBoundary'
 import { getMeta } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
 
 const PLANNED_SURFACES = [
   { name: 'Live scorecard', phase: 'Phase 7', owner: 'frontend' },
-  { name: 'Schedule & availability grid', phase: 'Phase 6', owner: 'frontend' },
+  { name: 'Schedule & availability grid (availability-adjusted)', phase: 'Phase 6', owner: 'frontend' },
   { name: 'Reliability scorecards', phase: 'Phase 6', owner: 'frontend' },
   { name: 'Draft board', phase: 'Phase 9', owner: 'frontend' },
   { name: 'Stock watch', phase: 'Phase 6', owner: 'frontend' },
@@ -63,6 +64,8 @@ export function DashboardPage() {
         <h2 id="planned-heading">Not built yet</h2>
         <p className="page__note">
           Listed so the gap between the plan and the code stays visible. See <code>docs/plan.md</code>.
+          The <Link to="/schedule">schedule grid</Link> is built and shows raw per-period game
+          counts; the availability-adjusted grid below is a separate, later surface (ADR-012).
         </p>
         <table className="table">
           <thead>
