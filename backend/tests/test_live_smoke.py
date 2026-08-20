@@ -348,6 +348,27 @@ class TestNbaStatsIsAlive:
             f"logs-only={sorted(player_log_game_ids - game_ids)}"
         )
 
+    def test_a_full_postseason_uses_canonical_playoff_scope(self, nba: NbaStatsClient) -> None:
+        games = parse_league_game_finder(
+            nba.league_game_finder(
+                season=FIXTURE_STATS_SEASON,
+                season_type="Playoffs",
+                max_age=NO_CACHE,
+            ),
+            season=FIXTURE_STATS_SEASON,
+            season_type="playoffs",
+        )
+        logs = parse_player_game_logs(
+            nba.player_game_logs(
+                season=FIXTURE_STATS_SEASON,
+                season_type="Playoffs",
+                max_age=NO_CACHE,
+            )
+        )
+
+        assert len(games) == 84
+        assert {game.nba_game_id for game in games} == {log.nba_game_id for log in logs}
+
     def test_the_inactive_list_is_still_populated_for_a_midseason_game(
         self, nba: NbaStatsClient
     ) -> None:

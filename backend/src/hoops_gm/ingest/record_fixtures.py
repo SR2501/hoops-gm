@@ -401,6 +401,35 @@ def record_nba() -> None:
             ),
         },
     )
+    playoff_payload = client.league_game_finder(
+        season=FIXTURE_STATS_SEASON,
+        season_type="Playoffs",
+    )
+    playoff_game_ids = _league_game_finder_fixture_ids(
+        playoff_payload,
+        boundary_rows=4,
+        required_game_ids=(),
+    )
+    playoff_trimmed, playoff_original = _select_league_game_finder_games(
+        playoff_payload,
+        playoff_game_ids,
+    )
+    _write(
+        "nba_leaguegamefinder_playoffs.json",
+        playoff_trimmed,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "LeagueGameFinder",
+            "params": {
+                "season_nullable": FIXTURE_STATS_SEASON,
+                "season_type_nullable": "Playoffs",
+            },
+            "trimmed": True,
+            "original_row_counts": playoff_original,
+            "kept_rows_per_result_set": len(playoff_game_ids) * 2,
+            "note": "Whole real rows retained as complete playoff game groups. No value edited.",
+        },
+    )
     _write(
         f"nba_boxscoresummaryv3_{FIXTURE_RECONCILIATION_GAME_ID}_reconciliation.json",
         client.box_score_summary(FIXTURE_RECONCILIATION_GAME_ID),

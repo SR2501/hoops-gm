@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from hoops_gm.availability.reliability import (
 pytestmark = pytest.mark.model_backtest
 
 EVIDENCE = Path(__file__).resolve().parent / "model_evidence" / "reliability_metrics_v2.json"
+HISTORICAL_EVIDENCE = EVIDENCE.with_name("reliability_metrics_v1.json")
 _SEASON_DATES = {
     "2023-24": "2023-10-24",
     "2024-25": "2024-10-22",
@@ -132,6 +134,15 @@ class _SyntheticEvidenceClient:
 
 def _evidence() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(EVIDENCE.read_text(encoding="utf-8")))
+
+
+def test_retired_v1_evidence_remains_integrity_pinned() -> None:
+    payload = json.loads(HISTORICAL_EVIDENCE.read_text(encoding="utf-8"))
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    assert sha256(canonical).hexdigest() == (
+        "254eac10d358f87a4e21aab4f88d9204eba829cc7c461b246a73aa5861707911"
+    )
 
 
 def _expected_protocol() -> dict[str, object]:

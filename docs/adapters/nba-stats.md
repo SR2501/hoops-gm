@@ -96,6 +96,7 @@ One repeated-canonical game is also checked against `BoxScoreSummaryV3`'s
 independent home/away team IDs, rather than treating cardinality as proof of
 correct orientation. Season backfill supports only the source's `Regular
 Season` and `Playoffs` labels; every other label is rejected before a request.
+Both supported scopes have recorded fixtures and live identity-set smoke tests.
 Output remains sorted by stable NBA `GAME_ID`, `GAME_DATE` remains the NBA's
 Eastern local date, and this endpoint still supplies no tip-off instant.
 

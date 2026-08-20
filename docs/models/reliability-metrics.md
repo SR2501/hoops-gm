@@ -150,10 +150,12 @@ games. Adapter reconciliation now identifies each row by its team abbreviation,
 and bidirectional game-ID coverage is 100% in all three seasons. The mismatch
 ceiling remains a drift guard, not permission to release another reduced cohort;
 its 1% tolerance did not catch this 0.41% game-ID loss, so the evidence contract
-also requires literal 100% bidirectional coverage. Affected examples include
-neutral-site Paris and NBA Cup games, so the restored rows are not assumed to be
-a random sample and nominal home/away must not be interpreted as home-court
-advantage.
+also asserts literal 100% bidirectional coverage in the committed Model-gate
+tests. Affected examples include neutral-site Paris and NBA Cup games, so the
+restored rows are not assumed to be a random sample and nominal home/away must
+not be interpreted as home-court advantage. Retired v1 evidence remains in the
+repository as historical evidence and is integrity-pinned; it is not a runtime
+release.
 
 Reproduce the live study with:
 

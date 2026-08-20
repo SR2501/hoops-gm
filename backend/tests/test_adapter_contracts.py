@@ -495,21 +495,25 @@ class TestNbaGamesAndLogs:
         with pytest.raises(SourceContractError, match="noncanonical GAME_ID"):
             parse_league_game_finder(payload, season="2024-25")
 
-    def test_playoffs_scope_accepts_canonical_season_and_game_ids(self) -> None:
+    def test_points_column_is_required_for_completed_game_evidence(self) -> None:
         payload = load("nba_leaguegamefinder_reconciliation.json")
-        payload["parameters"]["SeasonType"] = "Playoffs"
         table = payload["resultSets"][0]
-        game_id = table["headers"].index("GAME_ID")
-        season_id = table["headers"].index("SEASON_ID")
-        table["rowSet"] = table["rowSet"][:2]
-        for row in table["rowSet"]:
-            row[game_id] = "0042400101"
-            row[season_id] = "42024"
+        points = table["headers"].index("PTS")
+        table["headers"][points] = "POINTS"
 
-        games = parse_league_game_finder(payload, season="2024-25", season_type="playoffs")
+        with pytest.raises(SourceContractError, match=r"missing columns.*PTS"):
+            parse_league_game_finder(payload, season="2024-25")
 
-        assert [game.nba_game_id for game in games] == ["0042400101"]
-        assert games[0].season_type == "playoffs"
+    def test_playoffs_scope_accepts_canonical_season_and_game_ids(self) -> None:
+        games = parse_league_game_finder(
+            load("nba_leaguegamefinder_playoffs.json"),
+            season="2024-25",
+            season_type="playoffs",
+        )
+
+        assert games
+        assert all(game.nba_game_id.startswith("00424") for game in games)
+        assert all(game.season_type == "playoffs" for game in games)
 
     def test_an_unrecognised_matchup_string_is_a_contract_error(self) -> None:
         payload = load("nba_leaguegamefinder_trimmed.json")

@@ -6324,7 +6324,7 @@ evidence is green. This session must not merge or self-approve it.
 
 **Changed:** Reproduced the `LeagueGameFinder` defect from live official
 2024-25 and 2025-26 payloads on exact base `7136740`, then restacked onto exact
-`origin/main` `bcfb2d6`. The ten omitted games were not one-sided source
+`origin/main` `2b9a410`. The ten omitted games were not one-sided source
 records: both team rows existed, but both repeated one canonical `MATCHUP`
 string (for example, both rows for `0022400633` say `IND @ SAS`). The parser
 treated the separator as the current row's side, assigned both rows to one side,
@@ -6353,7 +6353,7 @@ still fails its calibration sign-reversal veto and remains unreleased.
 
 **Now true:** `LeagueGameFinder` and `PlayerGameLogs` reconcile 1,230/1,230
 game IDs in all three evidence seasons. The full backend gate passes (Ruff,
-format, strict mypy, 997 offline tests), the complete Adapter and Model gates
+format, strict mypy, 1,000 offline tests), the complete Adapter and Model gates
 pass, the focused live NBA smoke returns the exact same 1,230 game IDs from both
 official endpoints, live 2024-25 playoff scope parses 84 canonical `00424...`
 games, SQLite upgrades/checks/downgrades through `0015`, and the tracked-file

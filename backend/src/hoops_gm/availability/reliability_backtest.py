@@ -434,8 +434,7 @@ def _cohort_metadata(cohort: SeasonCohort) -> dict[str, object]:
         "parsed_game_only_ids": list(cohort.parsed_game_only_ids),
         "excluded_player_game_logs": cohort.excluded_player_game_logs,
         "player_log_only_reason": (
-            "PlayerGameLogs game ids without a two-sided home/away result from "
-            "the existing LeagueGameFinder parser"
+            "PlayerGameLogs game ids absent from the parsed LeagueGameFinder two-sided game set"
             if cohort.player_log_only_game_ids
             else None
         ),

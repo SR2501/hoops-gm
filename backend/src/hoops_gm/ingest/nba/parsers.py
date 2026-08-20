@@ -347,6 +347,7 @@ def parse_league_game_finder(
         "TEAM_ABBREVIATION",
         "GAME_DATE",
         "MATCHUP",
+        "PTS",
     )
 
     games: dict[str, dict[str, Any]] = {}
