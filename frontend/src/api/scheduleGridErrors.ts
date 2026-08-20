@@ -14,18 +14,19 @@
  * `client.ts` already parses `{error, detail, request_id}` off the body into
  * `ApiError.code`, and that is the value keyed here.
  *
- * One module rather than two so the message shown in the error panel and the
- * message shown in the stale banner cannot drift apart.
+ * One module rather than two, and consumed as a *description* rather than as a
+ * rendered panel, so that the same words reach both failure paths: the cold
+ * one, where nothing is on screen, and the warm one, where the grid is still
+ * showing and a refresh has just failed. The warm path is where
+ * `schedule_grid_not_current` actually arrives — the schedule is re-ingested
+ * while a grid is open — and it is the path where "these counts are from a
+ * superseded cohort" is the most decision-bearing sentence on the page.
  */
 
 import { ApiError } from './client'
+import type { ErrorDescription } from '../components/AsyncBoundary'
 
-export interface ScheduleGridErrorCopy {
-  /** What happened, in terms of the data rather than the stack. */
-  summary: string
-  /** The next thing the reader can actually do. */
-  action: string
-}
+export type ScheduleGridErrorCopy = Required<ErrorDescription>
 
 export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   schedule_grid_local_only: {
@@ -41,9 +42,9 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
   schedule_grid_not_current: {
     summary:
-      'The stored schedule no longer matches the games in the database: it changed after it was last verified. The counts are withheld rather than shown from a schedule cohort that may already be out of date.',
+      'The schedule changed after this version was recorded, so the counts no longer describe current reality. Verification worked and returned a clear verdict — nothing here is unknown, it is simply out of date. The grid is withheld rather than shown from a superseded cohort.',
     action:
-      'Re-run the schedule import so the refresh and the games it counts are the same cohort again.',
+      'Re-import the schedule to refresh it, so the registered refresh and the games it counts are the same cohort again.',
   },
   schedule_grid_incomplete_evidence: {
     summary:
@@ -80,12 +81,6 @@ const TRANSPORT_ERRORS: Record<string, ScheduleGridErrorCopy> = {
 export interface ScheduleGridErrorDescription extends ScheduleGridErrorCopy {
   /** The machine-readable code, from the response body. */
   code: string | null
-  /** The backend's own wording, kept so a report can quote it exactly. */
-  detail: string | null
-  /** Correlates this failure to a server log line. */
-  requestId: string | null
-  /** True when the code is one the backend documents for this endpoint. */
-  isKnown: boolean
 }
 
 export function describeScheduleGridError(error: Error | null): ScheduleGridErrorDescription {
@@ -94,14 +89,17 @@ export function describeScheduleGridError(error: Error | null): ScheduleGridErro
       summary: error?.message ?? 'The schedule grid failed to load for an unrecorded reason.',
       action: 'Retry. If it recurs, check the browser console and the backend logs.',
       code: null,
-      detail: null,
-      requestId: null,
-      isKnown: false,
     }
   }
 
-  const known = SCHEDULE_GRID_ERRORS[error.code]
-  const copy = known ?? TRANSPORT_ERRORS[error.code]
+  // `Object.hasOwn` rather than a bare lookup: a code named `constructor` or
+  // `toString` would otherwise resolve to an inherited function and be treated
+  // as a known one.
+  const copy = Object.hasOwn(SCHEDULE_GRID_ERRORS, error.code)
+    ? SCHEDULE_GRID_ERRORS[error.code]
+    : Object.hasOwn(TRANSPORT_ERRORS, error.code)
+      ? TRANSPORT_ERRORS[error.code]
+      : undefined
 
   return {
     summary:
@@ -111,10 +109,5 @@ export function describeScheduleGridError(error: Error | null): ScheduleGridErro
       copy?.action ??
       'Quote the code and request id below when reporting it; both appear in the backend log for the same request.',
     code: error.code,
-    // `client.ts` puts the envelope's `detail` on the message, so the backend's
-    // own wording survives even when the body itself is not retained.
-    detail: error.message === '' ? null : error.message,
-    requestId: error.requestId,
-    isKnown: known !== undefined,
   }
 }

@@ -9,6 +9,9 @@ headings and 105 markers, 1:1. Recounted at this head after two lanes merged —
 neither lane's pre-merge header was used as an input, because both were computed
 before the other's items landed. The header before that claimed 37 done / 63
 pending against an actual 36 / 64, and that drift predates both lanes.)
+**38 done - 1 blocked - 67 pending - 106 total**
+
+(Counted from the status markers themselves, not carried forward: 106 `###` headings and 106 markers, 1:1.)
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -318,6 +321,31 @@ fixtures, through the production importers, and the endpoint returns a real
 200 against it (see `backend/README.md`). The first attempt at this item was
 fail-closed but permanently unavailable, which is why the seed path is part of
 the deliverable rather than a convenience.
+
+### `schedule-grid-ui` - Putting the raw schedule grid on screen
+
+- [x] **done**
+- **Depends on:** `schedule-grid-early`
+
+Teams down, fantasy scoring periods across, scheduled game counts in the cells,
+at `/schedule`. Consumes `schedule-grid-early`'s endpoint and renders exactly
+what it returns: no availability weighting, no opponent quality, no colour scale
+and no light/heavy judgement (ADR-009).
+
+`games: 0` renders as `0`; a `counts` row the backend never sent renders as its
+own marked cell and is counted in a visible notice. A blank cell can never mean
+either, which is the failure mode this screen exists to avoid. Totals that are
+short a period are marked on screen rather than only in screen-reader text, so
+a partial sum cannot be read as a complete one. Each of the five documented
+refusal codes gets its own explanation and next step, read from the response
+body, on both the cold-load and the failed-refresh path. Schedule lineage —
+version, refresh id, raw `refreshed_at`, source/resolved/persisted counts — is
+on the page rather than in devtools, and the cohort's age is reported against
+ADR-012's weekly re-ingest cadence.
+
+The per-period league sum and the per-team mean satisfy the amendment's
+league-wide baseline clause. The team-versus-own-distribution clause is
+deliberately not implemented here — see `schedule-grid-reference-distribution`.
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 
@@ -812,6 +840,32 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 - **Depends on:** `gscore-engine`, `reliability-metrics`
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
+
+### `schedule-grid-reference-distribution` - Comparing a team's period count against its own normal
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-ui`
+
+ADR-012's 2026-08-17 amendment requires a team's raw scheduled-game count be
+shown against **both** the league-wide period baseline and *that team's normal
+distribution*. `schedule-grid-ui` ships the first and deliberately defers the
+second; without this item the amendment is half-implemented and nothing outside
+this line says so.
+
+Owned by `quant`, not `frontend`, because "normal" is not arithmetic. It
+requires choosing a reference set — whether to include fantasy playoff periods,
+partial first and last periods, and the league-wide sparse periods (In-Season
+Tournament, All-Star break) that the same amendment singles out as special. A
+baseline that includes All-Star week depresses the mean and makes a genuinely
+sparse week read as ordinary; excluding it needs a rule for what counts as
+league-wide sparse, and that rule is a threshold. The amendment ties the output
+to trade targeting, so it is a number a decision rests on.
+
+**Gate:** Model, not Adapter. Needs held-out evaluation of whether the deviation
+measure identifies the periods it claims to, a model card in `docs/models/`, and
+an explicit statement of what the reference set cannot see. Until then the grid
+shows the raw row, which is itself the team's distribution laid out in order —
+the missing piece is the quantified comparison, not the evidence.
 
 ### `schedule-ui` - Building the schedule tracker UI
 

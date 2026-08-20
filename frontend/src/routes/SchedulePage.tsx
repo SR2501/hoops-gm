@@ -55,21 +55,32 @@ export function SchedulePage() {
         staleAfterMs={STALE_AFTER_MS}
         isEmpty={(data) => data.teams.length === 0 || data.periods.length === 0}
         emptyMessage="The backend returned a grid with no teams or no scoring periods, so there is nothing to draw."
-        renderError={(error, reload) => <ScheduleGridError error={error} reload={reload} />}
+        describeError={describeScheduleGridError}
       >
-        {(data) => <ScheduleGridView grid={data} />}
+        {(data) => <ScheduleGridView grid={data} fetchedAt={grid.fetchedAt} />}
       </AsyncBoundary>
     </article>
   )
 }
 
-function ScheduleGridView({ grid }: { grid: ScheduleGrid }) {
+function ScheduleGridView({
+  grid,
+  fetchedAt,
+}: {
+  grid: ScheduleGrid
+  fetchedAt: Date | null
+}) {
   const model = useMemo(() => buildScheduleGridModel(grid), [grid])
+  // The cohort's age is measured against the moment this response was
+  // received, which `useAsync` already records, rather than against a clock
+  // read during render. It is a real timestamp tied to the data, so it cannot
+  // drift with unrelated re-renders.
+  const now = fetchedAt ?? new Date()
   const { integrity } = model
 
   return (
     <>
-      <ScheduleLineage lineage={grid.lineage} now={new Date()} />
+      <ScheduleLineage lineage={grid.lineage} now={now} />
 
       {!integrity.isDense ? (
         <p className="state state--error grid__integrity" role="alert" data-testid="grid-integrity">
@@ -77,7 +88,7 @@ function ScheduleGridView({ grid }: { grid: ScheduleGrid }) {
           {integrity.missingCells > 0
             ? ` ${String(integrity.missingCells)} of ${String(
                 model.rows.length * model.periods.length,
-              )} cells had no count and are shown as “·”, which is not the same as zero.`
+              )} cells had no count and are shown as “·”, which is not the same as zero. Totals containing one are marked “+?”.`
             : ''}
           {integrity.unmatchedRows > 0
             ? ` ${String(integrity.unmatchedRows)} counts named a team or period that is not in this response and were dropped.`
@@ -88,11 +99,11 @@ function ScheduleGridView({ grid }: { grid: ScheduleGrid }) {
         </p>
       ) : null}
 
-      <ScheduleGridTable model={model} season={grid.season} />
-
+      {/* Above the table: the first `·` a reader meets is in row one, and a key
+          below thirty rows of grid is a key they have already needed. */}
       <p className="page__note grid__key">
         <span className="grid__key-item">
-          <span className="grid__cell grid__cell--zero grid__key-swatch">0</span> no game scheduled
+          <span className="grid__cell grid__key-swatch">0</span> no game scheduled
         </span>
         <span className="grid__key-item">
           <span className="grid__cell grid__cell--nodata grid__key-swatch">·</span> no data sent
@@ -101,48 +112,16 @@ function ScheduleGridView({ grid }: { grid: ScheduleGrid }) {
           <span className="grid__playoff-badge">PO</span> fantasy playoff period
         </span>
         <span className="grid__key-item">
-          League row: total games scheduled across all teams in that period.
+          <span className="grid__key-swatch">+?</span> total is missing at least one period
+        </span>
+        <span className="grid__key-item">
+          League row: team-games in that period. Per team: the same divided by{' '}
+          {model.teamCount} teams.
         </span>
       </p>
+
+      <ScheduleGridTable model={model} season={grid.season} />
     </>
   )
 }
 
-function ScheduleGridError({ error, reload }: { error: Error | null; reload: () => void }) {
-  const described = describeScheduleGridError(error)
-
-  return (
-    <div className="state state--error" role="alert" data-testid="schedule-grid-error">
-      <p>Could not load the schedule grid.</p>
-      <p className="state__detail" data-testid="schedule-grid-error-summary">
-        {described.summary}
-      </p>
-      <p className="state__detail" data-testid="schedule-grid-error-action">
-        {described.action}
-      </p>
-      {described.detail ? (
-        <p className="state__meta">
-          Backend said: <q>{described.detail}</q>
-        </p>
-      ) : null}
-      {described.code || described.requestId ? (
-        <p className="state__meta">
-          {described.code ? (
-            <>
-              Code <code>{described.code}</code>
-            </>
-          ) : null}
-          {described.code && described.requestId ? ' · ' : null}
-          {described.requestId ? (
-            <>
-              Request <code>{described.requestId}</code>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-      <button type="button" onClick={reload}>
-        Retry
-      </button>
-    </div>
-  )
-}

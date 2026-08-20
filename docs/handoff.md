@@ -8298,3 +8298,147 @@ the entire point of the entry.
 **Next:** Whoever reviews the first post-merge nightly run should append the
 outcome here, including "all green", because a silent pass is exactly how an
 alarm nobody reads becomes an alarm nobody notices is broken.
+## 2026-08-20 — frontend — Schedule grid on screen
+
+**Changed:** A `/schedule` route renders the per-team, per-scoring-period
+scheduled game count grid from `GET /api/v1/leagues/{league_id}/schedule-grid/current`
+— teams down, periods across, counts in the cells, a per-team season total, and
+a league row giving each period's team-games plus a per-team mean (ADR-012's
+first amendment asks for the league-wide baseline explicitly). New:
+`frontend/src/routes/SchedulePage.tsx`,
+`frontend/src/components/ScheduleGridTable.tsx`,
+`frontend/src/components/ScheduleLineage.tsx`,
+`frontend/src/components/scheduleGridModel.ts`,
+`frontend/src/api/scheduleGridErrors.ts`, and a recorded-response fixture with
+its own contract test. Modified: `App.tsx`, `AppLayout.tsx`, `AsyncBoundary.tsx`,
+`api/endpoints.ts`, `api/types.ts`, `DashboardPage.tsx`, `styles.css`.
+
+The invariant the screen is built around is that a cell is either a count or it
+is absent, and those are different values. `games: 0` renders as `0` with
+`data-state="zero"`. A `counts` row the backend never sent renders hatched, as
+`·`, with `data-state="no-data"` and the accessible name "no data", and the page
+states how many such cells it found. A blank cell cannot mean either.
+`isScheduleGrid` deliberately does *not* assert the dense-grid invariant the
+backend guarantees: rejecting the whole response would replace a visible hole
+with a blank screen and a generic "the response is unusable" message, which
+would be a false statement about a body that is one cell short. Value domain
+*is* asserted — a negative or fractional `games` is refused, because that is a
+field not being what we think it is rather than a hole in a collection.
+
+Each of the five documented refusals gets its own summary and its own next step,
+keyed off the code in the response **body**. The coordinator's contract
+correction is confirmed against the running service: `X-Bridge-Error` was absent
+from every refusal measured, and `body.request_id` equalled the `X-Request-ID`
+header. A test asserts specifically that the code is not read from that header,
+because a client that did would see `null` and fall through to a generic message
+on exactly the failures that matter most.
+
+Nothing on this screen ranks a count against another count. No colour scale, no
+light/heavy week, no threshold — those are `quant` outputs behind the Model gate
+(ADR-009), and encoding them in CSS would ship an unbacktested model.
+
+**Now true:** The grid renders in a real browser. Verified at
+`http://127.0.0.1:5183/schedule` (Vite dev server) proxying to the real FastAPI
+service on `127.0.0.1:8010` against the seeded `schedule_grid_demo.db`, read off
+the live DOM and computed styles rather than from a mock: 30 team rows, 21
+period columns plus a Total column, table 959px wide in a 1280px viewport;
+`cell-1-1` = `"0"` / `data-state="zero"` / "ATL, period 1: 0 games";
+`cell-2-1` = `"1"` / `data-state="count"`; league row 6 / zeros / 14, season 20,
+matching the seed's 20 non-zero team-games exactly; periods 20 and 21 carry the
+`PO` badge and a 2px accent border while period 19 has none; the lineage
+disclosure shows `9bcac1c60490b41a`, refresh 1, `2026-08-20T15:10:39.334171Z`
+verbatim, and `10 from source · 10 resolved · 20 team rows persisted`.
+
+An error state was verified live from a genuine backend refusal, not a stub: the
+seeded database was copied, `schedule_completeness` stripped from
+`refresh_runs.summary`, and the service restarted against it, producing a real
+`409 schedule_grid_incomplete_evidence`. The browser showed the written summary,
+the next step, the backend's own wording quoted, the code and the request id.
+
+Three independent exact-head reviews ran on `cf3ba4a` — `frontend`, `architect`
+and `code-review` — and every must-fix they raised is closed:
+
+- Both total columns summed only the cells that arrived and marked the shortfall
+  in screen-reader text alone, so the two most scannable numbers on the grid
+  looked exactly as trustworthy as complete ones. Partial totals now carry
+  `data-state="partial"`, a warn colour and a visible `+?`.
+- Zeros were muted. That was a two-stop colour scale on the count axis wearing a
+  legibility justification — zero is a count, and it was the one count drawn
+  differently — and it de-emphasised the value ADR-012's sparse-period amendment
+  makes most decision-bearing. Every count now renders identically; only absence
+  and playoff periods are visually distinguished, and both are categories rather
+  than magnitudes. Confirmed in the browser: zero and non-zero cells both
+  compute to `rgb(230, 233, 239)`.
+- `scheduleGridErrors.ts` claimed its single-module design kept the error panel
+  and the stale banner from drifting apart. It did not: the module had one
+  caller, on the cold-load path only. `AsyncBoundary`'s new prop is now
+  `describeError` — a description consumed by *both* paths — rather than
+  `renderError`, a rendered panel that could only ever have reached one. This
+  matters because `schedule_grid_not_current` is precisely the refusal that
+  arrives *after* a successful load, when the reader is looking at counts now
+  known to be superseded. There is a test for that path; there was not before.
+- `.grid-scroll` had `overflow-x: auto`, which makes `overflow-y` compute to
+  `auto` as well, so it was already the sticky header's scrollport — but with no
+  height constraint it could never scroll and `top: 0` could never engage.
+  It now has a `max-height`; measured live, the period header pins at the
+  scrollport top (249px) across scroll positions 200, 400 and maximum.
+- A test named "gives every code a distinct summary" compared the test file's
+  own regex literals to each other and asserted nothing about the product. It
+  now asserts over `SCHEDULE_GRID_ERRORS` itself, and additionally pins that the
+  documented code set and the copy's key set are equal.
+- The ADR-012 amendment clause this screen does *not* satisfy is now recorded in
+  `docs/backlog.md` as `schedule-grid-reference-distribution`, owned by `quant`
+  and gated Model, rather than existing only in a review transcript.
+
+`not_current` copy was rewritten to match the coordinator's amended definition:
+verification worked and returned a clear verdict, the schedule simply changed
+after the version was recorded, and the operator re-imports. Telling that user
+"nothing on record can show it is right" — correct for
+`incomplete_evidence` — would have been false.
+
+Code gate green: ESLint clean, `tsc --noEmit` clean, 72 Vitest tests across 8
+files, up from 39 on the `11f7efa` baseline.
+
+**Could not verify:** The no-data cell has never been produced by a real
+backend. `scheduled_game_counts` builds the grid by cross join, so the service
+cannot emit a hole; the rendering is covered by unit test and by the legend
+swatch's computed style, and the live browser has only ever shown a dense
+response. The same is true of the partial-total marker and the integrity banner.
+
+Everything was verified against backend PR #38 at `11f7efa`, not at its current
+head `84ed9b1`. The coordinator reports 133 changed lines in the route since,
+including a `season_type` guard and a set-mismatch rejection that add a new
+`schedule_grid_incomplete_evidence` path — neither should affect the 200 shape,
+but "should" is not "did", and re-verification after the rebase onto merged
+`main` is outstanding. Nothing here has run against a merged `main`.
+
+The 403 `schedule_grid_local_only` path was never exercised end to end: the
+service refuses non-loopback callers and every request in this session came from
+loopback, so that copy is proven by unit test only. The 404 was exercised
+against the live service; the other three by unit test plus, for
+`incomplete_evidence`, one real doctored-database run.
+
+The grid has only been seen at the seed's scale — 630 cells with 20 non-zero
+team-games. Nothing is claimed about rendering cost or readability at a full
+1,230-game season, where most cells will be 3s and 4s rather than zeros, and the
+visual balance may well be different. The five-second readability target is
+asserted from a sparse demo, which is the easy case.
+
+Browser verification used a single Chromium instance at 1280x720 through the
+canvas. No other browser, no other viewport, no touch device, and no screen
+reader was used — accessible names were asserted through jsdom and
+`toHaveAccessibleName`, which is not the same as hearing them. Screenshot
+capture timed out repeatedly in this environment, so the visual evidence above
+is computed styles and DOM text, not pixels.
+
+Port 8000 was held by another worktree's backend and the machine's editable
+install of `hoops-gm-backend` points at a different worktree entirely, so this
+ran on port 8010 with `PYTHONPATH` set. That is not how anyone else will run it,
+and the documented `python -m hoops_gm` default path was therefore not the one
+exercised.
+
+**Next:** Hold the PR until backend #38 merges, then rebase onto merged `main`,
+re-run the browser verification against the merged route — specifically that the
+200 still renders and at least one refusal still displays — and open with base
+`main`. Then a fresh exact-head review round on the rebased head, since every
+review above was against `cf3ba4a` and the fixes that followed it.

@@ -352,14 +352,28 @@ a:focus-visible {
    visual distinctions are between a count, an explicit zero, and no data. */
 
 .grid-scroll {
-  overflow-x: auto;
+  /* A height constraint, not decoration. `overflow-x: auto` makes overflow-y
+     compute to `auto` too, so this element is already the sticky header's
+     scrollport — but without a max-height its scrollport is as tall as its
+     content, it never scrolls, and `position: sticky; top: 0` can never
+     engage. Thirty teams do not fit on a laptop, so the period numbers must
+     stay put while the rows move under them. */
+  max-height: calc(100vh - 18rem);
+  min-height: 12rem;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-raised);
 }
 
 .grid {
-  border-collapse: collapse;
+  /* `separate` rather than `collapse` on purpose: with a collapsing border
+     model the browser owns the borders rather than the cells, and
+     `position: sticky` on a `th` is ignored. Each cell draws its own right and
+     bottom edge instead, which renders the same 1px lines and lets the header
+     row and team column actually stick. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-variant-numeric: tabular-nums;
   font-size: 0.8rem;
   width: 100%;
@@ -429,7 +443,7 @@ a:focus-visible {
 }
 
 .grid__period-dates {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
 }
 
@@ -447,7 +461,7 @@ a:focus-visible {
   border: 1px solid var(--accent);
   border-radius: 3px;
   color: var(--accent);
-  font-size: 0.58rem;
+  font-size: 0.66rem;
   letter-spacing: 0.04em;
 }
 
@@ -460,11 +474,9 @@ a:focus-visible {
   min-width: 2.4rem;
 }
 
-/* Muted, not coloured. Zero is a real and useful fact — no game scheduled —
-   and this only keeps a row of nothing from shouting over the counts. */
-.grid__cell--zero {
-  color: var(--text-muted);
-}
+/* Zero is a count and is drawn like every other count. Only absence gets its
+   own treatment, because absence is not a magnitude — it is a different kind
+   of thing. */
 
 /* Absence is not zero, and must never be able to read as one. */
 .grid__cell--nodata {
@@ -483,6 +495,24 @@ a:focus-visible {
 .grid__total-header {
   background: var(--bg-sunken);
   font-weight: 600;
+}
+
+.grid__cell--mean {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* A sum over cells that did not all arrive is smaller than the truth, so it
+   does not get to look like a complete one. */
+.grid__total--partial {
+  color: var(--warn);
+}
+
+.grid__partial-mark {
+  margin-inline-start: 1px;
+  font-size: 0.7em;
+  vertical-align: super;
 }
 
 .grid tfoot th,

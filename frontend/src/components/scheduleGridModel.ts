@@ -41,6 +41,8 @@ export interface ScheduleGridIntegrity {
 export interface ScheduleGridModel {
   rows: ScheduleGridRow[]
   periods: ScheduleGridPeriod[]
+  /** Teams the response labelled — the denominator for a per-team mean. */
+  teamCount: number
   /** League-wide games in each period. ADR-012 requires the baseline be shown. */
   periodTotals: number[]
   /** Periods where at least one team's count was not sent. */
@@ -100,6 +102,7 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
   return {
     rows,
     periods: grid.periods,
+    teamCount: grid.teams.length,
     periodTotals,
     periodMissing,
     integrity: {

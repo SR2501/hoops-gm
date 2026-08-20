@@ -162,12 +162,23 @@ function isScheduleGridPeriod(value: unknown): value is ScheduleGridPeriod {
   )
 }
 
+/**
+ * Counts are non-negative integers.
+ *
+ * Unlike density, this is a property of the value itself rather than of the
+ * collection: a fractional or negative game count means the field is not what
+ * this dashboard thinks it is, and rendering `-1` or `2.5` verbatim would put a
+ * number on screen that cannot be true. Density is tolerated and reported;
+ * a nonsense value is not.
+ */
 function isScheduleGridCount(value: unknown): value is ScheduleGridCount {
   return (
     isRecord(value) &&
     typeof value.period_number === 'number' &&
     typeof value.team_id === 'number' &&
-    typeof value.games === 'number'
+    typeof value.games === 'number' &&
+    Number.isInteger(value.games) &&
+    value.games >= 0
   )
 }
 

@@ -1,0 +1,3490 @@
+{
+  "league_id": 1,
+  "season": "2026-27",
+  "lineage": {
+    "schedule": {
+      "refresh_id": 1,
+      "version": "9bcac1c60490b41a",
+      "refreshed_at": "2026-08-20T15:10:39.334171Z",
+      "source_game_count": 10,
+      "resolved_game_count": 10,
+      "persisted_team_row_count": 20,
+      "unresolved_game_ids": []
+    },
+    "scoring_period_projection": {
+      "refresh_id": 2,
+      "version": "22a8bac85a909ccd",
+      "refreshed_at": "2026-08-20T12:00:00Z"
+    },
+    "deadline_calendar": {
+      "id": 1,
+      "version": 1
+    },
+    "settings_snapshot": {
+      "id": 1,
+      "version": 1
+    }
+  },
+  "teams": [
+    {
+      "team_id": 1,
+      "nba_team_id": 1610612737,
+      "abbreviation": "ATL",
+      "name": "Atlanta Hawks"
+    },
+    {
+      "team_id": 2,
+      "nba_team_id": 1610612738,
+      "abbreviation": "BOS",
+      "name": "Boston Celtics"
+    },
+    {
+      "team_id": 3,
+      "nba_team_id": 1610612739,
+      "abbreviation": "CLE",
+      "name": "Cleveland Cavaliers"
+    },
+    {
+      "team_id": 4,
+      "nba_team_id": 1610612740,
+      "abbreviation": "NOP",
+      "name": "New Orleans Pelicans"
+    },
+    {
+      "team_id": 5,
+      "nba_team_id": 1610612741,
+      "abbreviation": "CHI",
+      "name": "Chicago Bulls"
+    },
+    {
+      "team_id": 6,
+      "nba_team_id": 1610612742,
+      "abbreviation": "DAL",
+      "name": "Dallas Mavericks"
+    },
+    {
+      "team_id": 7,
+      "nba_team_id": 1610612743,
+      "abbreviation": "DEN",
+      "name": "Denver Nuggets"
+    },
+    {
+      "team_id": 8,
+      "nba_team_id": 1610612744,
+      "abbreviation": "GSW",
+      "name": "Golden State Warriors"
+    },
+    {
+      "team_id": 9,
+      "nba_team_id": 1610612745,
+      "abbreviation": "HOU",
+      "name": "Houston Rockets"
+    },
+    {
+      "team_id": 10,
+      "nba_team_id": 1610612746,
+      "abbreviation": "LAC",
+      "name": "Los Angeles Clippers"
+    },
+    {
+      "team_id": 11,
+      "nba_team_id": 1610612747,
+      "abbreviation": "LAL",
+      "name": "Los Angeles Lakers"
+    },
+    {
+      "team_id": 12,
+      "nba_team_id": 1610612748,
+      "abbreviation": "MIA",
+      "name": "Miami Heat"
+    },
+    {
+      "team_id": 13,
+      "nba_team_id": 1610612749,
+      "abbreviation": "MIL",
+      "name": "Milwaukee Bucks"
+    },
+    {
+      "team_id": 14,
+      "nba_team_id": 1610612750,
+      "abbreviation": "MIN",
+      "name": "Minnesota Timberwolves"
+    },
+    {
+      "team_id": 15,
+      "nba_team_id": 1610612751,
+      "abbreviation": "BKN",
+      "name": "Brooklyn Nets"
+    },
+    {
+      "team_id": 16,
+      "nba_team_id": 1610612752,
+      "abbreviation": "NYK",
+      "name": "New York Knicks"
+    },
+    {
+      "team_id": 17,
+      "nba_team_id": 1610612753,
+      "abbreviation": "ORL",
+      "name": "Orlando Magic"
+    },
+    {
+      "team_id": 18,
+      "nba_team_id": 1610612754,
+      "abbreviation": "IND",
+      "name": "Indiana Pacers"
+    },
+    {
+      "team_id": 19,
+      "nba_team_id": 1610612755,
+      "abbreviation": "PHI",
+      "name": "Philadelphia 76ers"
+    },
+    {
+      "team_id": 20,
+      "nba_team_id": 1610612756,
+      "abbreviation": "PHX",
+      "name": "Phoenix Suns"
+    },
+    {
+      "team_id": 21,
+      "nba_team_id": 1610612757,
+      "abbreviation": "POR",
+      "name": "Portland Trail Blazers"
+    },
+    {
+      "team_id": 22,
+      "nba_team_id": 1610612758,
+      "abbreviation": "SAC",
+      "name": "Sacramento Kings"
+    },
+    {
+      "team_id": 23,
+      "nba_team_id": 1610612759,
+      "abbreviation": "SAS",
+      "name": "San Antonio Spurs"
+    },
+    {
+      "team_id": 24,
+      "nba_team_id": 1610612760,
+      "abbreviation": "OKC",
+      "name": "Oklahoma City Thunder"
+    },
+    {
+      "team_id": 25,
+      "nba_team_id": 1610612761,
+      "abbreviation": "TOR",
+      "name": "Toronto Raptors"
+    },
+    {
+      "team_id": 26,
+      "nba_team_id": 1610612762,
+      "abbreviation": "UTA",
+      "name": "Utah Jazz"
+    },
+    {
+      "team_id": 27,
+      "nba_team_id": 1610612763,
+      "abbreviation": "MEM",
+      "name": "Memphis Grizzlies"
+    },
+    {
+      "team_id": 28,
+      "nba_team_id": 1610612764,
+      "abbreviation": "WAS",
+      "name": "Washington Wizards"
+    },
+    {
+      "team_id": 29,
+      "nba_team_id": 1610612765,
+      "abbreviation": "DET",
+      "name": "Detroit Pistons"
+    },
+    {
+      "team_id": 30,
+      "nba_team_id": 1610612766,
+      "abbreviation": "CHA",
+      "name": "Charlotte Hornets"
+    }
+  ],
+  "periods": [
+    {
+      "period_number": 1,
+      "start_date": "2026-10-19",
+      "end_date": "2026-10-25",
+      "is_playoff": false
+    },
+    {
+      "period_number": 2,
+      "start_date": "2026-10-26",
+      "end_date": "2026-11-01",
+      "is_playoff": false
+    },
+    {
+      "period_number": 3,
+      "start_date": "2026-11-02",
+      "end_date": "2026-11-08",
+      "is_playoff": false
+    },
+    {
+      "period_number": 4,
+      "start_date": "2026-11-09",
+      "end_date": "2026-11-15",
+      "is_playoff": false
+    },
+    {
+      "period_number": 5,
+      "start_date": "2026-11-16",
+      "end_date": "2026-11-22",
+      "is_playoff": false
+    },
+    {
+      "period_number": 6,
+      "start_date": "2026-11-23",
+      "end_date": "2026-11-29",
+      "is_playoff": false
+    },
+    {
+      "period_number": 7,
+      "start_date": "2026-11-30",
+      "end_date": "2026-12-06",
+      "is_playoff": false
+    },
+    {
+      "period_number": 8,
+      "start_date": "2026-12-07",
+      "end_date": "2026-12-13",
+      "is_playoff": false
+    },
+    {
+      "period_number": 9,
+      "start_date": "2026-12-14",
+      "end_date": "2026-12-20",
+      "is_playoff": false
+    },
+    {
+      "period_number": 10,
+      "start_date": "2026-12-21",
+      "end_date": "2026-12-27",
+      "is_playoff": false
+    },
+    {
+      "period_number": 11,
+      "start_date": "2026-12-28",
+      "end_date": "2027-01-03",
+      "is_playoff": false
+    },
+    {
+      "period_number": 12,
+      "start_date": "2027-01-04",
+      "end_date": "2027-01-10",
+      "is_playoff": false
+    },
+    {
+      "period_number": 13,
+      "start_date": "2027-01-11",
+      "end_date": "2027-01-17",
+      "is_playoff": false
+    },
+    {
+      "period_number": 14,
+      "start_date": "2027-01-18",
+      "end_date": "2027-01-24",
+      "is_playoff": false
+    },
+    {
+      "period_number": 15,
+      "start_date": "2027-01-25",
+      "end_date": "2027-01-31",
+      "is_playoff": false
+    },
+    {
+      "period_number": 16,
+      "start_date": "2027-02-01",
+      "end_date": "2027-02-07",
+      "is_playoff": false
+    },
+    {
+      "period_number": 17,
+      "start_date": "2027-02-08",
+      "end_date": "2027-02-14",
+      "is_playoff": false
+    },
+    {
+      "period_number": 18,
+      "start_date": "2027-02-15",
+      "end_date": "2027-02-21",
+      "is_playoff": false
+    },
+    {
+      "period_number": 19,
+      "start_date": "2027-02-22",
+      "end_date": "2027-02-28",
+      "is_playoff": false
+    },
+    {
+      "period_number": 20,
+      "start_date": "2027-03-01",
+      "end_date": "2027-03-07",
+      "is_playoff": true
+    },
+    {
+      "period_number": 21,
+      "start_date": "2027-03-08",
+      "end_date": "2027-03-14",
+      "is_playoff": true
+    }
+  ],
+  "counts": [
+    {
+      "period_number": 1,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 2,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 16,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 19,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 23,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 24,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 1,
+      "team_id": 29,
+      "games": 1
+    },
+    {
+      "period_number": 1,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 2,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 3,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 4,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 5,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 6,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 7,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 8,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 9,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 10,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 11,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 12,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 13,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 14,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 15,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 16,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 17,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 18,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 19,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 2,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 3,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 7,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 8,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 11,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 12,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 14,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 16,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 22,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 23,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 24,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 25,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 28,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 29,
+      "games": 0
+    },
+    {
+      "period_number": 20,
+      "team_id": 30,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 1,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 2,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 3,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 4,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 5,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 6,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 7,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 8,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 9,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 10,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 11,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 12,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 13,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 14,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 15,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 16,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 17,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 18,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 19,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 20,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 21,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 22,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 23,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 24,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 25,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 26,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 27,
+      "games": 0
+    },
+    {
+      "period_number": 21,
+      "team_id": 28,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 29,
+      "games": 1
+    },
+    {
+      "period_number": 21,
+      "team_id": 30,
+      "games": 0
+    }
+  ]
+}

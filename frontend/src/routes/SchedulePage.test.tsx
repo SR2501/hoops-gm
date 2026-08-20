@@ -9,10 +9,11 @@
  * generic message — silently, and only in the cases that matter most.
  */
 
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
+import { SCHEDULE_GRID_ERRORS } from '../api/scheduleGridErrors'
 import type { ScheduleGrid } from '../api/types'
 import { mockFetch, renderWithRouter } from '../test/helpers'
 
@@ -86,8 +87,8 @@ describe('the schedule grid', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const grid = await screen.findByTestId('schedule-grid')
-    // 3 teams plus the league baseline row.
-    expect(within(grid).getAllByRole('row')).toHaveLength(5)
+    // 3 teams, plus the league sum row and the per-team mean row.
+    expect(within(grid).getAllByRole('row')).toHaveLength(6)
     expect(within(grid).getByText('ATL')).toBeInTheDocument()
     expect(within(grid).getByText('Cleveland Cavaliers')).toBeInTheDocument()
     expect(screen.getByTestId('cell-2-1')).toHaveTextContent('4')
@@ -140,6 +141,65 @@ describe('the schedule grid', () => {
     expect(screen.getByTestId('league-total-3')).toHaveTextContent('8')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByTestId('grid-integrity')).not.toBeInTheDocument()
+  })
+
+  it('renders every non-zero count identically, so magnitude carries no styling', async () => {
+    // Requirement: descriptive counts only. The moment a cell's appearance
+    // varies with how big the number is, the grid is asserting a judgement
+    // about schedule volume that belongs to `quant` behind the Model gate.
+    mockFetch({ [GRID_PATH]: { body: scheduleGrid() }, '/health': { body: HEALTH } })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const four = await screen.findByTestId('cell-2-1')
+    const two = screen.getByTestId('cell-3-1')
+    const five = screen.getByTestId('cell-1-3')
+    const zero = screen.getByTestId('cell-1-1')
+
+    expect(four.className).toBe(two.className)
+    expect(four.getAttribute('data-state')).toBe(two.getAttribute('data-state'))
+    // A zero is styled like any other count; only its `data-state` names it,
+    // and the playoff column adds a category marker, not a magnitude one.
+    expect(zero.className).toBe(four.className)
+    expect(five.className).toContain('grid__cell--playoff')
+    expect(zero.getAttribute('data-state')).toBe('zero')
+    expect(four.getAttribute('data-state')).toBe('count')
+  })
+
+  it('marks a total that is missing periods, on screen and not only for a screen reader', async () => {
+    const holed = scheduleGrid({
+      counts: scheduleGrid().counts.filter(
+        (count) => !(count.team_id === 3 && count.period_number === 2),
+      ),
+    })
+    mockFetch({ [GRID_PATH]: { body: holed }, '/health': { body: HEALTH } })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const partial = await screen.findByTestId('team-total-3')
+    expect(partial).toHaveAttribute('data-state', 'partial')
+    expect(partial.className).toContain('grid__total--partial')
+    // The marker is real text in the cell, not screen-reader-only.
+    expect(partial).toHaveTextContent('+?')
+
+    // A complete total in the same column is not marked.
+    const complete = screen.getByTestId('team-total-1')
+    expect(complete).toHaveAttribute('data-state', 'complete')
+    expect(complete).not.toHaveTextContent('+?')
+
+    // The league cell for the affected period is marked too — otherwise a
+    // period where nobody reported would read as a period where nobody played.
+    expect(screen.getByTestId('league-total-2')).toHaveAttribute('data-state', 'partial')
+  })
+
+  it('gives the league baseline as both a sum and a per-team mean', async () => {
+    mockFetch({ [GRID_PATH]: { body: scheduleGrid() }, '/health': { body: HEALTH } })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    expect(await screen.findByTestId('league-total-1')).toHaveTextContent('6')
+    expect(screen.getByTestId('league-mean-1')).toHaveTextContent('2.0')
+    expect(screen.getByTestId('league-mean-3')).toHaveTextContent('2.7')
   })
 
   it('marks fantasy playoff periods, which are not interchangeable with regular ones', async () => {
@@ -208,6 +268,68 @@ describe('the schedule grid', () => {
     expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
   })
 
+  it('explains a refusal that arrives on top of data already on screen', async () => {
+    // The case that matters most and was previously uncovered: the grid loads,
+    // the schedule is re-ingested underneath, and the refresh comes back 409.
+    // The reader is looking at counts now known to be superseded, so the
+    // written summary and its next step must reach this path too — not just
+    // the cold-load panel. This drives the real user route: wait for the grid
+    // to go stale, then press the Refresh the stale banner offers.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T12:00:00Z'))
+
+    let gridCall = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+        Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { 'Content-Type': 'application/json', ...headers },
+          }),
+        )
+
+      if (url.includes('/health')) return json(HEALTH)
+
+      gridCall += 1
+      if (gridCall === 1) return json(scheduleGrid())
+      return json(
+        {
+          error: 'schedule_grid_not_current',
+          detail: 'registered version no longer matches the persisted schedule content',
+          request_id: 'req-warm-failure',
+        },
+        409,
+        { 'X-Request-ID': 'req-warm-failure' },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithRouter(<App />, { route: '/schedule' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+    })
+    const refresh = screen.getByRole('button', { name: 'Refresh' })
+
+    fireEvent.click(refresh)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    const failure = screen.getByTestId('async-stale-failure')
+    expect(failure).toHaveTextContent(/changed after this version was recorded/)
+    expect(failure).toHaveTextContent(/[Rr]e-import the schedule/)
+    expect(failure).toHaveTextContent('Code schedule_grid_not_current.')
+    expect(failure).toHaveTextContent('Request req-warm-failure.')
+    // The stale data is still on screen and labelled, not hidden.
+    expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
+  })
+
   it('says there is nothing to draw rather than drawing an empty table', async () => {
     mockFetch({
       [GRID_PATH]: { body: scheduleGrid({ teams: [], counts: [] }) },
@@ -231,7 +353,7 @@ describe('the schedule grid', () => {
 
     renderWithRouter(<App />, { route: '/schedule' })
 
-    const panel = await screen.findByTestId('schedule-grid-error')
+    const panel = await screen.findByRole('alert')
     expect(panel).toHaveTextContent('did not match the schedule grid contract')
     expect(panel).toHaveTextContent('Code')
     expect(panel).toHaveTextContent('invalid_response')
@@ -280,7 +402,7 @@ describe('schedule grid refusals', () => {
       code: 'schedule_grid_not_current',
       status: 409,
       detail: 'registered version no longer matches',
-      expect: /changed after it was last verified/,
+      expect: /changed after this version was recorded/,
     },
     {
       code: 'schedule_grid_incomplete_evidence',
@@ -305,12 +427,12 @@ describe('schedule grid refusals', () => {
 
       renderWithRouter(<App />, { route: '/schedule' })
 
-      const panel = await screen.findByTestId('schedule-grid-error')
-      expect(within(panel).getByTestId('schedule-grid-error-summary')).toHaveTextContent(
+      const panel = await screen.findByRole('alert')
+      expect(within(panel).getByTestId('async-error-summary')).toHaveTextContent(
         testCase.expect,
       )
       // The action is present and is not a restatement of the summary.
-      const action = within(panel).getByTestId('schedule-grid-error-action')
+      const action = within(panel).getByTestId('async-error-action')
       expect(action.textContent?.length ?? 0).toBeGreaterThan(20)
       // The code and the backend's own words both survive, so the failure can
       // be correlated to a server log line.
@@ -320,12 +442,28 @@ describe('schedule grid refusals', () => {
     })
   }
 
-  it('gives every code a distinct summary', () => {
-    const summaries = new Set<string>()
-    for (const testCase of cases) {
-      summaries.add(testCase.expect.source)
-    }
-    expect(summaries.size).toBe(cases.length)
+  it('gives every documented code its own summary and its own action', () => {
+    // Asserted over the module, not over the table of regexes above — a test
+    // that compares its own literals to each other passes no matter what the
+    // product code says.
+    const codes = Object.keys(SCHEDULE_GRID_ERRORS)
+    expect(new Set(codes)).toEqual(new Set(cases.map((testCase) => testCase.code)))
+
+    const summaries = Object.values(SCHEDULE_GRID_ERRORS).map((copy) => copy.summary)
+    const actions = Object.values(SCHEDULE_GRID_ERRORS).map((copy) => copy.action)
+    expect(new Set(summaries).size).toBe(codes.length)
+    expect(new Set(actions).size).toBe(codes.length)
+  })
+
+  it('does not tell a not-current caller that nothing can show the schedule is right', () => {
+    // `not_current` means verification worked and returned a clear verdict.
+    // `incomplete_evidence` means it could not. Swapping those two messages
+    // would send the operator down the wrong path.
+    const notCurrent = SCHEDULE_GRID_ERRORS.schedule_grid_not_current
+    const noEvidence = SCHEDULE_GRID_ERRORS.schedule_grid_incomplete_evidence
+    expect(notCurrent?.summary).toMatch(/changed after this version was recorded/)
+    expect(notCurrent?.action).toMatch(/[Rr]e-import/)
+    expect(noEvidence?.summary).toMatch(/nothing on record can show it is right/)
   })
 
   it('does not read the code from a header the browser never receives', async () => {
@@ -347,8 +485,8 @@ describe('schedule grid refusals', () => {
 
     renderWithRouter(<App />, { route: '/schedule' })
 
-    const panel = await screen.findByTestId('schedule-grid-error')
-    expect(panel).toHaveTextContent(/changed after it was last verified/)
+    const panel = await screen.findByRole('alert')
+    expect(panel).toHaveTextContent(/changed after this version was recorded/)
   })
 
   it('stays specific about an unreachable backend rather than blaming the data', async () => {
@@ -356,7 +494,7 @@ describe('schedule grid refusals', () => {
 
     renderWithRouter(<App />, { route: '/schedule' })
 
-    const panel = await screen.findByTestId('schedule-grid-error')
+    const panel = await screen.findByRole('alert')
     expect(panel).toHaveTextContent(/did not answer, so no schedule data was received/)
     expect(panel).toHaveTextContent('unreachable')
   })
@@ -369,7 +507,7 @@ describe('schedule grid refusals', () => {
 
     renderWithRouter(<App />, { route: '/schedule' })
 
-    const panel = await screen.findByTestId('schedule-grid-error')
+    const panel = await screen.findByRole('alert')
     expect(panel).toHaveTextContent(/did not give a reason this dashboard recognises/)
     expect(panel).toHaveTextContent('schedule_grid_something_new')
     expect(panel).toHaveTextContent('a condition added later')
