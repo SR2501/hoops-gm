@@ -457,7 +457,7 @@ describe('schedule grid refusals', () => {
       code: 'schedule_grid_incomplete_evidence',
       status: 409,
       detail: 'carries no schedule_completeness block',
-      expect: /completeness could not be verified/,
+      expect: /could not be verified for this grid/,
     },
     {
       code: 'schedule_grid_incomplete',
@@ -490,6 +490,37 @@ describe('schedule grid refusals', () => {
       expect(panel).toHaveTextContent('req-schedule-1')
     })
   }
+
+  it('covers both backend conditions that share the incomplete-evidence code', async () => {
+    // The backend reaches this one code by two different routes: a refresh that
+    // carries no completeness block, and a refresh that carries one describing
+    // the wrong cohort. Both were driven end to end against the real service.
+    // The second is why this copy no longer says the refresh "cannot state what
+    // it imported" — in that case it states it perfectly well, and what it
+    // imported is a playoffs cohort this grid does not count. A summary that
+    // contradicts the backend's own wording underneath it is worse than a
+    // vague one.
+    mockFetch({
+      [GRID_PATH]: refusal(
+        409,
+        'schedule_grid_incomplete_evidence',
+        "schedule refresh 1 describes a 'playoffs' cohort, but this grid counts regular-season games only",
+      ),
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const panel = await screen.findByRole('alert')
+    const summary = within(panel).getByTestId('async-error-summary')
+    expect(summary).toHaveTextContent(/could not be verified for this grid/)
+    // True of both conditions, and false of neither.
+    expect(summary).toHaveTextContent(/not the cohort this grid counts/)
+    expect(summary).not.toHaveTextContent(/^The schedule refresh cannot state what it imported/)
+    // The backend's wording is what disambiguates, so the action points at it.
+    expect(within(panel).getByTestId('async-error-action')).toHaveTextContent(/own wording below/)
+    expect(panel).toHaveTextContent("describes a 'playoffs' cohort")
+  })
 
   it('gives every documented code its own summary and its own action', () => {
     // Asserted over the module, not over the table of regexes above — a test

@@ -48,9 +48,9 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
   },
   schedule_grid_incomplete_evidence: {
     summary:
-      'The schedule refresh cannot state what it imported, so its completeness could not be verified. This is not a claim that the schedule is wrong — it is that nothing on record can show it is right.',
+      'The schedule evidence could not be verified for this grid: either the refresh cannot state what it imported, or what it did import is not the cohort this grid counts. This is not a claim that the schedule is wrong — it is that nothing on record can show it is right for these numbers.',
     action:
-      'Re-run the schedule import to produce a refresh that records its own completeness, then reload.',
+      "The backend's own wording below says which of the two applies. Re-import the schedule so the refresh records its completeness for the regular-season cohort, then reload.",
   },
   schedule_grid_incomplete: {
     summary:

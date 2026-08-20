@@ -8730,3 +8730,66 @@ branch is already on its head, so the remaining steps are: rebase onto merged
 `main` (expected to be a no-op beyond the merge commit), re-capture the fixture
 once more and read the diff, re-verify both browser states, take a fresh
 exact-head review round on the rebased head, and open the PR with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Driving the second refusal path found a false message
+
+**Changed:** The coordinator asked that the post-merge browser pass drive one of
+`84ed9b1`'s two *new* refusal conditions end to end, rather than only the
+missing-completeness-block one already exercised, on the grounds that two
+conditions reaching the same screen through different backend paths is where an
+integration gap hides. Since this branch is already rebased onto `84ed9b1`, I
+did it now.
+
+It found one. The `season_type` guard produces
+`409 schedule_grid_incomplete_evidence` with the detail *"schedule refresh 1
+describes a 'playoffs' cohort, but this grid counts regular-season games only"*.
+The screen rendered that detail directly underneath a summary reading **"The
+schedule refresh cannot state what it imported"** — which is false in that
+condition. The refresh states what it imported perfectly well; what it imported
+is the wrong cohort. The dashboard was contradicting the backend's own words in
+the same panel, and a reader trusting the larger text would have gone looking
+for a missing block that is present and correct.
+
+The copy now covers both conditions without being false of either: *"either the
+refresh cannot state what it imported, or what it did import is not the cohort
+this grid counts"*, with the action pointing at the backend's wording as the
+thing that disambiguates. The clause the coordinator asked to keep — that this
+is not a claim the schedule is wrong, but that nothing on record can show it is
+right — is retained, qualified to "right **for these numbers**", which is what
+makes it true of the cohort case as well.
+
+**Now true:** Both conditions driven end to end against the real service on the
+rebased head, each from its own doctored database, each read off the live DOM:
+
+- Missing block → `Backend said: schedule refresh 1 carries no
+  schedule_completeness block…`, summary still accurate.
+- Playoffs cohort → `Backend said: schedule refresh 1 describes a 'playoffs'
+  cohort, but this grid counts regular-season games only`, summary now accurate.
+
+Both show the same code, distinct backend detail, distinct request ids, no grid
+on screen, and a working Retry. A regression test pins the cohort case and
+asserts specifically that the summary is no longer the old sentence.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** The set-mismatch rejection — the third path to this code,
+where `counts` names a team or period with no corresponding row — was not driven
+end to end. It requires a database whose count rows and header rows disagree,
+which the seed cannot produce by construction, and I judged hand-editing the
+schema to manufacture it a worse trade than recording that it is untested. Its
+copy is the same string now verified against two other conditions, so the
+message is exercised even though that specific route to it is not.
+
+This is also a caution about the general shape of the finding: the copy was
+written against one condition and reviewed four times without anyone noticing it
+was false of a second, because every test and every browser check drove the
+same path. Sharing an error code across conditions means the message has to be
+true of all of them, and nothing in the type system or the tests enforces that —
+only driving each path does.
+
+**Next:** Unchanged. Blocked on #38. On merge: rebase onto `main`, re-run the
+backlog 1:1 marker check as a matter of course rather than an exception (Lane C
+is actively adding items), re-capture the fixture and read the diff, re-verify
+the browser states, fresh exact-head review round, open with base `main`.
