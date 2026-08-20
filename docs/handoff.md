@@ -6219,6 +6219,13 @@ retain the header request id, pending refresh uses guarded `aria-disabled`, the
 test observes Node's real `unhandledRejection` event, and `main.tsx` adds a root
 fallback outside the persistent route boundary.
 
+Fresh publication frontend, code, and backend-contract reviews inspected the
+complete diff at `db8dc5cdb7bc1e44e52d6f44eac8e8d557aa1ac5` and reported no
+blocking findings. The backend review confirmed no backend change or ownership
+arbitration is needed; separately, a future backend-owned OpenAPI cleanup should
+document `/health/ready`'s existing typed 503 response instead of advertising
+only the 200 response.
+
 **Now true:** A successful HTTP status is not sufficient evidence for any
 existing frontend endpoint; malformed payloads become visible contract errors
 before route rendering. Readiness degradation no longer loses its typed backend
@@ -6230,11 +6237,12 @@ cannot leave a blank route.
 **Could not verify:** No live browser/backend pair was run in this worktree, so
 the evidence is the backend's committed readiness contract plus jsdom tests and
 the production build, not a manual failure injection against a running service.
-GitHub CI has not run on this branch yet. The retry control can recover when the
+GitHub CI is running on PR #35; secret scanning and userscript checks were green
+at handoff time, while frontend, backend, Postgres, migration, Adapter, Model,
+and CodeQL lanes were still in progress. The retry control can recover when the
 underlying render condition is transient or has changed; a deterministic render
 bug will correctly return to the visible fallback rather than pretending the
 view recovered.
 
-**Next:** Obtain fresh independent frontend, code, and backend-contract reviews
-against the exact committed head. If clear, push and open a focused Code-gate
-PR, require CI, and leave merge/approval to the coordinator.
+**Next:** The coordinator should require every blocking PR #35 check to pass,
+then review and merge independently. This session must not merge or self-approve.
