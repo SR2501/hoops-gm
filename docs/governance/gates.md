@@ -61,6 +61,39 @@ Enforced by CI.
 
 ---
 
+## What gates cannot catch
+
+Added 2026-08-20, after three lanes and thirteen review rounds produced roughly fifteen
+real defects, **none of which any gate would have caught**. Lint, types, and a full green
+suite were green throughout and would have stayed green through all of them.
+
+The shape they shared: *something that reads correctly and does nothing, or means something
+other than what its consumer assumes.* A guard bypassed for exactly the row it was written
+to catch. Tests that wrote state in a shape no real producer writes. A docstring claiming
+coverage its matcher lacked. An alarm asserting over a file that could only change by hand.
+Copy that was true of one condition and false of the next one raising the same code.
+
+Two things follow, and neither is a new gate.
+
+**A gate is a check, and R54 applies to gates too** — a gate can go green while asking a
+question adjacent to the one that matters. Adding a fifth would add another thing capable
+of that. These failures do not have a mechanical shape; the honest thing is to say so here
+rather than to grow the apparatus.
+
+**What actually caught them was a person re-deriving.** Executing rather than reading: a
+static enumeration of 44 lock sites declared a lock ordering sound, and instrumenting the
+lock and running the code found the inversion in four lines of trace. Driving a real
+refusal rather than reasoning about it: of six conditions driven end to end, four falsified
+copy that had already passed review.
+
+So, alongside the gate matching your work: **state what each check can and cannot observe
+at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
+the moment you write it, from the code beside it.** The failure modes and their evidence are
+recorded as R49–R54 in `risks.md` — deliberately in one place, because a lesson restated in
+two files drifts in one of them.
+
+---
+
 ## Gate discipline
 
 - Gates are not paperwork; if one is not catching anything, say so and change it.
