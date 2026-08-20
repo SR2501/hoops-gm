@@ -477,13 +477,6 @@ class TestNbaGamesAndLogs:
         with pytest.raises(SourceContractError, match="lacks declared"):
             parse_league_game_finder(payload, season="2024-25")
 
-    def test_empty_full_season_response_is_rejected(self) -> None:
-        payload = load("nba_leaguegamefinder_reconciliation.json")
-        payload["resultSets"][0]["rowSet"] = []
-
-        with pytest.raises(SourceContractError, match="returned no regular games"):
-            parse_league_game_finder(payload, season="2024-25")
-
     @pytest.mark.parametrize(
         ("parameter", "value"),
         [

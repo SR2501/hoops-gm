@@ -6707,10 +6707,11 @@ the invalidated 173-game/26-date cohort.
 **Changed:** Closed two final producer findings from rejected head `543a41c`.
 Production `backfill_season` now fetches and parses both `LeagueGameFinder` and
 `PlayerGameLogs`, requires non-empty exact game-ID set equality, and only then
-writes games or box scores. The offline ordering regression supplies
+writes games or box scores. The shared parser still represents an empty result
+so injury coverage can persist explicit zero-game failure evidence; the
+production season reconciler is the layer that refuses it. The offline ordering regression supplies
 contradictory source sets and makes both write functions fatal if reached,
-proving the rejection occurs before persistence. `LeagueGameFinder` itself now
-rejects a full-season response with zero parsed games.
+proving the rejection occurs before persistence.
 
 `import_schedule` now encloses game/team-row writes, exact persisted-cohort
 readback, and refresh registration in a database savepoint after its
@@ -6724,8 +6725,8 @@ set, refresh version, and current status all survive.
 **Now true:** The production backfill enforces the same exact cross-source
 identity equality that reproduced the original 1,225/1,230 defect; the live
 smoke is no longer the only place with that guarantee. Ruff, format, strict
-mypy, and all 1,052 offline backend tests pass. The complete Adapter gate passes
-282 tests and the Model gate passes 18. SQLite upgrades/checks/downgrades
+mypy, and all 1,051 offline backend tests pass. The complete Adapter gate passes
+281 tests and the Model gate passes 18. SQLite upgrades/checks/downgrades
 through `0015`, and the 277-file secret scan is clean. Both Model evidence
 commands again reproduced byte-for-byte, and live scope again returned 1,230
 regular games, 84 playoff games, and all ten independent anomaly orientations.

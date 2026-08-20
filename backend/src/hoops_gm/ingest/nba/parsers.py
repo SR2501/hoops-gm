@@ -468,12 +468,6 @@ def parse_league_game_finder(
                 away_score=entry.get("away_pts"),
             )
         )
-    if not records:
-        raise SourceContractError(
-            f"LeagueGameFinder returned no {season_type} games for {season}",
-            source=SOURCE,
-            endpoint=endpoint,
-        )
     return records
 
 
