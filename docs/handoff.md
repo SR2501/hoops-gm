@@ -6181,8 +6181,8 @@ onto final current `origin/main`
 `bcfb2d68df97238a6f97c03bb38e4f952a5282dd` touched no frontend file; its
 append-only handoff entry was preserved before this entry during the only
 conflict resolution. On that base, frontend ESLint, strict TypeScript checking,
-all 25 tests,
-the production Vite build, the tracked-file secret scan (271 files), and the
+all 27 tests,
+the production Vite build, the tracked-file secret scan (272 files), and the
 Impeccable mechanical UI detector all pass.
 
 The first exact-head independent frontend review found three concrete gaps in
@@ -6205,6 +6205,19 @@ complete response lifecycle; tests pin stalled-body timeout and caller abort
 after headers. Retained data visibly says `Refreshing` during retry, and the
 persistent `AppLayout` owns one boundary around `Outlet`, so every current and
 future child route is protected automatically while navigation remains usable.
+
+The final frontend review had no blockers but identified operator-facing edge
+cases worth fixing before publication: Vite's proxy-generated 500 when the
+backend is down has no backend request id and was labelled as a generic backend
+error; shell health never aged or offered retry; a body-read timeout discarded
+an already-received request id; disabling the pending refresh button dropped
+keyboard focus; the unhandled-rejection assertion listened to a jsdom event that
+jsdom does not emit; and an exception in the shell itself sat outside the route
+boundary. The shell now recognizes the proxy failure as unreachable, schedules
+one stale-health transition and exposes `Check backend again`, body timeouts
+retain the header request id, pending refresh uses guarded `aria-disabled`, the
+test observes Node's real `unhandledRejection` event, and `main.tsx` adds a root
+fallback outside the persistent route boundary.
 
 **Now true:** A successful HTTP status is not sufficient evidence for any
 existing frontend endpoint; malformed payloads become visible contract errors

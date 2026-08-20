@@ -14,7 +14,10 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getHealth } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
+import { useIsStale } from '../api/useStale'
 import { RenderErrorBoundary } from './RenderErrorBoundary'
+
+const HEALTH_STALE_AFTER_MS = 60_000
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -55,6 +58,8 @@ export function AppLayout() {
             version={health.data?.version ?? null}
             environment={health.data?.environment ?? null}
             error={health.error}
+            fetchedAt={health.fetchedAt}
+            reload={health.reload}
           />
         </div>
       </aside>
@@ -73,21 +78,72 @@ interface BackendStatusProps {
   version: string | null
   environment: string | null
   error: Error | null
+  fetchedAt: Date | null
+  reload: () => void
 }
 
-function BackendStatus({ status, version, environment, error }: BackendStatusProps) {
-  if (status === 'success') {
+export function BackendStatus({
+  status,
+  version,
+  environment,
+  error,
+  fetchedAt,
+  reload,
+}: BackendStatusProps) {
+  const isStale = useIsStale(fetchedAt, HEALTH_STALE_AFTER_MS)
+  const code = error instanceof ApiError ? error.code : null
+  const requestId = error instanceof ApiError ? error.requestId : null
+
+  if (version && environment) {
+    const refreshFailed = status === 'error'
+    const refreshPending = status === 'loading'
     return (
-      <p className="status status--ok" data-testid="backend-status">
-        <span className="status__dot" aria-hidden="true" />
-        Backend {version} · {environment}
-      </p>
+      <div
+        className="shell__status-error"
+        role={refreshFailed ? 'alert' : 'status'}
+        data-testid="backend-status"
+      >
+        <p
+          className={
+            refreshFailed
+              ? 'status status--error'
+              : isStale || refreshPending
+                ? 'status status--pending'
+                : 'status status--ok'
+          }
+        >
+          <span className="status__dot" aria-hidden="true" />
+          Backend {version} · {environment}
+        </p>
+        {refreshPending ? <p className="shell__status-detail">Checking backend…</p> : null}
+        {isStale && !refreshPending ? (
+          <p className="shell__status-detail">Health status is stale.</p>
+        ) : null}
+        {refreshFailed && error ? (
+          <p className="shell__status-detail">Refresh failed. {error.message}</p>
+        ) : null}
+        {refreshFailed && (code || requestId) ? (
+          <p className="shell__status-detail">
+            {code ? `Code ${code}` : ''}
+            {code && requestId ? ' · ' : ''}
+            {requestId ? `Request ${requestId}` : ''}
+          </p>
+        ) : null}
+        {(refreshFailed || isStale) && !refreshPending ? (
+          <button type="button" className="shell__status-retry" onClick={reload}>
+            Check backend again
+          </button>
+        ) : null}
+      </div>
     )
   }
   if (status === 'error') {
-    const code = error instanceof ApiError ? error.code : null
-    const requestId = error instanceof ApiError ? error.requestId : null
-    const unreachable = code === 'unreachable' || code === 'timeout'
+    const proxyCouldNotReachBackend =
+      error instanceof ApiError &&
+      error.code === 'http_error' &&
+      error.status >= 500 &&
+      error.requestId === null
+    const unreachable = code === 'unreachable' || code === 'timeout' || proxyCouldNotReachBackend
     return (
       <div className="shell__status-error" role="alert" data-testid="backend-status">
         <p className="status status--error">
@@ -102,6 +158,9 @@ function BackendStatus({ status, version, environment, error }: BackendStatusPro
             {requestId ? `Request ${requestId}` : ''}
           </p>
         ) : null}
+        <button type="button" className="shell__status-retry" onClick={reload}>
+          Check backend again
+        </button>
       </div>
     )
   }

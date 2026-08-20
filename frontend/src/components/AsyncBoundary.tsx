@@ -10,9 +10,10 @@
  * report from an hour ago is not.
  */
 
-import { useEffect, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { ApiError } from '../api/client'
 import type { AsyncState } from '../api/useAsync'
+import { useIsStale } from '../api/useStale'
 
 interface AsyncBoundaryProps<T> {
   state: AsyncState<T>
@@ -98,41 +99,16 @@ export function AsyncBoundary<T>({
               </span>
             ) : null}
           </span>
-          <button type="button" onClick={reload} disabled={refreshPending}>
+          <button
+            type="button"
+            onClick={refreshPending ? undefined : reload}
+            aria-disabled={refreshPending}
+          >
             {refreshPending ? 'Refreshing…' : 'Refresh'}
           </button>
         </p>
       )}
       {dataIsEmpty ? <div className="state state--empty">{emptyMessage}</div> : children(data)}
     </>
-  )
-}
-
-function useIsStale(fetchedAt: Date | null, staleAfterMs: number | undefined): boolean {
-  const [, checkStaleness] = useState(0)
-
-  useEffect(() => {
-    if (!fetchedAt || staleAfterMs === undefined) {
-      return
-    }
-
-    const staleAt = fetchedAt.getTime() + staleAfterMs
-    const delayMs = staleAt - Date.now()
-    if (delayMs <= 0) {
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      checkStaleness((version) => version + 1)
-    }, delayMs)
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [fetchedAt, staleAfterMs])
-
-  return (
-    fetchedAt !== null &&
-    staleAfterMs !== undefined &&
-    Date.now() >= fetchedAt.getTime() + staleAfterMs
   )
 }

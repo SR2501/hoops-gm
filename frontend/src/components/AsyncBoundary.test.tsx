@@ -6,8 +6,11 @@ import type { AsyncState } from '../api/useAsync'
 import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from './AsyncBoundary'
 
+const unhandledRejection = vi.fn()
+
 afterEach(() => {
   vi.useRealTimers()
+  process.off('unhandledRejection', unhandledRejection)
 })
 
 function successState<T>(data: T, fetchedAt: Date, reload = vi.fn()): AsyncState<T> {
@@ -68,8 +71,8 @@ describe('AsyncBoundary', () => {
       request += 1
       return request === 1 ? first.promise : second.promise
     }
-    const unhandled = vi.fn()
-    window.addEventListener('unhandledrejection', unhandled)
+    unhandledRejection.mockClear()
+    process.on('unhandledRejection', unhandledRejection)
 
     function Harness() {
       const state = useAsync(fetcher, [])
@@ -99,7 +102,10 @@ describe('AsyncBoundary', () => {
     })
     expect(screen.getByText('last good value')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing.')
-    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
 
     await act(async () => {
       second.reject(
@@ -112,9 +118,8 @@ describe('AsyncBoundary', () => {
     expect(screen.getByText(/Refresh failed/)).toHaveTextContent('Database refresh failed.')
     expect(screen.getByText(/Refresh failed/)).toHaveTextContent('Code refresh_unavailable.')
     expect(screen.getByText(/Refresh failed/)).toHaveTextContent('Request req-refresh.')
-    expect(unhandled).not.toHaveBeenCalled()
-
-    window.removeEventListener('unhandledrejection', unhandled)
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(unhandledRejection).not.toHaveBeenCalled()
   })
 
   it('does not let an empty last-good result hide a refresh failure', () => {

@@ -1,10 +1,10 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
 import { ApiError } from '../api/client'
-import { AppLayout } from '../components/AppLayout'
+import { AppLayout, BackendStatus } from '../components/AppLayout'
 import { mockFetch, renderWithRouter } from '../test/helpers'
 
 const HEALTH = { status: 'ok', service: 'hoops-gm', version: '0.1.0', environment: 'development' }
@@ -17,6 +17,10 @@ const META = {
 }
 const READY = { status: 'ok', database: 'ok', detail: null }
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('the dashboard shell', () => {
   it('renders backend state from a real API call', async () => {
     mockFetch({
@@ -27,7 +31,9 @@ describe('the dashboard shell', () => {
 
     renderWithRouter(<App />)
 
-    expect(await screen.findByTestId('backend-status')).toHaveTextContent('Backend 0.1.0')
+    await waitFor(() => {
+      expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend 0.1.0')
+    })
     expect(await screen.findByText('2026-27')).toBeInTheDocument()
     expect(await screen.findByText('identity, stats, league, schedule')).toBeInTheDocument()
   })
@@ -62,6 +68,49 @@ describe('the dashboard shell', () => {
     expect(screen.getByTestId('backend-status')).toHaveTextContent('did not match')
     expect(screen.getByTestId('backend-status')).toHaveTextContent('Code invalid_response')
     expect(screen.getByTestId('backend-status')).toHaveTextContent('Request req-bad-health')
+  })
+
+  it('treats a proxy-generated 500 with no backend request id as unreachable', async () => {
+    mockFetch({
+      '/api/v1/meta': { body: META },
+      '/health': { status: 500, body: null },
+    })
+
+    renderWithRouter(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend unreachable')
+    })
+    expect(
+      screen.getByRole('button', { name: 'Check backend again' }),
+    ).toBeInTheDocument()
+  })
+
+  it('marks an old shell health result stale and offers a deterministic recheck', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-19T12:00:00Z'))
+    const reload = vi.fn()
+
+    render(
+      <BackendStatus
+        status="success"
+        version="0.1.0"
+        environment="development"
+        error={null}
+        fetchedAt={new Date()}
+        reload={reload}
+      />,
+    )
+
+    expect(screen.queryByText('Health status is stale.')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    expect(screen.getByText('Health status is stale.')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Check backend again' }),
+    ).toBeInTheDocument()
   })
 
   it('offers a retry that actually retries', async () => {

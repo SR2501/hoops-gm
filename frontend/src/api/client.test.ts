@@ -129,7 +129,7 @@ describe('apiFetch', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-        Promise.resolve(stalledJsonResponse(init?.signal)),
+        Promise.resolve(stalledJsonResponse(init?.signal, 'req-stalled-body')),
       ),
     )
 
@@ -139,6 +139,7 @@ describe('apiFetch', () => {
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('timeout')
+    expect((error as ApiError).requestId).toBe('req-stalled-body')
   })
 
   it('propagates a caller-initiated abort untouched', async () => {
@@ -204,7 +205,7 @@ describe('apiFetch', () => {
   })
 })
 
-function stalledJsonResponse(signal?: AbortSignal | null): Response {
+function stalledJsonResponse(signal?: AbortSignal | null, requestId?: string): Response {
   const body = new ReadableStream({
     start(controller) {
       signal?.addEventListener(
@@ -218,6 +219,9 @@ function stalledJsonResponse(signal?: AbortSignal | null): Response {
   })
   return new Response(body, {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(requestId ? { 'X-Request-ID': requestId } : {}),
+    },
   })
 }

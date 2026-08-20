@@ -127,7 +127,7 @@ export async function apiFetch<T>(
         throw signal.reason ?? cause
       }
       if (timeoutController.signal.aborted) {
-        throw timeoutError(timeoutMs)
+        throw timeoutError(timeoutMs, requestId)
       }
       if (response.ok) {
         throw new ApiError(
@@ -186,11 +186,11 @@ export async function apiFetch<T>(
   }
 }
 
-function timeoutError(timeoutMs: number): ApiError {
+function timeoutError(timeoutMs: number, requestId: string | null = null): ApiError {
   return new ApiError(
     0,
     'timeout',
     `The backend did not answer within ${String(timeoutMs)}ms.`,
-    null,
+    requestId,
   )
 }
