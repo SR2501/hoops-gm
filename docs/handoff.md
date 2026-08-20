@@ -6112,6 +6112,8 @@ budget attached to a snake or linear draft. Snake and linear drafts expose
 one-indexed overall/round/pick/team-slot coordinates; snake reverses team slots
 on even rounds while linear preserves the same order. Auction exposes no
 nomination or bidding order because no current `League` fact establishes one.
+Restacked the unit onto projection-blending main commit `79a5e3e`, preserving
+its backlog state, model documentation, and append-only handoff entry.
 
 **Now true:** Downstream draft-tracker and mock-ingestion work can consume a
 typed structural format without inheriting the historical 10-team,
@@ -6122,10 +6124,10 @@ Forty-eight focused tests cover format identity, shape/budget boundaries,
 unknown and contradictory evidence, snake/linear ordering properties across
 multiple league sizes, coordinate bounds, and deterministic value equality.
 The full local backend Code gate passes: Ruff, format check, strict mypy, and
-960 default tests with 18 live-smoke tests deselected. The tracked-file secret
+979 default tests with 18 live-smoke tests deselected. The tracked-file secret
 scan is clean, and a fresh SQLite migration lifecycle upgraded from empty
 through `0015`, reported no model drift, and downgraded to base. The backlog
-was mechanically reconciled to 36 done, 1 blocked, 64 pending, 101 total.
+was mechanically reconciled to 37 done, 1 blocked, 63 pending, 101 total.
 The Model gate does not apply because this layer validates explicit
 configuration and produces no decision-bearing estimate.
 
