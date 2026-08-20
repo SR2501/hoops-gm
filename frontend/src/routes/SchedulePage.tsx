@@ -116,8 +116,9 @@ function ScheduleGridView({
           total or mean is missing at least one period
         </span>
         <span className="grid__key-item">
-          League row: team-games in that period. Per team: the same divided by the teams that
-          reported it, {model.teamCount} at full strength.
+          League row: team-games in that period. Mean row: the same divided by the teams that
+          reported it, {model.teamCount} at full strength. In the Total column the mean is over
+          teams with a complete row, so it is not the season sum divided by anything on screen.
         </span>
       </p>
 

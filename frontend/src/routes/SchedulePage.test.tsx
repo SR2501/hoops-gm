@@ -209,17 +209,24 @@ describe('the schedule grid', () => {
     // The numerator sums only the teams that reported. Dividing it by every
     // team would understate the mean by exactly the missing share — and
     // understate it in the direction that makes each team's own count read as
-    // relatively healthier than it is. Here CLE's period-1 count of 2 is
-    // dropped: the honest mean over the two teams that did report is 4.0, not
-    // 6/3 = 2.0.
+    // relatively healthier than it is.
+    //
+    // Period 1 here is ATL 4, BOS 4, CLE dropped, so the honest mean over the
+    // two teams that reported is 4.0; a full-denominator quotient would be
+    // 8/3 = 2.7. CLE's period-3 count is raised to 6 so that the season
+    // column's numerator differs too: the season sum is 22 across every
+    // reported cell, while the mean of the Total column is over complete rows
+    // only — ATL 9 and BOS 7 — giving 16/2 = 8.0 rather than 22/3 = 7.3.
+    const base = scheduleGrid()
     const holed = scheduleGrid({
-      counts: scheduleGrid().counts.filter(
-        (count) => !(count.team_id === 3 && count.period_number === 1),
-      ),
+      counts: base.counts
+        .filter((count) => !(count.team_id === 3 && count.period_number === 1))
+        .map((count) => {
+          if (count.period_number === 1 && count.team_id === 1) return { ...count, games: 4 }
+          if (count.period_number === 3 && count.team_id === 3) return { ...count, games: 6 }
+          return count
+        }),
     })
-    holed.counts = holed.counts.map((count) =>
-      count.period_number === 1 && count.team_id === 1 ? { ...count, games: 4 } : count,
-    )
     mockFetch({ [GRID_PATH]: { body: holed }, '/health': { body: HEALTH } })
 
     renderWithRouter(<App />, { route: '/schedule' })
@@ -232,6 +239,15 @@ describe('the schedule grid', () => {
     expect(mean).toHaveTextContent('+?')
     expect(screen.getByTestId('league-total-1')).toHaveAttribute('data-state', 'partial')
     expect(mean).toHaveAccessibleName(/over the 2 of 3 that reported/)
+
+    // The season cell is the mean of the Total column, so it drops incomplete
+    // rows entirely rather than dividing the season sum by every team. This is
+    // the only input on which that differs from the simpler expression.
+    const seasonMean = screen.getByTestId('league-mean-season')
+    expect(screen.getByTestId('league-total-season')).toHaveTextContent('22')
+    expect(seasonMean).toHaveTextContent('8.0')
+    expect(seasonMean).toHaveAttribute('data-state', 'partial')
+    expect(seasonMean).toHaveAccessibleName(/over the 2 of 3 with a complete row/)
   })
 
   it('marks fantasy playoff periods, which are not interchangeable with regular ones', async () => {

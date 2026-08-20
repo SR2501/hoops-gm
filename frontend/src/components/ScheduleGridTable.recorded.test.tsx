@@ -93,6 +93,9 @@ describe('the recorded schedule grid response', () => {
     expect(model.periodTotals.reduce((sum, value) => sum + value, 0)).toBe(20)
     expect(screen.getByTestId('league-total-1')).toHaveTextContent('6')
     expect(screen.getByTestId('league-total-21')).toHaveTextContent('14')
+    expect(screen.getByTestId('league-total-season')).toHaveTextContent('20')
+    // 20 team-games over 30 complete rows.
+    expect(screen.getByTestId('league-mean-season')).toHaveTextContent('0.7')
 
     // Zeros are the common case in this recording and every one is explicit.
     expect(screen.getByTestId('cell-1-1')).toHaveTextContent('0')

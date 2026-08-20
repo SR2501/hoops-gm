@@ -140,7 +140,7 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
           </tr>
           <tr>
             <th scope="row" className="grid__team">
-              Per team
+              Mean
             </th>
             {periods.map((period, index) => (
               <MeanCell
@@ -150,6 +150,7 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
                 expected={teamCount}
                 testId={`league-mean-${String(period.period_number)}`}
                 label={`Period ${String(period.period_number)} mean games per team`}
+                setNoun="that reported"
               />
             ))}
             <MeanCell
@@ -158,6 +159,7 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
               expected={teamCount}
               testId="league-mean-season"
               label="Season mean games per team"
+              setNoun="with a complete row"
             />
           </tr>
         </tfoot>
@@ -185,13 +187,11 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
  * matter entirely — that acquires the playoff/partial/sparse-week choices that
  * make `schedule-grid-reference-distribution` a Model-gated `quant` item.
  */
-function MeanCell({ total, reporting, expected, testId, label }: MeanCellProps) {
+function MeanCell({ total, reporting, expected, testId, label, setNoun }: MeanCellProps) {
   const partial = reporting < expected
   const value = reporting === 0 ? '—' : (total / reporting).toFixed(1)
   const description = partial
-    ? `${label}: ${value}, over the ${String(reporting)} of ${String(
-        expected,
-      )} that reported`
+    ? `${label}: ${value}, over the ${String(reporting)} of ${String(expected)} ${setNoun}`
     : `${label}: ${value}`
 
   return (
@@ -220,6 +220,15 @@ interface MeanCellProps {
   expected: number
   testId: string
   label: string
+  /**
+   * What the denominator counts, in words.
+   *
+   * A period column is over teams that reported *that period*; the season
+   * column is over teams whose *whole row* arrived. Same phrasing for both
+   * would give a screen-reader user one sentence describing two different
+   * sets, in the row whose entire purpose is saying what a mean is over.
+   */
+  setNoun: string
 }
 
 interface TotalCellProps {

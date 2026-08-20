@@ -91,6 +91,28 @@ describe('buildScheduleGridModel', () => {
     expect(model.integrity.missingCells).toBe(1)
     expect(model.integrity.isDense).toBe(false)
     expect(model.periodMissing).toEqual([false, true])
+    // The denominator for the per-period mean counts only the cells the
+    // numerator summed. Both the unmatched-row and duplicate-row paths skip
+    // the increment, so this needs its own guard rather than riding on totals.
+    expect(model.periodReportingTeams).toEqual([2, 1])
+    expect(model.teamCount).toBe(2)
+  })
+
+  it('does not count an unmatched or duplicate row toward the mean denominator', () => {
+    const messy = grid({
+      counts: [
+        ...grid().counts,
+        { period_number: 1, team_id: 1, games: 9 },
+        { period_number: 1, team_id: 99, games: 9 },
+      ],
+    })
+
+    const model = buildScheduleGridModel(messy)
+
+    expect(model.integrity.duplicateRows).toBe(1)
+    expect(model.integrity.unmatchedRows).toBe(1)
+    // Two real teams reported each period; neither stray row inflates it.
+    expect(model.periodReportingTeams).toEqual([2, 2])
   })
 
   it('totals only what it was told, so a missing cell cannot inflate a row', () => {

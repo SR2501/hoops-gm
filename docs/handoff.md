@@ -8442,3 +8442,113 @@ re-run the browser verification against the merged route — specifically that t
 200 still renders and at least one refusal still displays — and open with base
 `main`. Then a fresh exact-head review round on the rebased head, since every
 review above was against `cf3ba4a` and the fixes that followed it.
+
+---
+
+## 2026-08-20 — frontend — Schedule grid: three review rounds, and a correction to the entry above
+
+**Changed:** Two further rounds of exact-head review on `4006767` and
+`f6b0c1e` by `frontend`, `architect` and `code-review`. Every must-fix closed.
+The substantive ones:
+
+The per-team mean row summed only the teams that reported and divided by every
+team, producing a quotient that is the mean of no set — understated by exactly
+the missing share, and understated in the direction that makes each team's own
+count read as relatively healthier than it is. It sat directly beneath a total
+that *was* marked partial, which is worse than an unmarked number alone: an
+unflagged cell beside a flagged sibling signals it was checked and found sound.
+The denominator is now `periodReportingTeams`, computed in the same pass that
+decides absence so numerator and denominator cannot drift, and the cell carries
+`data-state="partial"`, the warn colour, a visible `+?` and an accessible name
+stating the shortfall.
+
+The footer rows are sticky at the bottom of the scrollport. Capping the grid's
+height so the header could pin had made the baseline rows reachable only at
+maximum scroll, by which point the first sixteen teams were off screen — so the
+header fix made the mean row, which exists solely to be compared against a
+team's cell, unreachable from most of the teams it serves. The offset between
+the two pinned rows is now a `--grid-foot-row` custom property both rules read,
+rather than a hard-coded height that a wrapped label would silently break.
+
+The row header is `Mean` rather than `Per team`: four characters cannot wrap in
+a column whose `min-width` floor is reached under horizontal compression, and a
+wrapped label there overlaps the row pinned above it — a defect jsdom can never
+catch, because it does no layout.
+
+**Now true — and this corrects the entry above.** The previous entry and my
+report to the coordinator both claimed the season mean cell "shipped wrong" at
+`4006767`, dividing by team-periods and rendering `0.0`. **That is false, and
+the `frontend` reviewer caught it.** At `4006767` the cell was
+`formatMean(seasonTotal, teamCount)` — 20/30 = `0.7`, correct. The `0.0` I saw
+in the browser came from my own in-progress round-two edit, which I introduced
+and fixed inside the same uncommitted working state. I then reported fixing a
+defect in a commit that never contained it. Verified by
+`git show 4006767:frontend/src/components/ScheduleGridTable.tsx`: the string
+`periods.length` does not appear in that file at that commit.
+
+The change to the season cell is still right — it now takes the mean of the
+Total column over rows that are complete, rather than dividing the season sum by
+every team, and it marks itself partial. But it was an improvement, not a
+repair, and the record said otherwise.
+
+The reviewer also showed the browser check I cited could not have distinguished
+the two expressions: on a dense response `completeRowTotal / completeRows.length`
+and `seasonTotal / teamCount` are provably identical, so the verification I
+performed did not exercise the change I made. The test now uses an input where
+they differ — one team missing a period and holding a non-zero count elsewhere,
+giving `16/2 = 8.0` against `22/3 = 7.3` — and I confirmed it by reverting the
+expression and watching it fail with `7.3` before restoring.
+
+A second record correction: the round-two commit message dates the Chromium
+sticky-`th` fix to January 2024. `code-review` puts it at Chromium 91, May 2021,
+as part of TablesNG. The decision is unaffected — `border-collapse: separate` is
+still right, because collapsed borders resolve onto the table's border grid
+rather than the cell box, so a pinned header's bottom rule does not travel with
+it (w3c/csswg-drafts#3136) — but the date in that message is wrong.
+
+Also closed this round: `isScheduleGrid` is exported and the recorded fixture
+asserts the predicate that guards the real request accepts it, rather than
+double-casting past it; the empty-cell check that could never fail is a
+`data-state` census over all 630 cells plus every total and mean; the season sum
+has a value assertion for the first time; `periodReportingTeams` has model-level
+tests including that unmatched and duplicate rows do not inflate it; the season
+mean's accessible name says "with a complete row" rather than "that reported",
+because those are different sets in the same row; the key no longer invites the
+reader to reproduce the season mean by dividing the season sum, which does not
+work when any row is partial.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 75 tests across 8 files.
+
+**Could not verify:** Everything in the previous entry's "could not verify"
+still stands and is not repeated here. Added by this round:
+
+The sticky footer is a second layout claim resting on the same single
+measurement — one Chromium instance at 1280x720, computed styles and geometry
+read from the DOM, no screenshots, no second browser, no touch device. The
+`z-index` and paint-order analysis that says the footer cannot punch through the
+team column was done by two reviewers reading specificity, not by observation,
+and it depends on `<tfoot>` following `<tbody>` in source order — legal HTML
+permits the reverse, and nothing tests it.
+
+The `Mean` row-header wrap this round guards against was never reproduced. It
+was predicted from `min-width: 4.5rem` with no `table-layout: fixed`, and the
+guard — a fixed footer row height plus `white-space: nowrap` — is asserted by
+construction rather than observed, because it needs magnitudes the seeded
+fixture does not contain.
+
+`--grid-foot-row: 1.75rem` is still a measured constant, not a derived one. It
+matches the rendered row height to a sub-pixel today; a change to the grid's
+font size or `--space-1` would desynchronise it, and no test can catch that.
+
+The three review rounds found two real numerical defects — the mean's
+denominator and the season cell's basis — and one false claim I made about my
+own work. None of the three would have been caught by any green test, and the
+last of them was caught only because a reviewer re-derived a claim I had written
+in prose. That is worth recording as the argument for the review apparatus
+rather than the gates alone.
+
+**Next:** Unchanged. Hold the PR until backend #38 merges, rebase onto merged
+`main`, re-*capture* rather than merely re-run the recorded fixture, re-verify
+the 200 and at least one refusal in a browser against the merged route, then
+open with base `main` and take a fresh exact-head review round on the rebased
+head.

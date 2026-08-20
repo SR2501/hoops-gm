@@ -841,6 +841,33 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
 
+### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-early`, `schedule-grid-ui`
+
+**Precondition for the next frontend increment against this API**, not an
+open-ended improvement. Named that way deliberately so it cannot quietly become
+permanent.
+
+Nothing currently ties the frontend's wire assumptions to the backend's actual
+output. `frontend/src/api/endpoints.ts` hand-writes the response contract, and
+`frontend/src/test/fixtures/schedule-grid-current.recorded.json` is a snapshot
+captured by hand from a running service — so it catches drift only when someone
+thinks to re-record, which is to say exactly when nobody is looking for it. Both
+sides can be internally green and mutually wrong.
+
+Owned by `backend`, because the artefact has to be produced where the response
+model lives: a backend test serialises a real `ScheduleGridResponse` to a
+committed JSON file, and the frontend suite loads that file instead of a
+recording. One artefact, both sides, fails in CI on drift rather than in a
+browser. Gate: Code.
+
+Deferred from 2026-08-20 by the coordinator with the mechanism stated: building
+it while backend PR #38 was in final review would have restarted the review
+clock on an otherwise-ready head, and the risk it mitigates has no active source
+until the next increment is scheduled against this contract.
+
 ### `schedule-grid-reference-distribution` - Comparing a team's period count against its own normal
 
 - [ ] **pending**

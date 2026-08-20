@@ -530,18 +530,32 @@ a:focus-visible {
    period numbers pin to the top: with roughly half the teams visible at a time,
    a baseline you can only see by scrolling to the end is a baseline you cannot
    compare a team against. The mean row exists precisely for that comparison. */
+/* The two pinned footer rows must not overlap, so the upper one is offset by
+   the lower one's height. That height is fixed here rather than left to
+   emerge from font size, padding and line-height: under horizontal
+   compression the team column falls to its `min-width` floor, a label could
+   wrap to two lines, and the taller row would then paint over the row pinned
+   above it — a thin seam nobody files a bug about, and one jsdom can never
+   catch because it does no layout. `--grid-foot-row` is the single place the
+   two rules agree. */
+.grid {
+  --grid-foot-row: 1.75rem;
+}
+
 .grid tfoot th,
 .grid tfoot td {
   position: sticky;
   z-index: 1;
+  height: var(--grid-foot-row);
   border-top: 1px solid var(--border);
   border-bottom: none;
   background: var(--bg-sunken);
+  white-space: nowrap;
 }
 
 .grid tfoot tr:first-child th,
 .grid tfoot tr:first-child td {
-  bottom: 1.75rem;
+  bottom: var(--grid-foot-row);
 }
 
 .grid tfoot tr:last-child th,
