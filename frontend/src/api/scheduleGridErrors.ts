@@ -92,7 +92,7 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
     // condition and raises `incomplete_evidence` at `:453` instead. An earlier
     // version of this action sent that operator to the wrong place.
     summary:
-      "The schedule verified cleanly, but the grid assembled from it does not hold together. The backend's wording below names what failed; the cases are no counts at all for this league, or a team left out of the grid that has schedule rows inside the verified cohort. It refuses to serve counts that contradict their own lineage rather than showing a grid quietly short a team.",
+      "The schedule verified cleanly, but the grid assembled from it does not hold together. The backend's wording below names what failed; common cases are no counts at all for this league, or a team left out of the grid that has schedule rows inside the verified cohort. It refuses to serve counts that contradict their own lineage rather than showing a grid quietly short a team.",
     action:
       "Read the backend's wording below. No counts at all means the league has no scoring periods, or no active teams — note that a calendar which exists but does not cover the imported season is a different refusal. A team present in the schedule but absent from the grid points at that team being marked inactive while still holding rows.",
   },

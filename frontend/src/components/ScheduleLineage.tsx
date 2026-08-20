@@ -45,9 +45,6 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
   const { schedule } = lineage
   const age = describeRefreshAge(schedule.refreshed_at, now)
   const pastCadence = age.days !== null && age.days >= REFRESH_CADENCE_DAYS
-  const countsDisagree =
-    schedule.source_game_count !== schedule.resolved_game_count ||
-    schedule.unresolved_game_ids.length > 0
 
   return (
     <details className="lineage" data-testid="schedule-lineage">
@@ -117,12 +114,15 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
         </div>
       </dl>
 
-      {countsDisagree ? (
-        <p className="lineage__note" role="status">
-          Source and resolved game counts differ, so some games in the source were not matched into
-          the schedule. The counts above are of what was resolved.
-        </p>
-      ) : null}
+      {/*
+        No `countsDisagree` note. `lineage.py:164` and `:169` reject any refresh
+        carrying unresolved ids or a source/resolved mismatch before the
+        completeness object is built, so neither state can appear in a 200 this
+        endpoint serves — a note for them could never render. The figures stay
+        on the facts row above, where a reader can see them; defending in the
+        UI against a state the backend's invariants forbid is the same error as
+        the persisted-count note, in the harmless direction.
+      */}
     </details>
   )
 }

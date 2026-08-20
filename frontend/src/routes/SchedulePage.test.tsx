@@ -564,7 +564,9 @@ describe('schedule grid refusals', () => {
 
     const panel = await screen.findByRole('alert')
     const summary = within(panel).getByTestId('async-error-summary')
-    expect(summary).toHaveTextContent(/no counts at all for this league/)
+    // Both codes now phrase their case list open, and both are pinned by a test
+    // asserting the hedge rather than only the contents.
+    expect(summary).toHaveTextContent(/common cases are no counts at all/)
     expect(summary).toHaveTextContent(/team left out of the grid that has schedule rows/)
     // Phrased open, like its sibling, so a third raiser does not silently
     // falsify it.
