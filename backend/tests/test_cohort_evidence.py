@@ -74,6 +74,18 @@ def schedule_league() -> Any:
     return load("nba_scheduleleaguev2_cohort_window_2025_26.json")
 
 
+@pytest.fixture(scope="module")
+def manifest() -> Any:
+    """The committed cohort manifest.
+
+    Module-scoped and defined at module level rather than as a class-scoped
+    instance method: pytest deprecates the latter, and this repository turns
+    warnings into failures, so the deprecated form fails in CI while passing on
+    an older local pytest.
+    """
+    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
 class TestEachViewWindowsItself:
     def test_league_game_finder_selects_only_in_window_games(self, league_game_finder: Any) -> None:
         assert (
@@ -213,6 +225,66 @@ class TestReconciliationRefusesToPassOnAgreementItDoesNotHave:
         assert reconciliation.agreed
         assert set(reconciliation.as_summary()["counts"]) == {"persisted_nba_games"}
 
+    def test_four_views_that_all_found_nothing_agree_but_witness_nothing(self) -> None:
+        """FAILS IF: an empty window can be published as four-source agreement.
+
+        Found by independent review. A mistyped window, or a raw store whose
+        captures predate the requested range, makes every view empty. They then
+        agree perfectly — over zero games. ``witnessed`` is the separate
+        question the CLI checks, so this cannot exit 0 with a manifest claiming
+        agreement across four sources.
+        """
+        reconciliation = self._views(
+            league_game_finder=(),
+            persisted_nba_games=(),
+            player_game_logs=(),
+            schedule_league_v2=(),
+        )
+
+        assert reconciliation.agreed
+        assert not reconciliation.witnessed
+        assert reconciliation.union == ()
+
+    def test_a_populated_reconciliation_is_witnessed(self) -> None:
+        assert self._views().witnessed
+
+
+class TestPositionEvidenceReportsTheSourceRatherThanADistribution:
+    """The label is a starting-lineup slot, and the manifest must say so.
+
+    The invalidated cohort published a G/F/C distribution over
+    ``BoxScoreTraditionalV3``'s ``position`` field as evidence of positional
+    diversity. The endpoint emits that field for exactly five players per team —
+    the starters — always as ``F,F,C,G,G``, so the distribution is forced to
+    2F:2G:1C for any cohort and establishes nothing. Worse for an injury cohort:
+    the players least likely to have started are exactly the injured ones, so
+    "no label" was systematically the population of interest.
+    """
+
+    def test_the_manifest_does_not_claim_positional_diversity(self, manifest: Any) -> None:
+        position = manifest["position_evidence"]
+        assert position["positional_diversity_established"] is False
+        assert "distinct_resolved_players_by_observed_label" not in position
+
+    def test_exactly_five_players_per_team_carry_a_label(self, manifest: Any) -> None:
+        """FAILS IF: the source starts labelling every player.
+
+        That would be good news and would make real positional evidence
+        possible — but it must be noticed and acted on, not absorbed.
+        """
+        assert list(manifest["position_evidence"]["labelled_players_per_team"]) == ["5"]
+
+    def test_the_only_observed_sequence_is_the_starting_five(self, manifest: Any) -> None:
+        assert list(manifest["position_evidence"]["distinct_label_sequences"]) == ["F,F,C,G,G"]
+
+    def test_missing_captures_are_named_rather_than_silently_shrinking_the_denominator(
+        self, manifest: Any
+    ) -> None:
+        """The raw store is prunable, so an absent capture must not look like a finding."""
+        position = manifest["position_evidence"]
+        assert position["games_without_box_score_capture"] == []
+        assert position["games_with_box_score_capture"] == manifest["scope"]["games_with_tipoff"]
+
 
 class TestTheCommittedManifestStillDescribesThisCode:
     """A fingerprint nobody checks is a comment.
@@ -223,10 +295,6 @@ class TestTheCommittedManifestStillDescribesThisCode:
     longer exists — a stale provenance claim, which is worse than none, because
     it looks checked.
     """
-
-    @pytest.fixture(scope="class")
-    def manifest(self) -> Any:
-        return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     def test_every_recorded_source_fingerprint_matches_the_file_today(self, manifest: Any) -> None:
         fingerprints = manifest["operator"]["source_fingerprints"]

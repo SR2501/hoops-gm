@@ -169,7 +169,22 @@ class GameIdentityReconciliation:
 
     @property
     def agreed(self) -> bool:
+        """Whether every view names the same games.
+
+        Deliberately says nothing about whether they named *any*. Four views
+        that all found nothing agree perfectly and witness nothing, so
+        :meth:`witnessed` is a separate question and both are checked before a
+        cohort is published — see :func:`main`. Found by independent review:
+        before that split, a mistyped ``--start``/``--end`` would have written a
+        manifest asserting agreement across four sources over zero games, with
+        exit code 0.
+        """
         return len({frozenset(ids) for ids in self.views.values()}) == 1
+
+    @property
+    def witnessed(self) -> bool:
+        """Whether any view actually named a game. An empty witness corroborates nothing."""
+        return bool(self.union)
 
     @property
     def union(self) -> tuple[str, ...]:
@@ -404,63 +419,86 @@ def _position_evidence(
     store: RawPayloadStore,
     *,
     nba_game_ids: Sequence[str],
-    observed_anchors: Mapping[str, int],
 ) -> dict[str, Any]:
-    """G/F/C diversity, from labels the source actually printed in this window.
+    """What ``BoxScoreTraditionalV3``'s ``position`` field actually is.
 
-    Read straight from the retained ``BoxScoreTraditionalV3`` captures rather
-    than from a roster listing, because the question this answers is "is the
-    cohort positionally diverse", and a label observed in the same window is the
-    only one that can be checked against the same evidence. A blank label stays
-    unknown: an absent position is not a position.
+    **This section reports a source finding, not a positional distribution, and
+    the change is deliberate.** The invalidated cohort published
+    ``distinct_resolved_players_by_observed_label`` as evidence that the cohort
+    was positionally diverse. It was not evidence of that, and could never have
+    been: the endpoint emits ``position`` for exactly five players per team per
+    game — the starting lineup — always in the sequence ``F, F, C, G, G``. Every
+    other player carries ``""``.
+
+    So the label is a *lineup slot*, not a player attribute. A distribution over
+    it is forced to roughly 2F : 2G : 1C for any cohort whatsoever, which is why
+    the invalidated manifest reported 76 : 76 : 43 and why that number could not
+    have distinguished a diverse cohort from a skewed one. Worse for this
+    cohort specifically: an injury cohort's most central players are the ones
+    least likely to have started, so "no label" was systematically the *injured*
+    players, and calling them position-unknown read a knowable fact ("did not
+    start") as missing evidence.
+
+    This is the ``AGENTS.md`` failure mode exactly — a well-formed, type-correct,
+    non-null field that lies about what it denotes. Nothing about parsing it was
+    wrong. Found by independent review of the regeneration.
+
+    The counts below are derived, not asserted, so a reader can disprove the
+    finding cheaply: if the endpoint ever starts labelling every player,
+    ``labelled_players_per_team`` stops being ``[5]`` and
+    ``distinct_label_sequences`` stops being a single ``F,F,C,G,G``.
     """
-    labels: dict[str, set[str]] = {}
+    per_team_counts: Counter[int] = Counter()
+    sequences: Counter[str] = Counter()
+    games_with_capture = 0
+    games_without_capture: list[str] = []
+
     for nba_game_id in sorted(set(nba_game_ids)):
         ref = store.latest(
             source=NBA_SOURCE, endpoint="BoxScoreTraditionalV3", params={"game_id": nba_game_id}
         )
-        if ref is None:
-            continue
-        body = ref.read_json().get("boxScoreTraditional")
+        body = ref.read_json().get("boxScoreTraditional") if ref is not None else None
         if not isinstance(body, dict):
+            # Counted, never skipped silently. The raw store is prunable
+            # operational state, and a shrinking denominator caused by a pruned
+            # capture must not look like a finding about the source.
+            games_without_capture.append(nba_game_id)
             continue
+        games_with_capture += 1
         for side in ("homeTeam", "awayTeam"):
             team = body.get(side)
             if not isinstance(team, dict):
                 continue
-            for entry in team.get("players") or ():
-                if not isinstance(entry, dict):
-                    continue
-                person_id = entry.get("personId")
-                position = str(entry.get("position") or "").strip()
-                if person_id is None or not position:
-                    continue
-                labels.setdefault(str(person_id), set()).add(position)
+            labels = [
+                str(entry.get("position") or "").strip()
+                for entry in team.get("players") or ()
+                if isinstance(entry, dict) and str(entry.get("position") or "").strip()
+            ]
+            per_team_counts[len(labels)] += 1
+            sequences[",".join(labels)] += 1
 
-    cohort = set(observed_anchors)
-    with_label = {anchor: sorted(labels[anchor]) for anchor in sorted(cohort & set(labels))}
-    by_label: Counter[str] = Counter()
-    for values in with_label.values():
-        for value in values:
-            by_label[value] += 1
-
-    observations_with = sum(observed_anchors[anchor] for anchor in with_label)
     return {
-        "canonical_observations_with_source_observed_position": observations_with,
-        "canonical_observations_without_source_observed_position": (
-            sum(observed_anchors.values()) - observations_with
+        "distinct_label_sequences": dict(sorted(sequences.items())),
+        "finding": (
+            "BoxScoreTraditionalV3 emits a non-empty position only for the five starters of "
+            "each team, always in the sequence F,F,C,G,G. The field denotes a starting-lineup "
+            "slot, not a player attribute, so a distribution over it is forced to 2F:2G:1C for "
+            "any cohort and cannot establish positional diversity. A blank is 'did not start "
+            "this game', which is knowable, not 'position unknown'."
         ),
-        "distinct_resolved_players": len(cohort),
-        "distinct_resolved_players_by_observed_label": dict(sorted(by_label.items())),
-        "distinct_resolved_players_with_source_observed_position": len(with_label),
-        "distinct_resolved_players_without_source_observed_position": len(cohort) - len(with_label),
-        "method": (
-            "Non-empty BoxScoreTraditionalV3 position labels observed for the same stable NBA "
-            "player id inside this exact window. A player may carry more than one observed "
-            "label; a blank label stays unknown and is never inferred."
+        "games_without_box_score_capture": sorted(games_without_capture),
+        "games_with_box_score_capture": games_with_capture,
+        "labelled_players_per_team": dict(sorted(per_team_counts.items())),
+        "positional_diversity_established": False,
+        "supersedes": (
+            "The invalidated cohort's position_evidence section reported 167 of 363 players "
+            "with an observed G/F/C label (C 43, F 76, G 76) and 196 as position-unknown. Those "
+            "figures are a starting-lineup artifact and must not be used as evidence of cohort "
+            "composition."
         ),
-        "sha256_sorted_player_position_mapping": content_sha256(
-            f"{anchor}|{','.join(values)}" for anchor, values in sorted(with_label.items())
+        "what_would_be_needed": (
+            "A source that prints a position for every player on a roster, ingested as its own "
+            "adapter under the Adapter gate. Not attempted here."
         ),
     }
 
@@ -535,11 +573,6 @@ def build_cohort_evidence(
 
     lead_times = [obs.lead_time_minutes for obs in observations]
     status_counts = Counter(obs.status.value for obs in observations)
-
-    observed_anchors: Counter[str] = Counter()
-    for obs in observations:
-        if obs.player_id is not None and obs.player_id in anchors:
-            observed_anchors[anchors[obs.player_id]] += 1
 
     return {
         "canonical_observations": {
@@ -618,7 +651,6 @@ def build_cohort_evidence(
         "position_evidence": _position_evidence(
             store,
             nba_game_ids=[game.nba_game_id for game in ready],
-            observed_anchors=observed_anchors,
         ),
         "schema_version": SCHEMA_VERSION,
         "scope": {
@@ -760,7 +792,17 @@ def render_cohort_evidence(evidence: Mapping[str, Any]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operator tool
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("season", help="e.g. 2025-26")
-    parser.add_argument("--season-type", default="regular", choices=[t.value for t in SeasonType])
+    parser.add_argument(
+        "--season-type",
+        default=SeasonType.REGULAR.value,
+        choices=[SeasonType.REGULAR.value],
+        help=(
+            "regular season only. The reconciliation requires ScheduleLeagueV2, which exposes "
+            "only 002-prefixed regular-season game ids, so a playoff scope could never assemble "
+            "four independent witnesses. Offered as a single choice rather than as an option "
+            "that parses and then fails."
+        ),
+    )
     parser.add_argument("--start", type=date.fromisoformat, required=True)
     parser.add_argument("--end", type=date.fromisoformat, required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -811,6 +853,14 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
             print(
                 "cross-source game identity disagreement -- refusing to publish a cohort "
                 f"manifest over it: {reconciliation.disagreements()}",
+                file=sys.stderr,
+            )
+            return 1
+        if not reconciliation.witnessed:
+            print(
+                f"every reconciliation view found zero games in {args.start}..{args.end}. Four "
+                "views that all found nothing agree perfectly and witness nothing; check the "
+                "requested window and that the raw store holds captures covering it.",
                 file=sys.stderr,
             )
             return 1

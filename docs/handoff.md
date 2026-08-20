@@ -7583,3 +7583,88 @@ merges may `quant` resume `injury-status-conversion` from this cohort — under
 the Model gate, preserving the unresolved identities, the two R35 unknowns, the
 blank positions and the new long lead-time tail as evidence rather than as
 outcomes.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review remediation
+
+**Changed:** Independent exact-head reviews of `6c5f085` found four issues in
+the regenerated cohort. The most important one invalidates a claim the *previous*
+cohort also made, so it is recorded here rather than quietly fixed.
+
+**Position evidence was a starting-lineup artifact, and is withdrawn.**
+`BoxScoreTraditionalV3` emits a non-empty `position` for exactly five players per
+team per game — the starters — always in the sequence `F,F,C,G,G`. Derived over
+all 346 team-games in the window: `labelled_players_per_team` is `{5: 346}` and
+`distinct_label_sequences` is `{"F,F,C,G,G": 346}`. So the field denotes a lineup
+slot, not a player attribute. A distribution over it is forced to roughly
+2F:2G:1C for any cohort, which is exactly the 76:76:43 both the invalidated
+manifest and my regeneration reported, and it can no more distinguish a diverse
+cohort from a skewed one than counting the number of players on a court can.
+
+Worse for this cohort specifically: an injury cohort's most central players are
+the ones least likely to have started, so "no label" was systematically the
+injured population. Reporting 196 players as "position-unknown rather than
+inferred" read a knowable fact — did not start — as missing evidence, and did so
+in the direction that flatters the cohort.
+
+Nothing about parsing the field was wrong. It is well-formed, type-correct and
+non-null, and it lies about what it denotes — the AGENTS.md rule that validation
+of form cannot catch errors of meaning, in the same family as `gameEt`. The
+manifest now reports the source behaviour with
+`positional_diversity_established: false`, and a contract test fails if the
+endpoint ever starts labelling every player.
+
+**Positional representativeness of this cohort is therefore not established.**
+The independent review that accepted the 2026-08-19 cohort listed position
+diversity among the evidence it reproduced; it reproduced the arithmetic
+correctly and the arithmetic was over the wrong thing.
+
+Three further fixes:
+
+- Four views that all found *zero* games agreed perfectly and witnessed nothing,
+  and the CLI published over them with exit 0. A mistyped window or a raw store
+  predating the requested range would have produced a manifest asserting
+  four-source agreement and `sha256_sorted_game_ids` equal to the digest of the
+  empty string. `witnessed` is now a separate property from `agreed`, checked
+  separately, with a test for the all-empty case.
+- `_position_evidence` silently skipped a game whose `BoxScoreTraditionalV3`
+  capture was absent. The raw store is prunable, so a pruned capture would have
+  shrunk a denominator invisibly while the manifest still claimed to be a pure
+  function of persisted state. Missing captures are now counted and named.
+- The `--season-type playoffs` option could never succeed: `parse_schedule`
+  filters to `002`-prefixed ids, so `ScheduleLeagueV2` cannot witness a playoff
+  game at all, and four independent views are unassemblable. Removed as a choice
+  rather than left to parse and then fail.
+
+Also removed nine untracked scratch files the reviewing agents left in the
+worktree (`backend/_rev*.py`), flagged by the privacy review because they were
+untracked *and* un-ignored and would have been swept into a `git add -A`.
+
+**Now true:** The privacy review found no secrets, credentials, Fantrax data or
+personal identifiers in any committed artifact, and confirmed `_capture_summary`
+is structurally independent of the raw store's parameter redaction rather than
+merely relying on it. It confirmed the secret scanner covers all four new JSON
+artifacts, and that `.gitignore` excludes the operational directories through
+generic directory patterns rather than path-specific accidents.
+
+The regenerated manifest is
+`260686d0f949c671057ee5d81aec0fd0c701f3f75d1748eeccfaab62202d0557`, reproduced
+byte-for-byte across two consecutive runs. Cohort scope, counts, joins and
+cross-source reconciliation are unchanged by this remediation — only the
+position section and the guards changed.
+
+**Could not verify:** Whether any *other* consumer of NBA position labels exists
+elsewhere in the repository and inherited the same misreading. I searched the
+cohort path only.
+
+The code review noted that `content_sha256` joins parts with an unprefixed
+newline, which is ambiguous in principle; it judged no reachable input can
+contain a newline, and I did not add a structural guarantee that none ever will.
+
+Local gates pass on the remediated tree, but the exact head has changed, so the
+prior reviews no longer cover it — they must be repeated. Native PostgreSQL
+remains CI-only.
+
+**Next:** Re-review at the replacement exact head, then require PostgreSQL CI
+before the PR is treated as mergeable.

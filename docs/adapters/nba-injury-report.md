@@ -1116,10 +1116,44 @@ the existing gitignored `data/` / `.live_evidence*` policy. Source-file
 fingerprints hash CRLF-normalised bytes, so they are identical on any checkout
 and equal the committed Git blob digest.
 
+### A published claim that was wrong, and is now withdrawn
+
+The invalidated cohort reported that 167 of 363 resolved players carried a
+source-observed G/F/C label (C 43, F 76, G 76) and that 196 were
+"position-unknown rather than inferred". The regeneration published the same
+shape until independent review caught it.
+
+`BoxScoreTraditionalV3` emits a non-empty `position` for **exactly five players
+per team per game — the starting lineup — always in the sequence `F,F,C,G,G`**.
+Derived over all 346 team-games in this window: `labelled_players_per_team` is
+`{5: 346}` and `distinct_label_sequences` is `{"F,F,C,G,G": 346}`. Every other
+player carries `""`.
+
+So the field denotes a *lineup slot*, not a player attribute. A distribution
+over it is forced to roughly 2F : 2G : 1C for any cohort whatsoever, which is
+exactly the 76 : 76 : 43 the old manifest reported, and it could never have
+distinguished a positionally diverse cohort from a skewed one. Worse for this
+cohort specifically: an injury cohort's most central players are the ones least
+likely to have started, so "no label" was systematically the injured
+population, and calling them position-unknown read a knowable fact — did not
+start — as missing evidence.
+
+Nothing about parsing the field was wrong. It is well-formed, type-correct and
+non-null, and it lies about what it denotes: the `AGENTS.md` rule that
+validation of form cannot catch errors of meaning. The manifest now reports the
+source behaviour, with `positional_diversity_established: false`, and a
+contract test fails if the endpoint ever starts labelling every player — which
+would be good news that must be acted on rather than absorbed.
+
+**Positional diversity of this cohort is therefore not established**, and
+establishing it needs a source that prints a position for every player,
+ingested as its own adapter. Not attempted here.
+
 ### What this cohort still does not license
 
 No status-to-play rate, threshold, probability or calibration claim. Those are
 `injury-status-conversion`, a separately Model-gated `quant` deliverable, and it
-must consume this cohort preserving the unresolved identities, the two R35
-unknowns and blank source positions as missing evidence rather than as negative
-outcomes.
+must consume this cohort preserving the unresolved identities and the two R35
+unknowns as missing evidence rather than as negative outcomes, and treating
+positional composition as unestablished rather than as the withdrawn G/F/C
+figures.

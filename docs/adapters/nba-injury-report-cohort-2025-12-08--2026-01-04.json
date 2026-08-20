@@ -249,7 +249,7 @@
       "backend/src/hoops_gm/db/lineage.py": "6073bc0226cabd4ffd3a04bd5d4f810164b2073b4ad71b250af10d4b7fd89390",
       "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "2ed218d7c9a233448bd3fad0333e76a4dd5c5efa59a8374899f68fdc0abf8989",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "c9e888925793eb05cdb3c1c5262d7a0f9ec3e5c2a6b76944ad3a4146c9451538",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "5dfd9aab6ed8e03d5c04136a1e46ff80db318ebc3bb56304741d9cdd669a15e9"
     }
   },
@@ -277,18 +277,18 @@
     "sha256_sorted_joined_stable_records": "3227730fe6d07866aca81f4bc31efbbd953d6cab0ddcdb6350375fb949c78b44"
   },
   "position_evidence": {
-    "canonical_observations_with_source_observed_position": 588,
-    "canonical_observations_without_source_observed_position": 1332,
-    "distinct_resolved_players": 363,
-    "distinct_resolved_players_by_observed_label": {
-      "C": 43,
-      "F": 76,
-      "G": 76
+    "distinct_label_sequences": {
+      "F,F,C,G,G": 346
     },
-    "distinct_resolved_players_with_source_observed_position": 167,
-    "distinct_resolved_players_without_source_observed_position": 196,
-    "method": "Non-empty BoxScoreTraditionalV3 position labels observed for the same stable NBA player id inside this exact window. A player may carry more than one observed label; a blank label stays unknown and is never inferred.",
-    "sha256_sorted_player_position_mapping": "7ce51cf868945a949a060155e4937aa0568bcf45096cacf84c04cd278bdc8223"
+    "finding": "BoxScoreTraditionalV3 emits a non-empty position only for the five starters of each team, always in the sequence F,F,C,G,G. The field denotes a starting-lineup slot, not a player attribute, so a distribution over it is forced to 2F:2G:1C for any cohort and cannot establish positional diversity. A blank is 'did not start this game', which is knowable, not 'position unknown'.",
+    "games_with_box_score_capture": 173,
+    "games_without_box_score_capture": [],
+    "labelled_players_per_team": {
+      "5": 346
+    },
+    "positional_diversity_established": false,
+    "supersedes": "The invalidated cohort's position_evidence section reported 167 of 363 players with an observed G/F/C label (C 43, F 76, G 76) and 196 as position-unknown. Those figures are a starting-lineup artifact and must not be used as evidence of cohort composition.",
+    "what_would_be_needed": "A source that prints a position for every player on a roster, ingested as its own adapter under the Adapter gate. Not attempted here."
   },
   "schema_version": 2,
   "scope": {
