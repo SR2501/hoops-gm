@@ -15,6 +15,14 @@ import { ApiError } from '../api/client'
 import type { AsyncState } from '../api/useAsync'
 import { useIsStale } from '../api/useStale'
 
+/** A view's own words for a failure, replacing the backend's raw wording. */
+export interface ErrorDescription {
+  /** What happened, in terms of the data rather than the stack. */
+  summary: string
+  /** The next thing the reader can actually do. */
+  action?: string
+}
+
 interface AsyncBoundaryProps<T> {
   state: AsyncState<T>
   children: (data: T) => ReactNode
@@ -24,6 +32,26 @@ interface AsyncBoundaryProps<T> {
   /** Age past which the data is shown as stale. Omit for data that cannot go stale. */
   staleAfterMs?: number
   label?: string
+  /**
+   * Explains a failure in the view's own terms.
+   *
+   * The backend's own wording is right for a generic surface and wrong where
+   * an endpoint fails closed on several distinct conditions calling for
+   * different actions.
+   *
+   * This is a *description* rather than a rendered panel because both failure
+   * paths need it: the cold one, where nothing is on screen, and the warm one,
+   * where earlier data is still showing and a refresh has just failed. The warm
+   * path is the one that matters most on a superseded-cohort error — the reader
+   * is looking at numbers now known to be out of date — and handing back a
+   * whole panel would have covered only the cold path while appearing to cover
+   * both.
+   *
+   * The backend's raw wording is still shown, so a failure can be quoted and
+   * correlated to a server log line exactly. Called only when there is an
+   * error, so an implementation never has to handle `null`.
+   */
+  describeError?: (error: Error) => ErrorDescription
 }
 
 export function AsyncBoundary<T>({
@@ -33,6 +61,7 @@ export function AsyncBoundary<T>({
   emptyMessage = 'Nothing to show yet.',
   staleAfterMs,
   label = 'data',
+  describeError,
 }: AsyncBoundaryProps<T>) {
   const { status, data, error, fetchedAt, reload } = state
   const isStale = useIsStale(fetchedAt, staleAfterMs)
@@ -45,14 +74,29 @@ export function AsyncBoundary<T>({
     )
   }
 
+  const described = error ? (describeError?.(error) ?? null) : null
+  const backendWording = error?.message ?? null
+  const code = error instanceof ApiError ? error.code : null
+  const requestId = error instanceof ApiError ? error.requestId : null
+
   if (status === 'error' && data === null) {
-    const detail = error instanceof ApiError ? error.message : (error?.message ?? 'Unknown error')
-    const code = error instanceof ApiError ? error.code : null
-    const requestId = error instanceof ApiError ? error.requestId : null
+    const summary = described?.summary ?? backendWording ?? 'Unknown error'
     return (
       <div className="state state--error" role="alert">
         <p>Could not load {label}.</p>
-        <p className="state__detail">{detail}</p>
+        <p className="state__detail" data-testid="async-error-summary">
+          {summary}
+        </p>
+        {described?.action ? (
+          <p className="state__detail" data-testid="async-error-action">
+            {described.action}
+          </p>
+        ) : null}
+        {backendWording && backendWording !== summary ? (
+          <p className="state__meta">
+            Backend said: <q>{backendWording}</q>
+          </p>
+        ) : null}
         {code || requestId ? (
           <p className="state__meta">
             {code ? (
@@ -79,9 +123,8 @@ export function AsyncBoundary<T>({
   // where the screen must say so rather than look current.
   const refreshFailed = status === 'error'
   const refreshPending = status === 'loading'
-  const failureCode = error instanceof ApiError ? error.code : null
-  const failureRequestId = error instanceof ApiError ? error.requestId : null
   const dataIsEmpty = isEmpty?.(data) ?? false
+  const failureWording = described?.summary ?? backendWording
 
   return (
     <>
@@ -92,10 +135,11 @@ export function AsyncBoundary<T>({
             {refreshPending ? 'Refreshing. ' : ''}
             Showing data from {fetchedAt?.toLocaleTimeString() ?? 'an earlier load'}.
             {refreshFailed && error ? (
-              <span className="stale-banner__detail">
-                {error.message}
-                {failureCode ? ` Code ${failureCode}.` : ''}
-                {failureRequestId ? ` Request ${failureRequestId}.` : ''}
+              <span className="stale-banner__detail" data-testid="async-stale-failure">
+                {failureWording}
+                {described?.action ? ` ${described.action}` : ''}
+                {code ? ` Code ${code}.` : ''}
+                {requestId ? ` Request ${requestId}.` : ''}
               </span>
             ) : null}
           </span>

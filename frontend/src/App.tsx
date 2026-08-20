@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { DashboardPage } from './routes/DashboardPage'
 import { NotFoundPage } from './routes/NotFoundPage'
+import { SchedulePage } from './routes/SchedulePage'
 import { SystemPage } from './routes/SystemPage'
 
 /**
@@ -15,6 +16,7 @@ export function App() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
+        <Route path="schedule" element={<SchedulePage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

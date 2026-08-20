@@ -2,13 +2,14 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**38 done - 1 blocked - 66 pending - 105 total**
+**39 done - 1 blocked - 69 pending - 109 total**
 
-(Counted from the status markers themselves, not carried forward: 105 `###`
-headings and 105 markers, 1:1. Recounted at this head after two lanes merged —
-neither lane's pre-merge header was used as an input, because both were computed
-before the other's items landed. The header before that claimed 37 done / 63
-pending against an actual 36 / 64, and that drift predates both lanes.)
+(Counted from the status markers themselves at this head, not carried forward from
+either lane: 109 `###` headings and 109 markers, 1:1, no duplicates. Neither
+pre-merge header was a usable input, because each was computed before the other
+lane's items landed. An earlier header claimed 37 done / 63 pending against an
+actual 36 / 64, and that drift predates all three lanes.)
+
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -318,6 +319,31 @@ fixtures, through the production importers, and the endpoint returns a real
 200 against it (see `backend/README.md`). The first attempt at this item was
 fail-closed but permanently unavailable, which is why the seed path is part of
 the deliverable rather than a convenience.
+
+### `schedule-grid-ui` - Putting the raw schedule grid on screen
+
+- [x] **done**
+- **Depends on:** `schedule-grid-early`
+
+Teams down, fantasy scoring periods across, scheduled game counts in the cells,
+at `/schedule`. Consumes `schedule-grid-early`'s endpoint and renders exactly
+what it returns: no availability weighting, no opponent quality, no colour scale
+and no light/heavy judgement (ADR-009).
+
+`games: 0` renders as `0`; a `counts` row the backend never sent renders as its
+own marked cell and is counted in a visible notice. A blank cell can never mean
+either, which is the failure mode this screen exists to avoid. Totals that are
+short a period are marked on screen rather than only in screen-reader text, so
+a partial sum cannot be read as a complete one. Each of the five documented
+refusal codes gets its own explanation and next step, read from the response
+body, on both the cold-load and the failed-refresh path. Schedule lineage —
+version, refresh id, raw `refreshed_at`, source/resolved/persisted counts — is
+on the page rather than in devtools, and the cohort's age is reported against
+ADR-012's weekly re-ingest cadence.
+
+The per-period league sum and the per-team mean satisfy the amendment's
+league-wide baseline clause. The team-versus-own-distribution clause is
+deliberately not implemented here — see `schedule-grid-reference-distribution`.
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 
@@ -812,6 +838,92 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 - **Depends on:** `gscore-engine`, `reliability-metrics`
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
+
+### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-early`, `schedule-grid-ui`
+
+**Precondition for the next frontend increment against this API**, not an
+open-ended improvement. Named that way deliberately so it cannot quietly become
+permanent.
+
+Nothing currently ties the frontend's wire assumptions to the backend's actual
+output. `frontend/src/api/endpoints.ts` hand-writes the response contract, and
+`frontend/src/test/fixtures/schedule-grid-current.recorded.json` is a snapshot
+captured by hand from a running service — so it catches drift only when someone
+thinks to re-record, which is to say exactly when nobody is looking for it. Both
+sides can be internally green and mutually wrong.
+
+Owned by `backend`, because the artefact has to be produced where the response
+model lives: a backend test serialises a real `ScheduleGridResponse` to a
+committed JSON file, and the frontend suite loads that file instead of a
+recording. One artefact, both sides, fails in CI on drift rather than in a
+browser. Gate: Code.
+
+Deferred from 2026-08-20 by the coordinator with the mechanism stated: building
+it while backend PR #38 was in final review would have restarted the review
+clock on an otherwise-ready head, and the risk it mitigates has no active source
+until the next increment is scheduled against this contract.
+
+### `schedule-grid-refusal-discriminant` - Distinguishing nine conditions that share one refusal code
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-early`, `schedule-grid-ui`
+
+`schedule_grid_incomplete_evidence` is raised from nine places in
+`backend/src/hoops_gm/api/routes/schedule_grid.py`, on four different objects:
+the refresh's completeness evidence, the cohort it describes, the league's team
+rows, and the league's scoring calendar. They call for different operator
+actions — a refresh that cannot state its completeness needs the schedule
+re-importing, while a scoring period the league has no row for needs the
+calendar corrected, and re-importing the schedule will never create one.
+
+A consumer given only the code cannot tell which. The dashboard currently names
+all three families in one message and defers to the backend's `detail` prose for
+which applies, which is honest but is the weakest form of the information: it
+cannot be branched on, and it puts the burden on the reader at the moment they
+are least able to carry it.
+
+This has already produced two defects on the frontend, both caught in review
+rather than by any test. Copy written against one condition asserted that the
+refresh "cannot state what it imported" and was rendered directly above a
+backend detail saying it had stated it and imported a playoffs cohort. The
+correction then asserted a single remedy — re-import the schedule — which is a
+confident, wrong instruction for the three conditions rooted in the league's own
+data. Each was true of the condition it was written against.
+
+Owned by `backend`. Either split the code so each family has its own, or add a
+machine-readable discriminant to the error body alongside `error`. Gate: Code.
+The frontend must not recover specificity by matching on `detail` text — that is
+the form-over-meaning coupling `AGENTS.md` warns about and would break silently
+on a reword.
+
+### `schedule-grid-reference-distribution` - Comparing a team's period count against its own normal
+
+- [ ] **pending**
+- **Depends on:** `schedule-grid-ui`
+
+ADR-012's 2026-08-17 amendment requires a team's raw scheduled-game count be
+shown against **both** the league-wide period baseline and *that team's normal
+distribution*. `schedule-grid-ui` ships the first and deliberately defers the
+second; without this item the amendment is half-implemented and nothing outside
+this line says so.
+
+Owned by `quant`, not `frontend`, because "normal" is not arithmetic. It
+requires choosing a reference set — whether to include fantasy playoff periods,
+partial first and last periods, and the league-wide sparse periods (In-Season
+Tournament, All-Star break) that the same amendment singles out as special. A
+baseline that includes All-Star week depresses the mean and makes a genuinely
+sparse week read as ordinary; excluding it needs a rule for what counts as
+league-wide sparse, and that rule is a threshold. The amendment ties the output
+to trade targeting, so it is a number a decision rests on.
+
+**Gate:** Model, not Adapter. Needs held-out evaluation of whether the deviation
+measure identifies the periods it claims to, a model card in `docs/models/`, and
+an explicit statement of what the reference set cannot see. Until then the grid
+shows the raw row, which is itself the team's distribution laid out in order —
+the missing piece is the quantified comparison, not the evidence.
 
 ### `schedule-ui` - Building the schedule tracker UI
 

@@ -344,6 +344,316 @@ a:focus-visible {
   font-weight: 600;
 }
 
+/* --- Schedule grid -------------------------------------------------------- */
+
+/* Teams down, scoring periods across. Deliberately no colour scale: a value
+   scale would encode a judgement about whether a game count is good, and that
+   judgement is a model output (ADR-009/ADR-012), not a CSS decision. The only
+   visual distinctions are between a count, an explicit zero, and no data. */
+
+.grid-scroll {
+  /* A height constraint, not decoration. `overflow-x: auto` makes overflow-y
+     compute to `auto` too, so this element is already the sticky header's
+     scrollport — but without a max-height its scrollport is as tall as its
+     content, it never scrolls, and `position: sticky; top: 0` can never
+     engage. Thirty teams do not fit on a laptop, so the period numbers must
+     stay put while the rows move under them.
+
+     The 18rem budgets for everything above the grid at the default window: the
+     page heading, the lede, the lineage summary and the key. It is a constant
+     rather than a measurement, so opening the lineage disclosure or wrapping
+     the key onto a second line pushes the bottom of the grid below the fold
+     and produces an inner scrollport inside the page scroll. Acceptable for a
+     single-user tool; the honest fix is a flex column with `min-height: 0`. */
+  max-height: calc(100vh - 18rem);
+  min-height: 12rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.grid {
+  /* `separate` rather than `collapse`, but not for the reason folklore gives:
+     sticky `th` under a collapsing border model works in current engines, and
+     a live measurement on this grid confirmed the header pins either way. What
+     `collapse` does break is border *painting* — collapsed borders resolve onto
+     the table's border grid rather than onto the cell box, so a pinned header's
+     bottom rule does not travel with it and the rows scroll out from under a
+     header with no separator. With `separate` and zero spacing each cell owns
+     its own right and bottom edge, the lines render identically, and they stick
+     with the cell. See w3c/csswg-drafts#3136. */
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.grid__caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.grid th,
+.grid td {
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: var(--space-1);
+  text-align: center;
+  font-weight: 400;
+}
+
+.grid tbody tr:last-child th,
+.grid tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.grid__corner,
+.grid__team {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-sunken);
+  text-align: left;
+  padding-inline: var(--space-3);
+  min-width: 4.5rem;
+}
+
+.grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.grid__corner {
+  z-index: 3;
+}
+
+.grid__period {
+  min-width: 2.4rem;
+  line-height: 1.15;
+  padding-block: var(--space-2);
+}
+
+.grid__period-number,
+.grid__period-dates {
+  display: block;
+}
+
+.grid__period-number {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.grid__period-dates {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* A fantasy playoff week is not interchangeable with a regular one, so it is
+   marked structurally rather than tinted. */
+.grid__period--playoff,
+.grid__cell--playoff {
+  border-left: 2px solid var(--accent);
+}
+
+.grid__playoff-badge {
+  display: inline-block;
+  margin-block-start: 2px;
+  padding: 0 3px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+}
+
+.grid__team-abbr {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.grid__cell {
+  min-width: 2.4rem;
+}
+
+/* Zero is a count and is drawn like every other count. Only absence gets its
+   own treatment, because absence is not a magnitude — it is a different kind
+   of thing. */
+
+/* Absence is not zero, and must never be able to read as one. */
+.grid__cell--nodata {
+  color: var(--warn);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 3px,
+    color-mix(in srgb, var(--warn) 18%, transparent) 3px,
+    color-mix(in srgb, var(--warn) 18%, transparent) 6px
+  );
+}
+
+.grid__cell--league,
+.grid__total,
+.grid__total-header {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+
+.grid__cell--mean {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* A sum over cells that did not all arrive is smaller than the truth, so it
+   does not get to look like a complete one. */
+.grid__total--partial {
+  color: var(--warn);
+}
+
+.grid__partial-mark {
+  margin-inline-start: 1px;
+  font-size: 0.7em;
+  vertical-align: super;
+}
+
+/* The baseline rows pin to the bottom of the scrollport for the same reason the
+   period numbers pin to the top: with roughly half the teams visible at a time,
+   a baseline you can only see by scrolling to the end is a baseline you cannot
+   compare a team against. The mean row exists precisely for that comparison. */
+/* The two pinned footer rows must not overlap, so the upper one is offset by
+   the lower one's height. `--grid-foot-row` exists so the offset and the
+   height cannot drift apart — one declaration, read by both rules.
+
+   What stops a row exceeding that height is `white-space: nowrap`, not the
+   `height` declaration: on a table cell `height` is a minimum, so a label
+   wrapping to two lines would grow the row past the offset regardless and open
+   a seam under the row pinned above it. Measured at the 15px root this file
+   sets, `1.75rem` is 26.25px against a natural row of 26.5px, so the rows
+   overlap by a quarter pixel rather than leaving a gap — the safe direction.
+   Setting the property to `3rem` in devtools grows the row to 45px and moves
+   the offset with it, which is the check that the two are actually coupled.
+
+   None of this is observable to jsdom, which does no layout, so no test guards
+   it. */
+.grid {
+  --grid-foot-row: 1.75rem;
+}
+
+.grid tfoot th,
+.grid tfoot td {
+  position: sticky;
+  z-index: 1;
+  height: var(--grid-foot-row);
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--bg-sunken);
+  white-space: nowrap;
+}
+
+.grid tfoot tr:first-child th,
+.grid tfoot tr:first-child td {
+  bottom: var(--grid-foot-row);
+}
+
+.grid tfoot tr:last-child th,
+.grid tfoot tr:last-child td {
+  bottom: 0;
+}
+
+.grid tfoot .grid__team {
+  z-index: 2;
+}
+
+.grid__integrity {
+  margin: 0 0 var(--space-3);
+}
+
+.grid__key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-block-start: var(--space-2);
+  font-size: 0.78rem;
+}
+
+.grid__key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grid__key-swatch {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Lineage -------------------------------------------------------------- */
+
+.lineage {
+  margin-block-end: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.lineage__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.lineage__age--old {
+  color: var(--warn);
+}
+
+.lineage__facts {
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  font-size: 0.85rem;
+}
+
+.lineage__note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+/* --- Utilities ------------------------------------------------------------ */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 720px) {
   .shell {
     grid-template-columns: 1fr;

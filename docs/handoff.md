@@ -8298,3 +8298,1095 @@ the entire point of the entry.
 **Next:** Whoever reviews the first post-merge nightly run should append the
 outcome here, including "all green", because a silent pass is exactly how an
 alarm nobody reads becomes an alarm nobody notices is broken.
+## 2026-08-20 — frontend — Schedule grid on screen
+
+**Changed:** A `/schedule` route renders the per-team, per-scoring-period
+scheduled game count grid from `GET /api/v1/leagues/{league_id}/schedule-grid/current`
+— teams down, periods across, counts in the cells, a per-team season total, and
+a league row giving each period's team-games plus a per-team mean (ADR-012's
+first amendment asks for the league-wide baseline explicitly). New:
+`frontend/src/routes/SchedulePage.tsx`,
+`frontend/src/components/ScheduleGridTable.tsx`,
+`frontend/src/components/ScheduleLineage.tsx`,
+`frontend/src/components/scheduleGridModel.ts`,
+`frontend/src/api/scheduleGridErrors.ts`, and a recorded-response fixture with
+its own contract test. Modified: `App.tsx`, `AppLayout.tsx`, `AsyncBoundary.tsx`,
+`api/endpoints.ts`, `api/types.ts`, `DashboardPage.tsx`, `styles.css`.
+
+The invariant the screen is built around is that a cell is either a count or it
+is absent, and those are different values. `games: 0` renders as `0` with
+`data-state="zero"`. A `counts` row the backend never sent renders hatched, as
+`·`, with `data-state="no-data"` and the accessible name "no data", and the page
+states how many such cells it found. A blank cell cannot mean either.
+`isScheduleGrid` deliberately does *not* assert the dense-grid invariant the
+backend guarantees: rejecting the whole response would replace a visible hole
+with a blank screen and a generic "the response is unusable" message, which
+would be a false statement about a body that is one cell short. Value domain
+*is* asserted — a negative or fractional `games` is refused, because that is a
+field not being what we think it is rather than a hole in a collection.
+
+Each of the five documented refusals gets its own summary and its own next step,
+keyed off the code in the response **body**. The coordinator's contract
+correction is confirmed against the running service: `X-Bridge-Error` was absent
+from every refusal measured, and `body.request_id` equalled the `X-Request-ID`
+header. A test asserts specifically that the code is not read from that header,
+because a client that did would see `null` and fall through to a generic message
+on exactly the failures that matter most.
+
+Nothing on this screen ranks a count against another count. No colour scale, no
+light/heavy week, no threshold — those are `quant` outputs behind the Model gate
+(ADR-009), and encoding them in CSS would ship an unbacktested model.
+
+**Now true:** The grid renders in a real browser. Verified at
+`http://127.0.0.1:5183/schedule` (Vite dev server) proxying to the real FastAPI
+service on `127.0.0.1:8010` against the seeded `schedule_grid_demo.db`, read off
+the live DOM and computed styles rather than from a mock: 30 team rows, 21
+period columns plus a Total column, table 959px wide in a 1280px viewport;
+`cell-1-1` = `"0"` / `data-state="zero"` / "ATL, period 1: 0 games";
+`cell-2-1` = `"1"` / `data-state="count"`; league row 6 / zeros / 14, season 20,
+matching the seed's 20 non-zero team-games exactly; periods 20 and 21 carry the
+`PO` badge and a 2px accent border while period 19 has none; the lineage
+disclosure shows `9bcac1c60490b41a`, refresh 1, `2026-08-20T15:10:39.334171Z`
+verbatim, and `10 from source · 10 resolved · 20 team rows persisted`.
+
+An error state was verified live from a genuine backend refusal, not a stub: the
+seeded database was copied, `schedule_completeness` stripped from
+`refresh_runs.summary`, and the service restarted against it, producing a real
+`409 schedule_grid_incomplete_evidence`. The browser showed the written summary,
+the next step, the backend's own wording quoted, the code and the request id.
+
+Three independent exact-head reviews ran on `cf3ba4a` — `frontend`, `architect`
+and `code-review` — and every must-fix they raised is closed:
+
+- Both total columns summed only the cells that arrived and marked the shortfall
+  in screen-reader text alone, so the two most scannable numbers on the grid
+  looked exactly as trustworthy as complete ones. Partial totals now carry
+  `data-state="partial"`, a warn colour and a visible `+?`.
+- Zeros were muted. That was a two-stop colour scale on the count axis wearing a
+  legibility justification — zero is a count, and it was the one count drawn
+  differently — and it de-emphasised the value ADR-012's sparse-period amendment
+  makes most decision-bearing. Every count now renders identically; only absence
+  and playoff periods are visually distinguished, and both are categories rather
+  than magnitudes. Confirmed in the browser: zero and non-zero cells both
+  compute to `rgb(230, 233, 239)`.
+- `scheduleGridErrors.ts` claimed its single-module design kept the error panel
+  and the stale banner from drifting apart. It did not: the module had one
+  caller, on the cold-load path only. `AsyncBoundary`'s new prop is now
+  `describeError` — a description consumed by *both* paths — rather than
+  `renderError`, a rendered panel that could only ever have reached one. This
+  matters because `schedule_grid_not_current` is precisely the refusal that
+  arrives *after* a successful load, when the reader is looking at counts now
+  known to be superseded. There is a test for that path; there was not before.
+- `.grid-scroll` had `overflow-x: auto`, which makes `overflow-y` compute to
+  `auto` as well, so it was already the sticky header's scrollport — but with no
+  height constraint it could never scroll and `top: 0` could never engage.
+  It now has a `max-height`; measured live, the period header pins at the
+  scrollport top (249px) across scroll positions 200, 400 and maximum.
+- A test named "gives every code a distinct summary" compared the test file's
+  own regex literals to each other and asserted nothing about the product. It
+  now asserts over `SCHEDULE_GRID_ERRORS` itself, and additionally pins that the
+  documented code set and the copy's key set are equal.
+- The ADR-012 amendment clause this screen does *not* satisfy is now recorded in
+  `docs/backlog.md` as `schedule-grid-reference-distribution`, owned by `quant`
+  and gated Model, rather than existing only in a review transcript.
+
+`not_current` copy was rewritten to match the coordinator's amended definition:
+verification worked and returned a clear verdict, the schedule simply changed
+after the version was recorded, and the operator re-imports. Telling that user
+"nothing on record can show it is right" — correct for
+`incomplete_evidence` — would have been false.
+
+Code gate green: ESLint clean, `tsc --noEmit` clean, 72 Vitest tests across 8
+files, up from 39 on the `11f7efa` baseline.
+
+**Could not verify:** The no-data cell has never been produced by a real
+backend. `scheduled_game_counts` builds the grid by cross join, so the service
+cannot emit a hole; the rendering is covered by unit test and by the legend
+swatch's computed style, and the live browser has only ever shown a dense
+response. The same is true of the partial-total marker and the integrity banner.
+
+Everything was verified against backend PR #38 at `11f7efa`, not at its current
+head `84ed9b1`. The coordinator reports 133 changed lines in the route since,
+including a `season_type` guard and a set-mismatch rejection that add a new
+`schedule_grid_incomplete_evidence` path — neither should affect the 200 shape,
+but "should" is not "did", and re-verification after the rebase onto merged
+`main` is outstanding. Nothing here has run against a merged `main`.
+
+The 403 `schedule_grid_local_only` path was never exercised end to end: the
+service refuses non-loopback callers and every request in this session came from
+loopback, so that copy is proven by unit test only. The 404 was exercised
+against the live service; the other three by unit test plus, for
+`incomplete_evidence`, one real doctored-database run.
+
+The grid has only been seen at the seed's scale — 630 cells with 20 non-zero
+team-games. Nothing is claimed about rendering cost or readability at a full
+1,230-game season, where most cells will be 3s and 4s rather than zeros, and the
+visual balance may well be different. The five-second readability target is
+asserted from a sparse demo, which is the easy case.
+
+Browser verification used a single Chromium instance at 1280x720 through the
+canvas. No other browser, no other viewport, no touch device, and no screen
+reader was used — accessible names were asserted through jsdom and
+`toHaveAccessibleName`, which is not the same as hearing them. Screenshot
+capture timed out repeatedly in this environment, so the visual evidence above
+is computed styles and DOM text, not pixels.
+
+Port 8000 was held by another worktree's backend and the machine's editable
+install of `hoops-gm-backend` points at a different worktree entirely, so this
+ran on port 8010 with `PYTHONPATH` set. That is not how anyone else will run it,
+and the documented `python -m hoops_gm` default path was therefore not the one
+exercised.
+
+**Next:** Hold the PR until backend #38 merges, then rebase onto merged `main`,
+re-run the browser verification against the merged route — specifically that the
+200 still renders and at least one refusal still displays — and open with base
+`main`. Then a fresh exact-head review round on the rebased head, since every
+review above was against `cf3ba4a` and the fixes that followed it.
+
+---
+
+## 2026-08-20 — frontend — Schedule grid: three review rounds, and a correction to the entry above
+
+**Changed:** Two further rounds of exact-head review on `4006767` and
+`f6b0c1e` by `frontend`, `architect` and `code-review`. Every must-fix closed.
+The substantive ones:
+
+The per-team mean row summed only the teams that reported and divided by every
+team, producing a quotient that is the mean of no set — understated by exactly
+the missing share, and understated in the direction that makes each team's own
+count read as relatively healthier than it is. It sat directly beneath a total
+that *was* marked partial, which is worse than an unmarked number alone: an
+unflagged cell beside a flagged sibling signals it was checked and found sound.
+The denominator is now `periodReportingTeams`, computed in the same pass that
+decides absence so numerator and denominator cannot drift, and the cell carries
+`data-state="partial"`, the warn colour, a visible `+?` and an accessible name
+stating the shortfall.
+
+The footer rows are sticky at the bottom of the scrollport. Capping the grid's
+height so the header could pin had made the baseline rows reachable only at
+maximum scroll, by which point the first sixteen teams were off screen — so the
+header fix made the mean row, which exists solely to be compared against a
+team's cell, unreachable from most of the teams it serves. The offset between
+the two pinned rows is now a `--grid-foot-row` custom property both rules read,
+rather than a hard-coded height that a wrapped label would silently break.
+
+The row header is `Mean` rather than `Per team`: four characters cannot wrap in
+a column whose `min-width` floor is reached under horizontal compression, and a
+wrapped label there overlaps the row pinned above it — a defect jsdom can never
+catch, because it does no layout.
+
+**Now true — and this corrects the entry above.** The previous entry and my
+report to the coordinator both claimed the season mean cell "shipped wrong" at
+`4006767`, dividing by team-periods and rendering `0.0`. **That is false, and
+the `frontend` reviewer caught it.** At `4006767` the cell was
+`formatMean(seasonTotal, teamCount)` — 20/30 = `0.7`, correct. The `0.0` I saw
+in the browser came from my own in-progress round-two edit, which I introduced
+and fixed inside the same uncommitted working state. I then reported fixing a
+defect in a commit that never contained it. Verified by
+`git show 4006767:frontend/src/components/ScheduleGridTable.tsx`: the string
+`periods.length` does not appear in that file at that commit.
+
+The change to the season cell is still right — it now takes the mean of the
+Total column over rows that are complete, rather than dividing the season sum by
+every team, and it marks itself partial. But it was an improvement, not a
+repair, and the record said otherwise.
+
+The reviewer also showed the browser check I cited could not have distinguished
+the two expressions: on a dense response `completeRowTotal / completeRows.length`
+and `seasonTotal / teamCount` are provably identical, so the verification I
+performed did not exercise the change I made. The test now uses an input where
+they differ — one team missing a period and holding a non-zero count elsewhere,
+giving `16/2 = 8.0` against `22/3 = 7.3` — and I confirmed it by reverting the
+expression and watching it fail with `7.3` before restoring.
+
+A second record correction: the round-two commit message dates the Chromium
+sticky-`th` fix to January 2024. `code-review` puts it at Chromium 91, May 2021,
+as part of TablesNG. The decision is unaffected — `border-collapse: separate` is
+still right, because collapsed borders resolve onto the table's border grid
+rather than the cell box, so a pinned header's bottom rule does not travel with
+it (w3c/csswg-drafts#3136) — but the date in that message is wrong.
+
+Also closed this round: `isScheduleGrid` is exported and the recorded fixture
+asserts the predicate that guards the real request accepts it, rather than
+double-casting past it; the empty-cell check that could never fail is a
+`data-state` census over all 630 cells plus every total and mean; the season sum
+has a value assertion for the first time; `periodReportingTeams` has model-level
+tests including that unmatched and duplicate rows do not inflate it; the season
+mean's accessible name says "with a complete row" rather than "that reported",
+because those are different sets in the same row; the key no longer invites the
+reader to reproduce the season mean by dividing the season sum, which does not
+work when any row is partial.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 75 tests across 8 files.
+
+**Could not verify:** Everything in the previous entry's "could not verify"
+still stands and is not repeated here. Added by this round:
+
+The sticky footer is a second layout claim resting on the same single
+measurement — one Chromium instance at 1280x720, computed styles and geometry
+read from the DOM, no screenshots, no second browser, no touch device. The
+`z-index` and paint-order analysis that says the footer cannot punch through the
+team column was done by two reviewers reading specificity, not by observation,
+and it depends on `<tfoot>` following `<tbody>` in source order — legal HTML
+permits the reverse, and nothing tests it.
+
+The `Mean` row-header wrap this round guards against was never reproduced. It
+was predicted from `min-width: 4.5rem` with no `table-layout: fixed`, and the
+guard — a fixed footer row height plus `white-space: nowrap` — is asserted by
+construction rather than observed, because it needs magnitudes the seeded
+fixture does not contain.
+
+`--grid-foot-row: 1.75rem` is still a measured constant, not a derived one. It
+matches the rendered row height to a sub-pixel today; a change to the grid's
+font size or `--space-1` would desynchronise it, and no test can catch that.
+
+The three review rounds found two real numerical defects — the mean's
+denominator and the season cell's basis — and one false claim I made about my
+own work. None of the three would have been caught by any green test, and the
+last of them was caught only because a reviewer re-derived a claim I had written
+in prose. That is worth recording as the argument for the review apparatus
+rather than the gates alone.
+
+**Next:** Unchanged. Hold the PR until backend #38 merges, rebase onto merged
+`main`, re-*capture* rather than merely re-run the recorded fixture, re-verify
+the 200 and at least one refusal in a browser against the merged route, then
+open with base `main` and take a fresh exact-head review round on the rebased
+head.
+
+---
+
+## 2026-08-20 — frontend — Schedule grid: round four, and two corrections to the correction
+
+**Changed:** A fourth exact-head review round on `50a3777` returned **no
+must-fix from any of the three reviewers**. What follows is the small set of
+record corrections it produced, which are the only things of substance left.
+
+**Now true — correcting the entry above, twice.**
+
+**First, my correction over-corrected.** The previous entry says the season mean
+change "was an improvement, not a repair". `code-review` is right that this
+invites a future reader to conclude the season cell was fine at `4006767` and
+the change was cosmetic. It was not fine. At that head the cell was a bare
+`<td className="grid__cell grid__cell--mean">` with no `data-state` and no
+partial class, dividing a numerator summed over reported cells by every team.
+On a dense response it produced the correct `0.7`; on a holed one it understated
+and said nothing about it — which is the unmarked-partial defect all three
+reviewers raised, unrepaired for the season column specifically. So the cell
+genuinely was defective and the change genuinely was a repair. What was false
+was my *diagnosis* of it — the team-periods denominator and the `0.0` render —
+not the need for the fix.
+
+**Second, the Chromium correction was itself imprecise, and the two reviewers
+were describing different fixes.** Sticky *positioning* on a `<th>` under
+`border-collapse: collapse` began working in Chromium 91 (May 2021, TablesNG);
+sticky *border painting* under `collapse` was fixed later, around Chromium 121.
+The previous entry flattened these into one date being wrong. The consequence
+matters: if border painting is fixed in current Chromium, the border-grid
+argument is satisfied there too, and the surviving reason for
+`border-collapse: separate` is cross-engine — `w3c/csswg-drafts#3136` is still
+open, so Firefox and WebKit are not guaranteed to match. The CSS comment already
+cites the csswg issue rather than a browser version, so the code was standing on
+the durable ground; only the handoff needed fixing.
+
+**Third, and not mine: two reviewers ratified a false claim without checking
+it.** `architect` and `code-review` both endorsed my round-three account of the
+season-mean defect — one calling it a "good catch" — and both have since
+recorded that they computed forward from my prose rather than reading the prior
+commit. One `git show` disproved it. `architect`'s generalisation is worth
+keeping: **a self-reported defect is the claim a reviewer is least likely to
+check, because admitting fault reads as credible, and that is exactly
+backwards.** The failure here was mutual, and the asymmetry is the part that
+generalises beyond this branch.
+
+**Fourth, a claim I wrote in the last commit is also wrong, and the browser
+settles it.** The `--grid-foot-row` comment said the row height was "fixed here
+rather than left to emerge from font size, padding and line-height". On a table
+cell `height` is a *minimum*, not a cap: a label wrapping to two lines would
+grow the row past the offset regardless. `white-space: nowrap` is what actually
+forecloses that, and the comment did not mention it — so someone tidying
+`nowrap` as redundant would have reintroduced the seam. Corrected.
+
+`architect` also flagged that my measurements did not close: 26px rows against
+what they computed as a 28px offset. Resolved by measurement rather than
+argument — `:root` in `styles.css` sets `font-size: 15px`, not the 16px the
+arithmetic assumed, so `1.75rem` is 26.25px against a natural row of 26.5px.
+The rows overlap by a quarter pixel rather than gapping, which is the safe
+direction, and `offsetHeight` reporting 26 is the rounded 26.25. Setting
+`--grid-foot-row: 3rem` in the live page grows the row to 45px and moves the
+offset to 45px together, confirming the two are genuinely coupled and that
+`height` binds upward.
+
+Also closed this round: the season *sum*'s partial marking now has a
+`data-state` assertion — it was the one derived cell whose marker was unpinned.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 75 tests across 8 files.
+
+**Could not verify:** Everything in the two entries above still stands. Added:
+
+The `height`-is-a-minimum reasoning is asserted from the spec and from a
+devtools experiment that grew the row; the *wrap* case it guards against was
+never reproduced, because it needs magnitudes the seeded fixture cannot produce.
+`white-space: nowrap` is therefore believed rather than observed to be the
+binding guard.
+
+The quarter-pixel overlap is measured at one root font size in one browser at
+one zoom level. Nothing checks it at browser zoom, at a user-set root size, or
+in Firefox or WebKit — and since the whole reason for `border-collapse:
+separate` is now cross-engine, the engines that argument is about are the ones
+never tested.
+
+**Next:** Unchanged, and the one instruction not to let slide on the rebase:
+**re-capture the recorded fixture and read its `git diff`; do not merely re-run
+it.** A committed JSON file passes whether or not the backend changed, which is
+the single failure mode a recorded fixture is uniquely bad at, and backend #38
+has moved since `11f7efa` with a `season_type` guard and a set-mismatch
+rejection. Then re-verify the 200 and at least one refusal in a browser against
+the merged route, take a fresh exact-head review round, and open with base
+`main`.
+
+**Standing observation across four rounds:** every defect that mattered was in
+prose, not in code — a comment's worked example, a commit message's date, a CSS
+comment's mechanism, a claimed repair, and a reviewer's ratification of it. The
+tests were green throughout and would have stayed green through all of it. That
+is the argument for this review apparatus, and also for a narrower habit worth
+more than the apparatus: re-derive any number or mechanism that appears in
+prose, at the moment you write it, from the code beside it.
+
+---
+
+## 2026-08-20 — frontend — Rebased forward onto backend `84ed9b1`, fixture re-captured
+
+**Changed:** Rebased the schedule grid branch from backend PR #38's original
+head `11f7efa` onto its current head `84ed9b1`, which adds a `season_type`
+guard and set-mismatch rejection to the route. Confirmed
+`git merge-base --is-ancestor 11f7efa origin/sr2501-schedule-grid-api-operational`
+first: the backend owner did not force-push, so this is a fast-forward onto
+real history rather than a rebase onto a rewritten one.
+
+Two append conflicts, both in `docs/`. `docs/handoff.md` is append-only, so both
+entries are kept in order. `docs/backlog.md` conflicted on the status line
+because the backend owner had recounted it from the markers and found the
+carried-forward number had been drifting. I adopted their method rather than
+their number: the line is now recounted from the markers at each commit, and at
+this head reads 38 done / 1 blocked / 66 pending / 105 total, with 105 `###`
+headings against 105 markers, 1:1.
+
+**Now true:** The recorded fixture was **re-captured and its diff read**, not
+re-run — the architect's instruction, and the one failure mode a committed JSON
+file is uniquely bad at, since re-running it passes whether or not the backend
+changed. The entire diff against `84ed9b1` is one line:
+
+```
+-      "refreshed_at": "2026-08-20T15:10:39.334171Z",
++      "refreshed_at": "2026-08-20T16:38:01.502087Z",
+```
+
+Every other byte is identical — `source_game_count` 10, `resolved_game_count`
+10, `persisted_team_row_count` 20, 30 teams, 21 periods, 630 dense counts, both
+schedule and scoring-period versions unchanged. So the coordinator's claim that
+the 200 contract did not change is confirmed by capture-and-diff rather than
+accepted.
+
+The seed's *console output* did change shape — it now reports
+`as_recorded_source_game_count: 12` with two `dropped_game_ids`, where before it
+reported a flat count of 10. The lineage block in the response still reports
+`source_game_count: 10`, so the two games dropped by the new guard are excluded
+before the number the screen displays. Nothing on screen moved, but the seed
+summary and the response now count different things under similar names, which
+is worth knowing before anyone treats the seed's output as the screen's source.
+
+Re-verified in a real browser against the rebased backend: the grid renders
+identically — 30 teams, 21 periods, league row 6 / zeros / 14 / 20, mean row
+0.2 / zeros / 0.5 / 0.7, `PO` on periods 20 and 21, lineage summary
+`Schedule 9bcac1c60490b41a — refreshed today`. And a real refusal still
+displays correctly: the doctored-database run against the updated route returns
+`409 schedule_grid_incomplete_evidence` and the browser shows the written
+summary, the next step, the backend's own wording quoted, the code and the
+request id, with no grid on screen.
+
+Code gate at the rebased head: ESLint clean, `tsc --noEmit` clean, 75 tests
+across 8 files.
+
+**Could not verify:** Everything above still stands. Added by the rebase:
+
+The new `season_type` guard and set-mismatch rejection in `84ed9b1` add a
+`schedule_grid_incomplete_evidence` path this frontend has never triggered.
+It maps to copy that already exists and is unit-tested, but the specific
+backend condition was not reproduced — only the missing-completeness-block one
+was.
+
+The four independent review rounds were all conducted against `11f7efa`-based
+heads. Nothing has been reviewed at the rebased head; the diff to the frontend
+is empty apart from the fixture timestamp and the two docs resolutions, but that
+is an argument, not a review.
+
+The backlog recount is arithmetic on markers in a file two lanes edit
+concurrently. It is 1:1 with the headings at this head, which is the only check
+that would catch a bad conflict resolution, and it will need doing again if
+another lane lands items before this merges.
+
+**Next:** Unchanged and blocked only on the merge. When backend #38 lands, this
+branch is already on its head, so the remaining steps are: rebase onto merged
+`main` (expected to be a no-op beyond the merge commit), re-capture the fixture
+once more and read the diff, re-verify both browser states, take a fresh
+exact-head review round on the rebased head, and open the PR with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Driving the second refusal path found a false message
+
+**Changed:** The coordinator asked that the post-merge browser pass drive one of
+`84ed9b1`'s two *new* refusal conditions end to end, rather than only the
+missing-completeness-block one already exercised, on the grounds that two
+conditions reaching the same screen through different backend paths is where an
+integration gap hides. Since this branch is already rebased onto `84ed9b1`, I
+did it now.
+
+It found one. The `season_type` guard produces
+`409 schedule_grid_incomplete_evidence` with the detail *"schedule refresh 1
+describes a 'playoffs' cohort, but this grid counts regular-season games only"*.
+The screen rendered that detail directly underneath a summary reading **"The
+schedule refresh cannot state what it imported"** — which is false in that
+condition. The refresh states what it imported perfectly well; what it imported
+is the wrong cohort. The dashboard was contradicting the backend's own words in
+the same panel, and a reader trusting the larger text would have gone looking
+for a missing block that is present and correct.
+
+The copy now covers both conditions without being false of either: *"either the
+refresh cannot state what it imported, or what it did import is not the cohort
+this grid counts"*, with the action pointing at the backend's wording as the
+thing that disambiguates. The clause the coordinator asked to keep — that this
+is not a claim the schedule is wrong, but that nothing on record can show it is
+right — is retained, qualified to "right **for these numbers**", which is what
+makes it true of the cohort case as well.
+
+**Now true:** Both conditions driven end to end against the real service on the
+rebased head, each from its own doctored database, each read off the live DOM:
+
+- Missing block → `Backend said: schedule refresh 1 carries no
+  schedule_completeness block…`, summary still accurate.
+- Playoffs cohort → `Backend said: schedule refresh 1 describes a 'playoffs'
+  cohort, but this grid counts regular-season games only`, summary now accurate.
+
+Both show the same code, distinct backend detail, distinct request ids, no grid
+on screen, and a working Retry. A regression test pins the cohort case and
+asserts specifically that the summary is no longer the old sentence.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** The set-mismatch rejection — the third path to this code,
+where `counts` names a team or period with no corresponding row — was not driven
+end to end. It requires a database whose count rows and header rows disagree,
+which the seed cannot produce by construction, and I judged hand-editing the
+schema to manufacture it a worse trade than recording that it is untested. Its
+copy is the same string now verified against two other conditions, so the
+message is exercised even though that specific route to it is not.
+
+This is also a caution about the general shape of the finding: the copy was
+written against one condition and reviewed four times without anyone noticing it
+was false of a second, because every test and every browser check drove the
+same path. Sharing an error code across conditions means the message has to be
+true of all of them, and nothing in the type system or the tests enforces that —
+only driving each path does.
+
+**Next:** Unchanged. Blocked on #38. On merge: rebase onto `main`, re-run the
+backlog 1:1 marker check as a matter of course rather than an exception (Lane C
+is actively adding items), re-capture the fixture and read the diff, re-verify
+the browser states, fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased forward onto `4b1ceef`, and the seed's names are fixed
+
+**Changed:** Rebased again onto backend PR #38's new head `4b1ceef`, having
+first confirmed `84ed9b1` is still an ancestor — fast-forward onto real history,
+not a rebase onto a rewritten one. Same two append conflicts in `docs/`, now
+resolved by a script rather than by hand, because this recurs on every rebase
+and hand-resolving a status line is how the count drifts in the first place.
+
+**Now true:** The fixture was re-captured and diffed again. The entire delta
+against `4b1ceef` is one line — the `refreshed_at` timestamp. `source_game_count`
+10, `resolved_game_count` 10, `persisted_team_row_count` 20, 30 teams, 21
+periods, 630 counts, both versions unchanged. That is the second consecutive
+backend head across which the 200 contract has been proved stable by capture and
+diff rather than assumed.
+
+Lane A acted on the seed-naming finding reported from here. The seed summary now
+reads `games_recorded_in_fixture: 12`, `games_dropped_unresolved: [...]`,
+`games_imported_into_cohort: 10` and — the useful one —
+`api_lineage_schedule_source_game_count: 10`. The two populations that
+previously shared the name `source_game_count` are now named for what each
+counts, and the one the screen displays says so in its key. Reported across an
+ownership boundary and fixed by its owner, which is the intended shape.
+
+Both browser states re-verified at this head: the grid renders 30 rows x 23
+columns with league totals 6 / 14 / 20, season mean 0.7, `PO` on period 21,
+lineage `Schedule 9bcac1c60490b41a — refreshed today`, zero and non-zero cells
+the same colour, ATL and the Mean row on screen together, no alerts. And the
+`season_type` refusal still displays its corrected copy with the backend's own
+wording quoted beneath it.
+
+The backlog 1:1 check earned its keep on this rebase. `git rerere` replayed the
+earlier resolution and carried a stale status line forward — 105 against an
+actual 106 — which the headings-to-markers comparison caught immediately. The
+line now reads 38 done / 1 blocked / 67 pending / 106 total, 106 headings to 106
+markers. This is exactly the failure the check exists for, and it happened on
+the first rebase after the check was introduced.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** As before, with one correction the coordinator supplied
+and which is more accurate than either half alone: the set-mismatch condition —
+the third path to `schedule_grid_incomplete_evidence` — is **not unguarded, only
+unrendered**. Lane A's mutation table covers set-equality deletion at the API
+layer, so the backend behaviour is pinned; what has never been exercised is the
+browser route to it. The seed cannot produce that state by construction and
+hand-editing the schema to manufacture it was judged a worse trade than
+recording the gap.
+
+Nothing has been reviewed at this head. The frontend diff since the last
+reviewed head is the fixture timestamp, the docs resolutions and the corrected
+`incomplete_evidence` copy — but that is an argument, not a review, and a fresh
+exact-head round follows the final rebase regardless.
+
+**Next:** Unchanged and blocked only on the merge. Rebase onto merged `main`,
+re-run the 1:1 marker check, re-capture and diff, re-verify both browser states,
+fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — One code, nine conditions: the copy was wrong twice more
+
+**Changed:** A focused review round on the corrected `incomplete_evidence`
+message — requested while blocked on the merge, because that copy had landed
+after all four full rounds and had been seen by nobody — found the correction
+itself defective, and the same defect in a second code.
+
+**`schedule_grid_incomplete_evidence` is raised from nine places**, not the
+seven I listed, on four different objects: the refresh's completeness evidence,
+the cohort it describes, the league's team rows, and the league's scoring
+calendar. Verified by line number against `schedule_grid.py` — 194, 215, 224,
+230, 246, 257, 302, 339, 430, 437.
+
+My corrected copy asserted a single remedy: *"Re-import the schedule so the
+refresh records its completeness for the regular-season cohort."* For three of
+those conditions — a team with no team row, a scoring period the league has no
+row for, and resolved games falling inside no scoring period — **re-importing
+the schedule cannot help.** The fault is in the league's own data, and the
+operator would have run the import, received the identical 409, and learned
+nothing. The previous wording was already wrong for those three, but genericly
+so; mine was wrong with more confidence, which is worse. I fixed the
+misdirection for the one condition I drove and sharpened it for three I did not.
+
+The copy now names all three families and says outright that the remedy differs,
+including that re-importing will not create a missing scoring period.
+
+**The same defect was live in `schedule_grid_not_current`, and a real response
+proved it.** Attempting to reach the league-calendar condition, I deleted a
+scoring period and got instead
+`scoring periods for league 1 do not match active deadline calendar version 1;
+run scoring-period projection`. My summary said *"The schedule changed after
+this version was recorded"* — false. The schedule had not changed; the
+scoring-period projection was stale. The coordinator's amended definition of
+this code covers both, and my wording had narrowed it to one. Now: *"the
+schedule may have changed after this version was recorded, or the league's
+scoring-period projection may be stale"*, with the action naming both remedies.
+
+**Now true:** Both corrected messages verified against the real service, each
+rendered above a backend detail it no longer contradicts:
+
+- `not_current` over *"…do not match active deadline calendar version 1; run
+  scoring-period projection"* — the action now names that remedy explicitly.
+- `incomplete_evidence` over *"…describes a 'playoffs' cohort…"*.
+
+`docs/backlog.md` gains `schedule-grid-refusal-discriminant`, owned by
+`backend`, gated Code: split the code or add a machine-readable discriminant to
+the body. Prose cannot be both specific and true across nine conditions on four
+objects, and the frontend must not recover specificity by matching on `detail`
+text — that is the form-over-meaning coupling AGENTS.md warns about and would
+break silently on a reword. Backlog recounted: 38 done / 1 blocked / 68 pending
+/ 107 total, 107 headings to 107 markers.
+
+Also fixed, and it was on a 40-minute fuse: the recorded fixture's age assertion
+hardcoded `2026-08-27T18:00:00Z` as its reference instant, which left **53
+minutes** of margin against the next re-capture. Any recording taken after
+18:00Z would have made `days` 6 and failed a test on a change that broke
+nothing. The reference is now derived from the recording itself, plus a
+boundary assertion so the derivation is not vacuous.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files.
+
+**Could not verify:** The three league-data conditions at `:302`, `:339` and
+`:437` still have not been driven end to end, and I now know why it is hard:
+deleting a scoring period trips the earlier `not_current` projection check
+first, so reaching them needs a database that is inconsistent in one specific
+way while consistent in every other — which the seed cannot produce and which I
+judged not worth manufacturing by hand. Lane A's mutation table pins the backend
+behaviour, so these are **not unguarded, only unrendered**. The copy is now
+written to be true of them rather than verified against them, which is weaker
+and is the honest description.
+
+The `:430` condition is documented unreachable by the backend and was not
+considered further.
+
+**The generalisation, now with three instances rather than one:** a message
+written against one condition and reviewed by three specialists was false of a
+second; its correction was false of three more; and the same defect was sitting
+in a neighbouring code the whole time. None of it was catchable by a green test,
+and each was found only by rendering a real refusal and reading the sentence
+above the backend's own words. **When one wire code spans several conditions,
+the message is an untested assertion about every condition you did not drive.**
+
+**Next:** Unchanged. Blocked on the merge of backend #38. Rebase onto merged
+`main`, re-run the 1:1 marker check, re-capture and diff the fixture, re-verify
+the browser states, fresh exact-head review round, open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased onto `5426920`; the fuse the review found was real by ten seconds
+
+**Changed:** Rebased forward again onto backend PR #38's third head `5426920`
+("Remove the seed's lock call rather than guard the ordering"), after confirming
+`4b1ceef` is still an ancestor. Re-seeded, re-captured, re-verified.
+
+**Now true:** The 200 contract is stable across a **third** consecutive backend
+head, proved by capture-and-diff each time. The whole fixture delta is again the
+`refreshed_at` timestamp; every other byte identical.
+
+**The review finding about the hardcoded age reference was not theoretical — it
+fired.** The reviewer calculated that the previous assertion, which compared the
+recording against a hardcoded `2026-08-27T18:00:00Z`, had 53 minutes of margin
+left and would break on any re-capture taken after `18:00:00Z`. This re-capture
+timestamped at **`2026-08-20T18:00:09.927941Z`** — nine and a half seconds past
+that boundary. Verified rather than asserted:
+
+```
+hardcoded reference would give days = 6 (test expects 7 -> FAIL)
+derived reference gives days = 7 (PASS)
+```
+
+Had the fix not landed an hour earlier, the suite would now be red on a schedule
+grid that is completely correct, with a failure message about refresh age. The
+lesson is not that the margin was thin; it is that **an assertion whose truth
+depends on what o'clock a fixture was recorded is not testing what it claims
+to**, and nothing about it looks wrong until the clock crosses.
+
+The backlog 1:1 marker check fired for the second time on this rebase, again
+catching `git rerere` replaying a stale status line — 107 stated against 108
+actual. Second consecutive rebase where the check caught the same class of
+failure. It is no longer a hypothetical safeguard.
+
+Browser re-verified at this head: 30 rows x 23 columns, zeros explicit and the
+same colour as counts, league totals 6 / 14 / 20, season mean 0.7, `PO` on
+period 21, lineage `Schedule 9bcac1c60490b41a — refreshed today`, first team and
+the Mean row on screen together, no alerts.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 76 tests across 8 files. Backlog
+recounted: 38 done / 1 blocked / 69 pending / 108 total, 108 headings to 108
+markers.
+
+**Could not verify:** Unchanged from the previous entries, and the list is not
+repeated. Nothing new was introduced by this rebase; the only frontend delta is
+the fixture timestamp.
+
+Three rebases onto three backend heads have each produced a timestamp-only
+fixture diff. That is evidence the 200 contract is stable, and it is *not*
+evidence the fixture would catch a change to it — nothing has yet exercised the
+capture-and-diff loop against a backend that actually changed the response
+shape, so the loop's sensitivity is assumed rather than demonstrated.
+
+**Next:** Unchanged and blocked only on the merge of backend #38. On the signal:
+rebase onto merged `main`, re-run the 1:1 marker check (it has now caught
+something on two of two rebases, so treat it as expected to fire), re-capture and
+diff the fixture, re-verify the browser states, fresh exact-head review round,
+open with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Negative control on the capture-and-diff loop
+
+**Changed:** No product code. The coordinator asked me to retire my own
+strongest caveat with evidence: three rebases had produced three
+timestamp-only fixture diffs, which is evidence the 200 contract is stable but
+*not* evidence the loop would notice if it were not. The loop was trusted,
+load-bearing and had never once been observed failing — the same category as
+every vacuous alarm found across the lanes today.
+
+So I perturbed the real route locally, three ways, ran the full loop each time —
+capture from the running service, write the fixture, `git diff`, run the suite —
+and reverted. Nothing was committed; the working tree was verified clean
+afterwards by `git status --porcelain`.
+
+**Now true — the loop is demonstrated sensitive on structure, value and
+cardinality, not assumed:**
+
+**1. Field rename.** `is_playoff` → `playoff` in `ScheduleGridPeriod`.
+Diff: `21 insertions, 21 deletions`, showing `-"is_playoff": false` /
+`+"playoff": false`. Tests: `is accepted by the validator that guards the real
+request` failed — `isScheduleGrid(recorded)` returned `false` — and the render
+assertion failed with the `PO` badge absent. This is the case the exported
+validator was added for, and it is now shown to work rather than argued to.
+
+**2. Changed count.** One added game in period 5.
+Diff: `30 insertions, 30 deletions`, showing `-"games": 0` / `+"games": 1`.
+Test failure: `expected 50 to be 20`. The season total assertion located the
+magnitude of the change, not merely its existence.
+
+**3. Broken density.** One `counts` row dropped, 629 instead of 630.
+Diff: `5 deletions` — the smallest of the three, and still unambiguous.
+Test failure: `expected [...] to have a length of 630 but got 629`, plus the
+`data-state` census.
+
+In all three the `git diff` named *what* changed rather than only *that*
+something did, which is the property that makes reading the diff worth more than
+re-running the suite.
+
+**Could not verify:** The control covers the three shapes I could produce by
+editing the response construction: a renamed field, a changed value, a missing
+row. It does not cover a change of *meaning* under an unchanged shape — a field
+that keeps its name and type while counting a different population, which is
+precisely the `MATCHUP` / `X-Bridge-Error` / `source_game_count` failure this
+project has hit four times today. A recording cannot detect that, because the
+bytes look identical to the correct answer. The loop's sensitivity is now
+demonstrated for the failures it can see and remains structurally blind to the
+one that has actually occurred most often here.
+
+Nor does it cover the capture step's own failure modes: a service that returns a
+cached or stale response, or a capture taken against the wrong database, would
+produce a clean diff and prove nothing. Every capture in this session was taken
+immediately after a restart against a freshly seeded database, which is a
+convention, not a guard.
+
+**Why this is recorded even though nothing shipped:** the argument for doing it
+was that every vacuous alarm found today — a position alarm asserting over a
+committed manifest, a reason-vocabulary alarm that structurally could not see
+the change it claimed to detect, a lock test satisfied by another function's
+locks, `rerere` replaying a resolution correct for different inputs — shared one
+property: **the mechanism had never been observed failing when it should.** A
+verifier that has only ever been seen passing is indistinguishable from one that
+cannot fail. Twenty minutes of deliberate breakage is the cheapest way to tell
+the two apart, and it should be the default for anything load-bearing rather
+than something a coordinator has to ask for.
+
+**Next:** Unchanged, blocked only on the merge of backend #38.
+
+---
+
+## 2026-08-20 — frontend — The `rerere` diagnosis was wrong, twice, and the second correction was wrong too
+
+**Changed:** No product code. A correction to a mechanism claim I published
+twice and the coordinator relayed to another lane.
+
+**What I claimed:** that `git rerere` "silently replayed a stale status line"
+during two rebases, carrying 105 against an actual 106 and later 107 against
+108. I called it "unexamined inheritance with a cache" and it was recorded in
+the risk register on my say-so.
+
+**What Lane C measured, and I confirmed independently:**
+
+```
+git config --show-origin --get rerere.enabled  → true  (repository config)
+git config --get rerere.autoupdate             → unset
+<git-common-dir>/rr-cache                      → 65 recorded resolutions
+```
+
+With `autoupdate` unset, rerere writes a recorded resolution into the working
+tree but leaves the path **unmerged in the index**, so git still stops and asks.
+It cannot silently complete a conflicted merge. My claim was wrong in the
+mechanism.
+
+**But the replacement diagnosis — "the file already looked resolved and
+`git add -A` took it unread" — does not fit my incidents either.** I staged
+those two files **by path** after running a resolver over them, not with
+`git add -A`. So neither published explanation accounts for what happened here.
+
+**What actually happened, verified rather than reasoned:**
+
+- The rebase stopped **once**, at the commit that genuinely conflicted, and then
+  reported `Rebasing (8/10)`, `(9/10)`, `(10/10)` with no further prompt.
+  Commits 4–7 and 8–10 did not conflict at all — and **rerere only acts on
+  conflicts**, so it was not the agent for any of them. That alone falsifies
+  the original claim.
+- Post-rebase commit `81b176a` adds **one** `###` heading to `docs/backlog.md`
+  and changes the status line **zero** times.
+- Its pre-rebase counterpart `50a3777` is still in the object store, and its
+  diff is `-**39 done … 104 total**` / `+**39 done … 105 total**`.
+
+So that commit's *heading* applied and its *status-line update* did not. The
+mechanism, stated as the inference it is: my resolver ran at the conflicting
+commit and wrote a status line already ending `105 total`; the later commit's
+hunk wanted to change a line ending `104 total` into one ending `105 total`, and
+git treated that change as already present. The total held the target value for
+a different reason, and the update was dropped as redundant while the thing the
+total counts kept growing.
+
+**The general shape is the same as the rest of the day and is worth more than
+either wrong version of it:** a derived quantity was resolved at an intermediate
+point in a sequence whose later steps also changed it, and it ended up correct
+for a tree that no longer existed. Not a cache replaying, not an unread file —
+**a number that was right when it was written and stale by the time it was
+committed.**
+
+**Now true — the mitigation changes accordingly.** Staging by path was already
+being done and did not help. Disabling rerere for the final rebase is harmless
+and I will do it as the coordinator suggests, but on this evidence it will not
+be what saves the count. What saves it is: **recompute the derived total at the
+final head, after the rebase completes, never during it.** The 1:1
+headings-to-markers check is the thing that actually caught both incidents, and
+it caught them at the final head, which is why it worked.
+
+**Could not verify:** The "treated as already present" step is an inference from
+the observed inputs and outputs, not from instrumenting git's merge. I did not
+re-run the rebase with `rerere.enabled=false` to demonstrate the same drop
+occurs without the cache — which would be the decisive experiment, and is the
+negative control I would want if this mattered more than it does. The
+falsification that *is* decisive is narrower and sufficient: rerere acts only on
+conflicts, and no conflict occurred on the commits whose update went missing.
+
+**The thing worth carrying:** this is the third mechanism claim about the same
+incident, and the first two were confident, plausible and wrong — one of them
+mine, published, relayed to another lane, and written into the risk register
+before anyone measured a `git config`. The measurement took one command. **A
+mechanism claim that nobody has run a command against is a guess wearing the
+grammar of a finding**, and this project's rule about stating claims in a form
+that lets someone disprove them cheaply exists precisely so that the command is
+obvious. It was obvious here and I did not run it.
+
+**Next:** Unchanged, blocked only on the merge. Final rebase will use
+`git -c rerere.enabled=false`, stage the two docs files by path, and recompute
+the backlog total at the final head rather than mid-sequence.
+
+---
+
+## 2026-08-20 — frontend — On merged `main`, and a third refusal code was misdescribed
+
+**Changed:** Rebased onto merged `main` (`959a795`). The merge added no content
+over `2091975`, so the rebase was conflict-free; recount at the final head gives
+38 done / 1 blocked / 69 pending / 108 total, 108 headings to 108 markers, tree
+clean, zero markers.
+
+**The coordinator's note that merged `main` carries a refusal path new since my
+last capture turned out to matter.** `schedule_grid_incomplete` now has **two**
+raisers, not one: the original `not rows` case, and a new one at
+`schedule_grid.py:485` — a team holding schedule rows inside the verified cohort
+but absent from the grid, because it is marked inactive.
+
+I drove it: deactivated team 2 in a copy of the seeded database and got
+
+> `teams [2] have 2026-27 schedule rows inside the verified cohort but are
+> absent from the grid; refusing to serve counts that contradict their own
+> lineage block`
+
+My copy for that code read *"produced no game counts at all for this league, so
+there is no grid to draw"* — **false here.** There are counts; they are short a
+team whose rows exist. That is the third code on this screen whose message was
+written against one condition and was false of another, and the third time
+driving the condition rather than reasoning about it is what found it.
+
+Both conditions are now named, with an action that points at the backend's
+wording and gives the different remedy for each: no counts at all points at the
+league's scoring calendar; a team present in the schedule but missing from the
+grid points at it being inactive while still holding rows. Verified in the
+browser against the merged route, rendered above the backend detail it no longer
+contradicts.
+
+**Now true:** Capture-and-compare against merged `main` — the response is
+identical to the previous capture in every field but `refreshed_at`, which moved
+only because the seed re-ran. The fixture was updated because something did
+move; where nothing moves, comparing without replacing is the verification and
+replacing destroys the baseline.
+
+The 200 re-verified in a browser on merged `main`: 30 rows x 23 columns, zeros
+explicit and the same computed colour as counts, league 6 / 14 / 20, season mean
+0.7, lineage reading `10 from source · 10 resolved · 20 team rows persisted ·
+20 counted in this grid`, `PO` on period 21, first team and Mean row on screen
+together, no alerts.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, **78 tests across 8 files**.
+
+**Could not verify:** The three league-data conditions under
+`schedule_grid_incomplete_evidence` remain unrendered, for the reason already
+recorded — reaching them needs a database inconsistent in exactly one way and
+consistent in every other, which the seed cannot produce. The `403
+schedule_grid_local_only` path is still unit-test-only; every request in this
+session came from loopback.
+
+**Five refusal conditions have now been driven end to end** — missing
+completeness block, wrong cohort, stale scoring-period projection, deactivated
+team, unknown league — and **three of the five falsified the copy that was
+already written for their code.** That ratio is the argument for
+`schedule-grid-refusal-discriminant` more than any reasoning about it: when a
+message is written for a code rather than for a condition, the base rate of it
+being wrong about some other condition of that code appears to be better than
+even.
+
+**Next:** Fresh exact-head review round on the rebased head, then open the PR
+with base `main`. If #39 lands first, one more rebase — recount from the merged
+file rather than reconciling either side's header, per Lane C.
+
+---
+
+## 2026-08-20 — frontend — Final review round: three more, and every one was a branch I reasoned about
+
+**Changed:** Three independent reviewers on merged `main` at `fd04725`. All
+three refused to approve. Five findings between them, and the architect named
+the pattern that produced every one: **each was a claim about a condition that
+was reasoned about rather than executed.**
+
+**1. The fixture "coherence fix" was backwards.** `db/lineage.py:174` enforces
+`persisted_team_row_count == 2 * resolved_game_count` — team_schedule holds
+exactly two rows per game. My earlier "fix" set persisted to 14 against 10
+resolved, which is a body the service **cannot produce**: it raises inside
+`schedule_completeness` and becomes a 409. Roughly thirty happy-path tests were
+rendering an impossible response.
+
+And the thing I "fixed" was not a defect. `10 resolved / 20 persisted` against
+14 counted is the legitimate case — six team-games falling outside every scoring
+period. I read the benign case as a fault and edited a correct number into an
+impossible one, one commit after writing a note whose entire purpose was to
+explain that the benign case is benign. The fixture is now `7 / 7 / 14` with 14
+counted: legal against the invariant and equal to what the grid counts.
+
+**2. The lineage mismatch note fires if and only if nothing is wrong.** Merged
+`main` refuses the fail-open it was shaped for at `schedule_grid.py:482` — a
+team persisted but absent from the grid is a 409 and cannot reach a 200. What
+remains is the structural gap between a season's persisted rows and the subset
+inside a fantasy calendar, which on any real season is permanent. Worse, on a
+sparse response `countedTeamGames` sums reported cells only, so the note fires
+and attributes a payload hole to calendar boundaries while the integrity banner
+ten lines below correctly attributes it to missing data — the dashboard
+contradicting itself, which is the defect I opened an earlier round to close.
+
+The note is deleted. The two figures stay side by side on the facts line, which
+costs nothing, asserts nothing, and lets a reader compare them.
+
+**3. `schedule_grid_not_current` had the same closed-enumeration flaw I had just
+removed from its sibling.** Three raisers: `:226` no refresh registered at all,
+`:282` fingerprint mismatch, `:430` a class the backend documents in its own
+comment as *"roughly twenty-five causes — no active calendar, no settings
+snapshot, a calendar bound to another league, a timezone-naive boundary — and
+only `StaleScoringPeriodProjectionError` means stale."*
+
+My copy asserted *"the evidence is well-formed but no longer describes current
+reality"*, which is false at `:226` — there is no evidence, nothing has been
+registered — and that is the **most likely refusal a new operator will ever
+see**, on a fresh install before the first import. The action offered a two-way
+remedy, so a league with no active deadline calendar was told to re-run a
+projection that cannot create the calendar it projects from.
+
+Rewritten open. Driven end to end: deleted the schedule refresh, got
+`season '2026-27' has no current NBA schedule refresh`, and the screen now reads
+*"common cases are no schedule refresh registered for this season…"* with
+*"Nothing registered means importing the schedule for the first time."*
+
+**4. `schedule_grid_incomplete`'s remedy named the wrong condition.** `rows` is
+empty only when the league has no scoring periods or no active teams. A calendar
+that exists but does not cover the imported season yields rows that are all
+zero, which raises `incomplete_evidence` at `:453` instead — the sibling code I
+had just corrected. So the remedy I wrote for the branch I had **not** driven
+sent the operator to a different code's condition.
+
+**5.** `countedTeamGames` was optional; a cross-check a caller can omit without a
+type error is not a cross-check. Now required. And a test comment claiming "the
+boundary either side" preceded a single assertion.
+
+**Now true:** Six refusal conditions have now been driven end to end against the
+real service — missing completeness block, wrong cohort, deadline-calendar
+mismatch, deactivated team, unknown league, and no refresh registered. **Four of
+the six falsified copy that was already written for their code.**
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 77 tests across 8 files.
+
+**Could not verify:** The `:430` projection class remains driven only through
+its deadline-calendar-mismatch member; the other ~24 causes are unexercised, and
+the copy is written to be true of them rather than checked against them. The
+403 loopback refusal is still unit-test-only. The three league-data conditions
+under `incomplete_evidence` remain unrendered.
+
+The lineage figures are shown side by side with no automated comparison, which
+is a deliberate retreat: I could not name a condition, reachable on a 200 at
+merged `main`, where they differ **and** something is wrong. If one exists the
+check should key on it, and I did not find one.
+
+**The generalisation, and it is the architect's not mine:** *when you change
+something because you observed a problem, check the sibling you did not
+observe.* Every defect this branch produced across six rounds has that shape —
+the untested branch of a two-branch remedy, a fixture field edited without
+checking the invariant that governs it, a warning designed against the only
+dataset where it cannot fire. None was caught by a test, because in each case
+the test was written from the same assumption as the code.
+
+**Next:** Report the three fixes and open the PR with base `main`.
+
+---
+
+## 2026-08-20 — frontend — Rebased onto `56adf2f` after #39; the recount caught a fourth stale header
+
+**Changed:** Rebased onto `main` at `56adf2f`, after Lane C's #39 merged. This is
+the first rebase where another lane's `docs/` entries were in play rather than
+only the backend's, and both files conflicted.
+
+**Now true — the two checks the coordinator asked for, both run:**
+
+`docs/handoff.md` entries were counted, not eyeballed, and the set difference
+taken **both ways** against snapshots of each side recorded before the rebase:
+
+```
+total ## headings at final head: 161   (expected 135 base + 6 Lane A + 8 Lane C + 12 mine)
+missing from mine: 0
+missing from main: 0
+duplicates:        0
+```
+
+So no lane's entries were eaten and none were doubled. Recording the two heading
+sets *before* starting the rebase is what made this checkable afterwards; doing
+it from memory would have been the same guess in a different costume.
+
+`docs/backlog.md` was recounted at the final head, and it caught a fourth stale
+header — the same class as the previous three, arriving by a new route. Dropping
+conflict markers is the right resolution for append-only prose and the **wrong**
+one for a single derived line: it kept *both* sides, leaving four status lines
+in the file, and a wrapped parenthetical from Lane C orphaned mid-sentence. The
+recount is what surfaced it. One line now: **39 done / 1 blocked / 69 pending /
+109 total**, with 109 headings to 109 markers, zero duplicates — which is Lane
+C's authoritative post-merge 38/1/66/105 plus my one done and three pending,
+exactly as predicted before measuring.
+
+Neither lane's pre-merge header was usable as an input, because each was
+computed before the other's items landed. That is now stated in the file so the
+next lane does not try to reconcile them.
+
+**Capture-and-compare against the new `main`: byte-identical, including the
+timestamp.** `56adf2f..HEAD` touches no backend file, so nothing could have
+moved, and the fixture was therefore *not* re-captured — comparing without
+replacing is the verification, and replacing on an unchanged route destroys the
+baseline. This is the check the coordinator asked for after `main` moved a
+fingerprinted file under Lane C: my only artefact deriving from backend source
+is the recorded response, and it is confirmed identical rather than assumed so.
+
+Browser re-verified on `56adf2f`: 30 rows x 23 columns, zeros explicit and the
+same computed colour as counts, league 6 / 14 / 20, season mean 0.7, lineage
+`10 from source · 10 resolved · 20 team rows persisted · 20 counted in this
+grid`, `PO` on period 21, first team and Mean row on screen together, no alerts.
+
+PR scope against `main`: 17 frontend files, 2 docs, **zero backend**.
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 77 tests across 8 files.
+
+**Could not verify:** Everything in the previous entries stands and is not
+repeated. Added by this rebase: nothing was re-reviewed at this head. The delta
+from the approved head is the two docs resolutions and no source change, which
+is checkable — `git diff --name-only` shows only `docs/` — but the three
+approvals were given at `aeff3bf`, not here.
+
+On the coordinator's AST-equivalence correction: I have no equivalence check of
+that kind, so nothing of mine is exposed to it. The nearest analogue is the
+capture-and-compare loop, and its limits are already recorded — it sees a
+renamed field, a changed value and a missing row, and is structurally blind to a
+change of meaning under an unchanged shape. Worth noting the two failures are
+the same shape: `ast.dump` cannot see comments, a recording cannot see meaning,
+and in both cases the check passes while the thing it was trusted to catch goes
+by. **Line-span containment is to AST-compare what driving a real refusal is to
+reading the copy** — the check that looks at what the other one cannot.
+
+**Next:** PR is open against `main`. Nothing outstanding in this lane.
