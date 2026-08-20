@@ -1137,10 +1137,31 @@ prove nothing about tomorrow's payload.
 The manifest now summarises the reports' own `Reason` column, which the
 invalidated cohort omitted entirely. It matters more than it looks:
 
-| Stated category | Canonical observations |
+### ⚠️ Nearly a third of this cohort's "out" is not injury
+
+**Read this before fitting anything on the status column.**
+
+`OUT` on the injury report is not a single mechanism. In this cohort, of the
+1,508 canonical `out` observations, **506 carry a G League reason** — a two-way
+player with the affiliate, or a standard-contract player on assignment. They are
+unavailable, but they are unavailable for a reason with a completely different
+generating process, a different persistence, and a different relationship to
+everything a fantasy manager cares about.
+
+An injury resolves or worsens on a medical timeline and is partially predictable
+from history. A G League assignment resolves on a roster decision, can reverse
+overnight, and says nothing about the player's body. ADR-002 separates
+production from availability precisely because conflating two quantities with
+different mechanisms produces confident wrong numbers; conflating two
+*availability* mechanisms inside one status code is the same error one level
+down.
+
+Across all 1,948 canonical observations:
+
+| Stated category | n |
 |---|---|
 | Injury/Illness | 1,324 |
-| **G League** | **559** |
+| **G League** | **559** (28.7%) |
 | Not With Team | 23 |
 | `-` (the report's own placeholder) | 14 |
 | Personal Reasons | 10 |
@@ -1150,37 +1171,42 @@ invalidated cohort omitted entirely. It matters more than it looks:
 | Coach's Decision | 1 |
 | Return to Competition Reconditioning | 1 |
 
-**559 observations — 28.7% — are G League, not injuries.** The source splits
-that bucket further and the manifest now publishes the split, because
-collapsing it let an earlier draft of this document label the whole 559
-"two-way" and gave a reader no way to detect the error from the artifact:
+The source splits the G League bucket further and the manifest publishes the
+split, because collapsing it let an earlier draft of this document call the
+whole 559 "two-way" — overstating that share by 5.3 points of the cohort with no
+way for a reader to detect the error from the artifact:
 
 | G League sub-category | n | Share of all canonical observations |
 |---|---|---|
 | Two-Way | 455 | 23.4% |
 | On Assignment | 104 | 5.3% |
 
-A two-way contract and a standard-contract player sent down are different
-facts. A consumer treating the 1,508 `out` rows as an injury population is
-wrong about a large fraction of them either way — 506 of those rows carry a
-G League reason — but wrong by a different amount depending on which question
-is being asked.
+A two-way contract and a standard-contract player sent down are different roster
+facts with different reversal dynamics.
 
-Two smaller things the granularity exposes. The 14 `-` rows are the report's
-own placeholder for "no reason given", reported separately from
+Two smaller things the granularity exposes. The 14 `-` rows are the report's own
+placeholder for "no reason given", reported separately from
 `observations_with_empty_reason_text` (0) so a reader does not read the zero as
 "every observation states a reason". And one row reads
-`Rest - Left Knee Injury Management`: a single record in which the source
-itself puts injury management under the Rest heading, which is the house rule
-about laundered reasons showing up in the data rather than in a warning.
+`Rest - Left Knee Injury Management`: the source itself filing injury management
+under Rest, which is the house rule about laundered reasons appearing in the
+data rather than in a warning.
 
 `Injury/Illness` is deliberately not sub-split. Its second field is free
-clinical text with hundreds of distinct values, and enumerating it would put a
-per-player medical narrative in a committed artifact for no analytic gain.
+clinical text with 256 distinct values in this window, and enumerating it would
+put a per-player medical narrative in a committed artifact for no analytic gain.
+A head whose detail vocabulary exceeds a bound is summarised by count rather
+than listed, so the allowlist is checked rather than merely asserted.
 
-These are raw source strings grouped by the categories the report printed
-around its own separator. They are evidence of what was said, never facts about
-an injury.
+These are raw source strings grouped by the categories the report printed around
+its own separator. They are evidence of what was said, never facts about an
+injury.
+
+**The vocabulary is not closed by observation.** The eleven categories above come
+from 28 days. A twelfth — `Team Suspension` — appears in the recorded
+2025-11-01 report and never once in this window, and it was found by the
+drift-detection test on its first run rather than by research. Treat any
+category list derived from a bounded window as a lower bound.
 
 ### Reproducibility
 

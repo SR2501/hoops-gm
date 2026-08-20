@@ -193,7 +193,13 @@ def source_file_sha256(path: Path) -> str:
 
 @dataclass(frozen=True)
 class GameIdentityReconciliation:
-    """Whether independent views of the same window name exactly the same games."""
+    """Whether the views of one window name exactly the same games.
+
+    Not "whether independent views agree" — see :data:`VIEW_INDEPENDENCE`. Two
+    of the four cannot disagree except via a persistence defect or a bypassed
+    ingest gate, and describing them as independent was a claim this module had
+    to retract.
+    """
 
     start: date
     end: date
@@ -251,12 +257,16 @@ class GameIdentityReconciliation:
             "game_ids": list(self.union),
             "independence": dict(sorted(VIEW_INDEPENDENCE.items())),
             "method": (
-                "Each view derives the in-window regular-season game-identity set from its own "
-                "payload and its own date field, and all views are required to be equal as SETS, "
-                "not as counts -- a count check passes a window that is the right size and the "
-                "wrong membership. Read 'independence' before treating four agreeing views as "
-                "four independent witnesses: only schedule_league_v2 is independent of the "
-                "ingest path. Row counts and clean parsing prove nothing about completeness."
+                "All views are required to be equal as SETS, not as counts -- a count check "
+                "passes a window that is the right size and the wrong membership. Each view "
+                "applies the window using its own date field, but they are NOT four independent "
+                "sources: persisted_nba_games derives from the database, written from the same "
+                "LeagueGameFinder payload and parser this reconciliation reads, and "
+                "player_game_logs was already required equal to LeagueGameFinder at season "
+                "scope before any row was written. Read 'independence' below before treating "
+                "four agreeing views as four witnesses; only schedule_league_v2 is independent "
+                "of the ingest path. Row counts and clean parsing prove nothing about "
+                "completeness."
             ),
             "sha256_sorted_game_ids": content_sha256(self.union),
             "start_game_date": self.start.isoformat(),
@@ -315,13 +325,15 @@ def reconcile_game_identity(
     store: RawPayloadStore,
     nba: NbaStatsClient | None = None,
 ) -> GameIdentityReconciliation:
-    """Rebuild the window's game-identity set from every independent view available.
+    """Rebuild the window's game-identity set from every view the store can supply.
 
     Cached captures are used when present, so this adds no load to
     ``stats.nba.com`` after a sweep; ``nba`` is required only to fetch a view the
     store has never seen. A view whose capture is absent and which cannot be
     fetched is omitted rather than silently treated as agreeing — an absent
-    witness is not a corroborating one.
+    witness is not a corroborating one. See :data:`VIEW_INDEPENDENCE` for what
+    each view is and is not independent of; they are not four independent
+    sources.
     """
     views: dict[str, tuple[str, ...]] = {}
 
@@ -598,33 +610,57 @@ def _reason_evidence(
         # report prints a literal "-" as its own placeholder for "none given".
         "observations_with_placeholder_reason": placeholder,
         "stated_reason_categories": dict(sorted(categories.items())),
-        # The leading category alone conflates things the source already
-        # distinguishes at zero extra cost. "G League - Two-Way" (a two-way
-        # contract) and "G League - On Assignment" (a standard-contract player
-        # sent down) are different facts, and collapsing them let a downstream
-        # reader label the whole bucket "two-way" with no way to detect the
-        # error from the artifact. Found by independent review. Sub-categories
-        # are the source's own second field, again un-normalised.
+        # Sub-counts sum to their category. An earlier version counted only
+        # observations containing " - ", so `Rest` published a single detail
+        # against a category of 9 and `Not With Team` published an empty object
+        # against 23 — the same collapse-a-distinction-the-artifact-cannot-expose
+        # shape this whole section was created to fix. Bare rows are counted
+        # under an explicit bucket rather than dropped.
         "stated_reason_subcategories": {
-            head: dict(
-                sorted(
-                    Counter(
-                        obs.reason_raw.strip().split(" - ", 1)[1].strip()
-                        for obs in observations
-                        if obs.reason_raw.strip().split(" - ", 1)[0].strip() == head
-                        and " - " in obs.reason_raw.strip()
-                    ).items()
-                )
-            )
+            head: _published_subcategories(observations, head=head)
             for head in sorted(_LOW_CARDINALITY_REASON_HEADS & set(categories))
         },
     }
 
 
-#: Reason categories whose second field is a small closed vocabulary worth
-#: publishing. ``Injury/Illness`` is deliberately excluded: its tail is free
-#: clinical text with hundreds of distinct values, and enumerating it would put
-#: a per-player medical narrative in a committed artifact for no analytic gain.
+def _published_subcategories(
+    observations: Sequence[CanonicalPregameObservation], *, head: str
+) -> dict[str, Any]:
+    """One head's detail counts, or a summary when the tail stops being a vocabulary."""
+    details = Counter(
+        raw.split(" - ", 1)[1].strip() if " - " in raw else _REASON_NO_DETAIL
+        for raw in (obs.reason_raw.strip() for obs in observations)
+        if raw.split(" - ", 1)[0].strip() == head
+    )
+    if len(details) > _MAX_PUBLISHED_SUBCATEGORIES:
+        return {
+            "_distinct_values": len(details),
+            "_not_published": (
+                "this head's detail field has become free text rather than a vocabulary; "
+                "publishing it would commit unbounded source prose"
+            ),
+            "_total": sum(details.values()),
+        }
+    return dict(sorted(details.items()))
+
+
+#: Bucket for an observation whose reason is a bare category with no detail.
+_REASON_NO_DETAIL: Final = "(no detail given)"
+
+
+#: Reason categories whose second field is expected to be a small closed
+#: vocabulary. ``Injury/Illness`` is deliberately excluded: its tail is free
+#: clinical text with 256 distinct values in this window alone, and enumerating
+#: it would put a per-player medical narrative in a committed artifact for no
+#: analytic gain.
+#:
+#: **The allowlist asserts low cardinality; :data:`_MAX_PUBLISHED_SUBCATEGORIES`
+#: measures it.** Independent review pointed out that the allowlist alone is a
+#: claim, not a check — a future season in which ``Not With Team`` or
+#: ``Personal Reasons`` grows a free-text tail would dump it into the manifest
+#: under a constant asserting it could not. A head whose observed detail
+#: vocabulary exceeds the cap is collapsed to a count instead, so the artifact
+#: says how many distinct values there were rather than listing them.
 _LOW_CARDINALITY_REASON_HEADS: Final[frozenset[str]] = frozenset(
     {
         "G League",
@@ -632,11 +668,66 @@ _LOW_CARDINALITY_REASON_HEADS: Final[frozenset[str]] = frozenset(
         "Personal Reasons",
         "Rest",
         "League Suspension",
+        "Team Suspension",
         "Coach's Decision",
         "Concussion Protocol",
         "Return to Competition Reconditioning",
     }
 )
+
+#: Above this many distinct detail values, a head's tail is not a vocabulary and
+#: is not published as one.
+_MAX_PUBLISHED_SUBCATEGORIES: Final = 12
+
+
+@dataclass(frozen=True)
+class TipoffReconciliation:
+    """Whether two endpoints agree on *when* each game started.
+
+    Separate from :class:`GameIdentityReconciliation` because it answers a
+    different question, and it carries the same ``agreed``/``witnessed`` split
+    for the same reason: 173 games whose instants were never compared agree
+    perfectly and witness nothing. An earlier version of this section returned
+    a bare ``agreed`` boolean and reintroduced exactly the defect the identity
+    reconciliation had already been corrected for — found by independent review,
+    in the same commit that documented why it was wrong.
+    """
+
+    compared: int
+    absent: tuple[str, ...]
+    disagreements: Mapping[str, Mapping[str, str]]
+    checked: bool = True
+    unavailable_reason: str | None = None
+
+    @property
+    def agreed(self) -> bool:
+        return not self.disagreements
+
+    @property
+    def witnessed(self) -> bool:
+        return self.compared > 0
+
+    def as_summary(self) -> dict[str, Any]:
+        return {
+            "agreed": self.agreed,
+            "checked": self.checked,
+            "disagreements": {k: dict(v) for k, v in sorted(self.disagreements.items())},
+            "games_compared": self.compared,
+            "games_without_both_instants": list(self.absent),
+            "method": (
+                "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against "
+                "ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured "
+                "endpoints in this build. Every lead time and the pre-tipoff selection itself "
+                "depend on this instant, so an unchecked shift would move every number in the "
+                "cohort silently. Note the independence here is operational rather than "
+                "structural: hoops_gm.ingest.importers.import_schedule can also write "
+                "tipoff_utc from ScheduleLeagueV2, and has no production caller today, but "
+                "nothing records the provenance of a persisted instant -- so if that path ever "
+                "acquires one, this becomes a comparison of one endpoint against itself."
+            ),
+            "unavailable_reason": self.unavailable_reason,
+            "witnessed": self.witnessed,
+        }
 
 
 def _tipoff_reconciliation(
@@ -647,7 +738,7 @@ def _tipoff_reconciliation(
     start: date,
     end: date,
     store: RawPayloadStore,
-) -> dict[str, Any]:
+) -> TipoffReconciliation:
     """Check the *instants*, not only the identities.
 
     Every lead time in this cohort, and the pre-tipoff selection that defines a
@@ -658,17 +749,19 @@ def _tipoff_reconciliation(
     ``gameDateTimeUTC`` is already parsed a few lines away.
 
     A silent tip-off shift moves every lead time and can flip a row across the
-    pre-tipoff boundary, turning a post-game row into evidence. Independent
-    review pointed out the witness was already in memory and unused; this is the
-    cheapest available extension of the reconciliation, and it is reported
-    rather than merely asserted so a future disagreement is visible in the
-    artifact instead of only in a test.
+    pre-tipoff boundary, turning a post-game row into evidence.
     """
     ref = store.latest(
         source=NBA_SOURCE, endpoint="ScheduleLeagueV2", params={"league_id": "00", "season": season}
     )
     if ref is None:
-        return {"checked": False, "reason": "no ScheduleLeagueV2 capture retained"}
+        return TipoffReconciliation(
+            compared=0,
+            absent=(),
+            disagreements={},
+            checked=False,
+            unavailable_reason="no ScheduleLeagueV2 capture retained",
+        )
 
     published = {
         record.game.nba_game_id: record.game.tipoff_utc
@@ -698,19 +791,11 @@ def _tipoff_reconciliation(
                 "schedule_league_v2": expected.isoformat(),
             }
 
-    return {
-        "agreed": not disagreements,
-        "checked": True,
-        "disagreements": dict(sorted(disagreements.items())),
-        "games_compared": compared,
-        "games_without_both_instants": sorted(absent),
-        "method": (
-            "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against "
-            "ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured "
-            "endpoints. Every lead time and the pre-tipoff selection itself depend on this "
-            "instant, so an unchecked shift would move every number in the cohort silently."
-        ),
-    }
+    return TipoffReconciliation(
+        compared=compared,
+        absent=tuple(sorted(absent)),
+        disagreements=disagreements,
+    )
 
 
 def build_cohort_evidence(
@@ -722,6 +807,7 @@ def build_cohort_evidence(
     end: date,
     store: RawPayloadStore,
     reconciliation: GameIdentityReconciliation,
+    tipoffs: TipoffReconciliation,
     repo_root: Path,
     source_paths: Sequence[str] = DEFAULT_SOURCE_FINGERPRINT_PATHS,
     report_dir: Path,
@@ -805,14 +891,7 @@ def build_cohort_evidence(
             "unresolved_player_id": sum(1 for obs in observations if obs.player_id is None),
         },
         "cross_source_reconciliation": reconciliation.as_summary(),
-        "cross_source_tipoff_reconciliation": _tipoff_reconciliation(
-            session,
-            season=season,
-            season_type=season_type,
-            start=start,
-            end=end,
-            store=store,
-        ),
+        "cross_source_tipoff_reconciliation": tipoffs.as_summary(),
         "kind": MANIFEST_KIND,
         "limitations": [
             "Evidence only. No injury-status conversion rate, threshold, probability or "
@@ -1024,8 +1103,11 @@ def _participation_join(
     }
 
 
-def refusal_reason(reconciliation: GameIdentityReconciliation) -> str | None:
-    """Why this reconciliation may not be published, or ``None`` if it may.
+def refusal_reason(
+    reconciliation: GameIdentityReconciliation,
+    tipoffs: TipoffReconciliation | None = None,
+) -> str | None:
+    """Why this cohort may not be published, or ``None`` if it may.
 
     Extracted from :func:`main` so the refusal is testable. Independent review
     pointed out that ``main`` carries ``# pragma: no cover`` and had no test, so
@@ -1034,9 +1116,13 @@ def refusal_reason(reconciliation: GameIdentityReconciliation) -> str | None:
     guard nobody runs is a comment, in exactly the way an unchecked fingerprint
     is.
 
-    The three refusals are separate questions and are checked separately: a
-    witness can be absent, present-but-disagreeing, or present-and-empty, and
-    only the middle one is what "disagreement" ordinarily means.
+    Each refusal is a separate question and is checked separately: a witness can
+    be absent, present-but-disagreeing, or present-and-empty, and only the
+    middle one is what "disagreement" ordinarily means. The tip-off checks were
+    added a round later and were initially reported without blocking anything,
+    which meant a disagreement about *when every game started* published with
+    exit 0 — caught by review, and the reason they are enforced here rather than
+    merely summarised.
     """
     missing = sorted(set(RECONCILIATION_VIEWS) - set(reconciliation.views))
     if missing:
@@ -1056,6 +1142,25 @@ def refusal_reason(reconciliation: GameIdentityReconciliation) -> str | None:
             f"{reconciliation.start}..{reconciliation.end}. Views that all found nothing agree "
             "perfectly and witness nothing; check the requested window and that the raw store "
             "holds captures covering it."
+        )
+    if tipoffs is None:
+        return None
+    if not tipoffs.checked:
+        return (
+            f"tip-off instants could not be reconciled ({tipoffs.unavailable_reason}). Every "
+            "lead time and the pre-tipoff selection rest on that instant, so it is not "
+            "published unchecked."
+        )
+    if not tipoffs.agreed:
+        return (
+            "BoxScoreSummaryV3 and ScheduleLeagueV2 disagree about when games started -- "
+            "refusing to publish, because every lead time and the pre-tipoff selection depend "
+            f"on that instant: {dict(tipoffs.disagreements)}"
+        )
+    if not tipoffs.witnessed:
+        return (
+            f"zero tip-off instants were compared across {len(tipoffs.absent)} in-scope games. "
+            "Instants that were never compared agree perfectly and witness nothing."
         )
     return None
 
@@ -1080,8 +1185,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
         help=(
             "regular season only. The reconciliation requires ScheduleLeagueV2, which exposes "
             "only 002-prefixed regular-season game ids, so a playoff scope could never assemble "
-            "four independent witnesses. Offered as a single choice rather than as an option "
-            "that parses and then fails."
+            "the full set of views. Offered as a single choice rather than as an option that "
+            "parses and then fails."
         ),
     )
     parser.add_argument("--start", type=date.fromisoformat, required=True)
@@ -1121,7 +1226,15 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
             store=store,
             nba=nba,
         )
-        refusal = refusal_reason(reconciliation)
+        tipoffs = _tipoff_reconciliation(
+            session,
+            season=args.season,
+            season_type=season_type,
+            start=args.start,
+            end=args.end,
+            store=store,
+        )
+        refusal = refusal_reason(reconciliation, tipoffs)
         if refusal is not None:
             print(refusal, file=sys.stderr)
             return 1
@@ -1133,6 +1246,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
             end=args.end,
             store=store,
             reconciliation=reconciliation,
+            tipoffs=tipoffs,
             repo_root=args.repo_root,
             report_dir=args.report_dir,
         )

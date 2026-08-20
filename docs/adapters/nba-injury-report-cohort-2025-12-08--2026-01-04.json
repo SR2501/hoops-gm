@@ -211,7 +211,7 @@
       "player_game_logs": "A separate endpoint windowed by its own GAME_DATE, but its season-level agreement with LeagueGameFinder was already required by backfill_season before any row was written (_require_matching_season_game_ids), so season-scope agreement here is guaranteed by construction. What it independently witnesses is the *windowing*: which of those games fall inside the requested dates, decided from a column the schedule query never supplied.",
       "schedule_league_v2": "The only view independent of the ingest path. A separate endpoint, separately captured, whose Eastern game date is derived from gameDateTimeEst reconciled against its UTC sibling. This is the witness that could actually have caught the omission."
     },
-    "method": "Each view derives the in-window regular-season game-identity set from its own payload and its own date field, and all views are required to be equal as SETS, not as counts -- a count check passes a window that is the right size and the wrong membership. Read 'independence' before treating four agreeing views as four independent witnesses: only schedule_league_v2 is independent of the ingest path. Row counts and clean parsing prove nothing about completeness.",
+    "method": "All views are required to be equal as SETS, not as counts -- a count check passes a window that is the right size and the wrong membership. Each view applies the window using its own date field, but they are NOT four independent sources: persisted_nba_games derives from the database, written from the same LeagueGameFinder payload and parser this reconciliation reads, and player_game_logs was already required equal to LeagueGameFinder at season scope before any row was written. Read 'independence' below before treating four agreeing views as four witnesses; only schedule_league_v2 is independent of the ingest path. Row counts and clean parsing prove nothing about completeness.",
     "sha256_sorted_game_ids": "43afabfc080d35784b94100481477183b64e6d20ee63a27d58aca4b1f4ab8fee",
     "start_game_date": "2025-12-08",
     "witnessed": true
@@ -222,7 +222,9 @@
     "disagreements": {},
     "games_compared": 173,
     "games_without_both_instants": [],
-    "method": "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured endpoints. Every lead time and the pre-tipoff selection itself depend on this instant, so an unchecked shift would move every number in the cohort silently."
+    "method": "nba_games.tipoff_utc, ingested from BoxScoreSummaryV3, compared against ScheduleLeagueV2's gameDateTimeUTC for the same game. Two separately captured endpoints in this build. Every lead time and the pre-tipoff selection itself depend on this instant, so an unchecked shift would move every number in the cohort silently. Note the independence here is operational rather than structural: hoops_gm.ingest.importers.import_schedule can also write tipoff_utc from ScheduleLeagueV2, and has no production caller today, but nothing records the provenance of a persisted instant -- so if that path ever acquires one, this becomes a comparison of one endpoint against itself.",
+    "unavailable_reason": null,
+    "witnessed": true
   },
   "kind": "injury_conversion_cohort_population_evidence",
   "limitations": [
@@ -264,7 +266,7 @@
       "backend/src/hoops_gm/db/lineage.py": "6073bc0226cabd4ffd3a04bd5d4f810164b2073b4ad71b250af10d4b7fd89390",
       "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "5e66aff2a74566c21b0cde75412db6ff03bd6594807bfc41a851a60a068f9044",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "c9090427cc6f44760c9f5f1a7f1f99626904ad6d97b641bed21097c9e7585c33",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "5dfd9aab6ed8e03d5c04136a1e46ff80db318ebc3bb56304741d9cdd669a15e9"
     }
   },
@@ -327,19 +329,32 @@
       "Return to Competition Reconditioning": 1
     },
     "stated_reason_subcategories": {
-      "Coach's Decision": {},
-      "Concussion Protocol": {},
+      "Coach's Decision": {
+        "(no detail given)": 1
+      },
+      "Concussion Protocol": {
+        "(no detail given)": 4
+      },
       "G League": {
         "On Assignment": 104,
         "Two-Way": 455
       },
-      "League Suspension": {},
-      "Not With Team": {},
-      "Personal Reasons": {},
+      "League Suspension": {
+        "(no detail given)": 3
+      },
+      "Not With Team": {
+        "(no detail given)": 23
+      },
+      "Personal Reasons": {
+        "(no detail given)": 10
+      },
       "Rest": {
+        "(no detail given)": 8,
         "Left Knee Injury Management": 1
       },
-      "Return to Competition Reconditioning": {}
+      "Return to Competition Reconditioning": {
+        "(no detail given)": 1
+      }
     }
   },
   "schema_version": 2,

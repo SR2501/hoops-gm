@@ -196,6 +196,19 @@ Historical per-player, per-game participation reconstructed from box scores and 
 
 Crosswalk resolver joining Fantrax IDs, NBA IDs and projection-CSV name strings. Fantrax exposes no NBA.com player id, so there is no anchor pair; matches begin with normalized name + team + position and retain per-field three-valued evidence, confidence, and manual overrides. Ship an unmatched-players report and a manual-override UI. Highest-risk foundational item - needs its own test suite.
 
+### `player-position-eligibility` - Ingesting player position and Fantrax position eligibility
+
+- [ ] **pending**
+- **Depends on:** `player-identity`
+
+**This project currently has no player position data at all.** Surfaced 2026-08-20 by the injury-cohort regeneration: the only position-shaped field this project ingests is `BoxScoreTraditionalV3.position`, which is emitted for exactly five players per team per game — the starting lineup — always in the sequence `F,F,C,G,G`, and blank for everyone else. It is a lineup slot, not a player attribute. Verified over all 346 team-games of the cohort window; a distribution over it is forced to 2F:2G:1C for any cohort whatsoever.
+
+That is load-bearing well beyond availability evidence. This is a 9-category head-to-head Fantrax league, where **position eligibility governs roster construction, lineup legality and therefore the entire draft board** — a draft tool that cannot tell a centre from a point guard is not a draft tool. Fantrax eligibility is also its own quantity: it is league-configured, multi-position, can differ from any single NBA-published position, and changes during a season as a player accrues games at a new slot.
+
+Ingest a source that states a position for every rostered player, plus Fantrax's own eligibility per player per league, keeping the two distinct rather than collapsing them — an NBA position is a fact about the player, Fantrax eligibility is a fact about the league's rules applied to that player, and only the second determines whether a lineup is legal. Adapter gate applies: recorded fixture, offline contract test, live smoke that may fail loudly, documented throttling and failure behaviour. Note that `player-identity` already matches on position as corroborating evidence, so improving position quality feeds back into the crosswalk's confidence.
+
+The `injury-conversion-cohort-population` waiver of its own "positions" criterion is one downstream consequence of this gap, not the reason for this item.
+
 ### `playoff-schedule` - Analysing fantasy playoff week schedules
 
 - [x] **done**

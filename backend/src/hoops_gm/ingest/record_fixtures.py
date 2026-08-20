@@ -80,11 +80,28 @@ def _write(name: str, payload: Any, *, meta: dict[str, Any]) -> None:
     manifest = _load_manifest()
     manifest[name] = {
         "captured_at": datetime.now(UTC).isoformat(),
-        "byte_size": path.stat().st_size,
+        "byte_size": _canonical_byte_size(path),
         **meta,
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    print(f"  wrote {name} ({path.stat().st_size:,} bytes)")
+    print(f"  wrote {name} ({path.stat().st_size:,} bytes on disk)")
+
+
+def _canonical_byte_size(path: Path) -> int:
+    """Size of the file's canonical (LF) bytes, not the working tree's.
+
+    ``path.stat().st_size`` counts CRLF on a Windows checkout while Git stores
+    LF, so a recorded size is unreproducible on any other platform — the exact
+    checkout-dependence PR #30 had to correct in the cohort manifest's source
+    fingerprints, found again here by independent review. This value equals
+    ``git cat-file -s`` for any file Git stores with LF endings.
+
+    Entries recorded before this fix retain their working-tree sizes until their
+    fixture is next re-recorded; the values are stale, not silently corrected,
+    because rewriting them without re-capturing would assert a size for bytes
+    nobody re-read.
+    """
+    return len(path.read_bytes().replace(b"\r\n", b"\n"))
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -649,8 +666,10 @@ def record_cohort_reconciliation() -> None:
             "original_row_counts": {"leagueSchedule.gameDates.games": original_games},
             "kept_rows_per_result_set": len(FIXTURE_COHORT_GAME_IDS),
             "note": (
-                f"{base_note} Only the gameDates entries holding the named games are retained; "
-                "each retained game object is the source's own, unmodified."
+                f"{base_note} Only the gameDates entries holding the named games are retained, "
+                "and within each retained entry only the named games -- 2025-12-08 had a full "
+                "slate and appears here with one game. Each retained game object is the "
+                "source's own, unmodified."
             ),
         },
     )

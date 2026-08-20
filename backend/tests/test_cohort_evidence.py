@@ -28,17 +28,19 @@ fixture whose every game sits comfortably inside the window.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from hoops_gm.ingest.injury_report import parse_injury_report_pdf
 from hoops_gm.ingest.injury_report.cohort_evidence import (
     RECONCILIATION_VIEWS,
     VIEW_INDEPENDENCE,
     GameIdentityReconciliation,
+    TipoffReconciliation,
     _league_game_finder_ids,
     _player_game_log_ids,
     _reason_evidence,
@@ -75,9 +77,13 @@ OUT_OF_WINDOW = ("0022500357", "0022500502")
 #: reason lines (35).
 _MAX_PLAUSIBLE_REASON_CATEGORIES = 20
 
-#: Observed across all 9,376 raw entries in the 2025-12-08..2026-01-04 window.
-#: An unrecognised value is either real NBA news or separator drift, and both
-#: are worth stopping for.
+#: Observed across all 9,376 raw entries in the 2025-12-08..2026-01-04 window,
+#: plus ``Team Suspension``, which appears in the recorded 2025-11-01 report and
+#: **not** in the cohort window at all. That addition was not researched — the
+#: source-watching test below found it on its first run, which is both the
+#: alarm working and a warning that a vocabulary derived from 28 days is not the
+#: source's vocabulary. An unrecognised value is either real NBA news or
+#: separator drift, and both are worth stopping for.
 _KNOWN_REASON_CATEGORIES = frozenset(
     {
         "-",
@@ -91,6 +97,7 @@ _KNOWN_REASON_CATEGORIES = frozenset(
         "Personal Reasons",
         "Rest",
         "Return to Competition Reconditioning",
+        "Team Suspension",
     }
 )
 
@@ -390,6 +397,81 @@ class TestTheRefusalPathIsExercised:
         assert "zero games" in reason
 
 
+class TestTipoffDisagreementBlocksPublication:
+    """The instants, guarded like the identities.
+
+    The tip-off comparison shipped a round after the identity reconciliation and
+    initially only *reported* — a disagreement about when every game started
+    published with exit 0, and zero instants compared reported ``agreed: true``.
+    That is the agreed-versus-witnessed defect the identity reconciliation had
+    already been corrected for, reintroduced in the same commit that documented
+    why it was wrong. Independent review caught it.
+    """
+
+    def _identity(self) -> GameIdentityReconciliation:
+        return GameIdentityReconciliation(
+            start=START, end=END, views=dict.fromkeys(RECONCILIATION_VIEWS, IN_WINDOW)
+        )
+
+    def test_agreeing_compared_instants_publish(self) -> None:
+        tipoffs = TipoffReconciliation(compared=173, absent=(), disagreements={})
+
+        assert tipoffs.agreed and tipoffs.witnessed
+        assert refusal_reason(self._identity(), tipoffs) is None
+
+    def test_a_disagreement_is_refused_and_both_instants_are_named(self) -> None:
+        tipoffs = TipoffReconciliation(
+            compared=173,
+            absent=(),
+            disagreements={
+                "0022501230": {
+                    "box_score_summary_v3": "2025-12-14T02:00:00+00:00",
+                    "schedule_league_v2": "2025-12-14T02:30:00+00:00",
+                }
+            },
+        )
+
+        reason = refusal_reason(self._identity(), tipoffs)
+
+        assert reason is not None
+        assert "0022501230" in reason
+        assert "02:30:00" in reason
+
+    def test_zero_compared_instants_agree_but_witness_nothing(self) -> None:
+        tipoffs = TipoffReconciliation(
+            compared=0, absent=("0022501229", "0022501230"), disagreements={}
+        )
+
+        assert tipoffs.agreed
+        assert not tipoffs.witnessed
+        reason = refusal_reason(self._identity(), tipoffs)
+        assert reason is not None
+        assert "zero tip-off instants" in reason
+
+    def test_an_unavailable_schedule_capture_is_refused_rather_than_skipped(self) -> None:
+        tipoffs = TipoffReconciliation(
+            compared=0,
+            absent=(),
+            disagreements={},
+            checked=False,
+            unavailable_reason="no ScheduleLeagueV2 capture retained",
+        )
+
+        reason = refusal_reason(self._identity(), tipoffs)
+
+        assert reason is not None
+        assert "could not be reconciled" in reason
+
+    def test_the_committed_manifest_reports_a_witnessed_agreement(self, manifest: Any) -> None:
+        section = manifest["cross_source_tipoff_reconciliation"]
+
+        assert section["checked"] is True
+        assert section["agreed"] is True
+        assert section["witnessed"] is True
+        assert section["disagreements"] == {}
+        assert section["games_compared"] == manifest["scope"]["games_with_tipoff"]
+
+
 class TestTheIndependenceMapIsCheckableRatherThanTrusted:
     """Four agreeing views are not four independent witnesses, and it must say so.
 
@@ -661,20 +743,72 @@ class TestTheReasonParseIsPinned:
     def test_the_committed_manifest_categories_still_look_like_categories(
         self, manifest: Any
     ) -> None:
+        """What the published artifact records. **Not a drift alarm.**
+
+        This reads a static committed file, so it cannot notice the NBA
+        changing its separator — regenerating the manifest needs gitignored
+        operational state. The alarms that watch the source are
+        :class:`TestTheReasonVocabularyIsWatchedAtTheSource` below, against the
+        recorded PDF, and its live counterpart in ``test_live_smoke.py``.
+        Independent review caught this test's failure messages claiming
+        otherwise.
+        """
         published = manifest["reason_evidence"]["stated_reason_categories"]
 
         assert published, "the manifest publishes no reason categories at all"
-        assert len(published) <= _MAX_PLAUSIBLE_REASON_CATEGORIES, (
-            f"the manifest publishes {len(published)} distinct reason categories. The report "
-            "uses a closed vocabulary of about ten; this many means the ' - ' separator has "
-            "probably changed and whole reason lines are being published as categories."
-        )
-        assert set(published) <= _KNOWN_REASON_CATEGORIES, (
-            f"unrecognised reason category: {sorted(set(published) - _KNOWN_REASON_CATEGORIES)}. "
-            "Either the NBA added a category -- which is real news worth recording in "
-            "docs/handoff.md -- or the separator changed."
-        )
+        assert len(published) <= _MAX_PLAUSIBLE_REASON_CATEGORIES
+        assert set(published) <= _KNOWN_REASON_CATEGORIES
         assert published["Injury/Illness"] > published["G League"] > 0
+
+    def test_subcategory_counts_sum_to_their_category(self, manifest: Any) -> None:
+        """A published breakdown that does not add up is a second wrong number."""
+        reason = manifest["reason_evidence"]
+        for head, details in reason["stated_reason_subcategories"].items():
+            assert sum(details.values()) == reason["stated_reason_categories"][head], (
+                f"{head} sub-counts sum to {sum(details.values())} but the category is "
+                f"{reason['stated_reason_categories'][head]}. Bare rows with no detail must be "
+                "bucketed, not dropped."
+            )
+
+
+class TestTheReasonVocabularyIsWatchedAtTheSource:
+    """The reason guard, pointed at bytes the NBA produced.
+
+    The manifest test above reads a static artifact and cannot go red on a
+    separator change. This one parses the committed injury-report PDF — a real
+    capture — and applies the same vocabulary bound to what the parser actually
+    extracts. The live counterpart in ``test_live_smoke.py`` is the half that
+    can detect tomorrow's change; this half detects a regression in our own
+    parsing of yesterday's.
+
+    Independent review caught the gap by noting that an en-dash switch would be
+    caught by nothing: not the live smoke, not an offline fixture test, and not
+    the manifest test.
+    """
+
+    def test_the_recorded_report_yields_only_known_reason_categories(self) -> None:
+        pdf = (FIXTURES / "nba_injury_report_2025-11-01_0530pm.pdf").read_bytes()
+        result = parse_injury_report_pdf(
+            pdf,
+            report_timestamp=datetime(2025, 11, 1, 21, 30, tzinfo=UTC),
+            source_url="https://ak-static.cms.nba.com/referee/injury/"
+            "Injury-Report_2025-11-01_05PM.pdf",
+        )
+
+        heads = {
+            entry.reason_raw.strip().split(" - ", 1)[0].strip()
+            for entry in result.entries
+            if entry.reason_raw.strip()
+        }
+
+        assert heads, "the recorded report parsed no reasons at all"
+        assert heads <= _KNOWN_REASON_CATEGORIES, (
+            f"the recorded report yields unrecognised reason categories: "
+            f"{sorted(heads - _KNOWN_REASON_CATEGORIES)}. Either our parsing of the ' - ' "
+            "separator regressed, or the recorded fixture was refreshed against a changed "
+            "source without updating the vocabulary."
+        )
+        assert len(heads) <= _MAX_PLAUSIBLE_REASON_CATEGORIES
 
 
 class TestSourceFingerprintsAreCheckoutIndependent:

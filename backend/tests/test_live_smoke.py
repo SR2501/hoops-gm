@@ -94,6 +94,28 @@ COHORT_SEASON = "2025-26"
 COHORT_START = date(2025, 12, 8)
 COHORT_END = date(2026, 1, 4)
 
+#: The closed vocabulary the injury report prints before its own " - "
+#: separator, observed across all 9,376 raw entries in the cohort window plus
+#: ``Team Suspension`` from the recorded 2025-11-01 report, which the cohort
+#: window does not contain. Kept here rather than imported from the offline test
+#: that also uses it, because a live smoke must not depend on a test module.
+KNOWN_REASON_CATEGORIES = frozenset(
+    {
+        "-",
+        "Coach's Decision",
+        "Concussion Protocol",
+        "G League",
+        "Injury/Illness",
+        "League Suspension",
+        "NOT YET SUBMITTED",
+        "Not With Team",
+        "Personal Reasons",
+        "Rest",
+        "Return to Competition Reconditioning",
+        "Team Suspension",
+    }
+)
+
 
 @pytest.fixture
 def fantrax() -> FantraxOfficialClient:
@@ -721,6 +743,27 @@ class TestInjuryReportIsAlive:
             "Injury-Report_2025-12-01_01PM.pdf",
         )
         assert len(result.entries) > 0, "a real evening-before report had zero entries"
+
+        # The reason-vocabulary drift alarm, on live bytes. The cohort manifest
+        # publishes a category breakdown derived by splitting on the report's
+        # own " - " separator, and 559 of 1,948 canonical observations are
+        # G League rather than injuries -- a number a consumer will act on. If
+        # the NBA switched that separator to an en dash, every reason *line*
+        # would become its own "category" and the offline tests could not
+        # notice: the fixture holds old bytes and the manifest is a static
+        # artifact. This is the only check that sees tomorrow's payload.
+        heads = {
+            entry.reason_raw.strip().split(" - ", 1)[0].strip()
+            for entry in result.entries
+            if entry.reason_raw.strip()
+        }
+        assert heads <= KNOWN_REASON_CATEGORIES, (
+            f"unrecognised injury-report reason categories: "
+            f"{sorted(heads - KNOWN_REASON_CATEGORIES)}. Either the NBA added a category -- "
+            "real news, record it in docs/handoff.md -- or the ' - ' separator changed and the "
+            "cohort manifest's reason breakdown is now whole reason lines masquerading as a "
+            "vocabulary."
+        )
 
     def test_a_known_active_era_report_is_still_reachable_and_parses(
         self, injury_report: InjuryReportClient

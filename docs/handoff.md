@@ -8009,3 +8009,138 @@ cannot detect an error upstream of both.
 
 **Next:** Re-review at the replacement exact head, PostgreSQL CI green there, and
 then the PR is mergeable. I am not merging it.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round five, and a governance lesson worth more than the PR
+
+**A cross-cutting lesson first, because it generalises past this change.**
+
+**A correction lands where the author is looking.** I retracted the claim that
+the cohort's four reconciliation views were four independent sources. I
+corrected it in the module docstring, the manifest, the adapter doc and the
+handoff — every file I happened to have open. It survived in four more places,
+including `docs/governance/risks.md` R48, which is *the durable record a future
+reader consults about this exact defect class*, and the module docstring of the
+test file whose own final class disproves it. The strongest-looking statement of
+the wrong claim was left sitting in the most authoritative location.
+
+Round five found five more residual instances of the same sentence, one of them
+published verbatim into the manifest. A retraction is not a retraction until you
+search for the claim rather than edit around it. This has no gate and will not
+get one; it is a habit, and it is worth writing down because two independent
+reviewers and a coordinator all separately propagated the wrong version before
+anyone checked.
+
+**Changed:** The fourth-round evidence review returned two blocking items, both
+guard-level, and both my own failure mode a third time.
+
+**The tip-off reconciliation had no test, blocked nothing, and reintroduced a
+defect I had just fixed 450 lines above it.** It returned a bare `agreed`
+boolean, so 173 games whose instants were never compared reported
+`agreed: true` — the identical agreed-versus-witnessed confusion that
+`GameIdentityReconciliation` had been split into two properties to prevent, in
+the same commit that documented why. A disagreement about *when every game
+started* published with exit 0. Now a `TipoffReconciliation` dataclass with the
+same `agreed`/`witnessed` split, enforced through `refusal_reason` — a
+disagreement, an uncheckable state, or zero compared instants each refuse
+publication — with tests for all four branches and the manifest self-assertion
+that was missing.
+
+**The reason-vocabulary guard was wired to a committed file while telling the
+reader it watched the NBA.** Its failure messages said "the `' - '` separator has
+probably changed" and "the NBA added a category"; neither could cause a red,
+because the only place the bound was applied read a static artifact regenerable
+solely from gitignored state I possess. This is the third instance of the same
+shape in three rounds — after the position alarm and after `refusal_reason` —
+and I did not recognise it while writing it.
+
+The fix is a parse of the committed injury-report PDF plus a live-smoke
+assertion on freshly fetched bytes. **It found something on its first run**: the
+2025-11-01 report contains `Team Suspension`, a category that appears nowhere in
+the 28-day cohort window. My "closed vocabulary of eleven categories" was the
+vocabulary of one window, not of the source, and I would have gone on saying so.
+That is the alarm working, and it is also a caution now recorded in the adapter
+doc: treat any category list derived from a bounded window as a lower bound.
+
+**Now true:** Manifest digest
+`b2d1124c977b418ddf5ef4bd545dd5f2ced9365749cddc3a9a70c0a177f7f996`, reproduced
+byte-for-byte. Ruff, Ruff format, strict mypy over 132 files and the full
+offline suite with warnings-as-errors all pass.
+
+Five smaller review findings also fixed. Sub-category counts now sum to their
+category — `Rest` published one detail against a category of 9 and
+`Not With Team` an empty object against 23, because bare rows with no detail
+were dropped rather than bucketed; the same
+collapse-a-distinction-the-artifact-cannot-expose shape the section was created
+to fix. `_LOW_CARDINALITY_REASON_HEADS` now *measures* low cardinality instead
+of asserting it, so a future season in which a head grows a free-text tail is
+summarised by count rather than dumping source prose into a committed file.
+Fixture `byte_size` was the Windows CRLF working-tree size and unreproducible
+anywhere else — the exact checkout-dependence PR #30 had to correct in the
+source fingerprints, found again here; it is now the canonical LF size, verified
+equal to `git cat-file -s`. Entries recorded before the fix keep their stale
+values rather than being silently rewritten, because correcting a size without
+re-reading the bytes would assert something nobody measured. And the schedule
+fixture's note omitted that games were filtered *within* each retained date.
+
+**The G League finding is promoted from a table to a warning**, at the
+coordinator's direction and correctly: 506 of the 1,508 canonical `out`
+observations carry a G League reason. An injury resolves on a medical timeline
+and is partly predictable from history; an assignment resolves on a roster
+decision, can reverse overnight, and says nothing about the player's body. ADR-002
+separates production from availability because conflating quantities with
+different mechanisms yields confident wrong numbers — conflating two
+*availability* mechanisms inside one status code is the same error one level
+down, and it will be absorbed as injury signal if it reads as a footnote.
+
+**A new backlog item, and it is bigger than this cohort.** The reason the
+"positions" criterion had to be waived is that **this project has no player
+position data at all**. `player-position-eligibility` is filed, owned by
+`data-engineer`, Adapter-gated, covering both NBA position and Fantrax position
+eligibility as distinct quantities — an NBA position is a fact about the player,
+Fantrax eligibility is a fact about the league's rules applied to that player,
+and only the second decides whether a lineup is legal. In a 9-category H2H
+league, eligibility governs roster construction and therefore the draft board.
+The cohort waiver is one downstream consequence of that gap, not its cause.
+
+**Could not verify:** The two live-smoke tests added across these rounds — the
+position drift alarm, the `isNeutral` drift detector, the corrected `MATCHUP`
+predicate and the reason-vocabulary alarm — **have never executed**. The
+live-smoke job is nightly-on-default-branch and shows `skipped` in CI on this
+branch. I executed the `MATCHUP` predicate offline against the real full-season
+payload and the reviewer independently confirmed it, but the rest is unrun code
+until merge.
+
+Whether the eleven-plus-one reason vocabulary is complete for the source. It was
+eleven until a test looked outside the window, and I have not swept the season.
+
+Whether the `Two-Way` / `On Assignment` split, or any of the sub-vocabularies,
+is stable across seasons. All are properties of one 28-day window.
+
+Whether any other published aggregate in this repository collapses a source
+distinction the way the G League bucket did. Three rounds of review found three
+instances of one failure shape in my own work; that is not evidence the rest of
+the repository is clean, and I did not audit it.
+
+The tip-off check's independence is operational rather than structural.
+`import_schedule` can also write `tipoff_utc` from `ScheduleLeagueV2` and has no
+production caller today, but nothing records the provenance of a persisted
+instant — so if that path ever acquires one, the check silently becomes a
+comparison of one endpoint against itself while still claiming two. Disclosed in
+the manifest's own method string rather than only here.
+
+`Concussion Protocol` appears both as a standalone category and inside
+`Injury/Illness - Concussion Protocol; -`, so the standalone count of 4
+undercounts concussion-related rows. That is what an un-normalised leading
+category means, and the caveat says so, but a reader could still take the 4 as a
+total.
+
+An earlier entry in this file quotes manifest digest `359ed874…` as "now true";
+no committed state ever had it. Rounds three and four landed in one commit and
+the digest moved before it was pushed. The narrative is chronologically honest;
+the present tense is not, and it is left standing rather than rewritten because
+this file is append-only.
+
+**Next:** Fifth-round independent review at the replacement exact head, then
+PostgreSQL CI green at that head specifically. I am not merging.
