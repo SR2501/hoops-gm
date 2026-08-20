@@ -6145,3 +6145,106 @@ absence of ordered picks for auction and keep all price, market, strategy, and
 recommendation behavior in their separately gated downstream units. Require
 exact-head CI and independent code/quant plus backend-seam review before merge;
 do not merge or self-approve from this session.
+
+---
+
+## 2026-08-19 — frontend — Response-state integrity hardening
+
+**Changed:** Hardened the existing frontend response/state seam without changing
+backend code or adding a schema dependency. `apiFetch` now requires an endpoint
+response contract, rejects invalid JSON and malformed 2xx bodies as
+`invalid_response`, strictly validates the stable backend error envelope, and
+retains response/request context on `ApiError`. The three existing endpoint
+functions validate their complete response shapes. Readiness remains the one
+documented exception to the backend schema claim that every non-2xx uses
+`ErrorResponse`: `/health/ready` intentionally returns its typed
+`ReadinessResponse` under HTTP 503. The frontend now recognizes that exact
+degraded body, preserves it on `ApiError.body`, uses the backend's `degraded`
+status as the code, keeps the backend detail, and takes the request id from
+`X-Request-ID`.
+
+`AsyncBoundary` now schedules one timeout for the exact configured stale
+deadline, clears it on replacement/unmount, and does not poll. A failed refresh
+continues to show the last good data while exposing the failure detail, code and
+request id. Initial-load failures display the same context. A route-level
+`RenderErrorBoundary` around the current route table prevents an unexpected
+render exception from blanking the app, reports the exception to the console,
+renders an actionable fallback with request context when available, resets on
+route changes, preserves shell navigation, and offers an explicit retry.
+
+Added focused tests for typed readiness 503 handling, strict error envelopes,
+invalid JSON and malformed 2xx responses, the exact fake-timer stale transition
+with a single scheduled check, last-good/refresh-failure retention with no
+unhandled rejection (including when the retained result is empty),
+request-id/code display, and render-exception fallback and recovery. Rebasing
+onto final current `origin/main`
+`bcfb2d68df97238a6f97c03bb38e4f952a5282dd` touched no frontend file; its
+append-only handoff entry was preserved before this entry during the only
+conflict resolution. On that base, frontend ESLint, strict TypeScript checking,
+all 27 tests,
+the production Vite build, the tracked-file secret scan (272 files), and the
+Impeccable mechanical UI detector all pass.
+
+The first exact-head independent frontend review found three concrete gaps in
+the frozen implementation: an empty retained result returned before the failed-
+refresh banner, the shell health badge collapsed malformed/HTTP failures into
+`Backend unreachable` without request context, and a boundary around the whole
+route tree removed navigation during fallback. All three were reproduced and
+fixed before publication. Empty results now retain the explicit failure,
+backend health distinguishes reachability from response errors and shows
+detail/code/request id, and each page is bounded inside the persistent shell so
+navigation remains an escape path.
+
+The next exact-head review found that the request timeout stopped when response
+headers arrived rather than after the body and contract validation, caller
+aborts during body parsing could be misclassified, retained data temporarily
+lost refresh context while a retry was pending, and route protection depended
+on each future route remembering a wrapper. Those findings were also reproduced
+and fixed before publication. The same abort signal and timeout now cover the
+complete response lifecycle; tests pin stalled-body timeout and caller abort
+after headers. Retained data visibly says `Refreshing` during retry, and the
+persistent `AppLayout` owns one boundary around `Outlet`, so every current and
+future child route is protected automatically while navigation remains usable.
+
+The final frontend review had no blockers but identified operator-facing edge
+cases worth fixing before publication: a Vite proxy-generated 5xx when the
+backend is down has no backend request id and was labelled as a generic backend
+error; shell health never aged or offered retry; a body-read timeout discarded
+an already-received request id; disabling the pending refresh button dropped
+keyboard focus; the unhandled-rejection assertion listened to a jsdom event that
+jsdom does not emit; and an exception in the shell itself sat outside the route
+boundary. The shell now recognizes the proxy failure as unreachable, schedules
+one stale-health transition and exposes `Check backend again`, body timeouts
+retain the header request id, pending refresh uses guarded `aria-disabled`, the
+test observes Node's real `unhandledRejection` event, and `main.tsx` adds a root
+fallback outside the persistent route boundary.
+
+Fresh publication frontend, code, and backend-contract reviews inspected the
+complete diff at `db8dc5cdb7bc1e44e52d6f44eac8e8d557aa1ac5` and reported no
+blocking findings. The backend review confirmed no backend change or ownership
+arbitration is needed; separately, a future backend-owned OpenAPI cleanup should
+document `/health/ready`'s existing typed 503 response instead of advertising
+only the 200 response.
+
+**Now true:** A successful HTTP status is not sufficient evidence for any
+existing frontend endpoint; malformed payloads become visible contract errors
+before route rendering. Readiness degradation no longer loses its typed backend
+detail or request correlation. Fresh data visibly crosses into stale state at
+the configured deadline without periodic wakeups. Refresh failure cannot erase
+the last good payload or make it look current, and an unforeseen render throw
+cannot leave a blank route.
+
+**Could not verify:** No live browser/backend pair was run in this worktree, so
+the evidence is the backend's committed readiness contract plus jsdom tests and
+the production build, not a manual failure injection against a running service.
+On the reviewed code head, every reported blocking PR #35 lane except the native
+Postgres suite was green at handoff time; Postgres was still in progress and the
+non-blocking live-smoke lane skipped by design. Publishing this docs-only
+closeout will trigger a fresh CI run, which the coordinator must evaluate rather
+than inheriting this snapshot. The retry control can recover when the underlying
+render condition is transient or has changed; a deterministic render bug will
+correctly return to the visible fallback rather than pretending the view
+recovered.
+
+**Next:** The coordinator should require every blocking PR #35 check to pass,
+then review and merge independently. This session must not merge or self-approve.

@@ -68,6 +68,17 @@ button:hover {
   border-color: var(--accent);
 }
 
+button:disabled,
+button[aria-disabled='true'] {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+button:disabled:hover,
+button[aria-disabled='true']:hover {
+  border-color: var(--border);
+}
+
 button:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent);
@@ -109,6 +120,19 @@ a:focus-visible {
 
 .shell__status {
   margin-top: auto;
+}
+
+.shell__status-detail {
+  margin: var(--space-1) 0 0 calc(7px + var(--space-2));
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.shell__status-retry {
+  margin-block-start: var(--space-2);
+  margin-inline-start: calc(7px + var(--space-2));
+  font-size: 0.75rem;
 }
 
 .shell__main {
@@ -197,6 +221,7 @@ a:focus-visible {
 .state__meta {
   font-size: 0.8rem;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* Stale data must look stale. A number computed from an old injury report is
@@ -212,6 +237,29 @@ a:focus-visible {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
   font-size: 0.85rem;
+}
+
+.stale-banner > span {
+  min-width: 0;
+}
+
+.stale-banner__detail {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.stale-banner button {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.render-error {
+  max-width: 48rem;
+}
+
+.render-error h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 1.25rem;
 }
 
 /* --- Page ----------------------------------------------------------------- */

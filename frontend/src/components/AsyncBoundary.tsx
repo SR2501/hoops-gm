@@ -13,6 +13,7 @@
 import type { ReactNode } from 'react'
 import { ApiError } from '../api/client'
 import type { AsyncState } from '../api/useAsync'
+import { useIsStale } from '../api/useStale'
 
 interface AsyncBoundaryProps<T> {
   state: AsyncState<T>
@@ -34,6 +35,7 @@ export function AsyncBoundary<T>({
   label = 'data',
 }: AsyncBoundaryProps<T>) {
   const { status, data, error, fetchedAt, reload } = state
+  const isStale = useIsStale(fetchedAt, staleAfterMs)
 
   if (status === 'idle' || (status === 'loading' && data === null)) {
     return (
@@ -45,12 +47,23 @@ export function AsyncBoundary<T>({
 
   if (status === 'error' && data === null) {
     const detail = error instanceof ApiError ? error.message : (error?.message ?? 'Unknown error')
+    const code = error instanceof ApiError ? error.code : null
     const requestId = error instanceof ApiError ? error.requestId : null
     return (
       <div className="state state--error" role="alert">
         <p>Could not load {label}.</p>
         <p className="state__detail">{detail}</p>
-        {requestId ? <p className="state__meta">Request {requestId}</p> : null}
+        {code || requestId ? (
+          <p className="state__meta">
+            {code ? (
+              <>
+                Code <code>{code}</code>
+              </>
+            ) : null}
+            {code && requestId ? ' · ' : null}
+            {requestId ? <>Request {requestId}</> : null}
+          </p>
+        ) : null}
         <button type="button" onClick={reload}>
           Retry
         </button>
@@ -62,28 +75,40 @@ export function AsyncBoundary<T>({
     return <div className="state state--empty">{emptyMessage}</div>
   }
 
-  if (isEmpty?.(data)) {
-    return <div className="state state--empty">{emptyMessage}</div>
-  }
-
-  const ageMs = fetchedAt ? Date.now() - fetchedAt.getTime() : null
-  const isStale = staleAfterMs !== undefined && ageMs !== null && ageMs > staleAfterMs
   // A failed refresh that leaves older data on screen is exactly the case
   // where the screen must say so rather than look current.
   const refreshFailed = status === 'error'
+  const refreshPending = status === 'loading'
+  const failureCode = error instanceof ApiError ? error.code : null
+  const failureRequestId = error instanceof ApiError ? error.requestId : null
+  const dataIsEmpty = isEmpty?.(data) ?? false
 
   return (
     <>
-      {(isStale || refreshFailed) && (
+      {(isStale || refreshFailed || refreshPending) && (
         <p className="stale-banner" role="status">
-          {refreshFailed ? 'Refresh failed — ' : ''}showing data from{' '}
-          {fetchedAt?.toLocaleTimeString() ?? 'an earlier load'}.{' '}
-          <button type="button" onClick={reload}>
-            Refresh
+          <span>
+            {refreshFailed ? 'Refresh failed. ' : ''}
+            {refreshPending ? 'Refreshing. ' : ''}
+            Showing data from {fetchedAt?.toLocaleTimeString() ?? 'an earlier load'}.
+            {refreshFailed && error ? (
+              <span className="stale-banner__detail">
+                {error.message}
+                {failureCode ? ` Code ${failureCode}.` : ''}
+                {failureRequestId ? ` Request ${failureRequestId}.` : ''}
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={refreshPending ? undefined : reload}
+            aria-disabled={refreshPending}
+          >
+            {refreshPending ? 'Refreshing…' : 'Refresh'}
           </button>
         </p>
       )}
-      {children(data)}
+      {dataIsEmpty ? <div className="state state--empty">{emptyMessage}</div> : children(data)}
     </>
   )
 }
