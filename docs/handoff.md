@@ -8651,3 +8651,82 @@ tests were green throughout and would have stayed green through all of it. That
 is the argument for this review apparatus, and also for a narrower habit worth
 more than the apparatus: re-derive any number or mechanism that appears in
 prose, at the moment you write it, from the code beside it.
+
+---
+
+## 2026-08-20 — frontend — Rebased forward onto backend `84ed9b1`, fixture re-captured
+
+**Changed:** Rebased the schedule grid branch from backend PR #38's original
+head `11f7efa` onto its current head `84ed9b1`, which adds a `season_type`
+guard and set-mismatch rejection to the route. Confirmed
+`git merge-base --is-ancestor 11f7efa origin/sr2501-schedule-grid-api-operational`
+first: the backend owner did not force-push, so this is a fast-forward onto
+real history rather than a rebase onto a rewritten one.
+
+Two append conflicts, both in `docs/`. `docs/handoff.md` is append-only, so both
+entries are kept in order. `docs/backlog.md` conflicted on the status line
+because the backend owner had recounted it from the markers and found the
+carried-forward number had been drifting. I adopted their method rather than
+their number: the line is now recounted from the markers at each commit, and at
+this head reads 38 done / 1 blocked / 66 pending / 105 total, with 105 `###`
+headings against 105 markers, 1:1.
+
+**Now true:** The recorded fixture was **re-captured and its diff read**, not
+re-run — the architect's instruction, and the one failure mode a committed JSON
+file is uniquely bad at, since re-running it passes whether or not the backend
+changed. The entire diff against `84ed9b1` is one line:
+
+```
+-      "refreshed_at": "2026-08-20T15:10:39.334171Z",
++      "refreshed_at": "2026-08-20T16:38:01.502087Z",
+```
+
+Every other byte is identical — `source_game_count` 10, `resolved_game_count`
+10, `persisted_team_row_count` 20, 30 teams, 21 periods, 630 dense counts, both
+schedule and scoring-period versions unchanged. So the coordinator's claim that
+the 200 contract did not change is confirmed by capture-and-diff rather than
+accepted.
+
+The seed's *console output* did change shape — it now reports
+`as_recorded_source_game_count: 12` with two `dropped_game_ids`, where before it
+reported a flat count of 10. The lineage block in the response still reports
+`source_game_count: 10`, so the two games dropped by the new guard are excluded
+before the number the screen displays. Nothing on screen moved, but the seed
+summary and the response now count different things under similar names, which
+is worth knowing before anyone treats the seed's output as the screen's source.
+
+Re-verified in a real browser against the rebased backend: the grid renders
+identically — 30 teams, 21 periods, league row 6 / zeros / 14 / 20, mean row
+0.2 / zeros / 0.5 / 0.7, `PO` on periods 20 and 21, lineage summary
+`Schedule 9bcac1c60490b41a — refreshed today`. And a real refusal still
+displays correctly: the doctored-database run against the updated route returns
+`409 schedule_grid_incomplete_evidence` and the browser shows the written
+summary, the next step, the backend's own wording quoted, the code and the
+request id, with no grid on screen.
+
+Code gate at the rebased head: ESLint clean, `tsc --noEmit` clean, 75 tests
+across 8 files.
+
+**Could not verify:** Everything above still stands. Added by the rebase:
+
+The new `season_type` guard and set-mismatch rejection in `84ed9b1` add a
+`schedule_grid_incomplete_evidence` path this frontend has never triggered.
+It maps to copy that already exists and is unit-tested, but the specific
+backend condition was not reproduced — only the missing-completeness-block one
+was.
+
+The four independent review rounds were all conducted against `11f7efa`-based
+heads. Nothing has been reviewed at the rebased head; the diff to the frontend
+is empty apart from the fixture timestamp and the two docs resolutions, but that
+is an argument, not a review.
+
+The backlog recount is arithmetic on markers in a file two lanes edit
+concurrently. It is 1:1 with the headings at this head, which is the only check
+that would catch a bad conflict resolution, and it will need doing again if
+another lane lands items before this merges.
+
+**Next:** Unchanged and blocked only on the merge. When backend #38 lands, this
+branch is already on its head, so the remaining steps are: rebase onto merged
+`main` (expected to be a no-op beyond the merge commit), re-capture the fixture
+once more and read the diff, re-verify both browser states, take a fresh
+exact-head review round on the rebased head, and open the PR with base `main`.
