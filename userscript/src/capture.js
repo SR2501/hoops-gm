@@ -196,18 +196,16 @@
   function createDedupeCache({ maxEntries = 200 } = {}) {
     const seenKeys = new Map();
     return {
-      seen(key) {
-        if (seenKeys.has(key)) {
-          seenKeys.delete(key);
-          seenKeys.set(key, true);
-          return true;
-        }
+      has(key) {
+        return seenKeys.has(key);
+      },
+      remember(key) {
+        seenKeys.delete(key);
         seenKeys.set(key, true);
         if (seenKeys.size > maxEntries) {
           const oldest = seenKeys.keys().next().value;
           seenKeys.delete(oldest);
         }
-        return false;
       },
       size() {
         return seenKeys.size;
@@ -243,30 +241,40 @@
     dedupe = createDedupeCache(),
     logger = console,
   } = {}) {
+    const inFlight = new Map();
+
     function forward(envelope) {
       if (!transport || typeof transport.sendPayload !== "function") {
-        return;
+        return Promise.resolve(false);
       }
-      if (dedupe.seen(envelope.dedupeKey)) {
-        return;
+      if (dedupe.has(envelope.dedupeKey)) {
+        return Promise.resolve(true);
       }
-      // Fire-and-forget: forwarding must never delay or block the response
-      // the page itself is waiting on, and a rejected forward must never
-      // become an unhandled rejection.
-      Promise.resolve()
+      const activeDelivery = inFlight.get(envelope.dedupeKey);
+      if (activeDelivery) {
+        return activeDelivery;
+      }
+
+      const delivery = Promise.resolve()
         .then(() => transport.sendPayload(envelope))
+        .then(() => {
+          dedupe.remember(envelope.dedupeKey);
+          return true;
+        })
         .catch(() => {
-          // A failed local delivery is not a successful duplicate. Forget the
-          // key so a later naturally scheduled capture may try again; there is
-          // deliberately no immediate retry loop or burst.
-          if (typeof dedupe.forget === "function") {
-            dedupe.forget(envelope.dedupeKey);
-          }
           safeWarn(
             logger,
             `hoops-gm bridge: failed to forward captured payload (${envelope.request.method} ${envelope.request.url})`
           );
+          return false;
+        })
+        .finally(() => {
+          if (inFlight.get(envelope.dedupeKey) === delivery) {
+            inFlight.delete(envelope.dedupeKey);
+          }
         });
+      inFlight.set(envelope.dedupeKey, delivery);
+      return delivery;
     }
 
     function handleCaptured(details) {
@@ -301,11 +309,10 @@
           raw,
           capturedAtMs: now(),
         });
-        forward(envelope);
-        return true;
+        return forward(envelope);
       } catch (err) {
         safeWarn(logger, `hoops-gm bridge: page snapshot failed (${err && err.message})`);
-        return false;
+        return Promise.resolve(false);
       }
     }
 
@@ -325,7 +332,7 @@
      */
     function captureRenderedView({ url, raw }) {
       if (!isFantraxLeaguePage(url) || typeof raw !== "string" || raw.length === 0) {
-        return false;
+        return Promise.resolve(false);
       }
       return capturePageSnapshot({
         source: "rendered-view",
@@ -443,6 +450,7 @@
       return xhr;
     }
     PatchedXHR.prototype = OriginalXHR.prototype;
+    Object.setPrototypeOf(PatchedXHR, OriginalXHR);
 
     target.XMLHttpRequest = PatchedXHR;
 
@@ -583,6 +591,7 @@
         return xhr;
       }
       PageCaptureXHR.prototype = OriginalXHR.prototype;
+      Object.setPrototypeOf(PageCaptureXHR, OriginalXHR);
       window.XMLHttpRequest = PageCaptureXHR;
     }
 
@@ -884,7 +893,7 @@
    * or service-worker internals. The selected root is cloned and sanitized by
    * `buildDomSnapshotHtml`; no live page node is changed.
    */
-  function captureRenderedViewSnapshot({
+  async function captureRenderedViewSnapshot({
     capture,
     win = typeof window !== "undefined" ? window : undefined,
     doc = typeof document !== "undefined" ? document : undefined,
@@ -910,7 +919,7 @@
       if (!html) {
         return { captured: false, reason: "no exportable content found on this page" };
       }
-      const ok = capture.captureRenderedView({ url: win.location.href, raw: html });
+      const ok = await capture.captureRenderedView({ url: win.location.href, raw: html });
       return ok
         ? { captured: true, reason: "rendered-view" }
         : { captured: false, reason: "capture rejected the rendered view" };
@@ -1041,7 +1050,7 @@
       pendingKind = null;
     }
 
-    function runSnapshot() {
+    async function runSnapshot() {
       timeoutId = null;
       if (
         stopped ||
@@ -1054,12 +1063,15 @@
         resetPending();
         return;
       }
-      const result = captureRenderedViewSnapshot({ capture, win, doc, logger });
-      if (result.captured) {
-        lastCaptureAt = nowMs();
+      try {
+        const result = await captureRenderedViewSnapshot({ capture, win, doc, logger });
+        if (result.captured) {
+          lastCaptureAt = nowMs();
+        }
+      } finally {
+        pendingSince = null;
+        pendingKind = null;
       }
-      pendingSince = null;
-      pendingKind = null;
     }
 
     function requestSnapshot(kind = "mutation") {
@@ -1209,7 +1221,7 @@
    * snapshot of the page's main content. Returns `{ captured, reason }`
    * rather than throwing so a menu command handler can report the outcome.
    */
-  function captureManualSnapshot({
+  async function captureManualSnapshot({
     capture,
     win = typeof window !== "undefined" ? window : undefined,
     doc = typeof document !== "undefined" ? document : undefined,
@@ -1225,7 +1237,7 @@
       if (!raw) {
         return { captured: false, reason: "no exportable content found on this page" };
       }
-      const ok = capture.captureManual({
+      const ok = await capture.captureManual({
         url: win.location.href,
         contentType: appState ? "application/json" : "text/html",
         raw,
@@ -1248,18 +1260,19 @@
       return false;
     }
     registerMenuCommand("hoops-gm: capture current Fantrax view", () => {
-      const result = captureManualSnapshot({ capture, win, doc, logger });
-      if (typeof alert === "function") {
-        try {
-          alert(
-            result.captured
-              ? "hoops-gm bridge: captured the current page for later review."
-              : `hoops-gm bridge: nothing captured (${result.reason}).`
-          );
-        } catch {
-          // A broken alert must never propagate into the page.
+      void captureManualSnapshot({ capture, win, doc, logger }).then((result) => {
+        if (typeof alert === "function") {
+          try {
+            alert(
+              result.captured
+                ? "hoops-gm bridge: stored the current page for later review."
+                : `hoops-gm bridge: nothing stored (${result.reason}).`
+            );
+          } catch {
+            // A broken alert must never propagate into the page.
+          }
         }
-      }
+      });
     });
     return true;
   }

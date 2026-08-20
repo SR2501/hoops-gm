@@ -24,7 +24,7 @@
     storage = { get: GM_getValue, set: GM_setValue },
     origin = BACKEND_ORIGIN,
   } = {}) {
-    function send(method, path, body, headers = {}) {
+    function send(method, path, body, headers = {}, expectedStatus = null) {
       return new Promise((resolve, reject) => {
         const requestHeaders = {
           Accept: "application/json",
@@ -44,6 +44,14 @@
               reject(new Error(`backend returned HTTP ${response.status}`));
               return;
             }
+            if (expectedStatus !== null && response.status !== expectedStatus) {
+              reject(
+                new Error(
+                  `backend returned HTTP ${response.status}; expected HTTP ${expectedStatus}`
+                )
+              );
+              return;
+            }
             try {
               resolve(JSON.parse(response.responseText));
             } catch {
@@ -57,12 +65,12 @@
       });
     }
 
-    function authenticatedSend(method, path, body) {
+    function authenticatedSend(method, path, body, expectedStatus = null) {
       const secret = getSecret(storage);
       if (!secret) {
         return Promise.reject(new Error("bridge is not paired"));
       }
-      return send(method, path, body, { "X-Bridge-Secret": secret });
+      return send(method, path, body, { "X-Bridge-Secret": secret }, expectedStatus);
     }
 
     return {
@@ -72,12 +80,18 @@
       storeSecret: (secret) => storage.set(SECRET_KEY, secret),
       healthCheck: () => authenticatedSend("GET", "/health"),
       handshake: () => authenticatedSend("POST", HANDSHAKE_PATH, { protocol: 1 }),
-      // Forwards one normalized bridge-capture envelope (see capture.js) over the
-      // same authenticated loopback channel as the handshake. This is a contract
-      // call: the backend endpoint and its `bridge_payloads` table are not part
-      // of this userscript-only change and may not exist yet, exactly as the
-      // handshake path was built before the backend route existed.
-      sendPayload: (envelope) => authenticatedSend("POST", PAYLOADS_PATH, envelope),
+      sendPayload: (envelope) =>
+        authenticatedSend("POST", PAYLOADS_PATH, envelope, 201).then((response) => {
+          if (
+            !response ||
+            response.status !== "stored" ||
+            !Number.isSafeInteger(response.id) ||
+            response.id < 1
+          ) {
+            throw new Error("backend did not acknowledge durable payload storage");
+          }
+          return response;
+        }),
       requestPairingCode: () => send("GET", PAIRING_CODE_PATH),
       pair: (code) => send(
         "POST",
