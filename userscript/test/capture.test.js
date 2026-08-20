@@ -173,21 +173,22 @@ test("computeDedupeKey is stable for identical inputs and differs when the body 
 // Dedupe cache
 // ---------------------------------------------------------------------------
 
-test("createDedupeCache reports a key as seen only after the first time", async () => {
+test("createDedupeCache contains only explicitly acknowledged keys", async () => {
   const capture = await loadCapture();
   const cache = capture.createDedupeCache();
-  assert.equal(cache.seen("k1"), false);
-  assert.equal(cache.seen("k1"), true);
-  assert.equal(cache.seen("k2"), false);
+  assert.equal(cache.has("k1"), false);
+  cache.remember("k1");
+  assert.equal(cache.has("k1"), true);
+  assert.equal(cache.has("k2"), false);
 });
 
 test("createDedupeCache evicts the oldest entry once past maxEntries", async () => {
   const capture = await loadCapture();
   const cache = capture.createDedupeCache({ maxEntries: 2 });
-  cache.seen("k1");
-  cache.seen("k2");
-  cache.seen("k3"); // evicts k1
-  assert.equal(cache.seen("k1"), false, "k1 should have been evicted and is fresh again");
+  cache.remember("k1");
+  cache.remember("k2");
+  cache.remember("k3"); // evicts k1
+  assert.equal(cache.has("k1"), false, "k1 should have been evicted");
 });
 
 // ---------------------------------------------------------------------------
@@ -323,6 +324,41 @@ test("a failed delivery may retry on a later event without an internal retry loo
   assert.equal(attempts, 2);
 });
 
+test("concurrent equivalent captures share one delivery and dedupe only after acknowledgement", async () => {
+  const capture = await loadCapture();
+  let attempts = 0;
+  let acknowledge;
+  const pending = new Promise((resolve) => {
+    acknowledge = resolve;
+  });
+  const instance = capture.createCapture({
+    transport: {
+      sendPayload: async () => {
+        attempts += 1;
+        await pending;
+      },
+    },
+  });
+  const details = {
+    url: "https://www.fantrax.com/fantasy/league/abc/draft",
+    contentType: "text/html",
+    raw: "<main>draft</main>",
+  };
+
+  const first = instance.captureManual(details);
+  const concurrent = instance.captureManual(details);
+  await flushMicrotasks();
+  assert.equal(attempts, 1);
+  assert.equal(instance.dedupe.size(), 0, "an in-flight request is not durably acknowledged");
+
+  acknowledge();
+  assert.equal(await first, true);
+  assert.equal(await concurrent, true);
+  assert.equal(instance.dedupe.size(), 1);
+  assert.equal(await instance.captureManual(details), true);
+  assert.equal(attempts, 1);
+});
+
 test("handleCaptured swallows an internal error instead of throwing into the page", async () => {
   const capture = await loadCapture();
   const warnings = [];
@@ -446,6 +482,13 @@ function makeFakeXHRClass() {
       (this._listeners.load || []).forEach((handler) => handler());
     }
   }
+  Object.defineProperties(FakeXHR, {
+    UNSENT: { value: 0, enumerable: true },
+    OPENED: { value: 1, enumerable: true },
+    HEADERS_RECEIVED: { value: 2, enumerable: true },
+    LOADING: { value: 3, enumerable: true },
+    DONE: { value: 4, enumerable: true },
+  });
   return FakeXHR;
 }
 
@@ -505,6 +548,23 @@ test("installXHR returns an uninstall function that restores the original XMLHtt
   assert.equal(win.XMLHttpRequest, FakeXHR);
 });
 
+test("installXHR preserves constructor constants, prototype, and genuine instances", async () => {
+  const capture = await loadCapture();
+  const instance = capture.createCapture({ transport: { sendPayload: async () => {} } });
+  const FakeXHR = makeFakeXHRClass();
+  const win = { XMLHttpRequest: FakeXHR };
+
+  instance.installXHR(win);
+  const xhr = new win.XMLHttpRequest();
+
+  assert.equal(win.XMLHttpRequest.UNSENT, 0);
+  assert.equal(win.XMLHttpRequest.DONE, 4);
+  assert.equal(win.XMLHttpRequest.prototype, FakeXHR.prototype);
+  assert.equal(Object.getPrototypeOf(win.XMLHttpRequest), FakeXHR);
+  assert.equal(xhr instanceof FakeXHR, true);
+  assert.equal(xhr instanceof win.XMLHttpRequest, true);
+});
+
 // ---------------------------------------------------------------------------
 // Page-world bridge
 // ---------------------------------------------------------------------------
@@ -562,6 +622,12 @@ test("page-world hook observes matching fetch and XHR responses without exposing
   }
   assert.equal(published[0].message.source, "fetch");
   assert.equal(published[1].message.source, "xhr");
+  assert.equal(pageWindow.XMLHttpRequest.UNSENT, 0);
+  assert.equal(pageWindow.XMLHttpRequest.DONE, 4);
+  assert.equal(pageWindow.XMLHttpRequest.prototype, FakeXHR.prototype);
+  assert.equal(Object.getPrototypeOf(pageWindow.XMLHttpRequest), FakeXHR);
+  assert.equal(xhr instanceof FakeXHR, true);
+  assert.equal(xhr instanceof pageWindow.XMLHttpRequest, true);
 });
 
 test("page-world hook ignores lookalike and off-host requests", async () => {
@@ -779,10 +845,10 @@ test("captureRenderedView is league-scoped, deduped, and carries no request data
     raw: "<main>draft board</main>",
   };
 
-  assert.equal(instance.captureRenderedView(details), true);
-  assert.equal(instance.captureRenderedView(details), true);
+  assert.equal(await instance.captureRenderedView(details), true);
+  assert.equal(await instance.captureRenderedView(details), true);
   assert.equal(
-    instance.captureRenderedView({
+    await instance.captureRenderedView({
       url: "https://example.test/fantasy/league/abc",
       raw: details.raw,
     }),
@@ -809,7 +875,7 @@ test("createCapture().captureManual bypasses the /fxpa/req URL filter and forwar
   const sent = [];
   const instance = capture.createCapture({ transport: { sendPayload: async (envelope) => sent.push(envelope) } });
 
-  const ok = instance.captureManual({
+  const ok = await instance.captureManual({
     url: "https://www.fantrax.com/fantasy/league/abc/draft",
     contentType: "text/html",
     raw: "<div>draft board</div>",
@@ -830,7 +896,7 @@ test("createCapture().captureManual bypasses the /fxpa/req URL filter and forwar
 test("captureManual never throws even if buildEnvelope fails internally", async () => {
   const capture = await loadCapture();
   const instance = capture.createCapture({ transport: { sendPayload: async () => {} } });
-  const ok = instance.captureManual({ url: undefined, contentType: null, raw: undefined });
+  const ok = await instance.captureManual({ url: undefined, contentType: null, raw: undefined });
   assert.equal(typeof ok, "boolean");
 });
 
@@ -1023,7 +1089,7 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
     },
   };
 
-  const result = capture.captureRenderedViewSnapshot({
+  const result = await capture.captureRenderedViewSnapshot({
     capture: instance,
     win,
     doc,
@@ -1036,13 +1102,13 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
 
   doc.visibilityState = "hidden";
   assert.equal(
-    capture.captureRenderedViewSnapshot({ capture: instance, win, doc }).captured,
+    (await capture.captureRenderedViewSnapshot({ capture: instance, win, doc })).captured,
     false
   );
   win.location.href = "https://example.test/fantasy/league/abc";
   doc.visibilityState = "visible";
   assert.equal(
-    capture.captureRenderedViewSnapshot({ capture: instance, win, doc }).captured,
+    (await capture.captureRenderedViewSnapshot({ capture: instance, win, doc })).captured,
     false
   );
   const frameWindow = {
@@ -1050,11 +1116,11 @@ test("automatic rendered-view snapshot stays visible, league-scoped, bounded, an
     top: {},
   };
   assert.equal(
-    capture.captureRenderedViewSnapshot({
+    (await capture.captureRenderedViewSnapshot({
       capture: instance,
       win: frameWindow,
       doc,
-    }).captured,
+    })).captured,
     false
   );
   assert.equal(captured.length, 1);
@@ -1288,7 +1354,7 @@ test("captureManualSnapshot prefers exposed app state over a DOM snapshot", asyn
   };
   const doc = { querySelector: () => makeCloneableRoot() };
 
-  const result = capture.captureManualSnapshot({ capture: instance, win, doc });
+  const result = await capture.captureManualSnapshot({ capture: instance, win, doc });
   assert.equal(result.captured, true);
   assert.match(result.reason, /^app-state:/);
   await flushMicrotasks();
@@ -1304,7 +1370,7 @@ test("captureManualSnapshot falls back to a DOM snapshot when no app state is ex
   const win = { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } };
   const doc = { querySelector: (selector) => (selector === "main" ? makeCloneableRoot() : null) };
 
-  const result = capture.captureManualSnapshot({ capture: instance, win, doc });
+  const result = await capture.captureManualSnapshot({ capture: instance, win, doc });
   assert.equal(result.captured, true);
   assert.equal(result.reason, "dom-snapshot");
   await flushMicrotasks();
@@ -1318,15 +1384,26 @@ test("captureManualSnapshot reports failure without throwing when nothing is exp
   const win = { location: { href: "https://www.fantrax.com/fantasy/league/abc" } };
   const doc = { querySelector: () => null, documentElement: null };
 
-  const result = capture.captureManualSnapshot({ capture: instance, win, doc });
+  const result = await capture.captureManualSnapshot({ capture: instance, win, doc });
   assert.equal(result.captured, false);
   assert.match(result.reason, /no exportable content/);
 });
 
-test("installManualCaptureMenu registers a menu command and reports the outcome via alert", async () => {
+test("installManualCaptureMenu reports stored only after transport acknowledgement", async () => {
   const capture = await loadCapture();
   const sent = [];
-  const instance = capture.createCapture({ transport: { sendPayload: async (envelope) => sent.push(envelope) } });
+  let acknowledge;
+  const pending = new Promise((resolve) => {
+    acknowledge = resolve;
+  });
+  const instance = capture.createCapture({
+    transport: {
+      sendPayload: async (envelope) => {
+        sent.push(envelope);
+        await pending;
+      },
+    },
+  });
   const win = { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } };
   const doc = { querySelector: (selector) => (selector === "main" ? makeCloneableRoot() : null) };
   let registeredLabel;
@@ -1349,8 +1426,51 @@ test("installManualCaptureMenu registers a menu command and reports the outcome 
   registeredHandler();
   await flushMicrotasks();
   assert.equal(sent.length, 1);
+  assert.equal(alerts.length, 0, "the UI must not claim storage while transport is pending");
+
+  acknowledge();
+  await flushMicrotasks();
   assert.equal(alerts.length, 1);
-  assert.match(alerts[0], /captured the current page/);
+  assert.match(alerts[0], /stored the current page/);
+});
+
+test("manual capture reports failure and permits a later retry", async () => {
+  const capture = await loadCapture();
+  let attempts = 0;
+  const instance = capture.createCapture({
+    transport: {
+      sendPayload: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("backend returned HTTP 500");
+        }
+      },
+    },
+    logger: { warn: () => {} },
+  });
+  const win = { location: { href: "https://www.fantrax.com/fantasy/league/abc/draft" } };
+  const doc = { querySelector: (selector) => (selector === "main" ? makeCloneableRoot() : null) };
+  const alerts = [];
+  let registeredHandler;
+
+  capture.installManualCaptureMenu({
+    registerMenuCommand: (_label, handler) => {
+      registeredHandler = handler;
+    },
+    capture: instance,
+    win,
+    doc,
+    alert: (message) => alerts.push(message),
+  });
+
+  registeredHandler();
+  await flushMicrotasks();
+  assert.match(alerts[0], /nothing stored/);
+
+  registeredHandler();
+  await flushMicrotasks();
+  assert.equal(attempts, 2);
+  assert.match(alerts[1], /stored the current page/);
 });
 
 test("installManualCaptureMenu is a no-op without a registerMenuCommand function", async () => {

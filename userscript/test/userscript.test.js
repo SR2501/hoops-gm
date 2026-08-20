@@ -197,7 +197,7 @@ test("sendPayload forwards a captured envelope to the payloads contract path wit
     storage: { get: () => "c".repeat(64), set: () => {} },
     request: (options) => {
       requestOptions = options;
-      options.onload({ status: 202, responseText: "{}" });
+      options.onload({ status: 201, responseText: '{"id":17,"status":"stored"}' });
     },
   });
 
@@ -208,4 +208,25 @@ test("sendPayload forwards a captured envelope to the payloads contract path wit
   assert.equal(requestOptions.url, "http://127.0.0.1:8000/api/v1/bridge/payloads");
   assert.equal(requestOptions.headers["X-Bridge-Secret"], "c".repeat(64));
   assert.deepEqual(JSON.parse(requestOptions.data), envelope);
+});
+
+test("sendPayload rejects a non-201 or malformed storage acknowledgement", async () => {
+  const bridge = await loadBridge();
+  const responses = [
+    { status: 200, responseText: '{"id":1,"status":"stored"}' },
+    { status: 201, responseText: '{"id":1,"status":"accepted"}' },
+  ];
+  const transport = bridge.createTransport({
+    storage: { get: () => "c".repeat(64), set: () => {} },
+    request: (options) => options.onload(responses.shift()),
+  });
+
+  await assert.rejects(
+    transport.sendPayload({ schema: "hoops-gm.bridge-payload.v1" }),
+    /expected HTTP 201/
+  );
+  await assert.rejects(
+    transport.sendPayload({ schema: "hoops-gm.bridge-payload.v1" }),
+    /did not acknowledge durable payload storage/
+  );
 });

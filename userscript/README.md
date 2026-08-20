@@ -217,7 +217,7 @@ Three things follow from that, all implemented here:
    can never be mistaken for a raw `/fxpa/req` response. It never reads request
    objects, request bodies, headers, cookies, local/session storage, or
    service-worker internals. A backend failure is warned and dropped without
-   an immediate retry loop; its dedupe key is released so a later naturally
+   an immediate retry loop; its in-flight key is released so a later naturally
    rate-limited page event can resume collection after the backend returns.
 3. **Manual export (guaranteed, owner-triggered).** Independent of which
    layer produced the data, the owner can invoke **hoops-gm: capture current
@@ -231,8 +231,11 @@ Three things follow from that, all implemented here:
    strips `<script>`/`<style>`/`<noscript>` from the clone, and forwards the
    resulting HTML. Output is bounded to 500,000 characters. This never
    depends on Fantrax's network layer at all, so it is the one path
-   guaranteed to work regardless of what `fx-sw.js` does. See "Customer
-   workflow: manual export" below for exactly when and how to use it.
+   guaranteed to work regardless of what `fx-sw.js` does. The menu reports
+   success only after the backend returns its durable-storage acknowledgement;
+   transport, non-201, malformed-acknowledgement, and backend commit failures
+   report that nothing was stored and leave the capture retryable. See
+   "Customer workflow: manual export" below for exactly when and how to use it.
 
 All fallback sources are stored in the same `bridge_payloads` table via the same
 authenticated envelope contract (`schema`, `capturedAt`, `request`,
@@ -294,19 +297,25 @@ Fantrax itself, not another userscript permission.
   forwarding step is wrapped so a bug in this module can at most silently
   drop one capture — it can never throw into Fantrax's own page code or
   delay a response the page is waiting on. Forwarding failures (backend
-  unreachable, non-2xx, invalid JSON) are logged as a warning and dropped.
-  There is no immediate retry; a later normal capture event may try again
-  after the failed key is released.
-- **Bounded dedupe.** A small in-memory recency cache collapses
-  byte-identical consecutive captures of the same method/URL/body (e.g. a
-  page polling the same RPC call every few seconds), so an unchanged draft
-  board does not flood the backend on every tick.
+  unreachable, non-201, invalid JSON, malformed storage acknowledgement, or
+  backend commit failure) are logged as a warning and dropped. There is no
+  immediate retry; a later normal or manual capture event may try again after
+  the in-flight key is released.
+- **Acknowledged, bounded dedupe.** Concurrent byte-identical captures of the
+  same method/URL/body share one in-flight delivery. The bounded recency cache
+  remembers the key only after the backend returns HTTP 201 with
+  `{ "status": "stored", "id": ... }`; a pending or failed request is never
+  recorded as a successful duplicate.
 - **Forwarded over the existing authenticated transport.** Captured
   envelopes are POSTed via `transport.sendPayload(envelope)`, which reuses
   the same loopback `GM_xmlhttpRequest` channel and `X-Bridge-Secret`
   header as the handshake — to `POST /api/v1/bridge/payloads`. **That
-  backend endpoint stores raw payloads in `bridge_payloads` before any
-  normalization.
+  backend endpoint commits raw payloads in `bridge_payloads` before emitting
+  its 201 response and before any normalization.**
+- **XHR compatibility is preserved.** Both XMLHttpRequest wrappers return
+  genuine native instances, retain the native prototype/`instanceof`
+  behavior, and inherit constructor statics such as `UNSENT`, `OPENED`,
+  `HEADERS_RECEIVED`, `LOADING`, and `DONE`.
 - **One-way and validated.** The page hook has no GM API, no bridge secret,
   and no backend address. Its `postMessage` record is accepted only when its
   `source` is the top-level page window, its `origin` is the exact current

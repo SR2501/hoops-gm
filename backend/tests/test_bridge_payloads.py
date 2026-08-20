@@ -9,8 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+from starlette.types import Message, Receive, Scope, Send
 
 from hoops_gm.core.config import Settings
+from hoops_gm.db.base import Base
 from hoops_gm.db.models.bridge import BridgePayload
 
 SECRET = "bridge-test-secret"
@@ -72,6 +75,94 @@ def test_payload_persists_exact_envelope_and_raw_diagnostic_fields(
         assert row.body_parse_error == "Unexpected token <"
         assert row.body_json is None
         assert row.request_method == "POST"
+
+
+def test_payload_response_starts_only_after_commit(app: FastAPI) -> None:
+    commit_finished = False
+    response_started_after_commit: list[bool] = []
+
+    class RecordingSession(Session):
+        def commit(self) -> None:
+            nonlocal commit_finished
+            super().commit()
+            commit_finished = True
+
+    async def observed_app(
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        async def observed_send(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                response_started_after_commit.append(commit_finished)
+            await send(message)
+
+        await app(scope, receive, observed_send)
+
+    with TestClient(observed_app) as observed_client:
+        database = app.state.database
+        Base.metadata.create_all(database.engine)
+        database.session_factory = sessionmaker(
+            bind=database.engine,
+            autoflush=False,
+            expire_on_commit=False,
+            class_=RecordingSession,
+        )
+        _auth(app)
+
+        response = observed_client.post(
+            "/api/v1/bridge/payloads",
+            json=_envelope(),
+            headers={"X-Bridge-Secret": SECRET},
+        )
+
+    assert response.status_code == 201
+    assert response_started_after_commit == [True]
+
+
+def test_payload_commit_failure_rolls_back_and_never_returns_201(app: FastAPI) -> None:
+    rollback_called = False
+
+    class CommitFailingSession(Session):
+        def commit(self) -> None:
+            raise RuntimeError("injected commit failure")
+
+        def rollback(self) -> None:
+            nonlocal rollback_called
+            rollback_called = True
+            super().rollback()
+
+    with TestClient(app, raise_server_exceptions=False) as failing_client:
+        database = app.state.database
+        Base.metadata.create_all(database.engine)
+        original_factory = database.session_factory
+        database.session_factory = sessionmaker(
+            bind=database.engine,
+            autoflush=False,
+            expire_on_commit=False,
+            class_=CommitFailingSession,
+        )
+        _auth(app)
+        failed_envelope = {**_envelope(), "dedupeKey": "POST:commit-failure:rollback-proof"}
+
+        response = failing_client.post(
+            "/api/v1/bridge/payloads",
+            json=failed_envelope,
+            headers={"X-Bridge-Secret": SECRET},
+        )
+
+        database.session_factory = original_factory
+        with database.session() as session:
+            persisted = session.scalars(
+                select(BridgePayload).where(
+                    BridgePayload.dedupe_key == failed_envelope["dedupeKey"]
+                )
+            ).all()
+
+    assert response.status_code == 500
+    assert response.json()["error"] == "internal_error"
+    assert rollback_called is True
+    assert persisted == []
 
 
 def test_runtime_paired_secret_authenticates_and_persists_payload(

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from hoops_gm.api.deps import SessionDep, SettingsDep
+from hoops_gm.api.deps import DatabaseDep, SettingsDep
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.core.bridge_pairing import BridgePairing
 from hoops_gm.db.models.bridge import BridgePayload
@@ -219,7 +219,7 @@ def handshake(
 async def store_payload(
     request: Request,
     settings: SettingsDep,
-    session: SessionDep,
+    database: DatabaseDep,
     _authenticated: None = Depends(require_bridge_secret),
 ) -> BridgePayloadResponse:
     """Validate and persist the typed envelope without normalising Fantrax JSON."""
@@ -250,21 +250,24 @@ async def store_payload(
             headers={"X-Bridge-Error": "validation_error"},
         ) from exc
 
-    row = BridgePayload(
-        schema_name=payload.schema_name,
-        source=payload.source,
-        captured_at=payload.captured_at,
-        request_method=payload.request.method,
-        request_url=payload.request.url,
-        response_status=payload.response.status,
-        response_ok=payload.response.ok,
-        response_content_type=payload.response.content_type,
-        body_raw=payload.body.raw,
-        body_json=payload.body.json_value,
-        body_parse_error=payload.body.parse_error,
-        dedupe_key=payload.dedupe_key,
-        raw_payload=raw_payload,
-    )
-    session.add(row)
-    session.flush()
-    return BridgePayloadResponse(id=row.id)
+    with database.session() as session:
+        row = BridgePayload(
+            schema_name=payload.schema_name,
+            source=payload.source,
+            captured_at=payload.captured_at,
+            request_method=payload.request.method,
+            request_url=payload.request.url,
+            response_status=payload.response.status,
+            response_ok=payload.response.ok,
+            response_content_type=payload.response.content_type,
+            body_raw=payload.body.raw,
+            body_json=payload.body.json_value,
+            body_parse_error=payload.body.parse_error,
+            dedupe_key=payload.dedupe_key,
+            raw_payload=raw_payload,
+        )
+        session.add(row)
+        session.flush()
+        response = BridgePayloadResponse(id=row.id)
+
+    return response
