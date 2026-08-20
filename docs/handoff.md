@@ -6097,3 +6097,51 @@ findings.
 **Next:** Freeze and commit this tree, obtain fresh independent reviews against
 that exact head, publish a PR only if they remain clear, and require GitHub CI
 including native Postgres before merge. Do not self-approve or merge.
+
+---
+
+## 2026-08-19 — quant — Typed draft-format configuration
+
+**Changed:** Completed `draft-format-abstraction` as a pure, migration-free
+configuration layer. Added immutable `SnakeDraftFormat`, `LinearDraftFormat`,
+and `AuctionDraftFormat` contracts built only from the current `League` row's
+`draft_type`, `team_count`, `roster_size`, and `auction_budget`. Construction
+fails closed on `UNKNOWN` or untyped format identities, missing/nonpositive
+roster shape, a missing/nonpositive/non-finite auction budget, and any auction
+budget attached to a snake or linear draft. Snake and linear drafts expose
+one-indexed overall/round/pick/team-slot coordinates; snake reverses team slots
+on even rounds while linear preserves the same order. Auction exposes no
+nomination or bidding order because no current `League` fact establishes one.
+Restacked the unit onto projection-blending main commit `79a5e3e`, preserving
+its backlog state, model documentation, and append-only handoff entry.
+
+**Now true:** Downstream draft-tracker and mock-ingestion work can consume a
+typed structural format without inheriting the historical 10-team,
+14-player, or $200 assumptions. The abstraction computes only total roster
+slots and ordered-draft coordinates; it contains no price, inflation, scarcity,
+ADP/AAV, recommendation, projection, availability, or valuation behavior.
+Forty-eight focused tests cover format identity, shape/budget boundaries,
+unknown and contradictory evidence, snake/linear ordering properties across
+multiple league sizes, coordinate bounds, and deterministic value equality.
+The full local backend Code gate passes: Ruff, format check, strict mypy, and
+979 default tests with 18 live-smoke tests deselected. The tracked-file secret
+scan is clean, and a fresh SQLite migration lifecycle upgraded from empty
+through `0015`, reported no model drift, and downgraded to base. The backlog
+was mechanically reconciled to 37 done, 1 blocked, 63 pending, 101 total.
+The Model gate does not apply because this layer validates explicit
+configuration and produces no decision-bearing estimate.
+
+**Could not verify:** Native PostgreSQL was not configured locally, so GitHub's
+Postgres and migration jobs remain the cross-dialect checks of record. No live
+league row was available to prove that all four required current-season facts
+have been populated; the contract intentionally raises instead of supplying a
+historical fallback when they are absent. Current evidence also does not define
+auction nomination/bidding order or any minimum-bid rule, so this unit leaves
+those semantics unknown rather than guessing.
+
+**Next:** `draft-tracker` and `mock-ingestion` may use
+`draft_format_from_league` as their structural boundary. They must preserve the
+absence of ordered picks for auction and keep all price, market, strategy, and
+recommendation behavior in their separately gated downstream units. Require
+exact-head CI and independent code/quant plus backend-seam review before merge;
+do not merge or self-approve from this session.
