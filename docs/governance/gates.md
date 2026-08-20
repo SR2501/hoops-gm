@@ -14,8 +14,9 @@ Gates exist because this project's failure modes are unusual — see the four po
 - Type-check clean
 - Tests green
 - No secrets, cookies, tokens or `userSecretId` values committed
+- **A new guard needs a mutation check that reproduces the failure it guards against.** Reviewer-enforced, not CI-enforced — say so in the PR. Added 2026-08-20 after one lane was caught twice: its first mutation on a NULL-league guard passed while proving nothing, and weakening an import detector left the suite green because no module used the missed idiom. Its own conclusion, earned rather than reasoned to: *a mutation check that does not reproduce the bug is the same false comfort as a test that does not.* Construct the failure deliberately, then confirm the guard sees it.
 
-Enforced by CI.
+Enforced by CI, except the bullet marked otherwise.
 
 ---
 

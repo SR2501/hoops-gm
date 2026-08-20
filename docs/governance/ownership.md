@@ -38,6 +38,7 @@ These need agreement from both owners before changing:
 | Valuation output | `quant` → `backend` → `frontend` | Every value carries its input versions |
 | Action protocol | `bridge` ↔ `backend` | Typed schema; changes need `safety` review |
 | Surface parity | `frontend` ↔ `bridge` | No draft-critical decision may exist in only one surface |
+| `scheduled_game_counts` | `data-engineer` → `backend` → `frontend` | Lives in `ingest/nba/schedule.py` and is `data-engineer`'s under ADR-009 as an observable schedule fact, but is now the sole producer of the schedule-grid API's numbers and the screen built on them. **Its density guarantee is the contract:** a dense cross product of scoring periods × active teams, with zero-game teams and periods as explicit rows rather than absent ones. `backend` guarantees `len(counts) == len(teams) × len(periods)` on any 200 by deriving both axes from those rows; `frontend` renders an explicit `0` distinct from absent data on the strength of it. A change that made the result sparse would not fail a type check and would silently turn "this team plays no games that week" into "we have no data", which is the distinction the screen exists to preserve |
 
 ## Notes on `backend/src/hoops_gm/dev/`
 
