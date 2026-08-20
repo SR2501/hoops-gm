@@ -6019,3 +6019,81 @@ profiles. No self-approval occurred.
 **Next:** `projection-blending` may now consume the imported per-game production
 rates. It must keep games played outside the blend: availability remains the
 separate future fusion seam required by ADR-002.
+
+---
+
+## 2026-08-19 — quant — Deterministic per-game projection blending contract
+
+**Changed:** Implemented `projection-blending` as a migration-free domain/service
+contract in `backend/src/hoops_gm/projections/blending.py`. A model worker can
+consume only an explicitly released, current `ProjectionImport`; release
+captures source, season, imported time, exact source-byte SHA-256, immutable
+parser-profile identity/definition SHA-256, effective scoring assumption, and a
+second deterministic SHA-256 over the normalized per-game rows. Definition and
+activation both revalidate that lineage, including detecting an in-place
+projection-row edit even if the cited source-file hash was not changed.
+
+Blend profiles are immutable caller-owned values with monotonically assigned
+versions, canonical content fingerprints, exact rational weight normalization,
+and separate explicit activation. A -> B -> A is an ordinary reactivation.
+Definition validates the complete cohort before returning a new catalog;
+activation validates before replacing its pointer, so either failure leaves the
+prior catalog unchanged.
+
+Every active scoring category must have an explicit weight for every selected
+source. Missing positively weighted values fail the whole profile; weights are
+never renormalized around a gap. Counting rates remain per game. Ratio
+categories apply one category weight vector independently to made and attempted
+volume, never to raw percentages. Manual replacements are post-blend inputs with
+their own id, actor, reason, player/category, league/season, UTC timestamp and
+exact component values; the applied override id survives on the output.
+
+ADR-002 and ADR-008 are enforced at the service boundary. The implementation
+never selects `source_games_played_assumptions`, and changing those rows leaves
+the output byte-for-byte identical. Availability, expected games, rankings,
+market/AAV, valuation, recommendations, mock outcomes and learned/calibrated
+weight bases are explicit rejected layers. Version 1 accepts only
+user-configured weights and makes no source-accuracy claim.
+
+Added 19 focused tests covering deterministic/order-invariant lineage, exact
+normalization, made/attempt volume correctness, games-played exclusion,
+layer-purity and unsupported learned-weight rejection, separate override
+provenance, missing category/cohort failure, invalid weights, duplicate/unknown/
+mixed-season/incompatible-scoring inputs, in-place mutation detection, active
+scoring-profile currentness, failure atomicity and A -> B -> A activation.
+`docs/models/projection-blending.md` records the method, experiment boundary,
+non-applicable training/calibration claim, blind spots and persistence
+limitation. `docs/backlog.md` now marks `projection-blending` done (35 done,
+1 blocked, 65 pending).
+
+**Now true:** The exact tree based on
+`7136740a713847b29cd0e5ec30a79fd00c4149d8` passes Ruff lint and formatting,
+strict mypy, the full default backend suite, the full existing
+`model_backtest` gate, the complete offline `adapter_contract` gate, the
+tracked-file secret scan, and a fresh SQLite `upgrade head` -> `alembic check`
+-> `downgrade base` lifecycle through migration `0015`. The package import was
+explicitly resolved from this worktree's `backend/src`, avoiding the stale
+editable-install hazard recorded earlier in this file. Independent pre-freeze
+quant, code, and data-engineer/import-lineage reviews found no blocking
+findings.
+
+**Could not verify:**
+- Native Postgres was unavailable locally: Docker is not installed and
+  `TEST_DATABASE_URL` is unset. The unchanged schema/migration lifecycle passed
+  SQLite, but the exact published head still needs CI's native Postgres suite.
+- Version 1 has no held-out source-accuracy or calibration result because it
+  fits no parameters. User weights are configuration, not a learned claim.
+  Any learned route requires a new preregistered, independently released
+  experiment under the projection sequestration protocol.
+- Only Basketball Monster and the canonical manual profile currently have
+  verified production contracts. No claim is made that a real multi-vendor
+  blend is more accurate than either source, and private paid rows remain
+  deliberately unavailable to this repository.
+- Profiles, activation pointers and blended outputs are caller-owned immutable
+  values, not durable database rows. The accepted schema has no blend
+  persistence/API contract; adding one remains architecture arbitration rather
+  than an opaque write into an unrelated table. No API/UI consumer exists yet.
+
+**Next:** Freeze and commit this tree, obtain fresh independent reviews against
+that exact head, publish a PR only if they remain clear, and require GitHub CI
+including native Postgres before merge. Do not self-approve or merge.

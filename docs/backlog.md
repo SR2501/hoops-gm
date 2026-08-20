@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**34 done - 1 blocked - 66 pending - 101 total**
+**35 done - 1 blocked - 65 pending - 101 total**
 
 A task is ready when every dependency is done. Update the status line when you finish one.
 
@@ -673,10 +673,17 @@ R40. The NBA official injury report is published per-game and the season opens A
 
 ### `projection-blending` - Implementing configurable projection blending
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `csv-importer`
 
-Configurable weighted blending of per-game production rates across sources including manual overrides. Versioned blend profiles so downstream valuations are reproducible. Production rates only - games played is handled by the availability model.
+Migration-free domain/service contract over exact current verified imports:
+category-wise normalized user weights, deterministic immutable profile/output
+fingerprints, separate auditable manual replacements, explicit activation with
+A -> B -> A currentness, and fail-closed lineage/category/cohort validation.
+Ratio categories blend made/attempt volume. Games played, availability,
+expected games, rankings, market/mock outcomes, valuation and recommendations
+cannot enter. No learned source-accuracy path exists without a preregistered
+held-out experiment. Profile persistence/API/UI remain an architecture decision.
 
 ### `punt-builds` - Modelling punt builds
 

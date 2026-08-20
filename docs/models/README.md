@@ -65,5 +65,7 @@ A model that says 70% and is right 70% of the time is more useful for a lineup d
 - `injury-status-conversion.md` — report status → actual play rate
 - `shutdown-risk.md` — late-season shutdown probability
 - `baseline-production.md` — in-house per-game production model
+- [`projection-blending.md`](projection-blending.md) — deterministic,
+  user-configured per-game source blending; no learned source-quality claim
 - `contingent-value.md` — usage redistribution on absence
 - `auction-inflation.md` — live price movement during an auction
