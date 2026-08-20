@@ -111,6 +111,13 @@ a:focus-visible {
   margin-top: auto;
 }
 
+.shell__status-detail {
+  margin: var(--space-1) 0 0 calc(7px + var(--space-2));
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 .shell__main {
   padding: var(--space-8);
   max-width: 68rem;

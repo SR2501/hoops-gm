@@ -22,11 +22,7 @@ describe('RenderErrorBoundary', () => {
     }
 
     render(
-      <RenderErrorBoundary
-        onRetry={() => {
-          shouldThrow = false
-        }}
-      >
+      <RenderErrorBoundary>
         <FragileView />
       </RenderErrorBoundary>,
     )
@@ -36,6 +32,7 @@ describe('RenderErrorBoundary', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Request req-render')
     expect(consoleError).toHaveBeenCalled()
 
+    shouldThrow = false
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
 
     expect(screen.getByText('Recovered view')).toBeInTheDocument()

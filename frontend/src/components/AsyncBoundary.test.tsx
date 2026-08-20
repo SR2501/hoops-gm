@@ -113,4 +113,24 @@ describe('AsyncBoundary', () => {
 
     window.removeEventListener('unhandledrejection', unhandled)
   })
+
+  it('does not let an empty last-good result hide a refresh failure', () => {
+    const state: AsyncState<readonly string[]> = {
+      status: 'error',
+      data: [],
+      error: new ApiError(503, 'refresh_unavailable', 'Refresh failed.', 'req-empty-refresh'),
+      fetchedAt: new Date(),
+      reload: vi.fn(),
+    }
+
+    render(
+      <AsyncBoundary state={state} isEmpty={(data) => data.length === 0}>
+        {(data) => <p>{data.join(', ')}</p>}
+      </AsyncBoundary>,
+    )
+
+    expect(screen.getByText('Nothing to show yet.')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Code refresh_unavailable.')
+    expect(screen.getByRole('status')).toHaveTextContent('Request req-empty-refresh.')
+  })
 })

@@ -74,15 +74,12 @@ export function AsyncBoundary<T>({
     return <div className="state state--empty">{emptyMessage}</div>
   }
 
-  if (isEmpty?.(data)) {
-    return <div className="state state--empty">{emptyMessage}</div>
-  }
-
   // A failed refresh that leaves older data on screen is exactly the case
   // where the screen must say so rather than look current.
   const refreshFailed = status === 'error'
   const failureCode = error instanceof ApiError ? error.code : null
   const failureRequestId = error instanceof ApiError ? error.requestId : null
+  const dataIsEmpty = isEmpty?.(data) ?? false
 
   return (
     <>
@@ -104,7 +101,7 @@ export function AsyncBoundary<T>({
           </button>
         </p>
       )}
-      {children(data)}
+      {dataIsEmpty ? <div className="state state--empty">{emptyMessage}</div> : children(data)}
     </>
   )
 }

@@ -4,7 +4,6 @@ import { ApiError } from '../api/client'
 interface RenderErrorBoundaryProps {
   children: ReactNode
   resetKey?: unknown
-  onRetry?: () => void
 }
 
 interface RenderErrorBoundaryState {
@@ -34,7 +33,6 @@ export class RenderErrorBoundary extends Component<
   }
 
   private readonly retry = () => {
-    this.props.onRetry?.()
     this.setState({ error: null })
   }
 

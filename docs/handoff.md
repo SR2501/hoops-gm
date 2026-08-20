@@ -6170,17 +6170,28 @@ request id. Initial-load failures display the same context. A route-level
 `RenderErrorBoundary` around the current route table prevents an unexpected
 render exception from blanking the app, reports the exception to the console,
 renders an actionable fallback with request context when available, resets on
-route changes, and offers an explicit retry.
+route changes, preserves shell navigation, and offers an explicit retry.
 
 Added focused tests for typed readiness 503 handling, strict error envelopes,
 invalid JSON and malformed 2xx responses, the exact fake-timer stale transition
 with a single scheduled check, last-good/refresh-failure retention with no
-unhandled rejection, request-id/code display, and render-exception fallback and
-recovery. Rebasing onto current `origin/main`
+unhandled rejection (including when the retained result is empty),
+request-id/code display, and render-exception fallback and recovery. Rebasing
+onto current `origin/main`
 `79a5e3e3d0c317374e90a58a9a9f5a0ecccefe13` was clean and touched no frontend
-file. On that base, frontend ESLint, strict TypeScript checking, all 19 tests,
-the production Vite build, the tracked-file secret scan (264 files), and the
+file. On that base, frontend ESLint, strict TypeScript checking, all 21 tests,
+the production Vite build, the tracked-file secret scan (268 files), and the
 Impeccable mechanical UI detector all pass.
+
+The first exact-head independent frontend review found three concrete gaps in
+the frozen implementation: an empty retained result returned before the failed-
+refresh banner, the shell health badge collapsed malformed/HTTP failures into
+`Backend unreachable` without request context, and a boundary around the whole
+route tree removed navigation during fallback. All three were reproduced and
+fixed before publication. Empty results now retain the explicit failure,
+backend health distinguishes reachability from response errors and shows
+detail/code/request id, and each page is bounded inside the persistent shell so
+navigation remains an escape path.
 
 **Now true:** A successful HTTP status is not sufficient evidence for any
 existing frontend endpoint; malformed payloads become visible contract errors

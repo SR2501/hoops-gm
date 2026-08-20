@@ -34,10 +34,31 @@ describe('the dashboard shell', () => {
 
     renderWithRouter(<App />)
 
-    expect(await screen.findByTestId('backend-status')).toHaveTextContent('Backend unreachable')
+    await waitFor(() => {
+      expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend unreachable')
+    })
     expect(await screen.findByText(/Could not load service metadata/)).toBeInTheDocument()
     // Both the shell status and the failed panel announce themselves.
     expect(await screen.findAllByRole('alert')).toHaveLength(2)
+  })
+
+  it('does not misclassify a malformed health response as unreachable', async () => {
+    mockFetch({
+      '/api/v1/meta': { body: META },
+      '/health': {
+        body: { status: 'ok' },
+        headers: { 'X-Request-ID': 'req-bad-health' },
+      },
+    })
+
+    renderWithRouter(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('backend-status')).toHaveTextContent('Backend error')
+    })
+    expect(screen.getByTestId('backend-status')).toHaveTextContent('did not match')
+    expect(screen.getByTestId('backend-status')).toHaveTextContent('Code invalid_response')
+    expect(screen.getByTestId('backend-status')).toHaveTextContent('Request req-bad-health')
   })
 
   it('offers a retry that actually retries', async () => {

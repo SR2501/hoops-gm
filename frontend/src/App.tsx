@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { RenderErrorBoundary } from './components/RenderErrorBoundary'
@@ -12,17 +13,39 @@ import { SystemPage } from './routes/SystemPage'
  * trade lab — is a sibling of these, added by its owning phase.
  */
 export function App() {
-  const location = useLocation()
-
   return (
-    <RenderErrorBoundary resetKey={location.key}>
-      <Routes>
-        <Route element={<AppLayout />}>
-          <Route index element={<DashboardPage />} />
-          <Route path="system" element={<SystemPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </RenderErrorBoundary>
+    <Routes>
+      <Route element={<AppLayout />}>
+        <Route
+          index
+          element={
+            <RouteBoundary>
+              <DashboardPage />
+            </RouteBoundary>
+          }
+        />
+        <Route
+          path="system"
+          element={
+            <RouteBoundary>
+              <SystemPage />
+            </RouteBoundary>
+          }
+        />
+        <Route
+          path="*"
+          element={
+            <RouteBoundary>
+              <NotFoundPage />
+            </RouteBoundary>
+          }
+        />
+      </Route>
+    </Routes>
   )
+}
+
+function RouteBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return <RenderErrorBoundary resetKey={location.key}>{children}</RenderErrorBoundary>
 }
