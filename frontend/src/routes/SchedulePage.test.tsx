@@ -30,11 +30,19 @@ function scheduleGrid(overrides: Partial<ScheduleGrid> = {}): ScheduleGrid {
         refresh_id: 1,
         version: '9bcac1c60490b41a',
         refreshed_at: '2026-08-20T12:00:00Z',
-        source_game_count: 10,
-        resolved_game_count: 10,
-        // Coherent with the counts below: 6 + 0 + 8 = 14 team-games. The
-        // fixture previously claimed 20 while counting 14, which nothing
-        // noticed because nothing compared them.
+        // `lineage.py` requires `persisted_team_row_count == 2 *
+        // resolved_game_count` — team_schedule holds exactly two rows per
+        // game — so these three move together. 7 games, 14 team rows, and all
+        // 14 fall inside the three periods below, so counted equals persisted.
+        //
+        // An earlier edit set persisted to 14 against 10 resolved "for
+        // coherence". That is a body the service cannot produce: it raises
+        // inside `schedule_completeness` and becomes a 409. The original
+        // 10/20 against 14 counted was not incoherent at all — it is the
+        // legitimate case where six team-games fall outside every scoring
+        // period. Shape-valid and meaning-invalid, which no test here can see.
+        source_game_count: 7,
+        resolved_game_count: 7,
         persisted_team_row_count: 14,
         unresolved_game_ids: [],
       },
@@ -273,41 +281,13 @@ describe('the schedule grid', () => {
     const lineage = await screen.findByTestId('schedule-lineage')
     expect(lineage).toHaveTextContent('9bcac1c60490b41a')
     expect(within(lineage).getByTestId('schedule-game-counts')).toHaveTextContent(
-      '10 from source · 10 resolved · 14 team rows persisted · 14 counted in this grid',
+      '7 from source · 7 resolved · 14 team rows persisted · 14 counted in this grid',
     )
-    // Agreeing counts raise nothing.
-    expect(screen.queryByTestId('lineage-persisted-mismatch')).not.toBeInTheDocument()
     // The raw timestamp is shown verbatim, so a mislabelled one stays checkable.
     expect(within(lineage).getByTestId('schedule-refreshed-at')).toHaveTextContent(
       '2026-08-20T12:00:00Z',
     )
     expect(lineage).toHaveTextContent('22a8bac85a909ccd')
-  })
-
-  it('shows a persisted row count that disagrees with what the grid counted', async () => {
-    // The shape of a real fail-open found in backend review: a 200 advertising
-    // more persisted rows than the counts it served add up to. This does not
-    // claim a fault — a persisted game outside every scoring period is counted
-    // by one number and not the other — but a reader can only notice the gap if
-    // both are on the same line.
-    const base = scheduleGrid()
-    const mismatched = scheduleGrid({
-      lineage: {
-        ...base.lineage,
-        schedule: { ...base.lineage.schedule, persisted_team_row_count: 20 },
-      },
-    })
-    mockFetch({ [GRID_PATH]: { body: mismatched }, '/health': { body: HEALTH } })
-
-    renderWithRouter(<App />, { route: '/schedule' })
-
-    await screen.findByTestId('schedule-grid')
-    const note = screen.getByTestId('lineage-persisted-mismatch')
-    expect(note).toHaveTextContent('persisted 20 team rows')
-    expect(note).toHaveTextContent('counts 14 team-games')
-    expect(note).toHaveTextContent('not necessarily a fault')
-    // The grid still renders — this is information, not a refusal.
-    expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
   })
 
   it('says when the schedule cohort itself is older than the weekly re-ingest cadence', async () => {
@@ -402,8 +382,8 @@ describe('the schedule grid', () => {
     })
 
     const failure = screen.getByTestId('async-stale-failure')
-    expect(failure).toHaveTextContent(/changed after this version was recorded/)
-    expect(failure).toHaveTextContent(/[Rr]e-import the schedule/)
+    expect(failure).toHaveTextContent(/would describe current reality/)
+    expect(failure).toHaveTextContent(/the remedy differs/)
     expect(failure).toHaveTextContent('Code schedule_grid_not_current.')
     expect(failure).toHaveTextContent('Request req-warm-failure.')
     // The stale data is still on screen and labelled, not hidden.
@@ -482,7 +462,7 @@ describe('schedule grid refusals', () => {
       code: 'schedule_grid_not_current',
       status: 409,
       detail: 'registered version no longer matches',
-      expect: /no longer describes current reality/,
+      expect: /would describe current reality/,
     },
     {
       code: 'schedule_grid_incomplete_evidence',
@@ -585,8 +565,15 @@ describe('schedule grid refusals', () => {
     const panel = await screen.findByRole('alert')
     const summary = within(panel).getByTestId('async-error-summary')
     expect(summary).toHaveTextContent(/no counts at all for this league/)
-    expect(summary).toHaveTextContent(/left out a team that has schedule rows/)
-    expect(within(panel).getByTestId('async-error-action')).toHaveTextContent(/marked inactive/)
+    expect(summary).toHaveTextContent(/team left out of the grid that has schedule rows/)
+    // Phrased open, like its sibling, so a third raiser does not silently
+    // falsify it.
+    expect(summary).toHaveTextContent(/names what failed/)
+    // The remedy for "no counts at all" must not name the all-zero-calendar
+    // condition, which raises `incomplete_evidence` instead.
+    const action = within(panel).getByTestId('async-error-action')
+    expect(action).toHaveTextContent(/no scoring periods, or no active teams/)
+    expect(action).toHaveTextContent(/marked inactive/)
     expect(panel).toHaveTextContent('teams [2] have 2026-27 schedule rows')
   })
 
@@ -609,9 +596,11 @@ describe('schedule grid refusals', () => {
     // would send the operator down the wrong path.
     const notCurrent = SCHEDULE_GRID_ERRORS.schedule_grid_not_current
     const noEvidence = SCHEDULE_GRID_ERRORS.schedule_grid_incomplete_evidence
-    expect(notCurrent?.summary).toMatch(/no longer describes current reality/)
-    expect(notCurrent?.summary).toMatch(/scoring-period projection may be stale/)
-    expect(notCurrent?.action).toMatch(/[Rr]e-import the schedule, or re-run the scoring-period projection/)
+    expect(notCurrent?.summary).toMatch(/would describe current reality/)
+    expect(notCurrent?.summary).toMatch(/no schedule refresh registered for this season/)
+    expect(notCurrent?.summary).toMatch(/cannot be resolved/)
+    expect(notCurrent?.action).toMatch(/the remedy differs/)
+    expect(notCurrent?.action).toMatch(/re-importing the schedule will not touch it/)
     expect(noEvidence?.summary).toMatch(/nothing on record establishes the counts/)
   })
 
@@ -635,7 +624,7 @@ describe('schedule grid refusals', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const panel = await screen.findByRole('alert')
-    expect(panel).toHaveTextContent(/changed after this version was recorded/)
+    expect(panel).toHaveTextContent(/would describe current reality/)
   })
 
   it('stays specific about an unreachable backend rather than blaming the data', async () => {

@@ -9223,3 +9223,97 @@ even.
 **Next:** Fresh exact-head review round on the rebased head, then open the PR
 with base `main`. If #39 lands first, one more rebase — recount from the merged
 file rather than reconciling either side's header, per Lane C.
+
+---
+
+## 2026-08-20 — frontend — Final review round: three more, and every one was a branch I reasoned about
+
+**Changed:** Three independent reviewers on merged `main` at `fd04725`. All
+three refused to approve. Five findings between them, and the architect named
+the pattern that produced every one: **each was a claim about a condition that
+was reasoned about rather than executed.**
+
+**1. The fixture "coherence fix" was backwards.** `db/lineage.py:174` enforces
+`persisted_team_row_count == 2 * resolved_game_count` — team_schedule holds
+exactly two rows per game. My earlier "fix" set persisted to 14 against 10
+resolved, which is a body the service **cannot produce**: it raises inside
+`schedule_completeness` and becomes a 409. Roughly thirty happy-path tests were
+rendering an impossible response.
+
+And the thing I "fixed" was not a defect. `10 resolved / 20 persisted` against
+14 counted is the legitimate case — six team-games falling outside every scoring
+period. I read the benign case as a fault and edited a correct number into an
+impossible one, one commit after writing a note whose entire purpose was to
+explain that the benign case is benign. The fixture is now `7 / 7 / 14` with 14
+counted: legal against the invariant and equal to what the grid counts.
+
+**2. The lineage mismatch note fires if and only if nothing is wrong.** Merged
+`main` refuses the fail-open it was shaped for at `schedule_grid.py:482` — a
+team persisted but absent from the grid is a 409 and cannot reach a 200. What
+remains is the structural gap between a season's persisted rows and the subset
+inside a fantasy calendar, which on any real season is permanent. Worse, on a
+sparse response `countedTeamGames` sums reported cells only, so the note fires
+and attributes a payload hole to calendar boundaries while the integrity banner
+ten lines below correctly attributes it to missing data — the dashboard
+contradicting itself, which is the defect I opened an earlier round to close.
+
+The note is deleted. The two figures stay side by side on the facts line, which
+costs nothing, asserts nothing, and lets a reader compare them.
+
+**3. `schedule_grid_not_current` had the same closed-enumeration flaw I had just
+removed from its sibling.** Three raisers: `:226` no refresh registered at all,
+`:282` fingerprint mismatch, `:430` a class the backend documents in its own
+comment as *"roughly twenty-five causes — no active calendar, no settings
+snapshot, a calendar bound to another league, a timezone-naive boundary — and
+only `StaleScoringPeriodProjectionError` means stale."*
+
+My copy asserted *"the evidence is well-formed but no longer describes current
+reality"*, which is false at `:226` — there is no evidence, nothing has been
+registered — and that is the **most likely refusal a new operator will ever
+see**, on a fresh install before the first import. The action offered a two-way
+remedy, so a league with no active deadline calendar was told to re-run a
+projection that cannot create the calendar it projects from.
+
+Rewritten open. Driven end to end: deleted the schedule refresh, got
+`season '2026-27' has no current NBA schedule refresh`, and the screen now reads
+*"common cases are no schedule refresh registered for this season…"* with
+*"Nothing registered means importing the schedule for the first time."*
+
+**4. `schedule_grid_incomplete`'s remedy named the wrong condition.** `rows` is
+empty only when the league has no scoring periods or no active teams. A calendar
+that exists but does not cover the imported season yields rows that are all
+zero, which raises `incomplete_evidence` at `:453` instead — the sibling code I
+had just corrected. So the remedy I wrote for the branch I had **not** driven
+sent the operator to a different code's condition.
+
+**5.** `countedTeamGames` was optional; a cross-check a caller can omit without a
+type error is not a cross-check. Now required. And a test comment claiming "the
+boundary either side" preceded a single assertion.
+
+**Now true:** Six refusal conditions have now been driven end to end against the
+real service — missing completeness block, wrong cohort, deadline-calendar
+mismatch, deactivated team, unknown league, and no refresh registered. **Four of
+the six falsified copy that was already written for their code.**
+
+Code gate: ESLint clean, `tsc --noEmit` clean, 77 tests across 8 files.
+
+**Could not verify:** The `:430` projection class remains driven only through
+its deadline-calendar-mismatch member; the other ~24 causes are unexercised, and
+the copy is written to be true of them rather than checked against them. The
+403 loopback refusal is still unit-test-only. The three league-data conditions
+under `incomplete_evidence` remain unrendered.
+
+The lineage figures are shown side by side with no automated comparison, which
+is a deliberate retreat: I could not name a condition, reachable on a 200 at
+merged `main`, where they differ **and** something is wrong. If one exists the
+check should key on it, and I did not find one.
+
+**The generalisation, and it is the architect's not mine:** *when you change
+something because you observed a problem, check the sibling you did not
+observe.* Every defect this branch produced across six rounds has that shape —
+the untested branch of a two-branch remedy, a fixture field edited without
+checking the invariant that governs it, a warning designed against the only
+dataset where it cannot fire. None was caught by a test, because in each case
+the test was written from the same assumption as the code.
+
+**Next:** Report the three fixes and open the PR with base `main`.

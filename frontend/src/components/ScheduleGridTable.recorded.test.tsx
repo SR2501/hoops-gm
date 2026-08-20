@@ -90,7 +90,9 @@ describe('the recorded schedule grid response', () => {
     expect(age.days).toBe(7)
     expect(age.label).toBe('refreshed 7 days ago')
 
-    // And the boundary either side of it, so the derivation is not vacuous.
+    // One boundary, which is enough to show the derivation is not tautological:
+    // describeRefreshAge(x, x) returning 'refreshed today' proves the function
+    // actually reads its second argument.
     expect(describeRefreshAge(grid.lineage.schedule.refreshed_at, new Date(recorded)).label).toBe(
       'refreshed today',
     )

@@ -12,12 +12,18 @@
  * backend rather than trust this component's arithmetic.
  *
  * `persisted_team_row_count` is shown next to what the grid actually counted,
- * because the two describe the same cohort and a reader can only notice a gap
- * if both numbers are on the same line. A backend that advertised more
- * persisted rows than it served counts for was a real fail-open found in
- * review; this does not detect it — the numbers can legitimately differ when a
- * persisted game falls outside every scoring period — but it makes the
- * discrepancy visible rather than leaving it to be inferred.
+ * because the two describe the same cohort and a reader can only compare them
+ * if both are on the same line.
+ *
+ * There is deliberately **no warning** when they differ. On a successful
+ * response they differ whenever a persisted game falls outside every scoring
+ * period, which is the normal case — a fantasy calendar rarely spans the whole
+ * NBA season — so a note would fire on essentially every real response while
+ * the fault it was written for (a team persisted but absent from the grid) is
+ * refused outright by `schedule_grid.py:482` and never reaches a 200. A caution
+ * that fires if and only if nothing is wrong devalues the one beside it that
+ * means something. The figures are shown; the interpretation is left to the
+ * reader, who has the period boundaries on the same screen.
  */
 
 import type { ScheduleGridLineage } from '../api/types'
@@ -26,8 +32,13 @@ import { describeRefreshAge, REFRESH_CADENCE_DAYS } from './scheduleGridModel'
 interface ScheduleLineageProps {
   lineage: ScheduleGridLineage
   now: Date
-  /** Games the grid actually counted, so the two can be seen together. */
-  countedTeamGames?: number
+  /**
+   * Games the grid actually counted, so the two can be seen together.
+   *
+   * Required rather than optional: a cross-check a caller can silently omit
+   * without a type error is not a cross-check.
+   */
+  countedTeamGames: number
 }
 
 export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLineageProps) {
@@ -37,8 +48,6 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
   const countsDisagree =
     schedule.source_game_count !== schedule.resolved_game_count ||
     schedule.unresolved_game_ids.length > 0
-  const persistedDiffersFromCounted =
-    countedTeamGames !== undefined && countedTeamGames !== schedule.persisted_team_row_count
 
   return (
     <details className="lineage" data-testid="schedule-lineage">
@@ -74,8 +83,8 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
           <dt>Games</dt>
           <dd data-testid="schedule-game-counts">
             {schedule.source_game_count} from source · {schedule.resolved_game_count} resolved ·{' '}
-            {schedule.persisted_team_row_count} team rows persisted
-            {countedTeamGames !== undefined ? <> · {countedTeamGames} counted in this grid</> : null}
+            {schedule.persisted_team_row_count} team rows persisted · {countedTeamGames} counted in
+            this grid
           </dd>
         </div>
         <div className="facts__row">
@@ -107,16 +116,6 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
           </dd>
         </div>
       </dl>
-
-      {persistedDiffersFromCounted ? (
-        <p className="lineage__note" role="status" data-testid="lineage-persisted-mismatch">
-          The refresh persisted {schedule.persisted_team_row_count} team rows, but this grid counts{' '}
-          {String(countedTeamGames)} team-games. That is not necessarily a fault — a persisted game
-          falling outside every scoring period is counted by one and not the other — but the two
-          numbers describe the same cohort and a gap is worth understanding before trusting the
-          totals.
-        </p>
-      ) : null}
 
       {countsDisagree ? (
         <p className="lineage__note" role="status">

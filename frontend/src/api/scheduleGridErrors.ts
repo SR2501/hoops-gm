@@ -58,10 +58,19 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
       'Check the league id in the URL, or seed a demo database — see `backend/README.md` for the offline seed path.',
   },
   schedule_grid_not_current: {
+    // Three raisers: `schedule_grid.py:226` (no refresh registered at all),
+    // `:282` (registered version no longer matches the persisted schedule),
+    // and `:430`, which the backend documents as covering roughly twenty-five
+    // causes of which only one actually means "stale". Phrased open for that
+    // reason. An earlier version asserted a two-way disambiguation with a
+    // per-branch remedy over that site, which is the construction removed from
+    // `incomplete_evidence` for exactly this reason — and it told an operator
+    // with no active deadline calendar to re-run a projection that cannot
+    // create the calendar it projects from.
     summary:
-      "The evidence is well-formed but no longer describes current reality: the schedule may have changed after this version was recorded, or the league's scoring-period projection may be stale. Verification worked and returned a clear verdict — nothing here is unknown, it is simply out of date, so the grid is withheld rather than served from a superseded cohort.",
+      "The backend could not establish that a grid served now would describe current reality, so it served none. The backend's wording below names what failed; common cases are no schedule refresh registered for this season, a registered version that no longer matches the persisted schedule, and a league deadline calendar or scoring-period projection that cannot be resolved.",
     action:
-      "Read the backend's wording below and act on what it names: re-import the schedule, or re-run the scoring-period projection. Both bring the registered version and the rows it describes back into step.",
+      "Read the backend's wording below — the remedy differs. Nothing registered means importing the schedule for the first time; a version that no longer matches means re-importing it, since the schedule changed after that version was recorded; a calendar or projection problem lives in the league's own configuration, and re-importing the schedule will not touch it.",
   },
   schedule_grid_incomplete_evidence: {
     summary:
@@ -70,10 +79,22 @@ export const SCHEDULE_GRID_ERRORS: Record<string, ScheduleGridErrorCopy> = {
       "Read the backend's wording below: it names the check that failed, and the remedy is not the same for each. A refresh that cannot state its completeness needs the schedule re-importing; a team or scoring period with no row needs the league's team data or calendar corrected, and re-importing the schedule will not create one.",
   },
   schedule_grid_incomplete: {
+    // Two raisers today: `schedule_grid.py:435` (no rows at all) and `:485`
+    // (a team holding schedule rows inside the verified cohort but absent from
+    // the grid). Phrased open rather than closed, like its sibling, because a
+    // third raiser would otherwise make this silently wrong — which is how
+    // `incomplete_evidence` went stale.
+    //
+    // `rows` comes from a cross join of the league's scoring periods with
+    // active teams, so it is empty only when the league has no scoring periods
+    // or there are no active teams. A calendar that exists but does not cover
+    // the imported season yields rows that are all zero, which is a different
+    // condition and raises `incomplete_evidence` at `:453` instead. An earlier
+    // version of this action sent that operator to the wrong place.
     summary:
-      'The schedule verified cleanly, but the grid assembled from it does not hold together: either it produced no counts at all for this league, or it left out a team that has schedule rows inside the verified cohort. The backend refuses to serve counts that contradict their own lineage rather than showing a grid quietly short a team.',
+      "The schedule verified cleanly, but the grid assembled from it does not hold together. The backend's wording below names what failed; the cases are no counts at all for this league, or a team left out of the grid that has schedule rows inside the verified cohort. It refuses to serve counts that contradict their own lineage rather than showing a grid quietly short a team.",
     action:
-      "Read the backend's wording below. No counts at all points at the league's scoring calendar not covering the season the schedule was imported for; a team present in the schedule but absent from the grid points at that team being marked inactive while still holding rows.",
+      "Read the backend's wording below. No counts at all means the league has no scoring periods, or no active teams — note that a calendar which exists but does not cover the imported season is a different refusal. A team present in the schedule but absent from the grid points at that team being marked inactive while still holding rows.",
   },
 }
 
