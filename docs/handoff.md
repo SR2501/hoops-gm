@@ -6042,15 +6042,15 @@ inherit the original constructor's static constants while preserving the
 original prototype and genuine native instances.
 
 **Now true:** The branch was rebased without conflict onto exact `origin/main`
-`79a5e3e3d0c317374e90a58a9a9f5a0ecccefe13`. Regressions cover response-start
+`bcfb2d68df97238a6f97c03bb38e4f952a5282dd`. Regressions cover response-start
 ordering after commit, injected commit failure, rollback and zero-row outcome,
 retry after failure, concurrent equivalent capture coalescing, manual UI
 timing, exact storage-acknowledgement validation, and all five standard XHR
 ready-state constants plus prototype/`instanceof` behavior in both wrappers.
 The full local Code gate passes: Ruff and formatting clean, strict mypy clean,
-933 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
+981 backend tests passed (18 live-smoke tests deselected), 67 userscript tests
 passed, the userscript production build completed, the tracked-file secret
-scan found no secrets in 264 files, and a fresh SQLite migration lifecycle
+scan found no secrets in 267 files, and a fresh SQLite migration lifecycle
 upgraded through `0015`, reported no model drift, and downgraded to base.
 Adapter and Automation gates do not apply: this change adds no external-source
 adapter and remains a response-only read path with no action protocol,
