@@ -90,8 +90,12 @@ date disagreement, missing or contradictory payload/row season scope,
 noncanonical season/type-specific `GAME_ID`, and same-team home/away identity
 raise `SourceContractError`. A one-sided response also raises with the
 unsupported side named; it is never silently dropped and no opponent ID or
-score is invented. Recorded fixtures select whole game groups rather than a
-raw row boundary, so fixture generation cannot manufacture an incomplete pair.
+score is invented. Full-season parsing also requires NBA league `00`, team
+rows, and neutral values for every other declared request parameter. A date,
+game, team, opponent, player, statistical, or other narrowing filter therefore
+cannot masquerade as a complete season payload. Recorded fixtures select whole
+game groups rather than a raw row boundary, so fixture generation cannot
+manufacture an incomplete pair.
 One repeated-canonical game is also checked against `BoxScoreSummaryV3`'s
 independent home/away team IDs, rather than treating cardinality as proof of
 correct orientation. Season backfill supports only the source's `Regular

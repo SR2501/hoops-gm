@@ -77,6 +77,15 @@ behind it change, including when the row count is unchanged. A completeness
 block that contradicts itself, its own refresh scope, or the cohort its version
 fingerprints raises rather than falling back to a string comparison.
 
+`source_game_count` is the number of regular-season entries in the returned
+`ScheduleLeagueV2` document, not an independently published season total. The
+client sends only league `00` and season, the parser verifies the response's
+`seasonYear`, and ordinary JSON truncation cannot parse successfully; however,
+a coherent upstream response containing only a subset would still describe
+that subset consistently. The live 1,206-entry observation and the independent
+historical `LeagueGameFinder`/`PlayerGameLogs` equality checks are drift
+evidence, not proof that every future `ScheduleLeagueV2` response is whole.
+
 **Limitation.** The recorded 2026–27 payload contains six NBA Cup games whose
 teams are still TBD, so under this contract that season registers no schedule
 cohort until the NBA resolves them, and everything keyed to a schedule version

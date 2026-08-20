@@ -43,6 +43,8 @@ class _SyntheticEvidenceClient:
         game_id = _GAME_IDS[season]
         return {
             "parameters": {
+                "LeagueID": "00",
+                "PlayerOrTeam": "T",
                 "Season": season,
                 "SeasonType": "Regular Season",
             },

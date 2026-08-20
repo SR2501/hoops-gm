@@ -520,6 +520,30 @@ def _validate_league_game_finder_scope(
             source=SOURCE,
             endpoint=endpoint,
         )
+    if _text_or_none(parameters.get("LeagueID")) != "00":
+        raise SourceContractError(
+            f"payload league {parameters.get('LeagueID')!r} is not NBA league '00'",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    if _text_or_none(parameters.get("PlayerOrTeam")) != "T":
+        raise SourceContractError(
+            "payload is not scoped to team rows",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    full_season_scope = {"Season", "SeasonType", "LeagueID", "PlayerOrTeam"}
+    narrowed = sorted(
+        key
+        for key, value in parameters.items()
+        if key not in full_season_scope and value not in (None, "")
+    )
+    if narrowed:
+        raise SourceContractError(
+            "payload declares narrowed LeagueGameFinder scope through " + ", ".join(narrowed),
+            source=SOURCE,
+            endpoint=endpoint,
+        )
     return f"{season_id_prefix}{season[:4]}", game_id_prefix
 
 

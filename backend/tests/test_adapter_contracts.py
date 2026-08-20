@@ -477,6 +477,41 @@ class TestNbaGamesAndLogs:
         with pytest.raises(SourceContractError, match="lacks declared"):
             parse_league_game_finder(payload, season="2024-25")
 
+    @pytest.mark.parametrize(
+        ("parameter", "value"),
+        [
+            ("DateFrom", "01/01/2025"),
+            ("DateTo", "01/31/2025"),
+            ("GameID", "0022400633"),
+            ("TeamID", 1610612754),
+            ("VsTeamID", 1610612759),
+        ],
+    )
+    def test_narrowed_source_scope_cannot_masquerade_as_a_full_season(
+        self, parameter: str, value: object
+    ) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["parameters"][parameter] = value
+
+        with pytest.raises(SourceContractError, match=rf"narrowed.*{parameter}"):
+            parse_league_game_finder(payload, season="2024-25")
+
+    @pytest.mark.parametrize(
+        ("parameter", "value", "message"),
+        [
+            ("LeagueID", "10", "not NBA league"),
+            ("PlayerOrTeam", "P", "not scoped to team rows"),
+        ],
+    )
+    def test_non_nba_or_non_team_source_scope_is_rejected(
+        self, parameter: str, value: object, message: str
+    ) -> None:
+        payload = load("nba_leaguegamefinder_reconciliation.json")
+        payload["parameters"][parameter] = value
+
+        with pytest.raises(SourceContractError, match=message):
+            parse_league_game_finder(payload, season="2024-25")
+
     def test_row_season_scope_must_match_requested_scope(self) -> None:
         payload = load("nba_leaguegamefinder_reconciliation.json")
         table = payload["resultSets"][0]

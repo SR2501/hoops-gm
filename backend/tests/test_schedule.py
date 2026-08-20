@@ -29,6 +29,7 @@ from hoops_gm.db.lineage import (
     record_refresh,
     schedule_completeness,
     schedule_content_version,
+    verify_refresh,
 )
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
@@ -513,7 +514,12 @@ def test_same_row_count_schedule_mutation_is_never_reported_current(session: Any
 
     before = session.scalars(select(TeamScheduleEntry)).all()
     mutated = sorted(before, key=lambda entry: (entry.game_id, entry.team_id))[0]
-    mutated.game_date = mutated.game_date + timedelta(days=1)
+    mutated_game = session.get(NbaGame, mutated.game_id)
+    assert mutated_game is not None
+    mutated_game.game_date = mutated_game.game_date + timedelta(days=1)
+    for entry in before:
+        if entry.game_id == mutated.game_id:
+            entry.game_date = mutated_game.game_date
     session.flush()
 
     [check] = check_cohort(session, schedule_version=registered_version)
@@ -521,11 +527,46 @@ def test_same_row_count_schedule_mutation_is_never_reported_current(session: Any
 
     assert len(after) == len(before), "the mutation must not change the row count"
     assert check.status == "stale"
-    assert check.current_version != registered_version
-    assert check.current_version == schedule_content_version(session, season="2026-27")
+    assert check.current_version is None
+    observed_version = schedule_content_version(session, season="2026-27")
+    verification = verify_refresh(session, run)
+    assert verification.is_current is False
+    assert verification.current_version is None
+    assert verification.observed_content_version == observed_version
+    [observed_claim] = check_cohort(session, schedule_version=observed_version)
+    assert observed_claim.status == "stale"
+    assert observed_claim.current_version is None
     # The registry itself is untouched: detection comes from recomputing the
     # content, not from a producer having registered something new.
     assert run.version == registered_version
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    ["season", "season_type", "game_date", "home_away"],
+)
+def test_schedule_serializer_refuses_nba_game_identity_that_contradicts_team_schedule(
+    session: Any,
+    contradiction: str,
+) -> None:
+    result = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, result)
+    import_schedule(session, result)
+    game = session.scalar(select(NbaGame).order_by(NbaGame.nba_game_id))
+    assert game is not None
+
+    if contradiction == "season":
+        game.season = "2025-26"
+    elif contradiction == "season_type":
+        game.season_type = SeasonType.PLAYOFFS
+    elif contradiction == "game_date":
+        game.game_date = game.game_date + timedelta(days=1)
+    else:
+        game.home_team_id, game.away_team_id = game.away_team_id, game.home_team_id
+    session.flush()
+
+    with pytest.raises(ValueError, match="contradicts team_schedule"):
+        schedule_content_version(session, season="2026-27")
 
 
 def _persisted_schedule_rows(

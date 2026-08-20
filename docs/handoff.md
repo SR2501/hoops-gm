@@ -6483,3 +6483,129 @@ editing it, so the fixture keeps its drift evidence.
 **Next:** Re-ingest any database written by the previous surrogate-key
 fingerprint — every schedule version registered before this change was computed
 over different bytes and will not match.
+
+---
+
+## 2026-08-20 — backend — Schedule lineage rejected-head remediation
+
+**Changed:** Corrected two guarantees in the unmerged 2026-08-19 schedule
+lineage entry above. A present `schedule_completeness: null` was treated as an
+absent legacy key, and `effective_current_version` returned a recomputed
+unregistered content hash as though it were current. Added the explicit
+`RefreshVerification` / `verify_refresh` contract: the observed hash is
+diagnostic evidence, while `current_version` is the registered version only
+when persisted content still matches it. Exact keyed `/lineage/validate` claims
+now use that verifier, and `/lineage/current` omits an invalidated schedule
+scope instead of presenting its stored row as current. Malformed or internally
+inconsistent completeness metadata still raises and reaches the stable API 500
+error envelope. No route or schema was added.
+
+The canonical serializer now cross-checks every joined `nba_games` row against
+the persisted `team_schedule` scope and orientation. A disagreement on season,
+season type, Eastern game date, or home/away identity raises instead of
+fingerprinting synthesized facts. Legacy/manual refreshes retain byte
+comparison only when the completeness key is genuinely absent.
+
+**Now true:** After a same-row-count out-of-band schedule mutation, neither the
+old registered version nor the newly observed hash validates as current; both
+the broad and exact keyed claim paths report stale with no current version until
+a producer registers a successful refresh. The current-list endpoint reports no
+current schedule for that invalidated scope. Focused tests cover both HTTP
+routes, present-null metadata through both routes, all four `nba_games`
+identity contradictions, legacy behavior, and the explicit verifier result.
+Targeted Ruff and format checks pass, strict mypy passes across all 130 source
+files, and the 77 targeted lineage, schedule, and API tests pass on SQLite.
+
+**Could not verify:** Native PostgreSQL was not available, so portability is
+supported by SQLAlchemy-only queries and the existing structural gate but still
+needs the CI PostgreSQL lane. The full offline suite, live adapter smokes, and
+model evidence reproductions were not rerun because this correction is confined
+to backend lineage verification and its focused tests. No migration was needed
+because persisted schema did not change. No commit was created.
+
+**Next:** `quant` may wire model consumers to `verify_refresh`; this change
+deliberately did not touch `schedule_context/service.py` or
+`availability/reliability.py`. Any invalidated schedule remains unusable until
+the schedule importer successfully registers the persisted content version.
+
+---
+
+## 2026-08-20 — quant — Verified schedule lineage in model consumers
+
+**Changed:** Schedule-context cohort publication/output persistence and
+reliability cohort publication/scorecard computation now call the backend-owned
+`verify_refresh` seam after acquiring their existing lineage locks. They fail
+closed when canonical persisted schedule content no longer matches the
+registered refresh, and derived lineage is stamped only with the verifier's
+current registered version. Model math, thresholds, cohorts, and public APIs
+are unchanged. Focused tests mutate a schedule date in both `nba_games` and its
+two `team_schedule` rows without changing row count, then prove publication and
+output computation refuse the obsolete registration instead of writing or
+returning derived output.
+
+**Now true:** A stored schedule label cannot remain sufficient evidence for
+either quant consumer once canonical content changes behind the registry.
+Focused Ruff, format, strict mypy, all schedule-context/reliability tests, and
+all `model_backtest` marker tests pass locally.
+
+**Could not verify:** Native PostgreSQL and the full offline backend suite were
+not run; this consumer-only change was exercised on SQLite. Live adapter smokes
+and external-source model evidence regeneration were not run because no model
+method, parameter, evidence artifact, or adapter changed.
+
+**Next:** Backend/CI should exercise the exact uncommitted head in the native
+PostgreSQL and full-suite lanes; invalidated schedules still require a
+successful producer refresh before either consumer can publish again.
+
+---
+
+## 2026-08-20 — data-engineer — Schedule completeness review remediation
+
+**Changed:** Closed the remaining source-scope hole found on rejected head
+`6aaebf7`: a `LeagueGameFinder` payload can represent a complete season only
+when its declared request is NBA league `00`, team rows, and every parameter
+other than season/type/league/row-kind is neutral. Date, game, team, opponent,
+player, statistical, and unknown future narrowing filters now raise instead of
+letting a coherent subset masquerade as a full season. Recorded-fixture tests
+cover date bounds, one game, one team, one opponent, non-NBA league, and player
+rows.
+
+The backend and quant remediation entries immediately above are cumulative with
+this one. Canonical schedule verification now reaches broad and exact API
+claims, the current-list endpoint, schedule-context publication/computation,
+and reliability publication/computation. A same-row-count mutation makes the
+registered refresh unusable everywhere; its observed hash remains diagnostic
+and cannot become current until a successful producer import registers it.
+
+**Now true:** Ruff, format, strict mypy, and all 1,038 offline backend tests pass.
+The complete offline Adapter gate passes 281 tests and the Model gate passes 18.
+SQLite upgrades/checks/downgrades through `0015`, and the tracked-file secret
+scan is clean across 277 files. Both documented Model reproduction commands
+produce the committed v2 artifacts byte-for-byte on the normalized checkout.
+The live NBA smokes again reconcile all 1,230 regular-season games, all 84
+playoff games, and independent orientation for all ten repeated-canonical
+games. Model math, thresholds, cohort identities, fingerprints, and reported
+metrics remain unchanged.
+
+**Could not verify:** Native PostgreSQL remains unavailable locally because
+Docker is not installed and `TEST_DATABASE_URL` is unset; fresh CI is required.
+`ScheduleLeagueV2` publishes no independent expected-total field:
+`source_game_count` is the literal number of regular-season entries in the
+returned document. The parser can reject unresolved or internally inconsistent
+evidence and ordinary truncated JSON cannot parse, but a coherent upstream
+subset could still pass without an independent source comparison. The observed
+1,206-entry 2026–27 feed and historical exact
+`LeagueGameFinder`/`PlayerGameLogs` equality are explicit drift evidence, not a
+claim that this upstream can never return a coherent subset.
+
+The production season backfill intentionally remains the completed-games
+`LeagueGameFinder`/`PlayerGameLogs`/`BoxScoreSummaryV3` path; it is not the
+future-schedule importer and does not create `team_schedule` lineage. This
+branch hardens the existing `ScheduleLeagueV2` parser/importer producer seam
+without adding refresh automation, consistent with the original
+`schedule-ingest` unit's library boundary.
+
+**Next:** Commit this remediation, obtain fresh backend, data-engineer, quant,
+and independent code approval on the replacement exact head, then publish one
+unmerged PR and require native PostgreSQL CI. Injury-status conversion remains
+blocked until its invalidated 173-game/26-date cohort is regenerated.

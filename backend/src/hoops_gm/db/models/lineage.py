@@ -89,9 +89,9 @@ class RefreshRun(IntPk, TimestampMixin, Base):
     #: a training job identifier. Provenance, not a foreign key: the producer
     #: is not always a row in this database.
     source: Mapped[str] = mapped_column(String(255))
-    #: Counts and other refresh metadata the producer finds useful to record
-    #: (rows created/updated, row counts). Never load-bearing for the cohort
-    #: check itself — only the artifact scope, version, and refresh time are.
+    #: Counts and other refresh metadata the producer records. Artifact-specific
+    #: verification contracts may make a named block load-bearing; schedule
+    #: completeness is validated against persisted rows by ``db.lineage``.
     summary: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     refreshed_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 

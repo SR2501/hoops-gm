@@ -133,9 +133,9 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
     exists to close.
     """
 
-    raw = summary.get(SCHEDULE_COMPLETENESS_SUMMARY_KEY)
-    if raw is None:
+    if SCHEDULE_COMPLETENESS_SUMMARY_KEY not in summary:
         return None
+    raw = summary[SCHEDULE_COMPLETENESS_SUMMARY_KEY]
     if not isinstance(raw, Mapping):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} is not an object")
     try:
@@ -205,36 +205,82 @@ def schedule_content_parts(
 
     team = aliased(NbaTeam)
     opponent = aliased(NbaTeam)
+    game_home = aliased(NbaTeam)
+    game_away = aliased(NbaTeam)
     rows = session.execute(
         select(
             NbaGame.nba_game_id,
+            NbaGame.season,
+            NbaGame.season_type,
+            NbaGame.game_date,
             team.nba_team_id,
             opponent.nba_team_id,
+            game_home.nba_team_id,
+            game_away.nba_team_id,
             TeamScheduleEntry.game_date,
             TeamScheduleEntry.is_home,
         )
         .join(NbaGame, NbaGame.id == TeamScheduleEntry.game_id)
         .join(team, team.id == TeamScheduleEntry.team_id)
         .join(opponent, opponent.id == TeamScheduleEntry.opponent_team_id)
+        .join(game_home, game_home.id == NbaGame.home_team_id)
+        .join(game_away, game_away.id == NbaGame.away_team_id)
         .where(
             TeamScheduleEntry.season == season,
             TeamScheduleEntry.season_type == season_type,
         )
     ).all()
-    body = sorted(
-        "|".join(
-            (
-                season,
-                season_type.value,
-                nba_game_id,
-                str(team_nba_id),
-                str(opponent_nba_id),
-                game_date.isoformat(),
-                "1" if is_home else "0",
+    body: list[str] = []
+    for (
+        nba_game_id,
+        game_season,
+        game_season_type,
+        nba_game_date,
+        team_nba_id,
+        opponent_nba_id,
+        home_nba_id,
+        away_nba_id,
+        schedule_game_date,
+        is_home,
+    ) in rows:
+        expected_team, expected_opponent = (
+            (home_nba_id, away_nba_id) if is_home else (away_nba_id, home_nba_id)
+        )
+        contradictions: list[str] = []
+        if game_season != season:
+            contradictions.append(f"season {game_season!r} != {season!r}")
+        if game_season_type != season_type:
+            contradictions.append(
+                f"season_type {game_season_type.value!r} != {season_type.value!r}"
+            )
+        if nba_game_date != schedule_game_date:
+            contradictions.append(
+                f"game_date {nba_game_date.isoformat()} != {schedule_game_date.isoformat()}"
+            )
+        if (team_nba_id, opponent_nba_id) != (expected_team, expected_opponent):
+            contradictions.append(
+                "home/away identity "
+                f"{team_nba_id}/{opponent_nba_id} != {expected_team}/{expected_opponent}"
+            )
+        if contradictions:
+            raise ValueError(
+                f"nba_games identity for game {nba_game_id!r} contradicts team_schedule: "
+                + "; ".join(contradictions)
+            )
+        body.append(
+            "|".join(
+                (
+                    season,
+                    season_type.value,
+                    nba_game_id,
+                    str(team_nba_id),
+                    str(opponent_nba_id),
+                    schedule_game_date.isoformat(),
+                    "1" if is_home else "0",
+                )
             )
         )
-        for nba_game_id, team_nba_id, opponent_nba_id, game_date, is_home in rows
-    )
+    body.sort()
     header = "|".join((SCHEDULE_CONTENT_ALGORITHM, season, season_type.value, str(len(body))))
     return [header, *body]
 
@@ -408,18 +454,33 @@ class CohortCheck:
     current_refreshed_at: datetime | None
 
 
-def effective_current_version(session: Session, run: RefreshRun) -> str:
-    """The version ``run``'s scope actually supports right now.
+@dataclass(frozen=True)
+class RefreshVerification:
+    """Whether one registered refresh still describes its persisted artifact.
+
+    ``observed_content_version`` is diagnostic evidence, never a current
+    version. Only a producer can make a version current by successfully
+    registering it; a verifier must not promote an out-of-band row mutation
+    merely because a caller submits the resulting hash.
+    """
+
+    registered_version: str
+    observed_content_version: str | None
+    current_version: str | None
+    is_current: bool
+
+
+def verify_refresh(session: Session, run: RefreshRun) -> RefreshVerification:
+    """Verify that ``run`` still describes its persisted artifact.
 
     For a schedule refresh registered with completeness metadata, that is the
     fingerprint recomputed from the persisted ``team_schedule`` rows — not the
-    label stored on the row. The two differ exactly when something mutated the
-    facts behind the registry's back, and in that case the stored label must
-    not keep being reported as current: a consumer stamping it would be
-    claiming a cohort that no longer exists. Rows without completeness
-    metadata (legacy imports, manual registrations, every non-schedule
-    artifact) are returned unchanged, because there is nothing this module can
-    honestly recompute them from.
+    label stored on the row. The registered label is current only when those
+    values match. If they differ, ``current_version`` is ``None``: the observed
+    hash is unregistered evidence, not a newly current version. Rows without
+    completeness metadata (legacy imports, manual registrations, every
+    non-schedule artifact) retain the original byte-comparison contract,
+    because there is nothing this module can honestly recompute them from.
 
     **Fail closed on inconsistent evidence.** A completeness block that
     contradicts itself or the refresh row it sits on is not weaker evidence,
@@ -432,10 +493,10 @@ def effective_current_version(session: Session, run: RefreshRun) -> str:
     """
 
     if run.artifact_type is not RefreshArtifactType.SCHEDULE:
-        return run.version
+        return RefreshVerification(run.version, None, run.version, True)
     completeness = schedule_completeness(run.summary)
     if completeness is None:
-        return run.version
+        return RefreshVerification(run.version, None, run.version, True)
     if run.season != completeness.season:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} is scoped to season "
@@ -452,13 +513,76 @@ def effective_current_version(session: Session, run: RefreshRun) -> str:
     # matches the metadata cannot fingerprint back to the stored label. If it
     # somehow does, the metadata was never describing this cohort at all.
     persisted_rows = len(parts) - 1
-    if persisted_rows != completeness.persisted_team_row_count and version == run.version:
+    if persisted_rows != completeness.persisted_team_row_count:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} claims "
             f"{completeness.persisted_team_row_count} persisted team row(s) for season "
-            f"{completeness.season}, but the registered version fingerprints {persisted_rows}"
+            f"{completeness.season}, but persisted content fingerprints {persisted_rows}"
         )
-    return version
+    is_current = version == run.version
+    return RefreshVerification(
+        registered_version=run.version,
+        observed_content_version=version,
+        current_version=run.version if is_current else None,
+        is_current=is_current,
+    )
+
+
+def effective_current_version(session: Session, run: RefreshRun) -> str | None:
+    """Return the registered current version, or ``None`` when verification fails.
+
+    New consumers should use :func:`verify_refresh` for the explicit result
+    contract. This compatibility helper deliberately never returns an
+    unregistered observed content hash.
+    """
+
+    return verify_refresh(session, run).current_version
+
+
+def _check_claimed_run(
+    session: Session,
+    *,
+    artifact_type: RefreshArtifactType,
+    claimed_version: str,
+    run: RefreshRun | None,
+) -> CohortCheck:
+    if run is None:
+        return CohortCheck(artifact_type, claimed_version, "unknown", None, None)
+    verification = verify_refresh(session, run)
+    if not verification.is_current:
+        return CohortCheck(artifact_type, claimed_version, "stale", None, None)
+    status: CohortStatus = "current" if verification.current_version == claimed_version else "stale"
+    return CohortCheck(
+        artifact_type,
+        claimed_version,
+        status,
+        verification.current_version,
+        run.refreshed_at,
+    )
+
+
+def check_refresh_claim(
+    session: Session,
+    *,
+    artifact_type: RefreshArtifactType,
+    artifact_key: str,
+    claimed_version: str,
+    season: str | None,
+) -> CohortCheck:
+    """Check one exact keyed, season-scoped claim through canonical verification."""
+
+    run = current_refresh(
+        session,
+        artifact_type,
+        artifact_key=artifact_key,
+        season=season,
+    )
+    return _check_claimed_run(
+        session,
+        artifact_type=artifact_type,
+        claimed_version=claimed_version,
+        run=run,
+    )
 
 
 def check_cohort(
@@ -503,10 +627,12 @@ def check_cohort(
         # Read them only when no producer has published the keyed stream.
         if current is None and artifact_key != "default":
             current = current_refresh(session, artifact_type)
-        if current is None:
-            results.append(CohortCheck(artifact_type, claimed, "unknown", None, None))
-            continue
-        effective = effective_current_version(session, current)
-        status: CohortStatus = "current" if effective == claimed else "stale"
-        results.append(CohortCheck(artifact_type, claimed, status, effective, current.refreshed_at))
+        results.append(
+            _check_claimed_run(
+                session,
+                artifact_type=artifact_type,
+                claimed_version=claimed,
+                run=current,
+            )
+        )
     return results
