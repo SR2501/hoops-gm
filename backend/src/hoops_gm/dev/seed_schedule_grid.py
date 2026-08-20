@@ -59,6 +59,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import inspect, or_, select
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from hoops_gm.calendar import (
@@ -68,10 +69,10 @@ from hoops_gm.calendar import (
 )
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
-from hoops_gm.db.lineage import lock_league_settings_scope
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.importers import import_league_settings, import_schedule, import_teams
 from hoops_gm.ingest.league_settings import (
     BRIDGE_SOURCE,
@@ -405,17 +406,17 @@ def seed_schedule_grid(
     """Bring one database to the exact state the schedule grid requires.
 
     Order is load-bearing four times over. Parsing happens before any write so
-    the target check can refuse before a row is touched. **The league row and
-    its settings-scope lock are taken before ``import_schedule``**, because
-    ``import_schedule`` takes the ``nba-schedule`` scope and
-    ``import_league_settings`` takes league-settings — composing them in the
-    obvious order would acquire the two in the exact inverse of the order the
-    rest of the codebase uses, and would deadlock a concurrent read of the
-    endpoint on PostgreSQL. That the seed is developer tooling is not an
-    exemption: it writes through the same locks, and the documented workflow is
-    to re-seed the very database being served. Then the deadline calendar cites
-    the current schedule refresh and settings snapshot by version, so both must
-    exist first; and the scoring-period projection cites the activated calendar.
+    the target check can refuse before a row is touched. **The settings import
+    runs before the schedule import**, because `import_league_settings` takes
+    the league-settings scope and `import_schedule` takes `nba-schedule` —
+    composed the other way round they acquire the two in the exact inverse of
+    the order the route and the calendar functions use, and would deadlock a
+    concurrent read of the endpoint on PostgreSQL. That the seed is developer
+    tooling is not an exemption: it writes through the same locks, and the
+    documented workflow is to re-seed the very database being served. Then the
+    deadline calendar cites the current schedule refresh and settings snapshot
+    by version, so both must exist first; and the scoring-period projection
+    cites the activated calendar.
     """
 
     recorded = parse_schedule(load_fixture(fixtures_dir, SCHEDULE_FIXTURE), season=SEASON)
@@ -430,11 +431,15 @@ def seed_schedule_grid(
     )
 
     league = _league(session)
-    lock_league_settings_scope(session, league_id=league.id, season=SEASON)
 
-    import_teams(session, parse_teams(load_fixture(fixtures_dir, TEAMS_FIXTURE)))
-    import_schedule(session, parsed)
-
+    # `import_league_settings` runs before `import_schedule` so the canonical
+    # league-settings-before-nba-schedule lock order is a consequence of call
+    # order, with no lineage primitive in developer tooling to be cargo-culted
+    # as "dev tools take lineage locks". Nothing here needs the schedule first:
+    # the period windows derive from `parsed`, which is already in memory.
+    # The rule this expresses is narrower than any lock call would suggest —
+    # *anything composing two production writers inherits their lock order and
+    # must respect the global one.*
     game_dates = [record.game.game_date for record in parsed.games]
     periods = weekly_periods(min(game_dates), max(game_dates))
     document = settings_document(periods)
@@ -445,6 +450,9 @@ def seed_schedule_grid(
         source_payload_sha256=sha256(document.canonical_json().encode()).hexdigest(),
         observed_at=SEEDED_AT,
     )
+
+    import_teams(session, parse_teams(load_fixture(fixtures_dir, TEAMS_FIXTURE)))
+    import_schedule(session, parsed)
 
     calendar = derive_deadline_calendar(session, league, derived_at=SEEDED_AT).calendar
     activate_deadline_calendar(session, league, calendar.version)
@@ -533,6 +541,17 @@ def main(argv: list[str] | None = None) -> int:
     except DemoSeedRefused as exc:
         print(f"refusing to seed: {exc}", file=sys.stderr)
         return 2
+    except (SQLAlchemyError, SourceContractError, ValueError) as exc:
+        # Two operator-error shapes reach here rather than `DemoSeedRefused`,
+        # and both used to exit with a raw traceback: a database holding the
+        # demo Fantrax id under a different season (`ValueError` from the
+        # settings import) and a half-built schema (`OperationalError`). Neither
+        # writes anything, so this is legibility rather than safety — but the
+        # exception type is kept in the message, because a bug that happens to
+        # be a `ValueError` must not be laundered into an operator-error
+        # message that tells them to fix their database.
+        print(f"seed failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
     finally:
         database.dispose()
 

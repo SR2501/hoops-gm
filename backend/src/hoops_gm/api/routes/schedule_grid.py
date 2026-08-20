@@ -193,6 +193,18 @@ def _verified_schedule_evidence(
     cannot state what it imported, or states something inconsistent, is
     ``schedule_grid_incomplete_evidence`` — that row can never populate the
     contract, whatever the rows say.
+
+    **``schedule_grid_incomplete_evidence`` is a family, not a single fact**,
+    and a consumer rendering one fixed sentence for it will be wrong for some
+    members. Two genuinely different conditions live under it: *the refresh
+    cannot state what it imported* — malformed, absent or self-contradicting
+    evidence — and *it states what it imported perfectly well, but that is not
+    the cohort this grid counts*, which is the season-type guard and the
+    refresh-identity check. The frontend found this the hard way, rendering
+    "the schedule refresh cannot state what it imported" above a ``detail``
+    saying the refresh describes a playoffs cohort: a summary that is simply
+    false in that condition. Consumers should read ``detail`` or branch on it
+    rather than treat the code as one message.
     """
 
     refresh = current_refresh(

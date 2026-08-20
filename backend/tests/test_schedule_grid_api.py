@@ -25,6 +25,7 @@ was itself the kind of uncounted claim this file exists to avoid.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from dataclasses import replace
@@ -39,6 +40,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, inspect, select, update
 from sqlalchemy.orm import Session
 
+import hoops_gm
 from hoops_gm.api.routes.schedule_grid import _grid_periods, _grid_teams
 from hoops_gm.app import create_app
 from hoops_gm.calendar import (
@@ -367,6 +369,43 @@ def test_current_grid_does_not_commit_lineage_lock_reservations(
         after = dict(session.execute(select(RefreshRun.id, RefreshRun.updated_at)).all())
     assert after == before
     assert set(after.values()) == {sentinel}
+
+
+def test_lineage_locks_are_acquired_through_exactly_one_import() -> None:
+    """Both lock-order tests monkeypatch one name; pin that it is the only one.
+
+    They patch `hoops_gm.db.lineage.acquire_transaction_lock`, which captures
+    every lineage lock only because `db/lineage.py` is the sole importer of it
+    and `lock_refresh_scope` the sole caller. If another module later imports it
+    from `db.session` directly, both recorders go blind and both tests stay
+    green while asserting nothing — a test weaker than its name, which is
+    exactly the failure those tests were rewritten to avoid.
+    """
+
+    src = Path(hoops_gm.__file__).resolve().parent
+    importers = []
+    for path in sorted(src.rglob("*.py")):
+        if path.name == "session.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = any(
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "acquire_transaction_lock" for alias in node.names)
+            for node in ast.walk(tree)
+        )
+        if imported:
+            importers.append(path.relative_to(src).as_posix())
+
+    assert importers == ["db/lineage.py"]
+    lineage_source = (src / "db" / "lineage.py").read_text(encoding="utf-8")
+    call_sites = sum(
+        1
+        for node in ast.walk(ast.parse(lineage_source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "acquire_transaction_lock"
+    )
+    assert call_sites == 1
 
 
 def test_current_grid_takes_lineage_locks_in_the_codebase_canonical_order(
@@ -1061,6 +1100,36 @@ def test_seed_reconciliation_refuses_a_filter_that_leaves_unresolved_games(
 
     with pytest.raises(DemoSeedRefused, match="still reports unresolved games"):
         reconcile_dropped_games(recorded, recorded)
+
+
+def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A half-built schema is an operator error, not a crash to be dumped.
+
+    Exit 3, distinct from the by-design refusal's exit 2, and the exception type
+    is kept in the message so a genuine bug that happens to be a `ValueError`
+    cannot be laundered into "fix your database".
+    """
+
+    url = f"sqlite:///{(tmp_path / 'halfbuilt.db').as_posix()}"
+    database = Database.from_settings(
+        Settings(environment="development", database_url=url, _env_file=None)
+    )
+    try:
+        Base.metadata.create_all(
+            database.engine, tables=[Base.metadata.tables[League.__tablename__]]
+        )
+    finally:
+        database.dispose()
+    capsys.readouterr()
+
+    assert main(["--database-url", url]) == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("seed failed: ")
+    assert "Traceback" not in captured.err
 
 
 def test_seed_weekly_periods_cover_every_game_date_in_whole_weeks() -> None:
