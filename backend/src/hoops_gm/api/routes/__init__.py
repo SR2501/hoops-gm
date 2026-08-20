@@ -7,7 +7,15 @@ of the ``/api/v1`` JSON API contract. Everything else hangs off ``/api/v1``.
 
 from fastapi import APIRouter
 
-from hoops_gm.api.routes import bridge, deadline_calendar, health, lineage, meta, userscript
+from hoops_gm.api.routes import (
+    bridge,
+    deadline_calendar,
+    health,
+    lineage,
+    meta,
+    schedule_grid,
+    userscript,
+)
 
 #: Operational endpoints, unversioned.
 ops_router = APIRouter()
@@ -20,5 +28,6 @@ api_v1_router.include_router(meta.router)
 api_v1_router.include_router(bridge.router)
 api_v1_router.include_router(lineage.router)
 api_v1_router.include_router(deadline_calendar.router)
+api_v1_router.include_router(schedule_grid.router)
 
 __all__ = ["api_v1_router", "ops_router"]
