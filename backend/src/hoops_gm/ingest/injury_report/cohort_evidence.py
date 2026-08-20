@@ -33,20 +33,23 @@ completeness. The defect above parsed cleanly and produced a plausible 1,225
 games. It was caught only by an independent endpoint that said 1,230.
 
 :func:`reconcile_game_identity` therefore re-derives the cohort's game-identity
-set from three mutually independent views and requires them to be *equal*, not
-merely similar:
+set from four views and requires them to be equal **as sets, not as counts** — a
+count check passes a window that is the right size and the wrong membership,
+which is exactly what a mislabelled timezone produces.
 
-* ``LeagueGameFinder`` — two team rows per game, the schedule source.
-* ``PlayerGameLogs`` — one row per player-game, an entirely separate endpoint
-  which knows nothing about the schedule query.
-* ``ScheduleLeagueV2`` — the official published schedule document, whose game
-  dates are derived from ``gameDateTimeEst`` reconciled against
-  ``gameDateTimeUTC`` (see :func:`hoops_gm.ingest.nba.schedule.parse_schedule`).
+**Read :data:`VIEW_INDEPENDENCE` before treating four agreeing views as four
+independent witnesses.** They are not, and an earlier revision of this docstring
+said they were. ``persisted_nba_games`` is the same ``LeagueGameFinder`` bytes
+through the same parser, so it is a persistence check. ``player_game_logs`` was
+already required equal to ``LeagueGameFinder`` at season scope before any row was
+written, so its season-level agreement is guaranteed by construction; what it
+independently witnesses is the windowing, decided from a column the schedule
+query never supplied. ``ScheduleLeagueV2`` is the only view independent of the
+ingest path, and it is the one that could actually have caught the omission.
 
-plus the set actually persisted in ``nba_games``. Any disagreement is reported
-with the offending identifiers rather than reduced to a count, and the manifest
-records the reconciliation as evidence rather than as a passing assertion that
-left no trace.
+That is a smaller claim than "four independent sources agree", and it is the
+true one. A witness that cannot disagree is not a witness, and saying so is
+cheaper than discovering it later.
 """
 
 from __future__ import annotations
@@ -107,6 +110,36 @@ RECONCILIATION_VIEWS: Final[tuple[str, ...]] = (
     "player_game_logs",
     "schedule_league_v2",
 )
+
+#: **What each view is actually independent of.** An earlier revision of this
+#: module claimed all four "derive from their own source". Two of them do not,
+#: and independent review caught the overstatement — which matters, because the
+#: whole point of the reconciliation is that a witness which cannot disagree is
+#: not a witness. Recorded in the manifest so a reader is not left to infer the
+#: relationships from the ingest code.
+VIEW_INDEPENDENCE: Final[dict[str, str]] = {
+    "league_game_finder": (
+        "The schedule source itself. The set the other three are checked against, not an "
+        "independent check on it."
+    ),
+    "persisted_nba_games": (
+        "NOT source-independent. These rows were written from the same LeagueGameFinder capture "
+        "through the same parser, so this view cannot disagree except via a persistence defect. "
+        "Retained as a persistence check, which is a real but different claim from corroboration."
+    ),
+    "player_game_logs": (
+        "A separate endpoint windowed by its own GAME_DATE, but its season-level agreement with "
+        "LeagueGameFinder was already required by backfill_season before any row was written "
+        "(_require_matching_season_game_ids), so season-scope agreement here is guaranteed by "
+        "construction. What it independently witnesses is the *windowing*: which of those games "
+        "fall inside the requested dates, decided from a column the schedule query never supplied."
+    ),
+    "schedule_league_v2": (
+        "The only view independent of the ingest path. A separate endpoint, separately captured, "
+        "whose Eastern game date is derived from gameDateTimeEst reconciled against its UTC "
+        "sibling. This is the witness that could actually have caught the omission."
+    ),
+}
 
 #: Repository files whose exact bytes the cohort's derivation depends on.
 DEFAULT_SOURCE_FINGERPRINT_PATHS: Final[tuple[str, ...]] = (
@@ -213,17 +246,18 @@ class GameIdentityReconciliation:
             # thing a reader needs to check. When they disagree, per-view gaps
             # are named in ``disagreements`` rather than left to a diff.
             "game_ids": list(self.union),
+            "independence": dict(sorted(VIEW_INDEPENDENCE.items())),
             "method": (
                 "Each view derives the in-window regular-season game-identity set from its own "
-                "source and its own date field, then all views are required to be equal. "
-                "LeagueGameFinder supplies two team rows per game; PlayerGameLogs is a separate "
-                "endpoint returning one row per player-game; ScheduleLeagueV2 is the published "
-                "schedule document whose Eastern game date is reconciled against its UTC sibling "
-                "before use. Row counts and clean parsing prove nothing about completeness -- "
-                "only an independent endpoint does."
+                "payload and its own date field, and all views are required to be equal as SETS, "
+                "not as counts -- a count check passes a window that is the right size and the "
+                "wrong membership. Read 'independence' before treating four agreeing views as "
+                "four independent witnesses: only schedule_league_v2 is independent of the "
+                "ingest path. Row counts and clean parsing prove nothing about completeness."
             ),
             "sha256_sorted_game_ids": content_sha256(self.union),
             "start_game_date": self.start.isoformat(),
+            "witnessed": self.witnessed,
         }
 
 
@@ -397,15 +431,27 @@ def _observation_records(
 
     Keyed by source-stable identity — the NBA game id and the NBA player id —
     never by a local surrogate primary key, which a rebuild reassigns freely.
+
+    **An unresolved observation falls back to its raw reported name.** With an
+    empty anchor instead, two different unresolved players in the same game, on
+    the same report, with the same status collided: independent review measured
+    11 such collisions across 1,948 observations, so substituting one unresolved
+    player for another would not have changed the fingerprint. The count was
+    never wrong — duplicates are preserved — but a fingerprint that cannot see a
+    substitution is weaker than the name "stable records" promises. The raw name
+    is the only identity an unresolved row has, which is precisely why
+    :func:`_canonical_observation_key` uses it too.
     """
     records = []
     for obs in observations:
         anchor = anchors.get(obs.player_id) if obs.player_id is not None else None
+        identity = f"nba:{anchor}" if anchor is not None else f"raw:{obs.player_name_raw}"
         records.append(
             "|".join(
                 (
                     game_ids[obs.game_id],
-                    anchor or "",
+                    identity,
+                    obs.team_raw,
                     obs.report_timestamp.isoformat(),
                     obs.status.value,
                     str(obs.lead_time_minutes),
@@ -500,6 +546,47 @@ def _position_evidence(
             "A source that prints a position for every player on a roster, ingested as its own "
             "adapter under the Adapter gate. Not attempted here."
         ),
+    }
+
+
+def _reason_evidence(
+    observations: Sequence[CanonicalPregameObservation],
+) -> dict[str, Any]:
+    """What the reports gave as *reasons*, not just as statuses.
+
+    Independent review flagged the omission, and my own brief is explicit about
+    it: capture reason codes, not just box scores, because the availability
+    engine depends on them and because the first normalisation will be wrong and
+    need re-deriving. A cohort published as availability evidence that
+    summarises 1,508 ``out`` rows without saying that some of them are two-way
+    G League assignments rather than injuries is under-describing itself.
+
+    Reported as the raw leading category the source printed, deliberately
+    un-normalised beyond splitting on the source's own separator. AGENTS.md:
+    do not trust stated DNP reasons. These are retained as evidence of what was
+    said, never as facts about an injury, and nothing downstream should treat
+    "Rest" and "left knee soreness" as different claims about the world merely
+    because the report spelled them differently.
+    """
+    categories: Counter[str] = Counter()
+    empty = 0
+    for obs in observations:
+        raw = obs.reason_raw.strip()
+        if not raw:
+            empty += 1
+            continue
+        # The source writes "Injury/Illness - Left knee soreness"; the leading
+        # token before the first " - " is the category it chose.
+        head = raw.split(" - ", 1)[0].strip()
+        categories[head] += 1
+    return {
+        "caveat": (
+            "Raw source text, grouped by the category the report itself printed before its own "
+            "' - ' separator. Not a normalised code, not a clinical claim, and not evidence that "
+            "a stated reason is the real one -- 'Rest' is routinely laundered as a minor ailment."
+        ),
+        "observations_with_no_stated_reason": empty,
+        "stated_reason_categories": dict(sorted(categories.items())),
     }
 
 
@@ -652,6 +739,7 @@ def build_cohort_evidence(
             store,
             nba_game_ids=[game.nba_game_id for game in ready],
         ),
+        "reason_evidence": _reason_evidence(observations),
         "schema_version": SCHEMA_VERSION,
         "scope": {
             "end_game_date": end.isoformat(),
@@ -725,11 +813,21 @@ def _participation_join(
 ) -> dict[str, Any]:
     """Join canonical observations to the authoritative participation ledger.
 
-    Joined locally by ``(game_id, player_id)`` and then *proved* through stable
-    source identity: the NBA game id and the NBA player external id. A local
-    surrogate key is an artefact of one database build; an observation whose
-    link cannot be re-expressed in source-stable terms is reported as such
-    rather than counted.
+    **The join itself is on local surrogate keys** — ``(game_id, player_id)`` —
+    and the manifest's ``local_join_columns`` has always said so. An earlier
+    version of this docstring claimed the links were then "proved" through
+    stable source identity, which overstated what happens: the NBA game id and
+    the NBA player external id are *required to exist* for a row to be counted,
+    and they are what the fingerprint is rendered from, but they do not perform
+    or re-verify the join. Independent review caught the overstatement. Stating
+    the weaker true mechanism is worth more than a defence that reads well and
+    is not there.
+
+    ``PlayerParticipation`` carries a unique constraint on
+    ``(player_id, game_id)``, so the surrogate join cannot fan out or lose a row
+    within one database build. What it cannot survive is a rebuild that
+    reassigns surrogate ids between the two sides — which is why the fingerprint
+    is source-keyed even though the join is not.
     """
     rows = session.scalars(
         select(PlayerParticipation).where(PlayerParticipation.game_id.in_(ready_game_pks or [0]))
@@ -738,6 +836,7 @@ def _participation_join(
 
     outcomes: Counter[str] = Counter()
     joined_records: list[str] = []
+    joined_lead_times: list[int] = []
     without_participation = 0
     without_anchor = 0
 
@@ -753,6 +852,7 @@ def _participation_join(
             without_participation += 1
             continue
         outcomes[row.outcome.value] += 1
+        joined_lead_times.append(obs.lead_time_minutes)
         joined_records.append(
             "|".join(
                 (
@@ -768,7 +868,21 @@ def _participation_join(
 
     return {
         "joined_player_games": len(joined_records),
-        "key": ["nba_games.nba_game_id", "player_external_ids[source=nba].external_id"],
+        # Reported separately from the canonical figure on purpose. The
+        # canonical maximum is driven by a single observation that has no
+        # participation row and is therefore NOT in this set, so quoting only
+        # the canonical maximum would send a consumer of the *joined* evidence
+        # looking for a tail that is absent from the data they actually use.
+        # Found by independent review.
+        "joined_lead_time_minutes": {
+            "maximum": max(joined_lead_times) if joined_lead_times else None,
+            "minimum": min(joined_lead_times) if joined_lead_times else None,
+        },
+        "join_is_on_local_surrogate_keys": True,
+        "key_rendered_in_fingerprint": [
+            "nba_games.nba_game_id",
+            "player_external_ids[source=nba].external_id",
+        ],
         "local_join_columns": ["game_id", "player_id"],
         "missing_rows_are_not_inferred_as_nonparticipation": True,
         "participation_outcome_counts": dict(sorted(outcomes.items())),
@@ -777,6 +891,42 @@ def _participation_join(
         "resolved_observations_without_participation_row": without_participation,
         "sha256_sorted_joined_stable_records": content_sha256(sorted(joined_records)),
     }
+
+
+def refusal_reason(reconciliation: GameIdentityReconciliation) -> str | None:
+    """Why this reconciliation may not be published, or ``None`` if it may.
+
+    Extracted from :func:`main` so the refusal is testable. Independent review
+    pointed out that ``main`` carries ``# pragma: no cover`` and had no test, so
+    the exit-1 refusal that this module, ``docs/adapters/nba-stats.md`` and the
+    handoff all advertise as the safety property was itself never exercised. A
+    guard nobody runs is a comment, in exactly the way an unchecked fingerprint
+    is.
+
+    The three refusals are separate questions and are checked separately: a
+    witness can be absent, present-but-disagreeing, or present-and-empty, and
+    only the middle one is what "disagreement" ordinarily means.
+    """
+    missing = sorted(set(RECONCILIATION_VIEWS) - set(reconciliation.views))
+    if missing:
+        return (
+            f"no capture available for reconciliation view(s) {missing}; re-run with "
+            "--allow-fetch. Publishing a cohort over an absent witness is exactly the failure "
+            "this reconciliation exists to prevent."
+        )
+    if not reconciliation.agreed:
+        return (
+            "cross-source game identity disagreement -- refusing to publish a cohort manifest "
+            f"over it: {reconciliation.disagreements()}"
+        )
+    if not reconciliation.witnessed:
+        return (
+            f"every reconciliation view found zero games in "
+            f"{reconciliation.start}..{reconciliation.end}. Views that all found nothing agree "
+            "perfectly and witness nothing; check the requested window and that the raw store "
+            "holds captures covering it."
+        )
+    return None
 
 
 def render_cohort_evidence(evidence: Mapping[str, Any]) -> str:
@@ -840,29 +990,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
             store=store,
             nba=nba,
         )
-        missing_views = sorted(set(RECONCILIATION_VIEWS) - set(reconciliation.views))
-        if missing_views:
-            print(
-                f"no capture available for reconciliation view(s) {missing_views}; re-run with "
-                "--allow-fetch. Publishing a cohort over an absent witness is exactly the "
-                "failure this reconciliation exists to prevent.",
-                file=sys.stderr,
-            )
-            return 1
-        if not reconciliation.agreed:
-            print(
-                "cross-source game identity disagreement -- refusing to publish a cohort "
-                f"manifest over it: {reconciliation.disagreements()}",
-                file=sys.stderr,
-            )
-            return 1
-        if not reconciliation.witnessed:
-            print(
-                f"every reconciliation view found zero games in {args.start}..{args.end}. Four "
-                "views that all found nothing agree perfectly and witness nothing; check the "
-                "requested window and that the raw store holds captures covering it.",
-                file=sys.stderr,
-            )
+        refusal = refusal_reason(reconciliation)
+        if refusal is not None:
+            print(refusal, file=sys.stderr)
             return 1
         evidence = build_cohort_evidence(
             session,

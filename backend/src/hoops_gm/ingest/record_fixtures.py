@@ -571,7 +571,11 @@ def record_cohort_reconciliation() -> None:
     client = NbaStatsClient()
     note = (
         "Whole real rows/objects retained for six named games spanning both window "
-        "boundaries and the two neutral-site 2025-12-13 games. No value edited."
+        "boundaries and the two neutral-site 2025-12-13 games. No value edited. "
+        "LeagueGameFinder rows are regrouped so each game's two rows are adjacent and games "
+        "appear in the order named above; the row set is identical to the source's, only its "
+        "order differs, and the parser is order-independent by construction (a contract test "
+        "reverses the row set and asserts the same result)."
     )
 
     payload = client.league_game_finder(season=FIXTURE_COHORT_SEASON)

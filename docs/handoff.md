@@ -7668,3 +7668,127 @@ remains CI-only.
 
 **Next:** Re-review at the replacement exact head, then require PostgreSQL CI
 before the PR is treated as mergeable.
+
+---
+
+## 2026-08-20 — data-engineer — Cohort review round two: independence, reasons, lead time
+
+**Changed:** The independent evidence review returned CHANGES REQUIRED on a
+second meaning-level finding, and it is the more embarrassing of the two because
+I had already reported the wrong version of it upstream.
+
+**Four agreeing views are not four independent witnesses.** My artifact said
+each view "derives from its own source". Two do not. `persisted_nba_games` is
+written from the same `LeagueGameFinder` capture through the same parser that
+the reconciliation then reads, so it cannot disagree except via a persistence
+defect. `player_game_logs` was already required equal to `LeagueGameFinder` at
+season scope by `_require_matching_season_game_ids` before any row was written,
+so its season-level agreement is guaranteed by construction; what it
+independently witnesses is the *windowing*, decided from a `GAME_DATE` column
+the schedule query never supplied. The genuinely independent witness is
+`ScheduleLeagueV2` alone.
+
+The honest count is **one independent witness plus corroboration**, which is a
+smaller claim than the one I published and than the one the coordinator repeated
+in the owner's inbox on my report. A witness that cannot disagree is not a
+witness. `VIEW_INDEPENDENCE` now states each relationship, the manifest
+publishes it, and a test asserts the map covers every required view and that the
+two dependent ones say so explicitly — a map a reader can check rather than a
+sentence they have to trust.
+
+Worth recording what *did* hold: the reviewer constructed the mislabelled-
+timezone failure and confirmed it is detectable, because the reconciliation
+compares sets rather than counts. An ET-windowed and a naive-UTC-windowed
+schedule set are **both size 173 and differ in membership**. A count check would
+have passed it.
+
+**Reason codes were missing entirely, and they change how the cohort reads.**
+My own brief says capture reason codes, not just box scores; I shipped a status
+summary with no reason summary, and so did the invalidated cohort. Now derived:
+Injury/Illness 1,324, **G League 559**, Not With Team 23, a literal `-` 14,
+Personal Reasons 10, Rest 9, Concussion Protocol 4, League Suspension 3,
+Coach's Decision 1, Reconditioning 1. **Roughly 29% of canonical observations
+are two-way G League assignments, not injuries.** Anyone treating the 1,508
+`out` rows as an injury population is wrong about a large fraction of them, and
+nothing in the previous manifest would have told them.
+
+**Lead time now reports both numbers with their sets named.** Canonical
+observations: min 15, max 1,650. Joined participation outcomes: min 15, max
+**540**. The 1,650 row is `Minix, Riley`, and it is one of the two observations
+with no participation row, so it is excluded from the 1,918 joined outcomes —
+the joined maximum is unchanged from the invalidated cohort. My earlier framing
+of the tail as a precondition for `quant` was right in direction and wrong in
+the detail that matters: it would have sent them looking for a tail absent from
+the data they use. Reporting only the corrected number would have been the
+opposite error, so both are published and each is labelled with the set it
+describes. The structural note is the more useful one: the canonical rule
+retains a stale day-ahead row for any player dropped from the game-day report,
+so long lead times correlate with "was removed from the report", which is not a
+neutral property of the sample.
+
+**The defect class has a name the upstream publishes.** There are exactly five
+`isNeutral: true` regular-season games in 2025-26 — Mexico City, Berlin, London,
+and the two Las Vegas NBA Cup semifinals (`gameLabel: "Emirates NBA Cup"`,
+`arenaName: "T-Mobile Arena"`) — and they are precisely the five with repeated
+canonical `MATCHUP` strings. Not anomalies we happened to find: a recurring
+annual class of about five games that will appear again in 2026-27. Per the
+architect's call, the set equality is asserted in the **live smoke** as a drift
+detector, explicitly labelled so a red is not misread as a parser defect, while
+the correctness invariant — a repeated-`MATCHUP` game resolving to the right
+home and away teams — is asserted offline against the recorded fixtures, checked
+against the independently recorded `ScheduleLeagueV2` orientation rather than a
+hand-typed id.
+
+Three smaller fixes: the observation fingerprint keyed unresolved rows on an
+empty anchor, which collided 11 times across 1,948 records, so a substitution
+between two unresolved players in the same game and report would not have
+changed it — unresolved rows now carry their raw reported name and team, the
+only identity they have. `_participation_join`'s docstring claimed the join was
+"proved through stable source identity"; it is not, it is a surrogate-key join
+whose anchors are required to exist and are rendered into the fingerprint, and
+the weaker true statement replaces the defence that reads well and is not there.
+The CLI refusal path carried `# pragma: no cover` and had no test at all, so the
+guard cited in three documents as the safety property was itself never run; it
+is now `refusal_reason`, with tests for all three refusals.
+
+**Now true:** Manifest digest
+`3b690f0546a75345a3058ca64d7900884d6924df88c7942bc67dff81d32d8b7c`, reproduced
+byte-for-byte. The full offline suite passes with warnings-as-errors, Ruff and
+strict mypy clean. Cohort scope, counts, joins and reconciliation results are
+unchanged by this round — what changed is what the artifact *claims* about them.
+
+Both prior reviews independently reproduced every headline count from the
+gitignored operational state rather than reading the manifest, including
+byte-for-byte manifest reproduction, the 102-row skip arithmetic broken down per
+affected game, and the four-view agreement re-derived from raw gzip with no
+`hoops_gm` imports. The privacy review found no secrets, no Fantrax data and no
+personal identifiers, and confirmed `_capture_summary` is structurally
+independent of the raw store's parameter redaction rather than merely relying
+on it.
+
+**Could not verify:** Whether any other consumer of NBA position labels exists
+outside the cohort path and inherited the same starters-only misreading. I
+searched the cohort path only.
+
+Whether `report_timestamp` is masthead-derived rather than URL-slot-derived. The
+reviewer flagged that `source_url` says `..._2025-12-12_05PM.pdf` while the
+stored timestamp is 17:30 ET; it is load-bearing for every lead-time number and
+neither of us read the parser to confirm it.
+
+`content_sha256` joins parts with an unprefixed newline, which is ambiguous in
+principle. No reachable input can contain a newline today; I did not add a
+structural guarantee that none ever will.
+
+The reconciliation proves the views agree and, for three of the four, that
+agreement is partly structural. It cannot prove they are jointly right: all four
+descend from NBA-operated infrastructure, and no non-NBA schedule source was
+consulted.
+
+Local PostgreSQL remains unavailable, so PostgreSQL CI on the exact pushed head
+is required and is not claimed here. The exact head has changed again, so both
+prior reviews no longer cover it.
+
+**Next:** Re-review at the replacement exact head; PostgreSQL CI green; then the
+PR is mergeable. `injury-status-conversion` stays paused until it merges, and
+must then treat the G League share, the two lead-time maxima, the unresolved
+identities and the two R35 unknowns as evidence rather than as outcomes.

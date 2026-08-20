@@ -9,7 +9,7 @@
       "minimum": 15
     },
     "resolved_player_id": 1920,
-    "sha256_sorted_stable_records": "80b3e5637dbe8c84c997e60d2dcf020a8828e0b6e1804b6678213987c618f0b1",
+    "sha256_sorted_stable_records": "6ca4d37f3dd97226141d43f0c6c1b97053d742e7629f63c4104b8b040aec278b",
     "status_counts": {
       "available": 209,
       "doubtful": 21,
@@ -205,9 +205,16 @@
       "0022501229",
       "0022501230"
     ],
-    "method": "Each view derives the in-window regular-season game-identity set from its own source and its own date field, then all views are required to be equal. LeagueGameFinder supplies two team rows per game; PlayerGameLogs is a separate endpoint returning one row per player-game; ScheduleLeagueV2 is the published schedule document whose Eastern game date is reconciled against its UTC sibling before use. Row counts and clean parsing prove nothing about completeness -- only an independent endpoint does.",
+    "independence": {
+      "league_game_finder": "The schedule source itself. The set the other three are checked against, not an independent check on it.",
+      "persisted_nba_games": "NOT source-independent. These rows were written from the same LeagueGameFinder capture through the same parser, so this view cannot disagree except via a persistence defect. Retained as a persistence check, which is a real but different claim from corroboration.",
+      "player_game_logs": "A separate endpoint windowed by its own GAME_DATE, but its season-level agreement with LeagueGameFinder was already required by backfill_season before any row was written (_require_matching_season_game_ids), so season-scope agreement here is guaranteed by construction. What it independently witnesses is the *windowing*: which of those games fall inside the requested dates, decided from a column the schedule query never supplied.",
+      "schedule_league_v2": "The only view independent of the ingest path. A separate endpoint, separately captured, whose Eastern game date is derived from gameDateTimeEst reconciled against its UTC sibling. This is the witness that could actually have caught the omission."
+    },
+    "method": "Each view derives the in-window regular-season game-identity set from its own payload and its own date field, and all views are required to be equal as SETS, not as counts -- a count check passes a window that is the right size and the wrong membership. Read 'independence' before treating four agreeing views as four independent witnesses: only schedule_league_v2 is independent of the ingest path. Row counts and clean parsing prove nothing about completeness.",
     "sha256_sorted_game_ids": "43afabfc080d35784b94100481477183b64e6d20ee63a27d58aca4b1f4ab8fee",
-    "start_game_date": "2025-12-08"
+    "start_game_date": "2025-12-08",
+    "witnessed": true
   },
   "kind": "injury_conversion_cohort_population_evidence",
   "limitations": [
@@ -249,13 +256,18 @@
       "backend/src/hoops_gm/db/lineage.py": "6073bc0226cabd4ffd3a04bd5d4f810164b2073b4ad71b250af10d4b7fd89390",
       "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "c9e888925793eb05cdb3c1c5262d7a0f9ec3e5c2a6b76944ad3a4146c9451538",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "9e5065c2f38e1261c1cf76786b74cc21ef2ff80a254f969675c90ca76ddb463b",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "5dfd9aab6ed8e03d5c04136a1e46ff80db318ebc3bb56304741d9cdd669a15e9"
     }
   },
   "participation_join": {
+    "join_is_on_local_surrogate_keys": true,
+    "joined_lead_time_minutes": {
+      "maximum": 540,
+      "minimum": 15
+    },
     "joined_player_games": 1918,
-    "key": [
+    "key_rendered_in_fingerprint": [
       "nba_games.nba_game_id",
       "player_external_ids[source=nba].external_id"
     ],
@@ -290,6 +302,22 @@
     "supersedes": "The invalidated cohort's position_evidence section reported 167 of 363 players with an observed G/F/C label (C 43, F 76, G 76) and 196 as position-unknown. Those figures are a starting-lineup artifact and must not be used as evidence of cohort composition.",
     "what_would_be_needed": "A source that prints a position for every player on a roster, ingested as its own adapter under the Adapter gate. Not attempted here."
   },
+  "reason_evidence": {
+    "caveat": "Raw source text, grouped by the category the report itself printed before its own ' - ' separator. Not a normalised code, not a clinical claim, and not evidence that a stated reason is the real one -- 'Rest' is routinely laundered as a minor ailment.",
+    "observations_with_no_stated_reason": 0,
+    "stated_reason_categories": {
+      "-": 14,
+      "Coach's Decision": 1,
+      "Concussion Protocol": 4,
+      "G League": 559,
+      "Injury/Illness": 1324,
+      "League Suspension": 3,
+      "Not With Team": 23,
+      "Personal Reasons": 10,
+      "Rest": 9,
+      "Return to Competition Reconditioning": 1
+    }
+  },
   "schema_version": 2,
   "scope": {
     "end_game_date": "2026-01-04",
@@ -305,12 +333,12 @@
   },
   "source_capture_summary": {
     "nba_injury_report/InjuryReportPdf": {
-      "captures": 86,
+      "captures": 87,
       "distinct_content_sha256": 86,
       "first_fetched_at": "2026-08-20T14:20:03.562983+00:00",
-      "last_fetched_at": "2026-08-20T14:22:58.298649+00:00",
-      "sha256_sorted_capture_identity": "013fbc4c03a99bb62342cccc202779a9da59dd5649e17e4155ac308841cae297",
-      "total_uncompressed_bytes": 6868125
+      "last_fetched_at": "2026-08-20T15:17:30.299939+00:00",
+      "sha256_sorted_capture_identity": "1be23aed964b4889fd31ee76712f4c730e280249931153a25e1caead421140ec",
+      "total_uncompressed_bytes": 6956648
     },
     "nba_stats/BoxScoreSummaryV3": {
       "captures": 173,

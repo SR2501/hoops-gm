@@ -1082,18 +1082,83 @@ rather than being inferred as nonappearance.
 ### The check that would have caught it
 
 `hoops_gm.ingest.injury_report.cohort_evidence` refuses to emit a manifest
-unless four independent views of the window name exactly the same games:
-`LeagueGameFinder`, `PlayerGameLogs` (windowed by its own `GAME_DATE`),
-`ScheduleLeagueV2` (windowed by `gameDateTimeEst` reconciled against
-`gameDateTimeUTC`), and the rows actually persisted in `nba_games`. All four
-agree at 173. A missing view is a failure, not a smaller set of agreeing
-witnesses — an absent witness does not corroborate.
+unless four views of the window name exactly the same games — **as sets, not as
+counts**. A count check passes a window that is the right size and the wrong
+membership, which is exactly what a mislabelled timezone produces.
+
+| View | Independent of the ingest path? |
+|---|---|
+| `LeagueGameFinder` | The source itself — what the others are checked against |
+| `persisted_nba_games` | **No.** Same bytes, same parser. A persistence check |
+| `PlayerGameLogs` | **Partly.** Season-scope equality was already required before any write, so only its *windowing*, from its own `GAME_DATE`, is independent |
+| `ScheduleLeagueV2` | **Yes.** Separately captured, Eastern date reconciled against its UTC sibling |
+
+All four agree at 173. An earlier version of this document said all four derived
+"from their own source"; two do not, and independent review caught it after the
+claim had already been repeated upstream. **One genuinely independent witness
+plus corroboration** is a smaller claim than four independent sources agreeing,
+and it is the true one — a witness that cannot disagree is not a witness. The
+manifest publishes the independence map so a reader can check it rather than
+trust this table.
+
+Three separate refusals, each tested: a view can be **absent**, **present and
+disagreeing**, or **present and empty**. Four views that all find zero games
+agree perfectly and witness nothing, and that used to publish with exit 0.
 
 The reconciliation runs offline against recorded fixtures
 (`tests/test_cohort_evidence.py`) containing whole real rows for six games:
 both window boundaries, one date either side of them, and both 2025-12-13
-games. It also runs live (`tests/test_live_smoke.py`), where a disagreement
-names the offending game ids rather than reporting a count.
+games. Those tests assert the **correctness invariant** — that a
+repeated-`MATCHUP` game still resolves to the right home and away teams,
+checked against the independently recorded `ScheduleLeagueV2` fixture rather
+than a hand-typed id.
+
+### The defect class has a name the upstream itself publishes
+
+There are exactly five `isNeutral: true` regular-season games in the 2025-26
+schedule: `0022500147` (Mexico City), `0022500578` (Berlin), `0022500602`
+(London), and `0022501229`/`0022501230` (Las Vegas, `gameLabel: "Emirates NBA
+Cup"`, East and West Semifinals at T-Mobile Arena). **Those are precisely the
+five games whose `LeagueGameFinder` rows repeat one canonical `MATCHUP`
+string** — the same five PR #37 identified.
+
+So this is not a list of anomalies we happened to find. It is a class the
+schedule endpoint flags itself, of about five games a season, recurring every
+December alongside the international slate, and it will recur in 2026-27.
+
+That set equality is asserted in `tests/test_live_smoke.py` and **labelled a
+drift detector, not a correctness invariant**. It couples two endpoints, so a
+red there means the NBA changed how it writes matchup strings, not that our
+parser is wrong. Pinning it offline would freeze today's recording forever and
+prove nothing about tomorrow's payload.
+
+### Reasons, not just statuses
+
+The manifest now summarises the reports' own `Reason` column, which the
+invalidated cohort omitted entirely. It matters more than it looks:
+
+| Stated category | Canonical observations |
+|---|---|
+| Injury/Illness | 1,324 |
+| **G League** | **559** |
+| Not With Team | 23 |
+| `-` (literal dash) | 14 |
+| Personal Reasons | 10 |
+| Rest | 9 |
+| Concussion Protocol | 4 |
+| League Suspension | 3 |
+| Coach's Decision | 1 |
+| Return to Competition Reconditioning | 1 |
+
+**Roughly 29% of the cohort's canonical observations are two-way G League
+assignments, not injuries.** A consumer treating the 1,508 `out` rows as an
+injury population would be wrong about a large fraction of them. Nine rows say
+"Rest" outright, which — per the house rule that stated reasons are not to be
+trusted — is a floor, not a count.
+
+These are raw source strings grouped by the category the report printed before
+its own separator. They are evidence of what was said, never facts about an
+injury.
 
 ### Reproducibility
 
@@ -1148,6 +1213,60 @@ would be good news that must be acted on rather than absorbed.
 **Positional diversity of this cohort is therefore not established**, and
 establishing it needs a source that prints a position for every player,
 ingested as its own adapter. Not attempted here.
+
+### The dropped games cost more than the dropped games
+
+The two omitted games did not only remove themselves. Diffing the regenerated
+manifest against the invalidated one field by field, the 171 *shared* games have
+the same 1,934 canonical observations and the same 33 distinct report
+timestamps — but **six of them carry a different status**: available +2, out +2,
+doubtful −1, probable −1, questionable −2, net zero.
+
+That is not source drift, and it was checked rather than assumed. The three
+whole-season payloads are identical in size across the two snapshots
+(`CommonAllPlayers` 723,120 bytes, `LeagueGameFinder` 461,424,
+`PlayerGameLogs` 11,844,159), the identity bootstrap reproduced 30 teams and
+5,206 players exactly, and re-fetching an archived report
+(`Injury-Report_2025-12-20_05PM.pdf`) with the cache bypassed returned a
+byte-identical SHA-256. The injury parser and importer are unchanged between the
+two commits.
+
+The mechanism is causal. The evening-before anchor for a 2025-12-13 game is the
+2025-12-12 17:30 ET report. The invalidated cohort had no 2025-12-13 games, so
+it never generated that candidate and never fetched that report. **An injury
+report's window is rolling** — it also covers 2025-12-12 games — and at 17:30 ET
+on 12-12 it is later than anything the old cohort held for that date, so it
+became canonical. Verified: all 90 canonical observations for 2025-12-12 games
+now come from that single report timestamp, and from no other.
+
+So recovering 2025-12-13 also improved 2025-12-12. The old cohort was not merely
+incomplete; part of what it *did* contain was **less authoritative than it could
+have been**, because a report it never had reason to fetch was closer to
+tip-off than the ones it used.
+
+### Lead time: two numbers, and which set each applies to
+
+| Set | n | Min | Max |
+|---|---|---|---|
+| Canonical observations | 1,948 | 15 | **1,650** |
+| Joined participation outcomes | 1,918 | 15 | **540** |
+
+Both are reported because which one binds depends on what a consumer fits on,
+and that is `quant`'s decision to make knowingly rather than ours to make for
+them by publishing whichever number is convenient.
+
+The 1,650-minute maximum comes from a single observation: `Minix, Riley`,
+listed OUT on the 2025-12-12 17:30 ET report and never re-listed before
+`0022501230` tipped at 21:00 ET the next day, so his latest pre-tipoff row sits
+27.5 hours out. **It is one of the two observations with no participation row,
+so it is excluded from the joined set** — the joined maximum is unchanged from
+the invalidated cohort at 540.
+
+A structural note that matters more than the single row: the canonical rule
+keeps the latest pre-tipoff row, so it retains a stale day-ahead row for *any*
+player dropped from the game-day report. Long lead times are therefore
+correlated with "was removed from the report", which is not a neutral property
+of the sample.
 
 ### What this cohort still does not license
 

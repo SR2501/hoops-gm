@@ -540,6 +540,54 @@ class TestTheCohortWindowStillReconcilesAcrossSources:
             assert game_id in games, f"{game_id} is absent from LeagueGameFinder again"
             assert games[game_id].game_date == date(2025, 12, 13)
 
+    def test_drift_detector_repeated_matchup_games_are_exactly_the_neutral_site_games(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """**A drift detector, not a correctness invariant. Read this before fixing it red.**
+
+        The five 2025-26 games whose two ``LeagueGameFinder`` rows repeat one
+        canonical ``MATCHUP`` string are exactly the five the published schedule
+        marks ``isNeutral: true`` — the two December NBA Cup knockouts in Las
+        Vegas plus the Mexico City, Berlin and London games. That turns the
+        defect class from "anomalies we happened to find" into one the upstream
+        itself names, and it recurs every season.
+
+        It couples two endpoints, so a red here does **not** mean the parser is
+        wrong. The NBA could start writing reciprocal strings for neutral-site
+        games, or repeat a ``MATCHUP`` for some unrelated reason, and the
+        relationship would break while every line of our code stayed correct.
+        The correctness invariant — that a repeated-``MATCHUP`` game still
+        resolves to the right home and away teams — is asserted offline against
+        recorded fixtures in ``test_adapter_contracts.py`` and
+        ``test_cohort_evidence.py``, where it can block a merge. This one lives
+        here precisely because it cannot.
+        """
+        payload = nba.league_game_finder(season=COHORT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        headers = table["headers"]
+        game_id_at = headers.index("GAME_ID")
+        matchup_at = headers.index("MATCHUP")
+        by_game: dict[str, set[str]] = {}
+        for row in table["rowSet"]:
+            by_game.setdefault(str(row[game_id_at]), set()).add(str(row[matchup_at]))
+        repeated = {game_id for game_id, strings in by_game.items() if len(strings) == 1}
+
+        schedule = nba.schedule_league(season=COHORT_SEASON, max_age=NO_CACHE)
+        neutral = {
+            str(game["gameId"])
+            for entry in schedule["leagueSchedule"]["gameDates"]
+            for game in entry.get("games") or ()
+            if str(game.get("gameId", "")).startswith("002") and game.get("isNeutral")
+        }
+
+        assert repeated == neutral, (
+            "the repeated-canonical-MATCHUP class no longer coincides with the schedule's own "
+            f"isNeutral flag. repeated-only={sorted(repeated - neutral)}, "
+            f"neutral-only={sorted(neutral - repeated)}. This is a DRIFT signal about how the "
+            "NBA writes matchup strings, not a parser defect -- the parser resolves both shapes "
+            "and is covered offline. Investigate before assuming either set is wrong."
+        )
+
 
 # ==========================================================================
 # The crosswalk, end to end

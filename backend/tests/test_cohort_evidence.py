@@ -28,13 +28,17 @@ from typing import Any
 import pytest
 
 from hoops_gm.ingest.injury_report.cohort_evidence import (
+    RECONCILIATION_VIEWS,
+    VIEW_INDEPENDENCE,
     GameIdentityReconciliation,
     _league_game_finder_ids,
     _player_game_log_ids,
     _schedule_league_ids,
     content_sha256,
+    refusal_reason,
     source_file_sha256,
 )
+from hoops_gm.ingest.nba import parse_league_game_finder
 
 pytestmark = pytest.mark.adapter_contract
 
@@ -57,6 +61,10 @@ OUT_OF_WINDOW = ("0022500357", "0022500502")
 
 def load(name: str) -> Any:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _parse_cohort_league_game_finder(payload: Any) -> Any:
+    return parse_league_game_finder(payload, season=SEASON, season_type="regular")
 
 
 @pytest.fixture
@@ -170,6 +178,39 @@ class TestTheGamesTheInvalidatedCohortDropped:
         ordinary = [row for row in table["rowSet"] if row[game_id] == "0022500364"]
         assert len({row[matchup] for row in ordinary}) == 2
 
+    def test_both_neutral_site_games_resolve_to_the_right_home_and_away(self) -> None:
+        """The correctness invariant, offline, where it can block a merge.
+
+        The cross-endpoint fact that the repeated-``MATCHUP`` class *is* the
+        schedule's ``isNeutral`` class is a drift detector and lives in
+        ``test_live_smoke.py``. What belongs here is the invariant a merge must
+        not break: a game whose two rows repeat one string still resolves to the
+        correct sides, by team abbreviation rather than by separator.
+
+        The expected orientation is taken from the committed ``ScheduleLeagueV2``
+        fixture rather than restated by hand, so this asserts agreement between
+        two independently recorded endpoints instead of agreement with a number
+        someone typed.
+        """
+        parsed = {
+            game.nba_game_id: game
+            for game in _parse_cohort_league_game_finder(
+                load("nba_leaguegamefinder_cohort_window_2025_26.json")
+            )
+        }
+        schedule = load("nba_scheduleleaguev2_cohort_window_2025_26.json")
+        expected = {
+            str(game["gameId"]): (game["homeTeam"]["teamId"], game["awayTeam"]["teamId"])
+            for entry in schedule["leagueSchedule"]["gameDates"]
+            for game in entry.get("games") or ()
+        }
+
+        for game_id in ("0022501229", "0022501230"):
+            home, away = expected[game_id]
+            assert parsed[game_id].home_team_id == home
+            assert parsed[game_id].away_team_id == away
+            assert parsed[game_id].home_team_id != parsed[game_id].away_team_id
+
 
 class TestReconciliationRefusesToPassOnAgreementItDoesNotHave:
     def _views(self, **overrides: tuple[str, ...]) -> GameIdentityReconciliation:
@@ -216,8 +257,16 @@ class TestReconciliationRefusesToPassOnAgreementItDoesNotHave:
             "schedule_league_v2": ["0022500502"],
         }
 
-    def test_agreement_among_fewer_views_is_not_the_same_claim(self) -> None:
-        """An absent witness must not be counted as a corroborating one."""
+    def test_a_single_view_agrees_with_itself_which_is_not_corroboration(self) -> None:
+        """Documents the permissive branch, and is named for what it asserts.
+
+        Independent review pointed out that this test was previously called
+        ``test_agreement_among_fewer_views_is_not_the_same_claim`` while
+        asserting ``agreed is True`` — a protective-sounding name over the
+        permissive behaviour. ``agreed`` genuinely is True for one view, because
+        one set trivially equals itself. The protection lives in
+        :func:`refusal_reason`, which is where it is now tested.
+        """
         reconciliation = GameIdentityReconciliation(
             start=START, end=END, views={"persisted_nba_games": IN_WINDOW}
         )
@@ -247,6 +296,85 @@ class TestReconciliationRefusesToPassOnAgreementItDoesNotHave:
 
     def test_a_populated_reconciliation_is_witnessed(self) -> None:
         assert self._views().witnessed
+
+
+class TestTheRefusalPathIsExercised:
+    """The guard the docs advertise as the safety property, actually run.
+
+    ``main`` carries ``# pragma: no cover`` because it is an operator tool, and
+    independent review noted that this left the exit-1 refusal — cited in the
+    module docstring, in ``docs/adapters/nba-stats.md`` and in the handoff as
+    the thing that stops a bad cohort being published — completely unexercised.
+    :func:`refusal_reason` exists so it is not.
+    """
+
+    def _views(self, **overrides: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+        views: dict[str, tuple[str, ...]] = dict.fromkeys(RECONCILIATION_VIEWS, IN_WINDOW)
+        views.update(overrides)
+        return views
+
+    def test_a_complete_agreeing_populated_reconciliation_is_publishable(self) -> None:
+        assert (
+            refusal_reason(GameIdentityReconciliation(start=START, end=END, views=self._views()))
+            is None
+        )
+
+    def test_a_missing_view_is_refused_and_named(self) -> None:
+        views = self._views()
+        del views["schedule_league_v2"]
+
+        reason = refusal_reason(GameIdentityReconciliation(start=START, end=END, views=views))
+
+        assert reason is not None
+        assert "schedule_league_v2" in reason
+        assert "--allow-fetch" in reason
+
+    def test_a_disagreement_is_refused_and_the_game_ids_are_named(self) -> None:
+        reason = refusal_reason(
+            GameIdentityReconciliation(
+                start=START,
+                end=END,
+                views=self._views(schedule_league_v2=("0022500364", "0022500494")),
+            )
+        )
+
+        assert reason is not None
+        assert "0022501229" in reason
+        assert "0022501230" in reason
+
+    def test_four_agreeing_but_empty_views_are_refused(self) -> None:
+        """The case that previously published a manifest over zero games with exit 0."""
+        reason = refusal_reason(
+            GameIdentityReconciliation(
+                start=START, end=END, views=dict.fromkeys(RECONCILIATION_VIEWS, ())
+            )
+        )
+
+        assert reason is not None
+        assert "zero games" in reason
+
+
+class TestTheIndependenceMapIsCheckableRatherThanTrusted:
+    """Four agreeing views are not four independent witnesses, and it must say so.
+
+    An earlier revision claimed each view derived "from its own source". Two do
+    not: ``persisted_nba_games`` is the same ``LeagueGameFinder`` bytes through
+    the same parser, and ``player_game_logs`` was already required equal to
+    ``LeagueGameFinder`` at season scope before any row was written. Caught by
+    independent review after the claim had already been repeated upstream.
+    """
+
+    def test_every_required_view_declares_its_independence(self) -> None:
+        assert set(VIEW_INDEPENDENCE) == set(RECONCILIATION_VIEWS)
+
+    def test_the_two_dependent_views_say_so_explicitly(self) -> None:
+        assert "NOT source-independent" in VIEW_INDEPENDENCE["persisted_nba_games"]
+        assert "guaranteed by construction" in VIEW_INDEPENDENCE["player_game_logs"]
+
+    def test_the_manifest_publishes_the_map(self, manifest: Any) -> None:
+        published = manifest["cross_source_reconciliation"]["independence"]
+        assert set(published) == set(RECONCILIATION_VIEWS)
+        assert published == VIEW_INDEPENDENCE
 
 
 class TestPositionEvidenceReportsTheSourceRatherThanADistribution:
