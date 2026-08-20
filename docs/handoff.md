@@ -6259,33 +6259,47 @@ contract over `scheduled_game_counts()`. The response contains one exact current
 lineage envelope (NBA schedule refresh, scoring-period projection refresh,
 deadline calendar, and league-settings snapshot) plus the complete deterministic
 `period_number` x active `team_id` matrix of raw `games` counts, including
-explicit zeroes. The route adds no schedule arithmetic or decision logic. It
-maps missing, stale, mismatched, unknown, and empty current evidence to typed
-404/409 errors in the existing request-id envelope rather than returning a
-historical default, guessed period, partial matrix, or success-shaped empty
-payload. Added the canonical `schedule-grid-early` backlog item with
+explicit zeroes. Before returning rows, the route requires the current schedule
+refresh summary to prove that every source game is resolved into exactly two
+team-schedule rows and that no Cup assignment remains unresolved; that evidence
+is exposed in the schedule lineage on success. The route adds no schedule
+arithmetic, source work, or decision logic. It maps missing, malformed, stale,
+mismatched, unknown, unresolved, and empty current evidence to typed 404/409
+errors in the existing request-id envelope rather than returning a historical
+default, guessed period, partial matrix, or success-shaped empty payload. Added
+the canonical `schedule-grid-early` backlog item with
 `scoring-period-projection` as its dependency.
 
 **Now true:** A frontend can read the current grid from one stable endpoint and
-prove its cohort from the response without independently selecting historical
-settings, calendars, or refresh rows. Focused tests cover loopback rejection,
-exact response shape and lineage, deterministic ordering, a complete explicit-
-zero matrix, missing settings/calendar evidence, unknown period projection,
-stale NBA schedule lineage, stale settings lineage, mismatched materialized
-periods, and empty-result refusal. The full local backend Code gate passes: Ruff
-and format checks, strict mypy, 921 tests with 18 live-smoke tests deselected,
-SQLite upgrade/check/downgrade through `0015` with no drift, and the tracked-file
-secret scan.
+prove its cohort and source completeness from the response without independently
+selecting historical settings, calendars, or refresh rows. Focused tests cover
+loopback rejection and acceptance of an actual loopback proxy peer, exact
+response shape and lineage, deterministic ordering, a complete explicit-zero
+matrix, missing schedule-completeness evidence, unresolved Cup assignments,
+missing settings/calendar evidence, unknown period projection, stale NBA
+schedule lineage, stale settings lineage, mismatched materialized periods,
+empty-result refusal, and no committed write-on-read from SQLite lock
+reservations. The rebased local Code gate passes: Ruff and format checks, strict
+mypy, 944 tests with 18 live-smoke tests deselected, SQLite
+upgrade/check/downgrade through `0015` with no drift, and the tracked-file secret
+scan.
 
 **Could not verify:** No local Docker or `TEST_DATABASE_URL` is available, so
 native Postgres execution remains for fresh CI. No authoritative current 2026-27
 league scoring-period projection exists locally, so endpoint behavior was
 verified against deterministic database fixtures rather than the owner's live
-league. The separate frontend consumer is not part of this change.
+league. Current schedule refreshes record only `team_schedule_rows`, so the live
+endpoint correctly remains unavailable until a future schedule refresh records
+the required source/resolved/unresolved completeness evidence; adding that
+producer evidence is data-engineer-owned source work and deliberately outside
+this PR. The local browser -> Vite -> backend path presents a loopback peer and
+is covered; the Compose frontend container presents a private-network peer and
+will be rejected until deployment work establishes an accepted authenticated
+proxy boundary. The separate frontend consumer is not part of this change.
 
 **Next:** Frontend may consume
 `GET /api/v1/leagues/{league_id}/schedule-grid/current` after this PR merges,
 using `counts: [{period_number, team_id, games}]` and the top-level `lineage`
-object as one indivisible current cohort. CI must supply native Postgres
-evidence; do not merge without fresh backend, data-engineer, and architect
-reviews of the exact published head.
+object (including schedule source-completeness counts) as one indivisible current
+cohort. CI must supply native Postgres evidence; do not merge without fresh
+backend, data-engineer, and architect reviews of the exact published head.

@@ -264,7 +264,7 @@ Back-to-backs, 3-in-4 / 4-in-5 / 4-in-6 stretches, rest-day differentials, road-
 - [x] **done**
 - **Depends on:** `scoring-period-projection`
 
-Loopback-only `GET /api/v1/leagues/{league_id}/schedule-grid/current` contract over `scheduled_game_counts`, returning the complete ordered active-team x scoring-period raw count matrix (including explicit zeroes) with exact current NBA schedule, scoring-period projection, deadline-calendar, and settings-snapshot lineage. Missing, stale, mismatched, unknown, or empty current evidence fails closed; no classifications, rankings, recommendations, or schedule recomputation enter this boundary.
+Loopback-only `GET /api/v1/leagues/{league_id}/schedule-grid/current` contract over `scheduled_game_counts`, returning the complete ordered active-team x scoring-period raw count matrix (including explicit zeroes) with exact current NBA schedule, scoring-period projection, deadline-calendar, and settings-snapshot lineage. The NBA schedule refresh must also carry source, resolved, team-row, and unresolved-assignment counts that prove completeness; missing evidence or any unresolved Cup assignment returns a typed unavailable response instead of partial zeroes. Missing, stale, mismatched, unknown, or empty current evidence fails closed; no classifications, rankings, recommendations, or schedule recomputation enter this boundary.
 
 ### `schedule-ingest` - Ingesting the NBA season schedule
 

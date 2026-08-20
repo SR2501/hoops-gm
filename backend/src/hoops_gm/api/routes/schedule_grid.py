@@ -6,11 +6,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.security import require_loopback_host
 from hoops_gm.calendar.scoring_periods import ScoringPeriodProjectionError
 from hoops_gm.db.models.league import League
+from hoops_gm.db.models.lineage import RefreshRun
 from hoops_gm.ingest.nba.schedule import scheduled_game_counts
 
 router = APIRouter(prefix="/leagues/{league_id}/schedule-grid", tags=["schedule-grid"])
@@ -20,6 +22,10 @@ class ScheduleRefreshLineage(BaseModel):
     refresh_id: int
     version: str
     refreshed_at: datetime
+    source_game_count: int
+    resolved_game_count: int
+    team_schedule_rows: int
+    unresolved_game_ids: list[str]
 
 
 class ScoringPeriodProjectionLineage(BaseModel):
@@ -61,6 +67,78 @@ def _error(status_code: int, code: str, detail: str) -> HTTPException:
     )
 
 
+def _schedule_completeness(
+    session: Session,
+    *,
+    refresh_id: int,
+) -> tuple[int, int, int, list[str]]:
+    refresh = session.get(RefreshRun, refresh_id)
+    if refresh is None:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} is unavailable",
+        )
+
+    required = {
+        "source_game_count",
+        "resolved_game_count",
+        "team_schedule_rows",
+        "unresolved_game_ids",
+    }
+    missing = sorted(required - refresh.summary.keys())
+    if missing:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} cannot prove source completeness; "
+            f"missing summary evidence: {', '.join(missing)}",
+        )
+
+    source_game_count = refresh.summary["source_game_count"]
+    resolved_game_count = refresh.summary["resolved_game_count"]
+    team_schedule_rows = refresh.summary["team_schedule_rows"]
+    unresolved_game_ids = refresh.summary["unresolved_game_ids"]
+    if (
+        not isinstance(source_game_count, int)
+        or isinstance(source_game_count, bool)
+        or source_game_count < 0
+        or not isinstance(resolved_game_count, int)
+        or isinstance(resolved_game_count, bool)
+        or resolved_game_count < 0
+        or not isinstance(team_schedule_rows, int)
+        or isinstance(team_schedule_rows, bool)
+        or team_schedule_rows < 0
+        or not isinstance(unresolved_game_ids, list)
+        or any(not isinstance(game_id, str) or not game_id for game_id in unresolved_game_ids)
+    ):
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} has malformed source-completeness evidence",
+        )
+    if unresolved_game_ids:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} has unresolved game assignments: "
+            f"{', '.join(unresolved_game_ids)}",
+        )
+    if source_game_count != resolved_game_count or team_schedule_rows != resolved_game_count * 2:
+        raise _error(
+            409,
+            "schedule_grid_incomplete_evidence",
+            f"schedule refresh {refresh_id} does not describe one resolved two-team row pair "
+            "for every source game",
+        )
+    return (
+        source_game_count,
+        resolved_game_count,
+        team_schedule_rows,
+        unresolved_game_ids,
+    )
+
+
 @router.get(
     "/current",
     response_model=ScheduleGridResponse,
@@ -97,6 +175,18 @@ def get_current_schedule_grid(
         )
 
     first = rows[0]
+    (
+        source_game_count,
+        resolved_game_count,
+        team_schedule_rows,
+        unresolved_game_ids,
+    ) = _schedule_completeness(session, refresh_id=first.schedule_refresh_id)
+
+    # The strict query reserves lineage scopes with transaction locks. This API
+    # only returns copied dataclass values, so release those locks without
+    # committing SQLite's no-op write reservations.
+    session.rollback()
+
     return ScheduleGridResponse(
         league_id=league.id,
         season=league.season,
@@ -105,6 +195,10 @@ def get_current_schedule_grid(
                 refresh_id=first.schedule_refresh_id,
                 version=first.schedule_version,
                 refreshed_at=first.schedule_refreshed_at,
+                source_game_count=source_game_count,
+                resolved_game_count=resolved_game_count,
+                team_schedule_rows=team_schedule_rows,
+                unresolved_game_ids=unresolved_game_ids,
             ),
             scoring_period_projection=ScoringPeriodProjectionLineage(
                 refresh_id=first.projection_refresh_id,
