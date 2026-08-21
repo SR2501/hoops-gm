@@ -12975,3 +12975,152 @@ renders without error proves nothing.
   original brief named holding the *smaller* half. A real league's periods come
   from imported Fantrax settings, so the response's own `periods` array outranks
   that arithmetic.
+
+## 2026-08-21 — quant — The unit is a frozen protocol, because the model it was meant to fit cannot activate
+
+**Unit:** resumed `injury-status-conversion` after the corrected cohort (PR #39) lifted the
+hard pause. Verified the lift myself rather than taking it: `56adf2f` is an ancestor of both
+`origin/main` and this branch's head, tree clean. The unit that came out is **one frozen
+pre-registration and two doc commits. No model is fitted and no number is emitted.**
+
+**Changed:** `docs/models/injury-status-conversion-preregistration.md` (new, committed alone),
+`docs/backlog.md`, `docs/models/README.md`.
+
+### Two findings, and the second retires a line of work
+
+**The fit is not possible from anything committed.** The cohort manifest publishes canonical
+`status_counts` and joined `participation_outcome_counts` as **two separate marginals**. There
+is no status x outcome contingency and no row-level data anywhere in the repository. A
+conversion rate cannot be fit from two marginals. The row-level outcomes live only in the
+gitignored database and raw store; the coordinator searched nine worktrees plus the owner's
+main checkout, and the one real database holds **0 rows** in both `player_participation` and
+`player_game_logs`.
+
+**The committed cohort can never activate this model, and that needs no data to show.** The
+activation rule requires at least 30 held-out direct outcomes for every status. Whole-cohort
+`doubtful` is **21**. A chronological holdout is a subset, so **21 < 30 unconditionally** —
+before any outcome is examined, and disprovable by re-reading one field of the manifest.
+`probable` at 59 would need the holdout to hold more than half the cohort. The correction made
+`doubtful` *smaller*, 22 to 21.
+
+So regenerating this four-week cohort would spend a full live archive sweep (~91 candidates
+plus a season ingest) and buy a guaranteed veto. That changed a decision already in front of
+the owner from *rebuild it* to *widen it or do not spend*.
+
+### Why a freeze was the right thing to ship today specifically
+
+`docs/models/reliability-metrics.md` records that this project has never managed a provable
+prospective pre-registration — *"the implementation and evidence first enter git together…
+this repository cannot independently prove prospective registration"* — with a standing
+instruction that any future release commit its protocol separately first.
+
+That instruction is satisfiable **only while the outcome data does not exist.** A freeze
+committed now is prospective in a way no later freeze can be, because the data it commits to
+could not have been consulted by anyone. Once the database is populated the window shuts
+permanently. The blocker is what makes the freeze airtight, which is the one useful property
+a blocker has.
+
+The coordinator cut my proposed harness port on the correct ground: every constant in the
+preserved branch is stale, and a harness targeting a cohort proved inadmissible is thrown away
+when the cohort widens. **Port nothing, freeze the protocol, stop.**
+
+### The substantive addition: a gate that fires before a sweep is spent
+
+A cohort is admissible only if **every status carries at least 30 observations inside the
+declared held-out range**. Per-status counts are *inputs*, not outcomes, so this is checkable
+**without unblinding anything**, and an inadmissible cohort is never fitted. It is the
+difference between discovering afterwards that a cohort was too small and the cohort refusing
+to proceed.
+
+It carries one requirement for `data-engineer`: the generator must publish `status_counts`
+**broken down by declared partition**, not only whole-cohort. Today the gate is a hand-check
+performed once, after a split is drawn.
+
+### Three corrections to the record, all re-derived from files at this head
+
+**A previous freeze pinned a checkout-dependent hash.** v1 pinned `manifest_worktree_sha256`.
+The same committed bytes are 19,261 on a CRLF checkout and 18,799 on LF. That is exactly the
+defect class the cohort manifest's own `source_fingerprint_method` records PR #30 having to
+correct after publication — found this time in the one artefact nobody re-reads. This freeze
+pins the LF-normalised digest `383fa77a…`, verified byte-equal to the raw git blob.
+
+**The canonical fingerprint in PR #39's own handoff entry is stale.** It quotes `80b3e563…`;
+the file says `6ca4d37f…`. Regenerated in later remediation rounds, prose never updated. The
+coordinator is grepping for other inheritors.
+
+**The lead-time warning handed to this lane is false for the fitting set.** PR #39's entry
+tells `quant` the maximum moved 540 to 1,650 minutes and that any stratification on the old
+9-hour maximum is wrong. True of *canonical* observations; the manifest's
+`joined_lead_time_minutes` maximum is still **540**. The joined set is canonical minus
+exclusions, so the 1,650 observation is excluded and cannot enter any fit — the joinable range
+is unchanged.
+
+**And I over-specified that third one in my own draft and had to weaken it.** I first wrote
+that the 1,650 row is one of the two with no participation row, excluded under R35. The
+manifest publishes only *class totals* for the 28 unresolved identities and 2 missing
+participation rows, so which class it falls into is **not determinable from the file**. The
+handoff attributes the value to a named player, but attributing him to a specific exclusion
+class is an inference I cannot check here. The freeze now claims only what the manifest
+settles: it is not in the fitting set. Declining to name a cause I cannot check, while still
+reporting the fact I can, is the distinction most of this week's defects failed at.
+
+### Also fixed prospectively, because v1 could not
+
+**Lead-time bands are defined** — ≤60 / 61–180 / 181–540 / >540 minutes, reported only where a
+band holds at least 10 eligible held-out observations. v1 requested bands without defining
+boundaries and had to record the planned sensitivity as unevaluated. `>540` is expected empty
+on any joinable data resembling this cohort, and an empty band is reported empty rather than
+merged away.
+
+**Two limitations sit beside their methods rather than being assumed away:** the paired
+bootstrap resamples by player-game and is therefore *not* valid against within-player or
+within-game correlation; and fitting eligibility (≥20 development observations) **is not
+activation**, so clearing it must never be read as a green light.
+
+**The contamination disclosure is mandatory and I volunteered it.** I have read v1's unblinded
+held-out results, and the cohorts overlap by roughly 99% of rows. The three-band structure is
+therefore **inherited knowingly**, and a future report that "it was selected again" would be
+close to uninformative. This is a replication protocol, not a clean blind. Describing it as a
+clean blind would have been worth less than nothing.
+
+**A second reason the pooled bands are not a discovery:** v1's held-out `probable` (0.9412)
+and `available` (0.7971) **reversed**, so a five-status model would have inverted on this data.
+
+### Gates
+
+**Code gate** claimed: documentation-only change, no code touched, no test affected. **The
+Model gate is deliberately not claimed** — no decision-bearing number is produced, so there is
+nothing to gate. Adapter and Automation gates do not apply: no external call, nothing in the
+write path. `injury-status-conversion` stays `pending`; `availability-model` stays blocked.
+
+Backlog header recounted from the finished file: 114 `###` headings, 114 markers, 1:1, no
+duplicate names, 40 done / 1 blocked / 73 pending. Unchanged, because this lane changed
+annotations and no status marker — recounted rather than assumed for that reason.
+
+### Could not verify
+
+- **The independent exact-head `data-engineer` and `code-review` reviews had not run** when
+  this entry was written. The unit is not ready until they do.
+- **CI on this head.** Not pushed at time of writing. The change is documentation-only, so I
+  expect nothing from it, and *expecting nothing* is not the same as having seen it green.
+- **That no populated cohort database exists anywhere.** I verified my own worktree; the
+  nine-worktree and main-checkout search is the coordinator's, relayed. I did not run it, and I
+  cannot see other machines at all.
+- **Whether `80b3e563…` was inherited by any other artefact.** I found it stale in one handoff
+  entry and stopped there; the sweep is the coordinator's.
+- **Which exclusion class the 1,650-minute observation falls into.** Not determinable from the
+  manifest, and deliberately not claimed. See above.
+- **The ~4.5x widening multiplier.** It follows arithmetically from v1's 32% holdout share, but
+  it assumes the status mix holds across a wider window, which it probably does not — December
+  reporting is not April reporting, and late-season shutdowns inflate `out` without inflating
+  `doubtful`, which would make the true requirement larger. It is a planning figure for the
+  owner, not a threshold. The gate is the measured per-status holdout count.
+- **Whether the reporting regime is stable at all.** A status-vocabulary or team-behaviour
+  change would invalidate every rate a future fit produces without changing one line of code,
+  and nothing in this protocol would detect it.
+- **That the three-band structure is right.** I have not fitted anything. I have seen it win on
+  99%-overlapping data, which is why the contamination disclosure exists rather than a claim.
+
+No cohort was regenerated, no live source was called, no Fantrax access was used, no paid
+source was consulted, and no owner-only decision was made. The widening decision is stated for
+the owner and explicitly not taken here.
