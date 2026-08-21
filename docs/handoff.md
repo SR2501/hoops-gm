@@ -14300,3 +14300,79 @@ and it was already correct, asserted by shape only.
   numbers are invented by construction.
 - **Whether the label digest matters.** I pinned one player's labels, not all sixty. A change to
   a different player's team or position would pass.
+
+## 2026-08-21 - frontend - The resolver dropped three items and exited zero, and a recount could not see it
+
+**Unit:** rebasing `projections-ui` onto merged `main` (`0b28003`) after the import CLI landed.
+Head `1aa71ac`. Gate green: lint, typecheck, 193 frontend tests, the vocabulary pin against
+merged `main`'s own `profiles.py`, and a live browser pass.
+
+**The finding, and it is the sharpest doc-merge failure this project has hit.**
+`scripts/resolve_doc_conflicts.py` **silently deleted the three backlog items the import-CLI
+lane had just added** - `projections-import-cli`, `projection-import-process-concurrency`,
+`projections-seed` - while keeping my side of the header block. **It exited successfully.**
+
+Three things made it nearly invisible:
+
+1. **It printed a recomputed header twice in one rebase, with different numbers** - `118` at the
+   first conflict, `115` at the second. Both were mid-rebase states and neither was usable, which
+   is exactly what this file's own parenthetical has said since the last time a rebase corrupted
+   it. Taking either would have shipped a wrong total.
+2. **A recount of the finished file agrees with itself perfectly after a deletion.** 115 headings,
+   115 unique slugs, 115 markers, 42/1/72 - internally consistent, and wrong. The discipline I had
+   been applying all day *cannot detect this class*, because a dropped item removes its heading
+   and its marker together.
+3. **The file also ended up with two header blocks** carrying different totals - the same
+   corruption its own parenthetical documents from an earlier rebase, recurring.
+
+**What caught it:** comparing this file's *slug set* against `origin/main`'s, which is a different
+question from counting. `Compare-Object` on the two slug lists named all three losses immediately.
+**Recount the total, and separately diff the slug set against `main`. The first cannot see what
+the second is for**, and I had only ever done the first.
+
+Both checks are now named in the backlog header with that reasoning, so the next person does not
+have to rediscover which one catches which failure.
+
+**Restored by taking `origin/main`'s copy of the file and re-applying my two edits**, rather than
+patching three entries back in - a reconstruction whose result can be diffed against `main` and
+shown to differ only where I intended. Final state verified: 118 headings, 118 unique slugs, 118
+markers, 45/1/72, one header block, slug set **identical to `main`**.
+
+**Also corrected a claim this unit falsifies.** `projections-api-early` said `schedule-grid-ui`
+"is still the only thing in this repository a person can look at". It is not, as of this branch.
+Corrected by the lane that falsified it rather than left for someone to notice - the same
+obligation as the reader-count entry, in the direction of a claim going stale by someone else's
+success rather than by a merge.
+
+**The digest decision, made on my own evidence rather than the producer's.** The coordinator was
+explicit that whether to re-capture was mine to decide and needed its own evidence. Against a
+database seeded from merged `main` itself: `content_sha256` and `projection_values_sha256` both
+match the literals my recorded test pins; assumptions 60 rows, range 59-79, first three
+identical; `players[0]` identical; payload 54159 bytes. **No re-capture.** The covering evidence
+is `git diff --stat c0502e6 origin/main -- backend/src/` returning empty - the source tree the
+seed executes is byte-identical to the head I had already verified, so it cannot produce
+different output - and the run is the observation confirming it.
+
+**Browser, live against merged `main`'s seed:** 60 rows, zero absence markers anywhere in the
+table body, one em dash in Pos, "not blended - single source" from `blend === null`, no integrity
+banner, header pinning at the scrollport top and holding at scrollTop 1300 and 1900, first column
+holding under horizontal scroll, `:has()` widening at 1230px, and the assumption rule at 1.92px
+against the volume-pair rule at 0.64px so the categorical boundary reads heavier than the
+grouping one.
+
+**Could not verify:**
+- **Whether the resolver drops items on other lanes' rebases too.** I found this on mine and fixed
+  my file. I did not audit `main`'s current backlog against the union of what every merged lane
+  added, so I cannot say whether an earlier rebase already lost an item that nobody compared. The
+  check that would answer it is cheap and I did not run it, because it is not my file to audit -
+  but the failure is silent and nothing else looks for it.
+- **Whether `scripts/resolve_doc_conflicts.py` should be fixed rather than worked around.** It is
+  not this lane's file, PR #58 is already open against it, and I have twice now confirmed its
+  "conflict markers survive" warning as a false positive on `make_pending_date_payloads.py` while
+  it silently did real damage elsewhere in the same run. **A tool that cries wolf where it is
+  wrong and stays silent where it is right** is a worse shape than either alone, and I am
+  recording that rather than filing it, because filing it is `backend`'s call.
+- **That my restored entry text matches what the CLI lane wrote.** I took `main`'s file wholesale
+  so the three entries are byte-exact, but my own `projections-ui` additions were re-applied by
+  hand from my prior commit; I diffed the result against `main` and confirmed it differs only in
+  that entry and the header, which is weaker than a byte-comparison against my pre-rebase copy.
