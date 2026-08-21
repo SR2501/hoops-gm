@@ -10705,6 +10705,63 @@ or mypy — all three were green over both. That is a small, concrete instance o
 the wider point: **the gates do not read prose, and prose is where this unit's
 remaining defects live.**
 
+**Rebased onto `28bd480` (PR #49) after this unit was reviewed.** Recorded
+because a conflict resolution that silently alters code is the class this
+repository has spent two days finding, so the claim that it did not needs to be
+checkable rather than asserted.
+
+The overlap with #49 is three files and all three are prose — `backend/README.md`,
+`docs/backlog.md`, `docs/handoff.md`. **No Python file is shared**, verified by
+intersecting the two name-only diffs rather than by reading the conflict output.
+So the code under review should be unchanged, and it is:
+
+```
+git diff <base>...HEAD -- . ':(exclude)*.md'
+  before (base e1e00c2): sha256 7BF04669...19D72D  93430 bytes
+  after  (base 28bd480): sha256 7BF04669...19D72D  93430 bytes
+```
+
+Byte-identical, confirmed by SHA-256 and independently by `fc /b`. Deliberately
+**not** an AST comparison: `ast.dump` cannot see comments, and by this lane's own
+accounting comments are where half its remaining defects lived.
+
+**The first attempt at this rebase committed conflict markers into
+`docs/handoff.md` and I nearly carried on.** My resolver's regex could not match
+a block whose HEAD side was empty, it raised — and I ran `git add` anyway,
+because the two were separate steps in one command and I read the exit of the
+second. `git rebase --continue` then committed a file containing `<<<<<<< HEAD`.
+Caught by grepping the commit rather than the working tree. Redone with a
+resolver that **verifies no marker survives before it stages anything** and exits
+non-zero otherwise; five conflicts, each resolved and verified in turn.
+
+That is the same shape as the two mutation checks earlier in this unit: an
+action whose success I inferred from an adjacent signal. **Staging is not
+resolution, red is not the right red, and a passing gate is not the claim you
+wanted to make.** Three instances, one lane, one night.
+
+Resolutions, stated so they can be disagreed with: `handoff.md` is append-only,
+so where both sides carried content the result is **both, in merge order**, never
+a choice — verified afterwards by checking all 149 of main's entries survive
+(none missing; the file now has 151). `backlog.md`'s header was taken from
+either side mid-rebase and **recomputed from the finished file**: 114 headings,
+114 markers, perfect `HM` alternation across all 228, no duplicate slugs, giving
+40 done / 1 blocked / 73 pending / 114 total. Neither pre-merge header was an
+input. Also verified additively: every one of main's 111 backlog items and 11
+README headings is still present, and my branch adds three of each.
+
+Gate green on the rebased head: ruff, format (157 files), mypy strict (140
+files), full offline suite. **CI must go again — the green run on `037fae9`,
+PostgreSQL included, describes a superseded head.**
+
+**Inherited from #49 and worth carrying:** a placeholder pair can be internally
+consistent. The NBA emits `1900-01-01` in both the EST and UTC fields of a
+resolved game, so a cross-field agreement check passes on a wholly fabricated
+value. Nothing here consumes it, but `source_games_played_assumptions` sits
+downstream of the same quantity, and the lesson generalises to this lane's own
+family: **cross-field agreement validates encoding, never meaning** — the sibling
+of "a consistency guarantee is only as wide as the set of keys someone
+enumerated".
+
 **Next:** unchanged. `frontend` builds the screen tomorrow against a contract
 whose *shape* did not move in this round — only its guarantees got smaller and
 truer.

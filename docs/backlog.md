@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**39 done - 1 blocked - 71 pending - 111 total**
+**40 done - 1 blocked - 73 pending - 114 total**
 
 (Counted from the status markers themselves at this head, not carried forward from
-either lane: 111 `###` headings and 111 markers, 1:1, no duplicates. Neither
+either lane: 114 `###` headings and 114 markers, 1:1, no duplicates. Neither
 pre-merge header was a usable input, because each was computed before the other
 lane's items landed. An earlier header claimed 37 done / 63 pending against an
 actual 36 / 64, and that drift predates all three lanes.)
