@@ -659,6 +659,141 @@ describe('a season the source has not finished scheduling', () => {
     expect(listed.textContent).not.toContain('Emirates NBA Cup — ')
   })
 
+  it('says a pending game has no date yet, in different words from a date it cannot read', async () => {
+    // The contract change: `game_date` is now `date | None`, because applying
+    // resolved-game time reconciliation to a pending fixture returned no season
+    // at all. `null` is the source saying it has not decided when — the same
+    // kind of statement as the TBD marker, one field along — and it must not be
+    // reported in the words reserved for a wire defect. Nor may it be dropped:
+    // ADR-013 says a consumer treats it as belonging to no known period,
+    // because the game is still published.
+    mockFetch({
+      [GRID_PATH]: {
+        body: withPendingGames([
+          pendingGame({ nba_game_id: 'no-date', game_date: null }),
+          pendingGame({ nba_game_id: 'unreadable', game_date: '10/21/2026' }),
+        ]),
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const notice = await screen.findByTestId('grid-pending')
+    expect(notice).toHaveTextContent(
+      '1 of them has no date yet — the source published it without saying when',
+    )
+    expect(notice).toHaveTextContent('1 carried a date this screen could not read')
+    // Each names its own game, so the two cannot be read as one clause.
+    expect(notice).toHaveTextContent('no-date')
+    expect(notice).toHaveTextContent('unreadable (10/21/2026)')
+    // Neither reaches a column, and the grid still draws.
+    expect(screen.getByTestId('period-header-1')).toHaveAttribute('data-pending', 'false')
+    expect(screen.getByTestId('schedule-grid')).toBeInTheDocument()
+  })
+
+  it('lists an undated pending game rather than leaving the count unexplained', async () => {
+    // It cannot be bucketed, so the period-scoped notice cannot name a column
+    // for it. If the lineage list dropped it too, the pending count would
+    // exceed the marked columns with nothing on screen accounting for the
+    // difference — the invariant visibly failing, which is the state this
+    // panel already refuses to leave undescribed.
+    mockFetch({
+      [GRID_PATH]: {
+        body: withPendingGames([pendingGame({ nba_game_id: 'no-date', game_date: null })]),
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const listed = await screen.findByTestId('schedule-pending-games')
+    expect(listed).toHaveTextContent('no-date')
+    expect(listed).toHaveTextContent('date not yet set')
+    // Not rendered as a hole, and not as the string "null".
+    expect(listed.textContent).not.toMatch(/null|undefined/)
+    expect(screen.getByTestId('schedule-game-counts')).toHaveTextContent('1 pending')
+  })
+
+  it('accepts a null game_date but still refuses one that is simply absent', async () => {
+    // The distinction the contract turns on. `game_date` is always *present*
+    // and may be `null`, so this is a value check, not a key check: `null` is
+    // the source saying it has not decided when, while a missing key is a
+    // response that is not the contract. Widening the first must not widen the
+    // second, or the present-but-malformed rule this validator is built on
+    // stops meaning anything.
+    const base = scheduleGrid()
+    const withRecord = (record: Record<string, unknown>) => ({
+      ...base,
+      lineage: {
+        ...base.lineage,
+        schedule: {
+          ...base.lineage.schedule,
+          pending_game_ids: ['0022601201'],
+          pending_games: [record],
+        },
+      },
+    })
+    const fields = {
+      nba_game_id: '0022601201',
+      game_label: 'Emirates NBA Cup',
+      game_sub_label: 'Quarterfinal',
+      game_subtype: 'in-season-knockout',
+    }
+
+    mockFetch({
+      [GRID_PATH]: { body: withRecord({ ...fields, game_date: null }) },
+      '/health': { body: HEALTH },
+    })
+    const first = renderWithRouter(<App />, { route: '/schedule' })
+    expect(await screen.findByTestId('schedule-grid')).toBeInTheDocument()
+    first.unmount()
+    vi.restoreAllMocks()
+
+    mockFetch({ [GRID_PATH]: { body: withRecord(fields) }, '/health': { body: HEALTH } })
+    renderWithRouter(<App />, { route: '/schedule' })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'did not match the schedule grid contract',
+    )
+    expect(screen.queryByTestId('schedule-grid')).toBeNull()
+  })
+
+  it('keeps the season-level pending count complete when a game cannot be placed', async () => {
+    // Two different denominators, and only one of them is allowed to be short.
+    // A game with no date belongs to no week, so it cannot be attributed to a
+    // column — but it still exists, and "N games not yet decided this season"
+    // must stay complete even when the per-week attribution cannot. Dropping
+    // what cannot be placed is the same shape as attributing a pending game to
+    // a named team, one level up: a number that quietly sheds what it cannot
+    // locate is worse than one that says it cannot locate it.
+    mockFetch({
+      [GRID_PATH]: {
+        body: withPendingGames([
+          pendingGame({ nba_game_id: 'placed', game_date: '2026-10-21' }),
+          pendingGame({ nba_game_id: 'no-date', game_date: null }),
+          pendingGame({ nba_game_id: 'outside', game_date: '2026-09-30' }),
+        ]),
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const notice = await screen.findByTestId('grid-pending')
+    // The season figure counts all three, not the one that reached a column.
+    expect(notice).toHaveTextContent('The source has published 3 games without deciding')
+    expect(screen.getByTestId('schedule-game-counts')).toHaveTextContent('3 pending')
+    // The per-week view is honestly short, and says why for each.
+    expect(notice).toHaveTextContent('Scoring period 1 (1) is marked TBD')
+    expect(notice).toHaveTextContent('has no date yet')
+    expect(notice).toHaveTextContent('falls outside every scoring period this grid shows')
+    // And all three are listed, so the reader can reconcile 3 against 1 column.
+    const listed = screen.getByTestId('schedule-pending-games')
+    for (const id of ['placed', 'no-date', 'outside']) {
+      expect(listed).toHaveTextContent(id)
+    }
+  })
+
   it('says a pending game fell outside the calendar rather than losing it', async () => {
     mockFetch({
       [GRID_PATH]: { body: withPendingGames([pendingGame({ game_date: '2026-09-30' })]) },
@@ -668,7 +803,7 @@ describe('a season the source has not finished scheduling', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const notice = await screen.findByTestId('grid-pending')
-    expect(notice).toHaveTextContent('fall outside every scoring period this grid shows')
+    expect(notice).toHaveTextContent('falls outside every scoring period this grid shows')
     expect(notice).toHaveTextContent('0022601201 on 2026-09-30')
     expect(notice.textContent).not.toContain('marked TBD')
     expect(screen.getByTestId('period-header-1')).toHaveAttribute('data-pending', 'false')

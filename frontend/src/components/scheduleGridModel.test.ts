@@ -260,7 +260,7 @@ describe('readPendingGames', () => {
     const model = buildScheduleGridModel(withPending([pending({ game_date: '12/04/2026' })]))
 
     expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
-    expect(model.pending.undated.map((game) => game.nba_game_id)).toEqual(['0022601201'])
+    expect(model.pending.unreadableDate.map((game) => game.nba_game_id)).toEqual(['0022601201'])
     expect(model.pending.outsidePeriods).toEqual([])
   })
 
@@ -274,7 +274,7 @@ describe('readPendingGames', () => {
       withPending([pending({ game_date: '2026-10-25T00:00:00Z' })]),
     )
 
-    expect(model.pending.undated.map((game) => game.nba_game_id)).toEqual(['0022601201'])
+    expect(model.pending.unreadableDate.map((game) => game.nba_game_id)).toEqual(['0022601201'])
     expect(model.pending.outsidePeriods).toEqual([])
     expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
   })
@@ -317,14 +317,42 @@ describe('readPendingGames', () => {
     expect(buildScheduleGridModel(halfBlock).pending.present).toBe(false)
   })
 
+  it('separates a date the source has not set from one this screen cannot read', () => {
+    // The two look identical in a summary and mean opposite things. `null` is
+    // the source stating it has not decided when — a published fact about an
+    // undrawn fixture, the same kind of statement as the `TBD` column marker
+    // one field along. Anything else that fails `ISO_DAY` is something having
+    // gone wrong between the source and this grid. Reporting the first as the
+    // second would tell a reader a fact in the words of a fault, which is the
+    // collapse `0` versus `·` refuses at cell level.
+    const model = buildScheduleGridModel(
+      withPending([
+        pending({ game_date: null }, 'no-date'),
+        pending({ game_date: '12/04/2026' }, 'unreadable'),
+      ]),
+    )
+
+    expect(model.pending.undatedBySource.map((game) => game.nba_game_id)).toEqual(['no-date'])
+    expect(model.pending.unreadableDate.map((game) => game.nba_game_id)).toEqual(['unreadable'])
+    expect(model.pending.outsidePeriods).toEqual([])
+    expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
+    // Still counted. ADR-013: a consumer must treat it as belonging to no known
+    // period rather than dropping it, because the game is still published.
+    expect(model.pending.declaredCount).toBe(2)
+    expect(unplacedPendingCount(model.pending)).toBe(2)
+  })
+
   it('keeps every declared game accounted for somewhere', () => {
     // The arithmetic a reader does on screen: placed columns plus the stated
-    // exceptions must reach the declared total, or the banner is hiding one.
+    // exceptions must reach the declared total, or the notice is hiding one.
+    // All four outcomes at once, so the sum is over the whole partition rather
+    // than over whichever branches happened to be exercised.
     const model = buildScheduleGridModel(
       withPending([
         pending({ game_date: '2026-10-21' }, 'placed'),
         pending({ game_date: '2026-09-30' }, 'outside'),
-        pending({ game_date: 'nonsense' }, 'undated'),
+        pending({ game_date: 'nonsense' }, 'unreadable'),
+        pending({ game_date: null }, 'no-date'),
       ]),
     )
     const { pending: summary } = model
@@ -332,7 +360,10 @@ describe('readPendingGames', () => {
     const placedInColumns = model.periodPending.reduce((sum, bucket) => sum + bucket.length, 0)
     expect(placedInColumns).toBe(summary.placedCount)
     expect(
-      summary.placedCount + summary.outsidePeriods.length + summary.undated.length,
+      summary.placedCount +
+        summary.outsidePeriods.length +
+        summary.unreadableDate.length +
+        summary.undatedBySource.length,
     ).toBe(summary.declaredCount)
   })
 })

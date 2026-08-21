@@ -25,6 +25,14 @@
  * undetermined bracket, and "Emirates NBA Cup — Quarterfinal" is that evidence.
  * A bare count of six would satisfy the arithmetic and show nothing.
  *
+ * A pending game with no date is listed here as "date not yet set" rather than
+ * omitted, and this list is the only place it can appear. It cannot be bucketed
+ * into a column, so the period-scoped notice cannot mention it by column — and
+ * if the list dropped it too, the pending count would exceed the marked columns
+ * with nothing on screen accounting for the difference. That is the
+ * invariant-visibly-failing shape this panel already refuses once, in the
+ * `countsDisagree` note it declines to write.
+ *
  * There is deliberately **no warning** when they differ. On a successful
  * response they differ whenever a persisted game falls outside every scoring
  * period, which is the normal case — a fantasy calendar rarely spans the whole
@@ -127,7 +135,8 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
               <ul className="lineage__list">
                 {pendingGames.map((game) => (
                   <li key={game.nba_game_id}>
-                    <code>{game.nba_game_id}</code> · {game.game_date} · {describePendingGame(game)}
+                    <code>{game.nba_game_id}</code> ·{' '}
+                    {game.game_date ?? 'date not yet set'} · {describePendingGame(game)}
                   </li>
                 ))}
               </ul>

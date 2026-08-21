@@ -60,8 +60,22 @@ export interface ApiErrorBody {
  */
 export interface SchedulePendingGame {
   nba_game_id: string
-  /** ISO day. The only field that can locate a pending game in the grid. */
-  game_date: string
+  /**
+   * ISO day, or `null` when the source has not said when.
+   *
+   * The only field that can locate a pending game in the grid — so `null` means
+   * it cannot be located in one, and that is a fact rather than a failure. The
+   * backend returns it when the source's own time fields do not reconcile:
+   * every pending game carries `seriesText: "Date subject to change"`, and an
+   * undecided tip-off is emitted as a year-0001 sentinel where a resolved game
+   * uses 1900. Guessing a date from that would put a game in a column on the
+   * strength of a placeholder.
+   *
+   * This is the same distinction the grid draws one level up, one field along:
+   * `TBD` on a column says the source has not decided *who*; a null here says
+   * it has not decided *when*. Neither may be rendered as an absence of news.
+   */
+  game_date: string | null
   /** e.g. "Emirates NBA Cup". */
   game_label: string | null
   /** e.g. "Quarterfinal". */

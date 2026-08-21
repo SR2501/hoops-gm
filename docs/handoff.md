@@ -11748,3 +11748,111 @@ measurement is one viewport on one machine. Nobody has used this screen to make 
 
 **Next:** #49 merges, then rebase, remove the wire optionality and the "cannot say" notice
 with it, re-capture and compare the fixture against committed backend code, and undraft.
+
+---
+
+## 2026-08-21 — frontend — A nullable pending date, and my own rule pointing back at me
+
+**Changed:** `PendingScheduleGame.game_date` became `date | None` in the schedule-import
+lane, and my validator rejected the null case — so a legitimate backend response would have
+taken the whole screen to a contract error. Types, validator, model, notice copy and the
+lineage list. Still zero backend files.
+
+**Why the contract moved, which matters for how it is handled.** The other lane found that
+`parse_schedule` was applying the strict EST/UTC reconciliation to *pending* games, and that
+one degenerate timestamp on one undrawn Cup fixture returned **no season at all** — not
+1,200 games with one flagged, not even a dry-run view. That is ADR-013's explicitly rejected
+outcome, arriving through a different field, inside the PR implementing ADR-013. So a
+pending date now degrades to `None` while a resolved date stays strict, because only the
+resolved one is persisted and joins `player_participation`.
+
+**This was my own rule aimed at me.** *Tolerate a gap you can describe, reject a value that
+cannot be true.* A null `game_date` had been on the wrong side of that line, and only
+because the line was drawn when the contract said the field was always a string. The rule
+did not move; the contract did. Worth recording because the reverse — quietly widening a
+validator until nothing fails — is the easy way to satisfy a rule while abandoning it.
+
+**Read the source, not the message, for the fourth time tonight.** The brief described the
+change accurately, and reading `origin/sr2501-real-schedule-import` confirmed two things it
+did not say: `game_label`/`game_sub_label`/`game_subtype` are back to non-nullable `str`
+(my client stays tolerant of null there, which is a superset and documented as such), and
+`"game_date": null` is serialized with the **key present**. That second detail decides the
+implementation: this is a *value* check, not a key check, so **an absent `game_date` still
+rejects** and the present-but-malformed rule survives intact. Driven both ways in a browser
+— null renders, absent refuses with no grid drawn.
+
+**Three reasons a pending game reaches no column, and they are not one thing.** The model
+now separates them and the names carry it:
+
+- `outsidePeriods` — dated, but the fantasy calendar does not cover that day.
+- `unreadableDate` — the source sent something this screen could not parse. A **defect**.
+- `undatedBySource` — the source sent `null`. A **fact**.
+
+Folding the last two together was the tempting simplification and it is the same collapse
+this screen refuses at cell level. `0` versus `·` is *a real count* versus *our data is
+missing*; `TBD` versus `·` is *the source has not decided who* versus the same. A null
+`game_date` is the source saying it has not decided **when** — one field along from the
+marker the whole screen is built around — and reporting it in the words reserved for a wire
+fault would tell a reader a published fact in the vocabulary of a failure.
+
+**The instruction I was given that I would not have derived, and it is the important one.**
+Do not filter undated pending games out of the season-level count. A game with no known date
+belongs to no week, so it cannot be attributed to one — **but it still exists**, and "N games
+not yet decided this season" must stay complete even when the per-week attribution cannot.
+Those are two different denominators, and collapsing them is the same class of error as
+attributing a pending game to a named team, one level up: the per-week view can be honestly
+incomplete without the season view becoming wrong.
+
+My implementation already satisfied it, because `declaredCount` reads `pending_game_ids` —
+but it satisfied it **incidentally**, with nothing pinning it. That is the pattern this
+branch has now found four times: correct by accident, and a rule stated nowhere a change
+would trip over. It has a test and a mutation now.
+
+**A copy defect the browser found and no test would have.** The first render said *"1 of
+them **have** no date yet"*. Every clause in that notice now agrees in number, which
+matters more here than it looks: these clauses appear one at a time, so the singular case is
+the common one and was the one nobody had read.
+
+**It will not fire today.** All six live pending games carry reconcilable dates and the live
+smoke asserts exactly that, so this is a **drift signal**, not the present state. Recorded in
+the docstring so nobody shapes the screen around it being common — the opposite mistake to
+the one the code makes, and just as available.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **115 tests across 8 files** (from 110).
+**22 of 22 mutations caught**, five new: a null date rejected; an absent key tolerated; a
+source-undated game reported as a wire defect; an unplaceable game dropped from the season
+count; and an undated game dropped from the lineage list.
+
+**Two mutation anchors went stale** when I introduced a local for the narrowed date, and the
+harness reported `SKIP` rather than passing them. A skipped mutation reads almost like a
+caught one in a list of twenty-two, and the only reason it did not is that the script counts
+skips as failures. That was luck in the design, not foresight.
+
+**Could not verify:**
+
+*Everything in the previous three entries stands and is not repeated.*
+
+*This work has not been reviewed by anyone.* Three reviewers cleared `92a1dd7`; this is
+`c30ba96` plus a contract change none of them has seen. The three-round history on this
+branch is that every round found something, so the base rate for "clean because nobody
+looked" is not low.
+
+*The recorded fixture does not exercise a null date and cannot.* No backend emits one today
+by design — that is the whole point of it being a drift signal — so this state rests
+entirely on hand-built payloads and on proxy mutations of a captured 200. It is the
+least-evidenced path on the screen and it is the one that exists for when something has gone
+wrong upstream.
+
+*I have not re-captured the fixture against `bf4c2b0`.* The comparison in the previous entry
+was against `1716044`; the schedule lane has moved twice since. The rebase is where that gets
+redone, and it must be capture-and-compare, not capture-and-replace.
+
+*The parallel I drew — that a null date is "the same kind of statement as the TBD marker" —
+is my own framing and nothing enforces it.* It reads well and it is the reason the buckets
+are separate, but if a future contributor merges `undatedBySource` into `unreadableDate` the
+tests will catch the words changing and nothing will catch the idea being lost.
+
+**Next:** unchanged. #49 merges, then position, then this — rebase onto merged `main`,
+re-capture and compare the fixture against committed backend code, remove the wire
+optionality and the "cannot say" notice with it, re-run the gate and all 22 mutations, and
+undraft.

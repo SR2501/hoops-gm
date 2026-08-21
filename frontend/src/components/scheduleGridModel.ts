@@ -124,35 +124,68 @@ export interface PendingGamesSummary {
    */
   outsidePeriods: SchedulePendingGame[]
   /**
-   * Detail entries whose `game_date` is not a readable ISO day.
+   * Detail entries the source published **without a date**.
    *
-   * Kept, where the two id/record reconciliation states this once carried were
-   * dropped, and the line between them is worth stating — the more so because
-   * the reason first written here was **measured and found false**. It claimed
-   * `'12/04/2026' <= '2026-12-13'` compares false and would drop a game out of
-   * its column without a word. It compares *true*; and a slash-formatted date
-   * fails `start_date <= game_date` against every period, so unguarded it lands
-   * in `outsidePeriods` and the notice prints it, id and all. Neither half of
-   * that justification survived being run.
+   * `game_date: null`, which the backend emits when the source's own time
+   * fields do not reconcile — a year-0001 sentinel against a resolved game's
+   * 1900, on fixtures that all carry `seriesText: "Date subject to change"`.
+   * It is the source saying *we have not decided when*, and it is a fact about
+   * an undrawn bracket rather than a defect in the pipe.
+   *
+   * Kept apart from `unreadableDate` on purpose, because they are the two
+   * halves of the distinction this whole screen exists to draw, one field
+   * along. A `TBD` column says the source has not decided *who*; this says it
+   * has not decided *when*. `unreadableDate` says something went wrong between
+   * the source and this grid. Merging them would tell a reader a published fact
+   * and a wire fault in the same words — which is exactly the collapse `0`
+   * versus `·` refuses at cell level.
+   *
+   * ADR-013's consumer obligation is explicit that these are not to be dropped:
+   * *"a consumer must then treat the game as belonging to no known period
+   * rather than dropping it, because the game is still published."* That cuts
+   * two ways and only one of them is about columns. A game with no date belongs
+   * to no week, so it cannot be attributed to one — but the **season** figure
+   * must still count it. Those are different denominators, and a per-week view
+   * being honestly incomplete does not license the season view to be wrong.
+   * Silently shedding what cannot be placed is the same error as attributing a
+   * pending game to a named team, one level up.
+   *
+   * **It is a drift signal, not the present state.** Against the live source
+   * all six pending games currently carry reconcilable dates, and the live
+   * smoke asserts exactly that, so this bucket should be empty on every real
+   * response today. It is handled because the source has already been observed
+   * emitting a year-0001 sentinel for an undecided tip-off, not because anyone
+   * expects to see it — so nothing here should be shaped around it being
+   * common.
+   */
+  undatedBySource: SchedulePendingGame[]
+  /**
+   * Detail entries whose `game_date` is present but not a readable ISO day.
+   *
+   * A **defect**, not a fact — and the reason first written here was measured
+   * and found false. It claimed `'12/04/2026' <= '2026-12-13'` compares false
+   * and would drop a game out of its column without a word. It compares *true*;
+   * and a slash-formatted date fails `start_date <= game_date` against every
+   * period, so unguarded it lands in `outsidePeriods` and the notice prints it.
+   * Neither half of that justification survived being run.
    *
    * The guard is still right, for the failure that is actually plausible. The
-   * drift to expect is not a slash date but `date` → `datetime` on the Pydantic
-   * field, giving `2026-12-04T00:00:00Z`. Measured, that buckets *correctly*
-   * everywhere except a period whose `end_date` is the game's own day, where
+   * drift to expect is `date` → `datetime` on the Pydantic field, giving
+   * `2026-12-04T00:00:00Z`. Measured, that buckets *correctly* everywhere
+   * except a period whose `end_date` is the game's own day, where
    * `'2026-12-04T00:00:00Z' <= '2026-12-04'` is false — so the game silently
    * falls out of the one column it belongs in and is then reported as *"falls
    * outside every scoring period this grid shows"*, which is a statement about
    * the fantasy calendar made about a data defect.
    *
    * So the value of this guard is that it prevents a **mis-attributed
-   * explanation**, not that it prevents silence. That is the same argument
-   * `PendingGamesSummary` makes for keeping its other fields apart, and it is
-   * why the id/record states went and this one stayed: those are forbidden by
-   * an invariant the client now checks at the boundary (`isPendingBlock`), and
-   * a boundary that can be closed should be closed rather than narrated. The
-   * wire date format is not ours to close.
+   * explanation**, not that it prevents silence. That is why the id/record
+   * states went and this one stayed: those are forbidden by an invariant the
+   * client now checks at the boundary (`isPendingBlock`), and a boundary that
+   * can be closed should be closed rather than narrated. The wire date format
+   * is not ours to close.
    */
-  undated: SchedulePendingGame[]
+  unreadableDate: SchedulePendingGame[]
 }
 
 export const EMPTY_PENDING: PendingGamesSummary = {
@@ -160,7 +193,8 @@ export const EMPTY_PENDING: PendingGamesSummary = {
   declaredCount: 0,
   placedCount: 0,
   outsidePeriods: [],
-  undated: [],
+  undatedBySource: [],
+  unreadableDate: [],
 }
 
 /**
@@ -198,17 +232,28 @@ export function readPendingGames(
   }
 
   const outsidePeriods: SchedulePendingGame[] = []
-  const undated: SchedulePendingGame[] = []
+  const undatedBySource: SchedulePendingGame[] = []
+  const unreadableDate: SchedulePendingGame[] = []
   let placedCount = 0
 
   for (const game of games) {
-    if (!ISO_DAY.test(game.game_date)) {
-      undated.push(game)
+    // Checked before the format guard, because the two mean opposite things.
+    // `null` is the source stating it has not decided when; anything else that
+    // fails `ISO_DAY` is something having gone wrong on the way here. Folding
+    // the first into the second would report a published fact as a fault.
+    if (game.game_date === null) {
+      undatedBySource.push(game)
       continue
     }
 
+    if (!ISO_DAY.test(game.game_date)) {
+      unreadableDate.push(game)
+      continue
+    }
+
+    const dated = game.game_date
     const index = periods.findIndex(
-      (period) => period.start_date <= game.game_date && game.game_date <= period.end_date,
+      (period) => period.start_date <= dated && dated <= period.end_date,
     )
     if (index === -1) {
       outsidePeriods.push(game)
@@ -224,7 +269,8 @@ export function readPendingGames(
       declaredCount: ids.length,
       placedCount,
       outsidePeriods,
-      undated,
+      undatedBySource,
+      unreadableDate,
     },
     periodPending,
   }

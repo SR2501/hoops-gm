@@ -228,17 +228,30 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
         </>
       ) : null}
       {pending.outsidePeriods.length > 0
-        ? `${String(
-            pending.outsidePeriods.length,
-          )} of them fall outside every scoring period this grid shows, so no column can carry them: ${pending.outsidePeriods
-            .map((game) => `${game.nba_game_id} on ${game.game_date}`)
+        ? `${String(pending.outsidePeriods.length)} of them ${
+            pending.outsidePeriods.length === 1 ? 'falls' : 'fall'
+          } outside every scoring period this grid shows, so no column can carry ${
+            pending.outsidePeriods.length === 1 ? 'it' : 'them'
+          }: ${pending.outsidePeriods
+            .map((game) => `${game.nba_game_id} on ${String(game.game_date)}`)
             .join(', ')}. `
         : ''}
-      {pending.undated.length > 0
-        ? `${String(
-            pending.undated.length,
-          )} carried a date this screen could not read, so nothing can be said about which period they fall in: ${pending.undated
-            .map((game) => `${game.nba_game_id} (${game.game_date})`)
+      {pending.undatedBySource.length > 0
+        ? `${String(pending.undatedBySource.length)} of them ${
+            pending.undatedBySource.length === 1 ? 'has' : 'have'
+          } no date yet — the source published ${
+            pending.undatedBySource.length === 1 ? 'it' : 'them'
+          } without saying when, so ${
+            pending.undatedBySource.length === 1 ? 'it falls' : 'they fall'
+          } in no column here: ${pending.undatedBySource
+            .map((game) => game.nba_game_id)
+            .join(', ')}. `
+        : ''}
+      {pending.unreadableDate.length > 0
+        ? `${String(pending.unreadableDate.length)} carried a date this screen could not read, so nothing can be said about which period ${
+            pending.unreadableDate.length === 1 ? 'it falls' : 'they fall'
+          } in: ${pending.unreadableDate
+            .map((game) => `${game.nba_game_id} (${String(game.game_date)})`)
             .join(', ')}. `
         : ''}
       {/*

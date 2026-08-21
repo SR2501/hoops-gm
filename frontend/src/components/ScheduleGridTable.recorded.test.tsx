@@ -154,7 +154,7 @@ describe('the recorded schedule grid response', () => {
     expect(marked[0]).toHaveTextContent('TBD')
     expect(model.pending.placedCount).toBe(2)
     expect(model.pending.outsidePeriods).toEqual([])
-    expect(model.pending.undated).toEqual([])
+    expect(model.pending.unreadableDate).toEqual([])
   })
 
   it('says nothing about any team in the pending column, because it cannot', () => {

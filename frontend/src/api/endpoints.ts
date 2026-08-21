@@ -130,12 +130,21 @@ function isStringArray(value: unknown): value is string[] {
  * Closing the hole at the boundary is what lets the states behind it be deleted
  * rather than narrated.
  *
- * The label fields are deliberately **not** in that category. A `null`
- * `game_label` is a gap this screen can describe — `describePendingGame`
- * already renders "no label given" — and refusing the response over it would
- * cost every count on the page for a missing piece of prose. That is the split
- * this file draws everywhere: tolerate a gap you can describe, reject a value
- * that cannot be true.
+ * The label fields are deliberately **not** in that category, and neither is
+ * `game_date`. A `null` `game_label` is a gap this screen can describe —
+ * `describePendingGame` already renders "no label given" — and refusing the
+ * response over it would cost every count on the page for a missing piece of
+ * prose. A `null` `game_date` is the source saying *it has not decided when*,
+ * which is a published fact about an undrawn fixture rather than a wire defect;
+ * rejecting it would take the whole screen to a contract error over a state the
+ * backend legitimately emits, which is the failure this validator exists to
+ * prevent, pointed the wrong way.
+ *
+ * That is the split this file draws everywhere: tolerate a gap you can
+ * describe, reject a value that cannot be true. The line moved here because the
+ * *contract* moved, not because the rule did — `game_date` was strictly a
+ * string until the schedule-import lane found that applying resolved-game time
+ * reconciliation to a pending game returned no season at all.
  */
 function isNullableString(value: unknown): boolean {
   return typeof value === 'string' || value === null
@@ -145,7 +154,7 @@ function isSchedulePendingGame(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.nba_game_id === 'string' &&
-    typeof value.game_date === 'string' &&
+    isNullableString(value.game_date) &&
     isNullableString(value.game_label) &&
     isNullableString(value.game_sub_label) &&
     isNullableString(value.game_subtype)
