@@ -21,6 +21,8 @@ Gates exist because this project's failure modes are unusual — see the four po
 
   **And a harness whose anchors can rot is a harness that can quietly stop testing.** A third lane found two of its twenty-two mutation anchors had gone stale when it introduced a local variable, so the harness printed `SKIP` — and *in a list of twenty-two, a skip reads almost exactly like a catch*. It only failed loudly because that script happened to count skips as failures, which its author had not done deliberately. **A skipped mutation is a failure, not a neutral result**, and a harness that reports it as anything else degrades silently as the code moves underneath it.
 
+  **Finally, red is not enough on its own: mutate the thing the docstring *names*, and check the failure matches the docstring's story.** A fourth lane had two mutation checks pass for reasons adjacent to the ones claimed — one reddened against the bug itself rather than the guard, another against a neighbouring condition. Both went red, both looked like evidence, and neither established what its docstring said it established. If a test claims to be pinned by a parked id, remove the parked id; if it stays green, the pin was something else.
+
 Enforced by CI, except the two bullets marked otherwise.
 
 ---
@@ -126,6 +128,25 @@ at the point you write it**, and **re-derive any number or mechanism appearing i
 the moment you write it, from the code beside it.** The failure modes and their evidence are
 recorded as R49–R54 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
+
+### Rounds have a cost, and the cost is prose
+
+One unit on 2026-08-21 ran six review rounds. It found **two behavioural defects a user
+would have seen** — both in the ADR-002 spine, both found by a reviewer executing a claim
+rather than reading it, neither catchable by any gate. Everything else the rounds found was
+prose, and **most of that prose was created by the rounds that fixed the two.**
+
+That is not an argument for fewer rounds; the two defects were worth all six. It is an
+argument about how corrections are written. Each round tends to add a corrected restatement
+beside the wrong one rather than replacing it, so a phrase fixed in round four survived in
+three other files findable with one grep, and two documents claimed a refusal family had
+eight members in the very commit that recounted it to nine.
+
+**State a mechanism once, where readership is most durable, and reference it elsewhere.**
+A corrected restatement is a new copy that can go stale independently, and lint, formatting
+and type-checking read none of it — a reviewer on that unit caught a blank line splitting a
+governance table so its last two rows rendered as literal pipe text, with ruff, format and
+mypy all green over it.
 
 ---
 
