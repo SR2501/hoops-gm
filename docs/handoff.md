@@ -12588,3 +12588,83 @@ to create the condition the guard catches, not merely delete the guard.**
 - **Anything a browser sees at this head.**
 - `architect`'s open item remains theirs: the ADR-013 revision landed on `main`
   with no handoff entry and no backlog line.
+
+## 2026-08-21 - frontend - The method, and the floor it stops at
+
+**Unit:** `schedule-grid-pending-periods`. I asked whether a fifth hole existed
+because I had no method for finding one. `architect` gave me the method and
+`frontend` gave me its limit, which is worth more than either finding.
+
+### The method
+
+> **Anything a check reads out of the artifact it is checking cannot fail.**
+
+Every hole on this branch was an instance: the wrong base, the hardcoded
+expectation dict, the resolved games, `game_date`. All four were found by three
+people asking that question, and none by me asking it.
+
+I have now run it to exhaustion over the response's six top-level keys instead of
+one field per round, and put the table in the generator's docstring:
+`counts` derived; `lineage` partly derived with three fields needing a database;
+`season` and `league_id` legitimately inputs; **`periods` and `teams` inputs that
+should not be.**
+
+### The floor, which is `frontend`'s and is the part I would not have found
+
+`periods` cannot be closed by widening the comparison — the pattern that closed
+the first four. Scoring periods come from SQL over `ScoringPeriod` rows, not from
+the `ScheduleLeagueV2` payload, so this file has nothing to derive them *from*;
+widening would mean comparing the recording against itself.
+
+Driven: shift every boundary three days, recompute the counts from the shifted
+periods, and **6 of 630 rows move while `--verify` stays green.** `periods`
+decides where the *columns* are exactly as `game_date` decides where a *game*
+is, and I closed only the second half.
+
+So this one is narrated rather than closed, and the docstring says what covers it
+instead — the backend's `ScoringPeriod` tests. **The method has a floor and it is
+the inputs the comparison is computed with.** Below that line, narration replaces
+closure. That is the sentence that should stop a round ten.
+
+### The one-directional comparison, inside the fix for the one-directional problem
+
+Both reviewers drove it and both got exit 0: `differing` iterated
+`record.items()`, so the comparison was `recording ⊆ derived`. Deleting a field
+from all three recordings passed silently.
+
+And the docstring claimed **exactly the direction not covered** — *"a field added
+to the contract arrives as a mismatch rather than as silence"*. A field added to
+the contract is absent from an older recording, so nothing yields it, so nothing
+looks. The sentence was not merely wrong, it was reassuring about the gap.
+
+This is the same one-directionality I had *fixed forty lines below in the same
+commit* with the dense-cross-product assertion. Fixed at one site, reintroduced
+at another, in one diff — `architect`'s scope-of-application defect, self-
+inflicted within a single change.
+
+Now over the union of both key sets. Deleting `game_subtype` from all three
+recordings fails with `recorded '<absent>' derived ''`.
+
+### A stale scope paragraph, in the commit that fixed the same defect one file over
+
+`ScheduleAbsenceReasons.recorded.test.tsx` still described the *previous* head's
+scope — "the four reasons and all 630 count rows", and "derives both" where three
+are derived. I widened the generator's opening in that same commit for exactly
+this reason and did not carry it one file across. A reader trusting that
+paragraph would have believed `game_date` was unchecked, which is now backwards.
+
+### Could not verify
+
+- **Whether the audit table is complete.** It is my enumeration of six keys, and
+  my enumerations have been wrong four times on this branch. It is checkable in
+  minutes against the response shape, which is the most I can offer.
+- **That `periods` drift would be caught backend-side.** `frontend` names three
+  backend tests touching `ScoringPeriod` and calls it "very likely". I have not
+  driven a period-generation change against them, and the frontend recorded tests
+  find their period *from the recording's own periods* — the same
+  self-consistency.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6
+  remain numbers no reviewer can check.
+- **Anything a browser sees**, at this head or the last three. Eight rounds
+  without a real screen reader.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.

@@ -37,16 +37,21 @@
  * a recording into a mock. That was not hypothetical. One of the two payloads
  * had already been overwritten by the time the finding arrived.
  *
- * `test/fixtures/make_pending_date_payloads.py` derives both from the committed
- * base the demo seed imports, and `--verify` re-runs the producer's own
- * classifier over them, asserting the four reasons named above **and all 630
- * recorded count rows**. Both fixtures were regenerated end to end through it —
- * seed, serve, capture — and differ from the committed bytes in exactly one
- * leaf, `refreshed_at`. So the reconstruction of the lost payload is proven
- * rather than remembered, and the concrete drift a frozen recording cannot see
- * is now caught: reorder reconciliation and plausibility in the producer and a
- * 1900 pair stops being `implausible`, which `--verify` fails on and the fixture
- * alone would not.
+ * `test/fixtures/make_pending_date_payloads.py` derives all three from the
+ * committed base the demo seed imports — including this file's undoctored
+ * sibling, so the payload the other two are edits *of* is pinned too. `--verify`
+ * compares **every field of every pending record** against the recording, all
+ * 630 count rows, and the lineage counters. Both fixtures were regenerated end
+ * to end through it — seed, serve, capture — and differ from the committed bytes
+ * in exactly one leaf, `refreshed_at`. So the reconstruction of the lost payload
+ * is proven rather than remembered, and the concrete drift a frozen recording
+ * cannot see is now caught: reorder reconciliation and plausibility in the
+ * producer and a 1900 pair stops being `implausible`, which `--verify` fails on
+ * and the fixture alone would not.
+ *
+ * That generator's docstring carries the audit of what it *cannot* see —
+ * `periods` and `teams` are read out of the artifact under test, so neither can
+ * fail there. Read it before trusting a green run to mean more than it says.
  *
  * "Proven" is doing exact work there: proven that *a derivable input* produces
  * these reasons and this response, **not** that it is byte-identical to the lost

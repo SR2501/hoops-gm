@@ -43,6 +43,45 @@ next field open, and the fourth one found was ``game_date``: the field that
 decides which column carries the TBD marker, computed here and discarded. A
 field added to the contract now arrives as a mismatch rather than as silence.
 
+What this check can and cannot see
+---------------------------------
+
+The rule that found every one of those holes, from ``architect``: **anything a
+check reads out of the artifact it is checking cannot fail.** Run to exhaustion
+over the response's six top-level keys rather than one field per round, so the
+next person does not have to rediscover where the floor is:
+
+===================== ===========================================================
+``counts``            **derived** — all 630 rows, from the payload.
+``lineage.schedule``  **partly derived** — ``source_game_count``,
+                      ``resolved_game_count`` and every ``pending_games`` field.
+                      ``refresh_id``, ``refreshed_at`` and the content-version
+                      fingerprint need a database and are **out of reach here**.
+``season``            **legitimately an input.** It names which season to parse.
+``periods``           **an input, and this is the floor.** Scoring periods come
+                      from SQL over ``ScoringPeriod`` rows, not from the
+                      ``ScheduleLeagueV2`` payload, so this file has nothing to
+                      derive them from — widening the comparison would mean
+                      comparing the recording against itself. Shift every
+                      boundary by three days and re-derive, and 6 of 630 rows
+                      move while this stays green. ``periods`` decides where the
+                      *columns* are exactly as ``game_date`` decides where a
+                      *game* is; only the second half is closed here. The backend
+                      tests over ``ScoringPeriod`` are what cover it.
+``teams``             **an input**, one step weaker: ``by_nba_id`` is built from
+                      the recording's rows, so a changed id mapping is
+                      reproduced rather than caught. ``nba_team_id``,
+                      ``abbreviation`` and ``name`` *are* derivable from
+                      ``nba_static_teams.json``; ``team_id`` is a database key
+                      and is not. Filed on the `data-engineer` backlog item.
+``league_id``         an input.
+===================== ===========================================================
+
+That table is the point of this section: **the method has a floor, and it is the
+inputs the comparison is computed with.** Below it, narration replaces closure —
+which is why the two rows above say what covers them elsewhere rather than
+pretending this file could.
+
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
 what the fixtures need: they need *some derivable input* producing those reasons
@@ -147,8 +186,12 @@ def recorded_expectations(variant: str) -> tuple[list[str], dict[str, dict]]:
     move a week, reconcile cleanly, and this printed success while the marker
     landed on a different period than the recording shows.
 
-    So it compares every field of the record, and a field added to the contract
-    arrives here as a mismatch rather than as silence.
+    So it compares every field of the record, over the **union** of the two key
+    sets. Iterating only the recording's keys was the first version, and its
+    docstring claimed the one direction it did not cover: a field *added* to the
+    contract is absent from an older recording, so nothing yields it, so nothing
+    looks. Both reviewers drove it by deleting a field from the recordings and
+    getting exit 0. A field appearing or vanishing is now a mismatch either way.
     """
     schedule = json.loads(RECORDED[variant].read_text(encoding="utf-8"))["lineage"]["schedule"]
     records = {game["nba_game_id"]: game for game in schedule["pending_games"]}
@@ -177,6 +220,15 @@ def derived_counts(payload: dict, periods: list[dict], teams: list[dict], season
     one check, and because drift shows up as a mismatch against a recording that
     *was* produced by the SQL. But if these ever disagree, this file is the more
     likely one to be wrong.
+
+    **And the boundaries the scan uses come from the artifact under test.**
+    ``periods`` is read out of the recording, so both sides of the comparison
+    share their most load-bearing input: this answers *are the games where the
+    recording says, given the recording's columns*, never *are the columns
+    right*. Shift every boundary three days and re-derive the counts and 6 of
+    630 rows move, while this stays green. That is not closeable here — scoring
+    periods are not in the ``ScheduleLeagueV2`` payload — so it is stated rather
+    than fixed, and the backend's ``ScoringPeriod`` tests are what cover it.
     """
     sys.path.insert(0, str(REPO / "backend/src"))
     from hoops_gm.ingest.nba.schedule import parse_schedule
@@ -280,9 +332,9 @@ def verify() -> int:
                 "date_absence_reason": pending.date_absence_reason,
             }
             differing = {
-                field: (value, derived_record.get(field))
-                for field, value in record.items()
-                if derived_record.get(field) != value
+                field: (record.get(field, "<absent>"), derived_record.get(field, "<absent>"))
+                for field in set(record) | set(derived_record)
+                if record.get(field, "<absent>") != derived_record.get(field, "<absent>")
             }
             if differing:
                 failures += 1
