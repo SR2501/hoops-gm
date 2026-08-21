@@ -209,6 +209,12 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
     .map((period, index) => ({ period, count: (periodPending[index] ?? []).length }))
     .filter((entry) => entry.count > 0)
   const games = pending.declaredCount === 1 ? '1 game' : `${String(pending.declaredCount)} games`
+  // "1 of them" is a partitive over a set, and when the whole pending set is a
+  // single game there is no "them" to take one of. Reachable, and it is the
+  // *common* case — these clauses appear one at a time — which is exactly why
+  // the tests using two games could not see it.
+  const subject = (n: number) =>
+    pending.declaredCount === 1 ? 'That game' : `${String(n)} of them`
 
   return (
     <p className="state grid__pending-note" data-testid="grid-pending">
@@ -228,7 +234,7 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
         </>
       ) : null}
       {pending.outsidePeriods.length > 0
-        ? `${String(pending.outsidePeriods.length)} of them ${
+        ? `${subject(pending.outsidePeriods.length)} ${
             pending.outsidePeriods.length === 1 ? 'falls' : 'fall'
           } outside every scoring period this grid shows, so no column can carry ${
             pending.outsidePeriods.length === 1 ? 'it' : 'them'
@@ -237,18 +243,18 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
             .join(', ')}. `
         : ''}
       {pending.undatedBySource.length > 0
-        ? `${String(pending.undatedBySource.length)} of them ${
+        ? `${subject(pending.undatedBySource.length)} ${
             pending.undatedBySource.length === 1 ? 'has' : 'have'
-          } no date yet — the source published ${
+          } no usable date — none came with ${
             pending.undatedBySource.length === 1 ? 'it' : 'them'
-          } without saying when, so ${
+          }, so ${
             pending.undatedBySource.length === 1 ? 'it falls' : 'they fall'
           } in no column here: ${pending.undatedBySource
             .map((game) => game.nba_game_id)
             .join(', ')}. `
         : ''}
       {pending.unreadableDate.length > 0
-        ? `${String(pending.unreadableDate.length)} carried a date this screen could not read, so nothing can be said about which period ${
+        ? `${subject(pending.unreadableDate.length)} carried a date this screen could not read, so nothing can be said about which period ${
             pending.unreadableDate.length === 1 ? 'it falls' : 'they fall'
           } in: ${pending.unreadableDate
             .map((game) => `${game.nba_game_id} (${String(game.game_date)})`)

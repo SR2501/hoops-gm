@@ -11856,3 +11856,120 @@ tests will catch the words changing and nothing will catch the idea being lost.
 re-capture and compare the fixture against committed backend code, remove the wire
 optionality and the "cannot say" notice with it, re-run the gate and all 22 mutations, and
 undraft.
+
+---
+
+## 2026-08-21 — frontend — I invented an ADR quotation, and told a reader the source withheld something we may simply have failed to read
+
+**Changed:** Round four on the nullable-date commit. Three reviewers, seven findings, and
+the two that matter are both about claims I made rather than code I wrote.
+
+**I fabricated a citation.** `scheduleGridModel.ts` presented this in quotation marks as
+ADR-013's *explicit* consumer obligation:
+
+> *"a consumer must then treat the game as belonging to no known period rather than dropping
+> it, because the game is still published."*
+
+That sentence is **in no version of ADR-013 on any ref.** `architect` searched `origin/main`
+and every commit on this branch; I re-ran it and confirmed — the words `game_date`,
+`belonging to no known period` and `still published` do not appear in the ADR at all. It is
+the `PendingScheduleGameLineage` docstring in the backend, **on an unmerged branch**, and I
+had repeated it in a test comment as well.
+
+The obligation is real and the producer does state it. The *authority* was invented. Two
+things follow and the second is worse. An implementer who checks the address finds nothing
+and may conclude the constraint was made up. And my single most load-bearing design
+constraint — the one I said I was given and would not have derived — was anchored to text
+that exists only in a PR that has not merged, which is the coding-against-something-in-no-
+branch pattern this branch spent all night closing, relocated into the citation layer. ADR-013
+does have a real clause that supports the same conclusion, *"Consumers displaying schedule
+counts must show the pending set, not merely omit it"*, and that is what is cited now.
+
+**And the screen told a reader something false, in the direction that comforts.** It said:
+
+> *"1 of them has no date yet — **the source published it without saying when**"*
+
+I read `_pending_game_date` in the producer rather than take the report on trust, and
+`architect` is right. One `try/except SourceContractError: return None` wraps **both** the
+`gameDateTimeUTC` and `gameDateTimeEst` parses, so `null` has three causes and only the
+third is the source declining to commit: UTC unreadable, Eastern unreadable, or the two
+irreconcilable. The first two are **us failing to read a date the source did give** — a
+renamed field, a restructured object, a parser regression.
+
+The backend's own function summary is honest — *"or `None` if it is not trustworthy"* — and
+the slippage to "the source has not told us when" happens in its next paragraph. I inherited
+it and amplified it into a sentence on a screen.
+
+**The direction is what makes it matter, which is the rule I accepted from `architect` two
+rounds ago about "floor" and did not apply here.** Told the source has not decided, an
+operator waits. Told we could not read it, an operator investigates. So this errs toward
+false comfort, and it does it in the bucket I created specifically to stop a published fact
+being reported as a fault — the same collapse, pointed the other way, inside the fix for it.
+
+The copy now attributes nothing: *"That game has no usable date — none came with it"*, which
+is true under all three causes. If the producer ever narrows its `except` so `null` means
+only the irreconcilable case, the screen can say more.
+
+**A limit the split's own framing was hiding.** `frontend` found that `ISO_DAY` accepts any
+well-formed day, so a degenerate **sentinel** — `0001-01-01`, which the producer's docstring
+names as exactly what the source emits for an undecided tip-off — passes it, matches no
+period, and lands in `outsidePeriods`, where it is described as *falling outside the fantasy
+calendar*. That is precisely the mis-attribution the `unreadableDate` guard exists to
+prevent, arriving through the one door it does not cover.
+
+Deliberately not coded around, on their recommendation and my agreement: the client cannot
+tell a sentinel from a genuine out-of-calendar date without inventing a rule about what a
+date means, which is what this screen refuses to do everywhere else. Documented instead,
+with the sentence that was missing — **these three buckets partition what the client can
+tell apart, not what the states are.**
+
+**Two stale numbers, both mine, both found independently by two reviewers.** `styles.css`
+still asserted **583px and five rows** — the reading I had already retracted in this same
+file two commits earlier, having published it as a *correction*. And the caption cost
+paragraph said the accessible name went "113 to 407" in the very commit that grew it to
+**445**; stale on arrival, inside the paragraph whose subject is reporting costs accurately.
+Both corrected, and `styles.css` now carries the derivation rather than a bare figure.
+
+**A copy defect no test here could have seen, for a structural reason.** *"1 of them"* is a
+partitive, and when the whole pending set is one game there is no "them". It is reachable
+and it is the **common** case, because these clauses appear one at a time — and every test
+covering them used two or more games, so the harness was blind to it by construction. That
+is a sharper version of the coverage problem than "we forgot a case": the fixtures were
+chosen to exercise the clause, and choosing them that way excluded the state that matters.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **116 tests across 8 files** (from 115).
+**24 of 24 mutations caught**, two new: the partitive restored, and the undated clause
+re-attributing to the source.
+
+**Harness hardened after the coordinator called the `SKIP` hole decay rather than a point
+failure.** It now pre-flights every anchor before running anything, reports all rotted
+anchors at once, and refuses to run. Verified by deliberately rotting an anchor: caught in
+one second, named, exit 1 — and zero stale on the healthy harness. Previously a stale anchor
+cost a twenty-minute run and read almost exactly like a catch in a list of twenty-four.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated.*
+
+*None of these seven fixes has been reviewed.* Same as every round. The pattern across four
+rounds is that each one found something real, so "clean because nobody looked" has a high
+base rate here.
+
+*The `null`-means-three-things finding is a backend fix I have not made and cannot.* The
+right repair is narrowing `except SourceContractError` in the producer so `null` is returned
+only when the fields are present and irreconcilable. Until that lands the screen is
+deliberately vaguer than it could be. `architect` also notes ADR-013 says nothing about
+`game_date` at all — the contract's newest value is defined in two docstrings on two
+branches and in no accepted decision.
+
+*I have still not re-captured the fixture against `bf4c2b0`.* Two lane heads have passed
+since `1716044`. That is the rebase, and it must be capture-and-compare.
+
+*Nobody has checked whether "no usable date came with it" is the right thing to say to a
+person.* It is defensible and it is vaguer than the sentence it replaced, which is the
+correct trade when the precise version was false — but vaguer copy is a real cost and I have
+tested it for truth, not for usefulness.
+
+**Next:** unchanged. #49 merges, then position, then this — rebase, re-capture and compare
+against committed backend code at whatever head #49 lands as, drop the wire optionality and
+the "cannot say" notice with it, re-run the gate and all 24 mutations, undraft.

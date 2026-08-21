@@ -659,14 +659,19 @@ describe('a season the source has not finished scheduling', () => {
     expect(listed.textContent).not.toContain('Emirates NBA Cup — ')
   })
 
-  it('says a pending game has no date yet, in different words from a date it cannot read', async () => {
+  it('says a pending game has no usable date, in different words from a date it cannot read', async () => {
     // The contract change: `game_date` is now `date | None`, because applying
     // resolved-game time reconciliation to a pending fixture returned no season
-    // at all. `null` is the source saying it has not decided when — the same
-    // kind of statement as the TBD marker, one field along — and it must not be
-    // reported in the words reserved for a wire defect. Nor may it be dropped:
-    // ADR-013 says a consumer treats it as belonging to no known period,
-    // because the game is still published.
+    // at all. `null` must not be reported in the words reserved for a wire
+    // defect — the two prescribe different actions — nor may it be dropped:
+    // ADR-013's consumer clause is "Consumers displaying schedule counts must
+    // show the pending set, not merely omit it."
+    //
+    // It also must not be reported as the source withholding a date. `null`
+    // comes from a `try/except` wrapping both time-field parses in the
+    // producer, so two of its three causes are *us* failing to read a date the
+    // source did give. An earlier version of this comment cited the backend's
+    // own docstring, from an unmerged branch, as ADR text.
     mockFetch({
       [GRID_PATH]: {
         body: withPendingGames([
@@ -680,10 +685,8 @@ describe('a season the source has not finished scheduling', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const notice = await screen.findByTestId('grid-pending')
-    expect(notice).toHaveTextContent(
-      '1 of them has no date yet — the source published it without saying when',
-    )
-    expect(notice).toHaveTextContent('1 carried a date this screen could not read')
+    expect(notice).toHaveTextContent('1 of them has no usable date — none came with it')
+    expect(notice).toHaveTextContent('1 of them carried a date this screen could not read')
     // Each names its own game, so the two cannot be read as one clause.
     expect(notice).toHaveTextContent('no-date')
     expect(notice).toHaveTextContent('unreadable (10/21/2026)')
@@ -785,13 +788,42 @@ describe('a season the source has not finished scheduling', () => {
     expect(screen.getByTestId('schedule-game-counts')).toHaveTextContent('3 pending')
     // The per-week view is honestly short, and says why for each.
     expect(notice).toHaveTextContent('Scoring period 1 (1) is marked TBD')
-    expect(notice).toHaveTextContent('has no date yet')
-    expect(notice).toHaveTextContent('falls outside every scoring period this grid shows')
+    expect(notice).toHaveTextContent('has no usable date')
+    expect(notice).toHaveTextContent('outside every scoring period this grid shows')
     // And all three are listed, so the reader can reconcile 3 against 1 column.
     const listed = screen.getByTestId('schedule-pending-games')
     for (const id of ['placed', 'no-date', 'outside']) {
       expect(listed).toHaveTextContent(id)
     }
+  })
+
+  it('does not take one of a set of one, in the case that is actually common', async () => {
+    // "1 of them" is a partitive, and when the whole pending set is a single
+    // game there is no "them". Reachable, and the *common* case, because these
+    // clauses appear one at a time — which is exactly why every other test
+    // here uses two or more games and none of them could see it.
+    //
+    // It also does not attribute a cause. `null` comes from a `try/except`
+    // wrapping both time-field parses in the producer, so it covers two cases
+    // of *us* failing to read a date the source did give and one of the source
+    // being irreconcilable. "The source published it without saying when" was
+    // false in two of three, and false toward comfort: told the source has not
+    // decided, a reader waits; told we could not read it, a reader looks.
+    mockFetch({
+      [GRID_PATH]: {
+        body: withPendingGames([pendingGame({ nba_game_id: 'lone', game_date: null })]),
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    const notice = await screen.findByTestId('grid-pending')
+    expect(notice).toHaveTextContent('The source has published 1 game without deciding')
+    expect(notice).toHaveTextContent('That game has no usable date — none came with it')
+    expect(notice.textContent).not.toContain('of them')
+    // And it never says the source withheld a date, because it may not have.
+    expect(notice.textContent).not.toMatch(/without saying when|has not decided when/)
   })
 
   it('says a pending game fell outside the calendar rather than losing it', async () => {
@@ -803,7 +835,7 @@ describe('a season the source has not finished scheduling', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const notice = await screen.findByTestId('grid-pending')
-    expect(notice).toHaveTextContent('falls outside every scoring period this grid shows')
+    expect(notice).toHaveTextContent('outside every scoring period this grid shows')
     expect(notice).toHaveTextContent('0022601201 on 2026-09-30')
     expect(notice.textContent).not.toContain('marked TBD')
     expect(screen.getByTestId('period-header-1')).toHaveAttribute('data-pending', 'false')

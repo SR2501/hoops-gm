@@ -47,17 +47,21 @@
  * of, in the round whose subject was naming costs.**
  *
  * A `<caption>` is the table's accessible name. This one took that name from
- * 113 characters to 407, and a name is announced on every entry into the table
- * rather than once in document order. That is the same mechanic this file fixed
- * one element down a round earlier — a sentence carried in both the accessible
- * name and the description, announced twice on every focus change — arriving
- * one level up and in the opposite direction. Attaching it to the table is
- * still right in principle, because a reader who jumps straight to the grid by
- * table navigation never heard the page paragraph at all. The clean split is
- * name for the identifying clause and `aria-describedby` for the caveat, and
- * that trade is not free either, since description is announced unreliably on
- * `table`. Recorded rather than acted on; if the cost proves real the split is
- * the fix.
+ * 113 characters to **445** at this head, and a name is announced on every
+ * entry into the table rather than once in document order. (An earlier version
+ * of this paragraph said 407 — true of the commit that *moved* the caption, and
+ * already stale in the commit that wrote it, because the same commit lengthened
+ * the text. A measured number that drifts inside the paragraph whose subject is
+ * reporting costs accurately is worth re-measuring rather than adjusting by
+ * hand.) That is the same mechanic this file fixed one element down a round
+ * earlier — a sentence carried in both the accessible name and the description,
+ * announced twice on every focus change — arriving one level up and in the
+ * opposite direction. Attaching it to the table is still right in principle,
+ * because a reader who jumps straight to the grid by table navigation never
+ * heard the page paragraph at all. The clean split is name for the identifying
+ * clause and `aria-describedby` for the caveat, and that trade is not free
+ * either, since description is announced unreliably on `table`. Recorded rather
+ * than acted on; if the cost proves real the split is the fix.
  *
  * The second cost is that "no block" is true of the space *above* the grid and
  * silent about the two rendered lines it adds *inside* `.grid-scroll`, above
