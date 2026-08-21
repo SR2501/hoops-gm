@@ -68,15 +68,53 @@ _HEADER_COUNT = re.compile(r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ tota
 _RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
 
 
-def _is_only_count_lines(block: str) -> bool:
-    """True when a conflict block holds nothing but count lines and blanks.
+def _has_content(block: str) -> bool:
+    """True when a conflict block holds any non-blank, non-marker line."""
+    for line in block.split("\n"):
+        if (
+            line.startswith(CONFLICT_BEGIN)
+            or line.startswith(CONFLICT_END)
+            or line.startswith(CONFLICT_BASE)
+            or line == CONFLICT_SEPARATOR
+        ):
+            continue
+        if line.strip():
+            return True
+    return False
 
-    The predicate that licenses deleting both sides of a block: not "contains
-    the thing I can regenerate" but "contains *nothing else*". A note-only
-    conflict deliberately returns False — the recount parenthetical is
-    accumulated incident history, several paragraphs of it, and merging that
-    by hand is the correct outcome rather than a cost.
+
+def _is_only_count_lines(block: str) -> bool:
+    """True when a conflict block holds at least one count line and nothing else.
+
+    Two conditions, and the fourth iteration of this defect was the second one
+    missing. The predicate that licenses deleting a block is not "contains the
+    thing I can regenerate" but "contains *nothing else*" — and **that alone is
+    vacuously true of an empty block.**
+
+    Review found it with real `git merge` output, not a constructed case: two
+    lanes deleting the same paragraph and leaving a different number of
+    trailing blank lines produces a conflict whose entire content is blank.
+    The old form skipped the markers, skipped the blanks, and returned True
+    having never seen a count line. The header was then injected where one
+    already existed outside, and the script refused with a message saying both
+    sides' headers had survived — which was false, because this function had
+    just manufactured the second one.
+
+    The general shape, in the reviewer's words: **the predicate that licenses
+    the deletion and the predicate the repair depends on are two different
+    predicates, written in two places, and they disagree at the edges.** So
+    this one now answers exactly the question the repair asks — *was a count
+    line here* — rather than a question that merely correlates with it.
+
+    A note-only conflict returns False deliberately: the recount parenthetical
+    is accumulated incident history and merging it by hand is the correct
+    outcome rather than a cost. Review built the canonical two-lane case and
+    confirmed the alternative was not a working resolution but a **corrupted
+    document that passed every check the script had** — a regenerated note
+    closing at one line and the orphaned tail of the original resuming
+    mid-sentence at the next, exit 0, "Safe to stage".
     """
+    saw_count = False
     for line in block.split("\n"):
         if (
             line.startswith(CONFLICT_BEGIN)
@@ -89,9 +127,10 @@ def _is_only_count_lines(block: str) -> bool:
         if not stripped:
             continue
         if _HEADER_COUNT.fullmatch(stripped):
+            saw_count = True
             continue
         return False
-    return True
+    return saw_count
 
 
 # Binary content is skipped without comment. Reporting a committed PDF as "not
@@ -228,6 +267,15 @@ def resolve_backlog(path: pathlib.Path) -> None:
         if _is_only_count_lines(block):
             return "__NOTE__\n"
         excerpt = "\n".join(block.strip().split("\n")[:8])
+        if not _has_content(block):
+            sys.exit(
+                f"{path}: a conflict block containing no content at all — a "
+                "whitespace-only conflict, which two lanes deleting the same "
+                "paragraph will produce. There is no header here to "
+                "regenerate, so collapsing it would inject one the file does "
+                "not need. Resolve by hand; keeping either side is correct.\n"
+                f"\n{excerpt}"
+            )
         sys.exit(
             f"{path}: this conflict block holds more than the header count "
             "line, and this script only knows how to regenerate that. "
@@ -322,8 +370,18 @@ def resolve_backlog(path: pathlib.Path) -> None:
     if written != 1:
         sys.exit(
             f"{path}: expected exactly one header count line after resolution, "
-            f"found {written}. Refusing to write. Two means both sides' headers "
-            "survived; zero means the header was collapsed and not restored."
+            f"found {written}. Refusing to write.\n\n"
+            "This counts the lines that exist; it does not know which "
+            "mechanism produced them, so it names the possibilities rather "
+            "than asserting one — an earlier version asserted 'both sides' "
+            "headers survived' for a second header this script had itself "
+            "injected one line earlier, and sent the operator looking for a "
+            "duplicate that the merge never contained.\n\n"
+            "Two can mean both sides' headers survived a block the collapse "
+            "regex did not match — a stash-style `<<<<<<< Updated upstream` "
+            "label, for instance, since the regex is anchored on HEAD. Zero "
+            "can mean the header was collapsed and not restored. Read the "
+            "file rather than trusting either reading of this number."
         )
 
     path.write_text(text, encoding="utf-8")
@@ -377,9 +435,21 @@ def main(argv: list[str] | None = None) -> int:
             "usage: resolve_doc_conflicts.py\n"
             "\n"
             "Resolves conflicts in docs/handoff.md (keeps both sides, main's\n"
-            "first) and docs/backlog.md (recounts the header from the finished\n"
-            "file), then refuses to let you stage if any conflict marker\n"
+            "first), then refuses to let you stage if any conflict marker\n"
             "survives anywhere in the tree.\n"
+            "\n"
+            "For docs/backlog.md it resolves ONE narrow case: a conflict whose\n"
+            "entire content is the header count line. Anything else refuses,\n"
+            "including a conflict on the recount note, and including one hunk\n"
+            "covering the count line together with the prose above it - which\n"
+            "is the ordinary two-lane shape, because those lines sit two apart.\n"
+            "\n"
+            "A refusal there is the expected outcome and not a malfunction.\n"
+            "Earlier versions collapsed those blocks and deleted both sides at\n"
+            "exit 0: three merged items once, an item's '**Depends on:**' edges\n"
+            "another time - which makes a blocked item look ready - and the\n"
+            "file's own intro sentence a third. Keep both sides by hand and\n"
+            "re-run; the accumulated notes are why the file is worth merging.\n"
             "\n"
             "Takes no options. It does not stage; run git add yourself after\n"
             "this exits 0.\n"

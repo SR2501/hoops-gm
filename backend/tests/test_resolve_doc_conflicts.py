@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
+import sys
 
 import pytest
 
@@ -222,8 +224,102 @@ def test_diff3_base_section_refuses_by_name(tmp_path):
         module.resolve_backlog(backlog)
 
     message = str(excinfo.value)
-    assert "diff3" in message
+    assert "resolves the two-sided form only" in message
     assert "would drop" not in message, "blamed the slug guard for a diff3 file"
+
+
+def test_blank_only_conflict_is_refused_without_injecting_a_header(tmp_path):
+    """Pins the fourth iteration: the predicate was vacuously true on nothing.
+
+    Two lanes deleting the same paragraph and leaving a different number of
+    trailing blank lines produces a conflict whose entire content is blank —
+    ordinary `git merge` output, not a constructed case. The old predicate
+    skipped the markers, skipped the blanks and returned True having never
+    seen a count line, so a header was injected where one already existed and
+    the script refused claiming both sides' headers had survived.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        + HEADER
+        + "\n\n<<<<<<< HEAD\n\n=======\n>>>>>>> other\n\n"
+        + ITEM_A
+        + "\n"
+        + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    message = str(excinfo.value)
+    assert "no content at all" in message
+    assert "found 2" not in message, "injected a header, then blamed the merge"
+    assert backlog.read_text(encoding="utf-8") == original
+
+
+def test_a_line_merely_containing_the_count_shape_is_not_a_count_line(tmp_path):
+    """Defends `fullmatch` over `search`, which is the whole v3-to-v4 fix.
+
+    Reverting that one word restores "block *contains* a count line", the
+    predicate that deleted this file's own intro sentence. Nothing else in the
+    suite fails when it is reverted.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        "<<<<<<< HEAD\n- recount: " + HEADER + "\n"
+        "=======\n- recount: **0 done - 0 blocked - 2 pending - 2 total**\n"
+        ">>>>>>> other\n\n" + HEADER + "\n\n" + ITEM_A + "\n" + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    assert "more than the header count line" in str(excinfo.value)
+    assert backlog.read_text(encoding="utf-8") == original
+
+
+def test_the_real_cli_reads_sys_argv(tmp_path):
+    """Pins the *wiring*, which every in-process test leaves untouched.
+
+    Review reverted `args = sys.argv[1:] if argv is None else argv` to
+    `args = []` and all twelve tests passed, while `--help` on the real CLI
+    rewrote this repository's backlog — the original defect restored in full
+    with a green suite. The in-process tests cover the parse; only a
+    subprocess covers the wiring.
+
+    The script is copied into the scratch tree so `REPO_ROOT`, which derives
+    from the script's own location, resolves inside it and the real repository
+    is unreachable **by construction** rather than by the child's cwd.
+    """
+    (tmp_path / "scripts").mkdir()
+    copy = tmp_path / "scripts" / "resolve_doc_conflicts.py"
+    copy.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    backlog.write_text(_backlog(ITEM_A + "\n" + ITEM_B), encoding="utf-8")
+    handoff = docs / "handoff.md"
+    handoff.write_text("## 2026-08-21\n\nentry\n", encoding="utf-8")
+    before = (backlog.read_bytes(), handoff.read_bytes())
+
+    result = subprocess.run(
+        [sys.executable, str(copy), "--help"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert (backlog.read_bytes(), handoff.read_bytes()) == before
 
 
 def test_body_conflict_is_refused_rather_than_collapsed(tmp_path):
