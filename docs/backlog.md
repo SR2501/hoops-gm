@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**40 done - 1 blocked - 73 pending - 114 total**
+**41 done - 1 blocked - 73 pending - 115 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers: 114 `###` headings and 114 markers, 1:1, no duplicate
@@ -13,15 +13,10 @@ reconciliation could have reached the answer. The position lane sharpened
 `player-position-eligibility` without closing it: the NBA-position half landed, the
 Fantrax-eligibility half did not, so that marker stays `pending`.)
 
-
-A task is ready when every dependency is done. Update the status line when you finish one.
-
-
----
-
----
-
-## Done
+The uniqueness check earns its place: resolving this rebase by taking both sides
+of a hunk left a bare duplicate `schedule-grid-ui` heading whose body had been
+replaced, and *both* status header blocks. The totals disagreed with each other
+in the same file, and only a count of unique slugs against markers found it.)
 
 ### `absence-splits` - Computing with/without absence splits
 
@@ -512,6 +507,175 @@ Position eligibility is *not* available: this project ingests no Fantrax positio
 data, and `player-position-eligibility` is still pending, so a draft board cannot
 filter or group by position yet. `players[].primary_position` is NBA's own label
 and is nullable.
+
+### `schedule-grid-pending-periods` - Showing that a scoring period is not fully scheduled
+
+- [x] **done**
+- **Depends on:** `schedule-grid-ui`
+
+ADR-013 lets a refresh register with games the source published without
+deciding their teams, so the grid can now show a count that is honest and
+incomplete at the same time. A scoring period containing one is marked `TBD` in
+its header with a dashed column rule, and a notice states the only thing the
+data supports: *this period contains N games whose teams are not yet decided, so
+any count in this column may rise*.
+
+This also depends on the backend emitting `lineage.schedule.pending_game_ids`
+and `pending_games`, which is the `data-engineer` lane implementing ADR-013 and
+had no backlog slug when this was written. `architect` is creating one; this
+item's dependency list should gain it.
+
+The wire types were **optional** on the client (`pending_game_ids?`,
+`pending_games?`) while the backend lane was unmerged, and the absence was
+rendered as its own statement. That lane merged as `28bd480`, so the tolerance
+is gone: both fields are required, the "cannot say" notice is deleted, and the
+boundary refuses a response without the block. **Closed.**
+
+Three further follow-ups, each with a trigger, recorded here because prose
+nothing prompts anyone to revisit is how a screen keeps asserting something it
+once checked:
+
+- **The caption's make-up-game clause expires.** It says those games have not
+  been released. When the NBA releases them it becomes false, and no
+  client-side condition can detect that — nothing in the payload distinguishes
+  80 games published because the bracket is open from 82 published. `frontend`
+  owns it; the trigger is the Emirates NBA Cup knockout resolving in December.
+  The re-ingest clause beside it does not expire.
+- **`grid-integrity` still carries `role="status"`.** The two ADR-013 notices
+  dropped theirs, because a region present at first paint that describes data
+  rather than announcing a change belongs in no polite queue. The same argument
+  applies to `grid-integrity` and it was left alone only to avoid changing an
+  already-reviewed surface inside an unrelated diff. `frontend` owns both, so
+  this is a note to itself and belongs in a tracker rather than a comment.
+- **Neither ADR-013 notice announces on refresh.** Dropping `role="status"` is
+  right on load and leaves a refresh that takes the pending set from empty to
+  non-empty silent. The fix is a region that is empty at mount and live
+  thereafter, if the cost is ever judged worth it.
+- **`irreconcilable` was classified as wait-class on an inference, and ADR-013
+  has now decided it.** The screen split absence causes into wait
+  (`not_offered`, `irreconcilable`) and investigate (`unreadable`,
+  `implausible`), mirroring the producer's `_FAULT_ABSENCE_REASONS`, which
+  excludes `irreconcilable` so the import stays exit 0. That was a
+  reconstruction rather than a rule: an exit code answers *should this import
+  fail*, and the screen answers *should a human look*.
+
+  **Resolved: `irreconcilable` is a fault.** `architect` ruled it from the live
+  feed rather than by argument — the alarm-fatigue objection to widening the
+  fault set is a claim about volume, and all six real pending games carry a
+  date and an empty reason, so every fault reason fires zero times today. The
+  caveat is recorded in ADR-013: if that stops being true, revisit the row
+  rather than letting an operator learn to ignore the channel.
+
+  `code-review` supplied the sharper argument, which is about drift and which
+  frequency data cannot retire: the producer's own docstring says an epoch
+  placeholder pair **reconciles perfectly** for 1900 (`-05:00`) and fails only
+  by accident for year 0001, because `America/New_York` ran on `-04:56` local
+  mean time before 1883 — so one phenomenon lands in `implausible`,
+  `irreconcilable` or `unreadable` depending on a nineteenth-century offset and
+  the hour. **The cleaner repair is upstream in `_FAULT_ABSENCE_REASONS`**, and
+  that is `data-engineer`'s to weigh; the client no longer depends on it either
+  way, because it enumerates the *wait* set and defaults everything else to
+  investigate.
+- **`.grid-scroll`'s `18rem` budget is now short by a block.** The constant was
+  written for four things above the grid; the pending notice is a fifth and is
+  present in every shipping state. Measured at a 720px viewport with scroll at
+  zero and the lineage collapsed, the first count sits at 583px against a 270px
+  budget — five of thirty teams visible, and `tfoot`'s league totals reachable
+  only through the inner scroll. The comment now says so. The fix is the one
+  that comment already names, a flex column with `min-height: 0`, rather than a
+  larger magic number; it is a whole-screen layout change and does not belong in
+  a pending-games diff. `frontend` owns it.
+- **The caption is the table's accessible name, now 407 characters.** Announced
+  on every entry into the table rather than once in document order. Attaching
+  the caveat to the table is right in principle — a reader arriving by table
+  navigation never heard the page paragraph — but the clean split is name for
+  the identifying clause and `aria-describedby` for the caveat. Not done here
+  because `aria-describedby` is announced unreliably on `table`, so the trade is
+  not obviously favourable and no one has tested either with a real screen
+  reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
+- **The pending block distinguishes *absent* from *empty*, and the screen cannot.**
+  A completeness block written before ADR-013 has no `pending_games` key at all —
+  confirmed on the real pre-merge refresh, which carried `source: 1200`,
+  `resolved: 1200` and the key **absent rather than empty**. Reading it as `()`
+  is sound (`lineage.py:222-225`: the old contract required
+  `source == resolved`, so the pending set was necessarily empty), and the
+  client is right to render an affirmative zero. But the two states the screen
+  deliberately collapses — *this refresh had no pending games* and *this refresh
+  predates the concept* — **are still distinguishable in the stored block**. No
+  change today: the collapse is correct for a reader who only needs to know
+  whether any count may rise. Recorded because a later reader wanting refresh
+  provenance has more to work with than the response shows.
+- **The mutation harness should be committed, and the reason overturns the rule
+  that kept it out.** Governance said *commit a tool whose failure mode is loud;
+  describe a tool whose failure mode is silent* — and a mutation harness fails
+  silently, since a broken one reports success. That conclusion is wrong here.
+  **Loud/silent governs safety; it does not govern evidence.** *33 of 33 caught*
+  was cited in every one of this unit's nine review rounds and **no reviewer
+  could ever check it**, because the thing producing it was outside the
+  repository. Stating the limitation each round is what made it invisible rather
+  than what excused it. The rule now reads: **if a tool's output is cited as
+  evidence, it belongs in the repository regardless of failure direction, because
+  the citation is what is being audited.** Deliberately not done in this PR — the
+  unit stopped at `architect`'s ruling, and adding a tool at round ten is how
+  round eleven happens. It carries a preflight that treats a rotted anchor as a
+  failure, and 33 mutations plus a separate driver for the `--verify` holes; both
+  live in session state today. `frontend` owns it; the trigger is the next unit
+  that would cite a mutation count in a review.
+- **`ScheduleGridTable.recorded.test.tsx` still asserts `counts` completeness by
+  length**, `teams.length * periods.length`, which is the proxy that let a real
+  count row be replaced by a duplicate zero row and render as `·`. `--verify`
+  now catches that case by comparing the key set, so the tree is not blind to
+  it; this assertion is a second check sharing the retired proxy. Not changed
+  here because it was not driven end to end, and quietly editing an assertion is
+  how this file got into trouble. `frontend` owns it.
+  closes two problems.** `make_pending_date_payloads.py` is a Python script under
+  `frontend/src/test/fixtures/` that imports `backend/src` to make *frontend*
+  fixtures, so it belongs to neither side. The cost is measurable rather than
+  aesthetic: the only ruff config is `backend/pyproject.toml` and CI runs
+  `ruff check .` with `working-directory: backend`, so nothing in this repository
+  lints, formats or type-checks the file where it sits. Separately, nothing in CI
+  pins `input -> reason`; `--verify` is a script a person runs, and the clean
+  version is a backend test importing the derived payloads and asserting the four
+  reasons. **That test requires the derivation to live under `backend/`, so doing
+  the gate does the move.** Filed as one item rather than two, because two items
+  with one fix diverge — one gets done and the other stays open describing a
+  solved problem. `data-engineer` owns it; the trigger is the next touch of the
+  schedule-ingestion lane, not "any change to `_pending_game_date`", which only
+  someone already thinking about this file would notice. `architect` holds only
+  the ruling that it moves. One thing to fold in when it moves: `team_id` and
+  the lineage fingerprint fields are the only response values `--verify` cannot
+  derive, because both need a database. Everything else — pending records,
+  period windows, team labels, all 630 count rows, the lineage counters — is
+  derived from the producer and compared.
+
+**Period-scoped, never cell-scoped.**
+A pending game carries `teamId: 0` with
+every naming field null, so no team can be named and none is. A per-cell "this
+team has an unscheduled game" badge would invent the one attribution the source
+withheld; the recorded contract test asserts every cell in a pending column
+carries the same state and the same accessible name as a cell anywhere else.
+
+Three states are now kept apart where there were two: `0` is a real count,
+`·` is data the backend did not send, and a `TBD` column is the source not
+having decided. Each has its own colour, marker and wording, and `+?` is
+deliberately not reused for pending — it means a sum is short because data is
+missing, which is a different claim. A pending block that is *absent* is a
+fourth statement, "this response cannot say", and is never read as "nothing is
+pending". The lineage panel gains the pending count and lists each game's id,
+date and labels, because ADR-013 reverts to refusing if the pending set stops
+being explicable as an undetermined bracket and a bare count shows nothing to
+check that against.
+
+The four non-empty `date_absence_reason` values fire zero times against the live
+source, so both recorded fixtures covering them were produced by driving the
+in-tree importer with authored source payloads. Those payloads are derived by
+`frontend/src/test/fixtures/make_pending_date_payloads.py` rather than
+remembered: `--verify` re-runs the producer's own classifier over them and
+asserts the four reasons, and both fixtures were regenerated end to end through
+it — seed, serve, capture — differing from the committed bytes in one leaf,
+`refreshed_at`. This exists because the fixtures first landed with the inputs
+uncommitted, which made *input -> reason* a claim nothing could check; one of the
+two payloads had already been overwritten by the time a reviewer said so.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 

@@ -12,6 +12,7 @@ import {
   type RequestOptions,
   type ResponseContract,
 } from './client'
+import { DATE_ABSENCE_REASONS, type DateAbsenceReason } from './types'
 import type {
   Health,
   Meta,
@@ -106,6 +107,79 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
+/**
+ * The ADR-013 pending block, now required and cross-checked.
+ *
+ * It was optional while this dashboard was stacked under an unmerged backend
+ * lane, on the argument that rejecting the whole response would trade a screen
+ * that can describe its own gap for a blank one. That lane has merged, so the
+ * argument has expired with it and the tolerance is gone — an absent block is a
+ * response that is not the contract.
+ *
+ * Everything a violation of which would be **silent** is checked here rather
+ * than narrated downstream. `pending_game_ids` and `pending_games` must name
+ * the same games in the same order with unique ids, which the backend
+ * guarantees by deriving the first from the second: without it, ids longer than
+ * records produces a pending total larger than the list beneath it, records
+ * longer than ids badges a column `TBD` while the lineage states "none", and
+ * duplicates reach React as duplicate keys. None of the three is loud.
+ *
+ * `date_absence_reason` gets the same treatment for the same reason. The set is
+ * closed by the producer, and an unrecognised value is a finding rather than a
+ * variation precisely because this screen keys *what it tells an operator to
+ * do* on it — a new reason arriving unvalidated would be silently sorted into
+ * the wrong action class. And the reason is cross-checked against `game_date`
+ * in both directions: a reason without an absence, or an absence without a
+ * reason, are the two halves of one fact disagreeing on the wire. The producer
+ * refuses that pair too, so this cannot arrive from it — but the failure would
+ * be silent here (the model reads only `game_date`, so a mismatched reason
+ * would simply never be rendered), and a boundary that can be closed should be.
+ *
+ * The label fields are deliberately **not** in that category. A `null`
+ * `game_label` is a gap this screen can describe — `describePendingGame`
+ * renders "no label given" — and refusing the response over it would cost every
+ * count on the page for a missing piece of prose. Tolerate a gap you can
+ * describe, reject a value that cannot be true.
+ */
+function isNullableString(value: unknown): boolean {
+  return typeof value === 'string' || value === null
+}
+
+function isSchedulePendingGame(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    typeof value.nba_game_id !== 'string' ||
+    !isNullableString(value.game_date) ||
+    !isNullableString(value.game_label) ||
+    !isNullableString(value.game_sub_label) ||
+    !isNullableString(value.game_subtype) ||
+    typeof value.date_absence_reason !== 'string'
+  ) {
+    return false
+  }
+  const reason = value.date_absence_reason as DateAbsenceReason
+  if (!(DATE_ABSENCE_REASONS as readonly string[]).includes(reason)) {
+    return false
+  }
+  // The two halves of one fact. A date with a reason, or an absence without
+  // one, is a response contradicting itself.
+  return (value.game_date === null) === (reason !== '')
+}
+
+function isPendingBlock(value: Record<string, unknown>): boolean {
+  const ids = value.pending_game_ids
+  const games = value.pending_games
+  if (!isStringArray(ids) || !Array.isArray(games) || !games.every(isSchedulePendingGame)) {
+    return false
+  }
+  const named = (games as { nba_game_id: string }[]).map((game) => game.nba_game_id)
+  return (
+    named.length === ids.length &&
+    named.every((id, index) => id === ids[index]) &&
+    new Set(ids).size === ids.length
+  )
+}
+
 function isScheduleRefreshLineage(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -115,7 +189,8 @@ function isScheduleRefreshLineage(value: unknown): boolean {
     typeof value.source_game_count === 'number' &&
     typeof value.resolved_game_count === 'number' &&
     typeof value.persisted_team_row_count === 'number' &&
-    isStringArray(value.unresolved_game_ids)
+    isStringArray(value.unresolved_game_ids) &&
+    isPendingBlock(value)
   )
 }
 

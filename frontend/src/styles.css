@@ -21,6 +21,15 @@
   --warn: #e4b83f;
   --error: #f2685f;
 
+  /* Source-declared pending (ADR-013): the schedule is unfinished, which is
+     not a fault and must not borrow the vocabulary of one. `--warn` already
+     means "our data is missing" on this screen — the `·` cell — and reusing it
+     would give the two states a reader most needs to tell apart the same
+     colour. A cool hue reads as "not decided yet" rather than "something went
+     wrong", and it is far enough from `--accent` that a period which is both a
+     fantasy playoff week and unscheduled shows two distinguishable marks. */
+  --pending: #7aa7f0;
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -376,12 +385,36 @@ a:focus-visible {
      engage. Thirty teams do not fit on a laptop, so the period numbers must
      stay put while the rows move under them.
 
-     The 18rem budgets for everything above the grid at the default window: the
-     page heading, the lede, the lineage summary and the key. It is a constant
-     rather than a measurement, so opening the lineage disclosure or wrapping
-     the key onto a second line pushes the bottom of the grid below the fold
-     and produces an inner scrollport inside the page scroll. Acceptable for a
-     single-user tool; the honest fix is a flex column with `min-height: 0`. */
+     The 18rem budgets for everything above the grid at the default window. It
+     was written for four things — the page heading, the lede, the lineage
+     summary and the key — and ADR-013 added a fifth, the pending notice, which
+     is present in every state this screen currently ships: non-empty today, and
+     "this response cannot say" whenever the backend predates the contract. The
+     budget was not raised to match, so what this comment described as the
+     *consequence* of a reader's deliberate act — opening the disclosure or
+     wrapping the key, pushing the grid's bottom below the fold and producing an
+     inner scrollport inside the page scroll — is now the default rather than an
+     edge case.
+
+     Measured at a 720px viewport with the notice present, scroll at zero and
+     the lineage collapsed: blocks above the grid sum to a scrollport top of
+     410px, `720 - 18rem` lands on the 450px height exactly, and caption 68px
+     plus header row 47px puts the first count at 527px — **seven of thirty**
+     teams visible, with the scrollport bottom 140px below the fold, so the
+     league totals in `tfoot` are reachable only through the inner scroll.
+
+     This comment previously said 583px and five rows. That reading was taken
+     without resetting scroll position and was published, retracted in
+     `docs/handoff.md`, and left standing here — a comment asserting a number
+     the same branch had already withdrawn, two commits apart. The figures above
+     are the ones whose arithmetic closes on the constant, which is what makes
+     them checkable rather than read off a screen.
+
+     The constant is left alone because changing it is a layout decision for the
+     whole screen rather than a side effect of a pending-games diff, and because
+     the honest fix is the one already named — a flex column with
+     `min-height: 0` — not a larger magic number. Tracked in
+     `docs/backlog.md`. */
   max-height: calc(100vh - 18rem);
   min-height: 12rem;
   overflow: auto;
@@ -414,6 +447,16 @@ a:focus-visible {
   color: var(--text-muted);
   font-size: 0.78rem;
   border-bottom: 1px solid var(--border);
+}
+
+/* The one clause in the caption that changes how a number should be read, as
+   against the two that say what the numbers are. Muted grey throughout would
+   make it the tail of a sentence a reader has already classified as provenance
+   — which is exactly what happened when this text lived in a second lede
+   paragraph under one ending in a file path. */
+.grid__caption-caveat {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .grid th,
@@ -491,6 +534,71 @@ a:focus-visible {
   color: var(--accent);
   font-size: 0.66rem;
   letter-spacing: 0.04em;
+}
+
+/* A scoring period the *source* has not finished scheduling (ADR-013).
+   Structural like the playoff rule and for the same reason: it is a category,
+   not a magnitude, so it gets an edge rather than a tint. Dashed rather than
+   solid, because the distinction it draws is "not settled yet" against the
+   playoff rule's "settled and different".
+
+   It runs the full height of the column — header, every cell, both footer rows
+   — because the claim is about the column. A reader who meets a `0` in row
+   twenty-two needs the rule beside it to connect that cell to the `TBD` badge
+   thirty rows up. Drawn by the cells rather than by a `<col>`: `<col>` borders
+   are ignored under `border-collapse: separate`, which this table needs so its
+   sticky header and team column keep their own edges.
+
+   Qualified by `th`/`td` deliberately. `.grid th, .grid td` above sets a 1px
+   solid right border at specificity (0,1,1), so the bare class at (0,1,0) lost
+   and this rule rendered nothing at all — every column looked identical while
+   the markup, the `data-pending` attributes and every test passed. It was found
+   by reading `getComputedStyle` in a real browser, which is the only place it
+   was ever visible: jsdom does no cascade resolution, so no unit test could
+   have caught it. The playoff rule escapes the same fate only by accident, in
+   setting `border-left` where the base rule sets `border-right`. */
+.grid th.grid__col--pending,
+.grid td.grid__col--pending {
+  border-inline-end: 2px dashed var(--pending);
+}
+
+/* Distinct from `.grid__playoff-badge` by more than colour: dashed border and
+   a different hue, so the two are told apart without relying on either. A
+   period can be both, and in a fantasy playoff week that pairing is the most
+   consequential cell on the grid. */
+.grid__pending-badge {
+  display: inline-block;
+  margin-block-start: 2px;
+  padding: 0 3px;
+  border: 1px dashed var(--pending);
+  border-radius: 3px;
+  color: var(--pending);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+}
+
+.grid__pending-note {
+  margin: 0 0 var(--space-3);
+  border-color: var(--pending);
+  border-style: dashed;
+  color: var(--text);
+}
+
+/* Not an error colour. Nothing has gone wrong when the NBA has not yet played
+   the group stage that decides a bracket; the schedule is simply unfinished,
+   and the note says so in the same hue as the marker it explains. */
+.grid__pending-note strong {
+  color: var(--pending);
+}
+
+/* Pending ids read as a list because they are checked one at a time against
+   ADR-013's falsification condition — each label has to look like a knockout
+   round — and a comma-joined run of six ids is not something anyone checks. */
+.lineage__list {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  display: grid;
+  gap: 2px;
 }
 
 .grid__team-abbr {

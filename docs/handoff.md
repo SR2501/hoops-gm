@@ -11241,3 +11241,1737 @@ reviewer rather than adding a `try/except` at the call site.
 - **`ingest/importers.py` is still unwatched by the cohort fingerprint** and on the
   derivation path, changed by both this lane and #49. Third item blocked on the same missing
   database.
+## 2026-08-20 — frontend — Three states where there were two: a period the source has not finished scheduling
+
+**Changed:** ADR-013's pending games surfaced on `/schedule`. A scoring period holding
+one is marked `TBD` with a dashed column rule; a notice states the period-scoped claim;
+the lineage panel gains the pending count and lists each game''s id, date and labels.
+Types, the response validator, the model layer, the table, the lineage panel, the page
+and the stylesheet. Recorded fixture re-captured. **Zero backend files.**
+
+**Now true:** A reader can tell three things apart that used to be two. `0` is a real
+count of zero scheduled games. `·` is data the backend did not send. A `TBD` column is
+the **source** not having decided who plays. Each has its own colour, marker and wording:
+default text; `--warn` yellow with a diagonal hatch; and a new `--pending` token with a
+dashed rule. The new token exists because `--warn` already means "our data is missing" on
+this screen, and the two states a reader most needs to separate would otherwise have
+shared a hue — pending is not a fault. `+?` is deliberately not reused: it means a sum is
+short because a count did not arrive, which is a different claim from a numerator that is
+not final. A pending block that is *absent* is a fourth statement — "this response cannot
+say" — and is never read as "nothing is pending". When the set is empty there is no banner
+at all; the lineage says "none", because a caution that fires when nothing is wrong
+devalues the one beside it that means something.
+
+**The correction that defined this unit, and it held.** The brief originally asked to show
+that DAL and LAL have an unscheduled game. The data cannot support it and the coordinator
+retracted it before I started. A pending game carries `teamId: 0` with `teamName`,
+`teamCity`, `teamTricode` and `teamSlug` all null — not having teams *is* the record — so
+`pending_game_ids` can never say which teams are affected. There is no per-cell pending
+state anywhere in this diff, and the recorded contract test asserts over all thirty cells
+of the real pending column that each carries the same `data-state`, the same accessible
+name and no extra title as a cell in any other column. `GridCell` does receive
+`inPendingPeriod`, because the column rule has to be drawn by the cells — `<col>` borders
+are ignored under `border-collapse: separate`, which this table needs for its sticky edges
+— so the discipline is enforced by that test rather than by withholding the prop.
+
+**Reading the lane''s source beat trusting the brief, twice.** The frozen contract in my
+brief was `game_id` / `label` / `sub_label` with nullable labels. The actual model in
+`api/routes/schedule_grid.py` is `nba_game_id` / `game_label` / `game_sub_label`, all
+non-nullable, plus a fifth field `game_subtype` the brief never mentioned. Built to the
+brief, every pending game would have rendered "no label given" and the lineage list would
+have been empty of exactly the evidence ADR-013''s flip condition turns on.
+
+Second: I had built two reconciliation states — an id with no matching record, and a
+record absent from the id list — and `db/lineage.py:_pending_games` forbids both. It
+derives the ids from the records and refuses any stored block where they name different
+games in a different order, so neither can appear in a 200 and UI for them could never
+render. I deleted them. That is the `countsDisagree` argument applied to my own work.
+
+I kept the unreadable-`game_date` guard, on an explicitly different footing, and the line
+is worth stating because it is the one that decides these cases. The id/record agreement
+is forbidden by a **stated, enforced invariant**. The wire date format is forbidden by
+nothing: it holds only because Pydantic''s default encoder happens to serialize `date` as
+`YYYY-MM-DD`, no invariant is written over it, and the failure it prevents is *silent* —
+`''12/04/2026'' <= ''2026-12-13''` is a perfectly well-formed comparison that answers a
+question about neither date, and unguarded it would place a game in a wrong column, or in
+none, with equal confidence and no mention. A guard against a silent wrong answer earns
+its place; a note about a state an invariant forbids does not.
+
+**Rendering found what reading could not.** My column rule rendered *nothing*.
+`.grid th, .grid td` sets a 1px solid right border at specificity (0,1,1) and
+`.grid__col--pending` was (0,1,0), so it lost every time. The markup was right, the
+`data-pending` attributes were right, and every test was green while all 21 columns looked
+identical. It surfaced only from `getComputedStyle` in a real browser. The playoff rule
+escapes the same fate by accident, in setting `border-left` where the base sets
+`border-right`.
+
+**Nine states driven end to end against a real running service, not reasoned about.** The
+`data-engineer` lane''s backend was snapshotted to a scratch directory and run on its own
+port with its own database, so nothing of theirs was touched; for the states a correct
+backend cannot produce — a sparse `counts`, an absent pending block — a small proxy served
+mutations of a **captured real 200** rather than a hand-built body. Driven: pending
+present and placed; pending empty; pending block absent; all three cell states on one
+screen; a pending game dated outside every scoring period; an unreadable `game_date`; a
+malformed block (correctly refused with `invalid_response` and no grid drawn); four
+pending games across three periods including one that is both a fantasy playoff week and
+unscheduled, where the orange solid left rule and the blue dashed right rule are visibly
+distinct; the real demo cohort; and a pending game carrying the **live** labels
+`Quarterfinal` / `in-season-knockout`, added after `architect` pointed out that my fixture
+nulls those fields and I had therefore only ever rendered the case with nothing to check.
+
+**Recorded fixture: compared before it was replaced.** Teams, periods, all 630 counts and
+the content version are byte-identical to the previous recording; the delta is the pending
+block, `source_game_count` 10 → 12, and the timestamp — exactly what ADR-013 moved and
+nothing else. Replacing was right here only because the demo seed genuinely changed
+underneath. It also caught something no hand-written fixture would have: `game_sub_label`
+and `game_subtype` arrive as **empty strings**, so the empty-label rendering path exists
+because a recording found it rather than because anyone anticipated it.
+
+**And I then over-claimed that finding, which the coordinator caught.** I wrote that the
+empty strings were "the real shape". They are the shape of *this fixture*, which was
+trimmed before those fields mattered; the live payload carries `Quarterfinal` /
+`Semifinal` and `in-season-knockout`. So the recording exercises the degenerate label case
+and structurally cannot exercise the ordinary one — which is the case a reader actually
+checks ADR-013''s flip condition against, and the entire reason the list exists. Corrected
+in three places, and the labelled case is now driven with the live values both in a test
+and in a browser. **A recording proves something true of a fixture, not of the source, and
+the gap between those is exactly the width of whatever the fixture was trimmed for.** That
+is a limit on recorded fixtures I had not stated before and it belongs beside the one
+about them being blind to a change of meaning under an unchanged shape.
+
+**Measured: the schedule content version is blind to the pending set — and the ADR is
+wrong, not the code.** `architect` reproduced this independently, two ways, and has taken
+the ADR-013 amendment and the persistence follow-up as their own actions. This entry
+originally stated those as already done; they were not, and recording someone else's
+intention as a completed action is the same defect class as everything else here. `schedule_content_version` is computed over persisted `team_schedule`
+rows (`importers.py:801`), and a pending game has none. The old demo seed (10 source / 10
+resolved) and the new one (12 source / 10 resolved / **2 pending**) both produce
+`9bcac1c60490b41a` — I hold both responses and diffed them field by field. ADR-013 says
+"the content fingerprint changes with them — correctly, because the facts changed", and
+that is not currently true for the pending set alone. It self-heals when a bracket is
+*drawn*, since that creates rows, so the hole is narrow: two refreshes differing only in
+which games are pending share a version, and anything caching on it shows a stale pending
+set. Not my call and not touched.
+
+**Code gate:** ESLint clean, `tsc --noEmit` clean, 102 tests across 8 files, up from 77.
+**Nine mutations applied and all nine caught**, each restoring the file afterwards: the
+period end bound made exclusive; the ISO guard removed; lexicographic comparison replaced
+by `Date`; an absent block read as `present: true`; the count taken from the records
+instead of the invariant''s ids; a cell attributing a pending game to its team; `+?`
+reused for a pending column; an out-of-calendar pending game dropped from the notice; and
+a malformed block accepted. The harness is a Python script driving vitest, kept out of the
+repository — `docs/governance/ownership.md` puts dev tooling under
+`backend/src/hoops_gm/dev/`, and a frontend-driving Python file at repo root is a
+placement decision I did not think was mine, so the mutations are stated in the PR instead.
+
+**Backlog** recounted at this head, not reconciled: 110 headings to 110 markers, 1:1, 110
+unique slugs, zero duplicates, zero conflict markers — **40 done / 1 blocked / 69 pending
+/ 110 total**. The new item names no dependency slug for the ADR-013 backend work, because
+that lane had not created one and citing a slug that does not exist is the same class of
+false claim as everything else in this entry.
+
+**Could not verify:**
+
+*The base branch never moved.* `sr2501-real-schedule-import` sat at `81ee15a` — identical
+to my own HEAD — for this entire unit, with thirteen files uncommitted in its worktree.
+Everything above about the backend contract was read from, and driven against,
+**uncommitted working-tree code that can still change**. The recorded fixture was captured
+from that snapshot. Both must be redone against the lane''s landed head, and the fixture
+re-compared rather than blindly re-captured.
+
+*No automated check guards the CSS specificity fix, and none can.* jsdom does no cascade
+resolution, so the defect that made every column look identical is invisible to the entire
+suite before and after the fix. I deliberately did not add a text-match assertion on the
+selector: **it would pass on a future override that broke it just as thoroughly, which is
+the false-confidence version of the thing.** The only verification is a browser, and the
+only record of it is this paragraph. That is a real limit on what a frontend test suite can
+promise, and it is not specific to this rule — every visual claim this dashboard makes
+rests on a cascade no test in this repository resolves.
+
+*I confirmed visual distinctness by computed style, not by eye.* `getComputedStyle`
+reports three different colours, a dashed versus solid versus hatched treatment, and the
+column rule present on all 33 elements of a pending column. It cannot tell me the result
+is legible at a glance under a pick clock. Nobody has looked at this screen with the
+intent of using it.
+
+I did then measure the contrast, having first written that I had not. `--pending`
+`#7aa7f0` is **7.15–7.98:1** against all three background tokens, comfortably past AA for
+text and for non-text UI. **The more useful number is the one I was not looking for:
+`--pending` sits within 1.05–1.30:1 of every other semantic hue** — 1.05:1 against
+`--accent`, 1.06:1 against `--ok`, 1.24:1 against `--error`, 1.30:1 against `--warn` — so
+to a reader with achromatopsia the `TBD` badge, the `PO` badge and the `·` cell are the
+same brightness. (That range is the `--pending` *row*. I first wrote it as a claim about
+every pair in the palette, one paragraph after admitting I had claimed a contrast figure
+without measuring it; `architect` measured all ten pairs and the true range is
+**1.01–1.62:1**, `accent`/`ok` to `warn`/`error`. The conclusion survives and strengthens,
+since 1.62 is still far below the 3:1 non-text minimum, but generalising a measured row to
+an unmeasured table is the same move in a smaller costume.) Nothing on this screen is separable by colour alone. It happens not to matter
+only because every distinction is also carried by shape or text — `TBD` versus `PO`,
+dashed versus solid, hatch versus edge, glyph versus digit — which is deliberate here and
+enforced nowhere. A future marker distinguished by hue alone would be invisible to a
+monochrome reader and no test or lint rule in this repository would notice. Worth someone
+deciding whether that becomes a stated rule rather than a habit.
+
+*The recording cannot show two of the four pending states.* No backend at this revision
+emits an empty pending block or an absent one, so "the season is fully scheduled" and
+"this response cannot say" are covered only by hand-built payloads — which can prove the
+code agrees with itself and nothing more. The empty case is what every response will carry
+from December onwards, which makes it the least-evidenced state and the most common one.
+
+*The proxy variants are mutations of a real 200, which is better than a hand-built body
+and is not the same as the backend producing them.* A malformed block, an out-of-calendar
+date and an unreadable date were all authored by me. If the backend ever emits one for a
+reason I have not imagined, the copy I wrote may be describing the wrong thing.
+
+*Nothing here was reviewed at this head yet.* The three independent reviews are pending on
+the pushed SHA.
+
+**Next:** PR open against `sr2501-real-schedule-import`, stacked and not mergeable until
+that lane lands. On landing: rebase forward (checking `git merge-base --is-ancestor` first),
+re-capture and compare the fixture against committed code, re-run the code gate and the
+mutation harness, then retarget to `main`.
+**Next:** PR #47 is open as a **draft against `main`**, not against
+`sr2501-real-schedule-import` as this entry first said. That branch was never pushed to
+origin and still held thirteen uncommitted files, so there was no base to target; pushing
+another lane's unfinished worktree to get my own PR a base was not mine to do, and holding
+the PR unopened would have forfeited review at an exact head. `architect` confirmed
+draft-on-main as the right posture and the coordinator has set the merge order: the
+schedule-import lane lands first, then this. Draft status is the guard.
+
+On that lane landing: rebase forward (checking `git merge-base --is-ancestor` first),
+re-capture and compare the fixture against committed code, remove the wire optionality and
+the "cannot say" notice with it, and re-run the code gate and the mutation harness.
+
+---
+
+## 2026-08-20 — frontend — Three independent reviews on one head, and four of my own claims failed
+
+**Changed:** `frontend`, `architect` and `code-review` all reviewed `4a1de71` — the exact
+pushed SHA, each verifying it with `git rev-parse` before starting. Eight findings acted
+on. Nothing was waved through, and the round found more than the build did.
+
+**The one that matters most: a mechanism I asserted was false, and it was load-bearing.**
+`PendingGamesSummary.undated` justified its guard by claiming `'12/04/2026' <=
+'2026-12-13'` compares **false** and would drop a game out of its column **without a
+word**. `architect` measured it. It compares **true**; and a slash-formatted date fails
+`start_date <= game_date` against every period, so unguarded it lands in `outsidePeriods`
+and the notice *prints* it, id and date and all. Both halves wrong. I had written a
+paragraph about silent failure whose own example was neither silent nor a failure of the
+kind described — in the entry immediately above, in a section arguing that this project's
+defect class is claims that read correctly and do not hold.
+
+The guard survives for the reason that actually works, which `architect` supplied and I
+then drove: the plausible drift is not a slash date but `date` → `datetime` on the Pydantic
+field. Measured, `2026-12-04T00:00:00Z` buckets **correctly** everywhere except a period
+whose `end_date` is the game's own day, where `'2026-12-04T00:00:00Z' <= '2026-12-04'` is
+false. The game falls out of the one column it belongs in and is then explained as *"falls
+outside every scoring period this grid shows"* — a statement about the fantasy calendar,
+made about a data defect. **The guard prevents a mis-attributed explanation, not silence.**
+Driven in a browser against a doctored real 200: the notice says "a date this screen could
+not read", and does not say "outside every scoring period". A test now pins that boundary.
+
+**The rule that came out of it, which is `architect`'s formulation and better than mine:**
+
+> Delete UI for a state only when an invariant **we** enforce forbids it **and** a
+> violation would surface loudly. When a state is forbidden but a violation would be
+> silent, do not write UI for it — **close the hole at the boundary instead.**
+
+I had a two-clause rule and did not notice the clauses conflicted inside my own diff.
+`isPendingBlock` validated every field of every pending record and never checked that
+`pending_game_ids` and `pending_games` name the same games — so the client accepted a block
+the backend cannot emit, while relying on that backend's invariant to justify having
+deleted the UI for it. Both reviewers found it independently, from opposite directions.
+`code-review` traced the ids-longer-than-records branch to a residual sentence no test
+drove because nothing could construct the state. `frontend` drove the reverse in a browser
+and got the worse outcome: a column badged **TBD**, no notice explaining it, and the
+lineage panel positively asserting *"none — every game the source published has teams
+assigned"* — the only place on this screen the copy ever claims completeness — above a
+counts row reading `8 from source · 7 resolved · 0 pending`, the ADR-013 invariant visibly
+failing to add up and printed without comment. The check is now at the boundary,
+`unexplained` is deleted, and both directions are refused and driven.
+
+**`code-review` found the screen contradicting itself in one render.** The season `MeanCell`
+was handed `model.pending.declaredCount`, which includes pending games dated outside every
+scoring period. Those have fixed dates no column can hold, so they can never enter any
+period count and therefore never the season total — while the notice above says in as many
+words that no column can carry them. The season mean said this column may rise anyway, in a
+sentence beginning "This period contains…" on a column that is an aggregate over twenty-one
+periods, with the sibling season *total* on the row above silently disagreeing about
+whether the season was pending at all. The season-scoped claim now lives once, in the
+notice, where it can be qualified. Two tests, one of them the contradiction case.
+
+**Both reviewers independently found the same honesty gap, and it is on a clock.** ADR-013
+names *two* sources of forward incompleteness and the contract carries one: teams eliminated
+early from the NBA Cup receive make-up games that are not published at all, so 80 games per
+team today becomes 82 later. Those are absent from `source_game_count` — neither resolved
+nor pending — so no field exists to mark them with, and marking only the pending columns
+implies its own converse, that an unmarked column is settled. **It fails worst in
+December**, when the bracket resolves, the pending set empties, the notice stops rendering
+and the screen would go silent while every team is still short about two games — the exact
+moment ADR-012's living-refresh amendment matters most. There is now an unconditional
+sentence in the lede saying a count is a floor, in prose rather than a banner, because it
+is always true and never an event.
+
+**Three smaller ones, all real.** `ScheduleLineage` said a response with no pending block
+*"predates the pending-games contract"* — asserting a backend version the client cannot
+see, which the `present` docstring three files away explicitly forbids; a current backend
+dropping the field through a serialization bug produces the identical wire shape. The
+header carried the pending sentence in both the visually-hidden accessible name and the
+`title`, which becomes the description, so screen readers with description reporting on
+announced the column twice at triple length on every focus change. And the wire validator
+hard-rejected a `null` prose label — costing the entire schedule page, all 1,200 resolved
+games, for a missing piece of prose — while `describePendingGame` carried a `'no label
+given'` fallback its own validator made unreachable. That last one was my stated rule
+applied against me: a missing label is a gap this screen can describe.
+
+**Live regions.** Both new notices dropped `role="status"`. They are present at first paint
+and describe data rather than announcing a change, so the polite queue read them on load in
+nondeterministic order against three other regions, and `aria-atomic` defaults true, so a
+refresh altering one word re-read the whole 417-character paragraph. `grid-integrity` is on
+the same footing and was left alone: changing an already-reviewed surface as a side effect
+of an unrelated diff is how surfaces drift. Flagged for whoever owns that one.
+
+**Code gate at the reviewed head plus fixes:** ESLint clean, `tsc --noEmit` clean, build
+clean, **109 tests across 8 files** (from 102, from 77). **Fourteen mutations, all
+fourteen caught** — five new ones covering the boundary equality check, the null-label
+tolerance, the season aggregate, the header announcement and the make-up-games caveat.
+
+**The harness caught my own mutation being weak**, which is the check working on itself.
+My first attempt at the caveat mutation reworded the opening clause without touching the
+claim, and the test correctly stayed green. That is a bad mutation, not a weak test — but I
+would have recorded "14 of 14" and moved on if the run had not said `NOT CAUGHT`. Replaced
+with one that inverts the claim.
+
+**Could not verify:**
+
+*Everything in the previous entry stands unless corrected above, and is not repeated.*
+
+*The three reviewers all read a tree with uncommitted edits in it.* I disclosed this to the
+coordinator while they ran and they ruled it acceptable, but it is worth stating plainly:
+`frontend` reported that `ScheduleGridTable.tsx`, `SchedulePage.test.tsx` and
+`docs/handoff.md` changed under it at 22:24, mid-review, and it re-verified its findings 3
+and 4 by diff rather than by running them. No source file differed for `architect` or
+`code-review`, whose runs completed earlier, but I cannot prove that from here.
+
+*None of the eight fixes has been reviewed.* The round was on `4a1de71`; this head is not
+that. That is the honest cost of the exact-head standard and I am not going to describe it
+as covered.
+
+*`architect` read the backend it verified my citations against from checkpoint commit
+`396174a8`, which is on no branch at all.* Independently confirmed what I had also found —
+`pending_game_ids` is a derived property, `_pending_games` raises on disagreement, both API
+fields are required, pending `game_date` uses `eastern_tipoff.date()` — and every one of
+those can still change before that lane lands.
+
+*One rule now has two implementations in two languages.* The backend buckets resolved games
+with `game_date.between(start_date, end_date)`; `readPendingGames` does the same
+inclusively in TypeScript. `architect` verified they agree today, including that both
+derive from the same ET convention — which, given this project's history with `gameEt`, was
+the thing worth checking. Nothing tests them against each other, and the trigger for that
+becoming a defect is the second consumer, not this one.
+
+*Still nobody has used this screen to make a decision.* Contrast is measured and passes;
+legibility under a pick clock is not measured and cannot be by any method used here.
+
+**Next:** re-run the three reviews at the new head before this leaves draft. Merge order is
+set: the schedule-import lane lands first, then #47.
+
+---
+
+## 2026-08-20 — frontend — Re-review at the fixed head: clean on the fixes, three new findings, and I over-generalised a measurement one paragraph after admitting I had not taken one
+
+**Changed:** All three reviewers re-ran on `c2ede24`. `code-review` returned clean. `frontend`
+and `architect` each found things the first pass could not, because they were properties of
+the fixes rather than of what they replaced. Five more changes, and the caveat this branch
+added last round turned out to be in the wrong place and, in one word, wrong.
+
+**"Floor" was the wrong word, and `architect` caught it against their own ADR text.** The
+amendment in PR #50 requires every consumer to state unconditionally that counts are a
+floor, so the sentence I added was the contract being met rather than a screen inventing
+policy — and the contract was wrong. Games are added and never removed *in aggregate*, so a
+season total can only rise; a count in a **cell** is a different quantity, and a re-ingest
+moving a fixture from one week to the next takes the first week down. ADR-012's
+living-refresh amendment exists because re-ingest changes shape. "Every count here is a
+floor" is therefore true of the Total column and false of the twenty-one beside it, erring
+toward **false comfort at exactly the granularity a manager plans a week on**. The screen
+now says *"no count here is final"* and names both directions. `architect` is fixing the
+ADR; the screen did not wait for that to stop asserting something false.
+
+**The caveat had no CSS rule, which `frontend` turned into the answer to a question I had
+asked them.** I asked whether it read as boilerplate. `page__lede--caveat` was a dead
+modifier — grep found it in one JSX file and nowhere in `styles.css` — so it rendered as
+`.page__lede`: identical muted grey, identical size, directly under a paragraph ending in
+`docs/decisions/ADR-012-per-week-game-distribution.md`. Two indistinguishable grey
+paragraphs, the first of which trains a reader that grey prose up there is provenance, and
+the operative clause was the last eight words of the second. **So yes, and structurally
+rather than as a matter of taste.**
+
+It is now in the table's `<caption>`, which fixes three things at once and is `frontend`'s
+suggestion rather than mine. It is where the eye already is when reading a number. It
+renders **if and only if the table does** — the previous placement in `<header>` put *"every
+count below is a floor"* above *"Could not load the schedule grid"*, with no counts below,
+which they drove and I had not. And it costs no block above a grid already carrying a
+lineage panel, a notice and a key.
+
+**A measurement I published four times, corrected a right answer into a wrong one, and only
+trusted once I could derive it.** `frontend` declined to assert the table was below the fold
+without a browser, which was right. The final figures are these, and unlike the previous
+three they come with the arithmetic that produces them, at a 720px viewport with the pending
+notice present, the lineage collapsed and both scrolls at zero:
+
+```
+blocks above the grid   header 86 + lineage 35 + notice 99 + key 103   -> scrollport top 410px
+18rem budget            720 - 270                                     -> scrollport height 450px  (exact)
+caption 68px + header row 47px                                        -> first count 527px
+                                                                      -> 7 of 30 rows visible
+scrollport bottom                                                     -> 140px below the fold
+lineage expanded                                                      -> grid pushed off entirely
+```
+
+The history is the point. Version one was "the grid is above the fold", from readings taken
+with the lineage panel expanded in one page and collapsed in another. Version two was 527px
+and about seven rows. Version three "corrected" that to 583px and five rows, from a page
+whose DOM I had been injecting into moments earlier — **I corrected a right number into a
+wrong one and published the wrong one to the coordinator.** Version four is above, and it is
+the first that can be checked without rerunning it: the block heights sum to the scrollport
+top, and `720 - 18rem` lands on the scrollport height exactly, which is what confirms the
+number rather than my having read it off a screen.
+
+Three of the four were taken by me in the same evening, in the same browser, at the same
+viewport. Nothing about the tooling changed; what changed each time was a condition I had
+not controlled and had not thought to state. **A measurement whose conditions are not
+recorded is not a measurement**, and this project already knew that about fixtures and
+recordings without my noticing it applies to a ruler.
+
+**`code-review` caught the sentence beside it, which was the misleading one.** I wrote that
+the caption move "removed 303 characters of prose above it and bought roughly two rows". The
+removed lede paragraph is exactly 303 characters — but the caption grew from 113 to 445 in
+the same change, and `caption-side: top` puts those characters *above the first row*, inside
+the same fixed-height scrollport. Prose above the first count did not fall by 303; it rose.
+Measured by reconstructing the old layout in the DOM rather than reverting the tree under two
+live reviewers, the change buys **33px against a 26px row — about one and a third rows** —
+and it buys that from the caption's smaller type and the paragraph's margin, which is a
+different and much smaller mechanism than the sentence claimed.
+
+**The most useful number here is the one nobody asked for.** The scrollport bottom sits 140px
+below the fold, so the nested scroll that `styles.css` describes as the *consequence* of a
+reader opening the disclosure is the default state — `tfoot`'s league totals, which exist so
+a team's count can be compared against the league, are reachable only through an inner
+scroll. `frontend` found the cause: the `18rem` constant was written for four blocks above
+the grid and ADR-013 added a fifth. The comment now says so and it is a backlog line; the fix
+is the flex column that comment already names, not a bigger magic number, and it is a
+whole-screen change rather than something to fold into a pending-games diff.
+
+So the density finding is not closed, it is quantified: **seven rows is a scroll under a pick
+clock**, one and a third rows is not a fix, and the grid's own footer is below the fold.
+
+**`architect` found a fresh over-generalisation in the previous entry, in the paragraph
+where I had just corrected a different one.** I wrote that *"every pair of semantic hues in
+this palette sits within 1.05–1.3:1 of the others."* Those two figures are exact and they
+are the `--pending` **row**. Across all ten pairs the range is **1.01–1.62:1**. The
+conclusion is unaffected and in fact stronger, but that is a measured row generalised to an
+unmeasured table, written immediately after *"I did then measure the contrast, having first
+written that I had not."* Corrected above, with all ten pairs computed rather than narrowed
+by assertion.
+
+**Duplicate ids passed the boundary check**, since positional equality admits repeats, and
+they reach `lineage__list` as duplicate React keys — which React documents as unsupported
+rather than cosmetic. `frontend` drove it and got the warning. One clause, and it is the
+position I had just adopted: a boundary that can be closed should be closed. Closed.
+
+**`role="status"` was recorded as a pure win and is a trade.** `architect` noted
+`AsyncBoundary` has a Refresh button, so a refresh taking the pending set from empty to
+non-empty now appears with no announcement. My justification covered load and not that
+path. It is still better than the reviewed head, which re-read 420 characters on any word
+change, and the stale banner already announces "Refreshing" — but the comment now names the
+cost instead of claiming there is none. `grid-integrity` keeping its `role="status"` was
+"flagged for whoever owns that one", and `architect` pointed out that `frontend` owns all of
+`frontend/`, so it was flagged to itself in a comment. It is now a backlog line, with the
+refresh-announcement gap and the caveat's December expiry beside it — three follow-ups, each
+with an owner and a trigger.
+
+**What the re-reviews confirmed rather than found.** `code-review` re-derived the corrected
+`undated` claims by running them, and independently confirmed the loop test cannot silently
+stop testing: `mockFetch` installs a fresh `vi.fn` per iteration, `findByRole` throws on
+multiple matches so a leak would fail rather than mask, and a wrongly-accepted response
+would time out rather than pass. `architect` verified the boundary check against the
+**producer** — now pushed as PR #49 — and confirmed my same-length-same-order equality is
+*exactly* as strict as the backend's, not stricter, so nothing will false-reject when it
+lands. That is the check I could not run and the reason it was worth someone else running.
+
+**Code gate:** ESLint, `tsc --noEmit`, `npm run build` clean. **110 tests across 8 files**
+(from 109, 102, 77). **16 of 16 mutations caught**, two new: the caption reverting to the
+floor claim, and duplicate ids being admitted.
+
+**Could not verify:**
+
+*The stacking premise in the entry above has expired.* `sr2501-real-schedule-import` is now
+pushed as PR #49 — open, non-draft, one commit ahead of `main`. The stated reason for
+draft-on-main ("never pushed to origin, thirteen uncommitted files") was true when written
+and is not true now. Draft is still right, for a different reason: the coordinator has set
+the order, #49 merges first, and merging a screen that renders "this response cannot say"
+on every load would ship something no reviewer or user can see working.
+
+*The reviewers read a moving tree, again, and this time it did not compile.* `architect`
+reported that two files changed under it at 23:05, mid-review, carrying a stray `*/` that
+closed a doc comment early and broke `tsc`. Its findings are against the committed head and
+the gates it ran were before that edit, but I have now done this to reviewers twice in one
+night, and disclosing it afterwards is a weaker remedy than not doing it.
+
+*None of these five fixes has been reviewed either.* Same as last round. The caption
+rewrite in particular is new copy that no reviewer has read, and copy is what three of
+tonight's findings were about.
+
+*The "exactly as strict as the backend's" claim below is now true only of part of the
+check.* `architect` verified my ids/records equality against the producer at PR #49. The
+duplicate-id clause was added **after** that verification and is strictly stricter than
+anything they read. It carries no false-reject risk — two distinct games cannot share an
+`nba_game_id` — but the sentence describes a check that has since grown. `code-review`
+caught the drift.
+
+*Every fold reading was taken after the caption move.* I have no before-reading in a
+browser; the 33px figure comes from reconstructing the previous markup in the DOM, which is
+a simulation of it rather than a measurement of the previous commit.
+
+*One "could not verify" from the previous entry is now closed, and it was the largest.*
+`sr2501-real-schedule-import` is pushed as PR #49, so I re-ran the whole verification
+against **committed** backend code rather than a working tree: added a detached worktree at
+`1716044`, seeded a fresh database, served it, and captured the response. It is
+**byte-identical to the committed fixture ignoring the two timestamps** — same 12/10/2
+completeness, same `9bcac1c60490b41a`, same 630 counts, same empty `game_sub_label` and
+`game_subtype`. Capture-and-*compare*: nothing moved, so nothing was replaced. Every
+contract citation in these three entries now rests on code that exists in a branch, and the
+screen was driven end to end against it.
+
+*I still have not measured whether any of this is legible under a pick clock.* The fold
+measurement is one viewport on one machine. Nobody has used this screen to make a decision.
+
+**Next:** #49 merges, then rebase, remove the wire optionality and the "cannot say" notice
+with it, re-capture and compare the fixture against committed backend code, and undraft.
+
+---
+
+## 2026-08-21 — frontend — A nullable pending date, and my own rule pointing back at me
+
+**Changed:** `PendingScheduleGame.game_date` became `date | None` in the schedule-import
+lane, and my validator rejected the null case — so a legitimate backend response would have
+taken the whole screen to a contract error. Types, validator, model, notice copy and the
+lineage list. Still zero backend files.
+
+**Why the contract moved, which matters for how it is handled.** The other lane found that
+`parse_schedule` was applying the strict EST/UTC reconciliation to *pending* games, and that
+one degenerate timestamp on one undrawn Cup fixture returned **no season at all** — not
+1,200 games with one flagged, not even a dry-run view. That is ADR-013's explicitly rejected
+outcome, arriving through a different field, inside the PR implementing ADR-013. So a
+pending date now degrades to `None` while a resolved date stays strict, because only the
+resolved one is persisted and joins `player_participation`.
+
+**This was my own rule aimed at me.** *Tolerate a gap you can describe, reject a value that
+cannot be true.* A null `game_date` had been on the wrong side of that line, and only
+because the line was drawn when the contract said the field was always a string. The rule
+did not move; the contract did. Worth recording because the reverse — quietly widening a
+validator until nothing fails — is the easy way to satisfy a rule while abandoning it.
+
+**Read the source, not the message, for the fourth time tonight.** The brief described the
+change accurately, and reading `origin/sr2501-real-schedule-import` confirmed two things it
+did not say: `game_label`/`game_sub_label`/`game_subtype` are back to non-nullable `str`
+(my client stays tolerant of null there, which is a superset and documented as such), and
+`"game_date": null` is serialized with the **key present**. That second detail decides the
+implementation: this is a *value* check, not a key check, so **an absent `game_date` still
+rejects** and the present-but-malformed rule survives intact. Driven both ways in a browser
+— null renders, absent refuses with no grid drawn.
+
+**Three reasons a pending game reaches no column, and they are not one thing.** The model
+now separates them and the names carry it:
+
+- `outsidePeriods` — dated, but the fantasy calendar does not cover that day.
+- `unreadableDate` — the source sent something this screen could not parse. A **defect**.
+- `undatedBySource` — the source sent `null`. A **fact**.
+
+Folding the last two together was the tempting simplification and it is the same collapse
+this screen refuses at cell level. `0` versus `·` is *a real count* versus *our data is
+missing*; `TBD` versus `·` is *the source has not decided who* versus the same. A null
+`game_date` is the source saying it has not decided **when** — one field along from the
+marker the whole screen is built around — and reporting it in the words reserved for a wire
+fault would tell a reader a published fact in the vocabulary of a failure.
+
+**The instruction I was given that I would not have derived, and it is the important one.**
+Do not filter undated pending games out of the season-level count. A game with no known date
+belongs to no week, so it cannot be attributed to one — **but it still exists**, and "N games
+not yet decided this season" must stay complete even when the per-week attribution cannot.
+Those are two different denominators, and collapsing them is the same class of error as
+attributing a pending game to a named team, one level up: the per-week view can be honestly
+incomplete without the season view becoming wrong.
+
+My implementation already satisfied it, because `declaredCount` reads `pending_game_ids` —
+but it satisfied it **incidentally**, with nothing pinning it. That is the pattern this
+branch has now found four times: correct by accident, and a rule stated nowhere a change
+would trip over. It has a test and a mutation now.
+
+**A copy defect the browser found and no test would have.** The first render said *"1 of
+them **have** no date yet"*. Every clause in that notice now agrees in number, which
+matters more here than it looks: these clauses appear one at a time, so the singular case is
+the common one and was the one nobody had read.
+
+**It will not fire today.** All six live pending games carry reconcilable dates and the live
+smoke asserts exactly that, so this is a **drift signal**, not the present state. Recorded in
+the docstring so nobody shapes the screen around it being common — the opposite mistake to
+the one the code makes, and just as available.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **115 tests across 8 files** (from 110).
+**22 of 22 mutations caught**, five new: a null date rejected; an absent key tolerated; a
+source-undated game reported as a wire defect; an unplaceable game dropped from the season
+count; and an undated game dropped from the lineage list.
+
+**Two mutation anchors went stale** when I introduced a local for the narrowed date, and the
+harness reported `SKIP` rather than passing them. A skipped mutation reads almost like a
+caught one in a list of twenty-two, and the only reason it did not is that the script counts
+skips as failures. That was luck in the design, not foresight.
+
+**Could not verify:**
+
+*Everything in the previous three entries stands and is not repeated.*
+
+*This work has not been reviewed by anyone.* Three reviewers cleared `92a1dd7`; this is
+`c30ba96` plus a contract change none of them has seen. The three-round history on this
+branch is that every round found something, so the base rate for "clean because nobody
+looked" is not low.
+
+*The recorded fixture does not exercise a null date and cannot.* No backend emits one today
+by design — that is the whole point of it being a drift signal — so this state rests
+entirely on hand-built payloads and on proxy mutations of a captured 200. It is the
+least-evidenced path on the screen and it is the one that exists for when something has gone
+wrong upstream.
+
+*I have not re-captured the fixture against `bf4c2b0`.* The comparison in the previous entry
+was against `1716044`; the schedule lane has moved twice since. The rebase is where that gets
+redone, and it must be capture-and-compare, not capture-and-replace.
+
+*The parallel I drew — that a null date is "the same kind of statement as the TBD marker" —
+is my own framing and nothing enforces it.* It reads well and it is the reason the buckets
+are separate, but if a future contributor merges `undatedBySource` into `unreadableDate` the
+tests will catch the words changing and nothing will catch the idea being lost.
+
+**Next:** unchanged. #49 merges, then position, then this — rebase onto merged `main`,
+re-capture and compare the fixture against committed backend code, remove the wire
+optionality and the "cannot say" notice with it, re-run the gate and all 22 mutations, and
+undraft.
+
+---
+
+## 2026-08-21 — frontend — I invented an ADR quotation, and told a reader the source withheld something we may simply have failed to read
+
+**Changed:** Round four on the nullable-date commit. Three reviewers, seven findings, and
+the two that matter are both about claims I made rather than code I wrote.
+
+**I fabricated a citation.** `scheduleGridModel.ts` presented this in quotation marks as
+ADR-013's *explicit* consumer obligation:
+
+> *"a consumer must then treat the game as belonging to no known period rather than dropping
+> it, because the game is still published."*
+
+That sentence is **in no version of ADR-013 on any ref.** `architect` searched `origin/main`
+and every commit on this branch; I re-ran it and confirmed — the words `game_date`,
+`belonging to no known period` and `still published` do not appear in the ADR at all. It is
+the `PendingScheduleGameLineage` docstring in the backend, **on an unmerged branch**, and I
+had repeated it in a test comment as well.
+
+The obligation is real and the producer does state it. The *authority* was invented. Two
+things follow and the second is worse. An implementer who checks the address finds nothing
+and may conclude the constraint was made up. And my single most load-bearing design
+constraint — the one I said I was given and would not have derived — was anchored to text
+that exists only in a PR that has not merged, which is the coding-against-something-in-no-
+branch pattern this branch spent all night closing, relocated into the citation layer. ADR-013
+does have a real clause that supports the same conclusion, *"Consumers displaying schedule
+counts must show the pending set, not merely omit it"*, and that is what is cited now.
+
+**And the screen told a reader something false, in the direction that comforts.** It said:
+
+> *"1 of them has no date yet — **the source published it without saying when**"*
+
+I read `_pending_game_date` in the producer rather than take the report on trust, and
+`architect` is right. One `try/except SourceContractError: return None` wraps **both** the
+`gameDateTimeUTC` and `gameDateTimeEst` parses, so `null` has three causes and only the
+third is the source declining to commit: UTC unreadable, Eastern unreadable, or the two
+irreconcilable. The first two are **us failing to read a date the source did give** — a
+renamed field, a restructured object, a parser regression.
+
+The backend's own function summary is honest — *"or `None` if it is not trustworthy"* — and
+the slippage to "the source has not told us when" happens in its next paragraph. I inherited
+it and amplified it into a sentence on a screen.
+
+**The direction is what makes it matter, which is the rule I accepted from `architect` two
+rounds ago about "floor" and did not apply here.** Told the source has not decided, an
+operator waits. Told we could not read it, an operator investigates. So this errs toward
+false comfort, and it does it in the bucket I created specifically to stop a published fact
+being reported as a fault — the same collapse, pointed the other way, inside the fix for it.
+
+The copy now attributes nothing: *"That game has no usable date — none came with it"*, which
+is true under all three causes. If the producer ever narrows its `except` so `null` means
+only the irreconcilable case, the screen can say more.
+
+**A limit the split's own framing was hiding.** `frontend` found that `ISO_DAY` accepts any
+well-formed day, so a degenerate **sentinel** — `0001-01-01`, which the producer's docstring
+names as exactly what the source emits for an undecided tip-off — passes it, matches no
+period, and lands in `outsidePeriods`, where it is described as *falling outside the fantasy
+calendar*. That is precisely the mis-attribution the `unreadableDate` guard exists to
+prevent, arriving through the one door it does not cover.
+
+Deliberately not coded around, on their recommendation and my agreement: the client cannot
+tell a sentinel from a genuine out-of-calendar date without inventing a rule about what a
+date means, which is what this screen refuses to do everywhere else. Documented instead,
+with the sentence that was missing — **these three buckets partition what the client can
+tell apart, not what the states are.**
+
+**Two stale numbers, both mine, both found independently by two reviewers.** `styles.css`
+still asserted **583px and five rows** — the reading I had already retracted in this same
+file two commits earlier, having published it as a *correction*. And the caption cost
+paragraph said the accessible name went "113 to 407" in the very commit that grew it to
+**445**; stale on arrival, inside the paragraph whose subject is reporting costs accurately.
+Both corrected, and `styles.css` now carries the derivation rather than a bare figure.
+
+**A copy defect no test here could have seen, for a structural reason.** *"1 of them"* is a
+partitive, and when the whole pending set is one game there is no "them". It is reachable
+and it is the **common** case, because these clauses appear one at a time — and every test
+covering them used two or more games, so the harness was blind to it by construction. That
+is a sharper version of the coverage problem than "we forgot a case": the fixtures were
+chosen to exercise the clause, and choosing them that way excluded the state that matters.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **116 tests across 8 files** (from 115).
+**24 of 24 mutations caught**, two new: the partitive restored, and the undated clause
+re-attributing to the source.
+
+**Harness hardened after the coordinator called the `SKIP` hole decay rather than a point
+failure.** It now pre-flights every anchor before running anything, reports all rotted
+anchors at once, and refuses to run. Verified by deliberately rotting an anchor: caught in
+one second, named, exit 1 — and zero stale on the healthy harness. Previously a stale anchor
+cost a twenty-minute run and read almost exactly like a catch in a list of twenty-four.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated.*
+
+*None of these seven fixes has been reviewed.* Same as every round. The pattern across four
+rounds is that each one found something real, so "clean because nobody looked" has a high
+base rate here.
+
+*The `null`-means-three-things finding is a backend fix I have not made and cannot.* The
+right repair is narrowing `except SourceContractError` in the producer so `null` is returned
+only when the fields are present and irreconcilable. Until that lands the screen is
+deliberately vaguer than it could be. `architect` also notes ADR-013 says nothing about
+`game_date` at all — the contract's newest value is defined in two docstrings on two
+branches and in no accepted decision.
+
+*I have still not re-captured the fixture against `bf4c2b0`.* Two lane heads have passed
+since `1716044`. That is the rebase, and it must be capture-and-compare.
+
+*Nobody has checked whether "no usable date came with it" is the right thing to say to a
+person.* It is defensible and it is vaguer than the sentence it replaced, which is the
+correct trade when the precise version was false — but vaguer copy is a real cost and I have
+tested it for truth, not for usefulness.
+
+**Next:** unchanged. #49 merges, then position, then this — rebase, re-capture and compare
+against committed backend code at whatever head #49 lands as, drop the wire optionality and
+the "cannot say" notice with it, re-run the gate and all 24 mutations, undraft.
+
+---
+
+## 2026-08-21 — frontend — The absence reason contract, and a test that refused for the wrong reason
+
+**Changed:** Rebased onto merged `main` (`28bd480`) and absorbed #49's landed contract.
+`date_absence_reason` is consumed, the wire optionality is gone, the fixture is re-captured
+against merged code, and the copy that told a reader the source withheld a date is replaced
+with copy that says which of two things to *do*.
+
+**The coordinator's claim was right and understated.** They thought *"no usable date — none
+came with it"* was false under `implausible`. I read `_pending_game_date` rather than take
+it on trust, and it is false under **three of the four** absence causes. Only `not_offered`
+means nothing came:
+
+| reason | what happened | operator |
+|---|---|---|
+| `not_offered` | both time fields absent | **wait** |
+| `irreconcilable` | both parsed and disagree — the source contradicting itself | **wait** |
+| `unreadable` | a value was published and we could not parse it | **investigate** |
+| `implausible` | both parsed, agreed, and named a 1900 placeholder | **investigate** |
+
+So the model now sorts an absent date by **what it tells an operator to do**, not by its
+shape: `awaitingSource` against `dateFaulted`, mirroring the producer's own
+`_FAULT_ABSENCE_REASONS` rather than inventing a classification. ADR-013 names rendering an
+investigate-class cause as a wait-class one as the error that matters, and my previous copy
+made exactly that error in the direction that comforts — told nothing came, a reader
+concludes the source is silent and waits through a defect.
+
+That is the third time this screen has drawn the same line and the first time the contract
+could carry it: `0` versus `·` at cell level, `TBD` versus `·` at column level, and now the
+source's undecided versus our failure at the reason level. The reason code is printed beside
+each id in both the notice and the lineage, so the classification is checkable rather than
+trusted — a reader can see `implausible` and disbelieve me.
+
+**The ADR contradicts itself and that is `architect`'s.** ADR-013 states the closed set
+twice: line 176 says *"Three are possible"* with
+`{"", not_offered, unreadable, irreconcilable}`, and line 222 has five including
+`implausible`. The first is present-tense and not scoped as historical, and it is the one a
+reader hits first. A consumer building a four-value validator from it would reject a
+well-formed response from the current producer — which is exactly the failure a closed set
+exists to prevent. Not mine to fix; reported.
+
+**The sentinel limitation is now unreachable through this seam and stays documented.** #49
+drove every shape and no sentinel reaches a consumer as a well-formed date: year-0001 and
+1900 pairs classify as `implausible`, `irreconcilable` or `unreadable` and carry no date at
+all. The comment says so and keeps the general form, because the next producer will not have
+that classifier and the client still cannot tell a sentinel from a genuine out-of-calendar
+date without inventing a rule about what a date means. **These buckets partition what the
+client can tell apart, not what the states are.**
+
+**The scope audit the coordinator asked for found two things, and the second is the better
+one.**
+
+*Where else is this true?* — the model tests bypass the validator, so nothing stopped them
+building payloads the new cross-check refuses: `game_date: null` beside
+`date_absence_reason: ''` is the two halves of one fact disagreeing. The behaviour they
+asserted was right; the payload could not arrive. Fixed, and it is a standing hazard of
+testing a model below its boundary.
+
+*What was already protecting this line, and is it still?* — **a test that refused for a
+different reason than it claimed.** `'accepts a null game_date but still refuses one that is
+simply absent'` built its rejecting payload without `game_date` *and* without
+`date_absence_reason`, so the response was refused for the missing reason. The assertion
+passed, the test read as isolating the date, and the mutation that widens the date check to
+admit `undefined` went **uncaught** — the harness said `NOT CAUGHT` and that is the only
+way I found it. The two payloads now differ in exactly the absent key.
+
+**Fixture re-captured against merged `28bd480`, capture-and-compare first.** Exactly one key
+added — `date_absence_reason`, `""` on both games — with no other key added or removed and
+no value changed on any shared key, across teams, periods, all 630 counts and the version.
+The API grew a field, so replace was right here; on any route where nothing moved it would
+have destroyed the baseline.
+
+**Wire optionality dropped**, and with it the "this response cannot say" notice, the
+`present` flag and the branch that produced them. That tolerance existed because this screen
+shipped ahead of an unmerged backend; the backlog entry tracking it warned it would become a
+permanent feature describing a transitional condition if nobody deleted it. The deletion has
+its own test, because deleting a tolerance is the part that can silently not happen.
+
+**Rebase discipline held and the recount fired as expected.** Heading sets were recorded
+*before* starting: 175 handoff headings and 112 backlog slugs predicted, 175 and 112
+observed, no entry eaten or doubled. The backlog produced two status header lines, as it
+always does, and **neither was right** — `main` carried 39/71/111, this branch carried
+40/69/110, and the truth is 40/71/112, because each was counted before the other's items
+existed. That is the clearest case yet for recounting rather than reconciling.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **118 tests across 8 files** (from 116).
+**26 of 26 mutations caught**, four new: an absent block tolerated again, an investigate-class
+cause sorted as wait-class, the date/reason cross-check dropped, and the reason set opened.
+
+**The harness pre-flight earned itself immediately.** The contract change rotted one anchor,
+and it was named in one second instead of surfacing twenty minutes into a run as a `SKIP`
+that reads like a `caught`.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated.*
+
+*None of this has been reviewed.* Four rounds on the previous head each found something
+real, and this is a larger change than any of them.
+
+*`unreadable` and `implausible` cannot be produced by the live source today*, so the
+investigate-class copy is exercised only by hand-built payloads and by proxy mutations of a
+captured 200. The live smoke asserts `unreadable` never occurs, which means the branch most
+likely to matter in an emergency is the least evidenced — and it is the branch whose whole
+purpose is to be right when something has gone wrong.
+
+*I classified `irreconcilable` as wait-class on the producer's exit-code behaviour*
+(`_FAULT_ABSENCE_REASONS` excludes it, so the import stays exit 0). ADR-013's prose gives
+the wait/investigate meaning for `not_offered` and `unreadable` and does not say which side
+`irreconcilable` falls on. The source contradicting itself is arguably worth a look even if
+it does not block an import, so this is an inference from an exit code rather than a stated
+rule, and it is the one classification here I would most like disputed.
+
+*The three-way copy has not been read by anyone but me.* "Needs looking at rather than
+waiting out" is my phrasing for a distinction the ADR states abstractly, and copy is what
+three of the last four rounds' findings were about.
+
+**Next:** exact-head reviews on the pushed SHA, then undraft. A final docs-only rebase will
+be needed after #48 and #45 merge, since those overlap only on `handoff.md` and
+`backlog.md`.
+
+---
+
+## 2026-08-21 — frontend — Enumerating the safe side, and four reasons that finally exist as producer bytes
+
+**Changed:** `irreconcilable` moved to the fault side per ADR-013, but not the way I was
+going to move it. Both reviewers converged on a better shape than the one in my brief, and
+the screen now enumerates the **wait** set rather than the fault set.
+
+**The inversion is the whole design and it was `frontend`'s.** I was going to widen
+`FAULT_ABSENCE_REASONS` to three members and write a comment explaining that it no longer
+mirrors the producer's set. Enumerating the other side is strictly better and closes three
+problems at once:
+
+- An unrecognised reason — a value added to the contract next month, a typo — now falls to
+  **investigate** rather than wait. A default has to point somewhere, and the comforting
+  direction is the error ADR-013 names. My version defaulted to wait.
+- `FAULT_ABSENCE_REASONS` ceases to exist, so there is no frontend constant that could be
+  claimed to mirror a producer constant. **The superset-versus-mirror problem stops being
+  expressible** rather than being documented.
+- It states the real relationship: the producer has no constant this could mirror, because
+  its frozenset answers *should this import fail* and this screen answers *should a human
+  look*. Reading one as the other is what put `irreconcilable` on the wrong side to begin
+  with.
+
+**`code-review` found the argument that beats the one that won, and it is a drift argument
+frequency data cannot retire.** The producer's own docstring says an epoch placeholder pair
+in both date fields **reconciles perfectly** for 1900, because 1900's Eastern offset really
+is `-05:00`, and fails only *by accident* for year 0001, because `America/New_York` ran on
+`-04:56` local mean time before 1883. They ran it:
+
+```
+1900-01-01  offset -5:00:00   pair reconciles      -> implausible     -> INVESTIGATE
+0001-01-01  offset -4:56:02   pair does not        -> irreconcilable  -> WAIT (before)
+0001-01-01T00:00Z  overflows datetime.min          -> unreadable      -> INVESTIGATE
+0001-01-01T12:00Z  does not                        -> irreconcilable  -> WAIT (before)
+```
+
+One phenomenon — a sentinel in both fields — landing in three different action classes on
+criteria no operator can act on: a nineteenth-century offset, and the hour of day. That
+supports the ruling *and* says the cleaner repair is upstream in the producer's own set,
+which is now a backlog note for `data-engineer`. The client no longer depends on it either
+way.
+
+**`architect` gave the rule I most want carried forward, and it is about which claims to
+edit.** *Correct what asserts the present; append to what records the past.* Six
+mirroring/derivation claims existed; four were present-tense assertions in code and are
+fixed, and two are handoff entries that were **left exactly as they were** — including the
+wait/investigate table in the previous entry that this ruling makes wrong. Editing those to
+match would destroy the only property that makes an audit trail worth keeping. The
+four-version fold measurement is valuable *because* the three wrong ones are still there.
+
+The coupling words to search for are `exactly`, `mirrors`, `the same set as`, `derived
+from`. Each is a guarantee about another file that nothing enforces.
+
+**And `frontend` predicted exactly which one I would leave standing.** The `awaitingSource`
+docstring said *"the producer leaves the import at exit 0 for these, because they are the
+source's state rather than a fault on our side."* Strike `irreconcilable` from the member
+list and **that sentence stays literally true** — `not_offered` really is exit 0 — while the
+inference it licenses, exit 0 implies wait, is precisely what the ruling overturned. It
+passes review as a true statement. Deleted rather than amended; it is the most survivable
+form of a stale citation, because nothing about it reads as false.
+
+**All four non-empty absence reasons now exist as producer bytes.** This was
+`code-review`'s (d) and `architect` raised the same thing with more weight: every non-empty
+reason fires **zero times** against the live source, so the whole mechanism — both buckets —
+rested on payloads written from the TypeScript interfaces, which are structurally blind to
+a field rename or a serialisation change. Two new recorded fixtures fix that, and neither is
+hand-written: each was produced by driving the **in-tree importer** with a doctored
+`ScheduleLeagueV2` *source* payload, seeding a real database, serving it and capturing the
+response. The only thing authored is the upstream payload the NBA would have sent.
+
+- `schedule-grid-date-faults.recorded.json` — a 1900 epoch pair (`implausible`) and a pair
+  one day apart (`irreconcilable`).
+- `schedule-grid-date-absent.recorded.json` — both fields empty (`not_offered`) and one
+  field withheld (`unreadable`).
+
+**A mutation I wrote that could not fail.** One of the new mutations inserted a lint comment
+— a change with no semantics — so nothing caught it, and the harness said so. Deleted rather
+than repaired: a mutation that cannot fail is the exact thing this harness exists to find in
+*tests*, and keeping it would have been that defect one level up. There is no honest
+replacement, because what the recorded fixtures uniquely catch is a **producer-side** change
+and no client-side mutation can simulate one. That is a limit of mutation testing, not a gap
+in the fixtures.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **124 tests across 9 files** (from 118).
+**28 of 28 mutations caught**, three new: the classification inverted back to enumerating
+faults; the wait copy reverted to hedging across a cause that has left; and an unrecognised
+reason defaulting to wait.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated. The wait/investigate table
+in the entry above is now wrong and is deliberately left standing.*
+
+*None of this round has been reviewed.* Five rounds on this branch, five that found
+something real.
+
+*The two new fixtures prove the producer classifies **my** doctored inputs that way, not
+that the NBA will ever send them.* The source payloads are authored; only the response bytes
+are the producer's. That is a genuine step up from hand-built objects and it is not the same
+as observing the real thing.
+
+*`code-review`'s correction to my ADR report was right and I had over-claimed to the
+coordinator.* I reported line 176 as *"'Three are possible' with a four-value set"*, which
+invites the reply that it is internally consistent — `""` is not an absence cause, so three
+causes and three named is correct. The real defect is narrower: that set **omits
+`implausible`**, so a validator built from it rejects a well-formed response. Both blocks
+also sit under dated headings inside `## Amendments` and the later one says the earlier is
+untrue, so it is scoped by position more than I allowed. The coordinator acted on my
+framing; I have corrected it.
+
+*Nobody has read the new copy but me.* "Needs looking at rather than waiting out" is my
+phrasing for a distinction ADR-013 states abstractly, and copy is what most of this
+branch's findings have been about.
+
+**Next:** exact-head reviews, then undraft. A final docs-only rebase after #48 and #56
+merge — and **not** copying ADR text into this PR, so the four-versus-five problem cannot
+recur through a merge.
+
+## 2026-08-21 - frontend - Regenerating the inputs I had already lost, and a "cannot be done" that was not
+
+**Unit:** `schedule-grid-pending-periods`, closing three review findings and a
+rebase. Continues the entries above; this one is about *evidence* rather than
+behaviour, which is where the branch ended up.
+
+### The claim all three reviewers refused, and they were right
+
+I deleted a mutation that could not fail and asserted there was **no honest
+replacement**, because what the recorded fixtures uniquely catch is a
+producer-side rename or serialisation change and "no client-side mutation can
+simulate one". That is false. **The fixture JSON is source too**, and mutating
+it is precisely that simulation. My harness only walked `.ts`/`.tsx`, so the
+limit was scope, not possibility — the exact shape of "cannot be done" meaning
+"I did not think of it" that I had flagged when making the claim.
+
+Five fixture mutations added, all caught by the boundary: field rename, case
+change, reason removed, a date restored beside a non-empty reason, ids array
+renamed. They matter more than their count: the fixtures' docstring claims
+hand-written payloads are blind to "a renamed field, a changed serialisation, a
+value the producer stopped emitting", and until now nothing tested that
+sentence. **33 of 33 mutations caught.**
+
+### The provenance finding, which was already true rather than predicted
+
+`architect` and `frontend` both said the doctored source payloads behind the two
+new fixtures were uncommitted, so the docstring's *input -> reason* sentences
+were claims nothing could check, and the only repair path was hand-editing the
+JSON — silently converting a recording into a mock.
+
+**When I went to commit them, one was gone.** The faults payload had been
+overwritten by the second capture run hours earlier. The predicted failure had
+already happened and I had not noticed, because the fixture it produced was
+still sitting there looking like evidence.
+
+So I derived them instead of reconstructing them from memory.
+`make_pending_date_payloads.py` takes the committed base and applies the minimum
+edit reaching each reason, and `--verify` re-runs the producer's classifier over
+the result. Two mutations of the generator prove `--verify` can fail: an expected
+reason changed (reports the move, exit 1) and a base id moved (refuses rather
+than forcing a stale edit, exit 1).
+
+### The first generator was wrong, and only capture-and-compare caught it
+
+I based it on `nba_scheduleleaguev2_2026_27_pending_knockout.json` — 24 games, 6
+pending. `--verify` **passed**, because it only classifies the two doctored
+games. But the fixtures are 12/10/2: they came from the payload the *demo seed*
+imports. A generator that claimed to regenerate the fixtures would have produced
+a different response entirely, and the verifier could not see it, because it
+checked the part I had thought about.
+
+Comparing the derived payload against the one surviving original is what found
+it. After retargeting, derived == surviving original, and both fixtures
+regenerate end to end — seed, serve, capture — differing in **one leaf**,
+`refreshed_at`. The reconstruction of the lost payload is now proven rather than
+remembered.
+
+That is the fourth instance of *correct by accident* on this branch, and the
+sharpest: a verifier passing while checking the wrong artifact. **A green
+verifier says the thing it looked at is fine, not that it looked at the right
+thing.**
+
+### The ADR citation, scoped rather than asserted
+
+`code-review` found `types.ts` claiming "the classification is ADR-013's
+decision" while ADR-013 **in this tree** contradicts it. Verified, and it is
+worse than reported: at this head the ADR states the five-value set (`:222`) but
+assigns no action to any member, and the one place it touches the question does
+so through **exit codes** (`:240`, grouping `irreconcilable` with `not_offered`)
+— the exact inference the ruling overturned. The comment now says the ruling is
+not in this tree, names the line to check, and records that **this branch must
+not merge ahead of the ADR revision**. Merge-order dependency, not a text
+overlap.
+
+### The partition assertion that could not see its missing term
+
+`frontend` found `scheduleGridModel.test.ts` summing **four** terms while the new
+recorded test sums **five** — omitting `dateFaulted`, and passing, because the
+fixture it built contained no faulted game. A partition assertion blind to the
+bucket it forgot. Now five terms, each asserted non-empty, with a comment saying
+the two sums must agree on how many terms exist.
+
+### The rebase, and a resolution that produced a file disagreeing with itself
+
+Rebased onto `ccedd0f`. Resolving by taking both sides left a **bare duplicate
+`schedule-grid-ui` heading** whose body had been replaced, and **both** status
+header blocks — so the file stated two different totals, 114 and 112, on
+consecutive lines. Only counting unique slugs against markers found it. Truth is
+**115/115, 1:1, no duplicates**, recomputed from the finished file.
+
+That is the recount rule paying for itself a second time in one branch, and this
+instance is stronger than the last: the previous one was two headers each wrong,
+this one is a *structural* duplicate that a header comparison could never see.
+
+### Could not verify
+
+- **That the ADR revision will land before this branch.** The code now states the
+  dependency, which is the most I can do from here; nothing enforces it.
+- **That `--verify` is right about the *live* producer.** It runs the in-tree
+  classifier. If the deployed importer differs from this checkout, it agrees with
+  the wrong thing — and it would still print "all claims hold".
+- **That the derived faults payload is what I originally wrote.** It reproduces
+  the committed fixture to one timestamp leaf, which is stronger evidence than my
+  memory, but it is not the same claim: a different payload reaching the same
+  response would be indistinguishable.
+- **The rendered result of this round.** The changes are a comment, a test, a
+  generator and a docstring; I did not re-drive the screen in a browser at this
+  head, having been told to hold the tree still. The suite and the harness are
+  the evidence, and they are weaker than a browser for anything a browser can see
+  — which found a copy defect jsdom could not, one round ago.
+- **Whether the generator belongs where I put it.** It imports `backend/src` to
+  make frontend fixtures and fits neither side. Filed for `architect`.
+
+## 2026-08-21 - frontend - A correction that over-claimed in the same direction as the thing it corrected
+
+**Unit:** `schedule-grid-pending-periods`, final review round, rebased onto
+`5a6aaf3`. Three reviewers on `adba693`; all three found something real.
+
+### The one I got wrong twice
+
+`code-review` had found `types.ts` citing "ADR-013's decision" while the ADR in
+the tree contradicted it. I fixed it by writing that the ADR **assigns no action
+to any member** and touches the question only through exit codes at `:240`.
+
+Both halves were false. At `ccedd0f` the ADR already assigned three of five —
+`not_offered` to *wait* (`:190`), `unreadable` (`:191`) and `implausible`
+(`:233`) to *investigate*. The gap was exactly one member wide: `irreconcilable`.
+
+So the correction over-claimed **in the same direction** as the thing it
+corrected, and it did so by discarding the three assignments that actually
+supported this client. The first version claimed the ADR said something it did
+not; the second claimed it was silent where it was not. Same document, same
+direction, one iteration apart. `code-review` caught it by reading the ADR rather
+than my account of it — the sixth time on this branch that reading the artifact
+beat reading the report about it.
+
+**And it dissolved rather than being fixed.** `main` reached `5a6aaf3` carrying
+the ADR revision with a full five-row operator table, so `:240` is gone, the
+merge-order dependency is satisfied, and the comment now cites `:194-199` and
+`:201` — every line re-read at the new head before being cited.
+
+### The verifier that could not see which artifact it held
+
+`frontend` and `code-review` independently drove `--verify` against the wrong
+base and got **exit 0**. My guard checked that the two doctored ids exist in the
+base; the 24-game knockout payload contains both, so the substitution that
+caused the original defect still passed silently. `code-review` ran it rather
+than arguing it.
+
+Worse, `--verify` never opened the fixtures it claimed to verify. Expectations
+came from a hardcoded dict — a third copy of data the recordings already hold —
+so hand-editing a reason in the JSON would have been **blessed by the check
+written to prevent hand-edits**.
+
+Both closed by one change: expectations are now read out of the recorded
+fixtures, and the derived pending set must equal the fixture's
+`pending_game_ids`. Driven, not reasoned: the wrong base now prints the two id
+lists and refuses; a hand-edited reason now fails naming both values.
+
+### Two more from `architect`, both found by execution
+
+The `--out` directory was **not** directly seedable despite the code printing
+"(unmodified, so --fixtures-dir works)" — the seed reads a fixed filename. And
+the printed recipe then told the reader to *copy a variant over the base
+filename*, which is the exact operation that destroyed the original payload. A
+file whose purpose is removing a hand-step documented one. Each variant now
+writes its own directory under the name the seed reads; verified by seeding
+straight from it.
+
+The asymmetry note said the fault copy is true of all four causes. It is
+**already false of `not_offered`** — the source published a game and no date.
+What saves it is the *routing*, not the copy, and the routing is the mechanism a
+future editor must preserve. Corrected to say so.
+
+### Could not verify
+
+- **That the ADR lines I now cite stay put.** I re-read all seven at `5a6aaf3`
+  rather than trusting the relayed quote, which is why the citation is right this
+  time. Nothing stops the next edit shifting them; a line number is a claim with
+  a short shelf life and I have now been burned by one twice.
+- **Anything a browser sees, at this head.** The round changed a comment, a
+  generator, a docstring and a backlog entry. No rendering was re-driven.
+- **The mutation harness**, as every round: it is outside the repository, so
+  33 of 33 is a number no reviewer can check. That is the same shape as the
+  finding above about `--verify`, one level out, and it is now the oldest
+  unclosed limitation on this branch.
+- **`schedule_content_version` is identical across all three grid fixtures**
+  despite materially different pending sets — `architect`'s round-one fingerprint
+  defect, still open, now with three fixtures standing as evidence for it.
+
+### Process failure I should name
+
+I edited the tree while `architect` was mid-review, again, after being told to
+hold it still. They disclosed it in their own report rather than me. Twice
+disclosed by reviewers is not a lapse, it is a habit, and the fix is not
+intention — it is not starting work while a review is outstanding.
+
+## 2026-08-21 - frontend - The verifier was green about a third artifact it was not looking at
+
+**Unit:** `schedule-grid-pending-periods`, closing the last review round on
+`b366eeb`. `code-review` returned no new findings; `architect` returned three.
+
+### The same defect, a third time, found the same way
+
+`--verify` had been green while pointed at the wrong base, then green while
+reading a hardcoded dict instead of the recordings. Both were fixed. `architect`
+then moved a **resolved** game one week in the base — a within-DST shift that
+reconciles cleanly, which is exactly what a re-capture would produce — and got
+**exit 0**, while the game crossed from scoring period 1 into period 2 and would
+have changed the captured counts.
+
+The check pinned 2 of 12 games. The fixture is a whole response: 21 periods, 630
+count rows. And the docstring beside it said the fixtures "were regenerated end
+to end, differing in one leaf" — a sentence a reader would take a green
+`--verify` to stand for.
+
+**I fixed the instance twice and never asked what else the check could be
+pointed at.** The third instance was found by the same person applying the same
+move, which is the argument for the move rather than for me.
+
+`--verify` now recomputes all 630 per-period per-team count rows from the derived
+payload — using the producer's own `parse_schedule`, not a second implementation
+of its date logic — and compares them against the recording. `architect`'s exact
+case now reports 4 differing rows and exits 1.
+
+### `code-review` found the loop was driven by the wrong collection
+
+`verify()` iterated `VARIANTS` and indexed `RECORDED` from it, so a recording
+with no variant was skipped **silently, with a green exit**. Not hypothetical in
+form: `schedule-grid-current.recorded.json` sat in that directory, outside the
+verifier's scope, with nothing saying so.
+
+Closed both ways they suggested: the pairing is asserted, and `current` is now a
+third variant with an empty edit set — which additionally pins the undoctored
+base every other comparison is anchored on. All three recordings now have all
+630 count rows checked.
+
+### A mutation that could not fail, twice, while testing this
+
+Driving the silent-skip case, a PowerShell `-replace` failed to match. The run
+went green and looked exactly like a caught mutation. **That is the skipped-
+mutation failure this project wrote down tonight, happening to me while I wrote
+the check for it** — and it only surfaced because the result seemed too clean.
+The driver now asserts the edit changed the file before drawing any conclusion.
+
+Then two candidate mutations were discarded for being unobservable by
+construction: removing the pairing assertion, and removing the count comparison.
+With nothing currently violating either guard, removing it changes no output.
+**A mutation has to create the condition the guard exists to catch**, not merely
+delete the guard. Both replaced with data mutations, both caught.
+
+### `architect`'s third finding, and it is the same clause a third time
+
+The comment said the ADR "now assigns all five". The table assigns **four** —
+`''` is a date that resolved, not an absence cause — and the same sentence said
+so, contradicting itself within one clause.
+
+This exact clause has now been wrong about this exact document three times:
+understating the assignment to nothing, then overstating it by one, **each time
+in the direction I needed**. Nothing depended on it, which is why it survived; it
+is corrected to "every absence cause… four rows".
+
+### Could not verify
+
+- **Whether a fourth thing `--verify` is not looking at exists.** Three were
+  found by three different probes, none by me. The pattern says assume a fourth
+  until someone drives it; the honest statement is that the check now covers
+  reasons, pending sets and every count row, and I do not know what that leaves.
+- **The mutation harness, still outside the repository.** 33 of 33 remains a
+  number no reviewer can check, and it is the same shape as the finding above.
+  Oldest unclosed limitation here.
+- **Anything a browser sees, at this head.** The round changed a Python
+  generator, a comment and two docstrings.
+- **`architect`'s finding 2 is theirs, not mine:** the ADR-013 revision landed on
+  `main` touching one file, with no handoff entry and no backlog line. Recorded
+  so it does not go quiet.
+- **`schedule_content_version` is identical across all three grid fixtures**
+  despite materially different pending sets. Round-one fingerprint defect, still
+  open.
+
+## 2026-08-21 - frontend - A fourth hole in the same check, and the field the screen is about
+
+**Unit:** `schedule-grid-pending-periods`. `architect` and `code-review` both
+drove the fourth independently; `frontend` found it too. Three probes, one
+answer.
+
+### The one I asked for and did not want
+
+I said I was assuming a fourth hole existed until someone drove it and failed.
+Nobody failed.
+
+`--verify` did `_, reason = _pending_game_date(...)` — it **computed the pending
+game's date and threw it away**. Both pending games could move a week,
+reconcile cleanly, keep their reasons, and the check reported the fixture
+reproduced. Pending games are excluded from `parse_schedule(...).games`, so the
+630-row counts comparison added an hour earlier was structurally blind to them.
+
+`game_date` is the field `readPendingGames` buckets on to decide which column
+carries the `TBD` marker. **It is the field this entire unit exists to render**,
+and the check computed it and dropped it on the floor.
+
+Adding `current` as a variant is what made it live: the doctored variants all
+have `null` dates, so only the undoctored recording had a date to disagree with.
+The fix for hole three created the conditions to see hole four.
+
+### Stopping the one-field-at-a-time repair
+
+`architect`'s instruction, and it is the right one: compare the **whole**
+recorded pending record rather than the next field someone names. Three
+consecutive rounds went reason-only, then reason-plus-counts, then
+reason-plus-counts-plus-date, and each fix left the following field open —
+`game_label`, `game_sub_label` and `game_subtype` were next in line.
+
+It now compares every field of every pending record, so a field added to the
+contract arrives as a mismatch rather than as silence.
+
+**And it does so through the producer's own `pending_games`, not a
+reimplementation.** My first attempt mapped the fields by hand and failed
+immediately — I had guessed `seriesText` for `game_label` where the producer
+reads `gameLabel`. That failure was the useful part: a hand-mapped comparison is
+a second implementation of the producer, which is the hazard `architect` had
+just named one function away.
+
+### Two smaller holes, both driven, both closed
+
+`code-review` found `derived_counts` skips games outside every scoring period, so
+a game appearing or vanishing outside the calendar was invisible. The lineage
+counters can see it and were never compared; now they are, and an extra game on
+`2027-08-01` fails with `source_game_count: recorded 12, derived 13`.
+
+`architect` found the counts comparison is one-directional — it iterates recorded
+rows — and is complete **only because** the recording is the dense 21x30 cross
+product. That held in all three recordings and nothing asserted it. Now asserted;
+dropping the zero rows fails.
+
+### My driver had the defect it was testing for, twice
+
+Driving these, a PowerShell `-replace` failed to match. The run went green,
+indistinguishable from a caught mutation. **The skipped-mutation failure,
+happening inside the harness written to catch it.** Every case now asserts the
+edit changed the file first.
+
+Then a case passed **for the wrong reason**: moving a resolved game's EST field
+without its UTC sibling tripped the producer's reconciliation check, so the
+mutation was caught by `SourceContractError` rather than by the counts
+comparison it was written to test. Green-for-the-wrong-reason in a driver whose
+subject is green-for-the-wrong-reason. Fixed by moving both fields, and it now
+fails with `4 of 630 count rows differ`.
+
+Two candidate mutations were also discarded as unobservable by construction —
+removing the pairing assertion, removing the counts comparison. With nothing
+currently violating either guard, removing it changes no output. **A mutation has
+to create the condition the guard catches, not merely delete the guard.**
+
+### Could not verify
+
+- **Whether a fifth hole exists.** Four were found by four probes and none by me.
+  The check now covers pending records whole, all 630 count rows, the dense-grid
+  precondition and two lineage counters — and I said something like this after
+  the third one. The honest position is that I have no method for finding the
+  next one; the reviewers do, and it is *"what else could this be pointed at?"*
+- **`derived_counts` reproduces the period predicate rather than calling it.**
+  Dates come from `parse_schedule`, but bucketing is an inclusive string-range
+  scan written here while the response's counts come from SQL over
+  `ScoringPeriod`. `schedule_grid.py` names that exact duplication as a hazard
+  and refuses it. Accepted here to avoid standing up a database for one check,
+  and now stated in the docstring: if these disagree, this file is the more
+  likely one to be wrong.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6 are
+  numbers no reviewer can check.
+- **Anything a browser sees at this head.**
+- `architect`'s open item remains theirs: the ADR-013 revision landed on `main`
+  with no handoff entry and no backlog line.
+
+## 2026-08-21 - frontend - The method, and the floor it stops at
+
+**Unit:** `schedule-grid-pending-periods`. I asked whether a fifth hole existed
+because I had no method for finding one. `architect` gave me the method and
+`frontend` gave me its limit, which is worth more than either finding.
+
+### The method
+
+> **Anything a check reads out of the artifact it is checking cannot fail.**
+
+Every hole on this branch was an instance: the wrong base, the hardcoded
+expectation dict, the resolved games, `game_date`. All four were found by three
+people asking that question, and none by me asking it.
+
+I have now run it to exhaustion over the response's six top-level keys instead of
+one field per round, and put the table in the generator's docstring:
+`counts` derived; `lineage` partly derived with three fields needing a database;
+`season` and `league_id` legitimately inputs; **`periods` and `teams` inputs that
+should not be.**
+
+### The floor, which is `frontend`'s and is the part I would not have found
+
+`periods` cannot be closed by widening the comparison — the pattern that closed
+the first four. Scoring periods come from SQL over `ScoringPeriod` rows, not from
+the `ScheduleLeagueV2` payload, so this file has nothing to derive them *from*;
+widening would mean comparing the recording against itself.
+
+Driven: shift every boundary three days, recompute the counts from the shifted
+periods, and **6 of 630 rows move while `--verify` stays green.** `periods`
+decides where the *columns* are exactly as `game_date` decides where a *game*
+is, and I closed only the second half.
+
+So this one is narrated rather than closed, and the docstring says what covers it
+instead — the backend's `ScoringPeriod` tests. **The method has a floor and it is
+the inputs the comparison is computed with.** Below that line, narration replaces
+closure. That is the sentence that should stop a round ten.
+
+### The one-directional comparison, inside the fix for the one-directional problem
+
+Both reviewers drove it and both got exit 0: `differing` iterated
+`record.items()`, so the comparison was `recording ⊆ derived`. Deleting a field
+from all three recordings passed silently.
+
+And the docstring claimed **exactly the direction not covered** — *"a field added
+to the contract arrives as a mismatch rather than as silence"*. A field added to
+the contract is absent from an older recording, so nothing yields it, so nothing
+looks. The sentence was not merely wrong, it was reassuring about the gap.
+
+This is the same one-directionality I had *fixed forty lines below in the same
+commit* with the dense-cross-product assertion. Fixed at one site, reintroduced
+at another, in one diff — `architect`'s scope-of-application defect, self-
+inflicted within a single change.
+
+Now over the union of both key sets. Deleting `game_subtype` from all three
+recordings fails with `recorded '<absent>' derived ''`.
+
+### A stale scope paragraph, in the commit that fixed the same defect one file over
+
+`ScheduleAbsenceReasons.recorded.test.tsx` still described the *previous* head's
+scope — "the four reasons and all 630 count rows", and "derives both" where three
+are derived. I widened the generator's opening in that same commit for exactly
+this reason and did not carry it one file across. A reader trusting that
+paragraph would have believed `game_date` was unchecked, which is now backwards.
+
+### Could not verify
+
+- **Whether the audit table is complete.** It is my enumeration of six keys, and
+  my enumerations have been wrong four times on this branch. It is checkable in
+  minutes against the response shape, which is the most I can offer.
+- **That `periods` drift would be caught backend-side.** `frontend` names three
+  backend tests touching `ScoringPeriod` and calls it "very likely". I have not
+  driven a period-generation change against them, and the frontend recorded tests
+  find their period *from the recording's own periods* — the same
+  self-consistency.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6
+  remain numbers no reviewer can check.
+- **Anything a browser sees**, at this head or the last three. Eight rounds
+  without a real screen reader.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - I asserted a floor and a reviewer found it one function lower
+
+**Unit:** `schedule-grid-pending-periods`. All three reviewers found the fifth
+hole. Two called it unclosable; the third went and closed it.
+
+### The claim I got wrong, and it is the same shape as everything else here
+
+Last entry I wrote that `periods` was **the floor** — that scoring periods come
+from SQL over `ScoringPeriod` rows, are not in the `ScheduleLeagueV2` payload,
+and so this file has nothing to derive them from. I narrated it instead of
+closing it, and framed that as the method's limit: *"the inputs a comparison is
+computed with can never be its subject."*
+
+`code-review` found `weekly_periods(first_game, last_game)` in
+`seed_schedule_grid.py` — a **pure function** of the first and last game dates,
+both of which `--verify` already had. They drove the closure before reporting it:
+21 of 21 windows including `is_playoff`, exact on all three variants.
+
+**Asserting where a method stops is exactly as falsifiable as any other
+assertion, and I did not test it.** I reasoned from "it comes from SQL" to "it
+cannot be derived" without looking for a function, which is the armchair move
+this project keeps catching. The floor was one import lower than I claimed.
+
+### What was actually at stake
+
+`readPendingGames` needs two operands to choose the TBD column: the pending
+game's `game_date` and the period window. Hole four was the first; this was the
+second, and I closed one and declared the other out of reach.
+
+`code-review` measured why the counts could not object: **610 of 630 rows are
+zero, and only two of 21 periods hold a resolved game.** The December boundary
+that decides this feature's entire output sits in the empty region, where
+boundaries move freely. Driven: move period 6's end past `2026-12-04` and both
+pending games change column with everything green.
+
+Now derived and compared. That case fails with `2 period row(s) differ`,
+`is_playoff` flipped fails with `1 period row(s) differ`, and a hand-edited team
+abbreviation fails with `1 team row(s) differ` — three cases that were exit 0.
+
+`teams` closed the same way for `nba_team_id`, `abbreviation` and `name` from
+`nba_static_teams.json`. `team_id` is a database key and stays out of reach,
+which is a limit I have now checked rather than assumed.
+
+### The audit table, rewritten in the honest form
+
+It said "an input, and this is the floor" for two rows. It now lists what has
+been **tried** rather than what is possible, and says so — because the previous
+version's confidence is what stopped me looking for `weekly_periods`.
+
+`derived_counts`' docstring changed with it: it no longer says the boundary
+problem is unclosable, it says the caller now pins the windows before calling,
+and that this function is only sound because its inputs are checked.
+
+### Could not verify
+
+- **Whether `weekly_periods` is what the API actually uses.** It is the *seed's*
+  function, and the response's periods come from SQL over rows the seed wrote.
+  It reproduces all 21 windows on all three recordings today, which is evidence
+  of agreement rather than of shared implementation. If the API's period
+  generation ever diverges from the seed's, this check follows the seed.
+- **That there is no sixth.** I have said a version of "this is the last one"
+  three times and been wrong three times. The per-key audit is now exhaustive
+  over the response's six top-level keys, which is the most structured claim I
+  can make, and it is checkable in minutes.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6
+  remain unverifiable by any reviewer.
+- **Anything a browser sees**, across the last five heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - Cardinality, which every previous fix compared its way past
+
+**Unit:** `schedule-grid-pending-periods`. `architect` and `code-review` both
+found the sixth, from opposite ends of the same defect, and it is a class rather
+than an instance.
+
+### The class
+
+Every closure on this branch compared the **values** of a set whose
+**membership** the artifact under test declared. Five rounds of "which field is
+unchecked" never looked at "how many of them are there".
+
+`code-review` deleted 15 teams from the recordings along with their zero count
+rows: **exit 0.** Half the league vanishes from the grid and the check reports
+the recording reproduced. The density assertion could not object because it
+computes `len(periods) * len(fixture["teams"])` — **both operands from the
+artifact it is guarding.** It pins internal consistency, never completeness.
+
+`architect` came at it from the other side: add a 31st team upstream and it is
+also **exit 0**, because the comparison iterates the recording and reads
+`derived_teams.get(...)`. That is `recording ⊆ derived` — the exact
+one-directionality I fixed for pending records with a key-set union one commit
+earlier, and reintroduced one function later in the next commit. **Fixed and
+reintroduced within two commits of each other.**
+
+Membership is now compared before values, for teams, recordings, pending ids and
+periods. Both cases fail, plus a fourth recording dropped in the directory, which
+passed because `RECORDED` and `VARIANTS` are both hardcoded so an unknown file is
+absent from *both* — the orphan check now globs.
+
+### The diagnostic that failed for the right reason and said the wrong one
+
+`architect` found the period message printing two identical dicts as "differing".
+`zip(strict=False)` truncates to the common prefix, so a pure length change left
+the differing list empty and the fallback printed row 1 against row 1. Correct
+exit code, false explanation, in a file whose subject is diagnostics that do not
+mislead. Length is now its own branch: `period count differs: 20 recorded, 21
+derived`.
+
+### The provenance claim I got wrong in the other direction
+
+I called `weekly_periods` "the producer's own function". `architect` traced it:
+`weekly_periods` → `settings_document` → `import_league_settings` →
+`project_scoring_periods` → SQL → `periods[]`. **Hop zero is shared
+implementation; the four hops after it are agreement only**, and the function
+lives in `dev/`, so what is pinned is the demo seed reproducing itself. A real
+league whose periods come from imported settings is not covered.
+
+Having just been caught over-claiming a limit, I under-hedged a capability in
+the same file. The table now says so, and every row reads *tried and not found*
+rather than *out of reach* — including `team_id` and `league_id`, which
+`architect` noted were described in two vocabularies for one situation.
+
+### Stopping
+
+`architect`'s ruling, which I am taking: **the marginal defect this is now
+catching is smaller than the marginal defect of another review round.** Each
+round found a strictly smaller and more structural class — wrong value, wrong
+field, wrong operand, wrong cardinality — which is convergence rather than a
+sequence of failures, and the stopping point for a fixture-verification script
+passed about two rounds ago. The thing that makes the rest load-bearing is the
+backend `_pending_game_date` pin, and that is the `data-engineer` item.
+
+### Could not verify
+
+- **That there is no seventh.** I have been wrong every time I said otherwise.
+  The audit table now names where one would live: it is exhaustive over values
+  and, since this round, over membership — so the next one is likelier to be
+  about *ordering* or about a level of nesting I have not enumerated.
+- **That `weekly_periods` matches the API's period generation for a non-demo
+  league.** It does not; that is now stated rather than implied.
+- **The mutation harness**, still outside the repository. 33 of 33 and 6 of 6
+  remain unverifiable by any reviewer, and that is now the oldest and largest
+  open limitation on this branch.
+- **Anything a browser sees**, across the last six heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - Assumed key sets, and the first hole that reached the screen
+
+**Unit:** `schedule-grid-pending-periods`. `frontend` found the seventh and it is
+the only one in this sequence with a visible consequence.
+
+### The one that reaches the screen
+
+Overwrite one non-zero count row with a duplicate of a zero row. The list is
+still 630 rows, so the density check — which counted rows — passed, and because
+the comparison iterated recorded rows, the vanished `(period, team)` pair was
+never looked up. **Exit 0 on all three recordings.**
+
+The consequence is not confined to the tool. `endpoints.ts` deliberately
+tolerates a sparse `counts` rather than blanking the page, so the missing pair
+renders as **`·`** — one of the three states this branch exists to keep distinct,
+and the one that asserts *the backend sent no count*. A real number would have
+become a marker claiming the opposite. **The single defect this screen was built
+to prevent, arriving through its own verification tool.**
+
+And the recorded test shared the blind spot exactly:
+`ScheduleGridTable.recorded.test.tsx` asserts `counts` has
+`teams.length * periods.length` entries, and the cell census still counts 630
+with one of them a `·`. Two independent checks, one shared proxy.
+
+Closed by asserting what "dense" actually means — the recorded key set equals the
+full cross product — which subsumes the length check it replaces.
+
+### A false disposition, in the row below the one that had just been wrong
+
+I left `unresolved_game_ids` and `persisted_team_row_count` unchecked as
+"covered transitively by producer invariants". Driven by `frontend`: set
+`unresolved_game_ids` to a non-empty list and `--verify` exits 0.
+
+The invariants are real and they are the reason these are *cheap*, not the reason
+to skip them. **A producer invariant guarantees the producer will not emit a bad
+value; this file's stated threat is a hand-edit to a committed recording**, which
+no producer invariant covers. So the two fields most strongly guaranteed upstream
+were the two the recording could lie about most freely.
+
+`persisted_team_row_count` sat inside a sentence about needing a database and is
+`2 * len(parsed.games)` — arithmetic on a number three lines above it. I reasoned
+from *"something else covers it"* to *"nothing is needed here"* without checking
+whether it was one line away, **in the same commit that rewrote the table to say
+it lists what has been tried rather than what is possible**, and in the row below
+the one where that exact reasoning had just been shown wrong.
+
+### The root I left assumed after closing the leaf
+
+The audit table was exhaustive over six top-level keys *as the recording has
+them*, with nothing enforcing that there were six. Adding a seventh exited 0.
+That is the pending record's key-set union one level up — closed for the leaf,
+assumed at the root. Now `RESPONSE_KEYS`.
+
+### The property I sold short
+
+I corrected "the producer's own `weekly_periods`" to a hedge about agreement.
+`frontend` traced it further and the truth is **stronger** than either version:
+`weekly_periods` is the seed's *input* to `project_scoring_periods`, which is the
+production transform that writes the rows. So the comparison **spans** production
+code — change how periods are projected, re-capture, and this still fails.
+
+Every other check here, `parse_schedule` above all, *is* the production
+transform, so a faithful re-capture reproduces a producer change invisibly. This
+one is the only exception in the file, and I had just written it down as the
+weakest link.
+
+### The procedure, which replaces asking whether I am finished
+
+From `frontend`, and it is why this stops being luck: **for each thing this file
+compares, what is the key set, and is it asserted or assumed?** Every one of the
+seven holes has been an answer of "assumed". Membership is now asserted for the
+response's top-level keys, the recordings on disk, pending record fields, pending
+ids, periods, teams, and the 630 `(period, team)` pairs.
+
+### Could not verify
+
+- **That the procedure is exhausted.** It is mechanical now, which is the point —
+  anyone can re-run it without needing the insight that produced it.
+- **The recorded test still uses the length proxy.** I did not change
+  `ScheduleGridTable.recorded.test.tsx`, because `--verify` now catches the case
+  and touching an assertion I have not driven end to end is how this file got
+  into trouble. Worth a follow-up, not a silent edit.
+- **The mutation harness**, still outside the repository, and now the largest
+  open limitation on this branch by some distance.
+- **Anything a browser sees**, across the last seven heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - "1,200 games" was never the season, and a version that does not move
+
+**Unit:** `schedule-grid-pending-periods`, post-undraft. Not code — two facts
+measured against the real database before the first live refresh, both of which
+correct numbers that have circulated today.
+
+### 1,200 is the season minus what the old importer could not express
+
+Last night's registered refresh:
+
+```
+refreshed 2026-08-20 21:54:31   version e80a3aecca0e86eb
+source 1200   resolved 1200   pending_games key: absent
+```
+
+Post-merge re-seed, same source:
+
+```
+version e80a3aecca0e86eb   source 1206   resolved 1200   pending 6
+```
+
+**The six Cup games were filtered upstream of the source count**, so last night's
+screen was under-reporting the source by six and nothing on it could have said
+so. "1,200 games" has been used today as though it were the season. It is not,
+and the difference is exactly the games this unit exists to display.
+
+The `()` default for an absent pending block is still sound —
+`lineage.py:222-225` argues that the old contract required
+`source == resolved`, so the pending set was necessarily empty, and reading it
+that way recovers the claim rather than guessing it. I went looking for a defect
+here and did not find one. **The residual is that the inference is only true
+because the count had already been narrowed**, which is a fact about the old
+importer rather than about the block.
+
+### The version is byte-identical across a refresh that changed the screen
+
+`e80a3aecca0e86eb` before and after. Same string, same `refresh_id` row updated
+in place, six pending games appearing from nothing.
+
+Predicted from the mechanism — `schedule_content_version` fingerprints persisted
+`team_schedule` rows, and a pending game has none because it has no teams — and
+then **demonstrated on the real database** rather than left as an argument.
+`refreshed_at` is the only field that moves; `schedule_grid.py:123-129` and
+`importers.py:791` both say so, and this is the first time it has been observed.
+
+The trap is live: confirming a re-seed by eyeballing `version` reports failure
+for a refresh that worked. This is `architect`'s round-one
+`schedule_content_version` fingerprint finding and the schedule lane's
+"cannot cover the pending set" note — **the same fact from two directions**, now
+with an observation attached.
+
+### The failure mode to watch on the first live load
+
+A pre-ADR-013 block renders as an affirmative *no pending games, every count
+final*. Correct about last night, silent about today's six, and **it looks like
+success** — the danger is a convincing screen rather than a wrong one. The
+verification is `lineage.schedule.pending_games` carrying six entries with
+`date_absence_reason: ""`, matched against the live feed's ids. A page that
+renders without error proves nothing.
+
+### Could not verify
+
+- **Anything at season scale.** Every fixture here is 12 games / 21 periods / 630
+  cells; live is 1,206 / 25 / 750. The `18rem` scrollport shortfall is a filed
+  item rather than a regression, and it is the thing most likely to read as
+  broken on first sight.
+- **Two adjacent marked columns on a 30-team grid** — new, and being driven by
+  the coordinator rather than by me.
+- **The live league's period boundaries.** The demo's are Monday-anchored so the
+  Cup dates split 4 / 2 across the weeks of 30 Nov and 7 Dec, with the week the
+  original brief named holding the *smaller* half. A real league's periods come
+  from imported Fantrax settings, so the response's own `periods` array outranks
+  that arithmetic.
