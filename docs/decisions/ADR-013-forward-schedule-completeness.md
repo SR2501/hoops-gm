@@ -233,16 +233,26 @@ not express.
 
 ### 2026-08-21 — the set is five, and the sentinel no longer reaches a consumer
 
-Written by the implementing lane at `architect`'s request, because PR #49 is what makes the
-section above untrue. Status unchanged; this records what the accepted decision produced.
+Written by the implementing lane at `architect`'s request, because PR #49 widened the set
+this ADR publishes. Status unchanged; this records what the accepted decision produced.
 
-The set is **five**, not four:
+**The section above has been corrected in place to the five-value set, rather than left to be
+contradicted here.** An ADR states the contract a consumer is entitled to build against, so it
+asserts the present and is corrected; a handoff entry records the past and is appended to. A
+reader entering at the earlier block would otherwise have built a validator that rejects a
+well-formed response — which is the failure a closed set exists to prevent. The historical fact
+that the set was published as four is preserved by this dated block existing at all.
 
-    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable, implausible}
+The narrower statement of that defect, which is the defensible one: the earlier block was not
+internally inconsistent — `""` is not an absence cause, so *"three causes"* beside a four-value
+set was correct arithmetic. **It simply omitted `implausible`.**
 
 `implausible` is a fault, not an absence: the value **parsed, reconciled, and was still not a
-date the source can have meant** — it falls outside a loose July-to-July window around the
-season the payload itself names. It exists because **agreement is not validity**. This source
+date the source can have meant** — it falls outside a **two-sided eleven-year window** centred
+on the season the payload itself names. The window is deliberately loose, and an earlier
+July-to-July form was widened at `architect`'s request: its only job is to catch an epoch
+placeholder, and the ones this source emits miss by 126 and 2,025 years, while a tight window
+would also refuse a rescheduled game or an adjacent feed and kill the import. It exists because **agreement is not validity**. This source
 uses `1900-01-01` as a live epoch placeholder for a time-only field on every resolved game in
 the recorded fixture; the same convention in the *date* fields reconciles exactly, because
 1900's Eastern offset genuinely is −05:00. Without the window it was stored as a decided date

@@ -132,7 +132,7 @@ defect — a seed writing a position with no provenance, a shape no real produce
 So, alongside the gate matching your work: **state what each check can and cannot observe
 at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
 the moment you write it, from the code beside it.** The failure modes and their evidence are
-recorded as R49–R57 in `risks.md` — deliberately in one place, because a lesson restated in
+recorded as R49–R58 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
 
 ### Two questions no gate asks, because no gate looks at scope of application
@@ -161,6 +161,31 @@ So, when you write or move a guard, ask both:
 
 Neither is a gate and neither should become one: a checklist item gets ticked, which is how
 a guard comes to pass for the wrong reason. They are questions to ask while writing.
+
+### Verifying a change did what you think
+
+Added 2026-08-21. Three lanes independently recorded the **outputs** of throwaway verification
+tools and none of the procedures, so each method died with its session while its results stayed
+in the handoff reading like evidence. Two are worth keeping, and both exist because a check
+succeeded against the wrong thing.
+
+**Resolving a conflict: verify, then stage.** One lane committed `<<<<<<< HEAD` into
+`docs/handoff.md`. Its resolver raised on a block whose HEAD side was empty; it ran `git add`
+anyway, because resolve-and-stage were two steps in one command and only the second exit status
+was read. `rebase --continue` then committed the markers, and it was found by grepping the
+*commit*, not the working tree. **Staging is not resolution.** A resolver must assert no marker
+survives *before* it stages anything and exit non-zero otherwise — and note the file it landed
+in is append-only, so nobody would have re-read it.
+
+**Patching for a mutation: scope the patch to the definition.** A naive string replacement hit
+`_projection_rows` when the target was `_games_played_claims`, because `.order_by(Projection.player_id)`
+appears in both. The mutation "worked" against the wrong function and nearly read as evidence.
+Slice the source between `def target(` and the next `def `, patch only that span, assert the
+patch applied, run the *targeted* test, restore.
+
+Both are the same failure as the mutation bullets above — success inferred from an adjacent
+signal — which is why they are here rather than in a tools directory. **A tool rebuilt from an
+accurate description gets re-read; a committed script gets run without being understood.**
 
 ### Rounds have a cost, and the cost is prose
 
