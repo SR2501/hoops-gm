@@ -1035,6 +1035,68 @@ From the blind mock captures, identify systematic tendencies worth flagging live
 
 Once adherence data shows systematic tendencies, surface them live in the overlay - for example that the current bid is well over list on a position the owner has consistently overpaid for across prior mocks. Requires enough captures to distinguish tendency from noise. Read-only advisory, not a block.
 
+### `blend-recipe-persistence` - Persisting the blend recipe so the owner's weights survive a restart
+
+- [ ] **pending**
+- **Depends on:** `csv-importer`, `projection-blending`
+
+ADR-015. `projection-blending` is complete but not durable: `BlendCatalog` is a
+caller-owned in-memory value, so owner-authored per-category weights die at
+process exit and there is no persistent "our number" to put beside a source's.
+Persist the **recipe** — selected sources, per-category weights, manual
+overrides, target scoring profile — and keep the **binding** to specific
+`ReleasedProjectionImport` records transient, recomputing the blend on read.
+Persisting `BlendProfile` whole would weld both lifetimes into a migration, and
+the failure that produces is a fresh Basketball Monster CSV on draft morning
+making the owner's weights unusable rather than stale.
+
+Gate: **Code gate**, argued rather than assigned. This stores where
+owner-authored weights live and changes no arithmetic; blending version 1 fits
+no parameters and its model card reports no learned-accuracy or calibration
+claim, so there is no held-out experiment for the Model gate to require and
+demanding one would produce a ceremonial backtest of a deterministic
+transformation. The Adapter gate does not apply — no external source is called.
+**The Model gate attaches the moment `weight_basis` widens past
+`user_configured`**, which is why the schema must make that widening a
+migration rather than a data edit.
+
+Acceptance criteria, each falsifiable:
+
+1. A recipe defined, activated and read back **after a process restart** yields
+   a byte-identical `content_sha256` and an identical `BlendResult` fingerprint.
+2. Importing a **newer** CSV for a selected source leaves the recipe active and
+   readable, and the blend against the new import succeeds without the owner
+   re-authoring weights. This is the criterion that fails if anyone persists the
+   binding.
+3. No table holds a blended per-game value. Asserted directly, so materialising
+   output later is a deliberate schema change rather than a drift.
+4. A schema test asserts the recipe tables carry no games-played,
+   expected-games, availability or seasonal-total column, and no column derived
+   by multiplying a rate by a count (ADR-002).
+5. At most one active recipe per `(league_id, name)` is enforced **by the
+   database**, demonstrated by a failing insert, on both SQLite and PostgreSQL.
+   Use the `LeagueScoringProfile` nullable-sentinel pattern: a partial index
+   needs `sqlite_where=`/`postgresql_where=`, which `test_portability.py`'s
+   dialect-branch pattern matches. That guard walks `src/hoops_gm` only, so it
+   will **not** catch the same keyword in the migration — honour it there
+   deliberately.
+6. A manual override whose stored `normalized_name` no longer matches its
+   `player_id` is **refused**, not applied. `players.id` is a surrogate with no
+   natural key and source rows are digested by it, so a crosswalk remap is
+   caught for a source row and invisible in an override.
+7. The recipe stores each source as its `ExternalSource` enum value, not
+   `projection_sources.id`; a re-seed that changes that row's id leaves the
+   recipe resolvable.
+8. Redefining an identical recipe after deactivation reproduces the same
+   `content_sha256` while producing a new `version`, pinning that version is
+   history-dependent and the digest is not.
+
+Each new guard needs a mutation that reproduces the failure it guards against,
+asserted green before mutating and asserted to have actually applied. `quant`
+owns the recipe/binding split in `projections/blending.py` and the model-card
+update; `backend` owns the tables, migration and any route — the same seam
+already recorded for the scoring profile in `ownership.md`.
+
 ### `bridge-overlay` - Building the in-page recommendation overlay
 
 - [ ] **pending**
