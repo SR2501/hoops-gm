@@ -312,19 +312,34 @@ def test_no_value_from_the_file_reaches_stdout(
     ``1182.1`` cannot collide with any count this module prints.
 
     This filter has now been wrong twice, in opposite directions, and both
-    versions were broader than the rationale written beside them.
+    versions were broader than the rationale written beside them. **All figures
+    below are cells of the 12-row file this test actually builds** — an earlier
+    version of this docstring quoted the first bullet from a 6-row file and the
+    second from the 12-row one, so two bullets silently described different
+    populations and the accurate half lent credibility to the stale half. That
+    is the defect this whole docstring is about, committed inside it.
 
-    * ``len(cell) > 4``, justified as excluding short *numeric* cells, actually
-      excluded 79 of 138 cells including ``'bam'`` — a real NBA first name,
-      which is the paid-content class the module docstring names first.
-    * ``not is_number``, fixing that, dropped **every numeric cell**: 131
-      checked became 60, and the 75 lost were the per-game rates. For a real
-      Basketball Monster export **the rates are the paid content**, so the
-      second fix exempted the larger half of the thing being protected while
-      reading as a tightening.
+    * ``len(cell) > 4``, justified as excluding short *numeric* cells, checked
+      131 of 276 and exempted 145 — including ``'bam'``, ``'jose'``, ``'nate'``
+      and ``'trey'``, real NBA first names, which is the paid-content class the
+      module docstring names first.
+    * ``not is_number``, fixing that, checked **60** — it dropped every numeric
+      cell, and the ones lost were the per-game rates. For a real Basketball
+      Monster export **the rates are the paid content**, so the second fix
+      exempted the larger half of the thing being protected while reading as a
+      tightening, because it was written as a correction.
+    * ``^[0-9]{1,3}$`` checks **228 of 276**, a strict superset of both prior
+      populations, exempting only ``games`` (59 to 79) and the three all-zero
+      counter columns.
 
     So the population is asserted from both sides now: it must contain a short
     name *and* a decimal value, so neither half can be silently emptied again.
+
+    ``fullmatch`` rather than ``match``: ``$`` matches before a trailing
+    newline, so ``match`` would exempt ``"123\\n"`` — the identical defect fixed
+    in ``_SEASON_PATTERN`` one file over. Inert here, since cells come from
+    ``splitlines()`` before ``split(",")``, and fixed anyway rather than left as
+    a dormant instance of the class this commit exists to close.
     """
     content = demo_csv(seeded)
     path = write_csv(tmp_path, content)
@@ -334,13 +349,13 @@ def test_no_value_from_the_file_reaches_stdout(
 
     out = capsys.readouterr().out
     lines = content.decode("utf-8").splitlines()
-    collides_with_a_count = re.compile(r"^[0-9]{1,3}$")
+    collides_with_a_count = re.compile(r"[0-9]{1,3}")
 
     checked = [
         cell
         for line in lines[1:]
         for cell in line.split(",")
-        if cell and not collides_with_a_count.match(cell)
+        if cell and not collides_with_a_count.fullmatch(cell)
     ]
 
     # A guard is only as good as its population. Both halves are asserted

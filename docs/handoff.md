@@ -13869,13 +13869,15 @@ believed harmless was driven or reasoned.**
 ### The two blocking findings, both in what I had just remediated
 
 **1. My fix to the stdout leak filter was a net coverage regression.** The census
-`code-review` ran on the same file the test uses:
+`code-review` ran on the same file the test uses — the **12-row** demo file, 276
+non-empty cells:
 
 ```
-old  (len(cell) > 4)    : 131 checked
-new  (not is_number)    :  60 checked
-checked by OLD, not NEW :  75   all numeric — the per-game rates
-gained by NEW           :   4   'bam', 'jose', 'nate', 'trey'
+old  (len(cell) > 4)    : 131 checked, 145 exempt
+new  (not is_number)    :  60 checked, 216 exempt
+lost                    :  the per-game rates, all of them
+gained                  :  'bam', 'jose', 'nate', 'trey'
+final (^[0-9]{1,3}$)    : 228 checked,  48 exempt — a strict superset of both
 ```
 
 `import_csv.py` promises *"No rate, no player name from the file, and no raw
