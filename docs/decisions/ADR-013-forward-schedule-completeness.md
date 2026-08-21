@@ -113,11 +113,17 @@ incompleteness implies its converse: that unmarked columns are settled. They are
 they will be least settled precisely when the marking stops.
 
 Until a second mechanism exists, **every consumer of games-per-period must state
-unconditionally that counts are a floor**, not merely mark the columns it can identify.
-That is a weaker guarantee than this ADR's Decision implies and it is stated here rather
-than left to each consumer to discover. Representing unpublished make-up games is a
-separate unit; it needs a source that says how many games a team is owed, which
-`ScheduleLeagueV2` does not currently provide.
+unconditionally that no count is final** — not merely mark the columns it can identify.
+
+Note the direction carefully, because the obvious wording is wrong. *"Counts are a floor"*
+is true of a season total, which only rises as fixtures are published. It is **false of a
+per-period count**: ADR-012's living-refresh amendment exists because re-ingest changes
+shape, and a rescheduled game leaves one week and joins another, taking the first week
+**down**. So the honest statement names both directions, and "floor" errs toward false
+comfort at exactly the granularity a manager plans a week on.
+
+Representing unpublished make-up games is a separate unit; it needs a source that says how
+many games a team is owed, which `ScheduleLeagueV2` does not currently provide.
 
 ## Rejected
 
