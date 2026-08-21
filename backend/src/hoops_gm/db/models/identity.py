@@ -18,7 +18,7 @@ resolver needs to exist without a rewrite:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -33,7 +33,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from hoops_gm.db.base import Base, IntPk, TimestampMixin, portable_enum
+from hoops_gm.db.base import Base, IntPk, TimestampMixin, UTCDateTime, portable_enum
 from hoops_gm.db.models.enums import (
     Conference,
     ExternalSource,
@@ -84,9 +84,50 @@ class Player(IntPk, TimestampMixin, Base):
     birth_date: Mapped[date | None] = mapped_column(Date)
     height_inches: Mapped[int | None] = mapped_column()
     weight_pounds: Mapped[int | None] = mapped_column()
-    #: NBA's own positional label. League-specific eligibility is a Fantrax
-    #: concept and belongs to the league tables, not here.
+    #: NBA's own positional label, verbatim from ``PlayerIndex`` — ``"G"``,
+    #: ``"F-C"``, and so on. League-specific eligibility is a Fantrax concept
+    #: and belongs to the league tables, not here.
+    #:
+    #: **This is a fact about the player, and it is coarse.** The source
+    #: vocabulary is ``G/F/C`` plus hybrids and contains no ``PG``/``SG``/
+    #: ``SF``/``PF`` — verified on 2026-08-20 against ``PlayerIndex``,
+    #: ``CommonPlayerInfo`` and ``CommonTeamRoster``. So this separates a centre
+    #: from a guard, which is what risk R7's third matching key needs, and it
+    #: cannot express a Fantrax lineup slot.
+    #:
+    #: ``NULL`` means the source stated no position, which is a real observed
+    #: condition (six 2026-27 rows, all ``FROM_YEAR`` 2026) and never a guess.
     primary_position: Mapped[str | None] = mapped_column(String(16))
+    #: Where the position came from, as ``"<source>:<endpoint>"``. A stored
+    #: attribute with no provenance cannot be refreshed deliberately, and this
+    #: column exists so that a future second opinion — Fantrax's, a projection
+    #: CSV's — is distinguishable from the NBA's rather than overwriting it
+    #: invisibly.
+    primary_position_source: Mapped[str | None] = mapped_column(String(48))
+    #: The season the listing was read for. Position is stable but not
+    #: immutable: 490 players shared between 2025-26 and 2026-27 carried
+    #: identical positions, so a changed value is a real event and needs a
+    #: season to be a change *from*.
+    primary_position_season: Mapped[str | None] = mapped_column(String(9))
+    #: When that reading was taken. **Refreshed on every crosswalk run, even
+    #: when the position is unchanged**, because the useful question about a
+    #: listed attribute is how fresh the reading is, not only when it last
+    #: moved. The cost is that ``players.updated_at`` changes on every run for
+    #: every matched player, so it stops distinguishing "this row changed
+    #: meaningfully" from "the position was re-confirmed" — use this column,
+    #: not ``updated_at``, to reason about position freshness.
+    #:
+    #: The four position columns are written together or not at all by
+    #: ``import_player_positions``, and ``NbaPlayerPositionRecord.season`` is
+    #: required so a caller cannot assemble an incomplete triple. There is
+    #: deliberately **no** database CHECK enforcing that, so any other writer —
+    #: including a plain ORM ``Player(primary_position="C")`` — can still
+    #: produce one. SQLite can only add a CHECK by rebuilding the table, and
+    #: ten foreign keys point into ``players`` with eight ``ON DELETE
+    #: CASCADE``, so the rebuild deletes the crosswalk, the game logs, the
+    #: participation ledger and the projections. Implemented, measured,
+    #: reverted — see revision 0016.
+    primary_position_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     rookie_season: Mapped[str | None] = mapped_column(String(9))
     status: Mapped[PlayerStatus] = mapped_column(
         portable_enum(PlayerStatus, "player_status"), default=PlayerStatus.UNKNOWN

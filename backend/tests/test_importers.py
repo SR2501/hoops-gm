@@ -12,6 +12,7 @@ losing something:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -34,25 +35,29 @@ from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity import IdentityResolver, ResolutionReport, ResolvableRecord
 from hoops_gm.ingest import importers
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.fantrax_official import parse_player_ids
 from hoops_gm.ingest.importers import (
     import_box_scores,
     import_games,
     import_nba_players,
     import_participation,
+    import_player_positions,
     import_resolutions,
     import_teams,
 )
 from hoops_gm.ingest.nba import (
+    PLAYER_INDEX_POSITIONS,
     combine_game_participation,
     parse_box_score_summary_v3,
     parse_box_score_traditional_v3,
     parse_common_all_players,
     parse_league_game_finder,
     parse_player_game_logs,
+    parse_player_index,
     parse_teams,
 )
-from hoops_gm.ingest.nba.models import GameParticipation
+from hoops_gm.ingest.nba.models import GameParticipation, NbaPlayerPositionRecord
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -155,6 +160,393 @@ class TestPlayerImport:
         players = session.scalars(select(Player)).all()
         assert all(p.normalized_name for p in players)
         assert all(p.normalized_name == p.normalized_name.lower() for p in players)
+
+
+class TestPlayerPositionImport:
+    """Persisting the NBA's listed position, and the identity payoff.
+
+    The point of this importer is risk R7: the crosswalk is specified to match
+    on "normalized name + team + position", and until this landed the NBA side
+    of every comparison had no position at all, so `compare_positions` returned
+    `UNKNOWN` for every pair in the project's history.
+    """
+
+    @pytest.fixture
+    def crosswalked(self, session: Session) -> Session:
+        import_teams(session, parse_teams(load("nba_static_teams.json")))
+        import_nba_players(
+            session, parse_common_all_players(load("nba_commonallplayers_current.json"))
+        )
+        return session
+
+    def test_positions_land_on_canonical_players_with_their_lineage(
+        self, crosswalked: Session
+    ) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        observed = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+
+        counts = import_player_positions(crosswalked, records, observed_at=observed)
+
+        assert counts.updated > 400
+        # This importer never inserts a row, so `created` must stay at zero.
+        # An earlier version reported "569 created" for a step whose whole
+        # design is that it creates nothing.
+        assert counts.created == 0
+        placed = crosswalked.scalars(
+            select(Player).where(Player.primary_position.is_not(None))
+        ).all()
+        assert placed
+        for player in placed:
+            assert player.primary_position in PLAYER_INDEX_POSITIONS
+            assert player.primary_position_source == "nba:PlayerIndex"
+            assert player.primary_position_season == "2026-27"
+            assert player.primary_position_observed_at == observed
+
+    def test_re_running_is_idempotent(self, crosswalked: Session) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        observed = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+
+        first = import_player_positions(crosswalked, records, observed_at=observed)
+        before = crosswalked.scalar(
+            select(func.count()).select_from(Player).where(Player.primary_position.is_not(None))
+        )
+        second = import_player_positions(crosswalked, records, observed_at=observed)
+
+        assert second.created == 0
+        assert second.updated == first.updated
+        assert second.skipped == first.skipped
+        assert (
+            crosswalked.scalar(
+                select(func.count()).select_from(Player).where(Player.primary_position.is_not(None))
+            )
+            == before
+        )
+
+    def test_a_superseded_nba_id_cannot_write_a_position(self, crosswalked: Session) -> None:
+        """A retired identifier is history, not a join key.
+
+        ``current_for_source`` exists so a superseded row stops being the one
+        joins pick up. Without that filter a stale NBA person id writes an old
+        season's position onto a current player and stamps it with fresh
+        provenance — a lie of exactly the kind the lineage columns exist to
+        prevent. The projection importer already filters this way.
+        """
+        player = crosswalked.scalars(select(Player)).first()
+        assert player is not None
+        crosswalked.add(
+            PlayerExternalId(
+                player_id=player.id,
+                source=ExternalSource.NBA,
+                current_for_source=None,  # superseded
+                external_id="99000001",
+                match_method=MatchMethod.ANCHOR_ID,
+            )
+        )
+        crosswalked.flush()
+
+        counts = import_player_positions(
+            crosswalked,
+            [NbaPlayerPositionRecord(nba_player_id=99000001, position="C", season="2019-20")],
+            observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        )
+
+        assert counts.skipped == 1
+        assert counts.updated == 0
+        crosswalked.refresh(player)
+        assert player.primary_position_season != "2019-20"
+
+    def test_a_naive_observed_at_is_refused_by_the_caller_not_the_column(
+        self, crosswalked: Session
+    ) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, 12, 0))
+
+    def test_an_orphaned_crosswalk_link_is_loud_and_is_not_blamed_on_the_source(
+        self, crosswalked: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one guard in this lane that shipped untested, until review.
+
+        **The state is unreachable under FK enforcement**, and that is stated
+        rather than worked around: `player_external_ids.player_id` is a CASCADE
+        foreign key, deleting a player removes its links, and SQLite refuses an
+        insert pointing at a missing row. An orphan therefore requires a bulk
+        load, a restored backup or a migration that ran with enforcement off.
+        So this drives the branch by making the lookup answer `None` —
+        exercising *our* response to a corrupt crosswalk, not a corruption this
+        test can honestly manufacture.
+
+        **Two obvious ways to build it for real, both of which fail, and one of
+        them misleadingly.** Recorded because someone will re-derive them:
+
+        * ``PRAGMA foreign_keys=OFF`` then insert an orphan row. The pragma is
+          a **no-op inside an open transaction**, which this session always has,
+          so the insert hits the foreign key and raises `IntegrityError`. That
+          reads like a correct test catching a real constraint, so it is easy to
+          accept as evidence of something it is not.
+        * Delete the player the link points at. The delete cascades the link
+          away, so there is no orphan left to find — and `session.get` would
+          answer from the identity map regardless.
+
+        What is being pinned is the exception *class*. Counting the orphan as
+        `skipped` would hide a broken database inside a number that also means
+        "nothing to do here"; raising `SourceContractError` was wrong the other
+        way, because that class means the source changed shape and carries
+        source/endpoint attributes handlers branch on and logs index by. It
+        would file local corruption as NBA API drift and send the reader to the
+        wrong system.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        real = next(r for r in records if r.position is not None)
+
+        monkeypatch.setattr(crosswalked, "get", lambda *args, **kwargs: None, raising=True)
+
+        # Caught as `Exception`, not `RuntimeError`, and the class asserted
+        # positively. Catching RuntimeError would make the isinstance check
+        # below dead code — SourceContractError is not a RuntimeError, so a
+        # regression to it would propagate past `pytest.raises` and the
+        # assertion would never run. That is the same shape as the attribution
+        # column deleted in this branch for being unable to answer twice, and
+        # review caught it here too.
+        with pytest.raises(Exception) as caught:
+            import_player_positions(
+                crosswalked, [real], observed_at=datetime(2026, 8, 20, tzinfo=UTC)
+            )
+
+        assert type(caught.value) is RuntimeError, (
+            f"expected RuntimeError, got {type(caught.value).__name__}"
+        )
+        assert not isinstance(caught.value, SourceContractError), (
+            "a broken local crosswalk must not be reported as upstream drift"
+        )
+        assert "referential integrity" in str(caught.value)
+        assert str(real.nba_player_id) in str(caught.value)
+
+    def test_position_provenance_is_written_as_a_complete_set_or_not_at_all(
+        self, crosswalked: Session
+    ) -> None:
+        """The guarantee that is actually in force, and its honest limit.
+
+        A database CHECK would be stronger and was implemented, then reverted:
+        SQLite can only add one by rebuilding ``players``, and ten foreign keys
+        point into that table with eight ``ON DELETE CASCADE``, so the rebuild
+        deletes the crosswalk, the game logs, the participation ledger and the
+        projections. The existing migration suite caught it. See revision 0016.
+
+        What holds instead is that ``NbaPlayerPositionRecord.season`` is
+        required with no default, and this importer writes all four columns in
+        one block. So no *record* can express the incomplete state and no write
+        through this path produces one. **Any other writer still can, including
+        a plain ORM ``Player(primary_position="C")``** — not merely raw SQL —
+        which is why that is stated rather than implied.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, tzinfo=UTC))
+
+        rows = crosswalked.scalars(select(Player)).all()
+        assert rows
+        for player in rows:
+            stated = [
+                player.primary_position,
+                player.primary_position_source,
+                player.primary_position_season,
+                player.primary_position_observed_at,
+            ]
+            # All four present, or all four absent. Never a partial triple.
+            assert all(v is not None for v in stated) or all(v is None for v in stated), (
+                f"player {player.id} carries partial position provenance: {stated}"
+            )
+
+        # And the record type refuses to express it a step earlier.
+        with pytest.raises(TypeError):
+            NbaPlayerPositionRecord(nba_player_id=1, position="C")  # type: ignore[call-arg]
+
+    def test_an_unstated_position_never_overwrites_a_known_one(self, crosswalked: Session) -> None:
+        """Declining to state a position is not retracting one.
+
+        The same distinction `inactives_available` exists for on the
+        participation side: absent evidence and contradicting evidence must not
+        produce the same write.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        stated = next(r for r in records if r.position is not None)
+        import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, tzinfo=UTC))
+
+        link = crosswalked.scalars(
+            select(PlayerExternalId).where(
+                PlayerExternalId.source == ExternalSource.NBA,
+                PlayerExternalId.external_id == str(stated.nba_player_id),
+            )
+        ).one()
+        player = crosswalked.get(Player, link.player_id)
+        assert player is not None and player.primary_position == stated.position
+
+        silent = replace(stated, position=None)
+        counts = import_player_positions(
+            crosswalked, [silent], observed_at=datetime(2026, 8, 21, tzinfo=UTC)
+        )
+
+        assert counts.skipped == 1
+        crosswalked.refresh(player)
+        assert player.primary_position == stated.position
+
+    def test_an_unknown_player_is_skipped_never_invented(self, crosswalked: Session) -> None:
+        """Only `import_nba_players` may introduce a canonical row.
+
+        A position listing is an attribute of a person already established, not
+        evidence that a person exists. Two independent inventors of identity is
+        R7's failure mode with extra steps.
+        """
+        before = crosswalked.scalar(select(func.count()).select_from(Player))
+
+        counts = import_player_positions(
+            crosswalked,
+            [NbaPlayerPositionRecord(nba_player_id=99999999, position="C", season="2026-27")],
+            observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        )
+
+        assert counts.skipped == 1
+        assert crosswalked.scalar(select(func.count()).select_from(Player)) == before
+
+    def test_importing_before_the_crosswalk_exists_is_refused(self, session: Session) -> None:
+        with pytest.raises(ValueError, match="crosswalk"):
+            import_player_positions(
+                session,
+                [NbaPlayerPositionRecord(nba_player_id=1, position="G", season="2026-27")],
+                observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+            )
+
+    def test_position_disambiguates_a_real_duplicate_name_and_costs_one_borderline_big(
+        self, crosswalked: Session
+    ) -> None:
+        """What supplying R7's third key actually did, measured rather than assumed.
+
+        Both effects are real and both are pinned here, because the headline
+        number hides them: 570 matches were accepted before and 570 after, and
+        the accepted **set is not the same set**. A count would have reported
+        "no change". This repository has already been bitten by exactly that
+        ("never a count — the count is what let the first defect survive
+        review"), so the set is compared, not its size.
+
+        **Gained — `Johnson, Jalen`.** Fantrax carries two rows of that name:
+        one on ATL listed `SF`, one with no team listed `SG`. The NBA has one,
+        on ATL, listed `F`. Position agrees with the first and contradicts the
+        second, which is precisely the duplicate-name disambiguation R7
+        specified position to perform, working on a genuine duplicate.
+
+        **Lost — `Tillman, Xavier`.** Fantrax says `C` with no team; the NBA
+        says `F`. Same human, two defensible classifications of a borderline
+        big. With team absent there is nothing to offset the 0.12 position
+        penalty, so a correct match drops to 0.730 and falls under the accept
+        floor.
+
+        The second effect is a false negative introduced by this lane, and it
+        is **not fixed here** — the matcher's weights belong to the identity
+        lane, and `evidence.py` already records lowering the *team* penalty for
+        this same reason (sources are snapshots that genuinely differ). This
+        test exists so that the trade-off is a recorded, executable fact rather
+        than a surprise when somebody asks where Xavier Tillman went.
+        """
+        positions = {
+            r.nba_player_id: r.position
+            for r in parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        }
+        nba_players = parse_common_all_players(load("nba_commonallplayers_current.json"))
+        fantrax = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        sources = [
+            ResolvableRecord.build(key=p.fantrax_id, name=p.name, team=p.team, position=p.position)
+            for p in fantrax.players
+        ]
+
+        def accepted_pairs(*, with_position: bool) -> set[tuple[str, str]]:
+            targets = [
+                ResolvableRecord.build(
+                    key=str(p.nba_player_id),
+                    name=p.display_last_comma_first,
+                    team=p.team_abbreviation,
+                    position=positions.get(p.nba_player_id) if with_position else None,
+                )
+                for p in nba_players
+            ]
+            report = IdentityResolver(targets).resolve(sources)
+            return {
+                (r.source_record.key, r.best.target.key)
+                for r in report.all_resolutions()
+                if r.accepted and r.best is not None
+            }
+
+        before = accepted_pairs(with_position=False)
+        after = accepted_pairs(with_position=True)
+
+        assert len(before) == len(after), "the sizes coincide, which is the trap"
+        assert before != after, "and the sets do not — so a count proves nothing here"
+
+        # The duplicate-name case position exists to settle.
+        assert ("05uiu", "1630552") in after - before
+        # The borderline big it costs. Left failing-by-design, not repaired.
+        assert ("05qtf", "1630214") in before - after
+
+    def test_the_nba_side_of_the_crosswalk_can_finally_corroborate_on_position(
+        self, crosswalked: Session
+    ) -> None:
+        """R7's third key, demonstrated end to end rather than asserted.
+
+        Fantrax states `PG`/`SG`/`SF`/`PF`/`C`; the NBA states `G`/`F`/`C` and
+        hybrids. `compare_positions` reduces both to coarse sets, so the two
+        vocabularies are comparable — and before this lane the NBA side was
+        `None`, which made every comparison `UNKNOWN`.
+        """
+        positions = {
+            r.nba_player_id: r.position
+            for r in parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        }
+        nba_players = parse_common_all_players(load("nba_commonallplayers_current.json"))
+
+        without = [
+            ResolvableRecord.build(
+                key=str(p.nba_player_id), name=p.display_last_comma_first, team=p.team_abbreviation
+            )
+            for p in nba_players
+        ]
+        with_position = [
+            ResolvableRecord.build(
+                key=str(p.nba_player_id),
+                name=p.display_last_comma_first,
+                team=p.team_abbreviation,
+                position=positions.get(p.nba_player_id),
+            )
+            for p in nba_players
+        ]
+
+        assert all(r.position is None for r in without)
+        assert sum(1 for r in with_position if r.position is not None) > 400
+
+        fantrax = parse_player_ids(load("fantrax_getplayerids_nba.json"))
+        sources = [
+            ResolvableRecord.build(key=p.fantrax_id, name=p.name, team=p.team, position=p.position)
+            for p in fantrax.players
+        ]
+
+        blind = IdentityResolver(without).resolve(sources)
+        sighted = IdentityResolver(with_position).resolve(sources)
+
+        def position_evidence(report: ResolutionReport) -> dict[FieldEvidence, int]:
+            tally: dict[FieldEvidence, int] = {}
+            for resolution in report.all_resolutions():
+                if resolution.best is None:
+                    continue
+                verdict = resolution.best.evidence.position
+                tally[verdict] = tally.get(verdict, 0) + 1
+            return tally
+
+        before = position_evidence(blind)
+        after = position_evidence(sighted)
+
+        # Every candidate pair was position-blind before, by construction.
+        assert set(before) == {FieldEvidence.UNKNOWN}
+        # And now the field actually carries evidence.
+        assert after.get(FieldEvidence.AGREE, 0) > 400
 
 
 class TestCrosswalkImport:

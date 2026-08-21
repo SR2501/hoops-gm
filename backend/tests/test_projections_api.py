@@ -29,6 +29,7 @@ foreign key seeing to that, and is driven directly against its helper.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier, Thread
 from typing import Any
@@ -106,6 +107,16 @@ def seed_player(
         full_name=name,
         normalized_name=normalize_name(name).key,
         primary_position=position,
+        # A seeded position carries the provenance a real import writes. The
+        # sibling helper in test_projection_importer.py was corrected for this
+        # and this one was missed, which matters more here: this fixture backs
+        # the only path where the persisted column reaches a user. Seeding a
+        # position with no source, season or observed-at is a shape no real
+        # producer can write, and there is no database constraint to catch it
+        # (see revision 0016 for why the CHECK was reverted).
+        primary_position_source="nba:PlayerIndex" if position else None,
+        primary_position_season="2026-27" if position else None,
+        primary_position_observed_at=(datetime(2026, 8, 20, tzinfo=UTC) if position else None),
         current_team_id=team.id,
     )
     session.add(player)
@@ -142,7 +153,7 @@ def _seed_league(session: Session, *, season: str = SEASON) -> int:
 
 
 def _seed_fixture_players(session: Session) -> None:
-    seed_player(session, nba_id=1, name="Player Alpha", team_abbreviation="BOS", position="SF")
+    seed_player(session, nba_id=1, name="Player Alpha", team_abbreviation="BOS", position="F")
     seed_player(session, nba_id=3, name="Player Gamma", team_abbreviation="DEN", position="C")
 
 
@@ -229,7 +240,7 @@ def test_current_projections_serves_the_imported_cohort_with_its_lineage(
 
     assert [player["full_name"] for player in body["players"]] == list(FIXTURE_PLAYERS)
     assert [player["team_abbreviation"] for player in body["players"]] == ["BOS", "DEN"]
-    assert [player["primary_position"] for player in body["players"]] == ["SF", "C"]
+    assert [player["primary_position"] for player in body["players"]] == ["F", "C"]
 
     alpha = body["projections"][0]
     assert alpha["minutes_per_game"] == pytest.approx(2415 / 70)
@@ -587,7 +598,7 @@ def test_the_write_after_regime_depends_on_primary_key_stability(
     # Verified by mutation: remove this block and the case collapses into
     # regime 2 and returns 200.
     with app.state.database.session() as session:
-        seed_player(session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="PG")
+        seed_player(session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="G")
         other = import_projection_csv(
             session,
             source=ExternalSource.MANUAL,
@@ -662,7 +673,7 @@ def test_a_byte_identical_reimport_mid_read_does_not_empty_the_assumptions(
         # row of the same import, which left `max(rowid)` unchanged and made the
         # test pass against the very bug it was written for.
         spare = seed_player(
-            session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="PG"
+            session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="G"
         )
         other_import = import_projection_csv(
             session,

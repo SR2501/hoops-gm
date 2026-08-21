@@ -19,6 +19,7 @@ __all__ = [
     "DnpReason",
     "GameParticipation",
     "NbaGameRecord",
+    "NbaPlayerPositionRecord",
     "NbaPlayerRecord",
     "NbaTeamRecord",
     "ParticipationOutcome",
@@ -145,3 +146,57 @@ class NbaPlayerRecord:
     team_id: int | None = None
     team_abbreviation: str | None = None
     player_slug: str | None = None
+
+
+@dataclass(frozen=True)
+class NbaPlayerPositionRecord:
+    """One player's **listed NBA position**, from ``PlayerIndex``.
+
+    This is a fact about the player — the position the NBA lists him at — and
+    is deliberately a different type from anything per-game. The distinction is
+    the whole reason this record exists, so it is worth stating precisely.
+
+    **What this is not.** ``BoxScoreTraditionalV3.position`` is a *starting
+    lineup slot*: emitted for exactly five players per team per game, always in
+    the sequence ``F,F,C,G,G``, blank for everyone else. It answers "which slot
+    did he start in tonight", and a distribution over it is forced to 2F:2G:1C
+    for any cohort whatsoever. Before 2026-08-20 it was the only
+    position-shaped field this project ingested, which is why risk R7 specified
+    the identity crosswalk to match on a position key that did not exist.
+
+    **What this is not, part two.** It is *not* Fantrax position eligibility,
+    and cannot be turned into it by any derivation. Fantrax eligibility is a
+    policy decision by a third party — it changes through a season, never
+    decreases, and Fantrax is not obliged to follow any published rule. A
+    number computed from NBA game data and presented as eligibility would be a
+    prediction of another company's undocumented behaviour wearing the clothes
+    of a fact. See ``docs/backlog.md``, ``player-position-eligibility``.
+
+    ``position`` is ``None`` when the source states no position. That is a real
+    and observed condition — six 2026-27 rows, all players whose ``FROM_YEAR``
+    is 2026 — and it is preserved rather than guessed at, because an invented
+    position would corroborate an identity match on evidence nobody supplied.
+    """
+
+    nba_player_id: int
+    #: Verbatim from the source: ``"G"``, ``"F-C"``, … or ``None`` if unstated.
+    #: **Coarse.** The source vocabulary contains no ``PG``/``SG``/``SF``/``PF``
+    #: distinction at all, on this endpoint or on any sibling checked.
+    position: str | None
+    #: The season the listing was requested for. **Required, with no default.**
+    #: Position is stable but not immutable, and a stored attribute with no idea
+    #: which season it describes cannot be refreshed deliberately — a changed
+    #: value is a real event and needs a season to be a change *from*.
+    #:
+    #: **Requiring it here is the only thing holding that invariant**, so do not
+    #: relax it on the assumption that something downstream will catch an
+    #: incomplete triple. Nothing will. A database CHECK was implemented and
+    #: reverted: SQLite can only add one by rebuilding ``players``, and ten
+    #: foreign keys point into that table with eight ``ON DELETE CASCADE``, so
+    #: the rebuild deletes the crosswalk, the game logs, the participation
+    #: ledger and the projections. See revision 0016.
+    season: str
+    first_name: str | None = None
+    last_name: str | None = None
+    team_id: int | None = None
+    team_abbreviation: str | None = None

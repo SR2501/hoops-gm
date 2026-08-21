@@ -33,7 +33,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -62,6 +62,7 @@ from hoops_gm.ingest.importers import (
     import_league_settings,
     import_nba_players,
     import_participation,
+    import_player_positions,
     import_resolutions,
     import_teams,
 )
@@ -80,6 +81,7 @@ from hoops_gm.ingest.nba import (
     parse_common_all_players,
     parse_league_game_finder,
     parse_player_game_logs,
+    parse_player_index,
     parse_teams,
 )
 from hoops_gm.ingest.rawstore import RawPayloadStore
@@ -245,15 +247,34 @@ def build_crosswalk(
     nba_players = parse_common_all_players(nba.common_all_players(season=season, only_current=True))
     result.steps["nba players"] = import_nba_players(session, nba_players)
 
+    # Position is imported *before* resolution, because it is one of the three
+    # fields the resolver corroborates a match on (risk R7). Until 2026-08-20
+    # this project ingested no position at all, so the crosswalk's specified
+    # "name + team + position" match had only ever been able to use two of them.
+    positions = parse_player_index(nba.player_index(season=season), season=season)
+    result.steps["nba positions"] = import_player_positions(
+        session, positions, observed_at=datetime.now(UTC)
+    )
+
     fantrax_players = fantrax.get_player_ids()
 
     # NBA is the canonical side: every stat in this project keys to an NBA
     # person id, so a Fantrax row is resolved *onto* an NBA player.
+    #
+    # ``position`` on this side was `None` for the whole of the project's life
+    # until 2026-08-20, because nothing ingested a player position. The Fantrax
+    # side below has always supplied one, so `compare_positions` was comparing
+    # a stated value against nothing and returning `UNKNOWN` for every pair —
+    # the "name + team + position" match in R7 was structurally a two-key match
+    # that described itself as three. Supplying it here is the point of this
+    # lane; the matcher itself is unchanged.
+    positions_by_id = {r.nba_player_id: r.position for r in positions}
     targets = [
         ResolvableRecord.build(
             key=str(p.nba_player_id),
             name=p.display_last_comma_first,
             team=p.team_abbreviation,
+            position=positions_by_id.get(p.nba_player_id),
         )
         for p in nba_players
     ]

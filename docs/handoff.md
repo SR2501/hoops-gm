@@ -10765,3 +10765,479 @@ enumerated".
 **Next:** unchanged. `frontend` builds the screen tomorrow against a contract
 whose *shape* did not move in this round — only its guarantees got smaller and
 truer.
+## 2026-08-20 — data-engineer — Player position exists after all; R7's third key is real, and it is coarse
+
+**Unit:** `player-position-eligibility`, NBA-position half. Ingest a real player position
+from a source this project can already reach, persist it with lineage, and make it
+available to the identity crosswalk. Fantrax eligibility explicitly out of scope.
+
+**The first question was whether a suitable source exists at all, and it does.**
+`PlayerIndex` on `stats.nba.com`, one request, league-wide: 578 rows for 2026-27, 582 for
+2025-26, `POSITION` stated on 572 of 578.
+
+**I did not take the field at its word.** The brief warned this was a prime place for
+another lineup-slot-in-disguise, so I attacked that hypothesis specifically and it died
+five ways: one row per `PERSON_ID` with zero duplicates, against a per-team-per-game field;
+per-team groups of 15–24 rather than five, with wildly uneven mixes (ATL 13 `G`, 7 `F`,
+2 `C`); hybrids `G-F`/`F-C` that a five-slot string cannot express; **490 players shared
+between the two seasons, 490 identical positions, zero changes**; and independent
+corroboration on a different endpoint — two players sampled per position value, 14 total,
+against `CommonPlayerInfo.POSITION`, 14/14 exact. Six 2026-27 rows state no position; all
+six are `FROM_YEAR: 2026` and `CommonPlayerInfo` returns `''` for them too, so they are
+persisted `NULL` rather than guessed.
+
+**The limitation is the more important half of the finding.** The vocabulary is
+`G/F/C` plus hybrids and contains **no `PG`/`SG`/`SF`/`PF` anywhere**. Three endpoints
+agree (`PlayerIndex` `G`, `CommonPlayerInfo` `"Guard"`, `CommonTeamRoster` `G`), and
+`PlayerIndex` rejects a `PlayerPosition=PG` filter outright with
+`{"PlayerPosition": ["Invalid parameters"]}` — the parameter exists in `nba_api`'s
+signature and the server refuses the value. So this separates a centre from a guard, which
+is what R7 needs, and **it is not Fantrax eligibility and cannot be made into it by
+derivation**: eligibility is a policy decision by a third party, monotonic, updated on a
+cadence, and not a computable function of NBA game data. Someone will otherwise reach for
+this field to build lineup legality and be quietly wrong, which is today's defect class, so
+it is stated in the model docstring, the column comment, the adapter doc, the backlog item
+and the live smoke's failure message.
+
+**What it did to the crosswalk, measured rather than claimed.** Position evidence across
+candidate pairs went from **576 `UNKNOWN` and nothing else** to **531 `AGREE` /
+35 `DISAGREE` / 10 `UNKNOWN`**. Accepted matches: 570 before, 570 after — **and not the
+same 570.** I compared the sets, not the sizes, precisely because this repository has
+already been bitten by a count ("never a count — the count is what let the first defect
+survive review"), and the count here is identical by coincidence. Gained
+`Johnson, Jalen`: Fantrax carries two rows of that name, one ATL/`SF` and one no-team/`SG`,
+the NBA has one ATL/`F`, and position agrees with the first and contradicts the second —
+the duplicate-name disambiguation R7 specified position to perform, working on a genuine
+duplicate. Lost `Tillman, Xavier`: Fantrax `C` no-team, NBA `F`, the same human read two
+defensible ways, and with no team to offset the 0.12 position penalty a correct match falls
+to 0.730 and under the accept floor.
+
+**A finding for the identity lane, which I deliberately did not act on.** All 35
+disagreements are of the second kind — Klay Thompson `SF`/`G`, Evan Mobley `PF`/`C`, Kevon
+Looney `C`/`F`. **Position disagreement is weak evidence of identity mismatch**, for
+exactly the reason `evidence.py` already records for lowering the *team* penalty: the two
+sources are genuine, differing classifications rather than contradictions. The penalty
+likely wants the same downward re-tuning. The matcher is not mine to rewrite, so the
+trade-off is pinned in an executable test and recorded in R7 rather than left as a surprise
+when somebody asks where Xavier Tillman went.
+
+**Guards, and each one broken on purpose before I trusted it.** Four new checks: required
+columns, position vocabulary (fatal even for a merely *new* value), one row per person id,
+and a 90% coverage floor. I neutered each in the parser and confirmed its test goes red —
+five mutations, five reds, source restored. The coverage floor was broken in the shape that
+matters rather than a convenient one: I rebuilt the payload as a starters-only field, five
+positions per team and the rest blank, which the vocabulary guard cannot see (the values
+are still `G`/`F`/`C`) and the duplicate guard cannot see (still one row each). I also
+recorded what these guards **cannot** observe: a payload that keeps full coverage and this
+exact vocabulary while the values come to mean something else. Nothing asserted over a
+single payload can see that, which is why the cross-season stability check exists in the
+live smoke and why its floor is 95% rather than 100% — a genuine re-listing of one player
+must not make it permanently red.
+
+**A real alarm fired on me and I did not weaken it.** The committed injury-cohort manifest
+fingerprints `ingest/nba/parsers.py` and `ingest/backfill.py`, both of which I changed, and
+the suite went red. Regenerating needs gitignored operational state I do not have, so
+following PR #43's precedent I checked the change mechanically instead of by reading it:
+AST comparison with docstrings stripped shows `parsers.py` gained exactly one top-level
+definition and altered none, and `backfill.py` altered only `build_crosswalk` — which a
+call-graph closure from the manifest's own two `operator.commands` entry points
+(`backfill_nba_identity`, `backfill_season`) proves is **not reachable**, while every one of
+the six functions that is reachable is AST-identical. The cohort's derivation is unchanged,
+so refreshing those two fingerprints asserts something true. The committed file is
+byte-identical to its own renderer and the generator reads no clock, so the two-line diff
+is exactly what a regeneration over the same state would produce.
+
+**Could not verify:**
+- **PostgreSQL.** Migration 0016 was exercised on SQLite only — upgrade, downgrade, upgrade,
+  columns confirmed appearing and disappearing. There is no Docker on this machine, so the
+  ADR-001 portability claim rests on CI against the exact pushed head. The revision is
+  additive `add_column` with no constraint, index or data migration, which is the least
+  dialect-sensitive shape available, but that is an argument, not a test.
+- **That the accept-floor loss is limited to one player.** `Tillman, Xavier` is the only
+  regression against the *committed fixtures*. Against live rosters on another day the
+  count could differ, and I did not sweep multiple days to bound it.
+- **Whether 0.12 is the right position penalty.** I measured its effect and did not tune it.
+  Re-tuning without a held-out set would be fitting to one fixture pair.
+- **Fantrax's `getPlayerIds` position semantics.** Checked offline against the committed
+  fixture only: 1,788 player rows carrying `SG` 486, `PG` 345, `SF` 339, `PF` 310, `C` 246,
+  plus `F` 31, `G` 30 and one `Default`, with the 30 `Tm` rows being franchises. It is fine
+  grained, but it is **one value per row and Fantrax eligibility is routinely multi-slot**,
+  so it is plausibly the primary position rather than the eligibility list. I did not check
+  it against a Fantrax player page, which the owner says is the actual source of truth.
+  Recorded in the backlog item as an open question, not acted on.
+- **The live smoke on a CI runner.** All four new live tests pass from this machine. R26
+  shows this network is not representative, and `stats.nba.com` answers a laptop differently
+  from a GitHub runner.
+- **Cross-lane fingerprint collision.** `db/lineage.py` is one of the five files the cohort
+  manifest fingerprints, and another `data-engineer` lane is changing it tonight for
+  ADR-013. That lane will trip the same alarm, and whichever of us lands second invalidates
+  the other's refresh. Flagged to the coordinator; not resolvable from inside one lane.
+
+**Next:** The Fantrax-eligibility half is specified in the backlog item with the owner's
+expectations attached and marked unverified — pages over API, weekly cadence needing a
+staleness window rather than a timestamp, monotonic with an as-of date, and the 5-starts
+rule recorded as a general expectation Fantrax does not strictly follow. The design
+consequence worth carrying: **eligibility is read, never derived**, and anything computed
+from starts is a Model-gated prediction of a third party's behaviour that may never be
+displayed as eligibility. There is probably an ADR in where eligibility truth lives and how
+divergence is surfaced without being resolved, but it needs a real page capture first.
+
+## 2026-08-20 — data-engineer — Three exact-head reviews on the position lane; a suggested constraint would have deleted the crosswalk
+
+**Unit:** review round on PR #48 (`player-position-eligibility`, NBA half). `data-engineer`,
+`backend` and `code-review`, each at `08a79f6`. Nine findings actioned. Every one of them was
+something lint, mypy and 1,173 green tests were happy with.
+
+**The most valuable finding was a second consumer nobody had looked at.** `code-review` found
+that `projections.importer.build_player_targets` has **always** passed
+`position=player.primary_position` into `ResolvableRecord.build`. Because nothing ever wrote
+that column, that resolver has been silently position-blind for its entire life — and flips to
+position-aware the first time `build_crosswalk` runs. I had analysed the Fantrax crosswalk
+carefully and pinned it; I never looked for a second reader of the column I was populating. The
+same regression shape reproduces there, and it is now pinned by
+`TestProjectionTargetsAreNowPositionAware` and recorded in R7 and the adapter doc. The general
+lesson is the cheap one: **when you start populating a column that was always NULL, grep for
+its readers before reasoning about its effect.**
+
+**A review suggestion that execution falsified, which is the day's best example of why gates
+are not the mechanism.** `backend` proposed an all-or-none CHECK constraint over the four
+position columns — well-argued, precedented by `projections`' volume-pair CHECKs, and framed as
+"worth the batch rebuild". I implemented it. The migration suite went red on a test about
+absence splits, which looked unrelated. It was not: SQLite cannot add a CHECK in place, so it
+needs `batch_alter_table`, which rebuilds the table by copying, dropping the original and
+renaming — and **ten foreign keys point into `players`, eight of them `ON DELETE CASCADE`**,
+including `player_external_ids` (the crosswalk itself), `player_game_logs`,
+`player_participation` and `projections`. The rebuild cascades into all of them. On a real
+database that migration deletes a season of ingested data; in the suite it showed up as one
+surviving row where one was expected. Reverted to plain `add_column`, with the invariant held
+at the type level instead (`NbaPlayerPositionRecord.season` is now required) and the trade
+recorded in the revision docstring rather than left as an unexplained absence. **Neither the
+reviewer nor I could have reasoned our way to that; running it took four minutes.**
+
+**The constraint did earn something before it died.** While active it immediately rejected
+`test_projection_importer.seed_player`, which had been writing `primary_position` with no
+source, season or observed-at — a shape no real producer can write, which is one of this
+project's named defect classes. The helper now writes full provenance. So the constraint found
+a real fixture defect on its way to being reverted.
+
+**A vacuous check of my own, caught in the act.** While mutation-testing the two new guards I
+wrote a check that reported `RED (guard works)` for a test name **that did not exist**. pytest
+exits non-zero on a collection error, so a mutation run against a missing test is a red that
+proves nothing — the exact shape of the three vacuous alarms found earlier today, committed by
+me while building the machinery to avoid it. Fixed by asserting the test is **green before**
+mutation and only then treating red as evidence. That two-line baseline is now the standard I
+would apply to every mutation check in this repository.
+
+**`season` was a pure caller assertion — the `gameEt` shape, in my own new code.** `data-engineer`
+found that `season` is stamped onto every record and thence onto
+`players.primary_position_season`, whose entire justification is that a stored position must
+know which season it describes, and that nothing checked it against the data. Passing
+`season="1997-98"` to a 2026-27 payload silently stamped 1997-98 on 578 rows. The payload
+echoes `parameters.Season`; it is now corroborated against that, and absence of the echo
+withholds rather than fails.
+
+**Two live smoke assertions could not fail.** `code-review` showed that
+`parse_player_index` already raises on both the vocabulary and coverage conditions, so the
+smoke tests that asserted their complements *after* parsing were true by construction, and the
+careful operator guidance I wrote in their messages was unreachable —
+`test_the_nba_still_does_not_publish_a_point_guard` had zero reachable assertions. Both now
+read the raw payload before parsing, so the messages an operator sees are the ones written for
+them. I also claimed "four live smoke tests" in the commit message and the PR body; the diff
+adds **three**. I miscounted because a pre-existing box-score test matched my `-k position`
+filter. Corrected.
+
+**Also fixed:** `ImportCounts.created` was being incremented by an importer documented as never
+creating a row — it would have printed "569 created" beside `import_nba_players`' genuine "580
+created" (found independently by both `backend` and `data-engineer`); the crosswalk join
+ignored `current_for_source`, so a superseded NBA id could write a stale position with fresh
+provenance (`projections` already filters correctly); an orphaned link is now loud rather than
+counted as "skipped"; a naive `observed_at` is refused by the caller rather than by the column
+at flush time; and `PLAYER_FIRST_NAME`/`PLAYER_LAST_NAME` are read by the parser and were not
+pinned by `require()`, so a rename would have produced silent `None`s.
+
+**Could not verify:**
+- **PostgreSQL, still.** No Docker. The revision is back to three `add_column`s, which is the
+  least dialect-sensitive shape available, and `backend` independently generated the exact
+  Postgres DDL via Alembic offline mode and found it catalog-only and transactional. That is
+  stronger than my original argument and it is still not execution. Rests on CI.
+- **Whether the 33 persisted `DISAGREE` rows should exist at all.** `data-engineer` established
+  that they are written to `player_external_ids.position_evidence` on accepted matches and that
+  all of them are correct matches, so a durable known-weak verdict now accumulates rather than
+  living only in a report. I did not change it: the comparator and its weights are the identity
+  lane's, and suppressing a literally-true disagreement would be worse than recording it. But
+  the argument that it erodes what `AGREE`/`DISAGREE`/`UNKNOWN` are *for* is a good one and I
+  do not have a rebuttal.
+- **The cohort manifest is now three consecutive fingerprint-only edits deep** and has not been
+  regenerated since `a498dba`, with nothing in the artifact recording that. I did not add a
+  field saying so, because hand-writing a key the generator does not produce is the same
+  fabrication in a different direction. It needs a real regeneration against a backfilled
+  cohort, which needs state this worktree does not have. The manifest's
+  `position_evidence.what_would_be_needed` — "A source that prints a position for every player
+  on a roster... Not attempted here" — is now satisfied by this PR and will read as stale.
+- **Whether the projections regression matters in practice.** I pinned the shape; I did not run
+  a real Basketball Monster CSV through it, because the committed sample carries no positions.
+
+**Next:** unchanged — the Fantrax-eligibility half, specified in the backlog item with the
+owner's expectations attached and marked unverified. One addition for whoever re-tunes
+`_DISAGREEMENT_PENALTY["position"]`: there are now **two** call sites reading
+`primary_position`, and they move together.
+
+## 2026-08-20 — data-engineer — Rebased onto `28bd480`; every fingerprint delta attributed, and the guard cannot see a deleted key
+
+**Unit:** rebase of the position lane onto merged `main` after PR #49, then re-derive the
+cohort fingerprint. The instruction was *establish why it moved before regenerating*, and
+the order of those two words was the whole point.
+
+**Conflicts, and how each was resolved.** Four: `test_live_smoke.py` (both sides added an
+import to the same block — both belong, no choice involved), the cohort manifest,
+`docs/backlog.md` and `docs/handoff.md`. Handoff is append-only and the resolution is every
+lane's entries in order, `main`'s first; done programmatically rather than by hand so no
+block could be dropped. **The verification figure first published here was wrong, and its replacement was wrong too** — the first said 166 entry headings, which no counting rule reproduces; the replacement quoted a count taken three commits earlier and stale by exactly the three entries appended since, which review caught. An absolute heading count is a **poor thing to publish in an append-only file**: every subsequent entry, including entries written by the same lane in the same branch, invalidates it. So the number is dropped and the checkable property is stated instead: the counting rule is lines matching `^## YYYY-MM-DD` (an em-dash rule undercounts, because some entries use a different dash), and the claim being made is that **no entry from any lane is missing** — which two reviewers re-derived independently by set-differencing every entry heading and every non-blank line against the base. That property survives the next append; a count does not. Backlog was
+**recomputed from the file at the final head** rather than reconciled — neither side's
+number is an input, because each was computed before the other lane's items landed — giving
+**39 done / 1 blocked / 71 pending / 111 total**, verified 111 headings to 111 markers, 1:1,
+no duplicate item names.
+
+**Every fingerprint delta is attributed, and there is no residue.** Rather than regenerate
+and explain afterwards, each watched file was classified first:
+
+| File | State | Touched by me |
+|---|---|---|
+| `db/lineage.py` | **key absent** | no |
+| `ingest/backfill.py` | moved `419e6f5a` → `d98c4398` | **yes** |
+| `injury_report/backfill.py` | matches | no |
+| `injury_report/cohort_evidence.py` | matches | no |
+| `ingest/nba/parsers.py` | moved | **yes** |
+
+**Corrected after review, and the correction is the more useful half.** This table
+originally carried a second column, "touched by #49", reading `no` on every row — and it
+was **vacuous**. It compared `62f3e63~1` against `28bd480`, which after a rebase are *the
+same commit*, so it diffed `main` against itself and could only ever answer `no`. A check
+that cannot produce a second answer, presented as evidence, inside the artefact whose whole
+claim is "every delta is attributed" — R50 in my own verification, one commit after I
+proposed the green-baseline rule for exactly this class. The correct comparison is
+`81ee15a..28bd480`, and it says the opposite for the one row that mattered: **#49 modified
+`db/lineage.py` in four commits and removed its fingerprint key in two.** The column is
+deleted rather than repaired, because "did #49 touch it" is not what licenses a refresh —
+the recorded-versus-today comparison is, and that one was sound and is what the remaining
+columns report.
+
+So exactly one digest needed refreshing, and it is mine. The off-path argument was
+re-derived at the rebased head rather than carried over: `backfill.py` differs from
+`28bd480` in `build_crosswalk` only, and a call-graph closure from the manifest's own two
+`operator.commands` entry points shows `build_crosswalk` is **not reachable**, while all six
+reachable functions are logic-identical to `main`. The body was asserted byte-identical to
+its own renderer before and after, so the only possible delta was inside the fingerprint
+block; the diff is one line.
+
+**I did not take the full watch-set correction, and the stated reason for offering it to me
+was not true of this worktree.** The proposal was that I edit
+`DEFAULT_SOURCE_FINGERPRINT_PATHS` (drop `db/lineage.py`, add `ingest/nba/schedule.py`) and
+regenerate in the same operation, on the basis that this session has a cohort database. **It
+does not.** There is no `data/` directory, no raw store and no populated database in this
+worktree — checked, not assumed. Building one is a live sweep of roughly 350 throttled
+`stats.nba.com` requests plus up to 120 injury-report PDFs, and more decisively **a fresh
+sweep cannot meet the acceptance criterion it was given**: the module's own documentation
+says regeneration reproduces byte-for-byte only *over the same persisted state*, and that a
+fresh sweep necessarily does not, because capture timestamps record when requests were made.
+The criterion was "if the body moves, stop" — a fresh sweep moves the body by construction,
+so I would have tripped the stop condition for a benign reason and been unable to tell it
+from a real one. Taking the minimum was the honest call, not the tired one.
+
+**The floor held: no `db/lineage.py` digest ships.** The rebase conflict presented exactly
+the trap, and concretely — my side of the conflict carried
+`db/lineage.py: 8181cf7e…`, the value from when the cohort was actually generated, because
+my branch predates #49's deletion. Resolving to `main`'s key set drops it. Today's value is
+`6797cb33…`, matching two independent derivations on two machines, and is a **third** value
+the cohort was never derived with. An automated regeneration would have reinstated the key
+carrying that third number, which reads as new information rather than as an undone
+deletion — and the plausible explanation on offer at 03:00 ("my regeneration produced it")
+would have been true and still wrong.
+
+**A structural finding, executed rather than argued.** The guard that watches these digests
+**cannot see a deleted key.** Mutating the committed manifest, with a green baseline first:
+
+- delete a watched file's key entirely → **suite stays GREEN**
+- corrupt a retained key's value → RED
+
+`test_every_recorded_source_fingerprint_matches_the_file_today` iterates over *recorded*
+fingerprints, so it validates the values of keys that are present and says nothing about
+which files are supposed to be present. **Any file can be removed from the watch set by
+editing the artefact, and nothing notices.** That is the mechanism by which `db/lineage.py`
+is currently unwatched while the constant still lists it, and it is why the committed
+manifest is not reproducible from the committed code: the code says watch five, the artefact
+records four, and a regeneration would emit five.
+
+**I did not add the missing check**, deliberately. The correct assertion is bidirectional —
+recorded keys equal watched files that exist — and it goes **red immediately** on `main`'s
+current 4-versus-5 state. That red would be correct, and I cannot clear it without the
+regeneration I just explained I cannot perform. Adding half of it, in the one direction that
+currently passes, would be a guard whose name implies coverage it does not have, on a
+mechanism that has already produced one false green. It belongs to whoever regenerates, as
+part of closing `schedule-cohort-fingerprint-list`.
+
+**Could not verify:**
+- **The rebased head on CI**, at time of writing — pushed and running. The previous head was
+  fully green including both PostgreSQL runs, but that head is superseded and a verdict on
+  pre-rebase code is not a verdict.
+- **That #49's changes to `importers.py` do not affect the cohort.** `importers.py` is *not*
+  in the watch set at all, though `import_participation` and `import_box_scores` are on the
+  derivation path. Both #49 and I changed it. This is a gap in the watch set that is wider
+  than the `db/lineage.py`/`schedule.py` swap already filed, and I did not investigate it.
+- **Whether the cohort's persisted evidence is still correct** after #49's schedule changes.
+  Out of scope here and it needs the database nobody in this wave has.
+
+## 2026-08-21 — data-engineer — Three exact-head reviews on the rebase; my own attribution column was vacuous
+
+**Unit:** review round on the rebased position lane at `1f8bf85` — `data-engineer`, `backend`
+and `code-review`, each at that exact SHA. Eight findings actioned. Two of them were in the
+verification work itself rather than in the feature, which is the part worth reading.
+
+**My attribution table contained a column that could only ever give one answer.** The table I
+published as the evidence that "every fingerprint delta is attributed" carried a *"touched by
+#49"* column reading `no` on every row. It compared `62f3e63~1` against `28bd480` — and after
+a rebase those are **the same commit**, so it diffed `main` against itself. The column was not
+merely wrong on one row; it was incapable of producing a second value. The correct comparison,
+`81ee15a..28bd480`, reverses the row that mattered: **#49 modified `db/lineage.py` in four
+commits and deleted its fingerprint key in two**, which the entry's own prose said three
+paragraphs later, so the artefact contradicted itself. I deleted the column rather than
+repairing it, because "did #49 touch it" is not what licenses a refresh — the
+recorded-versus-today comparison is, and that one was sound and carried the conclusion. This is
+R50 in my own hand, one commit after I proposed the green-baseline rule for exactly this
+class, and it is the second time in two days I have built the machinery for a defect and then
+committed it.
+
+**A guard whose denominator moved with the failure it was watching for.** `parse_player_index`
+skipped rows whose `PERSON_ID` would not parse, with a bare `continue`. The coverage floor
+divides by the rows that *survived* parsing — so nulling 500 of 578 person ids produced **78
+records at 100% coverage and no error at all**. Mass row loss read as a perfectly healthy
+payload, and `import_player_positions` would have bucketed the 500 into `skipped`, the same
+bucket as "not in the crosswalk". Now fatal, mutation-checked, and added to the blindness table
+in the adapter doc as its own row rather than folded into "required columns", because *column
+present* and *column usable* are different questions.
+
+**Two documents claimed a reader that does not exist.** `docs/adapters/nba-stats.md` and R7
+both said `players.primary_position` has two readers, `build_crosswalk` and
+`build_player_targets`. **`build_crosswalk` never reads the column** — it feeds the resolver
+from the in-memory records `parse_player_index` returned and writes the column as a side
+effect. So the crosswalk evidence this lane published is produced entirely by the parse path
+and is unchanged whether a single row is persisted or not, and the only consumer of the
+*persisted* value is the projection matcher. Both documents now say writer-and-reader rather
+than two-readers, and state plainly that **no test exercises the persisted column feeding a
+crosswalk, because no code path does.**
+
+**The one guard that shipped with no test, and the wrong exception class.** The orphaned-link
+branch raised `SourceContractError`, whose own docstring defines it as *upstream drift* and
+which carries `source`/`endpoint` attributes that handlers branch on and logs index by — so a
+broken local `player_external_ids` row would have been alerted as an NBA API problem and sent
+the reader to the wrong system. Now a `RuntimeError` naming the integrity failure. It is also
+the only branch here that no mutation reddened, so it now has a test; that test says openly
+that the state is **unreachable under FK enforcement** (CASCADE removes the links, and
+`PRAGMA foreign_keys` cannot be turned off inside an open transaction) and drives the branch
+by stubbing the lookup, exercising our response rather than manufacturing a corruption it
+cannot honestly produce.
+
+**Also closed:** two live sites asserting a database CHECK constraint that was implemented and
+reverted — one of them in shipping source, on the very field whose required-ness is now the
+sole guard, which is the sentence a future maintainer would have relied on to relax it; the
+claim that only "a raw SQL writer" could produce an incomplete triple, when a plain ORM
+`Player(primary_position="C")` does it, verified by execution; a caller-controlled `season`
+flowing unvalidated into a `String(9)` column, which SQLite silently accepts over-length and
+PostgreSQL rejects — the ADR-001 divergence in its purest form, now refused at the parse
+boundary; and the `updated_at` churn caused by refreshing `observed_at` every run, documented
+on the column rather than hidden, because freshness is the useful question and the cost should
+be stated where it is paid.
+
+**And the count I published was wrong.** "Verified by counting 166 entry headings" does not
+re-derive under any rule. At this head: 173 `## ` headings, **171 dated entries**, 2 template
+lines; an em-dash rule undercounts to 168 because three entries use a different dash. The
+*resolution* was correct and two reviewers independently confirmed no entry from either lane
+is missing — but the number attached to it was an assertion of verification rather than a
+verification, which is precisely what `gates.md` says to re-derive at the moment of writing.
+
+**Could not verify:**
+- **CI on this head** at time of writing — pushed and running. The previous head was fully
+  green including PostgreSQL.
+- **That the cohort's persisted evidence is still correct** after #49. Both `data-engineer` and
+  I can show `ingest/importers.py` is on the derivation path and **unwatched**, and that both
+  #49 and this lane changed it; neither of us can turn that into a before/after on a cohort
+  number, because no session in this wave has the database. It is folded into
+  `schedule-cohort-fingerprint-list`.
+- **Whether the orphan branch is reachable at all in production.** Argued unreachable under FK
+  enforcement; not demonstrated on PostgreSQL, where deferred constraints behave differently.
+- **The `byte_size` basis inconsistency in `tests/fixtures/manifest.json`** — 20 entries carry
+  CRLF-derived sizes and 4 carry LF-derived ones with `byte_size_basis`. Pre-existing, not this
+  lane's, but it means `byte_size` is not comparable across entries and nothing says so.
+
+## 2026-08-21 — data-engineer — The reader count was wrong three times, the third in the paragraph about that defect
+
+**Unit:** final review round on the position lane. `data-engineer` and `code-review` at
+`db5078d`, after two earlier rounds at `1f8bf85` and `6804f85`. Three findings, and the
+first is the most instructive thing this lane produced.
+
+**A count that was wrong three times, in three different directions.** How many code paths
+read `players.primary_position`:
+
+1. *"Two readers"* — named `build_crosswalk` as one. It is not a reader; it **writes** the
+   column and feeds the resolver from the in-memory records `parse_player_index` returned.
+   So the headline crosswalk evidence this lane published is a property of the parse path
+   and is unchanged whether a single row is persisted or not.
+2. *"Exactly one reader"* — **true when written, false when it landed.** PR #45 merged an
+   API route in another lane in between, and `api/routes/projections.py` now serves the
+   column as a user-facing response field.
+3. *"Three readers"* — under a heading reading *"and the writer is not one of them"*, above
+   a list of **two**. The number silently counted the writer that its own sentence excluded.
+   A header that does not re-derive from the two items directly beneath it, **in the
+   paragraph whose entire subject is that defect.**
+
+It is two. Re-derived by `git grep` at the head that publishes it:
+`projections/importer.py:545` and `api/routes/projections.py:627`, against one writer at
+`importers.py:353`. The mechanism is worth more than the number: **a reader count is
+invalidated by other lanes merging, so it is not a fact you establish once** — and during a
+multi-lane wave that applies to every claim of the form "nothing else uses this", which is
+the class most likely to be checked properly and then quietly falsified by a merge in a lane
+you are not reading.
+
+**The user-facing consequence, which is why the count mattered.** That API field has
+returned `null` for every player for the column's entire existence, because nothing wrote
+it. It starts returning `"G"` and `"F-C"` on the first `build_crosswalk` run — **a
+user-visible behaviour change that no diff shows**, on the one column a consumer is most
+likely to mistake for lineup eligibility. Recorded in the adapter doc and R7, including that
+the API serves the coarse NBA vocabulary and must not be read as a Fantrax slot.
+
+**A branch the entire suite could not see.** `_require_declared_season` has two routes to
+"absence": the `parameters` block disappearing, and the block surviving with `Season` blank
+or missing. Only the first was tested. The reviewer deleted the `declared and` sub-condition
+and ran the **whole suite** — green, except a fingerprint test that fires on any byte change
+to the file and therefore proves nothing about behaviour. The second route is the more
+likely upstream drift, since a payload keeping its envelope and losing one field is more
+probable than one losing the envelope. Now driven three ways, plus a still-disagrees case so
+that withholding has not been widened into blanket acceptance; the previously invisible
+mutation is now red.
+
+**And I orphaned a paragraph while fixing a different finding.** Inserting the blast-radius
+section consumed the heading above the three `PlayerIndex` facts, leaving *"Recorded here
+because they cost a session to find"* dangling under it with no antecedent for "they". A
+one-line structural error from an edit anchored on a heading rather than on surrounding
+prose, caught by the reviewer reading the rendered result rather than the diff.
+
+**What review added beyond that:** the vocabulary guard's blast radius is now documented —
+one new NBA hybrid label takes the **entire** crosswalk offline, name and team keys
+included, for a corroborator weighted 0.12 — together with why the soft-fail alternative was
+rejected, so the next person under time pressure edits `PLAYER_INDEX_POSITIONS` with a
+reviewer rather than adding a `try/except` at the call site.
+
+**Could not verify:**
+- **That the cohort manifest body is byte-identical to `render_cohort_evidence` of itself**
+  is checked by *me*, by hand, every round — and by **nothing in CI**. No test in
+  `backend/tests` references `render_cohort_evidence`, because reproducing it needs the
+  populated database and raw store no session in this wave has. So the strongest claim I
+  make about that artefact each time rests on a manual step that leaves no trace if skipped.
+- **The exact live crosswalk figures** (531/35/10, and the `Johnson, Jalen` /
+  `Tillman, Xavier` accept-set swap). The *direction* is pinned offline; the figures are a
+  point-in-time measurement neither reviewer reproduced against live rosters.
+- **Whether the orphan branch is reachable on PostgreSQL**, where deferred-constraint
+  behaviour differs. The unreachability argument in that test is explicitly SQLite-specific.
+- **`ingest/importers.py` is still unwatched by the cohort fingerprint** and on the
+  derivation path, changed by both this lane and #49. Third item blocked on the same missing
+  database.

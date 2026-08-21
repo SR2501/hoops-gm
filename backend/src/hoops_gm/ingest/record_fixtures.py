@@ -380,6 +380,26 @@ def record_nba() -> None:
         },
     )
 
+    payload = client.player_index(season=FIXTURE_CURRENT_SEASON)
+    _write(
+        "nba_playerindex_current.json",
+        payload,
+        meta={
+            "source": "nba_stats",
+            "endpoint": "PlayerIndex",
+            "params": {"league_id": "00", "season": FIXTURE_CURRENT_SEASON},
+            "trimmed": False,
+            "note": (
+                "The listed NBA position for every player, one row per person id. This is "
+                "the only position source this project has: BoxScoreTraditionalV3.position "
+                "is a starting-lineup slot (five per team per game, F,F,C,G,G), not a player "
+                "attribute. Untrimmed on purpose - the contract test asserts on coverage and "
+                "on the position vocabulary across the whole league, and both assertions are "
+                "meaningless over an arbitrary prefix of the rows."
+            ),
+        },
+    )
+
     payload = client.league_game_finder(season=FIXTURE_STATS_SEASON)
     fixture_game_ids = _league_game_finder_fixture_ids(
         payload,

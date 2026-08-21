@@ -32,6 +32,8 @@ from hoops_gm.ingest.fantrax_official import (
     parse_player_ids,
 )
 from hoops_gm.ingest.nba import (
+    MIN_POSITION_COVERAGE,
+    PLAYER_INDEX_POSITIONS,
     combine_game_participation,
     parse_box_score_summary_v3,
     parse_box_score_traditional_v3,
@@ -40,6 +42,7 @@ from hoops_gm.ingest.nba import (
     parse_minutes_to_seconds,
     parse_participation_comment,
     parse_player_game_logs,
+    parse_player_index,
     parse_teams,
 )
 from hoops_gm.ingest.record_fixtures import (
@@ -383,6 +386,332 @@ class TestNbaStaticAndPlayers:
     def test_a_payload_with_no_result_sets_is_a_contract_error(self) -> None:
         with pytest.raises(SourceContractError):
             parse_common_all_players({"resource": "commonallplayers"})
+
+
+class TestNbaPlayerIndexPosition:
+    """``PlayerIndex`` — the project's only source of a player position.
+
+    Every assertion here exists because something else in the project would be
+    wrong without it, and each guard below is checked by *breaking the payload
+    and watching the guard fire*, not merely by watching it pass on good data.
+    A verifier that has only ever been seen passing is indistinguishable from
+    one that cannot fail.
+    """
+
+    def test_it_lists_every_player_once_which_is_what_makes_it_an_attribute(self) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+
+        assert len(records) > 500
+        assert len({r.nba_player_id for r in records}) == len(records)
+
+    def test_the_position_vocabulary_is_coarse_and_has_no_point_guard(self) -> None:
+        """The single most consequential fact about this field.
+
+        `G/F/C` plus hybrids, and nothing finer — checked on 2026-08-20 against
+        `PlayerIndex`, `CommonPlayerInfo` ("Guard") and `CommonTeamRoster`
+        ("G"), while `PlayerIndex` answers a `PlayerPosition=PG` filter with
+        `{"PlayerPosition": ["Invalid parameters"]}`.
+
+        So this field can separate a centre from a guard — which is what the
+        identity crosswalk needs — and can **not** express a Fantrax lineup
+        slot. If this assertion ever fails because `PG` appeared, that is a
+        genuine change in what the NBA publishes and somebody should read
+        `docs/backlog.md`'s `player-position-eligibility` before celebrating.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+
+        stated = {r.position for r in records if r.position is not None}
+        assert stated <= PLAYER_INDEX_POSITIONS
+        assert not stated & {"PG", "SG", "SF", "PF"}
+
+    def test_it_is_not_the_box_score_starting_slot(self) -> None:
+        """The distinction this whole record type exists to preserve.
+
+        `BoxScoreTraditionalV3.position` is emitted for exactly five players
+        per team per game, always `F,F,C,G,G`. Asserted here side by side
+        rather than described, because the two fields carry the same-looking
+        letters and the reason to believe they are different quantities should
+        be executable.
+        """
+        box = load("nba_boxscoretraditionalv3_0022400306.json")["boxScoreTraditional"]
+        for side in ("homeTeam", "awayTeam"):
+            slots = [p.get("position") for p in box[side]["players"] if p.get("position")]
+            assert sorted(slots) == ["C", "F", "F", "G", "G"], (
+                "the box-score field is a five-slot starting lineup; if this ever "
+                "stops being true the two fields may have converged and the "
+                "position source should be re-examined"
+            )
+
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        by_team: dict[str | None, list[str | None]] = {}
+        for record in records:
+            by_team.setdefault(record.team_abbreviation, []).append(record.position)
+
+        assert len(by_team) == 30
+        # A starting-lineup slot would give exactly five per team. A roster
+        # listing gives a roster.
+        assert min(len(v) for v in by_team.values()) > 5
+        # And it could not express a hybrid at all.
+        assert any(r.position and "-" in r.position for r in records)
+
+    def test_an_unstated_position_is_preserved_as_none_never_guessed(self) -> None:
+        """Six 2026-27 rows state no position, and that is real absence.
+
+        `CommonPlayerInfo` returns `''` for the same players, all of whom have
+        `FROM_YEAR: 2026`. Inventing a position for them would corroborate an
+        identity match on evidence nobody supplied — which is the specific way
+        a scalar confidence score lies (see `identity/evidence.py`).
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+
+        unstated = [r for r in records if r.position is None]
+        assert unstated, "the fixture is expected to contain genuinely unlisted players"
+        assert all(r.nba_player_id > 0 for r in unstated)
+
+    def test_the_season_is_carried_so_a_stored_position_can_be_refreshed(self) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        assert {r.season for r in records} == {"2026-27"}
+
+    # -- the guards, each broken deliberately ------------------------------
+
+    def test_rows_with_an_unusable_person_id_are_fatal_not_quietly_dropped(self) -> None:
+        """Dropping them would raise the coverage figure, not lower it.
+
+        The coverage floor divides by the rows that survived parsing, so a
+        payload that loses most of its rows to unparseable `PERSON_ID`s would
+        report *higher* coverage than a healthy one — a guard whose denominator
+        moves with the failure it is watching for. Found by review; it was
+        silently `continue` before.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("PERSON_ID")
+        for row in table["rowSet"][:500]:
+            row[column] = None
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        message = str(caught.value)
+        assert "500 of 578" in message
+        assert "PERSON_ID" in message
+
+    def test_a_wholly_unusable_id_column_is_not_reported_as_an_empty_listing(self) -> None:
+        """The total case, which the empty-records check used to shadow.
+
+        When *every* id is unparseable, `records` is empty as well, and the
+        `if not records` branch used to win the race — reporting "no player
+        rows" for a payload that returned 578 of them. That message is the one
+        this adapter's own documentation attaches to a nonexistent season,
+        which returns 200 with an empty `rowSet`. So the total version of the
+        failure the guard was written for was routed to a different diagnosis.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("PERSON_ID")
+        for row in table["rowSet"]:
+            row[column] = "not-an-int"
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        message = str(caught.value)
+        assert "578 of 578" in message
+        assert "no player rows" not in message
+
+    def test_a_malformed_season_is_refused_at_the_parse_boundary(self) -> None:
+        """SQLite would take it; PostgreSQL would not — so it is caught here.
+
+        ``season`` lands in a 9-character column. SQLite ignores a declared
+        VARCHAR length and PostgreSQL enforces it, so an over-long season is
+        the ADR-001 divergence in its purest form: green locally, `value too
+        long for type character varying(9)` in production. Nothing downstream
+        validates it, so the parse boundary is the last place it can be caught
+        cheaply.
+        """
+        payload = load("nba_playerindex_current.json")
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-2027-extended")
+        assert "YYYY-YY" in str(caught.value)
+
+        # And the shape check does not reject the real form.
+        assert parse_player_index(payload, season="2026-27")
+
+    def test_a_season_disagreement_with_the_payload_is_a_contract_error(self) -> None:
+        """The season was a pure caller assertion until independent review.
+
+        ``season`` is stamped onto every record and thence onto
+        ``players.primary_position_season``, whose entire justification is that
+        a stored position must know which season it describes. Nothing checked
+        it against the data — the `gameEt` shape, a self-describing value
+        believed rather than corroborated. The payload echoes the season the
+        server actually served, so it is checked against that.
+        """
+        payload = load("nba_playerindex_current.json")
+        assert payload["parameters"]["Season"] == "2026-27"
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="1997-98")
+        assert "1997-98" in str(caught.value)
+        assert "2026-27" in str(caught.value)
+
+    def test_a_payload_that_states_no_season_withholds_rather_than_fails(self) -> None:
+        """Absence is not disagreement — the rule the whole evidence model runs on.
+
+        If the endpoint stops echoing its parameters, "the server did not say"
+        must not be read as "the server contradicted us".
+
+        **Both routes to absence are driven**, because they are different
+        branches and only one of them was covered until review: the parameters
+        block disappearing entirely, and the block surviving with `Season`
+        blanked or dropped. The second is the more likely upstream drift — a
+        payload keeping its envelope and losing one field — and deleting the
+        `declared and` sub-condition left the *entire* suite green.
+        """
+        # Route A: no parameters block at all.
+        payload = load("nba_playerindex_current.json")
+        del payload["parameters"]
+        assert len(parse_player_index(payload, season="2026-27")) > 500
+
+        # Route B: parameters present, Season blanked.
+        payload = load("nba_playerindex_current.json")
+        payload["parameters"]["Season"] = ""
+        assert len(parse_player_index(payload, season="2026-27")) > 500
+
+        # Route B': parameters present, Season key gone.
+        payload = load("nba_playerindex_current.json")
+        del payload["parameters"]["Season"]
+        assert len(parse_player_index(payload, season="2026-27")) > 500
+
+        # And a *stated* season still disagrees, so withholding has not been
+        # widened into blanket acceptance.
+        payload = load("nba_playerindex_current.json")
+        payload["parameters"]["Season"] = "1997-98"
+        with pytest.raises(SourceContractError):
+            parse_player_index(payload, season="2026-27")
+
+    def test_the_name_columns_that_are_read_are_also_required(self) -> None:
+        """Every column this parser reads is pinned, not just the load-bearing ones.
+
+        ``ResultTable.get`` returns ``None`` for an unknown column rather than
+        raising, so a column that is read but not declared in ``require()``
+        turns a source rename into silent ``None``s instead of a contract
+        error. ``PLAYER_FIRST_NAME`` and ``PLAYER_LAST_NAME`` are read into
+        every record and were unpinned until independent review; nothing
+        consumes them yet, which is exactly why it would have gone unnoticed.
+        """
+        for column in ("PLAYER_FIRST_NAME", "PLAYER_LAST_NAME"):
+            payload = load("nba_playerindex_current.json")
+            payload["resultSets"][0]["headers"] = [
+                h for h in payload["resultSets"][0]["headers"] if h != column
+            ]
+            with pytest.raises(SourceContractError) as caught:
+                parse_player_index(payload, season="2026-27")
+            assert column in str(caught.value)
+
+    def test_a_missing_position_column_is_a_contract_error(self) -> None:
+        payload = load("nba_playerindex_current.json")
+        payload["resultSets"][0]["headers"] = [
+            h for h in payload["resultSets"][0]["headers"] if h != "POSITION"
+        ]
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        assert "POSITION" in str(caught.value)
+
+    def test_a_new_position_value_is_a_contract_error_not_a_silent_passthrough(self) -> None:
+        """Mutation check for the vocabulary guard.
+
+        `PG` is the mutation that matters: if the NBA ever published it, every
+        stored coarse position would be describing a different vocabulary, and
+        the tempting reading — "great, now we can do Fantrax eligibility" — is
+        wrong for reasons that need a human. Deliberately fatal.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        table["rowSet"][0][column] = "PG"
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        assert "'PG'" in str(caught.value)
+        assert "vocabulary" in str(caught.value)
+
+    def test_a_repeated_person_id_is_a_contract_error(self) -> None:
+        """Mutation check for the one-row-per-player guard.
+
+        Duplicating a row is what a per-stint or per-game listing would look
+        like, and it is the shape that would mean "his position" no longer has
+        one answer.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        table["rowSet"].append(list(table["rowSet"][0]))
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        assert "more than once" in str(caught.value)
+
+    def test_a_lineup_slot_shaped_payload_trips_the_coverage_floor(self) -> None:
+        """Mutation check for the coverage guard, using the failure it guards against.
+
+        This is the guard's actual reason to exist, so it is broken in the
+        specific way that matters rather than by nulling a column: keep a
+        position for five players per team and blank the rest — exactly what
+        this field would look like if it were replaced by, or degraded into, a
+        starting-lineup slot. The vocabulary guard cannot see this (the values
+        are still `G`/`F`/`C`) and neither can the duplicate guard (still one
+        row each), which is why coverage is a separate check.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        position = table["headers"].index("POSITION")
+        team = table["headers"].index("TEAM_ABBREVIATION")
+
+        kept: dict[Any, int] = {}
+        for row in table["rowSet"]:
+            count = kept.get(row[team], 0)
+            if count < 5 and row[position]:
+                kept[row[team]] = count + 1
+            else:
+                row[position] = ""
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        message = str(caught.value)
+        assert "starting" in message
+        assert "Do not persist" in message
+
+    def test_an_emptied_position_column_also_trips_the_coverage_floor(self) -> None:
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        for row in table["rowSet"]:
+            row[column] = ""
+
+        with pytest.raises(SourceContractError):
+            parse_player_index(payload, season="2026-27")
+
+    def test_the_coverage_floor_leaves_real_headroom(self) -> None:
+        """The floor must be loose enough not to fire on an ordinary season.
+
+        A guard tuned so tightly that a normal payload trips it gets disabled,
+        which is a worse outcome than not having it. Observed coverage is
+        98.9%; this pins the margin so a later tightening is a deliberate act.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        stated = sum(1 for r in records if r.position is not None)
+        coverage = stated / len(records)
+
+        assert coverage > MIN_POSITION_COVERAGE
+        assert coverage - MIN_POSITION_COVERAGE > 0.05
+
+    def test_a_payload_with_no_rows_is_a_contract_error(self) -> None:
+        payload = load("nba_playerindex_current.json")
+        payload["resultSets"][0]["rowSet"] = []
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        assert "no player rows" in str(caught.value)
 
 
 class TestNbaGamesAndLogs:

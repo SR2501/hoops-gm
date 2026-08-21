@@ -51,11 +51,14 @@ from hoops_gm.ingest.injury_report.cohort_evidence import (
     _schedule_league_ids,
 )
 from hoops_gm.ingest.nba import (
+    MIN_POSITION_COVERAGE,
+    PLAYER_INDEX_POSITIONS,
     NbaStatsClient,
     parse_box_score_summary_v3,
     parse_common_all_players,
     parse_league_game_finder,
     parse_player_game_logs,
+    parse_player_index,
     parse_schedule,
     parse_teams,
 )
@@ -65,6 +68,7 @@ from hoops_gm.ingest.projections import (
     parse_projection_csv,
 )
 from hoops_gm.ingest.record_fixtures import (
+    FIXTURE_COHORT_SEASON,
     FIXTURE_CURRENT_SEASON,
     FIXTURE_MIDSEASON_GAME_DATE,
     FIXTURE_MIDSEASON_GAME_ID,
@@ -360,6 +364,142 @@ class TestNbaStatsIsAlive:
         )
         without = [p.display_last_comma_first for p in players if not p.team_abbreviation]
         assert not without, f"{len(without)} current players have no team: {without[:5]}"
+
+    def test_the_listed_position_is_still_published_for_the_whole_league(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: ``PlayerIndex`` stops stating a position for most players.
+
+        This is the project's **only** source of a player position, and
+        therefore of the third key risk R7 specifies the identity crosswalk to
+        match on.
+
+        **Asserted on the raw payload, deliberately.** ``parse_player_index``
+        already raises below the coverage floor, so measuring after parsing
+        would make every assertion here true by construction and the guidance
+        below unreachable — the parser's message would be the only one anyone
+        ever saw. Independent review caught exactly that in the first version
+        of this test. Reading the payload directly is what makes this test able
+        to fail on its own terms and to say what an operator should do.
+
+        Observed 2026-08-20: 572 of 578 rows state one, 98.9%.
+        """
+        payload = nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        rows = table["rowSet"]
+
+        assert len(rows) > 400, (
+            f"only {len(rows)} players listed. This is row *omission*, which the parser "
+            "cannot see — it validates the rows it is given. A short listing means stored "
+            "positions are refreshed for only part of the league"
+        )
+        stated = sum(1 for row in rows if str(row[column] or "").strip())
+        coverage = stated / len(rows)
+        assert coverage >= MIN_POSITION_COVERAGE, (
+            f"only {stated} of {len(rows)} players ({coverage:.1%}) have a listed "
+            "position. Treat stored primary_position values as stale, and check whether "
+            "this column has become a per-game or starters-only field"
+        )
+
+        # And the parser agrees with the raw reading, so the two cannot drift.
+        records = parse_player_index(payload, season=FIXTURE_CURRENT_SEASON)
+        assert sum(1 for r in records if r.position) == stated
+
+    def test_the_nba_still_does_not_publish_a_point_guard(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the NBA starts publishing fine-grained positions.
+
+        **A red here is good news and has product consequences**, which is why
+        it is a live test rather than only a fixture assertion — the fixture can
+        only ever show what the source did when it was recorded.
+
+        Today the vocabulary is `G/F/C` plus hybrids, with no `PG`/`SG`/`SF`/
+        `PF` on this endpoint, on `CommonPlayerInfo` ("Guard") or on
+        `CommonTeamRoster` ("G"); `PlayerIndex` rejects a `PlayerPosition=PG`
+        filter outright with `{"PlayerPosition": ["Invalid parameters"]}`. That
+        coarseness is the stated reason this field cannot express a Fantrax
+        lineup slot.
+
+        If this fails, **do not conclude that Fantrax eligibility is now
+        derivable.** Eligibility is a policy decision by a third party, not a
+        computable function of NBA data — see `player-position-eligibility` in
+        `docs/backlog.md`. Finer NBA positions would improve identity
+        corroboration and nothing else without a separate decision.
+
+        Read from the raw payload for the same reason as the test above: the
+        parser's vocabulary guard would otherwise raise first and this test
+        would have no reachable assertion at all.
+        """
+        payload = nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        stated = {
+            str(row[column]).strip().upper()
+            for row in table["rowSet"]
+            if str(row[column] or "").strip()
+        }
+
+        fine = stated & {"PG", "SG", "SF", "PF"}
+        assert not fine, (
+            f"PlayerIndex now publishes {sorted(fine)}. This changes what the NBA states "
+            "about position. Revisit PLAYER_INDEX_POSITIONS, the coarseness caveat in "
+            "docs/adapters/nba-stats.md, and R7 — but not the eligibility conclusion"
+        )
+        assert stated <= PLAYER_INDEX_POSITIONS, (
+            f"unrecorded position values {sorted(stated - PLAYER_INDEX_POSITIONS)}; the "
+            "source vocabulary changed and stored positions describe the old one"
+        )
+
+    def test_a_listed_position_is_still_stable_across_seasons(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the same players' positions churn between seasons.
+
+        **This is the check that covers what no single-payload guard can.** The
+        offline contract test can see the position column empty out, thin to a
+        starters-only shape, or change vocabulary. It structurally cannot see a
+        payload that keeps full coverage and this exact vocabulary while the
+        values come to mean something else — a per-game slot, a most-recent-
+        game slot, anything letter-shaped. Comparing two seasons can: a player
+        attribute is near-perfectly stable across them, and anything derived
+        from games is not.
+
+        Observed 2026-08-20: 490 players appear in both 2025-26 and 2026-27,
+        and **all 490 carry identical positions**. The floor is set at 95%
+        rather than 100% because a genuine re-listing of one player is a real
+        event and must not make this test permanently red — a smoke test people
+        learn to ignore protects nothing.
+        """
+        current = {
+            r.nba_player_id: r.position
+            for r in parse_player_index(
+                nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
+                season=FIXTURE_CURRENT_SEASON,
+            )
+            if r.position
+        }
+        previous = {
+            r.nba_player_id: r.position
+            for r in parse_player_index(
+                nba.player_index(season=FIXTURE_COHORT_SEASON, max_age=NO_CACHE),
+                season=FIXTURE_COHORT_SEASON,
+            )
+            if r.position
+        }
+
+        shared = sorted(set(current) & set(previous))
+        assert len(shared) > 300, f"only {len(shared)} players appear in both seasons"
+
+        identical = [pid for pid in shared if current[pid] == previous[pid]]
+        agreement = len(identical) / len(shared)
+        changed = [
+            (pid, previous[pid], current[pid]) for pid in shared if current[pid] != previous[pid]
+        ]
+        assert agreement >= 0.95, (
+            f"only {agreement:.1%} of {len(shared)} shared players kept their position "
+            f"between {FIXTURE_COHORT_SEASON} and {FIXTURE_CURRENT_SEASON}; examples "
+            f"{changed[:5]}. A listed position is a player attribute and does not churn. "
+            "This much movement means the field is being derived from something "
+            "per-game, and stored primary_position values should not be trusted"
+        )
 
     def test_a_full_season_of_games_is_still_retrievable(self, nba: NbaStatsClient) -> None:
         """FAILS IF: ``LeagueGameFinder`` stopped returning a whole season.

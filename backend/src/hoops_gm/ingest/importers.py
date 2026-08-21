@@ -53,6 +53,7 @@ from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
     GameParticipation,
     NbaGameRecord,
+    NbaPlayerPositionRecord,
     NbaPlayerRecord,
     NbaTeamRecord,
     PlayerBoxScoreRecord,
@@ -258,6 +259,102 @@ def import_nba_players(session: Session, records: Sequence[NbaPlayerRecord]) -> 
             link.normalized_name = normalized.key
             link.external_team = record.team_abbreviation
             counts.updated += 1
+
+    session.flush()
+    return counts
+
+
+#: Provenance stamped onto every position this importer writes. ``source`` on
+#: its own would not distinguish the league-wide listing from the per-player
+#: endpoint that states the same thing in long form, and refreshing deliberately
+#: means knowing which one was read.
+NBA_POSITION_SOURCE = f"{ExternalSource.NBA.value}:PlayerIndex"
+
+
+def import_player_positions(
+    session: Session,
+    records: Sequence[NbaPlayerPositionRecord],
+    *,
+    observed_at: datetime,
+) -> ImportCounts:
+    """Persist the NBA's listed position onto canonical players.
+
+    Joined by NBA person id through ``player_external_ids``, never by name —
+    this importer supplies one of the fields the *name* matcher corroborates
+    with, so matching it on a name would be circular. The join takes only
+    ``current_for_source`` rows: a superseded identifier is retained as history
+    precisely so it stops being the one joins pick up, and applying a position
+    through a retired id would stamp fresh provenance on a stale reading. Same
+    filter the projection importer already uses for the same kind of join.
+
+    A player the crosswalk has never seen is **skipped, not created**.
+    ``import_nba_players`` is the one place a canonical row is introduced, and
+    it does so from ``CommonAllPlayers``. A position listing is not evidence
+    that a person exists; it is an attribute of a person already established.
+    Letting it create rows would give this project two independent inventors of
+    identity, which is R7's failure mode with extra steps.
+
+    A record whose position is ``None`` is skipped rather than written as a
+    NULL over an existing value. The source declining to state a position is
+    not the source retracting one, and those must not be the same write — the
+    same distinction ``inactives_available`` exists for on the participation
+    side.
+
+    **The counts mean what they mean everywhere else in this module.** This
+    function never inserts a row, so ``created`` is never incremented — an
+    earlier version reported "569 created" for a step whose whole design is
+    that it creates nothing, which is the kind of confidently wrong operator
+    output this project keeps finding. ``updated`` counts rows whose position
+    lineage was written; ``skipped`` counts rows deliberately left alone.
+    """
+    counts = ImportCounts()
+    links = {
+        row.external_id: row.player_id
+        for row in session.scalars(
+            select(PlayerExternalId).where(
+                PlayerExternalId.source == ExternalSource.NBA,
+                PlayerExternalId.current_for_source == ExternalSource.NBA.value,
+            )
+        )
+    }
+    if not links:
+        raise ValueError(
+            "no current NBA player links exist; run the crosswalk before importing "
+            "positions, because this importer attaches an attribute to canonical players "
+            "and deliberately does not create them"
+        )
+    if observed_at.tzinfo is None:
+        # Checked here rather than left to UTCDateTime at flush time, where it
+        # surfaces as a StatementError wrapping a ValueError and names the
+        # column instead of the caller. import_league_settings does the same.
+        raise ValueError("observed_at must be timezone-aware")
+
+    for record in records:
+        player_id = links.get(str(record.nba_player_id))
+        if player_id is None or record.position is None:
+            counts.skipped += 1
+            continue
+        player = session.get(Player, player_id)
+        if player is None:
+            # The link's player_id is a CASCADE foreign key, so this is a
+            # broken local database, not an upstream problem. Deliberately
+            # **not** a SourceContractError: that class means "the source
+            # answered and the answer changed shape", and it carries
+            # source/endpoint attributes so handlers branch and logs index on
+            # them. Raising it here would file a referential-integrity failure
+            # in our own tables as NBA API drift, and send whoever reads the
+            # alert to the wrong system entirely.
+            raise RuntimeError(
+                f"player_external_ids row for NBA id {record.nba_player_id} points at "
+                f"player {player_id}, which does not exist; the crosswalk table has lost "
+                "referential integrity and no position can be attributed"
+            )
+
+        player.primary_position = record.position
+        player.primary_position_source = NBA_POSITION_SOURCE
+        player.primary_position_season = record.season
+        player.primary_position_observed_at = observed_at
+        counts.updated += 1
 
     session.flush()
     return counts

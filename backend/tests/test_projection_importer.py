@@ -39,6 +39,7 @@ from hoops_gm.db.models.projections import (
     SourceGamesPlayedAssumption,
 )
 from hoops_gm.db.session import Database
+from hoops_gm.identity import IdentityResolver, ResolvableRecord
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.identity.report import partition, render_summary, to_csv
 from hoops_gm.ingest.projections import (
@@ -54,6 +55,7 @@ from hoops_gm.ingest.projections import (
     ProjectionProfileError,
     StatColumn,
     ValueShape,
+    build_player_targets,
     get_or_create_projection_source,
     import_projection_csv,
     parse_projection_csv,
@@ -102,6 +104,18 @@ def seed_player(
         full_name=name,
         normalized_name=normalize_name(name).key,
         primary_position=position,
+        # A seeded position carries the provenance a real import writes.
+        # Without this the helper produced a shape no real producer can write,
+        # which is one of this project's named defect classes. Note there is
+        # **no** database constraint enforcing it: one was implemented and
+        # reverted because adding a CHECK on SQLite rebuilds ``players``, whose
+        # eight ``ON DELETE CASCADE`` dependants include the crosswalk itself.
+        # The rule lives in the importer and in the required
+        # ``NbaPlayerPositionRecord.season``, so a fixture that bypasses both
+        # has to keep the shape honest by hand.
+        primary_position_source="nba:PlayerIndex" if position else None,
+        primary_position_season="2026-27" if position else None,
+        primary_position_observed_at=(datetime(2026, 8, 20, tzinfo=UTC) if position else None),
         current_team_id=team_id,
     )
     session.add(player)
@@ -1889,3 +1903,68 @@ def test_source_games_played_assumption_never_becomes_a_projection_column(
     # one row carrying both.
     assert assumption.projection.points_per_game == 24.2
     assert not hasattr(assumption.projection, "games_played")
+
+
+class TestProjectionTargetsAreNowPositionAware:
+    """One of the two consumers of ``players.primary_position``.
+
+    ``build_player_targets`` has always passed ``position=player.primary_position``
+    into ``ResolvableRecord.build``. That column was never written by anything
+    until the ``PlayerIndex`` lane landed, so this resolver has been silently
+    position-blind for its whole life and flips to position-aware the first
+    time ``build_crosswalk`` runs.
+
+    The other reader is ``api/routes/projections.py``, which serves the column
+    as a response field and likewise goes from always-``null`` to populated
+    with no diff. ``build_crosswalk`` **writes** it and does not read it — it
+    feeds the resolver from the parsed records directly, so the crosswalk
+    evidence the position lane published is a property of the parse path, not
+    of anything persisted.
+
+    Pinned here so the reader set is a recorded fact rather than a surprise,
+    and so the identity lane re-tuning ``_DISAGREEMENT_PENALTY["position"]``
+    knows this is the path that moves with it.
+    """
+
+    def test_targets_carry_a_position_once_players_have_one(self, session: Session) -> None:
+        seed_player(session, nba_id=1, name="Alpha Example", team_abbreviation="BOS")
+        seed_player(session, nba_id=2, name="Beta Example", team_abbreviation="BOS", position="C")
+
+        by_key = {t.key: t for t in build_player_targets(session)}
+
+        assert by_key["1"].position is None, "a player with no listed position stays blind"
+        assert by_key["2"].position == "C", (
+            "once primary_position is populated this resolver compares on it; before the "
+            "PlayerIndex lane it was None for every player and every comparison was UNKNOWN"
+        )
+
+    def test_a_coarse_mismatch_with_no_team_costs_a_correct_match(self, session: Session) -> None:
+        """The Tillman shape, on the projections path.
+
+        A vendor calling a borderline big ``C`` where the NBA lists ``F`` is
+        the same human, but with no team to offset it the 0.12 position penalty
+        drops the match under the accept floor. Identical to the regression the
+        position lane recorded for the Fantrax crosswalk — same weights, same
+        cause, different consumer.
+        """
+        seed_player(session, nba_id=3, name="Gamma Example", position="F")
+        targets = build_player_targets(session)
+
+        blind = IdentityResolver(
+            [ResolvableRecord.build(key=t.key, name=t.raw_name, team=t.team) for t in targets]
+        ).resolve([ResolvableRecord.build(key="v1", name="Gamma Example", position="C")])
+        sighted = IdentityResolver(targets).resolve(
+            [ResolvableRecord.build(key="v1", name="Gamma Example", position="C")]
+        )
+
+        blind_only = next(iter(blind.all_resolutions()))
+        sighted_only = next(iter(sighted.all_resolutions()))
+
+        assert blind_only.accepted is True
+        assert blind_only.best is not None
+        assert blind_only.best.evidence.position is FieldEvidence.UNKNOWN
+
+        assert sighted_only.best is not None
+        assert sighted_only.best.evidence.position is FieldEvidence.DISAGREE
+        assert sighted_only.best.confidence < blind_only.best.confidence
+        assert sighted_only.accepted is False

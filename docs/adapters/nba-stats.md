@@ -164,6 +164,233 @@ the crosswalk entirely.
 uses. That is a convenience, not a contract: the box-score endpoints give the
 name in parts and the game logs give `"First Last"`.
 
+### `PlayerIndex` is the only source of a player position this project has
+
+**Status:** added 2026-08-20. Verified live the same day.
+
+Until this landed, **hoops-gm ingested no player position at all.** The only
+position-shaped field anywhere was `BoxScoreTraditionalV3.position`, which is a
+*starting-lineup slot*: exactly five per team per game, always `F,F,C,G,G`,
+blank for everyone else, verified across all 346 team-games of the injury
+cohort window. It answers "which slot did he start in tonight". It is not a
+player attribute, and a distribution over it is forced to 2F:2G:1C for any
+cohort whatsoever.
+
+That mattered because risk R7 specifies the identity crosswalk to match on
+"normalized name + team + **position**". The first link in the spine was
+specified as three-key and could only ever have been two-key.
+
+`PlayerIndex` supplies the missing field in **one request for the whole
+league**:
+
+| Property | Observed 2026-08-20 |
+|---|---|
+| Rows, season 2026-27 | 578, **one per `PERSON_ID`, zero duplicates** |
+| Rows, season 2025-26 | 582, likewise |
+| Position stated | 572 of 578 (98.9%) |
+| Vocabulary | `G` 241, `F` 180, `C` 61, `G-F` 37, `F-C` 25, `C-F` 17, `F-G` 11 |
+| Per-team rows | 15–24, position mix uneven (ATL: 13 `G`, 7 `F`, 2 `C`) |
+
+#### It was checked against something independent, not believed
+
+A field that describes itself is a claim, not a fact — the house rule that came
+out of `gameEt`. So `PlayerIndex.POSITION` was attacked with the specific
+hypothesis that it might be another lineup slot:
+
+* **One row per person id**, against a per-team-per-game field.
+* **Roster-sized groups**, 15–24 per team rather than five.
+* **Hybrids** (`G-F`, `F-C`) that a five-slot string cannot express.
+* **Cross-season stability**: 490 players appear in both 2025-26 and 2026-27,
+  and **all 490 carry identical positions**. Nothing derived from games does
+  that.
+* **A second endpoint agrees.** Two players sampled per position value, 14
+  total, checked against `CommonPlayerInfo.POSITION` — 14/14 exact
+  (`C`↔`Center`, `F-G`↔`Forward-Guard`, …).
+
+#### The vocabulary is coarse, and that is load-bearing
+
+**There is no `PG`, `SG`, `SF` or `PF` anywhere.** Three endpoints agree:
+`PlayerIndex` says `G`, `CommonPlayerInfo` says `"Guard"`, `CommonTeamRoster`
+says `G`. Asking `PlayerIndex` to filter on `PlayerPosition=PG` is answered
+`{"PlayerPosition": ["Invalid parameters"]}` — the parameter exists in
+`nba_api`'s signature and the server rejects the value.
+
+So this field separates a centre from a guard, which is what R7 needs, and it
+**cannot express a Fantrax lineup slot**. It is not Fantrax position
+eligibility and cannot be made into it by derivation: eligibility is a policy
+decision by a third party that changes through a season and never decreases,
+not a computable function of NBA game data. See `player-position-eligibility`
+in `docs/backlog.md`.
+
+#### Six players genuinely have no position
+
+All six are `FROM_YEAR: 2026`, and `CommonPlayerInfo` returns `''` for them
+too. They are persisted as `NULL`. Inventing a position would corroborate an
+identity match on evidence nobody supplied.
+
+#### What it did to the crosswalk
+
+Measured against the committed fixtures rather than assumed. Position evidence
+across candidate pairs went from **576 `UNKNOWN` and nothing else** to
+**531 `AGREE`, 35 `DISAGREE`, 10 `UNKNOWN`**.
+
+Accepted matches: **570 before, 570 after — and not the same 570.**
+
+* **Gained `Johnson, Jalen`.** Fantrax carries two rows of that name, one on
+  ATL listed `SF` and one with no team listed `SG`; the NBA has one, on ATL,
+  listed `F`. Position agrees with the first and contradicts the second. That
+  is exactly the duplicate-name disambiguation R7 specified position to do.
+* **Lost `Tillman, Xavier`.** Fantrax `C` with no team, NBA `F` — the same
+  human, two defensible readings of a borderline big. With team absent there is
+  nothing to offset the 0.12 position penalty, so a correct match falls to
+  0.730 and under the accept floor.
+
+All 35 disagreements are of the second kind — Klay Thompson `SF`/`G`, Evan
+Mobley `PF`/`C`, Kevon Looney `C`/`F`. **Position disagreement is weak evidence
+of identity mismatch**, for the same reason `evidence.py` already lowered the
+*team* penalty: the sources genuinely classify borderline players differently.
+The penalty is the identity lane's to re-tune; this lane recorded the effect
+and pinned it in a test rather than changing a matcher it does not own.
+
+#### Failing this guard takes the whole crosswalk offline
+
+Stated because the guard table below says what each check *sees*, not what
+firing costs, and the cost here is disproportionate to the field.
+
+`build_crosswalk` calls `parse_player_index` unguarded, before resolution. The
+vocabulary guard is deliberately fatal **even for a merely new value** — if the
+NBA adds one hybrid such as `G-C`, the parse raises, and the entire NBA↔Fantrax
+crosswalk cannot be rebuilt **at all**: not the name key, not the team key,
+neither of which has anything to do with position. That is the highest-risk
+foundational item in the project taken down by a corroborating third key the
+matcher weights at **0.12**, until somebody edits `PLAYER_INDEX_POSITIONS`.
+
+The obvious alternative — let position fail soft and rebuild the crosswalk
+two-key, which is what this project did for its entire life until 2026-08-20 —
+is **not** taken, and the reasoning is worth recording rather than leaving to be
+rediscovered:
+
+* A changed vocabulary means every *stored* position describes the old one, so
+  the failure is not "we lack a corroborator today", it is "the corroborator we
+  already persisted may now be wrong". Continuing quietly is the silent-degrade
+  failure ADR-006 exists to prevent.
+* A soft failure here would be invisible in exactly the situation that most
+  needs a human: a source-wide relabelling.
+
+But the blast radius is real, and if this fires close to draft day the fix is a
+one-line vocabulary edit plus a deliberate re-read of what changed — **not** a
+`try/except` added under time pressure. Anyone tempted by the latter should
+change it here, with a reviewer, rather than at the call site.
+
+#### Three things the endpoint does that no code path shows
+
+Recorded here because they cost a session to find and a future lane would
+otherwise re-derive them from scratch.
+
+**A nonexistent season returns zero rows, not an error.**
+`PlayerIndex(season="2030-31")` answers `200` with an empty `rowSet`. So a wrong
+season is caught only by the "no player rows" guard — a check about *player*
+rows, which is a different question — and a *near*-valid season, one that exists
+but is not the one you meant, would sail through with a full payload. That is
+why `season` is cross-checked against the payload's own `parameters.Season`
+echo rather than trusted.
+
+**`PlayerPosition` is a documented parameter that the server rejects.**
+`nba_api`'s signature advertises `player_position_abbreviation_nullable`, and
+sending any value gets `{"PlayerPosition": ["Invalid parameters"]}`. Do not
+build filtering on it; filter client-side on the parsed records.
+
+**That rejection surfaces as a library bug, not a rejected parameter.**
+`nba_api` raises `KeyError: 'resultSet'` from inside its own constructor, before
+`get_dict()` is ever reached, because it indexes a result-set key on an error
+envelope. Same "does not fail cleanly" behaviour documented above for a
+nonexistent game id — a rejected *parameter* and a broken *library* look
+identical from the call site, and only the client's wrapper turning it into a
+`SourceContractError` naming the endpoint makes it diagnosable.
+
+#### Guards, and what each can and cannot see
+
+| Guard | Fires when | Blind to |
+|---|---|---|
+| Required columns | any column this parser **reads** disappears, including the two name columns nothing consumes yet | a renamed-but-present column |
+| Usable `PERSON_ID` | a row's person id is present but not an integer | — |
+| Declared season | the season is not `YYYY-YY`, or the payload's `parameters.Season` contradicts the requested one | a payload that echoes no parameters (withholds rather than fails) |
+| Vocabulary | any value outside the seven, **including a merely new one** | a same-vocabulary meaning change |
+| One row per person id | a repeated `PERSON_ID` | an exact duplicate row is reported with the same message as a per-stint one, which overstates that case |
+| Coverage floor (90%) | the column empties, **or thins to a starters-only shape** (5 of a 15–24 man roster ≈ 26%) | a fully-populated meaning change; and its message names starters-only or emptied, which are the causes near the *bottom* of its range, not at 87% |
+
+The **usable `PERSON_ID`** row exists because of a defect review found in the
+first version: unparseable ids were skipped with a bare `continue`, and the
+coverage floor divides by the rows that *survived* parsing. So losing 500 of 578
+rows reported **100% coverage** and raised no error — a guard whose denominator
+moves with the failure it watches for. It is now fatal.
+
+No assertion over a single payload can see a payload that keeps full coverage
+and this exact vocabulary while the values come to mean something else. The
+live smoke's **cross-season stability check** is what covers that, and it is
+the reason that test exists. Each guard above was verified by neutering it in
+the parser and confirming its test goes red — **after** confirming that test
+was green beforehand, because a mutation run against a test that errors on
+collection is a red that proves nothing. That happened once here, on a test
+name that did not exist yet.
+
+The **declared-season** guard exists because independent review found `season`
+was a pure caller assertion: stamped onto every record and thence onto
+`players.primary_position_season`, whose whole justification is that a stored
+position must know which season it describes, and checked against nothing. That
+is the `gameEt` shape. The payload echoes the season the server actually
+served, so it is now corroborated against that.
+
+#### One writer, two readers — and the writer is not one of them
+
+`players.primary_position` is **written** by `backfill.build_crosswalk` (via
+`import_player_positions`) and **read** by:
+
+1. `projections.importer.build_player_targets` — the projection-CSV matcher.
+2. `api/routes/projections.py` — which selects the column and serves it as
+   `ProjectionPlayer.primary_position` on the projections release response.
+
+**This count has now been wrong three times, in three different directions, and
+the third time was in this paragraph.** It said "two readers" and named
+`build_crosswalk` as one of them, which it is not — it writes the column and
+feeds the resolver from the in-memory `NbaPlayerPositionRecord` list that
+`parse_player_index` returned. Corrected to "exactly one reader", which was true
+when written and false by the time it landed, because the API route merged in
+another lane in between. Corrected again to "three readers", whose own heading
+excluded the writer while the count silently included it — a header that does
+not re-derive from the two items directly beneath it, in the paragraph whose
+entire subject is that defect.
+
+The number is small and the mechanism is not: **a reader count is invalidated by
+other lanes merging, so it is not a fact established once.** Re-derive it from
+`git grep` at the head you publish it from, the way a backlog header is
+recomputed, and check the count against the list under it.
+
+Two consequences follow, and the second is user-facing:
+
+* **The crosswalk evidence measured above is produced entirely by the parse
+  path** and is unchanged whether `import_player_positions` persists a single
+  row or not. No test exercises the persisted column feeding a crosswalk,
+  because no code path does.
+* **The projections API response field changes value with no diff.**
+  `primary_position` has returned `null` for every player for the column's
+  entire existence, because nothing wrote it. It starts returning `"G"`,
+  `"F-C"` and so on the first time `build_crosswalk` runs. Same provenance as
+  `build_player_targets` silently becoming position-aware: a behaviour change
+  that no diff shows, in a field a consumer can already see.
+
+The matcher trade-off applies to `build_player_targets`, with the same weights
+as the crosswalk: a vendor calling a borderline big `C` where the NBA lists `F`,
+with no team to offset it, drops a correct match under the accept floor. Pinned
+by `TestProjectionTargetsAreNowPositionAware`. The API field is unaffected by
+the weights and reflects whatever was persisted.
+
+**The API serves the coarse NBA vocabulary** — `G/F/C` plus hybrids — because
+`import_player_positions` is the only writer and `PLAYER_INDEX_POSITIONS` bounds
+what it can emit. A consumer must not read it as a Fantrax lineup slot.
+
+
+
 ### `gameEt` carries a `Z` suffix and is not UTC
 
 The season-schedule endpoint has its own canonical contract in
@@ -193,7 +420,7 @@ game tipping after 7pm Eastern, which is most of them, and disagrees with
 |---|---|
 | **Throttle** | One request every **1.1 seconds**, just under the commonly cited ~1 req/s. A season backfill is thousands of requests and being throttled mid-backfill costs far more than the extra 100 ms. |
 | **Retry** | 3 attempts, exponential backoff with jitter, **only** on `SourceUnavailable`. |
-| **Cache** | A completed game's box score is immutable, so per-game captures effectively never expire. Player and schedule listings get a 12-hour window. This is what makes a ~2,460-request season backfill resumable rather than restartable. |
+| **Cache** | A completed game's box score is immutable, so per-game captures effectively never expire. Player and schedule listings get a 12-hour window, and `PlayerIndex` uses the same roster window: a position changes across seasons, not across an afternoon. This is what makes a ~2,460-request season backfill resumable rather than restartable. |
 | **Source down** | `requests` transport exceptions → `SourceUnavailable`, retried. |
 | **Returns garbage** | Anything else escaping `nba_api` → `SourceContractError` naming the endpoint and parameters. Never retried. |
 | **One bad game** | Does not abort a backfill. Failures are counted, named with their game ids, and reported at the end with a non-zero exit code. |
@@ -232,9 +459,15 @@ requests were made.
 
 | Work | Requests | Wall clock |
 |---|---|---|
-| Crosswalk (teams, players, Fantrax) | ~3 | seconds |
+| Crosswalk (teams, players, positions, Fantrax) | ~4 | seconds |
 | One season: games + box scores | 2 | seconds |
 | One season: participation (per game) | ~2,460 | **~45 minutes** |
+
+Position costs exactly **one** request, which is why `PlayerIndex` is used
+rather than `CommonPlayerInfo`: the latter states the same position in long
+form but per player, so ~580 players is a ten-minute throttled sweep to learn
+what one request already says. It rides in `build_crosswalk` because that is
+where the identity evidence it corroborates is assembled.
 
 Participation is opt-in (`--with-participation`) for that reason. Production
 and availability are separated everywhere else in this project; separating how

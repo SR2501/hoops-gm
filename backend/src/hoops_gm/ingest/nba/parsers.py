@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Final
 from zoneinfo import ZoneInfo
 
 from hoops_gm.ingest.errors import SourceContractError
@@ -38,6 +38,7 @@ from hoops_gm.ingest.nba.models import (
     DnpReason,
     GameParticipation,
     NbaGameRecord,
+    NbaPlayerPositionRecord,
     NbaPlayerRecord,
     NbaTeamRecord,
     ParticipationOutcome,
@@ -307,6 +308,228 @@ def parse_common_all_players(payload: Any) -> list[NbaPlayerRecord]:
 def _text_or_none(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+# --------------------------------------------------------------------------
+# PlayerIndex — listed NBA position
+# --------------------------------------------------------------------------
+
+#: The complete observed vocabulary of ``PlayerIndex.POSITION``, live on
+#: 2026-08-20 for both 2025-26 (582 rows) and 2026-27 (578 rows).
+#:
+#: **Coarse, and that is the finding, not an omission.** There is no ``PG``,
+#: ``SG``, ``SF`` or ``PF`` anywhere in the payload, and none of the sibling
+#: endpoints checked has one either: ``CommonPlayerInfo.POSITION`` says
+#: ``"Guard"``, ``CommonTeamRoster.POSITION`` says ``G``, and asking
+#: ``PlayerIndex`` itself to filter on ``PlayerPosition=PG`` is answered
+#: ``{"PlayerPosition": ["Invalid parameters"]}``. So this field separates a
+#: centre from a guard and cannot do more than that.
+PLAYER_INDEX_POSITIONS: Final[frozenset[str]] = frozenset(
+    {"G", "F", "C", "G-F", "F-G", "F-C", "C-F"}
+)
+
+#: The floor on how much of the roster listing must actually carry a position.
+#:
+#: **What this can observe.** It is the check that would notice
+#: ``PlayerIndex.POSITION`` being replaced by, or degraded into, something
+#: emitted only for a handful of players per team — a starting-lineup slot
+#: populates five of a 15-to-24-man roster, roughly 26%, which is nowhere near
+#: this floor. It equally notices the column going empty. Observed coverage
+#: when this was written was 572/578 = 98.9%, the six exceptions being players
+#: whose ``FROM_YEAR`` is 2026 and whom ``CommonPlayerInfo`` also declines to
+#: place, so the headroom to 90% is roughly ninety unlisted players.
+#:
+#: **What it cannot observe**, stated here rather than discovered later: a
+#: payload that keeps full coverage and this exact vocabulary while the values
+#: come to mean something else. No assertion over a single payload can see
+#: that. The cross-season stability check in the live smoke is what would
+#: notice, and in the end a person re-deriving is.
+MIN_POSITION_COVERAGE: Final = 0.90
+
+
+#: The shape ``stats.nba.com`` uses for a season, and the shape
+#: ``players.primary_position_season`` is declared wide enough to hold.
+#:
+#: Validated because the column is ``String(9)`` and **SQLite ignores a
+#: declared VARCHAR length while PostgreSQL enforces it**: an over-long season
+#: passes every local test and raises ``value too long for type character
+#: varying(9)`` in production. That is the exact SQLite-versus-Postgres
+#: divergence ADR-001 exists to catch, and it is invisible to the offline
+#: suite, so it is caught here at the parse boundary instead of resting on
+#: caller discipline.
+_SEASON = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _require_declared_season(payload: Any, *, season: str, endpoint: str) -> None:
+    """Check the caller's season for shape, and against the served payload.
+
+    ``season`` is otherwise a pure caller assertion: it is stamped onto every
+    record and thence onto ``players.primary_position_season``, whose entire
+    justification is that a stored position needs to know which season it
+    describes. A value nobody checked is the ``gameEt`` shape — self-describing
+    and believed — so it is checked against something independent, which this
+    payload supplies for free in its ``parameters`` echo.
+
+    Absence is not treated as disagreement. If the endpoint stops echoing its
+    parameters this withholds rather than failing, because "the server did not
+    say" and "the server said something else" are different claims and only the
+    second is evidence of a problem.
+    """
+    if not _SEASON.match(season):
+        raise SourceContractError(
+            f"season {season!r} is not the source's YYYY-YY form; it is stamped onto "
+            "players.primary_position_season, which is a 9-character column that SQLite "
+            "will silently accept over-length and PostgreSQL will reject",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+    parameters = payload.get("parameters") if isinstance(payload, dict) else None
+    if not isinstance(parameters, dict):
+        return
+    declared = str(parameters.get("Season") or "").strip()
+    if declared and declared != season:
+        raise SourceContractError(
+            f"requested season {season!r} but the payload declares {declared!r}; a position "
+            "stamped with the wrong season is worse than one with no season, because it "
+            "reads as deliberate provenance",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+
+def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRecord]:
+    """Parse ``PlayerIndex`` — the NBA's listed position for every player.
+
+    This is the source of ``players.primary_position``, and therefore of the
+    third key risk R7 specified the identity crosswalk to match on. Until
+    2026-08-20 that key did not exist: the only position-shaped field the
+    project ingested was a starting-lineup slot.
+
+    The guards below are the Adapter gate doing its job, so each says what it
+    would mean if it fired rather than merely raising.
+    """
+    endpoint = "PlayerIndex"
+    tables = result_tables(payload, endpoint=endpoint)
+    table = require_table(tables, "PlayerIndex", endpoint=endpoint)
+    table.require(
+        "PERSON_ID",
+        "POSITION",
+        "TEAM_ID",
+        "TEAM_ABBREVIATION",
+        # Read into the record, so pinned. An unpinned column that is read
+        # silently becomes None after a source rename — ``ResultTable.get``
+        # returns a default for an unknown column rather than raising.
+        "PLAYER_FIRST_NAME",
+        "PLAYER_LAST_NAME",
+    )
+    _require_declared_season(payload, season=season, endpoint=endpoint)
+
+    records: list[NbaPlayerPositionRecord] = []
+    seen: dict[int, str | None] = {}
+    unexpected: dict[str, int] = {}
+    unusable = 0
+
+    for row in table.rows:
+        person_id = as_int(table.get(row, "PERSON_ID"))
+        if person_id is None:
+            # Present but unparseable. Skipping silently would be the worst
+            # available option, because the coverage floor below divides by the
+            # number of rows that *survived* this loop — so dropping rows here
+            # raises the coverage figure rather than lowering it, and mass row
+            # loss would read as a perfectly healthy payload.
+            unusable += 1
+            continue
+
+        position = _text_or_none(table.get(row, "POSITION"))
+        if position is not None:
+            position = position.upper()
+            if position not in PLAYER_INDEX_POSITIONS:
+                unexpected[position] = unexpected.get(position, 0) + 1
+
+        if person_id in seen:
+            # One row per human being is what makes this a player attribute
+            # rather than a per-team or per-game one. If the endpoint starts
+            # emitting a row per stint, a traded player would carry two
+            # positions and "his position" would stop being a question with one
+            # answer — which is the shape of the box-score field this record
+            # type exists to not be.
+            raise SourceContractError(
+                f"player {person_id} appears more than once "
+                f"({seen[person_id]!r} then {position!r}); PlayerIndex is expected to list "
+                "each player once, and a repeated person id means position is no longer a "
+                "per-player attribute on this endpoint",
+                source=SOURCE,
+                endpoint=endpoint,
+            )
+        seen[person_id] = position
+
+        team_id = as_int(table.get(row, "TEAM_ID"))
+        records.append(
+            NbaPlayerPositionRecord(
+                nba_player_id=person_id,
+                position=position,
+                first_name=_text_or_none(table.get(row, "PLAYER_FIRST_NAME")),
+                last_name=_text_or_none(table.get(row, "PLAYER_LAST_NAME")),
+                # 0 is the sentinel for "no team", not a team id — the same
+                # convention CommonAllPlayers uses.
+                team_id=team_id or None,
+                team_abbreviation=_text_or_none(table.get(row, "TEAM_ABBREVIATION")),
+                season=season,
+            )
+        )
+
+    if unusable:
+        # Checked **before** the empty-records case on purpose. If every row's
+        # id is unparseable, `records` is empty too, and "no player rows" is
+        # the message this adapter's own documentation attaches to a different
+        # cause entirely — a nonexistent season, which returns 200 with an
+        # empty rowSet. Reporting an id-column type change as an empty listing
+        # would send the reader to the wrong question, so the more specific
+        # diagnosis wins. Found by review; the ordering was the other way.
+        raise SourceContractError(
+            f"{unusable} of {len(table.rows)} PlayerIndex rows carry a PERSON_ID that is "
+            "not an integer. A row without a usable person id cannot be attributed to a "
+            "player, and dropping such rows quietly would inflate the coverage figure "
+            "below rather than reduce it, because that ratio is taken over the rows that "
+            "survived parsing",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+    if not records:
+        raise SourceContractError("no player rows", source=SOURCE, endpoint=endpoint)
+
+    if unexpected:
+        # Deliberately fatal, including for a value that is merely new. If the
+        # NBA adds "G-C", or starts writing "PG", the meaning of every stored
+        # position and every identity match corroborated by one has changed and
+        # somebody must look. ADR-006: a contract failure is the mechanism
+        # working, not an obstacle to route around.
+        listed = ", ".join(f"{value!r} x{count}" for value, count in sorted(unexpected.items()))
+        raise SourceContractError(
+            f"PlayerIndex.POSITION returned values outside the recorded vocabulary "
+            f"{sorted(PLAYER_INDEX_POSITIONS)}: {listed}. Either the source changed its "
+            "position vocabulary, or this column no longer means what it meant when it "
+            "was recorded; both invalidate stored positions and any identity match "
+            "corroborated by one",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+    stated = sum(1 for record in records if record.position is not None)
+    coverage = stated / len(records)
+    if coverage < MIN_POSITION_COVERAGE:
+        raise SourceContractError(
+            f"only {stated} of {len(records)} PlayerIndex rows state a position "
+            f"({coverage:.1%}, floor {MIN_POSITION_COVERAGE:.0%}). A full-roster listing "
+            "states one for nearly everybody; this coverage is what a per-game starting "
+            "slot looks like — five of a 15-to-24-man roster — or what an emptied column "
+            "looks like. Do not persist these as player positions",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+    return records
 
 
 # --------------------------------------------------------------------------
