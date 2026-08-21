@@ -10981,3 +10981,96 @@ pinned by `require()`, so a rename would have produced silent `None`s.
 owner's expectations attached and marked unverified. One addition for whoever re-tunes
 `_DISAGREEMENT_PENALTY["position"]`: there are now **two** call sites reading
 `primary_position`, and they move together.
+
+## 2026-08-20 — data-engineer — Rebased onto `28bd480`; every fingerprint delta attributed, and the guard cannot see a deleted key
+
+**Unit:** rebase of the position lane onto merged `main` after PR #49, then re-derive the
+cohort fingerprint. The instruction was *establish why it moved before regenerating*, and
+the order of those two words was the whole point.
+
+**Conflicts, and how each was resolved.** Four: `test_live_smoke.py` (both sides added an
+import to the same block — both belong, no choice involved), the cohort manifest,
+`docs/backlog.md` and `docs/handoff.md`. Handoff is append-only and the resolution is every
+lane's entries in order, `main`'s first; done programmatically rather than by hand so no
+block could be dropped, and verified by counting 166 entry headings afterwards. Backlog was
+**recomputed from the file at the final head** rather than reconciled — neither side's
+number is an input, because each was computed before the other lane's items landed — giving
+**39 done / 1 blocked / 71 pending / 111 total**, verified 111 headings to 111 markers, 1:1,
+no duplicate item names.
+
+**Every fingerprint delta is attributed, and there is no residue.** Rather than regenerate
+and explain afterwards, each watched file was classified first, with "did `main` touch it"
+and "did I touch it" computed independently from git:
+
+| File | State | Touched by #49 | Touched by me |
+|---|---|---|---|
+| `db/lineage.py` | **key absent** | no | no |
+| `ingest/backfill.py` | moved `419e6f5a` → `d98c4398` | no | **yes** |
+| `injury_report/backfill.py` | matches | no | no |
+| `injury_report/cohort_evidence.py` | matches | no | no |
+| `ingest/nba/parsers.py` | matches | no | **yes** |
+
+So exactly one digest needed refreshing, and it is mine. The off-path argument was
+re-derived at the rebased head rather than carried over: `backfill.py` differs from
+`28bd480` in `build_crosswalk` only, and a call-graph closure from the manifest's own two
+`operator.commands` entry points shows `build_crosswalk` is **not reachable**, while all six
+reachable functions are logic-identical to `main`. The body was asserted byte-identical to
+its own renderer before and after, so the only possible delta was inside the fingerprint
+block; the diff is one line.
+
+**I did not take the full watch-set correction, and the stated reason for offering it to me
+was not true of this worktree.** The proposal was that I edit
+`DEFAULT_SOURCE_FINGERPRINT_PATHS` (drop `db/lineage.py`, add `ingest/nba/schedule.py`) and
+regenerate in the same operation, on the basis that this session has a cohort database. **It
+does not.** There is no `data/` directory, no raw store and no populated database in this
+worktree — checked, not assumed. Building one is a live sweep of roughly 350 throttled
+`stats.nba.com` requests plus up to 120 injury-report PDFs, and more decisively **a fresh
+sweep cannot meet the acceptance criterion it was given**: the module's own documentation
+says regeneration reproduces byte-for-byte only *over the same persisted state*, and that a
+fresh sweep necessarily does not, because capture timestamps record when requests were made.
+The criterion was "if the body moves, stop" — a fresh sweep moves the body by construction,
+so I would have tripped the stop condition for a benign reason and been unable to tell it
+from a real one. Taking the minimum was the honest call, not the tired one.
+
+**The floor held: no `db/lineage.py` digest ships.** The rebase conflict presented exactly
+the trap, and concretely — my side of the conflict carried
+`db/lineage.py: 8181cf7e…`, the value from when the cohort was actually generated, because
+my branch predates #49's deletion. Resolving to `main`'s key set drops it. Today's value is
+`6797cb33…`, matching two independent derivations on two machines, and is a **third** value
+the cohort was never derived with. An automated regeneration would have reinstated the key
+carrying that third number, which reads as new information rather than as an undone
+deletion — and the plausible explanation on offer at 03:00 ("my regeneration produced it")
+would have been true and still wrong.
+
+**A structural finding, executed rather than argued.** The guard that watches these digests
+**cannot see a deleted key.** Mutating the committed manifest, with a green baseline first:
+
+- delete a watched file's key entirely → **suite stays GREEN**
+- corrupt a retained key's value → RED
+
+`test_every_recorded_source_fingerprint_matches_the_file_today` iterates over *recorded*
+fingerprints, so it validates the values of keys that are present and says nothing about
+which files are supposed to be present. **Any file can be removed from the watch set by
+editing the artefact, and nothing notices.** That is the mechanism by which `db/lineage.py`
+is currently unwatched while the constant still lists it, and it is why the committed
+manifest is not reproducible from the committed code: the code says watch five, the artefact
+records four, and a regeneration would emit five.
+
+**I did not add the missing check**, deliberately. The correct assertion is bidirectional —
+recorded keys equal watched files that exist — and it goes **red immediately** on `main`'s
+current 4-versus-5 state. That red would be correct, and I cannot clear it without the
+regeneration I just explained I cannot perform. Adding half of it, in the one direction that
+currently passes, would be a guard whose name implies coverage it does not have, on a
+mechanism that has already produced one false green. It belongs to whoever regenerates, as
+part of closing `schedule-cohort-fingerprint-list`.
+
+**Could not verify:**
+- **The rebased head on CI**, at time of writing — pushed and running. The previous head was
+  fully green including both PostgreSQL runs, but that head is superseded and a verdict on
+  pre-rebase code is not a verdict.
+- **That #49's changes to `importers.py` do not affect the cohort.** `importers.py` is *not*
+  in the watch set at all, though `import_participation` and `import_box_scores` are on the
+  derivation path. Both #49 and I changed it. This is a gap in the watch set that is wider
+  than the `db/lineage.py`/`schedule.py` swap already filed, and I did not investigate it.
+- **Whether the cohort's persisted evidence is still correct** after #49's schedule changes.
+  Out of scope here and it needs the database nobody in this wave has.
