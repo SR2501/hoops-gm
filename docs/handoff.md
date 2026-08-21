@@ -13991,3 +13991,103 @@ missing one.
 
 *Anything about a real Basketball Monster export.* Unchanged and still the
 largest gap.
+## 2026-08-21 - frontend - The imported projections are on screen, and two of its own markers can never fire
+
+**Unit:** `projections-ui`. `/projections` renders the current Basketball Monster cohort - 16
+per-game rates per player, the source's games-played assumption in its own column group, and
+the full import lineage - at `556936e` + this branch. Code gate green: lint clean, typecheck
+clean, 182 tests.
+
+**It is not a comparison, and the screen says so rather than implying one.** No blend profile,
+source weighting or activation pointer is persisted anywhere, so `lineage.blend` is
+unconditionally `null` and "not blended - single source" is rendered *from that fact* rather
+than from a key the client failed to find. `architect` confirmed the producer supports the
+reading (`ProjectionLineage.blend: None = None`, with a docstring saying exactly why the key
+exists) and that under ADR-015 it will **widen to an object** rather than start being omitted,
+so the strict null check keeps its meaning.
+
+**The finding worth the most: two of this screen's own absence markers cannot fire.** The key
+originally read as though a `.` marker were routine sparseness. Tracing the producer with
+`backend` showed otherwise for the only source this screen requests. Basketball Monster's
+`required_production_fields` is **set-equal to `CANONICAL_STAT_FIELDS` in both directions**,
+and `parser.py:293-296` refuses a row on a *non-empty* `missing_required_values` list - `any`,
+not `all`. A row with no games figure has no divisor, which nulls its 14 `SEASON_TOTAL`
+columns and, through `parser.py:448-450`, the 2 derived fields computed from them. So every
+stored BBM row carries an assumption *and* a value for every rate, by construction. Sparsity
+is reachable only through `MANUAL_PROFILE`, which this screen never requests.
+
+So the key now says a `.` **should not appear** for Basketball Monster and that seeing one
+means something upstream changed. That turns a marker a reader would have taken for ordinary
+sparseness into a signal. **`backend` then found the half I had not:** that set-equality is
+pinned by nothing - `grep required_production_fields backend/tests/` returns nothing across a
+1304-test suite. Adding a canonical field without adding it to BBM's required set would make it
+legitimately nullable while `_rates()` still splats it onto the wire, and my copy would become
+actively misleading via a one-line tuple edit no test opposes. They are adding the pin with
+this screen named as the consumer.
+
+**I turned down a fixture I had asked for, and the reason generalises.** I asked `backend` to
+make the seed's assumptions sparse. Their trace showed it is impossible for BBM and reachable
+only at `?source=manual` - which this screen never requests, since `source` is not a parameter
+on the client. A fixture of a payload the screen cannot display would have been a green test
+over a path no user reaches. *"Unreachable by construction, at `parser.py:293-296`"* is
+cheaper to disprove than a fixture and says more.
+
+**A false-positive guard is still a broken guard.** My first ADR-002 detector concatenated the
+rendered subtree's `textContent` and searched for `rate x assumed_games_played` as a string. It
+passed against a one-row synthetic payload and reported **over 200 violations against the real
+60-row cohort, every one false**: a table's `textContent` runs adjacent cells together, so
+`12.34` beside `5.67` contains `345`. The failure was the direction nobody guards against - too
+sensitive - and a guard that cries wolf on a correct screen is one the next person loosens.
+It now walks text nodes, where a number cannot span a boundary, and parses tokens back to
+numbers so a `toLocaleString()` total with a thousands separator is caught. Both properties
+have tests, including a negative control that renders a violating column and asserts the
+detector fires, and a no-false-positive case. **The seed's cohort size found this; a hand-built
+fixture never would have.**
+
+**A recording that has been through a serialiser is not a recording.** My first capture went
+through PowerShell's `ConvertFrom-Json`/`ConvertTo-Json`, which parsed `imported_at` into a
+`DateTime` and re-emitted it as `08/21/2026 15:57:03` - US locale, no timezone, no sub-second
+precision. Every structural assertion would have passed against it while the one field this
+project has already been bitten by was silently replaced by the capture tool's opinion. The
+committed fixture is `WriteAllBytes(response)`; `imported_at` is `2026-08-21T15:57:03.567066Z`.
+
+**Verified in a real browser** at 5182 against `hoops_gm.dev.seed_projections`, with
+`getComputedStyle` rather than markup - PR #47 shipped a rule that lost on specificity (0,1,0)
+against `.grid th, .grid td` at (0,1,1) and rendered nothing while every test passed, and jsdom
+resolves no cascade. Every rule resolved: `:has()` widened the measure to 1230px, the header
+pins at the scrollport top once the 51px caption scrolls away and holds at scrollTop 400/900/
+1500, the first column holds under horizontal scroll, and the four assumption states resolve to
+four distinct treatments. **My first sticky assertion was wrong** - it compared the header's
+position before and after scrolling and read the caption scrolling away as a failure. The
+header legitimately moves up by the caption height and *then* pins; asserting it never moves
+was asserting the wrong thing.
+
+**Could not verify:**
+- **That the `.` marker and the absent-assumption marker ever render against real data.** They
+  are unreachable for Basketball Monster by construction, so both are exercised only by
+  hand-built payloads - "code agrees with itself" evidence, which is exactly what a recorded
+  fixture exists to escape. The `unreadable` and `unexplained` states are worse: `backend`
+  traced both as unreachable through *any* current profile (`parser.py:224-239`,
+  `importer.py:721-722`). They are kept as contract guards and nothing in the UI claims they
+  occur, but I cannot show any of the four rendering correctly against a payload a producer
+  actually emitted.
+- **That my on-screen claim stays true.** It rests on two hand-maintained tuples being
+  set-equal, which no test enforces at time of writing. `backend`'s pin was not merged when I
+  wrote this. If it does not land, the copy is true and undefended.
+- **Anything about scale.** The recorded fixture is 60 players with invented numbers and
+  ordinary names - no long, accented or suffixed name, no realistic distribution, no
+  four-figure value. Nothing here is evidence this screen handles a 550-row auction board, and
+  the column widths have never met a real name.
+- **The identity-resolution tail.** `needs_review_count` and `unmatched_count` are 0 in every
+  payload that has ever existed, so the lineage panel's rendering of a non-zero value has never
+  run. Asserted at 0 in the recorded test *with a comment saying that is why it is untested*,
+  so `backend`'s `--unresolved N` will redden it and force the fixture and the docstring to be
+  updated together.
+- **The 24rem scrollport budget is a constant, not a measurement**, and it is already 11px
+  short at a 720px viewport before the reader does anything - 9 of 60 rows visible, scrollport
+  bottom at 731px against a 720px fold. Opening the lineage disclosure or surfacing the
+  integrity banner pushes it further. Same defect as the schedule grid's 18rem and the same
+  honest fix, which is one flex-column change for both pages rather than a second magic number.
+- **Whether `useAsync`'s retry interacts correctly with a real concurrent import.** The
+  retry-once path is driven by mocked 409s; I could not stage a genuine mid-read re-import
+  against the running service, so the timing the backend actually produces is untested here.

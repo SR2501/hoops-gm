@@ -280,3 +280,201 @@ export interface ScheduleGrid {
   periods: ScheduleGridPeriod[]
   counts: ScheduleGridCount[]
 }
+
+/* --- Imported projections (ADR-002) --------------------------------------- */
+
+/**
+ * Every per-game rate field a projection row carries, in the order the screen
+ * shows them.
+ *
+ * This mirrors `ingest/projections/profiles.py`'s `CANONICAL_STAT_FIELDS`,
+ * which `ownership.md:42` records as a **wire contract** rather than an
+ * ingestion detail: `api/routes/projections.py`'s `_rates()` splats that tuple
+ * into `ProjectionRates`, and a backend test pins the two in lockstep. So this
+ * list is a third copy of the same vocabulary and the recorded-fixture test is
+ * what keeps it honest — a field renamed upstream fails there rather than
+ * rendering an empty column.
+ *
+ * **The vocabulary is per-game rates only, and that is load-bearing rather than
+ * descriptive.** A seasonal total or an expected-games field added to the tuple
+ * upstream would reach the wire and then this array, so ADR-002's separation
+ * depends on it staying what its name says. If one appears here, the correct
+ * response is to refuse to render it and report it, not to add a column.
+ *
+ * Order is display order, not the backend's: makes and attempts are adjacent so
+ * a volume pair reads as a pair. No percentage is derived from them anywhere —
+ * a percentage without its volume is the single most common bug in homebrew
+ * fantasy tools, and a 90% free-throw shooter on one attempt is worthless.
+ */
+export const PROJECTION_RATE_FIELDS = [
+  'minutes_per_game',
+  'points_per_game',
+  'rebounds_per_game',
+  'offensive_rebounds_per_game',
+  'defensive_rebounds_per_game',
+  'assists_per_game',
+  'steals_per_game',
+  'blocks_per_game',
+  'turnovers_per_game',
+  'personal_fouls_per_game',
+  'field_goals_made_per_game',
+  'field_goals_attempted_per_game',
+  'three_pointers_made_per_game',
+  'three_pointers_attempted_per_game',
+  'free_throws_made_per_game',
+  'free_throws_attempted_per_game',
+] as const
+
+export type ProjectionRateField = (typeof PROJECTION_RATE_FIELDS)[number]
+
+/**
+ * The exact import these rates were read from.
+ *
+ * Three digests, and they answer different questions: `content_sha256` is the
+ * CSV bytes, `profile_definition_sha256` is the parsing recipe those bytes were
+ * read under, and `projection_values_sha256` is over the *stored, normalised
+ * rates* — the one that moves when a row is edited in place while the other two
+ * still look untouched.
+ *
+ * **The five audit counts partition the file**, and the backend asserts that on
+ * the served body rather than only claiming it in prose. `projection_count` is
+ * separate and is what this response actually carries: the rows the canonical
+ * release validated. Both are published rather than one derived from the other,
+ * so the screen shows both rather than picking.
+ */
+export interface ProjectionImportLineage {
+  import_id: number
+  source: string
+  season: string
+  imported_at: string
+  content_sha256: string
+  profile_id: string
+  profile_version: string
+  profile_definition_sha256: string
+  projection_values_sha256: string
+  projection_count: number
+  /**
+   * The scoring format the source's numbers assume, when anybody stated one.
+   *
+   * `null` means nobody stated it, and is never defaulted to this league's
+   * format — a points-league projection consumed as a 9-cat one is wrong in a
+   * way no downstream check can see. Which of the two origins won is
+   * deliberately not carried, so the screen must not claim one.
+   */
+  assumed_scoring_type: string | null
+  original_filename: string | null
+  row_count: number
+  matched_count: number
+  needs_review_count: number
+  unmatched_count: number
+  rejected_count: number
+}
+
+/**
+ * What produced this response.
+ *
+ * `blend` is a typed key that is **always `null` today**, and the distinction
+ * between that and a key that is simply absent is the entire reason it exists.
+ * Blend profiles, their source weights and their activation state are
+ * caller-owned in-memory values with no persistence, so there is nothing for an
+ * HTTP request to read. The screen renders "not blended" from this being `null`
+ * — a fact — rather than from a lookup that failed.
+ *
+ * The declared type is `null` rather than `BlendLineage | null`, so a blend
+ * arriving here is a schema change and not a fill-in. `architect` is proposing
+ * ADR-015 to make a blend *recipe* durable; until that is accepted and built,
+ * a non-null value here is a contract violation rather than a new feature, and
+ * `isCurrentProjections` refuses it.
+ */
+export interface ProjectionLineage {
+  projection_import: ProjectionImportLineage
+  blend: null
+}
+
+/**
+ * One player in the cohort, with the labels a screen needs.
+ *
+ * These are the canonical player record's current values, read outside any
+ * lineage scope, so a player relabelled between the rates statement and this
+ * one is labelled from the newer state. What cannot change is which player a
+ * `player_id` denotes. The residual risk is a fresher label on the right
+ * player, never a rate attributed to the wrong one.
+ *
+ * **`primary_position` is not lineup eligibility.** It is NBA's own coarse
+ * label (`"G"`, `"F-C"`), it is nullable, and this project ingests no Fantrax
+ * position data at all — `player-position-eligibility` is still pending. It
+ * returned `null` for every player until `build_crosswalk` first ran, so a
+ * populated column here is recent. The screen must not filter, group or sort by
+ * it, because doing so would present an NBA label as a draft-board slot.
+ */
+export interface ProjectionPlayer {
+  player_id: number
+  full_name: string
+  team_abbreviation: string | null
+  primary_position: string | null
+}
+
+/**
+ * One player's per-game production rates, exactly as stored.
+ *
+ * Per-game only (ADR-002). Nothing here is a season total and nothing here is
+ * an expected-games number.
+ *
+ * Every field is present on every row, and **`null` means the source did not
+ * publish that quantity — it is never a zero.** Rendering the two the same way
+ * is the defect this type's shape exists to keep visible.
+ */
+export type ProjectionRates = { player_id: number } & Record<ProjectionRateField, number | null>
+
+/**
+ * What the source assumed about one player's availability.
+ *
+ * **Not a projection of games played, and not ours.** It exists to be
+ * overridden by the availability model, never blended with it.
+ *
+ * **Do not multiply a rate by `assumed_games_played`.** It is not merely *a*
+ * games-played figure: for a season-total source it is the exact divisor the
+ * importer used to produce the per-game rates beside it, so the product
+ * recovers the source's published seasonal total to within floating-point
+ * rounding. That join is the fusion ADR-002 permits only at `expected-games`,
+ * which does not exist. Display it; never compute with it.
+ *
+ * The two fields are separate because they carry different claims and a `null`
+ * value alone cannot distinguish them: `assumed_games_played_raw` is the
+ * source's own text kept verbatim, so a value that arrived and could not be
+ * read as a number is distinguishable from one that never arrived.
+ */
+export interface SourceGamesPlayedClaim {
+  player_id: number
+  assumed_games_played: number | null
+  assumed_games_played_raw: string | null
+}
+
+/**
+ * The current *imported* cohort. Not a blend, not a valuation, not a ranking.
+ *
+ * **Guaranteed on any 200**, or the request is refused instead: `players` and
+ * `projections` describe exactly the same `player_id` set, each exactly once,
+ * both ordered; and `projections.length ===
+ * lineage.projection_import.projection_count`.
+ *
+ * **`source_games_played_assumptions` is outside that guarantee, and is also
+ * deliberately sparse.** Only players whose source stated an assumption appear,
+ * and the array may be empty. A missing entry means *the source said nothing*
+ * and never zero. The canonical release never digests this table, so a
+ * *changed* assumption is not detected — a byte-identical re-import mid-read
+ * once served a 200 with an empty array, reporting that Basketball Monster
+ * published no assumption when it had published 70 and 78. Closing that class
+ * is `release-digests-assumptions`, which is pending, so the screen says the
+ * array is less well pinned than the rates rather than presenting both with
+ * equal confidence.
+ */
+export interface CurrentProjections {
+  league_id: number
+  season: string
+  source: string
+  lineage: ProjectionLineage
+  players: ProjectionPlayer[]
+  projections: ProjectionRates[]
+  source_games_played_assumptions: SourceGamesPlayedClaim[]
+}

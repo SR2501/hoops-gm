@@ -1,0 +1,219 @@
+/**
+ * The contract test for the projections screen, against a **recorded** response.
+ *
+ * `ProjectionsPage.test.tsx` and `projectionsModel.test.ts` build their
+ * payloads by hand from the TypeScript interfaces, so they can only ever prove
+ * the code agrees with itself. `projections-current.recorded.json` is a real
+ * 200 captured over HTTP from the running FastAPI service on 2026-08-21,
+ * against the database `hoops_gm.dev.seed_projections` builds — so this file is
+ * the only place the frontend's assumptions meet something the backend actually
+ * produced.
+ *
+ * **Captured as raw bytes, and that mattered.** The first capture went through
+ * PowerShell's `ConvertFrom-Json`/`ConvertTo-Json`, which parsed `imported_at`
+ * into a `DateTime` and re-emitted it as `08/21/2026 15:57:03` — US locale,
+ * no timezone, no sub-second precision. The file still looked like a recorded
+ * fixture and every structural assertion below would have passed against it,
+ * while the one field this project has already been bitten by would have been
+ * silently replaced by the capture tool's opinion of it. A recording that has
+ * been through a serialiser is not a recording. This one is
+ * `WriteAllBytes(response)`.
+ *
+ * The recorded `imported_at` carries a `Z` suffix with microsecond precision.
+ * The exact literal is deliberately not quoted here — it changes on every
+ * re-capture — and the assertion below checks for a UTC designator rather than
+ * `Z` specifically, because `+00:00` would be equally correct.
+ *
+ * **What this recording cannot check, stated because the seed's author said it
+ * first and unprompted.** Only the player *names* are real; every number in it
+ * is invented. So it proves shape and nothing else:
+ *
+ * - **not column width, not a real distribution.** Sixty rows scroll, which is
+ *   enough to see the sticky header engage. Sixty rows are not a league, and
+ *   nothing here is evidence this screen handles a 550-row auction board.
+ * - **not long, accented or suffixed names.** The widest name in the cohort is
+ *   ordinary.
+ * - **not the sparse-assumption path.** All 60 players carry a games-played
+ *   assumption, which is *not* representative: the array is deliberately sparse
+ *   in general and absence is its documented "the source said nothing" signal.
+ *   The absent, unreadable and unexplained states are therefore driven only
+ *   from hand-built payloads, and that is a real gap rather than a formality —
+ *   asked of `backend` and recorded in `docs/handoff.md`.
+ * - **not the unresolved-identity path.** `identities_unresolved` is 0 here and
+ *   a real Basketball Monster import will have a tail, so a non-zero
+ *   `needs_review_count` or `unmatched_count` has never rendered.
+ *
+ * If the endpoint's shape changes, this fails here rather than in a browser.
+ */
+
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import recorded from '../test/fixtures/projections-current.recorded.json'
+import { isCurrentProjections } from '../api/endpoints'
+import { PROJECTION_RATE_FIELDS } from '../api/types'
+import type { CurrentProjections } from '../api/types'
+import { detectForbiddenProducts, forbiddenProducts } from '../test/adr002'
+import { ProjectionsTable } from './ProjectionsTable'
+import { buildProjectionsModel } from './projectionsModel'
+
+const payload = recorded as unknown as CurrentProjections
+
+describe('the recorded projections response', () => {
+  it('is accepted by the validator that guards the real request', () => {
+    // The assertion the whole fixture exists for. Everything else in this file
+    // checks fields chosen by hand; this checks the predicate production
+    // actually runs, so a renamed or retyped field fails here even if no
+    // hand-written assertion happens to touch it.
+    expect(isCurrentProjections(recorded)).toBe(true)
+  })
+
+  it('carries the cohort guarantees the endpoint promises', () => {
+    const playerIds = payload.players.map((player) => player.player_id)
+    const rateIds = payload.projections.map((row) => row.player_id)
+
+    expect(new Set(playerIds).size).toBe(playerIds.length)
+    expect(new Set(rateIds).size).toBe(rateIds.length)
+    // Both directions, not one plus a length check.
+    expect(new Set(playerIds)).toEqual(new Set(rateIds))
+    expect(payload.projections).toHaveLength(
+      payload.lineage.projection_import.projection_count,
+    )
+  })
+
+  it('is ordered by player_id on both arrays, as the contract states', () => {
+    const ascending = (ids: number[]) =>
+      ids.every((id, i) => {
+        const previous = ids[i - 1]
+        return previous === undefined || previous < id
+      })
+
+    expect(ascending(payload.players.map((p) => p.player_id))).toBe(true)
+    expect(ascending(payload.projections.map((r) => r.player_id))).toBe(true)
+  })
+
+  it('publishes the games-played assumption outside every rate object', () => {
+    // ADR-002's separation is in the wire format, not only in the schema. If a
+    // durability figure ever appears inside a rate object, a component can pick
+    // one up while reading a rate — which is the accident the separate table
+    // and the separate array both exist to prevent.
+    const forbidden = ['games', 'expected_games', 'assumed_games_played', 'rank', 'aav', 'z_score', 'g_score']
+    for (const row of payload.projections) {
+      const keys = Object.keys(row)
+      expect(keys.sort()).toEqual([...PROJECTION_RATE_FIELDS, 'player_id'].sort())
+      for (const key of forbidden) {
+        expect(keys).not.toContain(key)
+      }
+    }
+    for (const key of forbidden) {
+      expect(Object.keys(payload)).not.toContain(key)
+    }
+  })
+
+  it('computes no shooting percentage — makes and attempts only', () => {
+    const first = payload.projections[0]
+    expect(first).toBeDefined()
+    const keys = new Set(Object.keys(first ?? {}))
+    for (const suspect of ['field_goal_percentage', 'free_throw_percentage', 'three_point_percentage']) {
+      expect(keys.has(suspect)).toBe(false)
+    }
+  })
+
+  it('reports a blend of exactly null, not a missing key', () => {
+    expect('blend' in payload.lineage).toBe(true)
+    expect(payload.lineage.blend).toBeNull()
+  })
+
+  it('carries a UTC designator on the import timestamp', () => {
+    // The field kind this project has already been bitten by: `gameEt` in the
+    // NBA box score carries a `Z` and is Eastern time. Asserting the shape of
+    // the designator is all a client can honestly do; the screen shows the raw
+    // string beside the derived one so a reader can check the claim.
+    expect(payload.lineage.projection_import.imported_at).toMatch(/(Z|[+-]\d{2}:\d{2})$/)
+  })
+
+  it('joins into a model with nothing to report', () => {
+    const model = buildProjectionsModel(payload)
+
+    expect(model.rows).toHaveLength(payload.projections.length)
+    expect(model.integrity).toEqual({
+      playersWithoutRates: 0,
+      ratesWithoutPlayer: 0,
+      duplicatePlayerRows: 0,
+      duplicateRateRows: 0,
+      duplicateAssumptionRows: 0,
+      assumptionsWithoutRates: 0,
+      unexplainedAssumptions: 0,
+      rowCountMatchesLineage: true,
+      isConsistent: true,
+    })
+  })
+
+  it('renders every recorded player', () => {
+    render(<ProjectionsTable model={buildProjectionsModel(payload)} />)
+
+    expect(screen.getAllByTestId(/^projection-row-/)).toHaveLength(payload.projections.length)
+    expect(screen.queryAllByTestId('unlabelled-player')).toHaveLength(0)
+  })
+
+  it('renders no rate × assumed_games_played product, against the real cohort', () => {
+    // The ADR-002 backstop run against numbers the backend actually produced
+    // rather than ones chosen for the test. `backend` flagged that this
+    // payload is the live trap: every one of these assumptions is the exact
+    // divisor used to produce the rates beside it, so each product recovers
+    // the source's seasonal total.
+    const model = buildProjectionsModel(payload)
+    const { container } = render(<ProjectionsTable model={model} />)
+
+    expect(detectForbiddenProducts(container, model)).toEqual([])
+  })
+
+  it('has something for the detector to have looked at', () => {
+    // The green above means nothing if the cohort yielded no products to check
+    // — a verifier that passes because it examined nothing is the defect this
+    // project keeps finding. 60 players × 16 rates, all with stated
+    // assumptions, so this should be in the high hundreds.
+    const model = buildProjectionsModel(payload)
+
+    expect(forbiddenProducts(model).length).toBeGreaterThan(500)
+  })
+
+  it('renders no rate as null, because Basketball Monster cannot publish one', () => {
+    // Not a formality. All 16 canonical fields are in this profile's
+    // `required_production_fields`, and `parser.py:293-305` drops any row
+    // missing one as fatal — so a stored Basketball Monster row carries a
+    // value for every rate, by construction. The `·` marker is therefore a
+    // contract guard on this screen rather than a state a user meets, and
+    // this assertion is what would tell us if that ever stopped being true.
+    for (const row of payload.projections) {
+      for (const field of PROJECTION_RATE_FIELDS) {
+        expect(row[field]).not.toBeNull()
+      }
+    }
+  })
+
+  it('has every assumption populated, which is why the sparse path is untested here', () => {
+    // Asserted rather than only described, so that if a future re-capture does
+    // carry sparse assumptions this test fails and the docstring above gets
+    // corrected instead of quietly going stale — which is how three comments
+    // in this repository came to describe fixtures they no longer matched.
+    expect(payload.source_games_played_assumptions).toHaveLength(payload.projections.length)
+    expect(
+      payload.source_games_played_assumptions.every(
+        (claim) => claim.assumed_games_played !== null,
+      ),
+    ).toBe(true)
+  })
+
+  it('has a clean identity resolution, which is why the review tail is untested here', () => {
+    const { projection_import: imported } = payload.lineage
+
+    expect(imported.needs_review_count).toBe(0)
+    expect(imported.unmatched_count).toBe(0)
+    expect(
+      imported.matched_count +
+        imported.needs_review_count +
+        imported.unmatched_count +
+        imported.rejected_count,
+    ).toBe(imported.row_count)
+  })
+})

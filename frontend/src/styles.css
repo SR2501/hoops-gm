@@ -798,3 +798,157 @@ a:focus-visible {
     gap: 0;
   }
 }
+
+/* --- Projections table (ADR-002) ------------------------------------------ */
+
+/* Built on `.grid` deliberately: same sticky header, same sticky first column,
+   same `border-collapse: separate` reasoning, same absence of any colour
+   scale. A value scale on a rate would encode a judgement about whether a
+   number is good, and that judgement is a model output rather than a CSS
+   decision.
+
+   **Every rule below that overrides a property `.grid th, .grid td` already
+   sets is qualified with `th`/`td` to reach specificity (0,1,1).** That base
+   rule sets `border-bottom`, `border-right`, `padding`, `text-align` and
+   `font-weight`. A bare class sits at (0,1,0) and loses, silently: PR #47
+   shipped `.grid__col--pending` that way and it rendered *nothing at all*
+   while the markup, the data attributes and every unit test passed. jsdom does
+   no cascade resolution, so no vitest run can catch it — it was found by
+   reading `getComputedStyle` in a real browser. The playoff rule escapes the
+   same fate only by accident, in setting `border-left` where the base sets
+   `border-right`, so matching that pattern is not a defence. */
+
+.grid-scroll:has(.projections) {
+  /* This page's own budget for everything above the table, and it is larger
+     than the schedule grid's `18rem` because this page carries more above the
+     scrollport: a heading, a four-clause lede, the lineage summary, and a key
+     of four items of which three are sentences that wrap.
+
+     **Measured rather than asserted**, at a 720px viewport with the lineage
+     collapsed, the integrity banner absent and scroll at zero: the scrollport
+     top lands at 371px and `720 - 24rem` gives it a 360px height, so its
+     bottom sits at **731px — 11px below the fold**. The `<caption>` is 51px
+     and is not sticky, so the header pins at 371px once the caption scrolls
+     away and stays there; **9 of 60 rows** are visible at rest. Root font-size
+     is 15px here, so `24rem` is 360px rather than 384px, which is why the
+     arithmetic closes on 731 and not 755.
+
+     Those figures are checkable against the constant, which is what makes them
+     worth writing down; the sibling comment on `.grid-scroll` records a
+     retracted measurement taken without resetting scroll position, so the
+     resting state is stated explicitly here.
+
+     Like its sibling this is **a constant rather than a measurement**, and it
+     is 11px short before a reader does anything at all. Opening the lineage
+     disclosure or surfacing the integrity banner pushes it further and
+     produces an inner scrollport inside the page scroll. The constant is left
+     alone because the honest fix is the one already named for the schedule
+     grid — a flex column with `min-height: 0` — and that is one fix for both
+     pages rather than a second magic number here. Filed with the existing
+     entry in `docs/backlog.md`. */
+  max-height: calc(100vh - 24rem);
+}
+
+.projections__player {
+  /* Wider than the schedule grid's team column: these are full player names,
+     not three-letter abbreviations. Capped so a long name does not push the
+     sixteen rate columns off a laptop screen entirely. */
+  min-width: 11rem;
+  max-width: 14rem;
+}
+
+.grid th.projections__player-head {
+  text-align: left;
+}
+
+.grid td.projections__team,
+.grid td.projections__pos {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.grid td.projections__rate {
+  /* Tabular figures so decimal points line up down sixteen columns. Right
+     alignment for the same reason — the base rule centres, which reads fine
+     for single-digit game counts and badly for a mix of `4.20` and `34.50`. */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-inline: var(--space-2);
+  min-width: 3.4rem;
+}
+
+/* A quantity the source did not publish.
+
+   **Deliberately not `--warn`, and not the `.grid__cell--nodata` hatching.**
+   On the schedule grid `--warn` means *our data is missing* — a count the
+   backend owed us and did not send. This is a different claim: the response is
+   complete and Basketball Monster simply published no value for this field.
+   Giving the two the same treatment would tell a reader that our pipeline had
+   dropped something when it had not. Muted and de-emphasised says "nothing was
+   published here" without claiming a fault, and it stays clearly distinct from
+   `0.00` in the cell beside it, which is a real published zero. */
+.grid td.projections__rate--nodata {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+/* A made/attempted volume pair begins here. A light rule groups the two so a
+   makes column is never read without its attempts column — a percentage
+   without its volume is the single most common bug in homebrew fantasy tools,
+   and this screen's answer is to show the volumes and compute no percentage at
+   all. Qualified to (0,1,1) per the note at the top of this section. */
+.grid th.projections__rate-head--pair-start,
+.grid td.projections__rate--pair-start {
+  border-left: 1px solid var(--border);
+}
+
+.grid th.projections__rate-head {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The source's games-played assumption. Separated from the rates by a heavier
+   rule than the volume-pair groupings, because the distinction it draws is
+   categorical rather than presentational: everything to the left is a per-game
+   rate and this is not one. It is the number ADR-002 forbids multiplying a
+   rate by, and the rule is the visual form of that boundary. */
+.grid th.projections__assumption-head,
+.grid td.projections__assumption {
+  border-left: 2px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5rem;
+}
+
+/* The source published text we could not read as a number. A value *did*
+   arrive, so this is our failure to parse rather than the source's silence,
+   and it takes `--warn` accordingly — the same meaning that colour already
+   carries on the schedule grid. */
+.grid td.projections__assumption--unreadable {
+  color: var(--warn);
+  font-size: 0.75rem;
+}
+
+/* An assumption row carrying neither a value nor the text it came from. The
+   contract does not describe this state at all, so it takes the error colour
+   rather than the muted one: an unrecognised state gets attention, and the
+   comforting reading is the one that would hide a producer defect. */
+.grid td.projections__assumption--unexplained {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* The source stated no assumption for this player. Muted, matching the
+   absent-rate treatment, because it is the same kind of claim — the source
+   said nothing — and emphatically not a zero. */
+.grid td.projections__assumption--absent {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.projections__unlabelled {
+  color: var(--warn);
+  font-style: italic;
+}
+
+.projections__integrity-inline {
+  color: var(--error);
+}

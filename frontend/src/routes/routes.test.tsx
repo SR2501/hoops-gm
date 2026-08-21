@@ -141,6 +141,33 @@ describe('the dashboard shell', () => {
     expect(await screen.findByTestId('readiness-database')).toHaveTextContent('ok')
   })
 
+  it('navigates to the projections page from the shell', async () => {
+    // The route table and the nav item are shared files this lane edited, and
+    // `ProjectionsPage.test.tsx` renders the page directly — so without this,
+    // a page that works would still be unreachable and nothing would say so.
+    mockFetch({
+      '/api/v1/leagues/1/projections/current': {
+        status: 409,
+        body: {
+          error: 'projections_source_not_imported',
+          detail: 'no basketball_monster projection import exists',
+          request_id: 'req-1',
+        },
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />)
+    await userEvent.click(await screen.findByRole('link', { name: 'Projections' }))
+
+    expect(await screen.findByRole('heading', { name: 'Projections' })).toBeInTheDocument()
+    // Reached the endpoint and rendered its refusal in the screen's own words,
+    // rather than merely mounting a heading.
+    expect(await screen.findByTestId('async-error-summary')).toHaveTextContent(
+      /No Basketball Monster projections have been imported/i,
+    )
+  })
+
   it('surfaces a degraded database rather than hiding it', async () => {
     mockFetch({
       '/health/ready': {

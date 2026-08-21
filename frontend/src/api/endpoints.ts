@@ -12,16 +12,20 @@ import {
   type RequestOptions,
   type ResponseContract,
 } from './client'
-import { DATE_ABSENCE_REASONS, type DateAbsenceReason } from './types'
+import { DATE_ABSENCE_REASONS, PROJECTION_RATE_FIELDS, type DateAbsenceReason } from './types'
 import type {
+  CurrentProjections,
   Health,
   Meta,
+  ProjectionPlayer,
+  ProjectionRates,
   Readiness,
   ScheduleGrid,
   ScheduleGridCount,
   ScheduleGridLineage,
   ScheduleGridPeriod,
   ScheduleGridTeam,
+  SourceGamesPlayedClaim,
 } from './types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -294,6 +298,173 @@ export function getScheduleGrid(
   return apiFetch(
     `/api/v1/leagues/${String(leagueId)}/schedule-grid/current`,
     SCHEDULE_GRID_CONTRACT,
+    options,
+  )
+}
+
+/* --- Imported projections (ADR-002) --------------------------------------- */
+
+function isProjectionImportLineage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.import_id === 'number' &&
+    typeof value.source === 'string' &&
+    typeof value.season === 'string' &&
+    typeof value.imported_at === 'string' &&
+    typeof value.content_sha256 === 'string' &&
+    typeof value.profile_id === 'string' &&
+    typeof value.profile_version === 'string' &&
+    typeof value.profile_definition_sha256 === 'string' &&
+    typeof value.projection_values_sha256 === 'string' &&
+    typeof value.projection_count === 'number' &&
+    (typeof value.assumed_scoring_type === 'string' || value.assumed_scoring_type === null) &&
+    (typeof value.original_filename === 'string' || value.original_filename === null) &&
+    typeof value.row_count === 'number' &&
+    typeof value.matched_count === 'number' &&
+    typeof value.needs_review_count === 'number' &&
+    typeof value.unmatched_count === 'number' &&
+    typeof value.rejected_count === 'number'
+  )
+}
+
+/**
+ * `blend` must be **present and null**, and both halves are checked.
+ *
+ * A missing key fails here rather than being read as "not blended", because
+ * those are different claims and the whole point of the backend declaring the
+ * key was to let this screen render the second from a fact. A *non-null* value
+ * fails too: the declared backend type is `None`, so a blend arriving today is
+ * a contract violation rather than a feature, and rendering it would mean
+ * showing a number nobody agreed the weights for.
+ *
+ * **This is the assertion that has to change when ADR-015 lands**, and it is
+ * written to fail loudly at that moment rather than pass silently. `architect`
+ * confirms the field will *widen to an object* carrying the recipe identity
+ * rather than start being omitted, so "not blended" stays a present-and-null
+ * fact and this check keeps its meaning for the unblended case.
+ */
+function isProjectionLineage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isProjectionImportLineage(value.projection_import) &&
+    'blend' in value &&
+    value.blend === null
+  )
+}
+
+function isProjectionPlayer(value: unknown): value is ProjectionPlayer {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.player_id) &&
+    typeof value.full_name === 'string' &&
+    (typeof value.team_abbreviation === 'string' || value.team_abbreviation === null) &&
+    (typeof value.primary_position === 'string' || value.primary_position === null)
+  )
+}
+
+/**
+ * A rate is either absent (`null`) or a finite, non-negative number.
+ *
+ * Like `isScheduleGridCount`, this is a property of the *value* rather than of
+ * the collection, and it is rejected rather than tolerated for the same reason:
+ * a negative or non-finite rate is one of the nine members of
+ * `projections_incomplete_evidence`, so the backend refuses to serve one. If
+ * one arrives anyway, the field is not what this dashboard thinks it is, and
+ * rendering `-1.4` verbatim would put a number on screen that cannot be true.
+ *
+ * Note what is *not* required: integrality. Rates are per-game averages, so
+ * `2.5` assists is ordinary. `0` is a real published zero and passes, which is
+ * the distinction from `null` the screen exists to preserve.
+ */
+function isRateValue(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+}
+
+/**
+ * Every canonical field must be **present**, not merely valid when it appears.
+ *
+ * `PROJECTION_RATE_FIELDS.every(...)` over `Object.hasOwn` rather than a
+ * property read, because `row.points_per_game === undefined` and a genuinely
+ * absent key are indistinguishable through a read, and the backend's contract
+ * is that every field is present on every row with `null` carrying the "not
+ * published" meaning. A field dropped upstream would otherwise render as an
+ * empty cell that looks exactly like a published `null`.
+ */
+function isProjectionRates(value: unknown): value is ProjectionRates {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.player_id) &&
+    PROJECTION_RATE_FIELDS.every((field) => Object.hasOwn(value, field) && isRateValue(value[field]))
+  )
+}
+
+function isSourceGamesPlayedClaim(value: unknown): value is SourceGamesPlayedClaim {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.player_id) &&
+    'assumed_games_played' in value &&
+    (value.assumed_games_played === null ||
+      (typeof value.assumed_games_played === 'number' &&
+        Number.isFinite(value.assumed_games_played))) &&
+    'assumed_games_played_raw' in value &&
+    (typeof value.assumed_games_played_raw === 'string' ||
+      value.assumed_games_played_raw === null)
+  )
+}
+
+/**
+ * Shape only. The backend's cohort guarantees are deliberately **not** asserted.
+ *
+ * The contract says `players` and `projections` describe the same `player_id`
+ * set, each exactly once, and that `projections.length` equals
+ * `projection_count`. Checking those here and rejecting on failure would
+ * replace a visible, countable inconsistency with a blank screen and a generic
+ * contract error — and a blank board during a live draft is worse than a
+ * slightly wrong one. `buildProjectionsModel` reports each of them as an
+ * integrity count instead, on screen, the way the schedule grid reports a
+ * missing cell.
+ *
+ * The line between the two is *value sanity* versus *collection consistency*: a
+ * negative rate cannot be rendered honestly at all and is refused above, while
+ * a player without rates can be shown as exactly that.
+ */
+export function isCurrentProjections(value: unknown): value is CurrentProjections {
+  return (
+    isRecord(value) &&
+    typeof value.league_id === 'number' &&
+    typeof value.season === 'string' &&
+    typeof value.source === 'string' &&
+    isProjectionLineage(value.lineage) &&
+    Array.isArray(value.players) &&
+    value.players.every(isProjectionPlayer) &&
+    Array.isArray(value.projections) &&
+    value.projections.every(isProjectionRates) &&
+    Array.isArray(value.source_games_played_assumptions) &&
+    value.source_games_played_assumptions.every(isSourceGamesPlayedClaim)
+  )
+}
+
+const CURRENT_PROJECTIONS_CONTRACT = {
+  isSuccess: isCurrentProjections,
+  invalidResponseDetail:
+    'The projections response did not match the expected backend contract.',
+} satisfies ResponseContract<CurrentProjections>
+
+/**
+ * The current imported cohort for one league.
+ *
+ * `source` is deliberately not a parameter yet. The endpoint accepts `?source=`
+ * and defaults to Basketball Monster, which is the only source the owner
+ * actually buys; a picker belongs with the surface that has more than one
+ * source to pick between.
+ */
+export function getCurrentProjections(
+  leagueId: number,
+  options?: RequestOptions,
+): Promise<CurrentProjections> {
+  return apiFetch(
+    `/api/v1/leagues/${String(leagueId)}/projections/current`,
+    CURRENT_PROJECTIONS_CONTRACT,
     options,
   )
 }

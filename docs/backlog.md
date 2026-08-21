@@ -2,11 +2,11 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**44 done - 1 blocked - 73 pending - 118 total**
-
-(Recomputed from the status markers in this finished file, never reconciled from
-two headers: 118 `###` headings and 118 markers, 1:1, no duplicate
-item names. Neither side of a rebase conflict is ever a usable input here, because
+(Recomputed from the status markers in this finished file, never
+reconciled from two headers: 118 `###` headings and
+118 markers, 1:1, no duplicate item names. Neither side of a
+rebase conflict is a usable input here, because each was computed before
+the other lane's items landed.)
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
 reconciliation could have reached the answer. The position lane sharpened
@@ -484,7 +484,7 @@ the exemption stated on `CurrentProjectionsResponse` and amend ADR-014.
 
 ### `projections-ui` - Putting the imported projections on screen
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `projections-api-early`
 
 The draft board's first surface: every player in the current Basketball Monster
