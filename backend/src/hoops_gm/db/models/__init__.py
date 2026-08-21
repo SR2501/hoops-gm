@@ -8,9 +8,12 @@ Phase 5 adds the ``csv-importer`` slice of Projections — ``projection_sources`
 ``projection_profile_versions``, ``projection_imports``, ``projections`` (per-game rates) and
 ``source_games_played_assumptions``. Blending, the baseline model and
 ``expected-games`` fusion are not implemented here; they consume this table
-and belong to their own backlog items. The modelled parts of Availability
-(``p(play)``, reliability, shutdown risk) plus Contingent value, Valuation,
-Draft and Decisions belong to later phases and their owning agents. Bridge
+and belong to their own backlog items. Phase 8 adds the *recorded* half of
+Draft — ``drafts``, ``draft_participants`` and the append-only ``draft_events``
+log, which hold what a person observed happening in a draft. The modelled parts
+of Availability (``p(play)``, reliability, shutdown risk) plus Contingent value,
+Valuation and the decision-bearing half of Draft (recommendations, dollar
+values, inflation) belong to later phases and their owning agents. Bridge
 payload capture is implemented here as a raw transport boundary; it
 deliberately does not parse Fantrax data.
 
@@ -27,11 +30,15 @@ from hoops_gm.db.models.availability import (
 )
 from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
+from hoops_gm.db.models.draft import Draft, DraftEvent, DraftParticipant
 from hoops_gm.db.models.enums import (
     CategoryKind,
     CategoryOutcome,
     Conference,
     DnpReason,
+    DraftEventType,
+    DraftStatus,
+    DraftToolUsage,
     DraftType,
     ExternalSource,
     FieldEvidence,
@@ -84,6 +91,12 @@ __all__ = [
     "CategoryOutcome",
     "Conference",
     "DnpReason",
+    "Draft",
+    "DraftEvent",
+    "DraftEventType",
+    "DraftParticipant",
+    "DraftStatus",
+    "DraftToolUsage",
     "DraftType",
     "ExternalSource",
     "FantasyTeam",
