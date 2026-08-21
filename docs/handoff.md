@@ -12901,3 +12901,77 @@ ids, periods, teams, and the 630 `(period, team)` pairs.
   open limitation on this branch by some distance.
 - **Anything a browser sees**, across the last seven heads.
 - `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - "1,200 games" was never the season, and a version that does not move
+
+**Unit:** `schedule-grid-pending-periods`, post-undraft. Not code — two facts
+measured against the real database before the first live refresh, both of which
+correct numbers that have circulated today.
+
+### 1,200 is the season minus what the old importer could not express
+
+Last night's registered refresh:
+
+```
+refreshed 2026-08-20 21:54:31   version e80a3aecca0e86eb
+source 1200   resolved 1200   pending_games key: absent
+```
+
+Post-merge re-seed, same source:
+
+```
+version e80a3aecca0e86eb   source 1206   resolved 1200   pending 6
+```
+
+**The six Cup games were filtered upstream of the source count**, so last night's
+screen was under-reporting the source by six and nothing on it could have said
+so. "1,200 games" has been used today as though it were the season. It is not,
+and the difference is exactly the games this unit exists to display.
+
+The `()` default for an absent pending block is still sound —
+`lineage.py:222-225` argues that the old contract required
+`source == resolved`, so the pending set was necessarily empty, and reading it
+that way recovers the claim rather than guessing it. I went looking for a defect
+here and did not find one. **The residual is that the inference is only true
+because the count had already been narrowed**, which is a fact about the old
+importer rather than about the block.
+
+### The version is byte-identical across a refresh that changed the screen
+
+`e80a3aecca0e86eb` before and after. Same string, same `refresh_id` row updated
+in place, six pending games appearing from nothing.
+
+Predicted from the mechanism — `schedule_content_version` fingerprints persisted
+`team_schedule` rows, and a pending game has none because it has no teams — and
+then **demonstrated on the real database** rather than left as an argument.
+`refreshed_at` is the only field that moves; `schedule_grid.py:123-129` and
+`importers.py:791` both say so, and this is the first time it has been observed.
+
+The trap is live: confirming a re-seed by eyeballing `version` reports failure
+for a refresh that worked. This is `architect`'s round-one
+`schedule_content_version` fingerprint finding and the schedule lane's
+"cannot cover the pending set" note — **the same fact from two directions**, now
+with an observation attached.
+
+### The failure mode to watch on the first live load
+
+A pre-ADR-013 block renders as an affirmative *no pending games, every count
+final*. Correct about last night, silent about today's six, and **it looks like
+success** — the danger is a convincing screen rather than a wrong one. The
+verification is `lineage.schedule.pending_games` carrying six entries with
+`date_absence_reason: ""`, matched against the live feed's ids. A page that
+renders without error proves nothing.
+
+### Could not verify
+
+- **Anything at season scale.** Every fixture here is 12 games / 21 periods / 630
+  cells; live is 1,206 / 25 / 750. The `18rem` scrollport shortfall is a filed
+  item rather than a regression, and it is the thing most likely to read as
+  broken on first sight.
+- **Two adjacent marked columns on a 30-team grid** — new, and being driven by
+  the coordinator rather than by me.
+- **The live league's period boundaries.** The demo's are Monday-anchored so the
+  Cup dates split 4 / 2 across the weeks of 30 Nov and 7 Dec, with the week the
+  original brief named holding the *smaller* half. A real league's periods come
+  from imported Fantrax settings, so the response's own `periods` array outranks
+  that arithmetic.

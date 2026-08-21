@@ -593,6 +593,18 @@ once checked:
   because `aria-describedby` is announced unreliably on `table`, so the trade is
   not obviously favourable and no one has tested either with a real screen
   reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
+- **The pending block distinguishes *absent* from *empty*, and the screen cannot.**
+  A completeness block written before ADR-013 has no `pending_games` key at all —
+  confirmed on the real pre-merge refresh, which carried `source: 1200`,
+  `resolved: 1200` and the key **absent rather than empty**. Reading it as `()`
+  is sound (`lineage.py:222-225`: the old contract required
+  `source == resolved`, so the pending set was necessarily empty), and the
+  client is right to render an affirmative zero. But the two states the screen
+  deliberately collapses — *this refresh had no pending games* and *this refresh
+  predates the concept* — **are still distinguishable in the stored block**. No
+  change today: the collapse is correct for a reader who only needs to know
+  whether any count may rise. Recorded because a later reader wanting refresh
+  provenance has more to work with than the response shows.
 - **The mutation harness should be committed, and the reason overturns the rule
   that kept it out.** Governance said *commit a tool whose failure mode is loud;
   describe a tool whose failure mode is silent* — and a mutation harness fails
