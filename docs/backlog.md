@@ -331,13 +331,22 @@ projection source published, exactly as the importer decomposed them, plus the
 `players` labels a browser screen needs and every fingerprint behind the numbers
 — the CSV bytes, the parsing recipe, and the digest over the stored normalised
 rates that changes when a row is edited in place while the other two look
-untouched. The foundation of the draft board, and the second browser-visible
-thing in this repository.
+untouched. The foundation of the draft board. Browser-*reachable*, not
+browser-visible: the screen is `projections-ui`'s, and `schedule-grid-ui` is
+still the only thing in this repository a person can look at.
 
 Descriptive only. No valuation, z-score, G-score, ranking, auction price, risk
 adjustment, availability fusion or recommendation crosses this boundary — those
 are `quant`'s behind the Model gate (ADR-002, ADR-008). The only arithmetic in
 the route is `len()`.
+
+**A client must not multiply a rate by `assumed_games_played`.** That number is
+not merely a games-played figure: for a season-total source it is the exact
+divisor the importer used to produce the rates beside it, so the product
+reconstructs the source's published seasonal total to the float. The ADR-002
+decomposition is perfectly reversible at the wire by a two-line join, and doing
+that join is the fusion ADR-002 permits only at `expected-games`, which is not
+built. Display the assumption; do not compute with it.
 
 **It serves the *imported* cohort, not a blended one, and `lineage.blend` is a
 typed key that is always `null`.** `projection-blending` computes a blend from a
@@ -347,10 +356,11 @@ because the accepted schema has no blend tables, by design. So no blend profile,
 activation pointer or source weights are persisted for any HTTP request to read,
 and serving a blend would mean the route choosing weights itself. The key exists
 so a consumer renders "not blended" from a fact rather than from a key it failed
-to find, and so persisted blend profiles have somewhere to surface. Persisting
-them is a separate `architect` + `quant` unit, and is on the path to the owner's
-stated requirement of seeing Basketball Monster and our own numbers side by side
-during the draft.
+to find; at the JSON level it is also where a blend would surface, though the
+declared type is `None` rather than `BlendLineage | None`, so that is a schema
+change and not a fill-in. Persisting blend profiles is a separate `architect` +
+`quant` unit, and is on the path to the owner's stated requirement of seeing
+Basketball Monster and our own numbers side by side during the draft.
 
 ADR-002's separation is in the wire format, not only in the schema: the source's
 own games-played assumption is a separate top-level array, never a key inside a

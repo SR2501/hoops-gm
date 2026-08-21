@@ -10108,3 +10108,182 @@ CLI reproductions and the mutation, not the 43-case sweep.
 findings have gone from season-killers to an unreachable season string; the
 remaining risk is concentrated in one function that this round characterised
 exhaustively, and a ninth would ask the same questions of the same code.
+
+## 2026-08-20 — backend — Exposing the imported per-game projection cohort with its lineage
+
+**Changed:** Added `api/routes/projections.py` and `tests/test_projections_api.py`,
+registered the router, and edited `backend/README.md`, `docs/backlog.md` and
+`docs/governance/ownership.md`. Loopback-only
+`GET /api/v1/leagues/{league_id}/projections/current?source=basketball_monster`:
+the per-game rates the source published, the labels a screen needs, and every
+fingerprint behind them. Nothing outside `api/` was touched, as briefed — three
+other lanes owned `db/lineage.py`, `ingest/` and `api/routes/schedule_grid.py`
+tonight. Descriptive only; the only arithmetic in the route is `len()`.
+
+**Now true:** The verified Basketball Monster import is reachable over HTTP for
+the first time. Eight typed codes in `ErrorResponse.error`; two guarantees on any
+200 (`players` and `projections` describe the same `player_id` set, each once,
+both ordered; `len(projections) == lineage.projection_import.projection_count`);
+the source's games-played assumption in its own top-level array, never inside a
+rate object, with a forbidden-key test over both every rate object and the top
+level. Currency, profile verification and row validity come from
+`blending.release_projection_import` — there is no second verifier, and the
+route's own "which import" query is a *selector* the canonical release
+arbitrates. `docs/governance/ownership.md` gained a `CANONICAL_STAT_FIELDS` seam
+row: that tuple is now the published rate vocabulary, so `data-engineer` adding
+a field is a wire-contract change.
+
+**It serves the imported cohort, not a blended one, and I verified that against
+the code rather than assuming it.** `BlendCatalog` is a frozen dataclass with no
+mapper; `define_blend_profile` and `activate_blend_profile` each return a *new*
+catalog; `grep BlendCatalog` across `backend/src` returns two files, neither a
+model. So no blend profile, activation pointer or source weights are persisted
+for any request to read, and serving a blend would mean the route choosing
+weights — the Model gate, `quant`'s. `lineage.blend` is a typed key that is
+always `null` so a consumer reads the absence as a fact. The coordinator has
+ratified this and is scoping the persistence unit; it is on the path to the
+owner's stated requirement of seeing Basketball Monster and our own numbers side
+by side during the draft.
+
+**The defect this lane actually produced, because it is the useful part.** My
+`_lock_projection_source` docstring claimed SQLite serialized on "SQLite's own
+shared read lock, held from this session's first statement until the transaction
+ends". **That was false.** pysqlite emits `BEGIN` only before DML, never before a
+`SELECT`, and SQLAlchemy drops `FOR UPDATE` on SQLite — so a read-only session
+held nothing at all, on the dialect that is the configured default.
+`code-review` demonstrated the consequence end to end: a 200 carrying the
+post-write cohort beside a pre-write `projection_values_sha256` (served
+`0cd93586…`, true `9750eba1…`), cardinality unchanged so my count-only guard
+passed. I re-drove it myself before fixing: `['COMMITTED THROUGH THE READER'] |
+reader now sees 'after'` without the reservation, `['BLOCKED: OperationalError:
+database is locked'] | reader now sees 'before'` with it.
+
+This is **rhetorical convenience** by AGENTS.md's own name — I reached for a
+named mechanism stated with confidence that I had not run. Lint, types and 1,175
+green tests were green straight through it, and no gate would ever have caught
+it. What caught it was a reviewer executing the claim. The coordinator checked
+whether the belief existed elsewhere and it does not: every other
+`with_for_update()` in the codebase is either preceded by
+`acquire_transaction_lock` or sits on a DML path where pysqlite emits `BEGIN`
+anyway. The defect was specific to a *read-only* route reaching for `FOR UPDATE`
+alone, and the read-only part is what made it bite.
+
+**Two fixes, and the second is the better one.** The lock now takes a no-op
+`UPDATE` write reservation before the `FOR UPDATE` select, so both dialects
+genuinely serialize. And `_assert_cohort_is_stable` no longer compares
+cardinality: it runs the canonical release a *second* time after the rows are
+read and compares the two immutable lineage records whole — digest, count,
+currency, profile lineage. Invoking the one canonical function twice is not a
+second verifier; re-implementing its digest would have been. The reservation is
+written inline rather than borrowed from `db/session.py`, because
+`test_lineage_locks_are_acquired_through_exactly_one_import` pins `db/lineage.py`
+as the only module reaching `acquire_transaction_lock` — my first attempt
+imported it and that tripwire caught me correctly.
+
+`code-review` also found the anti-deadlock test would have **hung CI rather than
+failed**: `ThreadPoolExecutor.__exit__` joins unconditionally, so a genuinely
+stuck writer would have burned the wall clock after the future timeout fired. A
+test that hangs converts a defect into a timeout, and a timeout reads as
+infrastructure flake, which is the one failure everybody re-runs instead of
+investigating. Now daemon threads with bounded joins.
+
+`architect` approved with required changes, all made: the handoff entry (this);
+the README insertion orphaning a schedule-grid paragraph whose antecedent became
+four paragraphs of projections prose (moved); a test pinning
+`ProjectionBlendError.__subclasses__()` so a future subclass cannot silently
+join a shared code's family; the `CANONICAL_STAT_FIELDS` seam row; and the
+no-multiply prohibition stated where a consumer will read it. Also fixed two
+prose overclaims `architect` re-derived and falsified: "the second
+browser-visible thing in this repository" (it is browser-*reachable*; the screen
+is tomorrow's lane) and "persisted blend profiles have somewhere to surface",
+which is true of the JSON and false of the contract, since `blend` is typed
+`None` rather than `BlendLineage | None`.
+
+**The sharpest thing `architect` found is one I had not seen: the payload is
+exactly invertible.** `assumed_games_played` is not merely a games-played figure
+— it is the exact divisor the importer used to produce the rates beside it, so
+`rate × assumption` reconstructs Basketball Monster's published seasonal total
+to the float. ADR-002's decomposition is perfectly reversible at the wire by a
+two-line join, and that join is the fusion ADR-002 permits only at
+`expected-games`, which does not exist. The prohibition now lives in the README
+endpoint table and the backlog entry — the two files a frontend lane opens — not
+only in Python docstrings a React lane will never see.
+
+`architect` also ruled a decision rule worth reusing: **split or discriminate a
+refusal family when two of its members imply different operator actions; keep one
+code when every member implies the same action. The test is the remedy, not the
+cause.** Under it, `projections_incomplete_evidence` stays one code (every member
+terminates at "re-import under a verified profile") and the open schedule-grid
+question resolves as *discriminate*.
+
+**Gates.** Code gate: `ruff check` clean, `ruff format --check` clean, `mypy`
+strict clean (138 files), full offline suite green. Mutation checks, stated
+because the gate's added bullet is reviewer-enforced — seven guards, each broken
+deliberately and each turning the suite red: removing the cohort guard returned a
+200 with one player's rates beside `projection_count: 2`; removing
+`.with_for_update()` failed both lock tests; removing the write reservation
+failed the SQLite blocking test; replacing the label set-equality with `if False`
+stopped it raising; inverting the currency selector made the canonical release
+refuse; deleting the `MissingProjectionDataError` branch collapsed two remedies
+into one code; inserting a `projection_imports` lock before the source lock — a
+real ABBA — was caught by the lock-order test. Model gate not engaged and
+deliberately kept that way. Adapter gate not engaged: no external source is
+called.
+
+**Could not verify:**
+
+*Native PostgreSQL.* No Docker on this machine, so nothing here is claimed
+locally on Postgres. The `FOR UPDATE` path is asserted by compiling statements
+against the PostgreSQL dialect, never by executing against a real server. CI is
+the only evidence, and it must be green on the exact pushed head.
+
+*The re-release comparison's ABA hole.* `_assert_cohort_is_stable` cannot see a
+change made and exactly reverted between the two releases. I believe that is
+unreachable through `import_projection_csv`, whose only same-cohort path is a
+delete-and-reinsert of byte-identical content that is value-identical and so
+digest-identical — but I did not drive it, and after tonight I am not willing to
+call an undriven mechanism established.
+
+*The two `_development_app` tests under a shared PostgreSQL database.*
+`code-review` cleared them by reading; I did not run them against Postgres.
+Likewise the unfiltered `select`/`update` statements in the test file are safe
+only because every fixture drops and recreates per test — correct as written,
+and they would break under `pytest-xdist`.
+
+*A schedule-grid flake I inherited and cannot attribute.* `architect` observed
+`test_current_grid_labels_match_the_persisted_rows_they_describe` and
+`test_current_grid_counts_agree_with_the_persisted_schedule` fail once at
+`46d7596` with `json.decoder.JSONDecodeError` on a **malformed HTTP body** — not
+an assertion failure — and could not reproduce it across two further full runs.
+I saw a separate one-off: two `tests/test_importers.py` fixture ERRORs in one run
+that did not recur. Both were under concurrent `ruff`/`mypy` load, which makes
+CPU contention the likely cause. **This diff touches no schedule-grid or importer
+code**, and each app gets its own SQLite file under `tmp_path` locally. I cannot
+attribute either to this PR and I cannot clear them. A route intermittently
+returning a truncated body is not a thing to leave unrecorded because it went
+away.
+
+*No dev seed, unlike `schedule-grid-early`.* That item shipped
+`dev/seed_schedule_grid.py` because its first attempt was fail-closed but
+permanently unavailable, and the seed was the proof it was operable. There is no
+`dev/seed_projections` here. The asymmetry is deliberate — that state graph spans
+four importers where this is one CSV, and shipping a seed for licensed projection
+data is a question I should not answer alone — but the consequence is real: **this
+endpoint has never been driven outside pytest.** Its state is written by the
+production importer over the committed fixture, which is the substance of PR
+#36's lesson, but there is no recorded curl and no capture-and-compare artefact
+of the kind the schedule-grid lane produced.
+
+*The `assumed_scoring_type` precedence origin* is not carried. `architect` is
+right that the project's standard elsewhere is to cite which of two sources won;
+I judged that publishing it here would restate a precedence rule the canonical
+release owns, free to drift. The gap is documented on the field rather than
+closed, and closing it belongs in `blending`.
+
+**Next:** `frontend` builds the projections screen against this contract
+tomorrow. Two things it will want that do not exist: Fantrax position eligibility
+(`player-position-eligibility`, pending, and already flagged as newly
+load-bearing) and anything to compare Basketball Monster against, which is the
+persisted-blend unit `architect` is scoping. Whoever takes that unit should start
+from `lineage.blend` and note it is typed `None`, so widening it is a schema
+change rather than a fill-in.

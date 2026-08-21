@@ -53,7 +53,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 | `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
-| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null`, because blend profiles are caller-owned in-memory values with no persistence — see below. Fails closed with one of eight typed codes. |
+| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null` — see below. Fails closed with one of eight typed codes. **A client must not multiply a rate by `assumed_games_played`:** that number is the exact divisor the importer used to produce the rates, so the product reconstructs the source's published seasonal total to the float, and that fusion is permitted only at `expected-games`. Display it; do not compute with it. |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -195,26 +195,6 @@ refused. Until ADR-013 the seed carried a filter and a reconciliation pair
 whose only purpose was to get past a refusal that no longer exists; both were
 retired with it.
 
-## Why the projections endpoint serves no blend
-
-`GET /api/v1/leagues/{league_id}/projections/current` reports the **imported**
-per-game cohort, not a blended one, and `lineage.blend` is a typed key that is
-always `null`.
-
-That is not an omission. `hoops_gm.projections.blending` computes a blend from a
-`BlendCatalog`, and that catalog is an explicitly caller-owned in-memory value:
-`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
-rather than writing one, because the accepted schema has no blend tables and
-adding them is an architecture decision rather than a side effect of blending.
-So no blend profile, no activation pointer and no source weights are persisted
-anywhere for an HTTP request to read. Serving a blend here would mean the route
-constructing a profile itself, which is choosing weights, which is a number a
-decision rests on — the Model gate, and `quant`'s to pass.
-
-The key exists so a consumer renders "not blended" from a fact rather than
-inferring it from a key it failed to find, and so persisted blend profiles have
-somewhere to surface when they exist.
-
 **Read the served lineage accordingly.** The response says
 `source_game_count: 12`, `resolved_game_count: 10`,
 `pending_game_ids: ["0022601201", "0022601202"]`, `unresolved_game_ids: []`.
@@ -246,6 +226,46 @@ The demo's scoring periods are Monday-to-Sunday weeks derived from the NBA game
 dates, not a real Fantrax calendar, and its playoff weeks are synthesized — the
 settings contract cannot express "authoritatively zero playoff periods". Do not
 read the demo as evidence that a real league's calendar joins correctly.
+
+## Why the projections endpoint serves no blend
+
+`GET /api/v1/leagues/{league_id}/projections/current` reports the **imported**
+per-game cohort, not a blended one, and `lineage.blend` is a typed key that is
+always `null`.
+
+That is not an omission. `hoops_gm.projections.blending` computes a blend from a
+`BlendCatalog`, and that catalog is an explicitly caller-owned in-memory value:
+`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
+rather than writing one, because the accepted schema has no blend tables and
+adding them is an architecture decision rather than a side effect of blending.
+So no blend profile, no activation pointer and no source weights are persisted
+anywhere for an HTTP request to read. Serving a blend here would mean the route
+constructing a profile itself, which is choosing weights, which is a number a
+decision rests on — the Model gate, and `quant`'s to pass.
+
+The key exists so a consumer renders "not blended" from a fact rather than
+inferring it from a key it failed to find. At the JSON level it is also where a
+persisted blend would surface: a key that has always been `null` starting to
+carry an object is additive for a client. At the *contract* level that is not
+free — `ProjectionLineage.blend` is typed `None`, not `BlendLineage | None`, so
+surfacing a blend is a schema change and not a fill-in. Say the second, because
+the first reads like the work is already provisioned for and it is not.
+
+## Do not multiply a projection rate by the source's games-played assumption
+
+`source_games_played_assumptions` is what the source assumed and what our
+availability model will replace. It is **also the exact divisor these rates were
+derived with** — for a season-total source like Basketball Monster the importer
+produced `minutes_per_game` as `2415 / 70` — so multiplying a rate by it
+reproduces the source's published seasonal total to the float. The
+decomposition ADR-002 mandates is perfectly reversible at the wire by a two-line
+join.
+
+Doing that join is the production-and-availability fusion ADR-002 permits only
+at `expected-games`, which is not built. **A client may display the assumption
+and must not compute with it.** Rendering "projected season total" from this
+payload is an ADR-002 violation implemented one layer away from where anyone is
+looking for it.
 
 ## Migrations
 

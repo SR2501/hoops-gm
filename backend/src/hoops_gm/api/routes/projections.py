@@ -39,14 +39,15 @@ rate. It is published so a screen can *show* what the source assumed and that
 our availability model will override it. It is never fused here.
 
 **Two operational limits worth knowing before this sits behind a dashboard
-poll.** This read takes the importer's own ``projection_sources`` row lock for
-the whole request, so a concurrent ``import_projection_csv`` for the same source
-blocks until it finishes; a slow poll therefore delays an import rather than
-racing it. And a refusal's code does not reach the server log: the middleware
-records ``status_code`` only, so five of the eight refusals read identically as
-``409`` to an operator. Both are inherited and app-wide rather than introduced
-here; the second is tracked as ``error-code-observability`` in
-``docs/backlog.md``.
+poll.** This read locks the importer's own ``projection_sources`` row for the
+whole request, so a concurrent ``import_projection_csv`` for the same source
+blocks until it finishes; on SQLite that lock is the database-wide write
+reservation, so a slow poll delays *any* writer, and a writer that loses the
+race gets ``database is locked`` rather than waiting. And a refusal's code does
+not reach the server log: the middleware records ``status_code`` only, so five
+of the eight refusals read identically as ``409`` to an operator. The second is
+inherited and app-wide rather than introduced here, and is tracked as
+``error-code-observability`` in ``docs/backlog.md``.
 """
 
 from __future__ import annotations
@@ -55,9 +56,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import Select
+from sqlalchemy.sql import Select, Update
 
 from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.schemas import ErrorResponse
@@ -99,14 +100,23 @@ class ProjectionImportLineage(BaseModel):
     normalised rates* — the one that changes when a row is edited in place while
     the file hash and the mapping lineage still look untouched.
 
-    The five row counts are the import's own audit trail and partition the file:
-    ``row_count`` is every data row it contained, ``rejected_count`` is what the
-    parser refused before identity resolution ran, and the other three partition
-    what survived by resolution outcome. ``projection_count`` is separate and is
-    what this response actually carries: the rows the canonical release
-    validated, which equals ``matched_count`` only while no earlier import for
-    the same source and season contributed rows to the crosswalk differently.
-    Both are published rather than one being derived from the other.
+    The five row counts are the import's own audit trail and **partition** the
+    file: ``row_count`` is every data row it contained, ``rejected_count`` is
+    what the parser refused before identity resolution ran, and the other three
+    partition what survived by resolution outcome. That is asserted rather than
+    asserted-in-prose — ``test_the_audit_counts_actually_partition_the_file``
+    drives an import where the terms are genuinely different and checks the sum
+    on the served body, because a screen that renders five numbers a docstring
+    calls a partition invites a reader to add them up.
+
+    ``projection_count`` is separate and is what this response actually carries:
+    the rows the canonical release validated. It equals ``matched_count`` only
+    while no earlier import for the same source and season contributed rows to
+    the crosswalk differently. Both are published rather than one being derived
+    from the other.
+
+    **Do not multiply these rates by anything.** See
+    :class:`SourceGamesPlayedClaim`.
     """
 
     import_id: int
@@ -123,6 +133,16 @@ class ProjectionImportLineage(BaseModel):
     #: or the import stated one. ``None`` means nobody stated it — never
     #: defaulted to this league's format, because a points-league projection
     #: consumed as a 9-cat one is wrong in a way no downstream check can see.
+    #:
+    #: **Which of the two origins won is deliberately not carried**, and that is
+    #: a real gap rather than an oversight. ``release_projection_import`` resolves
+    #: it (the import's own value, else the source's standing registration) and
+    #: publishing the winner's origin here would mean restating that precedence
+    #: rule in a second place, free to drift from the one that produced the
+    #: value. The project's own standard elsewhere — ``scoring-profile`` cites
+    #: which of two source fields won — is met by the producer recording it, not
+    #: by this route re-deriving it. A consumer needing the distinction should
+    #: ask for the canonical release to carry it.
     assumed_scoring_type: ScoringType | None
     original_filename: str | None
     row_count: int
@@ -205,6 +225,16 @@ class SourceGamesPlayedClaim(BaseModel):
     accident; this response keeps it in a separate array for the same reason. It
     exists to be overridden by the availability model, never blended with it.
 
+    **Do not multiply a rate by this number.** It is not merely *a* games-played
+    figure — for a season-total source like Basketball Monster it is the exact
+    divisor the importer used to produce the per-game rates beside it, so the
+    product reconstructs the source's published seasonal total to the float. The
+    decomposition ADR-002 mandates is therefore perfectly reversible at the wire
+    by a two-line join, and doing that join is the fusion ADR-002 permits only at
+    ``expected-games``, which does not exist yet. A client may **display** the
+    assumption — showing "the source assumed 70 games, we will replace that" is
+    the product thesis in one line — and must not compute with it.
+
     ``assumed_games_played_raw`` is the source's own text ("70", "68 GP") kept
     verbatim, so a consumer can show what was actually published rather than a
     re-rendered number.
@@ -268,30 +298,73 @@ def _source_lock_statement(source: ExternalSource) -> Select[tuple[int]]:
     return select(ProjectionSource.id).where(ProjectionSource.source == source).with_for_update()
 
 
+def _source_write_reservation(source: ExternalSource) -> Update:
+    """A no-op update on the same row, executed purely for the lock it takes.
+
+    ``display_name`` is set to itself, so the row's content cannot change. This
+    is the device ``db/lineage.py``'s ``lock_refresh_scope`` uses to acquire
+    SQLite's database-wide write reservation, reproduced here rather than
+    imported: ``test_lineage_locks_are_acquired_through_exactly_one_import``
+    pins ``db/lineage.py`` as the **only** module reaching
+    ``acquire_transaction_lock``, because both schedule-grid lock-order tests
+    record lineage locks by monkeypatching that one name and a second importer
+    would make them go blind while staying green. This lock is a row lock on the
+    projection source, not a lineage scope, so it has no business borrowing that
+    primitive.
+    """
+
+    return (
+        update(ProjectionSource)
+        .where(ProjectionSource.source == source)
+        .values(display_name=ProjectionSource.display_name)
+    )
+
+
 def _lock_projection_source(session: Session, *, source: ExternalSource) -> int | None:
     """Serialize this read against a concurrent import of the same source.
 
     ``import_projection_csv`` takes ``SELECT projection_sources.id ... FOR
     UPDATE`` as its first database-level lock, then the matching
-    ``projection_imports`` row. Taking the same row here — and nothing after it
-    — makes this read a strict prefix of the writer's lock order, so the pair
-    cannot deadlock however they interleave. Taking a *different* lock, such as
-    one of ``db/lineage.py``'s refresh scopes, would look rigorous and serialize
+    ``projection_imports`` row. This read takes the same row and nothing after
+    it, so its lock order is a strict prefix of the writer's and there is no
+    pair to invert. Taking a *different* lock, such as one of
+    ``db/lineage.py``'s refresh scopes, would look rigorous and serialize
     nothing, because the projection importer does not use them.
 
     Returns the source row id, or ``None`` when the source has never been
     registered — the caller turns that into a refusal rather than a 500.
 
-    **What this can and cannot observe.** On PostgreSQL it is a real row lock
-    held to the end of the transaction. On SQLite, SQLAlchemy omits ``FOR
-    UPDATE`` entirely, so the serialization there is not this statement: it is
-    SQLite's own shared read lock, held from this session's first statement
-    until the transaction ends, which blocks a concurrent writer's commit. Both
-    dialects therefore serialize, by different mechanisms, and neither is WAL —
-    the engine sets no ``journal_mode`` and no ``busy_timeout``, so SQLite
-    contention surfaces as an untyped 500 rather than as a documented code.
+    **Two statements, because one dialect's lock is the other's no-op.** The
+    reservation is what SQLite serializes on; the ``FOR UPDATE`` select is a real
+    row lock on PostgreSQL and is dropped entirely by SQLite. On PostgreSQL the
+    reservation alone would in fact suffice — an ``UPDATE`` takes the same row
+    lock — but the ``FOR UPDATE`` is kept because it is the importer's *own*
+    statement, so the prefix property is observable in the same form on both
+    sides rather than inferred from two different statements that happen to take
+    equivalent locks. Neither statement branches on the dialect (ADR-001); each
+    is simply a no-op on the dialect it was not written for.
+
+    **An earlier version of this docstring claimed SQLite serialized on its own
+    shared read lock, "held from this session's first statement until the
+    transaction ends". That was false and was caught in review by driving it.**
+    pysqlite's legacy transaction handling emits ``BEGIN`` only before DML, never
+    before a ``SELECT``, so a read-only session held nothing at all: a concurrent
+    writer committed straight through it, and the reader's next read saw the new
+    value. The reservation is what makes the claim true, and it was confirmed the
+    same way — with it, the same writer fails to commit and the reader's view
+    stays put (``test_the_read_actually_blocks_a_concurrent_writer_on_sqlite``).
+    The lesson generalises: a mechanism stated rather than exercised is not
+    evidence, and the SQLite half of this was rhetoric until something failed.
+
+    **What it still cannot observe.** Neither dialect is WAL — the engine sets
+    no ``journal_mode`` and no ``busy_timeout`` — so a SQLite writer that loses
+    the race gets ``database is locked`` rather than waiting, and SQLite
+    contention on this endpoint surfaces as an untyped 500 rather than as one of
+    the documented codes. That is inherited and app-wide rather than introduced
+    here.
     """
 
+    session.execute(_source_write_reservation(source))
     return session.scalar(_source_lock_statement(source))
 
 
@@ -362,10 +435,14 @@ def _projection_rows(session: Session, *, import_id: int) -> list[Projection]:
     """Load the rows this response carries.
 
     Same predicate and same ordering as the canonical release's own row load, in
-    the same session and transaction, so SQLAlchemy's identity map returns the
-    very objects the release validated and digested. The caller checks the
-    cardinality anyway rather than trusting that: see
-    :func:`_assert_cohort_matches_release`.
+    the same session and transaction. It is tempting to argue that SQLAlchemy's
+    identity map therefore hands back the very objects the release digested, and
+    an earlier version of this docstring did. **It does not follow:** the
+    identity map holds weak references and ``release_projection_import`` discards
+    the rows it loaded, so they are collectible and this query can re-fetch
+    changed values under unchanged primary keys. Whether the rows moved is
+    therefore established rather than argued — see
+    :func:`_assert_cohort_is_stable`.
     """
 
     return list(
@@ -377,23 +454,33 @@ def _projection_rows(session: Session, *, import_id: int) -> list[Projection]:
     )
 
 
-def _assert_cohort_matches_release(
-    rows: list[Projection], released: ReleasedProjectionImport
+def _assert_cohort_is_stable(
+    session: Session,
+    *,
+    rows: list[Projection],
+    released: ReleasedProjectionImport,
+    source: ExternalSource,
 ) -> None:
     """Refuse a body that does not match the lineage block beside it.
 
     The failure this guards against is the one this whole module exists to
     close: a 200 whose ``projection_values_sha256`` describes one cohort while
-    the rates beside it are another. Under either dialect's lock that should be
-    impossible, which is the point — the guard is what remains if that
-    assumption is wrong, and an assumption nobody can fail is not evidence.
+    the rates beside it are another.
 
-    **What it can and cannot observe.** Cardinality only. A same-cardinality
-    in-place edit between the release and the load would pass it. Catching that
-    needs the release's digest recomputed over these rows, and the function that
-    computes it is private to ``blending`` — re-implementing "normalised rates"
-    here would be a second definition of the thing the digest exists to pin, so
-    the weaker check is deliberate rather than an oversight.
+    **How it observes that, without becoming a second verifier.** It runs the
+    canonical release a second time, after the rows have been read, and compares
+    the two immutable lineage records whole. If anything the release attests to
+    moved across the read — the digest over the normalised rates, the row count,
+    the currency of the import, the profile lineage — the two records differ and
+    the request is refused. Recomputing the digest here instead would mean
+    re-implementing "normalised rates", which is a second definition of the exact
+    thing the digest exists to pin; invoking the one canonical function twice is
+    not.
+
+    **What it can and cannot observe.** It cannot see a change made and exactly
+    reverted between the two releases. It also costs a second row load and
+    digest, which is the price of not trusting the lock — and the SQLite half of
+    that lock was false until review drove it, so the price is worth paying.
     """
 
     if len(rows) != released.projection_count:
@@ -403,6 +490,16 @@ def _assert_cohort_matches_release(
             f"projection import {released.import_id} was released with "
             f"{released.projection_count} verified row(s) but {len(rows)} were read for this "
             "response; refusing to serve rates that contradict their own lineage block",
+        )
+    recheck = _released_import(session, import_id=released.import_id, source=source)
+    if recheck != released:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            f"projection import {released.import_id} was released as "
+            f"{released.projection_values_sha256} but re-released as "
+            f"{recheck.projection_values_sha256} after its rows were read; the cohort moved "
+            "under this request and its lineage block would not describe the rates beside it",
         )
 
 
@@ -558,7 +655,7 @@ def get_current_projections(
 
     released = _released_import(session, import_id=import_id, source=source)
     rows = _projection_rows(session, import_id=import_id)
-    _assert_cohort_matches_release(rows, released)
+    _assert_cohort_is_stable(session, rows=rows, released=released, source=source)
 
     projection_import = session.get(ProjectionImport, import_id)
     if projection_import is None:  # pragma: no cover - the release just loaded this row
