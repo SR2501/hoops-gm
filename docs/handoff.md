@@ -12975,3 +12975,510 @@ renders without error proves nothing.
   original brief named holding the *smaller* half. A real league's periods come
   from imported Fantrax settings, so the response's own `periods` array outranks
   that arithmetic.
+
+## 2026-08-21 — quant — The unit is a frozen protocol, because the model it was meant to fit cannot activate
+
+**Unit:** resumed `injury-status-conversion` after the corrected cohort (PR #39) lifted the
+hard pause. Verified the lift myself rather than taking it: `56adf2f` is an ancestor of both
+`origin/main` and this branch's head, tree clean. The unit that came out is **one frozen
+pre-registration and two doc commits. No model is fitted and no number is emitted.**
+
+**Changed:** `docs/models/injury-status-conversion-preregistration.md` (new, committed alone),
+`docs/backlog.md`, `docs/models/README.md`.
+
+### Two findings, and the second retires a line of work
+
+**The fit is not possible from anything committed.** The cohort manifest publishes canonical
+`status_counts` and joined `participation_outcome_counts` as **two separate marginals**. There
+is no status x outcome contingency and no row-level data anywhere in the repository. A
+conversion rate cannot be fit from two marginals. The row-level outcomes live only in the
+gitignored database and raw store; the coordinator searched nine worktrees plus the owner's
+main checkout, and the one real database holds **0 rows** in both `player_participation` and
+`player_game_logs`.
+
+**The committed cohort can never activate this model, and that needs no data to show.** The
+activation rule requires at least 30 held-out direct outcomes for every status. Whole-cohort
+`doubtful` is **21**. A chronological holdout is a subset, so **21 < 30 unconditionally** —
+before any outcome is examined, and disprovable by re-reading one field of the manifest.
+`probable` at 59 would need the holdout to hold more than half the cohort. The correction made
+`doubtful` *smaller*, 22 to 21.
+
+So regenerating this four-week cohort would spend a full live archive sweep (~91 candidates
+plus a season ingest) and buy a guaranteed veto. That changed a decision already in front of
+the owner from *rebuild it* to *widen it or do not spend*.
+
+### Why a freeze was the right thing to ship today specifically
+
+`docs/models/reliability-metrics.md` records that this project has never managed a provable
+prospective pre-registration — *"the implementation and evidence first enter git together…
+this repository cannot independently prove prospective registration"* — with a standing
+instruction that any future release commit its protocol separately first.
+
+That instruction is satisfiable **only while the outcome data does not exist.** A freeze
+committed now is prospective in a way no later freeze can be, because the data it commits to
+could not have been consulted by anyone. Once the database is populated the window shuts
+permanently. The blocker is what makes the freeze airtight, which is the one useful property
+a blocker has.
+
+The coordinator cut my proposed harness port on the correct ground: every constant in the
+preserved branch is stale, and a harness targeting a cohort proved inadmissible is thrown away
+when the cohort widens. **Port nothing, freeze the protocol, stop.**
+
+### The substantive addition: a gate that fires before a sweep is spent
+
+A cohort is admissible only if **every status carries at least 30 observations inside the
+declared held-out range**. Per-status counts are *inputs*, not outcomes, so this is checkable
+**without unblinding anything**, and an inadmissible cohort is never fitted. It is the
+difference between discovering afterwards that a cohort was too small and the cohort refusing
+to proceed.
+
+It carries one requirement for `data-engineer`: the generator must publish `status_counts`
+**broken down by declared partition**, not only whole-cohort. Today the gate is a hand-check
+performed once, after a split is drawn.
+
+### Three corrections to the record, all re-derived from files at this head
+
+**A previous freeze pinned a checkout-dependent hash.** v1 pinned `manifest_worktree_sha256`.
+The same committed bytes are 19,261 on a CRLF checkout and 18,799 on LF. That is exactly the
+defect class the cohort manifest's own `source_fingerprint_method` records PR #30 having to
+correct after publication — found this time in the one artefact nobody re-reads. This freeze
+pins the LF-normalised digest `383fa77a…`, verified byte-equal to the raw git blob.
+
+**The canonical fingerprint in PR #39's own handoff entry is stale.** It quotes `80b3e563…`;
+the file says `6ca4d37f…`. Regenerated in later remediation rounds, prose never updated. The
+coordinator is grepping for other inheritors.
+
+**The lead-time warning handed to this lane is false for the fitting set.** PR #39's entry
+tells `quant` the maximum moved 540 to 1,650 minutes and that any stratification on the old
+9-hour maximum is wrong. True of *canonical* observations; the manifest's
+`joined_lead_time_minutes` maximum is still **540**. The joined set is canonical minus
+exclusions, so the 1,650 observation is excluded and cannot enter any fit — the joinable range
+is unchanged.
+
+**And I over-specified that third one in my own draft and had to weaken it.** I first wrote
+that the 1,650 row is one of the two with no participation row, excluded under R35. The
+manifest publishes only *class totals* for the 28 unresolved identities and 2 missing
+participation rows, so which class it falls into is **not determinable from the file**. The
+handoff attributes the value to a named player, but attributing him to a specific exclusion
+class is an inference I cannot check here. The freeze now claims only what the manifest
+settles: it is not in the fitting set. Declining to name a cause I cannot check, while still
+reporting the fact I can, is the distinction most of this week's defects failed at.
+
+### Also fixed prospectively, because v1 could not
+
+**Lead-time bands are defined** — ≤60 / 61–180 / 181–540 / >540 minutes, reported only where a
+band holds at least 10 eligible held-out observations. v1 requested bands without defining
+boundaries and had to record the planned sensitivity as unevaluated. `>540` is expected empty
+on any joinable data resembling this cohort, and an empty band is reported empty rather than
+merged away.
+
+**Two limitations sit beside their methods rather than being assumed away:** the paired
+bootstrap resamples by player-game and is therefore *not* valid against within-player or
+within-game correlation; and fitting eligibility (≥20 development observations) **is not
+activation**, so clearing it must never be read as a green light.
+
+**The contamination disclosure is mandatory and I volunteered it.** I have read v1's unblinded
+held-out results, and the cohorts overlap by roughly 99% of rows. The three-band structure is
+therefore **inherited knowingly**, and a future report that "it was selected again" would be
+close to uninformative. This is a replication protocol, not a clean blind. Describing it as a
+clean blind would have been worth less than nothing.
+
+**A second reason the pooled bands are not a discovery:** v1's held-out `probable` (0.9412)
+and `available` (0.7971) **reversed**, so a five-status model would have inverted on this data.
+
+### Gates
+
+**Code gate** claimed: documentation-only change, no code touched, no test affected. **The
+Model gate is deliberately not claimed** — no decision-bearing number is produced, so there is
+nothing to gate. Adapter and Automation gates do not apply: no external call, nothing in the
+write path. `injury-status-conversion` stays `pending`; `availability-model` stays blocked.
+
+Backlog header recounted from the finished file: 114 `###` headings, 114 markers, 1:1, no
+duplicate names, 40 done / 1 blocked / 73 pending. Unchanged, because this lane changed
+annotations and no status marker — recounted rather than assumed for that reason.
+
+### Could not verify
+
+- **The independent exact-head `data-engineer` and `code-review` reviews had not run** when
+  this entry was written. The unit is not ready until they do.
+- **CI on this head.** Not pushed at time of writing. The change is documentation-only, so I
+  expect nothing from it, and *expecting nothing* is not the same as having seen it green.
+- **That no populated cohort database exists anywhere.** I verified my own worktree; the
+  nine-worktree and main-checkout search is the coordinator's, relayed. I did not run it, and I
+  cannot see other machines at all.
+- **Whether `80b3e563…` was inherited by any other artefact.** I found it stale in one handoff
+  entry and stopped there; the sweep is the coordinator's.
+- **Which exclusion class the 1,650-minute observation falls into.** Not determinable from the
+  manifest, and deliberately not claimed. See above.
+- **The ~4.5x widening multiplier.** It follows arithmetically from v1's 32% holdout share, but
+  it assumes the status mix holds across a wider window, which it probably does not — December
+  reporting is not April reporting, and late-season shutdowns inflate `out` without inflating
+  `doubtful`, which would make the true requirement larger. It is a planning figure for the
+  owner, not a threshold. The gate is the measured per-status holdout count.
+- **Whether the reporting regime is stable at all.** A status-vocabulary or team-behaviour
+  change would invalidate every rate a future fit produces without changing one line of code,
+  and nothing in this protocol would detect it.
+- **That the three-band structure is right.** I have not fitted anything. I have seen it win on
+  99%-overlapping data, which is why the contamination disclosure exists rather than a claim.
+
+No cohort was regenerated, no live source was called, no Fantrax access was used, no paid
+source was consulted, and no owner-only decision was made. The widening decision is stated for
+the owner and explicitly not taken here.
+
+## 2026-08-21 — quant — Review round: I published a false claim about my own evidence, and the reviewer disproved it with one `git show`
+
+**Unit:** independent exact-head `data-engineer` and `code-review` passes at `8f87fe8`, on the
+frozen-protocol unit in the entry above. Both reviewed a tree that did not move. Eleven
+findings actioned across `docs/models/injury-status-conversion-preregistration.md` and
+`docs/backlog.md`. The entry above is append-only and stands as written; this corrects it.
+
+### The finding that matters: my "no row-level data anywhere" claim was false
+
+The entry above states *"There is no status x outcome contingency and no row-level data
+anywhere in the repository"*, and the backlog said no conversion rate was *"fittable from any
+committed artifact"*. **Both are false, and the counter-example is a commit my own document
+cites twice.** `3285e647` — the preserved v1 branch — carries
+`backend/tests/model_evidence/injury_status_conversion_v1_rows.json`: 594,951 bytes, 1,934
+records, each with status, participation outcome, game date, lead time and exclusion reason.
+`code-review` computed the full v1 status x outcome contingency from it in seconds and pasted
+it into the review.
+
+**The damage is to the disclosure, not only the wording.** My contamination disclosure
+enumerated the *aggregates* I had seen — selected structure, three band probabilities, Brier
+scores, calibration table, five-status ineligibility. That reads as though summaries were all
+that was available. Row-level outcomes for the near-identical cohort were one `git show` away
+the entire time, and I did not say so. **A disclosure that understates what was available is a
+bad disclosure regardless of what was actually used**, and whether I opened that file before
+drafting is a claim about my own conduct that no reader can check — so the corrected document
+does not rest on it and records that the contingency is now certainly known, because the
+review put it in front of me.
+
+**What survives, narrowed.** The prospectivity argument is no longer "the data could not have
+been consulted". It is that the **widened** cohort this protocol will be fitted against has not
+been collected, so no split of it, no outcome in it and no result from it can have informed the
+document. The corrected cohort still has no row-level artifact anywhere. That is a weaker
+sentence and a true one.
+
+**And "roughly 99% overlap" was evidenced by set sizes, which do not establish overlap.**
+`data-engineer` supplied the bound and then withdrew half its own finding: per status, shared
+rows cannot exceed the smaller count, so **at most 1,932 of 1,948 are shared, ≤99.18%**, and
+there is **no non-trivial lower bound** until the cohort database exists. It first said the
+true overlap was computable because I hold v1's rows; an overlap needs *both* sides' keys, and
+the corrected side has none — a check proposed against data that isn't there, inside a review
+of a document whose central finding is that a fit can't run against data that isn't there.
+The cohorts are also demonstrably **not nested**: `doubtful` 22→21 and `questionable` 152→151
+both shrank while the correction *added* two games.
+
+### The gate I built to prevent a wasted unblind could not have prevented it
+
+**Both reviewers found this independently, which is why I trust it.** My §2 admissibility gate
+measured **canonical observations**; §8 condition 6, the veto it exists to pre-empt, measures
+**direct outcomes**. Canonical ≥ direct, so the pre-check was the *looser* of the two: a cohort
+could clear the gate at 30 and be vetoed at 29. The exclusions are status-concentrated, not
+uniform — v1's 28 land entirely on `out` (26) and `questionable` (2) — so this is not a
+rounding concern. **A pre-check stated in the wrong unit is not a weaker gate; it is a gate
+that passes the case it was built to catch.**
+
+The requirement I placed on `data-engineer` was also the wrong shape, and its replacement is
+theirs: **per-status direct-outcome counts by game date, plus exclusion classes by status.**
+Mine asked for counts by *declared partition*, which bakes a `quant` split into an ingest
+artifact against ADR-006 and forces a regeneration whenever the split moves. Theirs is
+partition-agnostic and makes any split checkable.
+
+**They then found the constraint that keeps it pre-unblind, which neither document had.** Three
+exclusion classes are pure absence predicates — verified from the code that `row.outcome` is
+not in scope on any of those branches — so publishing them by status leaks nothing. But if
+anyone later adds `participation_outcome_counts` **by date**, any date whose direct set is
+single-status yields that cell's contingency by subtraction, and **the gate stops being
+pre-unblind without one line of the freeze changing.** The invariant is now written down:
+*outcome-valued counts stay whole-cohort; only denominators get the finer breakdown.*
+
+### The defect I criticised v1 for, committed in my own §4
+
+`code-review` found the split specified against **two different denominators** — "the
+admissible cohort's date range" in the lead-in, "share of game dates" in the table — with no
+rounding rule. For the committed cohort those differ: 26 game dates against 28 calendar days,
+and 25% of 26 is 6.5. §7 of the same document faults v1 because it *"requested lead-time
+stratification without defining boundaries"*. I repeated that exact class **in the section that
+determines every downstream number**, where it would have let a future author pick the boundary
+with the cohort in hand. Now: ordered distinct game dates, `floor(0.50·N)` and `floor(0.25·N)`,
+holdout as remainder so the partitions are exhaustive by construction.
+
+### Two citation defects, and one claim of novelty that was not novel
+
+**The PR #30 attribution pointed at a field that contains no such record.** I cited the
+manifest's own `source_fingerprint_method` as recording the correction; it states the method
+and no history, and the string `#30` appears nowhere in that file. It is `docs/handoff.md:7543`
+and `:8080`. Both reviewers caught it. A provenance error inside a section headed *"re-derived
+from files at this head"* is the failure the section exists to prevent.
+
+**And my third "correction to the record" had already been made — by the lane I was
+correcting.** `docs/handoff.md:7719-7722` says it plainly: *"My earlier framing of the tail as
+a precondition for `quant` was right in direction and wrong in the detail that matters: it
+would have sent them looking for a tail absent from the data they use."* I read PR #39's first
+entry, not the remediation round that superseded it, and published the result as a novel
+correction. **A claim of the form "the record is wrong" is invalidated by another lane's later
+work** — the same class as the stale `80b3e563…` fingerprint I was flagging in the same
+paragraph. `data-engineer` graded this as over-cautious hedging and, on being shown the four
+following lines, said it had stopped reading four lines early by the same mechanism. Both of us
+hit it inside one review.
+
+Relatedly, I described the 1,650-minute row's exclusion class as something the record could not
+settle. Two committed documents assert it — `docs/adapters/nba-injury-report.md:1309` in bold,
+and `docs/handoff.md:7717-7718`. The freeze now declines to *rely* on it because it is not
+checkable from the manifest, which is a different statement from the record being silent.
+
+### One thing the review gave back
+
+`data-engineer` pointed out that `sha256_sorted_joined_stable_records` already hashes each
+row's status **and** outcome together. So the committed cohort's full contingency is
+**cryptographically committed at this head** — not a leak, since preimage resistance holds, but
+it means a future fit's contingency can be checked against a fingerprint published before
+anyone unblinded. My condition 8 leaned on that harder than it said, and now says so.
+
+### What was verified sound
+
+Both reviewers independently re-derived every manifest figure and confirmed them exact.
+`code-review` attacked the load-bearing arithmetic and confirmed it holds under **either** unit,
+since direct outcomes are a subset of canonical observations — so the `doubtful` ≤ 21 < 30
+argument is conservative rather than merely valid, and v1's actual held-out `doubtful` was **4**.
+`data-engineer` traced `_participation_join` to prove the joined set is a subset of the
+canonical set with `status_counts` a strict upper bound. Both confirmed the handoff append was
+purely additive with the 11,243-line prefix byte-identical, the backlog header reproducing at
+114/40/1/73 with no marker changed, the LF digest byte-equal to the git blob, and the
+`reliability-metrics.md` and `PlayerGameLogs` quotations accurate in context.
+
+### On amending a freeze
+
+The freeze now states it **binds on merge**, with the pre-merge review delta tabulated so the
+edit window is auditable rather than asserted. Its first draft said amending in place defeats
+its purpose, which would have forced a v3 for a wrong citation. Binding on merge preserves the
+actual guarantee — the widened cohort does not exist at merge time either — and claiming an
+unreviewed first draft was already immutable would assert a rigour the review process itself
+contradicts. Every pre-merge change is reviewer-driven, none data-driven, and the substantive
+ones **tightened** the protocol: the admissibility unit moved to the stricter denominator and
+the split gained a rounding rule it lacked.
+
+### A defect in this entry's own predecessor, found while appending it
+
+The previous entry was appended without a terminating newline, so `docs/handoff.md` ended
+mid-line. Appending after it produced a diff showing **one deletion** — the unterminated line
+being terminated, content byte-identical — and left the new heading with no blank line before
+it. I caught it by reading the diff and the rendered seam rather than trusting that "append
+cannot delete". So this commit is 172 insertions and 1 deletion, and **the deletion is my own
+missing newline being fixed, not a modified entry.** Recorded because "append-only" is verified
+by reviewers with a numstat, and this file will now show a clean 0-deletion append next time.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when this was written. Local gates green: 1,271 tests, Ruff
+  lint and format, strict mypy over 140 files, and `git status` clean afterwards, so no
+  `test_secret_scan.py` fixture residue.
+- **That I did not consult the v1 rows before drafting the first freeze.** Unfalsifiable by any
+  reader, so the corrected document is written not to depend on it. I have certainly seen the
+  contingency now.
+- **Any v1-derived figure, by anyone without this clone.** `3285e647` is on a local-only branch
+  that was never pushed. The ≤99.18% bound, the exclusion-by-status split and the held-out
+  `doubtful` count of 4 are all uncheckable from `origin`. That is a real audit gap in the
+  contamination disclosure and I have no way to close it without publishing invalidated-cohort
+  rows, which the backlog rules non-consumable.
+- **The lower bound on cohort overlap.** Not computable until the cohort database exists.
+- **Whether `80b3e563…` was inherited anywhere else.** The coordinator took that sweep.
+- **That the differencing-attack invariant is complete.** I reasoned about one attack — a
+  per-date outcome marginal — with `data-engineer`. Neither of us enumerated the space of
+  disclosures that could cross the margins, and neither of us ran an attack against a real
+  manifest, because no widened manifest exists.
+- **The corrected entry's own claim that every pre-merge change was reviewer-driven.** It is
+  checkable against the two review transcripts and the tabulated delta, but those transcripts
+  live in session state rather than in the repository, so a future reader has the table and my
+  word for it.
+
+No cohort was regenerated, no live source was called, no fit was run, no number was emitted,
+and no owner-only decision was made.
+
+## 2026-08-21 — quant — Round two: I got the same citation wrong twice, in the paragraph about getting it wrong
+
+**Unit:** second exact-head `data-engineer` and `code-review` passes, on the delta
+`8f87fe8..6a4d209`. Both reviewed a tree that did not move. Five findings actioned in
+`a8bd422`. Both reviewers independently signalled the stopping rule — every finding is in
+prose *this review series caused* — so this is the last round on this unit.
+
+**First, a correction to the entry above, which is append-only and stands as written.** It
+says the partition-agnostic disclosure requirement exists because publishing counts by a
+declared partition writes a `quant` split into *"an ingest artifact against ADR-006"*. **ADR-006
+is the wrong ADR.** It is "External adapters isolated behind contract tests", and its subject
+is adapter-versus-upstream isolation — fixtures, contract tests, throttling. It says nothing
+about a downstream consumer's parameter entering an ingest artifact. The principle is
+**ADR-008**, whose decision is that layers are ordered
+`observations → projections → availability → valuation` with information flowing one way. A
+split boundary is an availability-layer parameter; the cohort manifest is an
+observations-layer artifact.
+
+**The mechanism is worth more than the correction.** That citation arrived in a `data-engineer`
+review, I adopted the rationale, and I never re-derived the reference. It is the identical
+defect to the PR #30 `source_fingerprint_method` mis-citation from round one — **and I
+committed it in the same change that recorded that one.** `gates.md` says to re-derive any
+number or mechanism appearing in prose at the moment of writing; I applied that to figures I
+computed and not to a citation I was handed. **A borrowed justification is exactly as
+unverified as a borrowed number, and it does not feel like one**, because it arrives already
+argued and attributed to someone with more context.
+
+### The rule I wrote to close a leak forbade and permitted the same object
+
+My round-one invariant was *"outcome-valued counts stay whole-cohort; only the denominator gets
+the finer breakdown."* `code-review` showed it **mis-sorts its own first two applications**: a
+direct-outcome count is itself defined by a predicate on the outcome value, so requirement 1 —
+per-status direct counts by date — is an outcome-valued count broken down by status and date.
+The rule permits and forbids it simultaneously. I had also listed `explicit_unknown` as one of
+three "pure absence predicates"; it is defined by `ParticipationOutcome.UNKNOWN`, an outcome
+*value*, and it is not a `continue` branch in the generator at all. The real third branch is
+`without_nba_anchor`. **I mis-sorted my own example three paragraphs after stating the rule.**
+
+`data-engineer` then showed the rule fails structurally, against the *committed* manifest
+rather than hypothetically:
+
+- the two existing whole-cohort marginals already yield the exact global play rate
+  `292/1918 = 0.15224` and bound the non-`out` rate at `≤ 0.712` — real inference from fields
+  the rule calls safe, so it constrains coarseness rather than informativeness;
+- **it is stated per-manifest, and git makes cross-manifest differencing free.** The manifest
+  path has 12+ committed revisions and the planned operation is *widening the same window*, so
+  cohort B ⊃ cohort A with both committed, and `M_B[outcome] − M_A[outcome]` is the added
+  dates' outcome marginal while the new by-date denominators give their status composition.
+  **The widening this unit recommends is the thing that opens the attack**, and my rule is
+  satisfied at every step of it;
+- "whole-cohort" is a label, not a size guarantee — coarseness depends on `N`.
+
+Replaced, not patched, because a rule reached by enumerating attacks is stale the next time a
+field is added: **the pre-unblind disclosure surface adds no outcome-keyed field at any
+granularity in any manifest version**, beyond the one whole-cohort marginal already present.
+That is a closed set rather than a granularity heuristic, it needs nobody to reason about
+differencing, and `data-engineer` owns a contract test pinning the outcome-keyed field set to
+a frozen allow-list.
+
+### The binding rule justified itself with a fact about today
+
+Both reviewers, independently, accepted that "binds on merge" was **sound rather than
+self-serving** — the guarantee a pre-registration sells is that outcomes could not have
+influenced the protocol, immutability is only a proxy for it, and every recorded change was
+reviewer-driven and *tightened* the protocol. `code-review` verified the direction: an author
+gaming this relaxes a threshold or moves a boundary, and the delta table records the opposite.
+
+But both then found the same hole: **merge timing is not controlled.** Widening is an
+unscheduled owner decision with no ordering against this branch, so a PR held open across the
+collection window would still "bind on merge" while no longer being prospective — and §1
+already says the property is gone once the cohort exists. Now: binds at **the earlier of merge
+and the first row of the fitting cohort being collected**, which is falsifiable from `scope`
+and the merge timestamp.
+
+`data-engineer` also pointed out that **the delta table lives inside the document it audits and
+can be amended by the same edit it records.** It is now explicitly a convenience beneath
+`git log` on the pushed branch. And it was incomplete — four changes were missing, including
+v1's held-out `doubtful` count of 4, which I added during the review window from the unblinded
+v1 artifact. That is admissible only because it is a *denominator*, a count of rows rather than
+an outcome value, and it is now listed and labelled rather than quietly absent. **A completeness
+claim that is not complete is the failure mode this unit exists to catch.**
+
+### The question only I could answer, and the answer was the unfavourable one
+
+`data-engineer` asked whether my new split rule merely reproduces v1's realized boundaries —
+and noted it could not check, because v1's date list lives in a local-only artifact and the
+committed fixture is trimmed to six boundary games.
+
+Computed from `injury_status_conversion_v1_rows.json`: v1 has 25 distinct game dates, its
+**12th is `2025-12-21`** and its **18th is `2025-12-28`**. So `floor(0.50 · 25) = 12` and
+`floor(0.25 · 25) = 6` recover v1's split **exactly** — development `12-08..12-21`, selection
+`12-22..12-28`, holdout `12-29..01-04`.
+
+**So §4 is inherited, not discovered**, and now carries the same note §5 does. It is the split
+under which I have already seen v1's answers, expressed as a general rule. I kept the rule
+anyway: 50/25/25 chronological is conventional, and picking different proportions *because*
+these are contaminated is a worse reason than keeping them and disclosing it. On the corrected
+cohort's 26 dates the same rule gives 13/6/7, so the boundary moves by one date.
+
+Related: the ~4.5× multiplier inherits v1's 32% **row** share while §4 specifies a **date**
+rule, and v1 shows they differ — 7 of 25 dates is 28% but 32% of rows, because holdout dates
+were denser. Recorded; once a widened cohort exists the multiplier derives from the rule.
+
+### What the reviewers verified, including a correction to one of their own
+
+`data-engineer` confirmed the handoff append is a **strict byte prefix** — `new_bytes` starts
+with `old_bytes`, 782,387 bytes preserved verbatim, no differing line at any index — which is
+a stronger property than my own line-list comparison could express, since comparing lines
+normalises the missing terminator I was asking them to accept. `code-review` corrected its own
+round-one claim that `3285e647` was reachable from no ref: it is the tip of local branch
+`sr2501-injury-status-conversion`, contained in no remote, so it is not gc-able — which
+*strengthens* the contamination finding rather than weakening it. Both re-derived the ≤1,932
+bound, the 26/2 exclusion split, v1's held-out `doubtful` of 4, all five relocated citations,
+and the backlog at 114/40/1/73 with no marker changed.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when this was written. Local gates green: 1,271 tests, Ruff
+  lint and format, strict mypy over 140 files, tree clean afterwards.
+- **That the closed-set rule is itself sufficient.** It is stronger than what it replaced and
+  it is enforceable, but it was reached by the same process — reasoning, not attack — and
+  neither reviewer nor I ran an attack against a real widened manifest, because none exists.
+  I believe it holds because the gate consumes only denominators; I have not proved that the
+  gate's consumers will stay that way.
+- **That no other borrowed citation in this unit is wrong.** I found this one because a
+  reviewer checked it. I have not re-derived every reference I adopted from a review, and the
+  defect class is specifically that a handed-over justification does not feel unverified.
+- **Whether v1's split rule was itself chosen to fit v1's data.** I established that my rule
+  reproduces v1's boundaries; I did not establish how v1's boundaries were chosen, and v1's
+  own freeze states them as literal dates with no derivation.
+- **Any v1-derived figure, by anyone without this clone**, including the date computation
+  above. `3285e647` was never pushed.
+- **The lower bound on cohort overlap.** Not computable until the cohort database exists.
+
+No cohort was regenerated, no live source was called, no fit was run, no number a decision
+rests on was emitted, and no owner-only decision was made.
+
+## 2026-08-21 — quant — Rebased onto `556936e`; a claim about a commit's own diff did not survive it
+
+**Unit:** rebase of the frozen-protocol lane onto merged `main` before opening the PR. No
+content change to the freeze, the backlog annotations or any entry's substance.
+
+**Two doc conflicts, both resolved with `scripts/resolve_doc_conflicts.py`**, in
+`docs/handoff.md` where another lane had appended in the same window. All three of this lane's
+entries survive; zero conflict markers remain in any doc file. The resolver's
+`CONFLICT MARKERS SURVIVE` warning fired both times on
+`frontend/src/test/fixtures/make_pending_date_payloads.py` — the known seven-equals false
+positive PR #58 fixes. Verified rather than assumed: those lines are a reStructuredText table
+rule inside a docstring, in a file this lane never touched and which git did not list as
+conflicted.
+
+**Backlog header recomputed from the finished file, not reconciled:**
+**41 done / 1 blocked / 73 pending / 115 total**, 115 `###` headings against 115 markers, 1:1,
+no duplicate names. `main` gained one done item while this branch was out. I re-derived this
+independently of the resolver's own recount and got the same numbers; the resolver's output is
+not the evidence.
+
+**And the rebase falsified a claim I had made about a commit's own diff.** The entry two above
+says *"this commit is 172 insertions and 1 deletion, and the deletion is my own missing newline
+being fixed"*, and its commit message says the same. After rebasing it is **171 insertions and
+0 deletions**: on the new base the preceding entry was another lane's, which already ended with
+a newline, so the fix that commit was partly named for became unnecessary and disappeared. The
+commit is now titled *"and fix a missing newline I left"* for a fix it no longer contains.
+
+The substance is unaffected — the append is still strictly additive, which was the property
+being asserted — but the *number* attached to it is now wrong, and so is the title. **A claim
+about a diff is a claim about a base**, and rebasing changes the base underneath it. That is
+the same class as the reader count invalidated by another lane merging, and as my own
+"correction to the record" that another lane had already made: **a fact about the repository
+decays when the repository moves**, and self-referential facts decay fastest, because nothing
+in the file points at them.
+
+I did not rewrite the two commits to correct their messages. Doing so would rewrite commits
+that two reviewers approved at an exact head, and the whole unit rests on those verdicts being
+verdicts on a tree that did not move. Recorded here instead, which is the trade the append-only
+rule is for.
+
+**Could not verify:**
+- **CI on the rebased head.** Being pushed as this is written; the coordinator requires green
+  before merge, and the local gates are not that check.
+- **That no other lane's entry was altered by the resolver.** I verified my own three entries
+  survive, that the dated-entry count is consistent, and that no markers remain — I did not
+  diff every other lane's entry against its pre-rebase form.
+- **Whether the resolver has other false-positive classes** beyond the seven-equals one. It
+  also performed its resolution when invoked with `--help`, which is worth knowing before
+  someone runs it expecting usage text: it ignores arguments and acts.
