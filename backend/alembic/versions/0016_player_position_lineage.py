@@ -37,10 +37,13 @@ any real database.
 So the invariant is held one level up instead, where it costs nothing:
 ``NbaPlayerPositionRecord.season`` is required with no default, and
 ``import_player_positions`` writes all four columns together or none. That is
-weaker than a constraint — a raw SQL writer could still produce an incomplete
-triple — and the trade is recorded here rather than left as an unexplained
-absence. A constraint would need a safe rebuild of the most-referenced table in
-the schema, which is not a change to make in passing.
+weaker than a constraint, and **weaker than "only raw SQL could break it"** —
+a plain ORM ``Player(primary_position="C")`` with no source, season or
+observed-at is accepted, verified by execution. Nothing in the database
+defends this; the importer and the required ``season`` are the whole guard.
+The trade is recorded here rather than left as an unexplained absence. A
+constraint would need a safe rebuild of the most-referenced table in the
+schema, which is not a change to make in passing.
 
 Additive columns only — no constraint, no index, no data migration — so this is
 a plain ``add_column`` on both dialects rather than the batch rebuild 0002

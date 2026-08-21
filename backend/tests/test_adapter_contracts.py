@@ -474,6 +474,46 @@ class TestNbaPlayerIndexPosition:
 
     # -- the guards, each broken deliberately ------------------------------
 
+    def test_rows_with_an_unusable_person_id_are_fatal_not_quietly_dropped(self) -> None:
+        """Dropping them would raise the coverage figure, not lower it.
+
+        The coverage floor divides by the rows that survived parsing, so a
+        payload that loses most of its rows to unparseable `PERSON_ID`s would
+        report *higher* coverage than a healthy one — a guard whose denominator
+        moves with the failure it is watching for. Found by review; it was
+        silently `continue` before.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("PERSON_ID")
+        for row in table["rowSet"][:500]:
+            row[column] = None
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        message = str(caught.value)
+        assert "500 of 578" in message
+        assert "PERSON_ID" in message
+
+    def test_a_malformed_season_is_refused_at_the_parse_boundary(self) -> None:
+        """SQLite would take it; PostgreSQL would not — so it is caught here.
+
+        ``season`` lands in a 9-character column. SQLite ignores a declared
+        VARCHAR length and PostgreSQL enforces it, so an over-long season is
+        the ADR-001 divergence in its purest form: green locally, `value too
+        long for type character varying(9)` in production. Nothing downstream
+        validates it, so the parse boundary is the last place it can be caught
+        cheaply.
+        """
+        payload = load("nba_playerindex_current.json")
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-2027-extended")
+        assert "YYYY-YY" in str(caught.value)
+
+        # And the shape check does not reject the real form.
+        assert parse_player_index(payload, season="2026-27")
+
     def test_a_season_disagreement_with_the_payload_is_a_contract_error(self) -> None:
         """The season was a pure caller assertion until independent review.
 

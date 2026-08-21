@@ -186,11 +186,15 @@ class NbaPlayerPositionRecord:
     #: The season the listing was requested for. **Required, with no default.**
     #: Position is stable but not immutable, and a stored attribute with no idea
     #: which season it describes cannot be refreshed deliberately — a changed
-    #: value is a real event and needs a season to be a change *from*. An
-    #: optional season let a caller produce a position with no season, which is
-    #: exactly the incomplete provenance the ``players`` CHECK constraint now
-    #: makes inexpressible; making it required stops that state being reachable
-    #: a step earlier.
+    #: value is a real event and needs a season to be a change *from*.
+    #:
+    #: **Requiring it here is the only thing holding that invariant**, so do not
+    #: relax it on the assumption that something downstream will catch an
+    #: incomplete triple. Nothing will. A database CHECK was implemented and
+    #: reverted: SQLite can only add one by rebuilding ``players``, and ten
+    #: foreign keys point into that table with eight ``ON DELETE CASCADE``, so
+    #: the rebuild deletes the crosswalk, the game logs, the participation
+    #: ledger and the projections. See revision 0016.
     season: str
     first_name: str | None = None
     last_name: str | None = None

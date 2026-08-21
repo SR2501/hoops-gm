@@ -10992,23 +10992,35 @@ the order of those two words was the whole point.
 import to the same block — both belong, no choice involved), the cohort manifest,
 `docs/backlog.md` and `docs/handoff.md`. Handoff is append-only and the resolution is every
 lane's entries in order, `main`'s first; done programmatically rather than by hand so no
-block could be dropped, and verified by counting 166 entry headings afterwards. Backlog was
+block could be dropped. **The verification figure first published here was wrong** — it said 166 entry headings, and no counting rule reproduces that. Re-derived at this head: 173 `## ` headings, of which **171 are dated entries** and 2 are the `## Entry format` template block; an em-dash rule undercounts to 168 because three entries use a different dash. The resolution was correct and independently re-derived by two reviewers — no entry from either lane is missing — but the number attached to it was an assertion of verification rather than a verification, which is the thing `gates.md` says to re-derive at the moment of writing. Backlog was
 **recomputed from the file at the final head** rather than reconciled — neither side's
 number is an input, because each was computed before the other lane's items landed — giving
 **39 done / 1 blocked / 71 pending / 111 total**, verified 111 headings to 111 markers, 1:1,
 no duplicate item names.
 
 **Every fingerprint delta is attributed, and there is no residue.** Rather than regenerate
-and explain afterwards, each watched file was classified first, with "did `main` touch it"
-and "did I touch it" computed independently from git:
+and explain afterwards, each watched file was classified first:
 
-| File | State | Touched by #49 | Touched by me |
-|---|---|---|---|
-| `db/lineage.py` | **key absent** | no | no |
-| `ingest/backfill.py` | moved `419e6f5a` → `d98c4398` | no | **yes** |
-| `injury_report/backfill.py` | matches | no | no |
-| `injury_report/cohort_evidence.py` | matches | no | no |
-| `ingest/nba/parsers.py` | matches | no | **yes** |
+| File | State | Touched by me |
+|---|---|---|
+| `db/lineage.py` | **key absent** | no |
+| `ingest/backfill.py` | moved `419e6f5a` → `d98c4398` | **yes** |
+| `injury_report/backfill.py` | matches | no |
+| `injury_report/cohort_evidence.py` | matches | no |
+| `ingest/nba/parsers.py` | moved | **yes** |
+
+**Corrected after review, and the correction is the more useful half.** This table
+originally carried a second column, "touched by #49", reading `no` on every row — and it
+was **vacuous**. It compared `62f3e63~1` against `28bd480`, which after a rebase are *the
+same commit*, so it diffed `main` against itself and could only ever answer `no`. A check
+that cannot produce a second answer, presented as evidence, inside the artefact whose whole
+claim is "every delta is attributed" — R50 in my own verification, one commit after I
+proposed the green-baseline rule for exactly this class. The correct comparison is
+`81ee15a..28bd480`, and it says the opposite for the one row that mattered: **#49 modified
+`db/lineage.py` in four commits and removed its fingerprint key in two.** The column is
+deleted rather than repaired, because "did #49 touch it" is not what licenses a refresh —
+the recorded-versus-today comparison is, and that one was sound and is what the remaining
+columns report.
 
 So exactly one digest needed refreshing, and it is mine. The off-path argument was
 re-derived at the rebased head rather than carried over: `backfill.py` differs from
@@ -11074,3 +11086,85 @@ part of closing `schedule-cohort-fingerprint-list`.
   than the `db/lineage.py`/`schedule.py` swap already filed, and I did not investigate it.
 - **Whether the cohort's persisted evidence is still correct** after #49's schedule changes.
   Out of scope here and it needs the database nobody in this wave has.
+
+## 2026-08-21 — data-engineer — Three exact-head reviews on the rebase; my own attribution column was vacuous
+
+**Unit:** review round on the rebased position lane at `1f8bf85` — `data-engineer`, `backend`
+and `code-review`, each at that exact SHA. Eight findings actioned. Two of them were in the
+verification work itself rather than in the feature, which is the part worth reading.
+
+**My attribution table contained a column that could only ever give one answer.** The table I
+published as the evidence that "every fingerprint delta is attributed" carried a *"touched by
+#49"* column reading `no` on every row. It compared `62f3e63~1` against `28bd480` — and after
+a rebase those are **the same commit**, so it diffed `main` against itself. The column was not
+merely wrong on one row; it was incapable of producing a second value. The correct comparison,
+`81ee15a..28bd480`, reverses the row that mattered: **#49 modified `db/lineage.py` in four
+commits and deleted its fingerprint key in two**, which the entry's own prose said three
+paragraphs later, so the artefact contradicted itself. I deleted the column rather than
+repairing it, because "did #49 touch it" is not what licenses a refresh — the
+recorded-versus-today comparison is, and that one was sound and carried the conclusion. This is
+R50 in my own hand, one commit after I proposed the green-baseline rule for exactly this
+class, and it is the second time in two days I have built the machinery for a defect and then
+committed it.
+
+**A guard whose denominator moved with the failure it was watching for.** `parse_player_index`
+skipped rows whose `PERSON_ID` would not parse, with a bare `continue`. The coverage floor
+divides by the rows that *survived* parsing — so nulling 500 of 578 person ids produced **78
+records at 100% coverage and no error at all**. Mass row loss read as a perfectly healthy
+payload, and `import_player_positions` would have bucketed the 500 into `skipped`, the same
+bucket as "not in the crosswalk". Now fatal, mutation-checked, and added to the blindness table
+in the adapter doc as its own row rather than folded into "required columns", because *column
+present* and *column usable* are different questions.
+
+**Two documents claimed a reader that does not exist.** `docs/adapters/nba-stats.md` and R7
+both said `players.primary_position` has two readers, `build_crosswalk` and
+`build_player_targets`. **`build_crosswalk` never reads the column** — it feeds the resolver
+from the in-memory records `parse_player_index` returned and writes the column as a side
+effect. So the crosswalk evidence this lane published is produced entirely by the parse path
+and is unchanged whether a single row is persisted or not, and the only consumer of the
+*persisted* value is the projection matcher. Both documents now say writer-and-reader rather
+than two-readers, and state plainly that **no test exercises the persisted column feeding a
+crosswalk, because no code path does.**
+
+**The one guard that shipped with no test, and the wrong exception class.** The orphaned-link
+branch raised `SourceContractError`, whose own docstring defines it as *upstream drift* and
+which carries `source`/`endpoint` attributes that handlers branch on and logs index by — so a
+broken local `player_external_ids` row would have been alerted as an NBA API problem and sent
+the reader to the wrong system. Now a `RuntimeError` naming the integrity failure. It is also
+the only branch here that no mutation reddened, so it now has a test; that test says openly
+that the state is **unreachable under FK enforcement** (CASCADE removes the links, and
+`PRAGMA foreign_keys` cannot be turned off inside an open transaction) and drives the branch
+by stubbing the lookup, exercising our response rather than manufacturing a corruption it
+cannot honestly produce.
+
+**Also closed:** two live sites asserting a database CHECK constraint that was implemented and
+reverted — one of them in shipping source, on the very field whose required-ness is now the
+sole guard, which is the sentence a future maintainer would have relied on to relax it; the
+claim that only "a raw SQL writer" could produce an incomplete triple, when a plain ORM
+`Player(primary_position="C")` does it, verified by execution; a caller-controlled `season`
+flowing unvalidated into a `String(9)` column, which SQLite silently accepts over-length and
+PostgreSQL rejects — the ADR-001 divergence in its purest form, now refused at the parse
+boundary; and the `updated_at` churn caused by refreshing `observed_at` every run, documented
+on the column rather than hidden, because freshness is the useful question and the cost should
+be stated where it is paid.
+
+**And the count I published was wrong.** "Verified by counting 166 entry headings" does not
+re-derive under any rule. At this head: 173 `## ` headings, **171 dated entries**, 2 template
+lines; an em-dash rule undercounts to 168 because three entries use a different dash. The
+*resolution* was correct and two reviewers independently confirmed no entry from either lane
+is missing — but the number attached to it was an assertion of verification rather than a
+verification, which is precisely what `gates.md` says to re-derive at the moment of writing.
+
+**Could not verify:**
+- **CI on this head** at time of writing — pushed and running. The previous head was fully
+  green including PostgreSQL.
+- **That the cohort's persisted evidence is still correct** after #49. Both `data-engineer` and
+  I can show `ingest/importers.py` is on the derivation path and **unwatched**, and that both
+  #49 and this lane changed it; neither of us can turn that into a before/after on a cohort
+  number, because no session in this wave has the database. It is folded into
+  `schedule-cohort-fingerprint-list`.
+- **Whether the orphan branch is reachable at all in production.** Argued unreachable under FK
+  enforcement; not demonstrated on PostgreSQL, where deferred constraints behave differently.
+- **The `byte_size` basis inconsistency in `tests/fixtures/manifest.json`** — 20 entries carry
+  CRLF-derived sizes and 4 carry LF-derived ones with `byte_size_basis`. Pre-existing, not this
+  lane's, but it means `byte_size` is not comparable across entries and nothing says so.

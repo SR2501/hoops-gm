@@ -35,6 +35,7 @@ from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.stats import NbaGame, PlayerGameLog
 from hoops_gm.identity import IdentityResolver, ResolutionReport, ResolvableRecord
 from hoops_gm.ingest import importers
+from hoops_gm.ingest.errors import SourceContractError
 from hoops_gm.ingest.fantrax_official import parse_player_ids
 from hoops_gm.ingest.importers import (
     import_box_scores,
@@ -262,6 +263,43 @@ class TestPlayerPositionImport:
         with pytest.raises(ValueError, match="timezone-aware"):
             import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, 12, 0))
 
+    def test_an_orphaned_crosswalk_link_is_loud_and_is_not_blamed_on_the_source(
+        self, crosswalked: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one guard in this lane that shipped untested, until review.
+
+        **The state is unreachable under FK enforcement**, and that is stated
+        rather than worked around: `player_external_ids.player_id` is a CASCADE
+        foreign key, deleting a player removes its links, and SQLite refuses an
+        insert pointing at a missing row while `PRAGMA foreign_keys` cannot be
+        turned off inside an open transaction. An orphan therefore requires a
+        bulk load, a restored backup or a migration that ran with enforcement
+        off. So this drives the branch by making the lookup answer `None` —
+        exercising *our* response to a corrupt crosswalk, not a corruption this
+        test can honestly manufacture.
+
+        What is being pinned is the exception *class*. Counting the orphan as
+        `skipped` would hide a broken database inside a number that also means
+        "nothing to do here"; raising `SourceContractError` was wrong the other
+        way, because that class means the source changed shape and carries
+        source/endpoint attributes handlers branch on and logs index by. It
+        would file local corruption as NBA API drift and send the reader to the
+        wrong system.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        real = next(r for r in records if r.position is not None)
+
+        monkeypatch.setattr(crosswalked, "get", lambda *args, **kwargs: None, raising=True)
+
+        with pytest.raises(RuntimeError, match="referential integrity") as caught:
+            import_player_positions(
+                crosswalked, [real], observed_at=datetime(2026, 8, 20, tzinfo=UTC)
+            )
+        assert not isinstance(caught.value, SourceContractError), (
+            "a broken local crosswalk must not be reported as upstream drift"
+        )
+        assert str(real.nba_player_id) in str(caught.value)
+
     def test_position_provenance_is_written_as_a_complete_set_or_not_at_all(
         self, crosswalked: Session
     ) -> None:
@@ -276,8 +314,9 @@ class TestPlayerPositionImport:
         What holds instead is that ``NbaPlayerPositionRecord.season`` is
         required with no default, and this importer writes all four columns in
         one block. So no *record* can express the incomplete state and no write
-        through this path produces one. A raw SQL writer still could, which is
-        why that is stated rather than implied.
+        through this path produces one. **Any other writer still can, including
+        a plain ORM ``Player(primary_position="C")``** — not merely raw SQL —
+        which is why that is stated rather than implied.
         """
         records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
         import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, tzinfo=UTC))

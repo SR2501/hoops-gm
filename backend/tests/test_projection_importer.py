@@ -104,12 +104,15 @@ def seed_player(
         full_name=name,
         normalized_name=normalize_name(name).key,
         primary_position=position,
-        # The four position columns are all-or-none
-        # (``primary_position_provenance_complete``), so a seeded position
-        # carries the same provenance a real import writes. Without this the
-        # helper produced a shape no real producer can write — the constraint
-        # caught it the moment it was added, which is the point of putting the
-        # rule in the database rather than in the importer.
+        # A seeded position carries the provenance a real import writes.
+        # Without this the helper produced a shape no real producer can write,
+        # which is one of this project's named defect classes. Note there is
+        # **no** database constraint enforcing it: one was implemented and
+        # reverted because adding a CHECK on SQLite rebuilds ``players``, whose
+        # eight ``ON DELETE CASCADE`` dependants include the crosswalk itself.
+        # The rule lives in the importer and in the required
+        # ``NbaPlayerPositionRecord.season``, so a fixture that bypasses both
+        # has to keep the shape honest by hand.
         primary_position_source="nba:PlayerIndex" if position else None,
         primary_position_season="2026-27" if position else None,
         primary_position_observed_at=(datetime(2026, 8, 20, tzinfo=UTC) if position else None),

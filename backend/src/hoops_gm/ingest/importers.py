@@ -58,7 +58,6 @@ from hoops_gm.ingest.nba.models import (
     NbaTeamRecord,
     PlayerBoxScoreRecord,
 )
-from hoops_gm.ingest.nba.parsers import SOURCE as NBA_SOURCE
 from hoops_gm.ingest.nba.schedule import ENDPOINT as SCHEDULE_ENDPOINT
 from hoops_gm.ingest.nba.schedule import SOURCE as SCHEDULE_SOURCE
 from hoops_gm.ingest.nba.schedule import ScheduleParseResult
@@ -338,14 +337,17 @@ def import_player_positions(
         player = session.get(Player, player_id)
         if player is None:
             # The link's player_id is a CASCADE foreign key, so this is a
-            # referential-integrity violation rather than an ordinary miss.
-            # Counting it as "skipped" would hide a broken database inside a
-            # number that also means "nothing to do here".
-            raise SourceContractError(
+            # broken local database, not an upstream problem. Deliberately
+            # **not** a SourceContractError: that class means "the source
+            # answered and the answer changed shape", and it carries
+            # source/endpoint attributes so handlers branch and logs index on
+            # them. Raising it here would file a referential-integrity failure
+            # in our own tables as NBA API drift, and send whoever reads the
+            # alert to the wrong system entirely.
+            raise RuntimeError(
                 f"player_external_ids row for NBA id {record.nba_player_id} points at "
-                f"player {player_id}, which does not exist",
-                source=NBA_SOURCE,
-                endpoint="PlayerIndex",
+                f"player {player_id}, which does not exist; the crosswalk table has lost "
+                "referential integrity and no position can be attributed"
             )
 
         player.primary_position = record.position

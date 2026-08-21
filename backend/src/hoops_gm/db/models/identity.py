@@ -109,15 +109,24 @@ class Player(IntPk, TimestampMixin, Base):
     #: identical positions, so a changed value is a real event and needs a
     #: season to be a change *from*.
     primary_position_season: Mapped[str | None] = mapped_column(String(9))
-    #: When that reading was taken. The four position columns are written
-    #: together or not at all by ``import_player_positions``, and
-    #: ``NbaPlayerPositionRecord.season`` is required so a caller cannot
-    #: assemble an incomplete triple. There is deliberately **no** database
-    #: CHECK enforcing that: SQLite can only add one by rebuilding the table,
-    #: and ten foreign keys point into ``players`` with eight of them
-    #: ``ON DELETE CASCADE``, so the rebuild deletes the crosswalk, the game
-    #: logs, the participation ledger and the projections. Implemented,
-    #: measured, reverted — see revision 0016.
+    #: When that reading was taken. **Refreshed on every crosswalk run, even
+    #: when the position is unchanged**, because the useful question about a
+    #: listed attribute is how fresh the reading is, not only when it last
+    #: moved. The cost is that ``players.updated_at`` changes on every run for
+    #: every matched player, so it stops distinguishing "this row changed
+    #: meaningfully" from "the position was re-confirmed" — use this column,
+    #: not ``updated_at``, to reason about position freshness.
+    #:
+    #: The four position columns are written together or not at all by
+    #: ``import_player_positions``, and ``NbaPlayerPositionRecord.season`` is
+    #: required so a caller cannot assemble an incomplete triple. There is
+    #: deliberately **no** database CHECK enforcing that, so any other writer —
+    #: including a plain ORM ``Player(primary_position="C")`` — can still
+    #: produce one. SQLite can only add a CHECK by rebuilding the table, and
+    #: ten foreign keys point into ``players`` with eight ``ON DELETE
+    #: CASCADE``, so the rebuild deletes the crosswalk, the game logs, the
+    #: participation ledger and the projections. Implemented, measured,
+    #: reverted — see revision 0016.
     primary_position_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     rookie_season: Mapped[str | None] = mapped_column(String(9))
     status: Mapped[PlayerStatus] = mapped_column(

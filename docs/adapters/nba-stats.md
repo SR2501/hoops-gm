@@ -257,10 +257,17 @@ and pinned it in a test rather than changing a matcher it does not own.
 | Guard | Fires when | Blind to |
 |---|---|---|
 | Required columns | any column this parser **reads** disappears, including the two name columns nothing consumes yet | a renamed-but-present column |
-| Declared season | the payload's `parameters.Season` contradicts the requested season | a payload that echoes no parameters (withholds rather than fails) |
+| Usable `PERSON_ID` | a row's person id is present but not an integer | — |
+| Declared season | the season is not `YYYY-YY`, or the payload's `parameters.Season` contradicts the requested one | a payload that echoes no parameters (withholds rather than fails) |
 | Vocabulary | any value outside the seven, **including a merely new one** | a same-vocabulary meaning change |
 | One row per person id | a repeated `PERSON_ID` | an exact duplicate row is reported with the same message as a per-stint one, which overstates that case |
 | Coverage floor (90%) | the column empties, **or thins to a starters-only shape** (5 of a 15–24 man roster ≈ 26%) | a fully-populated meaning change; and its message names starters-only or emptied, which are the causes near the *bottom* of its range, not at 87% |
+
+The **usable `PERSON_ID`** row exists because of a defect review found in the
+first version: unparseable ids were skipped with a bare `continue`, and the
+coverage floor divides by the rows that *survived* parsing. So losing 500 of 578
+rows reported **100% coverage** and raised no error — a guard whose denominator
+moves with the failure it watches for. It is now fatal.
 
 No assertion over a single payload can see a payload that keeps full coverage
 and this exact vocabulary while the values come to mean something else. The
@@ -278,23 +285,35 @@ position must know which season it describes, and checked against nothing. That
 is the `gameEt` shape. The payload echoes the season the server actually
 served, so it is now corroborated against that.
 
-#### Two consumers, not one
+#### One writer, one reader — and they are not the same path
 
-`players.primary_position` has **two** readers, and the second was found by
-review rather than by the author:
+`players.primary_position` is **written** by `backfill.build_crosswalk` (via
+`import_player_positions`) and **read** by exactly one consumer:
+`projections.importer.build_player_targets`, the projection-CSV matcher.
 
-1. `backfill.build_crosswalk` — the Fantrax crosswalk, analysed above.
-2. `projections.importer.build_player_targets` — the projection-CSV matcher,
-   which has **always** passed `position=player.primary_position` into
-   `ResolvableRecord.build`. Because the column was never written, that path was
-   silently position-blind for its entire life and flips to position-aware the
-   first time the crosswalk runs.
+That distinction was wrong here until review caught it, and it matters:
 
-The same trade-off applies to both, with the same weights: a vendor calling a
-borderline big `C` where the NBA lists `F`, with no team to offset it, drops a
-correct match under the accept floor. Pinned by
+* `build_crosswalk` never reads the column. It feeds the resolver from the
+  in-memory `NbaPlayerPositionRecord` list that `parse_player_index` returned,
+  then writes the column as a side effect.
+* So **the crosswalk evidence measured above is produced entirely by the parse
+  path** and is unchanged whether `import_player_positions` persists a single
+  row or not.
+* `build_player_targets` has **always** passed `position=player.primary_position`
+  into `ResolvableRecord.build`. Because nothing ever wrote the column, that
+  path was silently position-blind for its entire life, and it flips to
+  position-aware the first time the crosswalk runs — which is a behaviour
+  change with no diff.
+
+The same trade-off applies to both paths, with the same weights: a vendor
+calling a borderline big `C` where the NBA lists `F`, with no team to offset it,
+drops a correct match under the accept floor. Pinned by
 `TestProjectionTargetsAreNowPositionAware`. Anyone re-tuning
-`_DISAGREEMENT_PENALTY["position"]` moves both call sites at once.
+`_DISAGREEMENT_PENALTY["position"]` moves both, though only one of them is
+reading the persisted value.
+
+**No test exercises the persisted column feeding a crosswalk**, because no code
+path does.
 
 
 

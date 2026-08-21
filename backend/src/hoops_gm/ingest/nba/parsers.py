@@ -347,8 +347,21 @@ PLAYER_INDEX_POSITIONS: Final[frozenset[str]] = frozenset(
 MIN_POSITION_COVERAGE: Final = 0.90
 
 
+#: The shape ``stats.nba.com`` uses for a season, and the shape
+#: ``players.primary_position_season`` is declared wide enough to hold.
+#:
+#: Validated because the column is ``String(9)`` and **SQLite ignores a
+#: declared VARCHAR length while PostgreSQL enforces it**: an over-long season
+#: passes every local test and raises ``value too long for type character
+#: varying(9)`` in production. That is the exact SQLite-versus-Postgres
+#: divergence ADR-001 exists to catch, and it is invisible to the offline
+#: suite, so it is caught here at the parse boundary instead of resting on
+#: caller discipline.
+_SEASON = re.compile(r"^\d{4}-\d{2}$")
+
+
 def _require_declared_season(payload: Any, *, season: str, endpoint: str) -> None:
-    """Check the caller's season against the one the server says it served.
+    """Check the caller's season for shape, and against the served payload.
 
     ``season`` is otherwise a pure caller assertion: it is stamped onto every
     record and thence onto ``players.primary_position_season``, whose entire
@@ -362,6 +375,14 @@ def _require_declared_season(payload: Any, *, season: str, endpoint: str) -> Non
     say" and "the server said something else" are different claims and only the
     second is evidence of a problem.
     """
+    if not _SEASON.match(season):
+        raise SourceContractError(
+            f"season {season!r} is not the source's YYYY-YY form; it is stamped onto "
+            "players.primary_position_season, which is a 9-character column that SQLite "
+            "will silently accept over-length and PostgreSQL will reject",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
     parameters = payload.get("parameters") if isinstance(payload, dict) else None
     if not isinstance(parameters, dict):
         return
@@ -406,10 +427,17 @@ def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRe
     records: list[NbaPlayerPositionRecord] = []
     seen: dict[int, str | None] = {}
     unexpected: dict[str, int] = {}
+    unusable = 0
 
     for row in table.rows:
         person_id = as_int(table.get(row, "PERSON_ID"))
         if person_id is None:
+            # Present but unparseable. Skipping silently would be the worst
+            # available option, because the coverage floor below divides by the
+            # number of rows that *survived* this loop — so dropping rows here
+            # raises the coverage figure rather than lowering it, and mass row
+            # loss would read as a perfectly healthy payload.
+            unusable += 1
             continue
 
         position = _text_or_none(table.get(row, "POSITION"))
@@ -452,6 +480,17 @@ def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRe
 
     if not records:
         raise SourceContractError("no player rows", source=SOURCE, endpoint=endpoint)
+
+    if unusable:
+        raise SourceContractError(
+            f"{unusable} of {len(table.rows)} PlayerIndex rows carry a PERSON_ID that is "
+            "not an integer. A row without a usable person id cannot be attributed to a "
+            "player, and dropping such rows quietly would inflate the coverage figure "
+            "below rather than reduce it, because that ratio is taken over the rows that "
+            "survived parsing",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
 
     if unexpected:
         # Deliberately fatal, including for a value that is merely new. If the
