@@ -184,7 +184,39 @@ def surviving_markers() -> list[str]:
     return found
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Resolve doc conflicts, verify, and report — or explain, if asked.
+
+    This takes no options **and must say so rather than ignore them.** It
+    previously read no arguments at all, so `--help` performed a full
+    resolution and rewrote `docs/handoff.md` in the caller's tree. Nothing was
+    lost that time, but a script that mutates tracked files when asked for help
+    is one `--dry-run` away from a bad afternoon — the caller who types an
+    unrecognised flag is precisely the caller who does not yet know what the
+    tool does.
+
+    So an unrecognised argument **refuses before touching anything**, which is
+    the same order this script already enforces on itself: verify, then act.
+    """
+    args = sys.argv[1:] if argv is None else argv
+    if args:
+        usage = (
+            "usage: resolve_doc_conflicts.py\n"
+            "\n"
+            "Resolves conflicts in docs/handoff.md (keeps both sides, main's\n"
+            "first) and docs/backlog.md (recounts the header from the finished\n"
+            "file), then refuses to let you stage if any conflict marker\n"
+            "survives anywhere in the tree.\n"
+            "\n"
+            "Takes no options. It does not stage; run git add yourself after\n"
+            "this exits 0.\n"
+        )
+        if args in (["-h"], ["--help"]):
+            print(usage)
+            return 0
+        print(f"unrecognised argument(s): {' '.join(args)}\n\n{usage}", file=sys.stderr)
+        return 2
+
     resolve_append_only(REPO_ROOT / "docs/handoff.md")
     resolve_backlog(REPO_ROOT / "docs/backlog.md")
 
