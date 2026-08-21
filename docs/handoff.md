@@ -9802,3 +9802,90 @@ modes, not over what the source might do — a value it invents lands in
 as having seen it.
 
 **Next:** re-review this head. Three lanes are queued behind.
+
+---
+
+## 2026-08-21 — data-engineer — Round six found behaviour, not prose; then I swept the prose
+
+**Changed:** Closed round six. Two reviewers, four findings between them that a
+user or operator would have seen, plus one prose contradiction. Then applied
+`gates.md`'s new state-it-once rule to my own diff, which needed it.
+
+**The question the coordinator asked — is this round finding defects or
+manufacturing prose to fix — has a clear answer for round six: defects.**
+
+**A fourth cause nobody had thought of, and it was the worst one.** The
+partition assumed an unusable date fails *something*. The NBA's own
+convention defeats that: it uses a `1900-01-01` epoch placeholder for
+`gameTimeEst` on **every resolved game in the committed fixture**. The same
+convention in the *date* fields reconciles perfectly — 1900's Eastern offset
+genuinely is -05:00 — and would have been recorded as a **decided date in
+1900 with no reason at all**. Strictly worse than `None`, which at least says
+we do not know. Now `implausible`, bounded by a loose July-to-July window
+around the season the payload names.
+
+The sharpest part is why the year-0001 sentinel *did* get caught: only because
+`America/New_York` ran on -04:56 local mean time before 1883, so the
+conversion fails by four minutes. **The guard that appeared to catch a
+sentinel was catching a pre-1883 timezone artefact**, and one year over the
+same trick reconciles cleanly. I had cited year-0001 as evidence the
+classifier handled sentinels; it handled that one by accident.
+
+**`OverflowError` walked straight past the lenient path.** `astimezone` raises
+it — not `SourceContractError` — for a conversion outside `datetime.min`/`max`,
+so a year-0001 value one non-UTC offset from the boundary propagated out of
+`parse_schedule` and cost the whole season. **The exact outcome the function
+exists to prevent, arriving through the exception type instead of the field.**
+And reachable through the sentinel the source already emits.
+
+**The conflation I removed, reproduced one level down, in the same comforting
+direction.** The frontend's finding was "one `except` spanning both parses". My
+fix replaced it with **one pre-check spanning both fields** — returning
+`not_offered` if *either* was empty. So a payload giving the date in one field
+and withholding the other was reported as "the source has not committed to a
+date". The canonical example of *the source declined to give a date* was a
+payload in which the source gives it. My own test asserted that semantics and
+passed.
+
+That is the third time tonight I have fixed an instance and left the class,
+and it is the same shape each time: I recognised the pattern when reasoning
+about someone else's code and not about the code I had just written.
+
+**Two invariants that were one-sided.** The reader enforced "date absent iff
+reason present"; the producer did not, so `PendingScheduleGame` could
+construct a record that serialises into a block **no reader will ever
+accept** — written successfully, then a hard error on the schedule-grid read
+path. Now enforced in `__post_init__`. And a comment claiming no producer
+could write such a block was false: an intermediate commit *on this branch*
+wrote exactly it. The bound is real (nothing merged, developer databases only)
+and is now stated as a bound rather than as impossibility.
+
+**Then the prose, because the projections lane's number applies to me.** Six
+rounds, and the four-cause mechanism was stated in five places: the
+classifier, the lineage dataclass, the API model, the adapter doc and the ADR.
+Each restatement was written *beside* the previous one to show working — right
+for this file, wrong for a docstring, which has no reader who wants the
+history. Swept: **ADR-013 owns what a consumer must do, the adapter doc owns
+what the source did, the classifier owns why the boundaries are where they
+are**, and the other two reference rather than repeat.
+
+**My read on when to stop, since it was asked for directly.** Round six
+returned an `OverflowError` that killed the season, a misclassification that
+told an operator to wait through a fault, and a sentinel recorded as a real
+date. Those are behavioural. **Round seven should be scoped to behaviour
+only** — the round-six fixes added a new reason, a new exit code, an exception
+class and a construction invariant, and new guards deserve a round — but if it
+returns corrected restatements, that is the signal and I will merge on it
+rather than run an eighth.
+
+**Verified on this head:** ruff, format, strict mypy over 138 files, full
+offline suite, live smoke (4 probes), and a real import — 30 teams, 1,200
+`nba_games`, 2,400 `team_schedule` rows at 80 per team, `1206 = 1200 + 6`, no
+undated pending games, exit 0.
+
+**Could not verify:** PostgreSQL on this head — CI-only, not claimed. The
+`implausible` window is derived from the season label, not from an observation
+of the source emitting an out-of-season date; I have seen the placeholder
+convention in the sibling field, not in the date fields. And the four causes
+remain exhaustive over *this parser's* outcomes rather than over the source's
+states — which is exactly what round six proved was not the same thing.

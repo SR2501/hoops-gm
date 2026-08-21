@@ -52,7 +52,9 @@ SCHEDULE_COMPLETENESS_SUMMARY_KEY = "schedule_completeness"
 #: Why a pending game carries no date. Closed on purpose: an unrecognised
 #: value is a finding, not a variation, because a consumer keys behaviour on
 #: these — ``not_offered`` means wait, ``unreadable`` means investigate.
-_DATE_ABSENCE_REASONS: frozenset[str] = frozenset({"not_offered", "unreadable", "irreconcilable"})
+_DATE_ABSENCE_REASONS: frozenset[str] = frozenset(
+    {"not_offered", "unreadable", "irreconcilable", "implausible"}
+)
 
 #: Identifies the serialisation below. Bumping it deliberately invalidates
 #: every previously registered schedule version, because a fingerprint is only
@@ -117,14 +119,15 @@ class PendingScheduleGame:
     guessed. A consumer must then treat the game as belonging to no known
     period rather than dropping it, because the game is still published.
 
-    ``date_absence_reason`` says *why*, and the three causes are not the same
-    news. ``not_offered`` is the only one that means the source has not
-    committed to a date; ``unreadable`` means we could not parse a value it
-    did give, which is a fault to investigate rather than a decision to wait
-    for; ``irreconcilable`` means the source's two time fields contradict each
-    other. It is ``""`` when ``game_date`` is present. Reporting the cause is
-    what stops ``None`` reading as "not yet decided" in every case, which is
-    the comforting direction and was wrong in two of three.
+    ``date_absence_reason`` says *why*. The four causes, what each one means
+    for a consumer, and why they must not be collapsed are stated once in
+    ADR-013's nullable-date contract; the classifier's own reasoning for
+    drawing them where it does lives in
+    :func:`hoops_gm.ingest.nba.schedule._pending_game_date`. The invariant
+    this dataclass enforces, and the only one worth repeating here, is that
+    ``game_date is None`` **iff** ``date_absence_reason`` is non-empty — the
+    two halves of one fact, which must never disagree on the wire or in
+    memory.
     """
 
     nba_game_id: str
@@ -133,6 +136,18 @@ class PendingScheduleGame:
     game_sub_label: str
     game_subtype: str
     date_absence_reason: str = ""
+
+    def __post_init__(self) -> None:
+        # The producer must not be able to construct what the reader refuses.
+        # `_pending_games` enforces this iff on read-back; without it here the
+        # producer type is strictly wider than the reader accepts, and
+        # `as_summary()` could serialise a block that can never be read again.
+        if (self.game_date is None) != bool(self.date_absence_reason):
+            raise ValueError(
+                f"{self.nba_game_id}: game_date "
+                f"{'absent' if self.game_date is None else 'present'} with "
+                f"date_absence_reason {self.date_absence_reason!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -249,11 +264,18 @@ def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]
             raise ValueError(f"{key}.pending_games entry has a non-string id or date")
         if not all(isinstance(label, str) for label in labels):
             raise ValueError(f"{key}.pending_games entry has a non-string label")
-        # Absent key reads as "". There is no legacy producer to accommodate:
-        # `pending_games` did not exist before ADR-013, so every block
-        # carrying one was written by this importer. The consistency check
-        # below therefore holds strictly — an absent date with no reason is a
-        # block nothing wrote.
+        # Absent key reads as "". The strict cross-check below then holds: an
+        # absent date with no reason is refused.
+        #
+        # **This is not "no producer could write it", which would be false.**
+        # An intermediate commit on this branch emitted `game_date: null` with
+        # no reason key at all, so a database seeded from that commit holds a
+        # block this reader refuses — and `schedule_completeness` raising is
+        # not degradable, it makes the schedule-grid read path a hard error.
+        # The bound is that no such commit was ever merged, so this can only
+        # affect a developer's own throwaway database, and the remedy is to
+        # re-import. Stated rather than asserted away, because the next reader
+        # deserves the real bound instead of a claim of impossibility.
         absence_reason = record.get("date_absence_reason", "")
         if not isinstance(absence_reason, str):
             raise ValueError(f"{key}.pending_games entry has a non-string date_absence_reason")

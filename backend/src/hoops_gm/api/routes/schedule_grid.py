@@ -77,11 +77,10 @@ class PendingScheduleGameLineage(BaseModel):
     must then treat the game as belonging to no known period rather than
     dropping it: it is still a published game.
 
-    ``date_absence_reason`` names *which* of three causes, because they are
-    not the same news and only one is "not yet decided": ``not_offered`` (the
-    source gave no date — wait), ``unreadable`` (it gave one we could not
-    parse — investigate), ``irreconcilable`` (its two time fields contradict
-    each other). ``""`` when ``game_date`` is present.
+    ``date_absence_reason`` names which cause. **Do not collapse them into
+    "unknown":** ADR-013's nullable-date contract states what each obliges a
+    consumer to do, and the error that matters is rendering an
+    investigate-class cause as a wait-class one.
     """
 
     nba_game_id: str

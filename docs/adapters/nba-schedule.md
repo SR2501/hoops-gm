@@ -118,8 +118,10 @@ This is the same class of semantic check documented for `gameEt` and
 does not prove that a field means what its label claims.
 
 **Pending games are reconciled the same way but do not refuse on failure.** A
-pending game's date degrades to `None` — recorded as "the source has not told
-us when" — while a resolved game's date still raises. The rule is
+pending game's date degrades to `None` — with the cause recorded, because the
+four causes are not the same news and only one means "the source has not told
+us when" (see *Consumer contract for pending games* below) — while a resolved
+game's date still raises. The rule is
 *strictness proportional to the consequence of being wrong*, and the
 consequence is set by whether the value is persisted and joined: a resolved
 date becomes `team_schedule` rows and the denominator of every expected-games
@@ -286,14 +288,32 @@ stays complete even when per-period attribution cannot be made. Those are two
 different denominators and collapsing them is the same class of error as
 attributing a pending game to a team.
 
-**`date_absence_reason` says which of three causes, and they are not the same
-news.** `not_offered` — the source gave no date; the response is to wait.
-`unreadable` — it gave one this parser could not read; the response is to
-investigate, because that is a fault or a schema change rather than an
-undecided bracket. `irreconcilable` — its two time fields contradict each
-other. `""` when `game_date` is present. Without it a `null` read as "not yet
-decided" in all three cases, which is true of one and comfortingly false of
-the other two.
+**`date_absence_reason` says which of four causes.** ADR-013's nullable-date
+contract states what each obliges a *consumer* to do; what follows is what
+each means about the *source*, which is this document's job.
+
+| Reason | What the source did |
+|---|---|
+| `""` | Published a date that reconciled and falls in the season |
+| `not_offered` | Left **both** time fields absent or empty |
+| `unreadable` | Published a value we could not parse, **or** gave one field and withheld its sibling |
+| `irreconcilable` | Published two time fields that contradict each other |
+| `implausible` | Published two fields that agree on a date nowhere near the season |
+
+**Agreement is not validity, and this source really does use epoch
+placeholders.** Every resolved game in the recorded fixture carries
+`gameTimeEst: "1900-01-01T..."` as a live placeholder for a time-only field.
+The same convention in the *date* fields reconciles exactly — 1900's Eastern
+offset genuinely is -05:00 — and would otherwise have been recorded as a
+decided date in 1900 with no reason at all, which is strictly worse than
+`null`. The year-0001 sentinel only fails reconciliation by accident, because
+`America/New_York` ran on -04:56 local mean time before 1883.
+
+The operator command exits `5` (not `0`) when any pending game carries an
+`unreadable` or `implausible` date. **That is not a refusal** — rows are
+written and the cohort is registered — it is the fault classes saying so at
+the terminal instead of only in a nightly live smoke that is allowed to fail
+and does not run in CI. `not_offered` and `irreconcilable` stay `0`.
 
 Note what a consumer *cannot* distinguish and should not pretend to: a
 year-0001 sentinel and a genuine out-of-calendar date are the same bytes at

@@ -85,6 +85,20 @@ EXIT_SOURCE_CONTRACT: Final = 2
 EXIT_SOURCE_UNAVAILABLE: Final = 3
 #: The database refused the write for a reason that is not about the source.
 EXIT_DATABASE: Final = 4
+#: **The import succeeded and something in it needs a human.** Not a refusal:
+#: rows are written and the cohort is registered. Reserved for the pending-date
+#: causes the parser itself classifies as a fault rather than an undecided
+#: bracket — `unreadable` and `implausible`. `not_offered` and
+#: `irreconcilable` stay exit 0, because those are the source declining to
+#: commit, which is the case this whole command exists to tolerate.
+#:
+#: It exists because the alternative was exit 0 and a stderr paragraph: a
+#: schema change on our read path would have been reported only by a nightly
+#: live smoke that is allowed to fail and does not run in CI.
+EXIT_IMPORTED_WITH_FAULT: Final = 5
+
+#: Absence causes that mean *investigate*, not *wait*.
+_FAULT_ABSENCE_REASONS: Final = frozenset({"unreadable", "implausible"})
 
 
 @dataclass(frozen=True)
@@ -167,14 +181,19 @@ def summarise(parsed: ScheduleParseResult, *, dry_run: bool) -> ScheduleImportSu
         resolved_game_count=len(parsed.games),
         pending_game_ids=parsed.pending_game_ids,
         pending_game_labels=tuple(labels),
-        pending_game_ids_without_a_date=tuple(
-            game.nba_game_id for game in parsed.pending_games if game.game_date is None
+        # One filter, deriving both fields. An earlier version computed the
+        # count from `game_date is None` and the detail from a non-empty
+        # reason -- two predicates the lineage reader enforces as equivalent
+        # but which nothing enforced here, so a mismatch would have printed
+        # "3 game(s) carry no usable date" beside two listed ids.
+        pending_game_date_absence=(
+            absence := tuple(
+                (game.nba_game_id, game.date_absence_reason)
+                for game in parsed.pending_games
+                if game.game_date is None
+            )
         ),
-        pending_game_date_absence=tuple(
-            (game.nba_game_id, game.date_absence_reason)
-            for game in parsed.pending_games
-            if game.date_absence_reason
-        ),
+        pending_game_ids_without_a_date=tuple(game_id for game_id, _ in absence),
         first_game_date=dates[0].isoformat() if dates else "",
         last_game_date=dates[-1].isoformat() if dates else "",
         dry_run=dry_run,
@@ -294,6 +313,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "(ADR-013).",
             file=sys.stderr,
         )
+    faults = [
+        game_id
+        for game_id, why in summary.pending_game_date_absence
+        if why in _FAULT_ABSENCE_REASONS
+    ]
+    if faults:
+        print(
+            f"\nThe import succeeded, but {len(faults)} pending game(s) carry a date this "
+            f"parser treats as a fault rather than an undecided bracket: {', '.join(faults)}. "
+            "Investigate the payload before trusting the pending set. Exiting "
+            f"{EXIT_IMPORTED_WITH_FAULT} to say so; nothing was rolled back.",
+            file=sys.stderr,
+        )
+        return EXIT_IMPORTED_WITH_FAULT
     return EXIT_OK
 
 

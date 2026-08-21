@@ -651,16 +651,29 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
         )
 
         undated = [game.nba_game_id for game in result.pending_games if game.game_date is None]
-        unreadable = {
+        faults = {
             game.nba_game_id: game.date_absence_reason
             for game in result.pending_games
-            if game.date_absence_reason == "unreadable"
+            if game.date_absence_reason in {"unreadable", "implausible"}
+        }
+        out_of_season = {
+            game.nba_game_id: game.game_date
+            for game in result.pending_games
+            if game.game_date is not None
+            and not (date(2026, 10, 1) <= game.game_date <= date(2027, 6, 30))
         }
 
-        assert not unreadable, (
-            f"pending games {sorted(unreadable)} published a date this parser could not read. "
-            "This is NOT an undecided bracket -- it is our failure or a schema change, and it "
-            "is the one absence cause that means investigate rather than wait"
+        assert not faults, (
+            f"pending games {faults} published a date this parser treats as a fault. This is "
+            "NOT an undecided bracket -- it is our failure, a schema change, or an epoch "
+            "placeholder, and these are the absence causes that mean investigate rather "
+            "than wait"
+        )
+        assert not out_of_season, (
+            f"pending games {out_of_season} carry a date outside the 2026-27 season. A date "
+            "that reconciles is not thereby valid -- this source uses a 1900 epoch "
+            "placeholder for time-only fields, and a placeholder pair in the date fields "
+            "reconciles exactly"
         )
         assert not undated, (
             f"pending games {undated} no longer carry a date whose EST and UTC fields "

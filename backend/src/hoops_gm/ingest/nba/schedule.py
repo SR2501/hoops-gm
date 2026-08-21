@@ -329,7 +329,7 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                 continue
 
             if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
-                game_date_value, absence_reason = _pending_game_date(raw_game, game_id)
+                game_date_value, absence_reason = _pending_game_date(raw_game, game_id, season)
                 pending.append(
                     PendingScheduleGame(
                         nba_game_id=game_id,
@@ -486,7 +486,9 @@ def _rest_days_by_team_game(
     return rest_by_team_game
 
 
-def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> tuple[date | None, str]:
+def _pending_game_date(
+    raw_game: Mapping[str, object], game_id: str, season: str
+) -> tuple[date | None, str]:
     """The Eastern date of a pending game, and why it is absent when it is.
 
     **Deliberately lenient where the resolved path is strict.** The rule is
@@ -526,33 +528,90 @@ def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> tuple[da
     boundary back onto a field nothing persists:
 
     ``""``
-        A date was published and reconciled.
+        A date was published, reconciled, and falls inside the season.
     ``not_offered``
-        The field is absent or empty. This is the only cause that means "the
-        source has not committed to a date."
+        **Both** time fields are absent or empty. This is the only cause that
+        means "the source has not committed to a date." It requires both,
+        because a payload giving the date in one field and not the other is
+        the source *having* committed — a reviewer caught an earlier version
+        reporting exactly that as ``not_offered``, which is the same
+        wait-versus-investigate conflation this function exists to remove,
+        reproduced one level down.
     ``unreadable``
         A value was published and we could not parse it, or it carried a
-        timezone where an Eastern wall clock is expected. **This is our
-        failure or a schema change, not an undecided bracket**, and the live
-        smoke asserts it never occurs.
+        timezone where an Eastern wall clock is expected, or one field was
+        given and its sibling withheld. **This is our failure or a schema
+        change, not an undecided bracket**, and the live smoke asserts it
+        never occurs.
     ``irreconcilable``
-        Both fields parsed and disagree — the source contradicting itself. A
-        year-0001 sentinel in one field and a real instant in the other lands
-        here, which is the shape actually observed for undecided *times*.
+        Both fields parsed and disagree — the source contradicting itself.
+    ``implausible``
+        Both fields parsed and agree, and the date is nowhere near the season
+        it claims to belong to. This exists because **agreement is not
+        validity**: the NBA uses a ``1900-01-01`` epoch as a live placeholder
+        for a time-only field on every resolved game in the payload, and a
+        placeholder pair in the *date* fields would reconcile perfectly —
+        1900's Eastern offset really is -05:00 — and be recorded as a decided
+        date in 1900. That is strictly worse than ``None``, which at least
+        says we do not know. The year-0001 sentinel only fails reconciliation
+        by accident, because ``America/New_York`` was on a -04:56 local mean
+        time before 1883; one year over, the same trick reconciles.
     """
 
+    values: list[str] = []
     for key in ("gameDateTimeUTC", "gameDateTimeEst"):
         value = raw_game.get(key)
-        if value is None or value == "":
-            return None, "not_offered"
+        if value is not None and value != "":
+            values.append(key)
+    if not values:
+        return None, "not_offered"
+    if len(values) == 1:
+        # One field given, its sibling withheld. The source *has* committed to
+        # a date; we cannot read it in the shape this parser requires, which
+        # is a schema change on our read path rather than an undecided
+        # bracket.
+        return None, "unreadable"
     try:
         utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
         eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
-    except SourceContractError:
+    except (SourceContractError, OverflowError):
+        # OverflowError, not just the contract error: `astimezone` raises it
+        # for a datetime whose conversion falls outside `datetime.min`/`max`,
+        # and this function's whole purpose is that no pending-game timestamp
+        # can cost the season. A year-0001 value one non-UTC offset from the
+        # boundary does exactly that, and year-0001 is the sentinel this
+        # source is already observed to emit for undecided times.
         return None, "unreadable"
-    if eastern_tipoff.astimezone(UTC) != utc_tipoff:
+    try:
+        reconciles = eastern_tipoff.astimezone(UTC) == utc_tipoff
+    except OverflowError:
+        return None, "unreadable"
+    if not reconciles:
         return None, "irreconcilable"
-    return eastern_tipoff.date(), ""
+    game_day = eastern_tipoff.date()
+    if not _plausible_season_date(game_day, season):
+        return None, "implausible"
+    return game_day, ""
+
+
+def _plausible_season_date(game_day: date, season: str) -> bool:
+    """Is this date anywhere near the season it claims to belong to?
+
+    A deliberately loose bound — July to July around a season that runs
+    October to June — because its job is to catch an epoch placeholder, not to
+    police the calendar. The NBA's own schedule shifts by weeks; a sentinel
+    misses by a century.
+
+    ``season`` is ``NNNN-NN``, already validated against the payload's
+    ``seasonYear`` before any game is read, so the leading year is trustworthy
+    here.
+    """
+
+    try:
+        start_year = int(season.split("-", 1)[0])
+    except ValueError:  # pragma: no cover - season shape is validated upstream
+        return True
+    return date(start_year, 7, 1) <= game_day < date(start_year + 2, 7, 1)
 
 
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:

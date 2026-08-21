@@ -25,6 +25,7 @@ from hoops_gm.db.session import Database
 from hoops_gm.ingest.nba.client import NbaStatsClient
 from hoops_gm.ingest.schedule_import import (
     EXIT_DATABASE,
+    EXIT_IMPORTED_WITH_FAULT,
     EXIT_OK,
     EXIT_SOURCE_CONTRACT,
     EXIT_SOURCE_UNAVAILABLE,
@@ -177,8 +178,65 @@ def test_an_undated_pending_game_is_reported_to_the_operator(
     assert body["pending_game_count"] == 6, "the season survived the bad date"
     assert body["resolved_game_count"] == 18
     assert body["pending_game_ids_without_a_date"] == ["0022601229"]
+    assert body["pending_game_date_absence"] == {"0022601229": "irreconcilable"}
     assert "carry no usable date" in captured.err
     assert "0022601229" in captured.err
+
+
+def test_a_fault_class_absence_exits_non_zero_after_a_successful_import(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable date must not report success and leave it to a nightly job.
+
+    Before this, every path after the JSON print returned 0. So a schema
+    change on our read path — which the parser itself classifies as a fault
+    rather than an undecided bracket — produced a successful exit and a
+    stderr paragraph, and nothing automated noticed until someone read a live
+    smoke that is allowed to fail and does not run in CI.
+
+    `not_offered` deliberately stays 0: the source declining to commit is the
+    case this whole command exists to tolerate.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                game["gameDateTimeEst"] = "not a timestamp"
+    monkeypatch.setattr(
+        "hoops_gm.ingest.schedule_import.NbaStatsClient",
+        lambda **kwargs: fixture_client(payload),
+    )
+    capsys.readouterr()
+
+    assert main(["2026-27", "--dry-run"]) == EXIT_IMPORTED_WITH_FAULT
+
+    captured = capsys.readouterr()
+    body = json.loads(captured.out)
+    assert body["resolved_game_count"] == 18, "the season still parsed"
+    assert body["pending_game_date_absence"] == {"0022601229": "unreadable"}
+    assert "treats as a fault" in captured.err
+
+
+def test_a_source_that_declines_to_give_a_date_still_exits_zero(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of the exit-code split, so the distinction is load-bearing."""
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                game["gameDateTimeEst"] = ""
+                game["gameDateTimeUTC"] = ""
+    monkeypatch.setattr(
+        "hoops_gm.ingest.schedule_import.NbaStatsClient",
+        lambda **kwargs: fixture_client(payload),
+    )
+    capsys.readouterr()
+
+    assert main(["2026-27", "--dry-run"]) == EXIT_OK
+
+    body = json.loads(capsys.readouterr().out)
+    assert body["pending_game_date_absence"] == {"0022601229": "not_offered"}
 
 
 def test_import_writes_teams_then_the_schedule_and_records_pending(prepared: Database) -> None:
