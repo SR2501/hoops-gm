@@ -53,6 +53,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 | `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
+| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null`, because blend profiles are caller-owned in-memory values with no persistence — see below. Fails closed with one of eight typed codes. |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -193,6 +194,26 @@ teams assigned: under ADR-013 those are recorded as *pending* rather than
 refused. Until ADR-013 the seed carried a filter and a reconciliation pair
 whose only purpose was to get past a refusal that no longer exists; both were
 retired with it.
+
+## Why the projections endpoint serves no blend
+
+`GET /api/v1/leagues/{league_id}/projections/current` reports the **imported**
+per-game cohort, not a blended one, and `lineage.blend` is a typed key that is
+always `null`.
+
+That is not an omission. `hoops_gm.projections.blending` computes a blend from a
+`BlendCatalog`, and that catalog is an explicitly caller-owned in-memory value:
+`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
+rather than writing one, because the accepted schema has no blend tables and
+adding them is an architecture decision rather than a side effect of blending.
+So no blend profile, no activation pointer and no source weights are persisted
+anywhere for an HTTP request to read. Serving a blend here would mean the route
+constructing a profile itself, which is choosing weights, which is a number a
+decision rests on — the Model gate, and `quant`'s to pass.
+
+The key exists so a consumer renders "not blended" from a fact rather than
+inferring it from a key it failed to find, and so persisted blend profiles have
+somewhere to surface when they exist.
 
 **Read the served lineage accordingly.** The response says
 `source_game_count: 12`, `resolved_game_count: 10`,

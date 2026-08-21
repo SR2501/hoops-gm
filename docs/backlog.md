@@ -320,6 +320,69 @@ fixtures, through the production importers, and the endpoint returns a real
 fail-closed but permanently unavailable, which is why the seed path is part of
 the deliverable rather than a convenience.
 
+### `projections-api-early` - Exposing the imported per-game projection cohort
+
+- [x] **done**
+- **Depends on:** `csv-importer`, `projection-blending`
+
+Loopback-only `GET /api/v1/leagues/{league_id}/projections/current`, with
+`?source=` defaulting to Basketball Monster: the per-game production rates one
+projection source published, exactly as the importer decomposed them, plus the
+`players` labels a browser screen needs and every fingerprint behind the numbers
+— the CSV bytes, the parsing recipe, and the digest over the stored normalised
+rates that changes when a row is edited in place while the other two look
+untouched. The foundation of the draft board, and the second browser-visible
+thing in this repository.
+
+Descriptive only. No valuation, z-score, G-score, ranking, auction price, risk
+adjustment, availability fusion or recommendation crosses this boundary — those
+are `quant`'s behind the Model gate (ADR-002, ADR-008). The only arithmetic in
+the route is `len()`.
+
+**It serves the *imported* cohort, not a blended one, and `lineage.blend` is a
+typed key that is always `null`.** `projection-blending` computes a blend from a
+`BlendCatalog` that is an explicitly caller-owned in-memory value —
+`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
+because the accepted schema has no blend tables, by design. So no blend profile,
+activation pointer or source weights are persisted for any HTTP request to read,
+and serving a blend would mean the route choosing weights itself. The key exists
+so a consumer renders "not blended" from a fact rather than from a key it failed
+to find, and so persisted blend profiles have somewhere to surface. Persisting
+them is a separate `architect` + `quant` unit, and is on the path to the owner's
+stated requirement of seeing Basketball Monster and our own numbers side by side
+during the draft.
+
+ADR-002's separation is in the wire format, not only in the schema: the source's
+own games-played assumption is a separate top-level array, never a key inside a
+rate object, mirroring the one-to-one table it comes from, and a test asserts
+`games`/`expected_games`/`rank`/`aav`/`z_score`/`g_score` appear in no rate
+object and at no top level. No shooting percentage is ever computed — makes and
+attempts only.
+
+Currency, profile verification and row validity come from
+`blending.release_projection_import`, the canonical function the rest of the
+pipeline already trusts, never from a second reader in the route; the route's
+own "which import" query is a *selector* the canonical release arbitrates, so
+drift in the definition of "current" fails closed rather than serving a
+superseded cohort. Eight typed codes in `ErrorResponse.error`:
+`projections_local_only`, `projections_league_not_found`,
+`projections_source_unsupported`, `projections_source_not_imported`,
+`projections_not_current`, `projections_incomplete`,
+`projections_incomplete_evidence` and `projections_inconsistent_cohort`.
+`projections_incomplete_evidence` is a **family** — unverified profile, season
+outside verified scope, self-contradicting immutable lineage, a stored rate gone
+negative — and stays one code because splitting it would make the route
+re-derive which member fired. A consumer must render a summary true of every
+member and must not substring-match `detail`, which is free-form prose.
+
+Guaranteed on any 200 or refused instead: `players` and `projections` describe
+the same `player_id` set, each exactly once, both ordered; and
+`len(projections) == lineage.projection_import.projection_count`.
+`source_games_played_assumptions` is deliberately sparse and absent never means
+zero. The read takes the importer's own `projection_sources` row lock and
+nothing after it, so its lock order is a strict prefix of the writer's — asserted
+by executing both paths and comparing, not by enumerating call sites.
+
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 
 - [x] **done**

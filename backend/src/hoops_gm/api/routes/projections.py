@@ -1,0 +1,606 @@
+"""The current imported per-game projection cohort for one league's season.
+
+Descriptive only. This route reports the per-game production rates one
+projection source published, exactly as the importer decomposed them, plus the
+lineage that produced them. It ranks nothing, values nothing, fuses nothing
+with availability, and computes no aggregate — those are ``quant``'s behind the
+Model gate (ADR-002, ADR-008) and are deliberately absent. **The only arithmetic
+in this module is ``len()``.**
+
+**Where the evidence comes from.** Currency, profile verification and row
+validity are *not* re-derived here.
+:func:`hoops_gm.projections.blending.release_projection_import` owns the single
+definition of "is this import fit to be consumed" — it checks the profile is
+verified for the season, that the import's immutable profile lineage is
+self-consistent, that the import is the current one for its source and season,
+and that every stored rate is finite and non-negative with intact shooting
+pairs. It also digests the rows it validated. This route consumes that function
+and adds no second verifier, because a second verifier can only ever drift from
+the one the rest of the pipeline trusts.
+
+**What this route does not serve, and why.** It serves the *imported* cohort,
+not a blended one. ``hoops_gm.projections.blending`` computes a blend from a
+:class:`~hoops_gm.projections.blending.BlendCatalog`, and that catalog is an
+explicitly caller-owned in-memory value — the accepted schema has no blend
+tables, by design, because adding them is an architecture decision rather than
+a side effect. There is therefore no persisted blend, no persisted profile and
+no persisted source weights for any HTTP request to read. Serving a blend here
+would mean this route constructing a profile itself, which is choosing weights,
+which is a number a decision rests on. ``blend`` is present in the lineage block
+and is always ``null`` today, so a consumer reads the absence instead of
+inferring it from a missing key.
+
+**ADR-002 is visible in the response shape.** The source's own games-played
+assumption is carried in its own top-level array, never inside a projection
+object, mirroring the table separation
+(``source_games_played_assumptions`` is one-to-one with ``projections`` rather
+than a column on it) so nothing can pick up a durability guess while reading a
+rate. It is published so a screen can *show* what the source assumed and that
+our availability model will override it. It is never fused here.
+
+**Two operational limits worth knowing before this sits behind a dashboard
+poll.** This read takes the importer's own ``projection_sources`` row lock for
+the whole request, so a concurrent ``import_projection_csv`` for the same source
+blocks until it finishes; a slow poll therefore delays an import rather than
+racing it. And a refusal's code does not reach the server log: the middleware
+records ``status_code`` only, so five of the eight refusals read identically as
+``409`` to an operator. Both are inherited and app-wide rather than introduced
+here; the second is tracked as ``error-code-observability`` in
+``docs/backlog.md``.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
+
+from hoops_gm.api.deps import SessionDep
+from hoops_gm.api.schemas import ErrorResponse
+from hoops_gm.api.security import require_loopback_host
+from hoops_gm.db.models.enums import ExternalSource, ScoringType
+from hoops_gm.db.models.identity import NbaTeam, Player
+from hoops_gm.db.models.league import League
+from hoops_gm.db.models.projections import (
+    Projection,
+    ProjectionImport,
+    ProjectionSource,
+    SourceGamesPlayedAssumption,
+)
+from hoops_gm.ingest.projections.profiles import CANONICAL_STAT_FIELDS, PROJECTION_IMPORT_SOURCES
+from hoops_gm.projections.blending import (
+    MissingProjectionDataError,
+    ProjectionBlendError,
+    ReleasedProjectionImport,
+    StaleProjectionInputError,
+    UnknownProjectionInputError,
+    release_projection_import,
+)
+
+router = APIRouter(prefix="/leagues/{league_id}/projections", tags=["projections"])
+
+#: The project's projection source. A caller may ask for another registered CSV
+#: source, but the default is the one the owner actually buys (AGENTS.md: this
+#: project does not rebuild Basketball Monster).
+DEFAULT_PROJECTION_SOURCE = ExternalSource.BASKETBALL_MONSTER
+
+
+class ProjectionImportLineage(BaseModel):
+    """The exact import the rates below were read from.
+
+    Every fingerprint the importer and the canonical release produce is carried
+    verbatim rather than summarised. ``content_sha256`` is the CSV bytes,
+    ``profile_definition_sha256`` is the parsing recipe those bytes were read
+    under, and ``projection_values_sha256`` is a digest over the *stored,
+    normalised rates* — the one that changes when a row is edited in place while
+    the file hash and the mapping lineage still look untouched.
+
+    The five row counts are the import's own audit trail and partition the file:
+    ``row_count`` is every data row it contained, ``rejected_count`` is what the
+    parser refused before identity resolution ran, and the other three partition
+    what survived by resolution outcome. ``projection_count`` is separate and is
+    what this response actually carries: the rows the canonical release
+    validated, which equals ``matched_count`` only while no earlier import for
+    the same source and season contributed rows to the crosswalk differently.
+    Both are published rather than one being derived from the other.
+    """
+
+    import_id: int
+    source: ExternalSource
+    season: str
+    imported_at: datetime
+    content_sha256: str
+    profile_id: str
+    profile_version: str
+    profile_definition_sha256: str
+    projection_values_sha256: str
+    projection_count: int
+    #: The scoring format the source's published numbers assume, when the source
+    #: or the import stated one. ``None`` means nobody stated it — never
+    #: defaulted to this league's format, because a points-league projection
+    #: consumed as a 9-cat one is wrong in a way no downstream check can see.
+    assumed_scoring_type: ScoringType | None
+    original_filename: str | None
+    row_count: int
+    matched_count: int
+    needs_review_count: int
+    unmatched_count: int
+    rejected_count: int
+
+
+class ProjectionLineage(BaseModel):
+    """What produced this response.
+
+    ``blend`` is typed and always ``null``. See the module docstring: blend
+    profiles, their source weights and their activation state are caller-owned
+    in-memory values with no persistence, so there is nothing for an HTTP
+    request to read. The key exists so a consumer can render "not blended"
+    from a fact rather than from a key it did not find.
+    """
+
+    projection_import: ProjectionImportLineage
+    blend: None = None
+
+
+class ProjectionPlayer(BaseModel):
+    """One player appearing in ``projections``, with the labels a screen needs.
+
+    ``team_abbreviation`` and ``primary_position`` are the canonical player
+    record's current values, not the projection source's opinion of them, and
+    they are read outside any lineage scope — ``players`` and ``nba_teams`` have
+    no lineage scope to take. So a player traded or relabelled between the rates
+    statement and this one would be labelled from the newer state. What cannot
+    change is which player a ``player_id`` denotes: it is our own surrogate key
+    and no writer repoints it. The residual risk is therefore a fresher label on
+    the right player, never a rate attributed to the wrong one.
+    """
+
+    player_id: int
+    full_name: str
+    team_abbreviation: str | None
+    primary_position: str | None
+
+
+class ProjectionRates(BaseModel):
+    """One player's per-game production rates, exactly as stored.
+
+    Per-game only (ADR-002). Nothing here is a season total and nothing here is
+    an expected-games number. Percentage categories are absent by construction:
+    makes and attempts are published separately and a shooting percentage is
+    never precomputed, because a percentage without its volume is the single
+    most common bug in homebrew fantasy tools.
+
+    Every field is present on every row; ``null`` means the source did not
+    publish that quantity, and is never a zero.
+    """
+
+    player_id: int
+    minutes_per_game: float | None
+    points_per_game: float | None
+    offensive_rebounds_per_game: float | None
+    defensive_rebounds_per_game: float | None
+    rebounds_per_game: float | None
+    assists_per_game: float | None
+    steals_per_game: float | None
+    blocks_per_game: float | None
+    turnovers_per_game: float | None
+    personal_fouls_per_game: float | None
+    field_goals_made_per_game: float | None
+    field_goals_attempted_per_game: float | None
+    three_pointers_made_per_game: float | None
+    three_pointers_attempted_per_game: float | None
+    free_throws_made_per_game: float | None
+    free_throws_attempted_per_game: float | None
+
+
+class SourceGamesPlayedClaim(BaseModel):
+    """What the source assumed about one player's availability.
+
+    **Not a projection of games played, and not ours.** ADR-002 keeps this in a
+    separate table so nothing reads a rate and picks up a durability guess by
+    accident; this response keeps it in a separate array for the same reason. It
+    exists to be overridden by the availability model, never blended with it.
+
+    ``assumed_games_played_raw`` is the source's own text ("70", "68 GP") kept
+    verbatim, so a consumer can show what was actually published rather than a
+    re-rendered number.
+    """
+
+    player_id: int
+    assumed_games_played: float | None
+    assumed_games_played_raw: str | None
+
+
+class CurrentProjectionsResponse(BaseModel):
+    """The current imported cohort plus what a screen needs to label and trust it.
+
+    **Guaranteed on any 200**, or the request is refused instead:
+
+    * ``players`` and ``projections`` describe exactly the same set of
+      ``player_id`` values, each exactly once, both ordered by ``player_id``. A
+      partially-labelled cohort is impossible rather than merely unlikely.
+    * ``len(projections) == lineage.projection_import.projection_count`` — the
+      rows carried here are the rows the canonical release verified and
+      digested, not a differently-sized second read of the same table.
+
+    ``source_games_played_assumptions`` is deliberately **not** dense: only
+    players whose source stated an assumption appear, and it may be empty. A
+    consumer must join it by ``player_id`` and treat a missing entry as "the
+    source said nothing", never as zero.
+    """
+
+    league_id: int
+    season: str
+    source: ExternalSource
+    lineage: ProjectionLineage
+    players: list[ProjectionPlayer]
+    projections: list[ProjectionRates]
+    source_games_played_assumptions: list[SourceGamesPlayedClaim]
+
+
+def _error(status_code: int, code: str, detail: str) -> HTTPException:
+    """Raise inside the app's error contract.
+
+    ``X-Bridge-Error`` is **not** a response header. ``app.py``'s handler reads
+    it off the exception and returns the code in ``ErrorResponse.error``; the
+    only header on the way out is ``X-Request-ID``. The name is a legacy of the
+    bridge routes that introduced this transport.
+    """
+
+    return HTTPException(
+        status_code=status_code,
+        detail=detail,
+        headers={"X-Bridge-Error": code},
+    )
+
+
+def _source_lock_statement(source: ExternalSource) -> Select[tuple[int]]:
+    """The exact statement :func:`_lock_projection_source` executes.
+
+    Split out so a test can compile it against PostgreSQL and see the ``FOR
+    UPDATE`` clause, which no SQLite run can ever emit.
+    """
+
+    return select(ProjectionSource.id).where(ProjectionSource.source == source).with_for_update()
+
+
+def _lock_projection_source(session: Session, *, source: ExternalSource) -> int | None:
+    """Serialize this read against a concurrent import of the same source.
+
+    ``import_projection_csv`` takes ``SELECT projection_sources.id ... FOR
+    UPDATE`` as its first database-level lock, then the matching
+    ``projection_imports`` row. Taking the same row here — and nothing after it
+    — makes this read a strict prefix of the writer's lock order, so the pair
+    cannot deadlock however they interleave. Taking a *different* lock, such as
+    one of ``db/lineage.py``'s refresh scopes, would look rigorous and serialize
+    nothing, because the projection importer does not use them.
+
+    Returns the source row id, or ``None`` when the source has never been
+    registered — the caller turns that into a refusal rather than a 500.
+
+    **What this can and cannot observe.** On PostgreSQL it is a real row lock
+    held to the end of the transaction. On SQLite, SQLAlchemy omits ``FOR
+    UPDATE`` entirely, so the serialization there is not this statement: it is
+    SQLite's own shared read lock, held from this session's first statement
+    until the transaction ends, which blocks a concurrent writer's commit. Both
+    dialects therefore serialize, by different mechanisms, and neither is WAL —
+    the engine sets no ``journal_mode`` and no ``busy_timeout``, so SQLite
+    contention surfaces as an untyped 500 rather than as a documented code.
+    """
+
+    return session.scalar(_source_lock_statement(source))
+
+
+def _current_import_candidate(session: Session, *, source_id: int, season: str) -> int | None:
+    """Propose the import this response should describe.
+
+    Deliberately a *selector*, not a verifier. It proposes the newest import for
+    one source and season; ``release_projection_import`` is the arbiter and
+    rejects the proposal with ``StaleProjectionInputError`` if it disagrees. So
+    if the canonical definition of "current" ever changes underneath this
+    function, the endpoint fails closed with ``projections_not_current`` rather
+    than serving an import the rest of the pipeline considers superseded.
+    """
+
+    return session.scalar(
+        select(ProjectionImport.id)
+        .where(
+            ProjectionImport.source_id == source_id,
+            ProjectionImport.season == season,
+        )
+        .order_by(ProjectionImport.imported_at.desc(), ProjectionImport.id.desc())
+        .limit(1)
+    )
+
+
+def _released_import(
+    session: Session, *, import_id: int, source: ExternalSource
+) -> ReleasedProjectionImport:
+    """Run the canonical release, mapping each refusal to its own code.
+
+    Three outcomes, because they call for three different operator actions.
+
+    ``projections_not_current`` — the import this response would have described
+    is no longer the one on record. **One fact, two ways to reach it:** it was
+    superseded by a newer import for the same source and season, or it was
+    removed outright between the selector and the release. Either way the
+    consumer's action is identical: re-request. Nothing else shares this code.
+
+    ``projections_incomplete`` — the import exists and is current but carries no
+    usable rows, which for a real CSV means every row failed identity
+    resolution. The fix is in the crosswalk, not the file.
+
+    ``projections_incomplete_evidence`` — the catch-all for every other way the
+    canonical release refuses: an unverified profile, a season outside the
+    profile's verified scope, immutable profile lineage that contradicts itself,
+    a stored rate that is negative or non-finite, a made/attempted pair that is
+    half-present. It is a *family*, and it stays one because splitting it would
+    mean this route re-deriving which member fired, which is exactly the second
+    verifier this module refuses to be. A consumer must render a summary general
+    enough to be true of every member and must **not** substring-match
+    ``detail``, which is free-form English with interpolated ids rather than a
+    contract surface. It is also the code any future ``ProjectionBlendError``
+    subclass lands on — deliberately, so a new refusal reaching this route is a
+    typed 409 rather than an untyped 500.
+    """
+
+    try:
+        return release_projection_import(session, import_id=import_id, source=source)
+    except (UnknownProjectionInputError, StaleProjectionInputError) as exc:
+        raise _error(409, "projections_not_current", str(exc)) from exc
+    except MissingProjectionDataError as exc:
+        raise _error(409, "projections_incomplete", str(exc)) from exc
+    except ProjectionBlendError as exc:
+        raise _error(409, "projections_incomplete_evidence", str(exc)) from exc
+
+
+def _projection_rows(session: Session, *, import_id: int) -> list[Projection]:
+    """Load the rows this response carries.
+
+    Same predicate and same ordering as the canonical release's own row load, in
+    the same session and transaction, so SQLAlchemy's identity map returns the
+    very objects the release validated and digested. The caller checks the
+    cardinality anyway rather than trusting that: see
+    :func:`_assert_cohort_matches_release`.
+    """
+
+    return list(
+        session.scalars(
+            select(Projection)
+            .where(Projection.projection_import_id == import_id)
+            .order_by(Projection.player_id)
+        )
+    )
+
+
+def _assert_cohort_matches_release(
+    rows: list[Projection], released: ReleasedProjectionImport
+) -> None:
+    """Refuse a body that does not match the lineage block beside it.
+
+    The failure this guards against is the one this whole module exists to
+    close: a 200 whose ``projection_values_sha256`` describes one cohort while
+    the rates beside it are another. Under either dialect's lock that should be
+    impossible, which is the point — the guard is what remains if that
+    assumption is wrong, and an assumption nobody can fail is not evidence.
+
+    **What it can and cannot observe.** Cardinality only. A same-cardinality
+    in-place edit between the release and the load would pass it. Catching that
+    needs the release's digest recomputed over these rows, and the function that
+    computes it is private to ``blending`` — re-implementing "normalised rates"
+    here would be a second definition of the thing the digest exists to pin, so
+    the weaker check is deliberate rather than an oversight.
+    """
+
+    if len(rows) != released.projection_count:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            f"projection import {released.import_id} was released with "
+            f"{released.projection_count} verified row(s) but {len(rows)} were read for this "
+            "response; refusing to serve rates that contradict their own lineage block",
+        )
+
+
+def _projection_players(session: Session, rows: list[Projection]) -> list[ProjectionPlayer]:
+    """Label exactly the players the rates already contain, or refuse.
+
+    The player set is taken from ``rows`` rather than by re-querying the
+    projection cohort, so there is one definition of "who is in this response"
+    and it is the one that produced the numbers.
+
+    The set equality is then enforced rather than assumed. A short label list
+    would render as unlabelled rows — a partially-labelled cohort that still
+    looks like an answer — which is worse than a refusal. ``projections.player_id``
+    is a foreign key with SQLite enforcement switched on, so this should be
+    unreachable; it is driven directly against this function rather than through
+    the route, because a guard nobody has made fire is an untested assertion.
+    """
+
+    player_ids = sorted({row.player_id for row in rows})
+    players = [
+        ProjectionPlayer(
+            player_id=player_id,
+            full_name=full_name,
+            team_abbreviation=abbreviation,
+            primary_position=primary_position,
+        )
+        for player_id, full_name, primary_position, abbreviation in session.execute(
+            select(Player.id, Player.full_name, Player.primary_position, NbaTeam.abbreviation)
+            .outerjoin(NbaTeam, Player.current_team_id == NbaTeam.id)
+            .where(Player.id.in_(player_ids))
+            .order_by(Player.id)
+        )
+    ]
+    if [player.player_id for player in players] != player_ids:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            "the cohort carries rates for players "
+            f"{sorted(set(player_ids) - {player.player_id for player in players})} that have no "
+            "player row",
+        )
+    return players
+
+
+def _games_played_claims(session: Session, rows: list[Projection]) -> list[SourceGamesPlayedClaim]:
+    """The source's own availability assumptions, for the rows in this cohort.
+
+    Sparse on purpose: a source that published only rates has no row here, and
+    inventing one to fill the shape is precisely what ADR-002 forbids.
+    """
+
+    projection_ids = [row.id for row in rows]
+    player_id_by_projection = {row.id: row.player_id for row in rows}
+    claims = [
+        SourceGamesPlayedClaim(
+            player_id=player_id_by_projection[projection_id],
+            assumed_games_played=assumed_games_played,
+            assumed_games_played_raw=assumed_games_played_raw,
+        )
+        for projection_id, assumed_games_played, assumed_games_played_raw in session.execute(
+            select(
+                SourceGamesPlayedAssumption.projection_id,
+                SourceGamesPlayedAssumption.assumed_games_played,
+                SourceGamesPlayedAssumption.assumed_games_played_raw,
+            )
+            .where(SourceGamesPlayedAssumption.projection_id.in_(projection_ids))
+            .order_by(SourceGamesPlayedAssumption.projection_id)
+        )
+    ]
+    return sorted(claims, key=lambda claim: claim.player_id)
+
+
+def _rates(row: Projection) -> ProjectionRates:
+    """Copy one row's canonical per-game fields into the response model.
+
+    Driven by ``CANONICAL_STAT_FIELDS`` rather than a hand-written argument list
+    so a field added to the schema and the profile registry cannot be silently
+    missing from the API. ``test_projections_api`` asserts the two agree.
+    """
+
+    return ProjectionRates(
+        player_id=row.player_id,
+        **{field: getattr(row, field) for field in CANONICAL_STAT_FIELDS},
+    )
+
+
+@router.get(
+    "/current",
+    response_model=CurrentProjectionsResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+    summary="The current imported per-game projection cohort for one league's season",
+)
+def get_current_projections(
+    league_id: int,
+    session: SessionDep,
+    request: Request,
+    source: ExternalSource = Query(
+        default=DEFAULT_PROJECTION_SOURCE,
+        description="Registered projection CSV source to read. Defaults to Basketball Monster.",
+    ),
+) -> CurrentProjectionsResponse:
+    require_loopback_host(
+        request,
+        error_code="projections_local_only",
+        detail="Imported projections are only served to the local machine.",
+    )
+    if source not in PROJECTION_IMPORT_SOURCES:
+        # `ExternalSource` is one vocabulary for two jobs: projection publishers
+        # and identity-anchor namespaces. `nba` and `fantrax` are valid enum
+        # members and will pass FastAPI's 422 validation, so the narrower
+        # membership question has to be asked here and answered distinguishably.
+        raise _error(
+            400,
+            "projections_source_unsupported",
+            f"{source.value!r} is an identity-anchor namespace, not a projection CSV source",
+        )
+
+    league = session.get(League, league_id)
+    if league is None:
+        raise _error(404, "projections_league_not_found", f"no league {league_id}")
+    response_league_id = league.id
+    response_season = league.season
+
+    # Take the importer's own source-row lock before reading anything, so the
+    # currency check, the release digest and the rows below all describe one
+    # instant. Nothing else is locked: this route reads no settings snapshot,
+    # no schedule cohort and no derived calendar, so taking
+    # `lock_league_settings_scope` would add a second lock to the ordering
+    # graph and buy nothing. `leagues.season` is written once at creation and
+    # by no production writer thereafter.
+    source_id = _lock_projection_source(session, source=source)
+    if source_id is None:
+        raise _error(
+            409,
+            "projections_source_not_imported",
+            f"{source.value} has never been registered as a projection source; import a "
+            f"{source.value} CSV for season {response_season!r} first",
+        )
+
+    import_id = _current_import_candidate(session, source_id=source_id, season=response_season)
+    if import_id is None:
+        raise _error(
+            409,
+            "projections_source_not_imported",
+            f"no {source.value} projection import exists for season {response_season!r}",
+        )
+
+    released = _released_import(session, import_id=import_id, source=source)
+    rows = _projection_rows(session, import_id=import_id)
+    _assert_cohort_matches_release(rows, released)
+
+    projection_import = session.get(ProjectionImport, import_id)
+    if projection_import is None:  # pragma: no cover - the release just loaded this row
+        raise _error(
+            409,
+            "projections_not_current",
+            f"projection import {import_id} disappeared while it was being read",
+        )
+
+    response = CurrentProjectionsResponse(
+        league_id=response_league_id,
+        season=response_season,
+        source=source,
+        lineage=ProjectionLineage(
+            projection_import=ProjectionImportLineage(
+                import_id=released.import_id,
+                source=released.source,
+                season=released.season,
+                imported_at=released.imported_at,
+                content_sha256=released.content_sha256,
+                profile_id=released.profile_id,
+                profile_version=released.profile_version,
+                profile_definition_sha256=released.profile_definition_sha256,
+                projection_values_sha256=released.projection_values_sha256,
+                projection_count=released.projection_count,
+                assumed_scoring_type=released.assumed_scoring_type,
+                original_filename=projection_import.original_filename,
+                row_count=projection_import.row_count,
+                matched_count=projection_import.matched_count,
+                needs_review_count=projection_import.needs_review_count,
+                unmatched_count=projection_import.unmatched_count,
+                rejected_count=projection_import.rejected_count,
+            ),
+        ),
+        players=_projection_players(session, rows),
+        projections=[_rates(row) for row in rows],
+        source_games_played_assumptions=_games_played_claims(session, rows),
+    )
+
+    # Built entirely from copied values above, so releasing the source-row lock
+    # here cannot expire anything the response still needs. Rolling back rather
+    # than letting the dependency commit keeps a read endpoint from ending a
+    # transaction with a write.
+    session.rollback()
+    return response
