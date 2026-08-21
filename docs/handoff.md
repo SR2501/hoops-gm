@@ -14376,3 +14376,67 @@ grouping one.
   so the three entries are byte-exact, but my own `projections-ui` additions were re-applied by
   hand from my prior commit; I diffed the result against `main` and confirmed it differs only in
   that entry and the header, which is weaker than a byte-comparison against my pre-rebase copy.
+
+## 2026-08-21 - frontend - A guard that fails slowly reads as green, and I never looked at CI
+
+**Unit:** blocker found by the coordinator on `09b5b06`, the head I had reported ready. Fixed at
+this head. 194 tests, lint and typecheck clean.
+
+**The defect.** `ProjectionsTable.recorded.test.tsx`'s absence-marker test ran ~1,020
+`getByTestId` calls - 60 players x 16 rates, plus 60 assumptions - each a full DOM traversal
+with testing-library's suggestion machinery attached. Measured at **6,161 ms against vitest's
+5,000 ms default**. It **timed out on the `push` run of the exact commit I offered for merge**
+while the `pull_request` run of the same commit passed, two seconds apart.
+
+**Why this one is worse than an assertion failure.** It is the guard behind a sentence the
+screen prints to the reader - *"a `.` should not appear for Basketball Monster"*. And a timeout
+is the failure mode a re-run erases: the natural response is "it passed on the other run, merge
+it", which converts an assertion that **never completed** into a permanent green check. Every
+other guard argued about on this branch fails loudly. **This one fails slowly, which reads as
+green.**
+
+**I did not look at CI. Not once.** The checks table did not hide the red run from me -
+`gh pr checks 63` lists it first - because I never ran it. I ran the gate locally, saw green, and
+reported ready. Local green and CI green are different claims and I substituted one for the
+other, in a unit whose whole subject is evidence not reaching as far as the claim it is offered
+for.
+
+**Worse: the signal was in my own console every single run and I read past it.** Vitest prints a
+slow test separately, and that line read 3,177 ms, then 3,309, 3,376, 3,714, **4,298** across my
+runs today. Monotonically climbing toward a limit I could have named. I quoted the *total* suite
+time in four different messages and never once read the line directly above it.
+
+**The fix, and why not the obvious one.** Not raising the timeout - that hides the symptom,
+leaves a six-second assertion in a growing suite, and guarantees the next person raises it
+again. One scoped `querySelectorAll` into a `Map`, then set comparison: **1,094 ms for the whole
+file.**
+
+The coordinator's condition on the fix was the valuable part. `getByTestId` *throws on a missing
+cell*, so the loop doubled as a completeness check - but it could never see an **extra** cell,
+because it only asked for what it expected. Asserting key-set equality covers both directions.
+**It caught a bug in my own replacement on its first run**: `[data-testid^="rate-"]` unscoped
+also matches the 16 `rate-header-*` column headers, 975 keys against 959 expected. The new
+assertion's first act was to fail on the exact direction the code it replaced was blind to.
+
+**The em dash defined by an entry that uses two more as punctuation.** The key defines `-` as
+meaning "we hold no label", then used em dashes as ordinary punctuation twice more in the same
+element, **including inside the sentence explaining that it is a distinct mark**. A styled swatch
+saves a sighted reader; a screen reader or anything consuming `textContent` receives the defined
+glyph and the punctuation as the same character two words apart. The `.` entries escaped this
+because that mark was wrapped in `<code>` mid-sentence - **the habit was right and had been
+applied to one of the two marks**, which is the same shape as every scope defect on this branch.
+Now pinned by a test asserting the key's text contains exactly one em dash.
+
+**Could not verify:**
+- **Whether other tests in this suite are near the timeout.** I fixed the one that failed and
+  read the slow-test lines for the rest of the run, which are all far below - but I have not
+  measured the schedule suite's 55 tests individually, and that suite is larger than mine and
+  older. The class is now known to be live in this repository; nobody has swept for it.
+- **Whether the split `push`/`pull_request` result can happen without a timeout.** Both runs
+  execute the same job on the same commit, so a deterministic failure should appear in both. I
+  am inferring that the divergence *is* the nondeterminism rather than confirming it - a
+  flaky-on-both-runs failure would look identical from where I stand.
+- **That my em-dash test would catch the general case.** It counts em dashes in `.grid__key`
+  and expects exactly one. It does not check the lede, the caption, the lineage panel or the
+  integrity banner, where the same confusion is possible and currently absent by luck rather
+  than by assertion.

@@ -137,12 +137,22 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
         </span>
         <span className="grid__key-item">
           <span className="grid__cell grid__cell--nodata grid__key-swatch">·</span> in a rate
-          column: the source did not publish that quantity — <strong>not zero</strong>
+          column: the source did not publish that quantity. <strong>Not zero.</strong>
         </span>
         <span className="grid__key-item">
+          {/* No em dash anywhere in this entry's text, and that is deliberate
+              rather than fussy. The mark being defined is an em dash, and the
+              first version of this entry used two more as ordinary punctuation
+              — including one inside the sentence explaining that it is a
+              distinct mark. A sighted reader is saved by the styled swatch; a
+              screen reader, or anything reading `textContent`, got the defined
+              glyph and the punctuation as the same character two words apart.
+              The `·` entries escaped this because the mark was wrapped in
+              `<code>` where it appeared mid-sentence: the habit was right and
+              had been applied to one of the two marks. */}
           <span className="grid__cell grid__key-swatch">—</span> in Team or Pos:{' '}
-          <em>we</em> hold no label for this player. A different claim, and it says nothing
-          about what the source published — which is why it is a different mark.
+          <em>we</em> hold no label for this player. That is a different claim, and says nothing
+          about what the source published, which is why it gets a different mark.
         </span>
         <span className="grid__key-item">
           {/* Scoped to the rate columns and to Source GP. An earlier version of
@@ -161,7 +171,7 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
           <strong>Source GP</strong> is what Basketball Monster assumed about games played. It is
           shown so you can see the assumption our availability model will replace. It is{' '}
           <strong>not</strong> a rate, and multiplying a rate by it reconstructs the source&apos;s
-          own season total — the fusion ADR-002 permits only at the expected-games seam, which is
+          own season total: the fusion ADR-002 permits only at the expected-games seam, which is
           not built.
         </span>
         <span className="grid__key-item">

@@ -86,6 +86,28 @@ describe('ProjectionsPage', () => {
     expect(screen.getByTestId('projections-lineage')).toBeInTheDocument()
   })
 
+  it('uses no em dash as punctuation in the key, so the defined mark is unambiguous', async () => {
+    // The key defines `—` as a distinct mark meaning "we hold no label". An
+    // earlier version then used em dashes as ordinary punctuation twice more
+    // in the same element, including inside the sentence explaining that it is
+    // a distinct mark. A sighted reader is saved by the styled swatch; a
+    // screen reader, or anything consuming `textContent`, receives the defined
+    // glyph and the punctuation as the same character two words apart.
+    //
+    // Pinned rather than left to care, because it is a class of defect no
+    // renderer, type or linter can see, and it returns the moment somebody
+    // writes a natural sentence.
+    mockFetch({ [PATH]: { body: payload() } })
+    renderWithRouter(<ProjectionsPage />)
+
+    await screen.findByTestId('projections-table')
+    const key = document.querySelector('.grid__key')
+    const emDashes = (key?.textContent?.match(/—/g) ?? []).length
+
+    // Exactly one: the swatch that defines the mark.
+    expect(emDashes).toBe(1)
+  })
+
   it('says these are not our numbers, rather than implying a comparison', async () => {
     mockFetch({ [PATH]: { body: payload() } })
     renderWithRouter(<ProjectionsPage />)

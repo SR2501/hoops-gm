@@ -122,8 +122,26 @@ that is real from the moment one lane builds against another's branch and
 invisible until somebody runs the command. It cost the coordinator a checkout to
 discover.
 
+**If the screen 404s, check the server's build before checking the data.** Three
+independently reasonable choices compose into a 404 that looks like a broken
+screen:
+
+- `vite.config.ts` proxies `/api` to **`127.0.0.1:8000`**, so a backend on any
+  other port is not the one the dashboard is talking to.
+- `seed_projections` writes to a throwaway `projections_demo.db` and
+  **deliberately ignores `DATABASE_URL`**, seeding schedule *and* projections
+  into that one file. Point the backend at it explicitly.
+- A backend process started **before the projections route existed** keeps
+  answering. It returns `200 ok` on `/health` while 404-ing a route it was never
+  built with, so health is not evidence the build is current.
+
+That last one is the trap: *a stale server is not stale data*. A 404 from a
+process that predates the route is indistinguishable from a routing bug in the
+screen, and `/health` will reassure you throughout. Read the server's own startup
+log and confirm which revision it is running.
+
 If port 8000 is busy the server exits with `[Errno 10048]` and a curl against it
-returns **somebody else's 404**, which is indistinguishable from an answer.
+returns **somebody else's 404**, which is the same class one layer out.
 Read the server's own log before believing an unexpected status; use
 `python -m uvicorn "hoops_gm.app:create_app" --factory --host 127.0.0.1 --port 8017`
 and `VITE_API_PROXY_TARGET=http://127.0.0.1:8017` if so.

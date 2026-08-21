@@ -266,20 +266,71 @@ describe('the recorded projections response', () => {
     // about — review found the unqualified version false against this very
     // fixture, because a player with a null `primary_position` rendered one in
     // the Pos column under a key saying it meant something upstream changed.
+    //
+    // **Two DOM reads, not ~1,020.** This previously called `getByTestId` once
+    // per cell — 60 players × 16 rates plus 60 assumptions — each a full
+    // traversal with testing-library's suggestion machinery attached. It
+    // measured 6,161 ms against vitest's 5,000 ms default and **timed out in
+    // CI on the exact head this branch offered for merge**, while the
+    // `pull_request` run of the same commit passed. It had been printing 3.1s,
+    // 3.3s, 3.7s, 4.3s in local runs the whole time.
+    //
+    // A timeout is the failure mode a re-run erases: re-running turns an
+    // assertion that never completed into a green check, permanently, and this
+    // is the guard behind a sentence the screen prints to the reader. Raising
+    // the timeout would have hidden it and left the next person to raise it
+    // again.
+    //
+    // **The key-set assertion is not a rewrite of the loop, it is more than
+    // the loop had.** `getByTestId` threw on a *missing* cell, so the old
+    // version doubled as a completeness check — but it could never see an
+    // *extra* cell, because it only asked for the ones it expected. Comparing
+    // the rendered key set against the expected one catches both directions,
+    // which is the discipline this module's own join already uses.
     const model = buildProjectionsModel(payload)
-    render(<ProjectionsTable model={model} />)
+    const { container } = render(<ProjectionsTable model={model} />)
 
-    for (const row of model.rows) {
-      for (const field of PROJECTION_RATE_FIELDS) {
-        expect(screen.getByTestId(`rate-${String(row.playerId)}-${field}`)).not.toHaveTextContent(
-          NOT_PUBLISHED,
-        )
-      }
-      expect(screen.getByTestId(`assumption-${String(row.playerId)}`)).toHaveAttribute(
-        'data-assumption',
-        'stated',
-      )
-    }
+    // Scoped to `tbody`. An unscoped `[data-testid^="rate-"]` also matches the
+    // 16 `rate-header-*` column headers — which the key-set assertion caught
+    // on its first run, in the *extra cell* direction the `getByTestId` loop
+    // this replaced could never have seen. Left as a comment rather than a
+    // silent fix because it is the argument for the assertion's shape.
+    const body = container.querySelector('tbody')
+    expect(body).not.toBeNull()
+
+    const rateCells = new Map(
+      [...(body?.querySelectorAll('[data-testid^="rate-"]') ?? [])].map((cell) => [
+        cell.getAttribute('data-testid') ?? '',
+        cell.textContent ?? '',
+      ]),
+    )
+    const assumptionCells = new Map(
+      [...(body?.querySelectorAll('[data-testid^="assumption-"]') ?? [])].map((cell) => [
+        cell.getAttribute('data-testid') ?? '',
+        cell.getAttribute('data-assumption') ?? '',
+      ]),
+    )
+
+    const expectedRateKeys = model.rows.flatMap((row) =>
+      PROJECTION_RATE_FIELDS.map((field) => `rate-${String(row.playerId)}-${field}`),
+    )
+    const expectedAssumptionKeys = model.rows.map(
+      (row) => `assumption-${String(row.playerId)}`,
+    )
+
+    // Both directions: a missing cell and an unexpected extra one both fail.
+    expect([...rateCells.keys()].sort()).toEqual([...expectedRateKeys].sort())
+    expect([...assumptionCells.keys()].sort()).toEqual([...expectedAssumptionKeys].sort())
+
+    const withMarker = [...rateCells.entries()]
+      .filter(([, text]) => text.includes(NOT_PUBLISHED))
+      .map(([key]) => key)
+    expect(withMarker).toEqual([])
+
+    const notStated = [...assumptionCells.entries()]
+      .filter(([, state]) => state !== 'stated')
+      .map(([key]) => key)
+    expect(notStated).toEqual([])
   })
 
   it('has a player with no position, which is why labels carry their own marker', () => {
