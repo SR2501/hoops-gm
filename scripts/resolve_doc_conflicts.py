@@ -60,6 +60,25 @@ CONFLICT_SEPARATOR = "======="
 CONFLICT_BASE = "||||||| "
 CONFLICT_END = ">>>>>>> "
 
+# The one region `resolve_backlog` is allowed to collapse. Matched on the count
+# line's own shape rather than on a heading's absence, because "contains no
+# heading" is true of an item's body as well as of the header, and that
+# ambiguity is what let a dependency edge be deleted at exit 0.
+_HEADER_COUNT = re.compile(
+    r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*"
+)
+_RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
+
+# Binary by extension, skipped without comment. Reporting a PDF as "not
+# scanned" on every run is how the report gets deleted — a guard that cries
+# wolf is the one the next person loosens, and this repository commits binary
+# fixtures. The report exists for a *text* file the scan could not decode,
+# which is the case that scanned clean and was claimed as covered.
+BINARY_SUFFIXES = frozenset(
+    {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".zip",
+     ".gz", ".db", ".sqlite", ".sqlite3", ".xlsx", ".docx", ".pptx", ".parquet"}
+)
+
 
 def is_conflict_marker(line: str) -> bool:
     """Whether a line is a git conflict marker, not something that resembles one."""
@@ -90,6 +109,18 @@ def resolve_append_only(path: pathlib.Path) -> None:
     mode = "normal"
     for line in path.read_text(encoding="utf-8").split("\n"):
         if line.startswith(CONFLICT_BEGIN):
+            # A begin marker seen while already inside a block is content, not
+            # structure — a doc quoting a marker verbatim. The previous form
+            # restarted the block, which *consumed* the quoted line and exited
+            # zero. `docs/handoff.md` quotes markers today; inline backticks
+            # survive only because they do not start the line.
+            if mode != "normal":
+                sys.exit(
+                    f"{path}: conflict begin marker inside an open block "
+                    f"(mode={mode}). This is either a malformed conflict or a "
+                    "document quoting a marker at line start. Refusing to "
+                    "write, because the previous behaviour silently deleted it."
+                )
             mode = "ours"
             continue
         if line.startswith(CONFLICT_BASE) and mode in {"ours", "base"}:
@@ -125,25 +156,58 @@ def resolve_backlog(path: pathlib.Path) -> None:
     had_conflict = CONFLICT_BEGIN in text
     slugs_before = set(re.findall(r"^### `([^`]+)`", text, re.M))
 
-    # Collapse a conflicted block to the recomputed note **only when the block
-    # contains no backlog item**. The previous form replaced every conflict
-    # block, both sides, with a placeholder — so when two lanes added items in
-    # the same region, the resolver silently deleted all of them and exited
-    # zero. On 2026-08-21 that removed three entries a lane had merged minutes
-    # earlier, and every check we had agreed the result was fine: a recount of
-    # the finished file is *internally consistent after a deletion*, because a
-    # dropped item takes its heading and its marker with it.
+    # Collapse a conflicted block **only when it is the header count region**,
+    # which is the one region this function knows how to resolve.
+    #
+    # Two earlier forms were both wrong, and the second is the instructive one.
+    # The original replaced every conflict block, both sides, with a
+    # placeholder — so when two lanes added items in the same region it
+    # silently deleted all of them and exited zero. On 2026-08-21 that removed
+    # three entries a lane had merged minutes earlier, and every check we had
+    # agreed the result was fine: a recount of the finished file is *internally
+    # consistent after a deletion*, because a dropped item takes its heading
+    # and its marker with it.
+    #
+    # The fix for that exempted any block containing `### `. Review found it
+    # **narrowed the defect rather than removing it**: a conflict inside an
+    # item's *body* — its `- **Depends on:**` edges, its description — carries
+    # no heading and no status marker, so it was still collapsed, the slug
+    # guard below still saw no change, the 1:1 check still balanced, and the
+    # script still printed "Safe to stage". That is worse than the original in
+    # one specific way: deleting a dependency edge makes a blocked item look
+    # **ready**, and `AGENTS.md` defines readiness as every dependency done.
+    #
+    # So: anchor to the count region and refuse on everything else. A resolver
+    # that only knows how to resolve one region should say so on the others
+    # rather than treating "I have no rule for this" as "delete both sides".
     def _collapse(match: "re.Match[str]") -> str:
         block = match.group(0)
-        return block if "### " in block else "__NOTE__\n"
+        if _HEADER_COUNT.search(block) or _RECOUNT_NOTE in block:
+            return "__NOTE__\n"
+        excerpt = "\n".join(block.strip().split("\n")[:6])
+        sys.exit(
+            f"{path}: a conflict block outside the header count region. This "
+            "script only knows how to resolve the count block; collapsing "
+            "anything else deletes both sides. Resolve by hand and keep both "
+            "sides' content — note that a body conflict can delete a "
+            "'**Depends on:**' edge without changing any heading, marker or "
+            f"total, so no other check here can see it.\n\n{excerpt}"
+        )
 
     text = re.sub(
         r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", _collapse, text, flags=re.DOTALL
     )
 
     # And the guard that does not depend on the mechanism above being right:
-    # no item may leave this function that entered it. A total can be recounted
-    # correctly and still be wrong; only the *set* sees a deletion.
+    # no item **slug** may leave this function that entered it. A total can be
+    # recounted correctly and still be wrong; only the *set* sees a deletion.
+    #
+    # Stated at the strength it reaches, deliberately: this compares slugs, so
+    # it sees a lost *item* and is blind to lost *content within* one. Before
+    # the anchor above, that gap was reachable; it is the reason the anchor
+    # exists rather than a caveat on this guard. Both are kept because they
+    # fail independently — the anchor was verified by mutating it away and
+    # watching this one still refuse.
     slugs_after = set(re.findall(r"^### `([^`]+)`", text, re.M))
     if lost := sorted(slugs_before - slugs_after):
         sys.exit(
@@ -172,6 +236,10 @@ def resolve_backlog(path: pathlib.Path) -> None:
         if (m := re.match(r"^- \[[ x]\] \*\*(\w+)\*\*", line)) is not None
     )
     total = sum(counts.values())
+    header = (
+        f"**{counts['done']} done - {counts['blocked']} blocked - "
+        f"{counts['pending']} pending - {total} total**"
+    )
     if had_conflict:
         note = (
             "(Recomputed from the status markers in this finished file, never\n"
@@ -180,36 +248,72 @@ def resolve_backlog(path: pathlib.Path) -> None:
             "rebase conflict is a usable input here, because each was computed before\n"
             "the other lane's items landed.)"
         )
-        text = text.replace("__NOTE__", note)
-    header = (
-        f"**{counts['done']} done - {counts['blocked']} blocked - "
-        f"{counts['pending']} pending - {total} total**"
-    )
-    text = re.sub(
+        # The note carries the header when the conflicted block *was* the header
+        # region, which is the only region we collapse. Found by the first test
+        # ever written for this file: `re.sub` below matched nothing because the
+        # header line had been collapsed into `__NOTE__`, the file was written
+        # with no header at all, and the script printed
+        # "backlog header recomputed: ..." regardless. A substitution that
+        # matches nothing is not an error to `re.sub`, so the print was a claim
+        # about an edit that did not happen.
+        text = text.replace("__NOTE__", f"{header}\n\n{note}")
+
+    text, substitutions = re.subn(
         r"^\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*$",
         header,
         text,
         count=1,
         flags=re.MULTILINE,
     )
+
+    # Assert the presence we expect rather than the absence of what we fear:
+    # exactly one header line, in the file we are about to write. Counting is
+    # cheap and it is the only thing that distinguishes "substituted", "carried
+    # in on the note" and "silently absent" — all three of which reach this
+    # line with `substitutions` telling a different story about each.
+    written = len(
+        re.findall(
+            r"^\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*$",
+            text,
+            flags=re.MULTILINE,
+        )
+    )
+    if written != 1:
+        sys.exit(
+            f"{path}: expected exactly one header count line after resolution, "
+            f"found {written}. Refusing to write. Two means both sides' headers "
+            "survived; zero means the header was collapsed and not restored."
+        )
+
     path.write_text(text, encoding="utf-8")
     print(f"  backlog header recomputed: {header}")
 
 
-def surviving_markers() -> list[str]:
-    """Every conflict marker left anywhere in the tree."""
+def surviving_markers() -> tuple[list[str], list[str]]:
+    """Every conflict marker left in the tree, and every file not read.
+
+    Returns both because the previous form returned only the first and `main`
+    printed "no conflict marker in any text file" — a verdict covering files it
+    had skipped. A file that cannot be decoded is not a file without markers;
+    a latin-1 `.md` holding a complete conflict block scanned clean. This
+    script's own subject is a check reporting a pass it did not earn.
+    """
     found: list[str] = []
+    unread: list[str] = []
     for path in REPO_ROOT.rglob("*"):
         if not path.is_file() or SKIP_DIRS & set(path.parts):
             continue
+        if path.suffix.lower() in BINARY_SUFFIXES:
+            continue
         try:
             text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+        except (UnicodeDecodeError, OSError) as exc:
+            unread.append(f"{path.relative_to(REPO_ROOT)}: {type(exc).__name__}")
             continue
         for number, line in enumerate(text.split("\n"), 1):
             if is_conflict_marker(line):
                 found.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line[:40]}")
-    return found
+    return found, unread
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -249,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     resolve_backlog(REPO_ROOT / "docs/backlog.md")
 
     # Verify BEFORE the caller stages anything. This is the entire point.
-    survivors = surviving_markers()
+    survivors, unread = surviving_markers()
     if survivors:
         # A stop that gives the operator nothing to resolve it with is a stop
         # they will learn to override, and they will override it using whatever
@@ -281,7 +385,17 @@ def main(argv: list[str] | None = None) -> int:
         if re.match(r"^## \d{4}-\d{2}-\d{2}", line)
     )
     print(f"  handoff dated entries: {entries}")
-    print("VERIFIED: no conflict marker in any text file. Safe to stage.")
+    if unread:
+        # Reported rather than swallowed: the verdict below is about the files
+        # this scan could read, and saying so is the difference between a pass
+        # and a pass it earned.
+        print(f"NOT SCANNED - {len(unread)} file(s) could not be read:")
+        for line in unread[:20]:
+            print("   ", line)
+        print("The verdict below does not cover them.")
+    print("VERIFIED: no conflict marker in any text file this scan could read.")
+    if not unread:
+        print("Safe to stage.")
     return 0
 
 
