@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -118,12 +119,64 @@ EXIT_IMPORTED_INCOMPLETE: Final = 5
 #: crosswalk backfill's ``data/reports/unmatched_players.csv``.
 DEFAULT_REPORT_DIR: Final = Path("data/reports/projections")
 
-#: Only sources that can actually write production. ``PROJECTION_IMPORT_SOURCES``
-#: is the same set the importer enforces, so this cannot drift into offering a
-#: source the importer then refuses as an identity-anchor namespace.
+#: Only sources the importer will accept as a *source*. Derived from
+#: ``PROJECTION_IMPORT_SOURCES`` intersected with the profiles registry — the
+#: same two conditions ``import_projection_csv`` enforces at its top — so this
+#: cannot drift into offering an identity-anchor namespace like ``nba`` or
+#: ``fantrax``, which the importer rejects outright.
+#:
+#: **It is deliberately not "sources that can write production", and an earlier
+#: comment here said that and was wrong.** The importer has a third condition,
+#: ``verified_for_season``, that this set does not mirror: ``fantasypros`` and
+#: ``hashtag`` are ``verified=False`` and therefore refuse for *every* season,
+#: in both modes. They stay offered because parse-preview against them is a
+#: real use and the refusal message is the useful answer; ``--source``'s help
+#: text says so.
 _SOURCE_CHOICES: Final = tuple(
     sorted(source.value for source in PROJECTION_IMPORT_SOURCES if source in PROFILES_BY_SOURCE)
 )
+
+#: NBA season form: four digits, a hyphen, and the last two digits of the
+#: following year.
+_SEASON_PATTERN: Final = re.compile(r"^(\d{4})-(\d{2})$")
+
+
+def nba_season(value: str) -> str:
+    """Validate a season argument, as an ``argparse`` ``type=``.
+
+    Nothing downstream constrains this string. ``parse_projection_csv`` takes
+    ``season`` and immediately discards it, and the only other check is
+    membership in a profile's ``verified_seasons`` — which ``MANUAL_PROFILE``
+    satisfies with a wildcard, so under ``--source manual`` *any* string was
+    accepted.
+
+    That mattered twice. A typo'd ``2026-2027`` imported successfully and exited
+    ``0``, producing a cohort keyed to a season no reader would ever query — the
+    confident, plausible, wrong result arriving through the operator's fingers
+    rather than through the data. And the value is interpolated into the
+    unresolved-report filename beside a ``mkdir(parents=True)``, so a review
+    drove ``season="../../pwned"`` and watched the report land a directory above
+    ``--report-dir``, creating a literal ``manual-..`` directory on the way.
+
+    Not a privilege boundary — it is the operator's own machine and his own
+    argument — which is why this is a ``type=`` and not a security control. The
+    point is that the sibling ``schedule_import.py`` never builds a path from
+    ``season``, so this module is the first to do it and inherits no protection
+    from that precedent.
+    """
+
+    match = _SEASON_PATTERN.match(value)
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not an NBA season; expected the form 2026-27"
+        )
+    start, end = int(match.group(1)), match.group(2)
+    if f"{(start + 1) % 100:02d}" != end:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a consecutive NBA season; {start} should be followed by "
+            f"{(start + 1) % 100:02d}"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -319,7 +372,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("season", help="season in NBA form, e.g. 2026-27")
+    parser.add_argument(
+        "season",
+        type=nba_season,
+        help="season in NBA form, e.g. 2026-27",
+    )
     parser.add_argument("csv_path", type=Path, help="path to the projection CSV on disk")
     parser.add_argument(
         "--source",
@@ -327,9 +384,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=ExternalSource.BASKETBALL_MONSTER.value,
         help=(
             "which projection publisher this file came from. Default "
-            f"{ExternalSource.BASKETBALL_MONSTER.value}. Only a profile verified for the "
-            "requested season may write production; the others are parse-preview examples "
-            "and refuse in both modes."
+            f"{ExternalSource.BASKETBALL_MONSTER.value}. **Not every choice can write "
+            "production**: only a profile verified for the requested season may, and "
+            "fantasypros and hashtag are unverified examples that refuse for every "
+            "season in both modes. They are offered because the refusal is the useful "
+            "answer and parse-preview against them is a real use."
         ),
     )
     parser.add_argument(

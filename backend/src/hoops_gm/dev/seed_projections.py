@@ -19,13 +19,23 @@ unavailable and nobody noticed.
 ``tests/fixtures/projections/basketball_monster_sample.csv`` holds two rows
 named *Player Alpha* and *Player Gamma*. Its own metadata says why: *"All paid
 player rows and private paths were removed. The committed rows are synthetic."*
-Those names match no player in ``nba_playerindex_current.json``, so the importer
-accepts zero resolutions, writes zero ``projections`` rows, and
+Those names match no canonical player, so the importer accepts zero
+resolutions, writes zero ``projections`` rows, and
 ``blending.release_projection_import`` then raises ``MissingProjectionDataError``.
 Seeding that file through the real importer produces **a new refusal, not a
 200**. The fixture is Adapter-gate evidence of Basketball Monster's column
 contract and it is doing that job correctly; it is not evidence of anything on
 this path, because it never becomes a row.
+
+The population it fails to match is ``nba_commonallplayers_current.json``, not
+``nba_playerindex_current.json``. Resolution targets come from
+:func:`~hoops_gm.ingest.projections.importer.build_player_targets`, which reads
+``player_external_ids`` rows written by ``import_nba_players`` from
+**CommonAllPlayers**; ``import_player_positions`` skips players it has not seen
+and creates none, so PlayerIndex contributes no target at all. Three docstrings
+in this unit named PlayerIndex, and a reviewer pointed out that file *does*
+contain a first name "Alpha" (Alpha Diallo) — so a reader checking the claim as
+written got a confusing hit against a mechanism one file over.
 
 ## How the demo CSV is built, and why there is no committed CSV
 
@@ -63,9 +73,21 @@ Run it::
 It composes :func:`~hoops_gm.dev.seed_schedule_grid.seed_schedule_grid` first,
 so one command produces a database both screens can be driven against, and so
 the league the projections route reads — and its season, which must match the
-profile's verified season — is created by the same guarded path. That also
-inherits ``require_safe_demo_target``: this refuses to run against a database
-holding any league it did not create.
+profile's verified season — is created by the same guarded path.
+
+**Say what a cited guard inspects, not what it refuses.** An earlier version of
+this docstring said the module "inherits ``require_safe_demo_target``: this
+refuses to run against a database holding any league it did not create." Every
+word of that was true and it read as protection for what this module writes.
+``require_safe_demo_target`` **inspects ``leagues`` and the parsed ``nba_games``
+cohort** — it has never heard of ``projection_imports``,
+``projection_sources`` or ``player_external_ids``, which are the tables added
+here. Two independent reviews reproduced a real Basketball Monster crosswalk
+being silently retracted and replaced with ``synthetic-demo-*`` entries, on a
+database that guard accepts. :func:`require_safe_projection_target` is the
+refusal that covers what this module actually writes, and it runs before
+anything is written. When a module adds tables, an inherited guard **not**
+covering them is the default rather than the exception.
 
 Re-running converges. The generated CSV is deterministic, so its SHA-256 is
 stable and the importer resolves onto the same ``projection_imports`` row rather
@@ -91,7 +113,8 @@ from sqlalchemy.orm import Session
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.models.enums import ExternalSource, ScoringType
-from hoops_gm.db.models.identity import Player
+from hoops_gm.db.models.identity import Player, PlayerExternalId
+from hoops_gm.db.models.projections import ProjectionImport
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_schedule_grid import (
     DEFAULT_FIXTURES_DIR,
@@ -129,6 +152,13 @@ SEEDED_AT = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 DEMO_FILENAME = "synthetic-projections-demo.csv"
 
 DEMO_DISPLAY_NAME = "Basketball Monster (synthetic demo cohort)"
+
+#: Prefix on every source player id this seed writes. It is what makes a demo
+#: crosswalk row distinguishable from a real inferred match in
+#: ``player_external_ids``, where both otherwise carry
+#: ``confidence=0.85, match_method=normalized_name``, and it is what
+#: :func:`require_safe_projection_target` keys its refusal on.
+DEMO_SOURCE_ID_PREFIX = "synthetic-demo-"
 
 
 @dataclass(frozen=True)
@@ -261,13 +291,93 @@ def build_demo_csv(players: list[Player]) -> bytes:
             # is the source crosswalk key, and a reader inspecting
             # `player_external_ids` should be able to tell at a glance that this
             # row came from a seed rather than from a paid export.
-            "player_id": f"synthetic-demo-{player.id}",
+            "player_id": f"{DEMO_SOURCE_ID_PREFIX}{player.id}",
             "last_name": player.last_name,
             "first_name": player.first_name,
         }
         row.update(_synthetic_season_line(player.id, games))
         writer.writerow(row)
     return buffer.getvalue().encode("utf-8")
+
+
+def require_safe_projection_target(session: Session) -> None:
+    """Refuse a database holding a projection import this seed did not create.
+
+    **The guard this module used to lean on cannot see any of the tables this
+    module writes.** ``require_safe_demo_target`` inspects ``leagues`` and the
+    parsed ``nba_games`` cohort; ``projection_imports``, ``projection_sources``
+    and ``player_external_ids`` are not in its scope and never were. A database
+    holding the owner's real paid import but no league row passes it cleanly.
+
+    Two independent reviews reproduced the consequence in three steps, and it is
+    the reason this function exists:
+
+    * a real Basketball Monster import is on record with its own vendor ids;
+    * this seed runs and its ``projection_imports`` row is the newest for that
+      source and season, so ``_owns_current_source_crosswalk`` returns ``True``
+      and ``import_resolutions`` rewrites the **source-wide current view**;
+    * every real ``player_external_ids`` row has ``current_for_source`` retracted
+      to ``NULL`` and ``synthetic-demo-*`` becomes the current crosswalk.
+
+    The seed exited ``0`` and printed ``identities_accepted: 60`` while doing it.
+    ``AGENTS.md`` calls the crosswalk the highest-risk foundational item and R7
+    says an identity mismatch silently corrupts every downstream number, so a
+    demo tool that can reassign it without saying so is not acceptable at any
+    convenience.
+
+    **The ordering is the owner's documented workflow, not an exotic one.**
+    ``backfill nba-identity`` followed by ``import_projection_csv`` creates no
+    league row, the CLI reads ``DATABASE_URL`` rather than taking a flag, and
+    ``backend/README.md`` tells the owner to point ``DATABASE_URL`` at the demo
+    database to serve it. One order is safe and the other displaces his
+    crosswalk.
+
+    Unlike the schedule half there is no producer-side refusal to fall back on:
+    ``require_safe_demo_target`` can reason that ``import_schedule``'s
+    exact-cohort read-back protects a real season, but a second projection
+    import for the same source and season is a normal, accepted operation.
+
+    Called **before** :func:`~hoops_gm.dev.seed_schedule_grid.seed_schedule_grid`
+    so it refuses before anything at all is written, which is the principle that
+    module already establishes.
+    """
+
+    foreign_import = session.execute(
+        select(ProjectionImport.id, ProjectionImport.original_filename)
+        .where(ProjectionImport.original_filename.is_distinct_from(DEMO_FILENAME))
+        .limit(1)
+    ).first()
+    if foreign_import is not None:
+        raise DemoSeedRefused(
+            f"this database holds projection import {foreign_import.id} "
+            f"({foreign_import.original_filename!r}), which this seed did not create. "
+            "Seeding would make the demo cohort the newest import for its source and "
+            "retract every real player_external_ids row to a non-current state, "
+            "replacing the crosswalk with synthetic-demo-* entries. Nothing was written. "
+            "Use a throwaway --database-url."
+        )
+
+    # Checked separately rather than inferred from the absence of an import row:
+    # the crosswalk is the thing being protected, and a link can outlive the
+    # import that created it. `_owns_current_source_crosswalk` reads
+    # `player_external_ids` directly, so an import-only check would be a guard
+    # whose scope is narrower than the harm — which is the defect this whole
+    # function exists to correct.
+    foreign_link = session.execute(
+        select(PlayerExternalId.external_id)
+        .where(
+            PlayerExternalId.source == ExternalSource.BASKETBALL_MONSTER,
+            PlayerExternalId.current_for_source.is_not(None),
+            PlayerExternalId.external_id.not_like(f"{DEMO_SOURCE_ID_PREFIX}%"),
+        )
+        .limit(1)
+    ).first()
+    if foreign_link is not None:
+        raise DemoSeedRefused(
+            f"this database holds a current Basketball Monster crosswalk entry "
+            f"({foreign_link.external_id!r}) that this seed did not create. Seeding "
+            "would retract it. Nothing was written. Use a throwaway --database-url."
+        )
 
 
 def seed_projections(
@@ -278,13 +388,16 @@ def seed_projections(
 ) -> ProjectionsSeedResult:
     """Bring one database to the state the projections endpoint requires.
 
-    Order is load-bearing. The schedule grid seed runs first because it creates
-    the league the projections route reads and the ``nba_teams`` rows player
-    imports join to, and because it composes the settings and schedule writers
-    in the canonical lock order. Players are imported before positions because
-    ``import_player_positions`` refuses to invent a canonical row. The demo CSV
-    is generated after both, from the players that now exist.
+    Order is load-bearing. The projections-specific refusal runs **first**, so a
+    database holding a real import is refused before any writer touches it. The
+    schedule grid seed then creates the league the projections route reads and
+    the ``nba_teams`` rows player imports join to, and composes the settings and
+    schedule writers in the canonical lock order. Players are imported before
+    positions because ``import_player_positions`` refuses to invent a canonical
+    row. The demo CSV is generated after both, from the players that now exist.
     """
+
+    require_safe_projection_target(session)
 
     schedule = seed_schedule_grid(session, fixtures_dir=fixtures_dir)
 
@@ -301,7 +414,9 @@ def seed_projections(
     if not cohort:
         raise DemoSeedRefused(
             "no canonical player has a unique normalised name, so no projection row could "
-            "resolve. The player fixtures did not import as expected; nothing was seeded."
+            "resolve. The player fixtures did not import as expected. This refusal comes "
+            "*after* the schedule and player imports have written into the caller's "
+            "session, so the caller must roll back — `main` does, via `Database.session()`."
         )
 
     csv_bytes = build_demo_csv(cohort)
@@ -321,7 +436,8 @@ def seed_projections(
         raise DemoSeedRefused(
             f"the demo cohort of {len(cohort)} row(s) resolved to no player, so the "
             "projections endpoint would still refuse. Nothing about this seed is useful "
-            "in that state, so it fails rather than reporting success."
+            "in that state, so it fails rather than reporting success. Like the refusal "
+            "above, this fires after writes and depends on the caller rolling back."
         )
 
     return ProjectionsSeedResult(

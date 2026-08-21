@@ -262,7 +262,18 @@ The committed Basketball Monster fixture cannot do this job.
 and the committed ones are synthetic — so it resolves to zero players, writes
 zero rows, and `release_projection_import` then raises. Seeding it through the
 real importer produces **a new refusal, not a 200**. That fixture is Adapter-gate
-evidence of the column contract and is doing that job correctly.
+evidence of the column contract and is doing that job correctly. (The population
+it fails to match is `nba_commonallplayers_current.json`, which
+`import_nba_players` reads — not `nba_playerindex_current.json`, which only
+supplies positions and creates no players.)
+
+The seed **refuses** a database holding any projection import, or any current
+Basketball Monster crosswalk entry, that it did not create. That refusal is
+separate from `seed_schedule_grid`'s, which inspects `leagues` and the game
+cohort and has never heard of the projection tables — without it, seeding a
+database that already holds the owner's real import silently retracts every real
+`player_external_ids` row and makes `synthetic-demo-*` the current crosswalk,
+exiting 0 while doing it.
 
 ## Importing a real projection CSV
 
@@ -275,9 +286,12 @@ python -m hoops_gm.ingest.projections.import_csv 2026-27 ~/bbm-2026-27.csv --dry
 python -m hoops_gm.ingest.projections.import_csv 2026-27 ~/bbm-2026-27.csv
 ```
 
-Players must already exist — run `python -m hoops_gm.ingest.backfill crosswalk
---season 2026-27` first, or there is nothing for the CSV's names to resolve
-against.
+Players must already exist — run `python -m hoops_gm.ingest.backfill nba-identity`
+first, or there is nothing for the CSV's names to resolve against. Use that
+rather than `backfill crosswalk`: the crosswalk subcommand calls Fantrax inside
+the same transaction as the player import, so a Fantrax outage rolls the players
+back too, and it writes a Fantrax crosswalk you did not ask for. `nba-identity`
+is NBA-only and offline once the fixtures are captured.
 
 `--dry-run` is a rehearsal rather than a preview: it runs the real import,
 identity resolution included, and rolls back. That means it holds the database

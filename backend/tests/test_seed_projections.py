@@ -8,20 +8,29 @@ completes would reproduce exactly that blind spot one module over.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from hoops_gm.db.models.identity import Player
+from hoops_gm.db.models.enums import ExternalSource, MatchMethod
+from hoops_gm.db.models.identity import Player, PlayerExternalId
 from hoops_gm.db.models.projections import Projection, ProjectionImport
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_projections import (
     DEMO_COHORT_SIZE,
+    DEMO_SOURCE_ID_PREFIX,
+    PLAYERS_FIXTURE,
     build_demo_csv,
     seed_projections,
     unique_named_players,
 )
+from hoops_gm.dev.seed_schedule_grid import DEFAULT_FIXTURES_DIR, DemoSeedRefused, load_fixture
+from hoops_gm.ingest.importers import import_nba_players
+from hoops_gm.ingest.nba.parsers import parse_common_all_players
+from hoops_gm.ingest.projections.importer import import_projection_csv
 from hoops_gm.ingest.projections.profiles import BASKETBALL_MONSTER_2026_27_HEADERS
 
+SEASON = "2026-27"
 COHORT = 8
 
 
@@ -117,6 +126,115 @@ def test_the_uniqueness_filter_excludes_a_shared_name(database: Database) -> Non
     assert "player|solo" in names
     assert "twin|casey" not in names
     assert len(cohort) == 1
+
+
+def test_the_seed_refuses_a_database_holding_a_real_import(database: Database) -> None:
+    """The blocking finding from two independent reviews, pinned.
+
+    ``require_safe_demo_target`` inspects ``leagues`` and the parsed
+    ``nba_games`` cohort. It has never heard of ``projection_imports`` or
+    ``player_external_ids`` — the tables this module writes — so a database
+    holding the owner's real paid import but no league row passes it cleanly.
+
+    What happened then: the demo import became the newest for its source and
+    season, ``_owns_current_source_crosswalk`` returned ``True``,
+    ``import_resolutions`` rewrote the **source-wide current view**, and every
+    real ``player_external_ids`` row had ``current_for_source`` retracted to
+    ``NULL`` while ``synthetic-demo-*`` became the current crosswalk. The seed
+    exited 0 and printed ``identities_accepted: 60`` while doing it.
+
+    This asserts the refusal fires **and that the real crosswalk survives it**,
+    because a refusal that raises after writing would still have done the harm.
+    """
+    with database.session() as setup:
+        import_nba_players(
+            setup, parse_common_all_players(load_fixture(DEFAULT_FIXTURES_DIR, PLAYERS_FIXTURE))
+        )
+    with database.session() as setup:
+        real_rows = build_demo_csv(unique_named_players(setup, limit=4)).decode().splitlines()
+        header, body = real_rows[0], real_rows[1:]
+        real_csv = "\n".join(
+            [header, *(row.replace(DEMO_SOURCE_ID_PREFIX, "bbm-real-") for row in body)]
+        )
+        import_projection_csv(
+            setup,
+            source=ExternalSource.BASKETBALL_MONSTER,
+            display_name="Basketball Monster 2026-27",
+            season=SEASON,
+            csv_bytes=(real_csv + "\n").encode("utf-8"),
+            original_filename="owner-real-export.csv",
+        )
+
+    def current_bbm_links() -> set[str]:
+        with database.session() as check:
+            return set(
+                check.scalars(
+                    select(PlayerExternalId.external_id).where(
+                        PlayerExternalId.source == ExternalSource.BASKETBALL_MONSTER,
+                        PlayerExternalId.current_for_source.is_not(None),
+                    )
+                )
+            )
+
+    before = current_bbm_links()
+    assert before and all(key.startswith("bbm-real-") for key in before), before
+
+    with pytest.raises(DemoSeedRefused, match="did not create"), database.session() as session:
+        seed_projections(session, cohort_size=COHORT)
+
+    assert current_bbm_links() == before
+    with database.session() as check:
+        assert check.scalar(select(func.count()).select_from(ProjectionImport)) == 1
+
+
+def test_the_seed_refuses_a_stray_crosswalk_entry_with_no_import(database: Database) -> None:
+    """The crosswalk is checked directly, not inferred from the import table.
+
+    A ``player_external_ids`` row can outlive the import that created it, and
+    ``_owns_current_source_crosswalk`` reads that table rather than
+    ``projection_imports``. Checking only for a foreign import would be a guard
+    whose scope is narrower than the harm — which is the exact defect the whole
+    refusal exists to correct, so it must not be reintroduced one table over.
+    """
+    with database.session() as setup:
+        player = Player(
+            full_name="Real Person",
+            normalized_name="person|real",
+            first_name="real",
+            last_name="person",
+        )
+        setup.add(player)
+        setup.flush()
+        setup.add(
+            PlayerExternalId(
+                player_id=player.id,
+                source=ExternalSource.BASKETBALL_MONSTER,
+                current_for_source=ExternalSource.BASKETBALL_MONSTER.value,
+                external_id="bbm-real-42",
+                external_name="Real Person",
+                normalized_name="person|real",
+                confidence=0.85,
+                match_method=MatchMethod.NORMALIZED_NAME,
+            )
+        )
+
+    with pytest.raises(DemoSeedRefused, match="crosswalk entry"), database.session() as session:
+        seed_projections(session, cohort_size=COHORT)
+
+
+def test_re_seeding_is_not_refused_by_its_own_output(database: Database) -> None:
+    """The negative control: the refusal must not make the seed single-use.
+
+    Without this, a guard that refuses *everything* would pass the two tests
+    above and look like protection while breaking the documented workflow of
+    re-seeding the demo database.
+    """
+    with database.session() as session:
+        first = seed_projections(session, cohort_size=COHORT)
+    with database.session() as session:
+        second = seed_projections(session, cohort_size=COHORT)
+
+    assert first.content_sha256 == second.content_sha256
 
 
 def test_the_seed_resolves_every_row_it_writes(database: Database) -> None:

@@ -13660,3 +13660,162 @@ accented names, suffixes and a 550-row cohort are all unexercised.
 **Next:** `frontend` can build against a database that answers. Two commands and
 this head are in that lane's session directly rather than relayed, because a
 command relayed by a coordinator is a command nobody ran.
+
+---
+
+## 2026-08-21 — backend — Two reviews found the same blocker: the demo seed could displace a real crosswalk
+
+**Changed:** Remediation of `ee139a1` after exact-head reviews from
+`data-engineer` and `code-review`, run in separate detached worktrees. Nine
+findings, all taken. 11 files.
+
+**The blocker, found independently by both reviewers and reproduced by both.**
+`seed_projections` run against a database already holding the owner's real
+Basketball Monster import **silently retracted every real
+`player_external_ids` row and made `synthetic-demo-*` the current crosswalk** —
+exiting `0` and printing `identities_accepted: 60` while doing it.
+`/projections/current` then served invented numbers over real ones.
+
+```
+bbm crosswalk before : [('bbm-real-id-1','basketball_monster'), ... ] 20 rows
+seed_projections ACCEPTED the operator's database
+bbm crosswalk after  : [('bbm-real-id-1', None), ... ('synthetic-demo-1','basketball_monster'), ...]
+```
+
+Mechanism: the demo import is the newest for its source and season, so
+`_owns_current_source_crosswalk` returns `True` and `import_resolutions`
+rewrites the source-wide current view.
+
+**The governance failure is the part worth keeping.** My docstring said the
+module *"inherits `require_safe_demo_target`: this refuses to run against a
+database holding any league it did not create."* Every word true.
+`require_safe_demo_target` **inspects `leagues` and the parsed `nba_games`
+cohort** — it has never heard of `projection_imports`, `projection_sources` or
+`player_external_ids`, which are exactly the tables my module added. I inherited
+a guarantee and, by citing it accurately, extended its apparent scope over
+tables it cannot see.
+
+That is the unexamined-inheritance class in `AGENTS.md`, committed on the same
+day I wrote the handoff entry about it. Reading about a failure class does not
+immunise you against it, which is the argument for the review seam rather than
+for more care. The rule now in the docstring: **say what a cited guard
+*inspects*, not what it *refuses*** — "refuses against a foreign league" invites
+generalisation, "inspects `leagues` and the schedule cohort" does not. And when
+a module adds tables, an inherited guard not covering them is the default.
+
+Fixed by `require_safe_projection_target`, which runs **before**
+`seed_schedule_grid` so it refuses before anything is written, and checks both
+the import table and the crosswalk directly — the latter because a link can
+outlive the import that created it, and an import-only check would be a guard
+narrower than the harm, which is the defect being corrected.
+
+**Reachability was the owner's documented workflow, not an exotic one.**
+`backfill nba-identity` + `import_csv` creates no league row, `import_csv` reads
+`DATABASE_URL` rather than taking a flag, and **my own README in the same diff
+tells the owner to point `DATABASE_URL` at the demo database.** One order is
+safe; the other displaces his crosswalk. Both reviewers drove both directions.
+
+**A path traversal I had not considered.** `season` is validated by nothing —
+`parse_projection_csv` discards it, and `MANUAL_PROFILE` is wildcard-verified —
+and it is interpolated into the report filename beside a `mkdir(parents=True)`.
+`code-review` drove `season="../../pwned"` and watched the report land a
+directory above `--report-dir`, creating a literal `manual-..` directory on the
+way. Not a privilege boundary, since it is the operator's own argument on his own
+machine, but the mundane half is worse in practice: a typo'd `2026-2027` imported
+successfully, exited `0`, and produced a cohort keyed to a season nobody would
+ever query. Now an `argparse` `type=`, which closes both halves at once.
+
+**My own leak guard checked 43% of what it claimed.** `test_no_value_from_the
+_file_reaches_stdout` said *"every cell of every data row"* and filtered on
+`len(cell) > 4`, justified in a comment as excluding short *numeric* cells. It
+does not do that — a census found it checked 59 of 138 cells and dropped 79,
+including **`'bam'`**, a real NBA first name, which is exactly the paid-content
+class the module promises never reaches stdout. A leak of any name of four
+characters or fewer passed. The filter now tests "does this parse as a number",
+matching its own rationale, and the test asserts its checked population is
+non-trivial so a future filter change cannot quietly empty it.
+
+**And a test that was R55 written one day later.**
+`test_the_source_choices_are_exactly_the_sources_that_can_write_production`
+asserted set equality against **the identical expression the implementation
+uses**. It could only fail if someone hardcoded the list, and could not
+distinguish "can write production" from "has a profile" — which is what its name
+claimed. Both reviewers caught it, and the disproof was forty lines above in the
+same file: my own test passes `--source fantasypros` *because* it is an offered
+choice that always refuses. Split into two tests that establish one property
+each, asserted against `ExternalSource` rather than against the implementation.
+
+**A governance entry that silently did not exist.** `code-review` rendered
+`ownership.md` through `markdown-it` and found my new row after `</table>`: a
+blank line terminates a GFM table, so the row rendered as literal pipe text with
+lint, format and mypy green over it. `gates.md` records this exact defect from a
+previous unit, in the bullet that says to read the rendered result rather than
+the diff. I had read the diff.
+
+**Which led to a pre-existing one.** I wrote a renderer check and ran it across
+the governance tree: **R45 and R48 in `risks.md` have been rendering as literal
+pipe text on `main`**, from a blank line after R44's very long row. Two risk-
+register rows invisible in the rendered register. Fixed here rather than filed,
+because it is one line in a file this unit already edits and the same defect
+class that blocked it. Confirmed pre-existing by running the checker against
+`origin/main`.
+
+The checker itself needed a correction first: its first version flagged every
+table header in the repository, because a header legitimately precedes its
+separator. A checker that cries wolf on correct input is one the next person
+stops running — the same lesson `frontend` reported the same day from an
+ADR-002 detector that produced 200 false positives on a real cohort.
+
+**Also fixed:** the README named `backfill crosswalk` as the prerequisite, which
+calls Fantrax inside the same transaction as the player import, so an outage
+rolls the players back too — `backfill nba-identity` is the offline, NBA-only
+command and its own help string already said so. `DemoSeedRefused("nothing was
+seeded")` was true only because `main`'s session context manager rolls back, not
+because the function enforces it, and five tests call the function directly.
+Three docstrings named `nba_playerindex_current.json` as the population the
+sample fails to match; targets come from `nba_commonallplayers_current.json`, and
+PlayerIndex *does* contain a first name "Alpha" (Alpha Diallo), so a reader
+checking my claim as written got a confusing hit against a mechanism one file
+over — R56's "name the operation precisely enough that a neighbouring one cannot
+be substituted".
+
+**Now true:** 1316 tests. 11 mutations, all caught, applied and reverted, each
+asserting green-before and that the mutation applied. The endpoint still answers
+200 with a byte-identical payload digest after every change.
+
+**The harness needed two corrections during this round, both in the safe
+direction and both worth recording.** One mutation reddened with
+`AttributeError: 'Select' object has no attribute 'first'` — a syntactically
+broken mutation, which is a red any edit would produce and establishes nothing;
+replaced with a semantically valid weakening. And `season-validation` reported
+`NO RESULT` because the harness demanded exactly `1 passed` and the test is
+parametrized into seven. A verifier refusing to read a legitimate answer is the
+same class as one reading absence as success, just failing safe.
+
+**Could not verify:**
+
+*PostgreSQL on the new head.* The previous head's postgres job was green and
+verified by `headSha`; that head no longer exists. This must be re-earned and
+has not been at the time of writing.
+
+*Whether `require_safe_projection_target` is broad enough.* It refuses on a
+foreign `projection_imports` row or a foreign current Basketball Monster
+crosswalk entry. It does **not** inspect `projections`, `projection_sources`,
+`source_games_played_assumptions`, or crosswalk rows under other projection
+sources. I believe those cannot be reached without one of the two it checks, but
+I did not drive each of them, and "I believe it is unreachable" is the sentence
+this unit has already been wrong about once today.
+
+*The `MANUAL` source path generally.* It is offered, wildcard-verified, and now
+the only route to a sparse assumptions array — and nothing in this repository
+imports through it. Its parse-preview and production behaviour are exercised by
+unit tests only.
+
+*Anything about a real Basketball Monster export*, unchanged from the previous
+entry and still the largest gap: every row this unit has been driven with is
+synthetic, so column width, long and accented names, and suffixes stay
+unexercised until the owner runs it.
+
+*That the two reviewers between them found everything.* They found the same
+blocker independently, which is reassuring about that finding and says nothing
+about the ones neither looked for.

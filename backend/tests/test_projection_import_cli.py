@@ -304,10 +304,18 @@ def test_no_value_from_the_file_reaches_stdout(
 ) -> None:
     """The export is paid content, and a terminal scrollback is a paste away.
 
-    Checked against the file's own bytes rather than against a list of fields
-    somebody remembered to add: every cell of every data row must be absent
-    from stdout. The identifiers that *are* printed — the content hash, the
-    profile id, the filename — are not values from inside the file.
+    Checked against the file's own bytes rather than a list of fields somebody
+    remembered to add. **Only cells that parse as numbers are exempt**, and only
+    because a short number genuinely does collide with a count by coincidence —
+    ``60`` appearing in the summary says nothing about the file.
+
+    An earlier version filtered on ``len(cell) > 4`` and justified it as
+    excluding short *numeric* cells. It did not do that: a review's census over
+    the 12-row demo file found it checked 59 of 138 cells and dropped 79,
+    including ``'bam'`` — a real NBA first name, which is precisely the class
+    the module docstring promises never reaches stdout. A leak of any name of
+    four characters or fewer passed. The filter now matches its own rationale,
+    so every name is checked at every length.
     """
     content = demo_csv(seeded)
     path = write_csv(tmp_path, content)
@@ -317,15 +325,121 @@ def test_no_value_from_the_file_reaches_stdout(
 
     out = capsys.readouterr().out
     lines = content.decode("utf-8").splitlines()
-    leaked = [
-        cell
-        for line in lines[1:]
-        for cell in line.split(",")
-        # Short numeric cells collide with counts by coincidence rather than by
-        # leaking; a name or a long decimal appearing in stdout does not.
-        if len(cell) > 4 and cell in out
+
+    def is_number(cell: str) -> bool:
+        try:
+            float(cell)
+        except ValueError:
+            return False
+        return True
+
+    checked = [
+        cell for line in lines[1:] for cell in line.split(",") if cell and not is_number(cell)
     ]
-    assert leaked == []
+    # The guard is only as good as its population: assert real names are in it,
+    # so a future filter change that quietly empties it fails here rather than
+    # passing over nothing.
+    assert any(len(cell) <= 4 for cell in checked), checked
+    assert len(checked) >= 2 * len(lines[1:])
+
+    assert [cell for cell in checked if cell in out] == []
+
+
+def test_the_source_choices_are_derived_from_the_registry_rather_than_hand_maintained(
+    capsys: pytest.CaptureFixture[str], seeded: Database, tmp_path: Path
+) -> None:
+    """What the derivation actually buys, and what it does not.
+
+    An earlier version of this test was named ``…are_exactly_the_sources_that
+    _can_write_production`` and asserted set equality against **the identical
+    expression the implementation uses**. It could only fail if someone
+    hardcoded the list, and it could not distinguish "can write production" from
+    "has a profile" — which is what its name claimed. R55's agreeing check.
+
+    Two separate properties, established separately:
+
+    * the offered set excludes identity-anchor namespaces, checked against the
+      enum rather than against the implementation's own expression;
+    * ``fantasypros`` is offered **and cannot write production**, driven through
+      ``main`` — which is the fact the old name denied.
+    """
+    from hoops_gm.db.models.enums import ExternalSource
+
+    action = next(
+        action for action in build_parser()._actions if "--source" in action.option_strings
+    )
+    choices = set(action.choices or ())
+
+    assert action.default == ExternalSource.BASKETBALL_MONSTER.value
+    # Independent of `_SOURCE_CHOICES`' own derivation: no anchor namespace.
+    assert ExternalSource.NBA.value not in choices
+    assert ExternalSource.FANTRAX.value not in choices
+
+    # And the half the old name got wrong: an offered source that always refuses.
+    assert "fantasypros" in choices
+    path = write_csv(tmp_path, demo_csv(seeded))
+    capsys.readouterr()
+    assert main([SEASON, str(path), "--source", "fantasypros"]) == EXIT_REFUSED
+    assert "not verified" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["2026-2027", "2026", "26-27", "2026-28", "2026_27", "../../pwned", ""],
+    ids=[
+        "four-digit-end",
+        "no-end",
+        "short-start",
+        "non-consecutive",
+        "underscore",
+        "traversal",
+        "empty",
+    ],
+)
+def test_a_season_that_is_not_an_nba_season_is_rejected_before_anything_runs(
+    bad: str, tmp_path: Path
+) -> None:
+    """Nothing downstream constrains ``season``, so the parser has to.
+
+    ``parse_projection_csv`` discards it, and the only other check is membership
+    in a profile's ``verified_seasons`` — which ``MANUAL_PROFILE`` satisfies with
+    a wildcard. So under ``--source manual`` any string was accepted, written to
+    ``projection_imports.season``, and interpolated into the report filename
+    beside a ``mkdir(parents=True)``.
+
+    A review drove ``season="../../pwned"`` and watched the report land a
+    directory above ``--report-dir``, creating a literal ``manual-..`` directory
+    on the way. Not a privilege boundary — the operator's own machine, his own
+    argument — but the mundane half is worse in practice: a typo'd ``2026-2027``
+    imported successfully, exited 0, and produced a cohort keyed to a season no
+    reader would ever query.
+    """
+    path = write_csv(tmp_path, b"player_id,last_name\nx,y\n")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main([bad, str(path), "--source", "manual"])
+
+    assert exit_info.value.code == 2  # argparse's own usage-error code
+
+
+def test_the_report_path_cannot_escape_the_report_dir(seeded: Database, tmp_path: Path) -> None:
+    """The traversal half, pinned at the place it was reproduced.
+
+    Complements the parametrized rejection above: that one proves argparse
+    refuses, this one proves nothing outside ``--report-dir`` is ever created
+    for an accepted season.
+    """
+    rows = demo_csv(seeded).decode("utf-8").splitlines()
+    fields = rows[1].split(",")
+    fields[1], fields[2] = "Nonexistentsurname", "Nobody"
+    mutated = "\n".join([rows[0], ",".join(fields), *rows[2:]]) + "\n"
+    path = write_csv(tmp_path, mutated.encode("utf-8"))
+    reports = tmp_path / "reports"
+
+    assert main([SEASON, str(path), "--report-dir", str(reports)]) == EXIT_IMPORTED_INCOMPLETE
+
+    written = [p for p in tmp_path.rglob("*.csv") if p != path]
+    assert written == [reports / f"basketball_monster-{SEASON}-unresolved.csv"], written
 
 
 def test_a_database_failure_is_reported_as_one_and_writes_nothing(
@@ -351,22 +465,21 @@ def test_a_database_failure_is_reported_as_one_and_writes_nothing(
     assert row_counts(seeded) == (0, 0, 0)
 
 
-def test_the_source_choices_are_exactly_the_sources_that_can_write_production() -> None:
-    """The offered set is derived, so it cannot drift into offering a refusal.
+def test_a_source_the_importer_would_reject_as_a_namespace_is_never_offered() -> None:
+    """The one thing the derivation genuinely buys, checked against the enum.
 
-    ``--source`` is built from ``PROJECTION_IMPORT_SOURCES`` intersected with
-    the profiles registry, which is the same pair of conditions
-    ``import_projection_csv`` enforces. A hand-maintained list would eventually
-    offer an identity-anchor namespace that the importer then rejects as "not a
-    projection CSV source" — a command offering an option that cannot work.
+    ``nba`` and ``fantrax`` are identity-anchor namespaces; ``import_projection_csv``
+    rejects them outright as "not a projection CSV source". Asserted against
+    ``ExternalSource`` rather than against ``_SOURCE_CHOICES``' own expression,
+    so this cannot become the agreeing check its predecessor was.
     """
-    from hoops_gm.ingest.projections.profiles import PROFILES_BY_SOURCE, PROJECTION_IMPORT_SOURCES
+    from hoops_gm.db.models.enums import ExternalSource
 
     action = next(
         action for action in build_parser()._actions if "--source" in action.option_strings
     )
+    choices = set(action.choices or ())
 
-    assert set(action.choices or ()) == {
-        source.value for source in PROJECTION_IMPORT_SOURCES if source in PROFILES_BY_SOURCE
-    }
-    assert action.default == "basketball_monster"
+    assert choices
+    assert ExternalSource.NBA.value not in choices
+    assert ExternalSource.FANTRAX.value not in choices
