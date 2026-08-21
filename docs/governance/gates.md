@@ -15,8 +15,9 @@ Gates exist because this project's failure modes are unusual — see the four po
 - Tests green
 - No secrets, cookies, tokens or `userSecretId` values committed
 - **A new guard needs a mutation check that reproduces the failure it guards against.** Reviewer-enforced, not CI-enforced — say so in the PR. Added 2026-08-20 after one lane was caught twice: its first mutation on a NULL-league guard passed while proving nothing, and weakening an import detector left the suite green because no module used the missed idiom. Its own conclusion, earned rather than reasoned to: *a mutation check that does not reproduce the bug is the same false comfort as a test that does not.* Construct the failure deliberately, then confirm the guard sees it.
+- **The red must be attributable: assert the test is green *before* mutating.** Added the same night, after a lane's harness reported `RED (guard works)` for a test name that did not exist — pytest exits non-zero on a collection error, so a mutation against a missing test is a red that proves nothing. "I mutated it and it went red" is not sufficient; a red caused by a typo, a collection error or an unrelated failure looks identical to a red caused by the guard. Two lines: green first, then mutate, then red.
 
-Enforced by CI, except the bullet marked otherwise.
+Enforced by CI, except the two bullets marked otherwise.
 
 ---
 
@@ -86,6 +87,35 @@ static enumeration of 44 lock sites declared a lock ordering sound, and instrume
 lock and running the code found the inversion in four lines of trace. Driving a real
 refusal rather than reasoning about it: of six conditions driven end to end, four falsified
 copy that had already passed review.
+
+**And a review suggestion can be the dangerous thing.** Later the same night, a reviewer
+proposed an all-or-none CHECK constraint over four new columns — well argued, precedented
+by an existing table's volume-pair CHECKs, and accepted by the author. Implementing it
+turned the migration suite red on a test that looked unrelated. It was not: SQLite cannot
+add a CHECK in place, so the migration needs `batch_alter_table`, which **rebuilds the
+table by copying, dropping the original and renaming** — and ten foreign keys point into
+`players`, eight of them `ON DELETE CASCADE`, including the crosswalk itself, game logs,
+participation and projections. **On a real database that migration silently deletes a
+season of ingested data.** In the suite it surfaced as one surviving row where one was
+expected.
+
+Neither reviewer nor author could have reasoned to it; running it took four minutes. And
+the reason is not that the reviewer was careless — **the suggestion was correct about the
+invariant and wrong only about the cost, and the cost was invisible from the code under
+review.** The reviewer was reading a model file and a migration; the danger lived in ten
+`ON DELETE CASCADE` foreign keys in *other* model files, plus a SQLite implementation
+detail. No amount of care reading that diff surfaces it.
+
+So two rules, the second more useful to whoever writes the next migration:
+
+- **A suggestion is a hypothesis until it has been run**, and its blast radius is not
+  bounded by how well it was argued.
+- **A migration's risk is bounded by what references the table, not by what the migration
+  says.**
+
+Keep both halves of what happened. While briefly active, that same constraint caught a real
+defect — a seed writing a position with no provenance, a shape no real producer can write.
+**A check can be simultaneously right about its invariant and unshippable.**
 
 So, alongside the gate matching your work: **state what each check can and cannot observe
 at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
