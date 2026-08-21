@@ -1,0 +1,209 @@
+{
+  "kind": "nba_injury_report_archive_reach_probe",
+  "observations": [
+    {
+      "entries": 95,
+      "masthead_utc": "2025-11-01T21:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 90,
+      "requested_instant_et": "2025-11-01T17:30:00-04:00",
+      "response_bytes": 78771,
+      "season": "2025-26",
+      "sha256": "8f98f898291ed9c199867c534972729bfd40b59bc0e1243796194ca1e9e53e89",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-11-01_05PM.pdf",
+      "status_counts": {
+        "available": 7,
+        "not_yet_submitted": 5,
+        "out": 67,
+        "probable": 5,
+        "questionable": 11
+      }
+    },
+    {
+      "committed_fixture": "backend/tests/fixtures/nba_injury_report_2025-01-15_0530pm.pdf",
+      "entries": 166,
+      "masthead_utc": "2025-01-15T22:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 161,
+      "requested_instant_et": "2025-01-15T17:30:00-05:00",
+      "response_bytes": 89571,
+      "season": "2024-25",
+      "sha256": "e8824fc221df5b6546e65157a13b9eaa8df0e5c368d0983ddadeb683af80336c",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-01-15_05PM.pdf",
+      "status_counts": {
+        "available": 5,
+        "doubtful": 5,
+        "not_yet_submitted": 5,
+        "out": 119,
+        "probable": 13,
+        "questionable": 19
+      }
+    },
+    {
+      "entries": 156,
+      "masthead_utc": "2024-11-15T22:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 150,
+      "requested_instant_et": "2024-11-15T17:30:00-05:00",
+      "response_bytes": 88619,
+      "season": "2024-25",
+      "sha256": "9b34b529d5d9a22d2e21a6489c148da4806e4f2867d570554586edfc92ca8930",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2024-11-15_05PM.pdf",
+      "status_counts": {
+        "available": 5,
+        "doubtful": 4,
+        "not_yet_submitted": 6,
+        "out": 116,
+        "probable": 8,
+        "questionable": 17
+      }
+    },
+    {
+      "entries": 150,
+      "masthead_utc": "2025-03-15T21:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 140,
+      "requested_instant_et": "2025-03-15T17:30:00-04:00",
+      "response_bytes": 86710,
+      "season": "2024-25",
+      "sha256": "89d6222c2031d621debaea013bf4f30138bcac653c10db4f645d436cf1e3859c",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-03-15_05PM.pdf",
+      "status_counts": {
+        "available": 8,
+        "doubtful": 4,
+        "not_yet_submitted": 10,
+        "out": 103,
+        "probable": 10,
+        "questionable": 15
+      }
+    },
+    {
+      "committed_fixture": "backend/tests/fixtures/nba_injury_report_2024-01-10_0530pm.pdf",
+      "entries": 125,
+      "masthead_utc": "2024-01-10T22:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 119,
+      "requested_instant_et": "2024-01-10T17:30:00-05:00",
+      "response_bytes": 82623,
+      "season": "2023-24",
+      "sha256": "63a097a4b20e6d6b5ab03966dc0491ec6eb7e1ab3303feb24d18b0137f98d0e8",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2024-01-10_05PM.pdf",
+      "status_counts": {
+        "available": 8,
+        "doubtful": 3,
+        "not_yet_submitted": 6,
+        "out": 94,
+        "probable": 3,
+        "questionable": 11
+      }
+    },
+    {
+      "entries": 57,
+      "masthead_utc": "2023-10-25T21:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 55,
+      "requested_instant_et": "2023-10-25T17:30:00-04:00",
+      "response_bytes": 85602,
+      "season": "2023-24",
+      "sha256": "a451a29fe38e961fe0f523ed81cf157b565552df521043b1338710b7185b6e29",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-10-25_05PM.pdf",
+      "status_counts": {
+        "not_yet_submitted": 2,
+        "out": 44,
+        "probable": 2,
+        "questionable": 9
+      }
+    },
+    {
+      "entries": 93,
+      "masthead_utc": "2023-11-15T22:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 93,
+      "requested_instant_et": "2023-11-15T17:30:00-05:00",
+      "response_bytes": 76726,
+      "season": "2023-24",
+      "sha256": "e04338cc0def65925ea6fd82a117ecfdb1251591459d5f77e5209de7ba7b2788",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-11-15_05PM.pdf",
+      "status_counts": {
+        "available": 8,
+        "doubtful": 2,
+        "out": 67,
+        "probable": 7,
+        "questionable": 9
+      }
+    },
+    {
+      "entries": 105,
+      "masthead_utc": "2024-03-15T21:30:00+00:00",
+      "parse_outcome": "parsed",
+      "player_entries": 91,
+      "requested_instant_et": "2024-03-15T17:30:00-04:00",
+      "response_bytes": 79306,
+      "season": "2023-24",
+      "sha256": "ca1a45e34dba963ef61158e17b16fd849c49209c0c69d0401bf79d4dbc33f0a1",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2024-03-15_05PM.pdf",
+      "status_counts": {
+        "available": 6,
+        "doubtful": 1,
+        "not_yet_submitted": 14,
+        "out": 67,
+        "questionable": 17
+      }
+    },
+    {
+      "committed_fixture": "backend/tests/fixtures/nba_injury_report_2023-01-11_0530pm_unsupported_layout.pdf",
+      "parse_error": "[nba_injury_report.InjuryReportPdf] unparseable Game Date ''",
+      "parse_error_type": "SourceContractError",
+      "parse_outcome": "refused",
+      "requested_instant_et": "2023-01-11T17:30:00-05:00",
+      "response_bytes": 35726,
+      "season": "2022-23",
+      "sha256": "0e29abbd4ee168365bbe0a7c11fc247eaecd925f9b8a98bc58f8ac1d78148c27",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-01-11_05PM.pdf"
+    },
+    {
+      "parse_error": "[nba_injury_report.InjuryReportPdf] unparseable Game Date ''",
+      "parse_error_type": "SourceContractError",
+      "parse_outcome": "refused",
+      "requested_instant_et": "2023-04-05T17:30:00-04:00",
+      "response_bytes": 30823,
+      "season": "2022-23",
+      "sha256": "e957f6184c0a9acba681c4f4a8216a63566507eef28829a6063abe9a9df1235c",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-04-05_05PM.pdf"
+    },
+    {
+      "parse_error": "[nba_injury_report.InjuryReportPdf] unparseable Game Date ''",
+      "parse_error_type": "SourceContractError",
+      "parse_outcome": "refused",
+      "requested_instant_et": "2022-01-12T17:30:00-05:00",
+      "response_bytes": 35489,
+      "season": "2021-22",
+      "sha256": "1ca7885944cef86205d7367ab6897aeaef9dcc588fc5ef86e3cfae42eaf53231",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2022-01-12_05PM.pdf"
+    },
+    {
+      "parse_error": "[nba_injury_report.InjuryReportPdf] unparseable Game Date ''",
+      "parse_error_type": "SourceContractError",
+      "parse_outcome": "refused",
+      "requested_instant_et": "2021-02-10T17:30:00-05:00",
+      "response_bytes": 35335,
+      "season": "2020-21",
+      "sha256": "6f0e84e203b75469f05a8806ca7e6ff657cbc5b59511ef58698ff7e263c68e65",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2021-02-10_05PM.pdf"
+    },
+    {
+      "parse_error": "[nba_injury_report.InjuryReportPdf] unparseable Game Date ''",
+      "parse_error_type": "SourceContractError",
+      "parse_outcome": "refused",
+      "requested_instant_et": "2020-01-15T17:30:00-05:00",
+      "response_bytes": 36427,
+      "season": "2019-20",
+      "sha256": "85577271854df99bca76ed05fd41e404ec65a405aee93054a02708f5b1d39898",
+      "source_url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2020-01-15_05PM.pdf"
+    }
+  ],
+  "operator": "data-engineer",
+  "requests_issued": 13,
+  "retrieved_at_utc": "2026-08-21T20:02:48.753897+00:00",
+  "schema_version": 1
+}

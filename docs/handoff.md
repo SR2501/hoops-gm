@@ -13482,3 +13482,170 @@ rule is for.
 - **Whether the resolver has other false-positive classes** beyond the seven-equals one. It
   also performed its resolution when invoked with `--help`, which is worth knowing before
   someone runs it expecting usage text: it ignores arguments and acts.
+
+## 2026-08-21 — data-engineer — The archive reaches back six seasons; our parser reaches back three
+
+**Unit:** `injury-conversion-cohort-widening` Unit 1 — the prior-work review the owner asked
+for before any scraping, plus a bounded live archive-reach probe folded into it by owner
+decision. **No model fitted, no conversion rate emitted, no cohort regenerated.** Units 2–6
+are not started and are explicitly parked behind pre-draft work.
+
+### The literature does not answer the question, and that is the useful finding
+
+There is **no peer-reviewed measurement of NBA injury-report label → play conversion**.
+Searched Sloan's paper archive, arXiv, the sports-analytics journals, and the betting-analytics
+writing where the numbers actually circulate. The familiar rates — `DOUBTFUL` ~25%,
+`QUESTIONABLE` ~50%, `PROBABLE` 75–90% — have **no traceable primary source**; every trail ends
+at a handicapping page restating them with no N, no season and no method. Stated falsifiably in
+`docs/models/injury-status-conversion-literature.md`: disprove it with one citation carrying a
+sample size and a season. I could not.
+
+So our own fit is worth running, and under **ADR-008** those three figures may be compared
+against and never blended in — they belong in the eventual model card's comparison section,
+labelled unsourced, and nowhere a join can reach.
+
+The one genuinely useful paper is **arXiv 2603.26935**, *The Load Management Paradox*, and not
+for its subject: it shows NBA injury models produce *inverted* effects because the risk set is
+enriched for players healthy enough to keep playing. That is selection on a variable downstream
+of the outcome, and it is the reason this unit rejected the proposed minutes floor. Its own
+calibration section — predictions clustered near zero against 2–3% observed, and an explicit
+statement that the models are informative about relative hazard rather than absolute
+probability — is independent support for our Model gate's calibration-first rule, from a source
+with no stake in this project.
+
+### A citation handed to me was dead, which is why "driven, not reasoned" applies to citations
+
+The coordinator made every citation a driven claim. It caught one immediately: the search
+summary's Sloan URL, `sloansportsconference.com/research-papers`, **returns HTTP 404**. The
+working paths are `/research-paper-competition` and `/past-conferences`. Had I passed the
+summary through, the document would have carried a dead link to the single most important venue
+it claims to have searched — and "we searched Sloan" would have been unfalsifiable in the worst
+way: pointing at nothing while looking like provenance.
+
+The other five resolved with **exact-matching titles**, through Crossref (`10.3390/info16080699`,
+`10.3390/computation12020036`), the arXiv API and the PyPI JSON API, on 2026-08-21. One source
+(ESPN) returns HTTP 202 with no extractable title — bot mitigation rather than absence — and is
+cited only for a date corroborated independently inside this repository.
+
+**The general shape:** a citation is a claim about an artefact *outside* this repository, so no
+gate here looks at it. A fabricated-but-plausible arXiv ID is well-formed, correctly formatted,
+names a real venue, and simply is not a thing — the same failure as `gameEt` carrying a `Z` while
+not being UTC. Form validates; referent does not.
+
+### The probe found the boundary was not where anyone thought, in two directions at once
+
+30 live requests. Evidence with per-response SHA-256 at
+`docs/adapters/nba-injury-report-archive-reach-probe.json`.
+
+**The blocking question was the vocabulary.** Secondary sources say the NBA designations are
+Out / Doubtful / Questionable / Available with **no `PROBABLE`**. If true, widening would clear
+the floor for `doubtful` and leave the model unactivatable on `probable` — a multi-hour sweep
+spent to stay blocked on a different status. **It is false.** `PROBABLE` and `DOUBTFUL` both
+appear throughout 2023-24 and 2024-25; the 2025-01-15 report alone carries 13 and 5.
+
+**The second finding needed looking inside the files, and this is the part worth keeping.**
+Reports fetch successfully back to at least **2019-20** — HTTP 200, valid PDF magic, five pages.
+They also fail to parse. Every transport signal said success; the parse error said failure. Had
+the probe stopped at either, it would have reported a wrong answer *in opposite directions*:
+"four more usable seasons" or "the archive stops at 2023-24". Extracting the text settled it —
+they are **complete, genuine reports** in a pre-2023 word-spacing layout
+(`Ball, Lonzo Out Injury/Illness - ...` versus the later `Conley,Mike Out Rest`) that the
+column-bounds detection cannot read. The boundary is bracketed between **2023-04-05** (refused)
+and **2023-10-25** (parsed).
+
+*Validation of form cannot catch errors of meaning* earned its place here twice over — the
+files are valid PDFs that are not readable, and they are unreadable files that are not junk.
+
+Consequence: **three seasons are readable today, which is exactly the three the owner wanted.**
+A fourth is an archive that has the data and a parser that cannot read it — bounded work, not a
+hard limit, and not taken here.
+
+### The refusal is the load-bearing behaviour
+
+A pre-2023 report is the worst shape a bad input can take: it fetches cleanly, so nothing in
+transport notices, and only the parser stands between that layout and a cohort of plausible
+nonsense. So `nba_injury_report_2023-01-11_0530pm_unsupported_layout.pdf` is committed
+deliberately as a fixture that **must fail**, with a companion test asserting it is a *complete
+report* — because a parser refusing a stub proves nothing, and without that assertion the
+refusal test would pass just as happily on an error page.
+
+Four mutation checks, each reproducing the failure its docstring names: green asserted before
+mutating, target text asserted present, mutation asserted applied on disk, red, revert, green.
+All four caught, no skips. M2 is the one I would point a reviewer at — it repoints the
+vocabulary test at a season with no parsed reports, which is the actual failure the guard
+exists to catch, rather than at a generic broken value.
+
+### What the numbers say, and the sequencing finding the brief did not account for
+
+One full season projects to ~37 held-out `doubtful` against a floor of 30 — a **23% margin**, on
+a figure scaled from a December window that is plausibly *peak* `doubtful` density (October
+carries few designations; April converts marginal cases to `out` via shutdowns). Two seasons
+→ ~75, three → ~113. The owner's three-season goal is supported by arithmetic, not only
+ambition. **None of this substitutes for the measured count**, and the first-season go/no-go is
+binding: under 30, stop and report rather than proceed on the multiplier's authority.
+
+**The sweep is a box-score ingest with an injury-report attachment, not the other way round.**
+Participation dominates report fetching ~2.7× in requests and ~4× in wall time (~3,690 vs
+~1,350 across three seasons), and `enforce_expected_game_coverage` is fail-closed on every
+expected game, so a season is ingested whole or not at all. There is no partial-season shortcut.
+
+### Two mistakes I made in this unit
+
+**I rewrote another lane's fixture-manifest entries.** My first script wrote the manifest with
+`sort_keys=True` and `ensure_ascii=False`, producing 53 insertions and **20 deletions** for
+three added entries: an em-dash escape was un-escaped and an entry moved. Caught by reading the
+diff rather than the exit code. Reverted and rewritten to assert `json.dumps(d, indent=2)`
+round-trips the file **byte-identically before any entry is added**, refusing to write
+otherwise. Result: 33 insertions, **0 deletions**. The lesson is narrow and reusable — *a
+formatting-normalising write is a rewrite of everything it touches, and it looks like an
+append.*
+
+**And the plan I had approved contained a dangling cross-reference.** Folding the probe into
+Unit 1 left §5 pointing twice at a "Unit 2" that no longer existed. The coordinator caught it.
+Harmless in a plan, not harmless in `docs/models/`, where a reader chasing Unit 2 cannot tell
+whether the probe was dropped or renamed. Units are contiguous in the committed document, and
+it states explicitly that the coordinator's binding condition on "Unit 4" now attaches to
+Unit 3.
+
+Separately, `docs/backlog.md`'s header prose said "114 headings and 114 markers" while its own
+header line said 115 total — stale prose from an earlier count. Recomputed from the finished
+file: **41 done / 1 blocked / 74 pending / 116 total**, 116 headings against 116 markers, 1:1,
+no duplicate names, after adding `injury-conversion-cohort-widening`. Both numbers now agree
+because both were derived, not reconciled.
+
+### Could not verify
+
+Split by whether the belief was **driven** or **reasoned**, because that distinction is where
+this project's reasoning is historically least disciplined.
+
+- **CI on this head.** Not pushed when written. Local gates green: 1,288 offline tests (35
+  `live_smoke` deselected), Ruff lint and format, strict mypy over 141 files. *Driven, but not
+  the check that counts.*
+- **The full-season `doubtful` projection of ~149.** Scaled from one December window. The
+  seasonality argument for it being an *over*estimate is **reasoned, not driven**, and it is
+  precisely the number the Unit 3 go/no-go exists to replace with a measurement.
+- **Participation wall-time and request estimates.** Derived from the client's 1.1 s interval
+  and game counts. **Reasoned.** No season ingest has been run; retries, 429s and parse failures
+  are not modelled, so the 2–4.5 h figure is a floor wearing a range.
+- **That the PDF layout is stable *within* each supported season.** Four reports probed for
+  2023-24 and three for 2024-25, spread across each. **Driven but not exhaustive** — a
+  mid-season layout change inside a supported season would not have been caught, and I do not
+  claim it cannot happen.
+- **That no relevant Sloan paper exists.** Absence of evidence from four searches, and Sloan
+  proceedings are not uniformly indexed. **Reasoned.** The claim I actually hold is narrower:
+  none surfaced through any route tried. I did not enumerate the archive year by year, and I
+  should not be read as having done so.
+- **That the era-boundary lead-time argument holds quantitatively.** The *mechanism* is driven
+  from the documented candidate strategies; the *size* of the lead-time shift is **reasoned**
+  and unmeasured until a widened cohort exists.
+- **Whether the pre-2023 layout is recoverable.** The parser refuses it and I made no attempt to
+  read it, so the cost of a fourth season is **unknown**, not high. I want to flag that I was
+  tempted to write "expensive" and have no basis for it.
+- **That ~40,000 rows for three seasons is "nothing".** Extrapolated from ~11 designated players
+  per game in the committed cohort. **Reasoned**, and it is load-bearing for the scope argument
+  against a minutes floor, so it is the estimate most worth attacking.
+
+No live source was called beyond the 30 probe requests and 4 live-smoke fetches, no fit was run,
+no number a decision rests on was emitted, and no owner-only decision was made. The decision to
+widen remains the owner's; this unit establishes only that widening *can* work and what it will
+cost.
