@@ -96,6 +96,8 @@ class ScheduleImportSummary:
     resolved_game_count: int
     pending_game_ids: tuple[str, ...]
     pending_game_labels: tuple[str, ...]
+    pending_game_ids_without_a_date: tuple[str, ...]
+    pending_game_date_absence: tuple[tuple[str, str], ...]
     first_game_date: str
     last_game_date: str
     dry_run: bool
@@ -114,6 +116,21 @@ class ScheduleImportSummary:
                 "pending_game_count": len(self.pending_game_ids),
                 "pending_game_ids": list(self.pending_game_ids),
                 "pending_game_labels": list(self.pending_game_labels),
+                # Reported even when empty, and named for what it is. A pending
+                # game whose date the source did not give is recorded with
+                # `game_date: null` rather than refusing, so without this line
+                # the operator running the importer on draft morning would see
+                # six pending Cup games and no indication that one of them
+                # cannot be placed in a week. The nightly live smoke catches it
+                # too, but a day later and only on `main`.
+                "pending_game_ids_without_a_date": list(self.pending_game_ids_without_a_date),
+                # Which of three causes, per game. `not_offered` means the
+                # source has not committed to a date and the right response is
+                # to wait; `unreadable` means it gave one we could not parse,
+                # and the right response is to investigate. Reporting only the
+                # ids would tell an operator to wait in a case where they
+                # should be looking at the payload.
+                "pending_game_date_absence": dict(self.pending_game_date_absence),
                 "first_game_date": self.first_game_date,
                 "last_game_date": self.last_game_date,
                 "teams_created": self.teams_created,
@@ -150,6 +167,14 @@ def summarise(parsed: ScheduleParseResult, *, dry_run: bool) -> ScheduleImportSu
         resolved_game_count=len(parsed.games),
         pending_game_ids=parsed.pending_game_ids,
         pending_game_labels=tuple(labels),
+        pending_game_ids_without_a_date=tuple(
+            game.nba_game_id for game in parsed.pending_games if game.game_date is None
+        ),
+        pending_game_date_absence=tuple(
+            (game.nba_game_id, game.date_absence_reason)
+            for game in parsed.pending_games
+            if game.date_absence_reason
+        ),
         first_game_date=dates[0].isoformat() if dates else "",
         last_game_date=dates[-1].isoformat() if dates else "",
         dry_run=dry_run,
@@ -178,6 +203,8 @@ def import_season_schedule(
         resolved_game_count=summary.resolved_game_count,
         pending_game_ids=summary.pending_game_ids,
         pending_game_labels=summary.pending_game_labels,
+        pending_game_ids_without_a_date=summary.pending_game_ids_without_a_date,
+        pending_game_date_absence=summary.pending_game_date_absence,
         first_game_date=summary.first_game_date,
         last_game_date=summary.last_game_date,
         dry_run=False,
@@ -245,6 +272,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             database.dispose()
 
     print(summary.as_json())
+    if summary.pending_game_ids_without_a_date:
+        detail = ", ".join(
+            f"{game_id} ({why})" for game_id, why in summary.pending_game_date_absence
+        )
+        print(
+            f"\n{len(summary.pending_game_ids_without_a_date)} pending game(s) carry no usable "
+            f"date: {detail}. They cannot be attributed to a scoring period until the source "
+            "publishes one. 'not_offered' means the source has not committed to a date and "
+            "there is nothing to do; 'unreadable' means it published a value this parser could "
+            "not read, which is a fault to investigate rather than a decision to wait for.",
+            file=sys.stderr,
+        )
     if summary.pending_game_ids:
         print(
             f"\n{len(summary.pending_game_ids)} game(s) are published without teams and were "

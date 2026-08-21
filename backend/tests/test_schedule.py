@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -357,6 +358,7 @@ def test_schedule_import_records_source_declared_pending_games_without_refusing(
                 "game_label": "Emirates NBA Cup",
                 "game_sub_label": "",
                 "game_subtype": "",
+                "date_absence_reason": "",
             },
             {
                 "nba_game_id": "0022601202",
@@ -364,6 +366,7 @@ def test_schedule_import_records_source_declared_pending_games_without_refusing(
                 "game_label": "Emirates NBA Cup",
                 "game_sub_label": "",
                 "game_subtype": "",
+                "date_absence_reason": "",
             },
         ],
     }
@@ -454,18 +457,62 @@ def test_a_degenerate_pending_date_does_not_cost_the_whole_season() -> None:
         assert len(result.pending_games) == 6, f"{mutation} cost a pending game"
         assert result.unresolved_game_ids == ()
         degraded = {
-            game.nba_game_id: game.game_date
+            game.nba_game_id: game.date_absence_reason
             for game in result.pending_games
             if game.game_date is None
         }
-        assert degraded == {"0022601229": None}, mutation
+        expected_reason = {
+            "disagree": "irreconcilable",
+            "unparseable": "unreadable",
+            "absent": "not_offered",
+        }[mutation]
+        assert degraded == {"0022601229": expected_reason}, mutation
         # Every other pending game keeps its date; the leniency is per game,
         # not a blanket loss of the field.
         assert all(
-            game.game_date is not None
+            game.game_date is not None and game.date_absence_reason == ""
             for game in result.pending_games
             if game.nba_game_id != "0022601229"
         )
+
+
+def test_the_three_causes_of_a_missing_pending_date_are_not_conflated() -> None:
+    """``None`` alone said "not yet decided" for two causes where that is false.
+
+    One ``except`` covered both time parses, so a null date meant any of: the
+    source declined to give a date, the source gave one we could not read, or
+    the source's two fields contradict each other. **Only the first is "not
+    yet decided."** The conflation ran in the comforting direction — told the
+    source has not decided, an operator waits; told the date could not be
+    read, an operator investigates — and it sat inside the very field added so
+    a published fact would not be reported as a fault.
+
+    The distinction is cleanly available in the payload: absent-or-empty is
+    distinguishable from present-but-malformed before any parse is attempted.
+    So the cause is recorded rather than the boundary being moved, which would
+    have put a season-killing refusal back on a field nothing persists.
+    """
+    causes: dict[str, Callable[[dict[str, Any]], None]] = {
+        "not_offered": lambda g: g.__setitem__("gameDateTimeEst", ""),
+        "unreadable": lambda g: g.__setitem__("gameDateTimeEst", "not a timestamp"),
+        "irreconcilable": lambda g: g.__setitem__("gameDateTimeEst", "2026-12-08T00:30:00Z"),
+    }
+    for expected, mutate in causes.items():
+        payload = load(PENDING_FIXTURE)
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] == "0022601229":
+                    mutate(game)
+
+        result = parse_schedule(payload, season="2026-27")
+
+        by_id = {game.nba_game_id: game for game in result.pending_games}
+        assert by_id["0022601229"].date_absence_reason == expected
+        assert by_id["0022601229"].game_date is None
+        # A game that kept its date carries no reason: the two halves of the
+        # same fact must never disagree.
+        assert by_id["0022601201"].date_absence_reason == ""
+        assert by_id["0022601201"].game_date is not None
 
 
 def test_a_degenerate_date_on_a_RESOLVED_game_still_kills_the_import() -> None:

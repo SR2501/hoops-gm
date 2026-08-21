@@ -1247,8 +1247,18 @@ def test_seed_imports_the_pending_cup_games_rather_than_filtering_them_out(
     }
     assert not (served & team_labels), served & team_labels
     assert {frozenset(game) for game in schedule["pending_games"]} == {
-        frozenset({"nba_game_id", "game_date", "game_label", "game_sub_label", "game_subtype"})
+        frozenset(
+            {
+                "nba_game_id",
+                "game_date",
+                "game_label",
+                "game_sub_label",
+                "game_subtype",
+                "date_absence_reason",
+            }
+        )
     }
+    assert all(game["date_absence_reason"] == "" for game in schedule["pending_games"])
 
 
 def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(

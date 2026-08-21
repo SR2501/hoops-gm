@@ -76,6 +76,12 @@ class PendingScheduleGameLineage(BaseModel):
     reconcile — "we do not know when", stated rather than guessed. A consumer
     must then treat the game as belonging to no known period rather than
     dropping it: it is still a published game.
+
+    ``date_absence_reason`` names *which* of three causes, because they are
+    not the same news and only one is "not yet decided": ``not_offered`` (the
+    source gave no date — wait), ``unreadable`` (it gave one we could not
+    parse — investigate), ``irreconcilable`` (its two time fields contradict
+    each other). ``""`` when ``game_date`` is present.
     """
 
     nba_game_id: str
@@ -83,6 +89,7 @@ class PendingScheduleGameLineage(BaseModel):
     game_label: str
     game_sub_label: str
     game_subtype: str
+    date_absence_reason: str
 
 
 class ScheduleRefreshLineage(BaseModel):
@@ -563,6 +570,7 @@ def get_current_schedule_grid(
                         game_label=game.game_label,
                         game_sub_label=game.game_sub_label,
                         game_subtype=game.game_subtype,
+                        date_absence_reason=game.date_absence_reason,
                     )
                     for game in completeness.pending_games
                 ],

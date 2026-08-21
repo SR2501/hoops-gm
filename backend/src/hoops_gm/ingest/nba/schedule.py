@@ -287,13 +287,13 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
     and independently reconciled to the UTC sibling.  This prevents the
     schedule adapter from repeating the project's prior mislabeled-time bug.
 
-    The reconciliation runs for pending games too, on the same terms. Their
-    published tip-off is a provisional Eastern midnight, and verified against
-    the live 2026-27 payload on 2026-08-20 the two fields agree exactly
-    (``2026-12-04T00:00:00Z`` Eastern against ``2026-12-04T05:00:00Z`` UTC).
-    Exempting them would be the one place in this parser where a time claim
-    went unchecked, and pending games are precisely the entries the source is
-    most likely to reshape.
+    **Pending games are reconciled but do not refuse on failure.** The same
+    two fields are read, and an unusable result degrades the pending game's
+    date to ``None`` with a recorded cause instead of raising — see
+    :func:`_pending_game_date` for why the asymmetry is drawn there and not
+    somewhere else. Classification therefore happens *before* the strict
+    reconciliation below, which is what keeps one bad timestamp on one undrawn
+    Cup fixture from costing the other 1,200 games.
     """
 
     league_schedule = payload.get("leagueSchedule")
@@ -329,13 +329,15 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                 continue
 
             if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
+                game_date_value, absence_reason = _pending_game_date(raw_game, game_id)
                 pending.append(
                     PendingScheduleGame(
                         nba_game_id=game_id,
-                        game_date=_pending_game_date(raw_game, game_id),
+                        game_date=game_date_value,
                         game_label=_optional_text(raw_game, "gameLabel"),
                         game_sub_label=_optional_text(raw_game, "gameSubLabel"),
                         game_subtype=_optional_text(raw_game, "gameSubtype"),
+                        date_absence_reason=absence_reason,
                     )
                 )
                 continue
@@ -484,15 +486,17 @@ def _rest_days_by_team_game(
     return rest_by_team_game
 
 
-def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> date | None:
-    """The Eastern date of a pending game, or ``None`` if it is not trustworthy.
+def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> tuple[date | None, str]:
+    """The Eastern date of a pending game, and why it is absent when it is.
 
-    **Deliberately lenient where the resolved path is strict, and the
-    asymmetry is the point.** A resolved game's date is persisted, joins
-    ``player_participation``, and is the denominator of every expected-games
-    number, so a bad one must stop everything. A pending game's date is
-    persisted nowhere: it exists only to tell a consumer *which scoring period
-    is provisional*.
+    **Deliberately lenient where the resolved path is strict.** The rule is
+    *strictness proportional to the consequence of being wrong*, and the
+    consequence is set by whether the value is persisted and joined. A resolved
+    game's date becomes ``team_schedule`` rows, joins ``player_participation``,
+    and is the denominator of every expected-games number, so a bad one must
+    stop everything. A pending game's date is persisted nowhere: it exists only
+    to tell a consumer *which scoring period is provisional*, and a missing one
+    costs a screen affordance.
 
     Applying the strict reconciliation here meant one degenerate timestamp on
     one undrawn Cup fixture returned **no season at all** — not 1,200 games
@@ -503,21 +507,52 @@ def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> date | N
     a degenerate year-0001 sentinel for ``gameTimeEst`` where a resolved game
     uses 1900.
 
-    So an unreconcilable pending date degrades to ``None`` — "the source has
-    not told us when" — rather than being guessed at or raising. The drift
-    signal is not lost, it is moved to where it belongs: the live smoke
-    asserts every pending game still has a date today, so a source that starts
-    withholding them goes red loudly without costing the season.
+    **Not** because the two time fields are non-independent. They are — a
+    game's ``gameDateTimeUTC`` is an exact offset conversion of its
+    ``gameDateTimeEst`` — but that is true of every game in the payload,
+    resolved and pending alike, so it cannot ground an asymmetry between them.
+    An earlier version of this docstring gave that as the reason; if it held it
+    would equally justify deleting the resolved-side check. The resolved check
+    stays because it costs nothing and would catch a schema change, which is a
+    legitimate reason to keep a guard the current source cannot trip.
+
+    **The reason is returned, not just the absence, because the three causes
+    are not the same news and only one of them is "not yet decided".** A bare
+    ``None`` conflated *the source declined to give a date* with *we could not
+    read the date it gave*, and the conflation ran in the comforting
+    direction: told the source has not decided, an operator waits; told the
+    date could not be read, an operator investigates. Reporting the cause is
+    cheaper and more honest than either conflating them or moving the refusal
+    boundary back onto a field nothing persists:
+
+    ``""``
+        A date was published and reconciled.
+    ``not_offered``
+        The field is absent or empty. This is the only cause that means "the
+        source has not committed to a date."
+    ``unreadable``
+        A value was published and we could not parse it, or it carried a
+        timezone where an Eastern wall clock is expected. **This is our
+        failure or a schema change, not an undecided bracket**, and the live
+        smoke asserts it never occurs.
+    ``irreconcilable``
+        Both fields parsed and disagree — the source contradicting itself. A
+        year-0001 sentinel in one field and a real instant in the other lands
+        here, which is the shape actually observed for undecided *times*.
     """
 
+    for key in ("gameDateTimeUTC", "gameDateTimeEst"):
+        value = raw_game.get(key)
+        if value is None or value == "":
+            return None, "not_offered"
     try:
         utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
         eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
     except SourceContractError:
-        return None
+        return None, "unreadable"
     if eastern_tipoff.astimezone(UTC) != utc_tipoff:
-        return None
-    return eastern_tipoff.date()
+        return None, "irreconcilable"
+    return eastern_tipoff.date(), ""
 
 
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:

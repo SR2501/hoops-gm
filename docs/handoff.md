@@ -9713,3 +9713,92 @@ semifinals), not from an observation of a season where it was exceeded. And
 PostgreSQL remains CI-only.
 
 **Next:** re-review on the new head, then merge. Three PRs are queued behind this one.
+
+---
+
+## 2026-08-21 — data-engineer — Fifth round: `None` was telling the operator to wait when it should have said investigate
+
+**Changed:** Closed the fifth review round on the ADR-013 unit — three
+doc/code contradictions, an operator-facing signal that had not been rebuilt,
+and a contract defect the frontend lane found by reading my source.
+
+**The defect: one `except` gave `null` three causes and only one of them meant
+"not yet decided".** `_pending_game_date` wrapped both the UTC and the Eastern
+parse in a single `except SourceContractError: return None`, so a null date
+meant any of: the source declined to give a date, the source gave one this
+parser could not read, or the source's two fields contradict each other. My
+function summary said "or `None` if it is not trustworthy" — honest — and the
+paragraph under it read as though null meant the source had not said when. A
+consumer inherited that and was about to put it on a screen.
+
+**The direction is why it is a defect and not a wording nit.** Told the source
+has not decided, an operator *waits*. Told the date could not be read, an
+operator *investigates*. So the contract erred toward comfort about a
+data-reading failure — inside the very field added so a published fact would
+not be reported as a fault.
+
+**The distinction is cleanly available in the payload**, which is what made a
+third option better than the two on offer. Absent-or-empty is distinguishable
+from present-but-malformed *before any parse is attempted*. So rather than
+conflating the causes, or narrowing the `except` and putting a season-killing
+refusal back on a field nothing persists, the **cause is recorded**:
+`date_absence_reason` ∈ `{"", not_offered, unreadable, irreconcilable}`, closed
+set, validated, and cross-checked against `game_date` so a reason without an
+absence or an absence without a reason is refused. `unreadable` is the one the
+live smoke now asserts never occurs, because it is our failure or a schema
+change rather than an undecided bracket.
+
+This is the repo's own "capture reason codes, not just the outcome" applied to
+a parse result rather than a DNP.
+
+**Three doc/code contradictions, all mine, all in the class gates cannot
+catch.** `parse_schedule`'s docstring still said the reconciliation "runs for
+pending games too, on the same terms" — forty lines above a helper whose
+docstring says the opposite at length. The adapter doc repeated it, showed
+`game_date` as a string in the published consumer contract with no mention of
+nullability, and its fails-closed list re-conflated `_require_known_teams` with
+`unresolved_game_ids` a hundred lines after a table that separates them. The
+one document a downstream lane actually reads was the one that had it wrong.
+
+**The loudness finding, which I had half-fixed and did not realise was half.**
+Before this unit, an upstream change to pending time fields produced exit 2, a
+named game, and nothing written. After it: exit 0, a successful import, and
+silence — the `null` landing in a lineage row nobody looks at. I had framed
+this as "the signal moved to the live smoke". What actually happened is that
+the *loud half* — the operator at a terminal running a real import — was not
+rebuilt. Now `pending_game_ids_without_a_date`, `pending_game_date_absence`
+and a stderr line that says which response each cause calls for.
+
+**A stale "could not verify" of mine, caught by a reviewer.** My previous entry
+said the live smoke had not been re-run since the cardinality ceiling and date
+probe were added. It had — 4 probes green at `bf4c2b0`, run after the push. The
+sentence was written before the run and not corrected after it. A "could not
+verify" list is worth exactly as much as its freshness, and a stale one is
+worse than none because it reads as current.
+
+**A concurrency hazard worth recording.** A reviewer's mutation and my edits
+collided in this shared worktree: its narrowed `_TEAM_IDENTITY_FIELDS` was left
+in the tree, and separately one of its writes landed mid-run and produced a
+`JSONDecodeError` in an unrelated suite that looked like a real failure. The
+narrowing was caught by the very test written for it. The reviewer hit the
+mirror image — its mutation was clobbered by my write and briefly reported a
+false green — and moved to an isolated detached worktree. **A reviewer and an
+author sharing a worktree can each silently destroy the other's evidence**, and
+both directions produce a green that means nothing.
+
+**Verified end to end on the final code**, not inherited from the earlier run:
+30 teams, 1,200 `nba_games`, 2,400 `team_schedule` rows at 80 per team,
+`source 1206 = resolved 1200 + pending 6`, no undated pending games, exit 0.
+Ruff, format, strict mypy over 138 files, and the full offline suite green.
+
+**Could not verify:** PostgreSQL, still CI-only, still not claimed. The live
+smoke has **not** been re-run since adding the `unreadable` assertion and the
+zero-pending drawn-bracket branch in this round — that is true as of writing
+and I will say so again only if it stays true. The `<= 6` ceiling remains
+derived from the bracket's shape rather than observed to be exceeded. And the
+`date_absence_reason` states are exhaustive over *this parser's* failure
+modes, not over what the source might do — a value it invents lands in
+`unreadable` by construction, which is the safe direction but is not the same
+as having seen it.
+
+**Next:** re-review this head. Three lanes are queued behind.

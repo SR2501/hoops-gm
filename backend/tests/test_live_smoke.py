@@ -523,6 +523,18 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
     #: point is that an unrecognised label is a finding, not a variation.
     EXPLICABLE_LABELS: ClassVar[set[str]] = {"Emirates NBA Cup"}
     EXPLICABLE_SUBTYPES: ClassVar[set[str]] = {"in-season-knockout"}
+    #: The 2026-27 knockout ids observed pending on 2026-08-20. Named so an
+    #: empty pending set can be distinguished from a vanished one: once the
+    #: bracket is drawn these become resolved games, and that is the *expected*
+    #: end state rather than a drift signal.
+    KNOCKOUT_GAME_IDS: ClassVar[set[str]] = {
+        "0022601201",
+        "0022601202",
+        "0022601203",
+        "0022601204",
+        "0022601229",
+        "0022601230",
+    }
 
     def test_the_forward_season_accounts_for_every_game_it_publishes(
         self, nba: NbaStatsClient
@@ -589,17 +601,31 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
             "'pending' is silently absorbing a different failure and the ADR says to revert "
             "to refusing rather than to widen this set"
         )
-        assert observed, (
-            f"the live {FIXTURE_CURRENT_SEASON} schedule reports no pending games at all. The "
-            "Cup knockout bracket is published undecided until December; an empty set means "
-            "the source changed what it publishes, not that the season is fully scheduled"
-        )
+        if not observed:
+            # Zero pending is the *expected end state*, not a failure: the
+            # bracket is drawn in December and the six knockout fixtures then
+            # become real games. Asserting a non-empty floor would therefore go
+            # red mid-season and say something flatly false — training the
+            # owner to ignore the one alarm ADR-013 says to revert on.
+            #
+            # What must still hold is that they went away by being *decided*,
+            # not by the source dropping them. So an empty pending set is
+            # accepted only alongside evidence the ids now resolve.
+            resolved_ids = {record.game.nba_game_id for record in result.games}
+            drawn = self.KNOCKOUT_GAME_IDS & resolved_ids
+            assert drawn, (
+                f"the live {FIXTURE_CURRENT_SEASON} schedule reports no pending games, and none "
+                f"of the knockout ids {sorted(self.KNOCKOUT_GAME_IDS)} resolved either. The "
+                "being drawn would move them from pending to resolved; both sets empty means "
+                "the source stopped publishing them, which changes what a complete season is"
+            )
+            return
         assert len(observed) <= 6, (
             f"{len(observed)} games are pending, but the Emirates NBA Cup knockout bracket "
-            "above group play is four quarterfinals and two semifinals — six. A correctly "
-            "labelled set larger than the bracket means the labels have stopped bounding the "
-            "class, so structural explicability no longer follows from them and ADR-013's "
-            f"premise needs re-checking: {sorted(observed)}"
+            "above group play is four quarterfinals and two semifinals — six, and the final "
+            "carries no regular-season id. A correctly labelled set larger than the bracket "
+            "means the labels have stopped bounding the class, so structural explicability no "
+            f"longer follows from them and ADR-013's premise needs re-checking: {sorted(observed)}"
         )
         assert {labels[1] for labels in observed.values()} <= {"Quarterfinal", "Semifinal"}, (
             f"a pending game carries an unexpected sub-label: {sorted(observed.values())}"
@@ -625,13 +651,23 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
         )
 
         undated = [game.nba_game_id for game in result.pending_games if game.game_date is None]
+        unreadable = {
+            game.nba_game_id: game.date_absence_reason
+            for game in result.pending_games
+            if game.date_absence_reason == "unreadable"
+        }
 
+        assert not unreadable, (
+            f"pending games {sorted(unreadable)} published a date this parser could not read. "
+            "This is NOT an undecided bracket -- it is our failure or a schema change, and it "
+            "is the one absence cause that means investigate rather than wait"
+        )
         assert not undated, (
             f"pending games {undated} no longer carry a date whose EST and UTC fields "
-            "reconcile. The parser degraded them to None rather than refusing the season, so "
-            "nothing is broken -- but a consumer can no longer say which scoring period is "
-            "provisional for these games. Check whether the source changed its time fields "
-            "for undecided fixtures before changing any code"
+            "reconcile. The parser degraded them rather than refusing the season, so nothing "
+            "is broken -- but a consumer can no longer say which scoring period is provisional "
+            "for these games. Check whether the source changed its time fields for undecided "
+            "fixtures before changing any code"
         )
 
     def test_a_pending_game_still_carries_no_team_identity_at_all(

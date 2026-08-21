@@ -589,6 +589,22 @@ def test_the_pending_block_the_importer_writes_round_trips() -> None:
             ),
             "none resolved",
         ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", "because"),
+            "unknown date_absence_reason",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", "not_offered"),
+            "game_date present but date_absence_reason 'not_offered'",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", 7),
+            "non-string date_absence_reason",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("game_date", None),
+            "game_date absent but date_absence_reason ''",
+        ),
         (lambda b: b.__setitem__("source_game_count", 7), "5 resolved and 1 pending"),
     ],
     ids=[
@@ -607,6 +623,10 @@ def test_the_pending_block_the_importer_writes_round_trips() -> None:
         "duplicate-pending-id",
         "pending-also-unresolved",
         "everything-pending-nothing-resolved",
+        "unknown-absence-reason",
+        "reason-without-an-absence",
+        "non-string-absence-reason",
+        "absence-without-a-reason",
         "count-ignores-pending",
     ],
 )
@@ -675,6 +695,7 @@ def test_a_pending_game_with_no_known_date_round_trips_as_null() -> None:
                 game_label="Emirates NBA Cup",
                 game_sub_label="Quarterfinal",
                 game_subtype="in-season-knockout",
+                date_absence_reason="not_offered",
             ),
         ),
     ).as_summary()
@@ -682,9 +703,11 @@ def test_a_pending_game_with_no_known_date_round_trips_as_null() -> None:
     serialised = block["pending_games"]
     assert isinstance(serialised, list)
     assert serialised[0]["game_date"] is None
+    assert serialised[0]["date_absence_reason"] == "not_offered"
     completeness = schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
     assert completeness is not None
     assert completeness.pending_games[0].game_date is None
+    assert completeness.pending_games[0].date_absence_reason == "not_offered"
 
 
 def test_the_pending_overlap_guard_is_reachable_and_outranks_the_general_refusal() -> None:

@@ -49,6 +49,11 @@ SCHEDULE_CONTEXT_SOURCE_KEY = "schedule-context-observations"
 #: registrations and are compared by version string alone.
 SCHEDULE_COMPLETENESS_SUMMARY_KEY = "schedule_completeness"
 
+#: Why a pending game carries no date. Closed on purpose: an unrecognised
+#: value is a finding, not a variation, because a consumer keys behaviour on
+#: these — ``not_offered`` means wait, ``unreadable`` means investigate.
+_DATE_ABSENCE_REASONS: frozenset[str] = frozenset({"not_offered", "unreadable", "irreconcilable"})
+
 #: Identifies the serialisation below. Bumping it deliberately invalidates
 #: every previously registered schedule version, because a fingerprint is only
 #: meaningful relative to the exact bytes it was computed over.
@@ -111,6 +116,15 @@ class PendingScheduleGame:
     reconcile or are absent — "we do not know when", stated rather than
     guessed. A consumer must then treat the game as belonging to no known
     period rather than dropping it, because the game is still published.
+
+    ``date_absence_reason`` says *why*, and the three causes are not the same
+    news. ``not_offered`` is the only one that means the source has not
+    committed to a date; ``unreadable`` means we could not parse a value it
+    did give, which is a fault to investigate rather than a decision to wait
+    for; ``irreconcilable`` means the source's two time fields contradict each
+    other. It is ``""`` when ``game_date`` is present. Reporting the cause is
+    what stops ``None`` reading as "not yet decided" in every case, which is
+    the comforting direction and was wrong in two of three.
     """
 
     nba_game_id: str
@@ -118,6 +132,7 @@ class PendingScheduleGame:
     game_label: str
     game_sub_label: str
     game_subtype: str
+    date_absence_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -174,10 +189,11 @@ class ScheduleCompleteness:
             "pending_games": [
                 {
                     "nba_game_id": game.nba_game_id,
-                    "game_date": game.game_date.isoformat() if game.game_date else None,
+                    "game_date": game.game_date.isoformat() if game.game_date is not None else None,
                     "game_label": game.game_label,
                     "game_sub_label": game.game_sub_label,
                     "game_subtype": game.game_subtype,
+                    "date_absence_reason": game.date_absence_reason,
                 }
                 for game in self.pending_games
             ],
@@ -233,6 +249,29 @@ def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]
             raise ValueError(f"{key}.pending_games entry has a non-string id or date")
         if not all(isinstance(label, str) for label in labels):
             raise ValueError(f"{key}.pending_games entry has a non-string label")
+        # Absent key reads as "". There is no legacy producer to accommodate:
+        # `pending_games` did not exist before ADR-013, so every block
+        # carrying one was written by this importer. The consistency check
+        # below therefore holds strictly — an absent date with no reason is a
+        # block nothing wrote.
+        absence_reason = record.get("date_absence_reason", "")
+        if not isinstance(absence_reason, str):
+            raise ValueError(f"{key}.pending_games entry has a non-string date_absence_reason")
+        if absence_reason and absence_reason not in _DATE_ABSENCE_REASONS:
+            raise ValueError(
+                f"{key}.pending_games entry has an unknown date_absence_reason "
+                f"{absence_reason!r}; expected one of {sorted(_DATE_ABSENCE_REASONS)}"
+            )
+        if (parsed_date_is_absent := game_date is None) != bool(absence_reason):
+            # A reason without an absence, or an absence without a reason,
+            # means the two halves of the same fact disagree — and a consumer
+            # reading only one of them would be told something the other
+            # denies.
+            raise ValueError(
+                f"{key}.pending_games entry has game_date "
+                f"{'absent' if parsed_date_is_absent else 'present'} but "
+                f"date_absence_reason {absence_reason!r}"
+            )
         try:
             parsed_date = date.fromisoformat(game_date) if game_date is not None else None
         except ValueError as exc:
@@ -244,6 +283,7 @@ def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]
                 game_label=str(labels[0]),
                 game_sub_label=str(labels[1]),
                 game_subtype=str(labels[2]),
+                date_absence_reason=absence_reason,
             )
         )
 

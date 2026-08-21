@@ -117,11 +117,46 @@ This is the same class of semantic check documented for `gameEt` and
 `gameTimeUTC` in [`nba-stats.md`](nba-stats.md): a well-formed timezone marker
 does not prove that a field means what its label claims.
 
-The reconciliation runs for pending games too. Their published tip-off is a
-provisional Eastern midnight and the two fields agree exactly
-(`2026-12-04T00:00:00Z` Eastern against `2026-12-04T05:00:00Z` UTC). Exempting
-them would leave the one unchecked time claim in the parser on precisely the
-entries the source is most likely to reshape.
+**Pending games are reconciled the same way but do not refuse on failure.** A
+pending game's date degrades to `None` — recorded as "the source has not told
+us when" — while a resolved game's date still raises. The rule is
+*strictness proportional to the consequence of being wrong*, and the
+consequence is set by whether the value is persisted and joined: a resolved
+date becomes `team_schedule` rows and the denominator of every expected-games
+number downstream, whereas a pending date is persisted nowhere and exists only
+to say which scoring period is provisional.
+
+This is a correction, recorded rather than quietly replaced. An earlier version
+of this document argued that exempting pending games would leave "the one
+unchecked time claim in the parser". That was wrong twice over. It was wrong on
+consequence, because the strict check meant **one degenerate timestamp on one
+undrawn Cup fixture returned no season at all** — not 1,200 games with one
+flagged, not even a `--dry-run` view — which is ADR-013's explicitly rejected
+outcome arriving through a different field. And the source signals the date is
+provisional twice: every pending game carries
+`seriesText: "Date subject to change"`, and these same objects use a degenerate
+`gameTimeEst` of `0001-01-01T00:00:00Z` where a resolved game uses
+`1900-01-01`.
+
+It was also *not* wrong for the reason first given for correcting it. The claim
+that a pending game's `gameDateTimeUTC` is merely the source's own arithmetic on
+`gameDateTimeEst`, so the check compares a derivation against its own input, is
+true — but it is true of **all 24 games in the fixture, resolved and pending
+alike**, so it cannot ground an asymmetry between them. If it justified leniency
+for pending games it would equally justify deleting the resolved-side check.
+Consequence is the ground; independence is not.
+
+The resolved-side check is kept precisely because it costs nothing and would
+catch a schema change, which is a legitimate reason to hold a guard the current
+source cannot trip.
+
+**Where the drift signal lives.** Not in the parser, and it never could have
+been. An offline contract test runs against a committed fixture that by
+construction never changes, so it cannot detect the source withholding a date;
+the parser's strictness was a refusal policy, not a detector, and firing it
+meant destroying the import. Detection lives in the live smoke
+(`test_every_pending_game_still_has_a_reconcilable_date`), which is where
+ADR-006 puts observations of the live source.
 
 ## Persistence boundary
 
@@ -137,8 +172,12 @@ adapter does not define them.
 and **fails closed rather than registering a partial cohort**. It raises
 `SourceContractError` and registers nothing when:
 
-- the source named a team it gave no id for, or named a team the database does
-  not hold (the unresolved class above);
+- the source named a team it gave no id for — the unresolved class above;
+- the parsed cohort references an `nba_team_id` the database does not hold.
+  This is `_require_known_teams`, a **separate** refusal outside the parser
+  and outside `unresolved_game_ids`: one is the source contradicting itself,
+  the other is our identity table being behind, and the operator's next action
+  differs;
 - the source's own game count disagrees with resolved **plus** pending;
 - the same game is reported as both resolved and pending;
 - a persisted `nba_games` row contradicts the parsed source about the game's
@@ -205,7 +244,8 @@ treat counts before December as provisional.
 
 A pending game **carries no team, by definition** — withholding the team is
 what makes it pending. A consumer may say the scoring period containing
-`game_date` is provisional; it may **not** attribute the game to a team.
+`game_date` is provisional, **when `game_date` is present**; it may **not**
+attribute the game to a team.
 "DAL and LAL have an unscheduled game" is an attribution the source explicitly
 declined to make. The honest statement is period-scoped: *this week contains N
 games whose teams are not yet decided, so any count in it is provisional.*
@@ -227,11 +267,42 @@ The schedule-grid API surfaces this on `lineage.schedule`:
   "pending_games": [
     {"nba_game_id": "0022601201", "game_date": "2026-12-04",
      "game_label": "Emirates NBA Cup", "game_sub_label": "Quarterfinal",
-     "game_subtype": "in-season-knockout"}
+     "game_subtype": "in-season-knockout", "date_absence_reason": ""},
+
+    {"nba_game_id": "0022601229", "game_date": null,
+     "game_label": "Emirates NBA Cup", "game_sub_label": "Semifinal",
+     "game_subtype": "in-season-knockout", "date_absence_reason": "not_offered"}
   ],
   "unresolved_game_ids": []
 }
 ```
+
+**`game_date` is nullable, and the key is always present.** A consumer's
+validator must accept `null` as a value, not treat it as a malformed record —
+rejecting the block would take a screen to a contract error over a state the
+API legitimately emits. A null-dated pending game **belongs to no scoring
+period and must not be dropped**: the season-level count of undecided games
+stays complete even when per-period attribution cannot be made. Those are two
+different denominators and collapsing them is the same class of error as
+attributing a pending game to a team.
+
+**`date_absence_reason` says which of three causes, and they are not the same
+news.** `not_offered` — the source gave no date; the response is to wait.
+`unreadable` — it gave one this parser could not read; the response is to
+investigate, because that is a fault or a schema change rather than an
+undecided bracket. `irreconcilable` — its two time fields contradict each
+other. `""` when `game_date` is present. Without it a `null` read as "not yet
+decided" in all three cases, which is true of one and comfortingly false of
+the other two.
+
+Note what a consumer *cannot* distinguish and should not pretend to: a
+year-0001 sentinel and a genuine out-of-calendar date are the same bytes at
+the client. Buckets partition what a consumer can tell apart, not what the
+states are.
+
+Against the live source today all six pending games carry reconcilable dates,
+so `null` is a drift signal rather than the current state — handle it, but do
+not build a screen around it being common.
 
 `pending_game_ids` and `pending_games` are cross-checked to hold the identical
 sequence, so they cannot drift; both are recorded because ADR-013 names the ID

@@ -134,6 +134,7 @@ def test_dry_run_reports_the_real_cohort_and_writes_nothing(
         "Emirates NBA Cup Quarterfinal",
         "Emirates NBA Cup Semifinal",
     ]
+    assert body["pending_game_ids_without_a_date"] == []
     assert body["first_game_date"] == "2026-10-20"
     assert body["last_game_date"] == "2027-04-11"
     assert body["teams_created"] == 0
@@ -141,6 +142,43 @@ def test_dry_run_reports_the_real_cohort_and_writes_nothing(
     # The pending set is named on stderr too, because the operator has to see
     # it without piping stdout through a JSON reader.
     assert "Emirates NBA Cup Quarterfinal" in captured.err
+
+
+def test_an_undated_pending_game_is_reported_to_the_operator(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signal an operator needs at the moment of use, not a day later.
+
+    A pending game whose date does not reconcile is recorded with no date
+    rather than refusing the season. Without this line the operator running
+    the importer on draft morning would see six pending Cup games and no
+    indication that one of them cannot be placed in a week — the only signal
+    would be the nightly live smoke, a day later and only on `main`.
+    """
+    payload = load(PENDING_FIXTURE)
+    mutated = 0
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                game["gameDateTimeEst"] = "2026-12-08T00:30:00Z"
+                mutated += 1
+    assert mutated == 1
+
+    monkeypatch.setattr(
+        "hoops_gm.ingest.schedule_import.NbaStatsClient",
+        lambda **kwargs: fixture_client(payload),
+    )
+    capsys.readouterr()
+
+    assert main(["2026-27", "--dry-run"]) == EXIT_OK
+
+    captured = capsys.readouterr()
+    body = json.loads(captured.out)
+    assert body["pending_game_count"] == 6, "the season survived the bad date"
+    assert body["resolved_game_count"] == 18
+    assert body["pending_game_ids_without_a_date"] == ["0022601229"]
+    assert "carry no usable date" in captured.err
+    assert "0022601229" in captured.err
 
 
 def test_import_writes_teams_then_the_schedule_and_records_pending(prepared: Database) -> None:
