@@ -106,10 +106,15 @@ class PendingScheduleGame:
     **It carries no team, by definition.** A consumer may say the scoring
     period containing ``game_date`` is provisional; it may not attribute the
     game to a team, because that is the one thing the source withheld.
+
+    ``game_date`` is ``None`` when the source's own time fields do not
+    reconcile or are absent — "we do not know when", stated rather than
+    guessed. A consumer must then treat the game as belonging to no known
+    period rather than dropping it, because the game is still published.
     """
 
     nba_game_id: str
-    game_date: date
+    game_date: date | None
     game_label: str
     game_sub_label: str
     game_subtype: str
@@ -169,7 +174,7 @@ class ScheduleCompleteness:
             "pending_games": [
                 {
                     "nba_game_id": game.nba_game_id,
-                    "game_date": game.game_date.isoformat(),
+                    "game_date": game.game_date.isoformat() if game.game_date else None,
                     "game_label": game.game_label,
                     "game_sub_label": game.game_sub_label,
                     "game_subtype": game.game_subtype,
@@ -224,12 +229,12 @@ def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]
             )
         except KeyError as exc:
             raise ValueError(f"{key}.pending_games entry is missing {exc.args[0]!r}") from exc
-        if not isinstance(nba_game_id, str) or not isinstance(game_date, str):
+        if not isinstance(nba_game_id, str) or not isinstance(game_date, str | None):
             raise ValueError(f"{key}.pending_games entry has a non-string id or date")
         if not all(isinstance(label, str) for label in labels):
             raise ValueError(f"{key}.pending_games entry has a non-string label")
         try:
-            parsed_date = date.fromisoformat(game_date)
+            parsed_date = date.fromisoformat(game_date) if game_date is not None else None
         except ValueError as exc:
             raise ValueError(f"{key}.pending_games entry has an unparseable date") from exc
         parsed.append(
@@ -295,16 +300,36 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports an impossible all-zero refresh; "
             "a registered schedule refresh must contain at least one source game"
         )
+    if resolved_game_count == 0:
+        # Not subsumed by the all-zero check above, and this is exactly what
+        # ADR-013 loosened by accident: once `source == resolved + pending`,
+        # a block declaring *every* game pending satisfies the arithmetic with
+        # zero resolved games and zero persisted rows, and `verify_refresh`
+        # then fingerprints an empty cohort against itself and answers
+        # "current". `_require_complete_schedule_source` refuses an empty
+        # parse, so no producer can write this; a stored block claiming it was
+        # written by something else.
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports {source_game_count} source game(s) of "
+            "which none resolved; a registered schedule refresh always persists at least one "
+            "resolved game, so this block was not written by the importer"
+        )
+    # Ordered before the blanket unresolved refusal deliberately. Both describe
+    # a block that must not exist, but this one names *which* game is
+    # double-classified, and the general refusal below is strictly stronger —
+    # placed after it, this could never fire. A reviewer proved exactly that by
+    # tracing the branch, which is the shape `gates.md` names: correct code
+    # made unreachable by the guard above it.
+    if overlap := sorted({game.nba_game_id for game in pending} & set(unresolved)):
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records the same game as pending and "
+            f"unresolved: {overlap}"
+        )
     if unresolved:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records {len(unresolved)} unresolved game id(s); "
             "a refresh is only registered once every game the source claims to have assigned "
             "resolves; a game the source has not assigned yet belongs in pending_game_ids"
-        )
-    if set(pending_ids := [game.nba_game_id for game in pending]) & set(unresolved):
-        raise ValueError(
-            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records the same game as pending and unresolved: "
-            f"{sorted(set(pending_ids) & set(unresolved))}"
         )
     if source_game_count != resolved_game_count + len(pending):
         raise ValueError(

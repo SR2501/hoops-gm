@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
+from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
@@ -213,6 +214,11 @@ def test_a_source_that_contradicts_its_contract_exits_two_and_writes_nothing(
         with verify.session() as session:
             assert session.scalars(select(TeamScheduleEntry)).all() == []
             assert session.scalars(select(NbaGame)).all() == []
+            # Teams are written FIRST in that transaction, so this is the table
+            # a leak would show in. The earlier version of this test checked
+            # only the two written later, which is the wrong end of the
+            # rollback to look at.
+            assert session.scalars(select(NbaTeam)).all() == []
     finally:
         verify.dispose()
 

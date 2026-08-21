@@ -1233,9 +1233,22 @@ def test_seed_imports_the_pending_cup_games_rather_than_filtering_them_out(
         "2026-12-04",
     ]
     # No team appears anywhere in the pending records, because the source
-    # withheld it. A consumer can say which period is provisional and must not
-    # say which team's count will rise.
-    assert all("team" not in key for game in schedule["pending_games"] for key in game)
+    # withheld it. Asserted on the served VALUES, not on key names: a review
+    # caught the earlier form checking `"team" not in key` against a model
+    # that structurally has no team field, so it could not fail.
+    served = {
+        value
+        for game in schedule["pending_games"]
+        for value in game.values()
+        if isinstance(value, str)
+    }
+    team_labels = {team["abbreviation"] for team in body["teams"]} | {
+        team["name"] for team in body["teams"]
+    }
+    assert not (served & team_labels), served & team_labels
+    assert {frozenset(game) for game in schedule["pending_games"]} == {
+        frozenset({"nba_game_id", "game_date", "game_label", "game_sub_label", "game_subtype"})
+    }
 
 
 def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(

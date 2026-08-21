@@ -839,12 +839,14 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
 
-### `schedule-cohort-fingerprint-list` - Fixing what the injury cohort manifest watches
+### `schedule-cohort-fingerprint-list` - Restoring what the injury cohort manifest watches
 
 - [ ] **pending**
 - **Depends on:** `injury-report-backfill`
 
-`DEFAULT_SOURCE_FINGERPRINT_PATHS` in `ingest/injury_report/cohort_evidence.py` fingerprints `backend/src/hoops_gm/db/lineage.py`, which the generator never imports a symbol from, and omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which it directly calls (`parse_schedule`, for the `schedule_league_v2` reconciliation view). Found 2026-08-20 when one change touched both files: the staleness alarm fired on the file that is not in the derivation and stayed silent on the file that is. The list cannot be corrected by editing it, because recording today's bytes for a newly-watched file would claim the cohort was derived with code it was not — closing this needs the cohort database and a real regeneration.
+`DEFAULT_SOURCE_FINGERPRINT_PATHS` in `ingest/injury_report/cohort_evidence.py` omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which the generator directly calls (`parse_schedule`, for the `schedule_league_v2` reconciliation view — the cohort's only genuinely independent witness). Found 2026-08-20 when one change touched that file and `db/lineage.py` together: the alarm fired on the file outside the derivation and stayed **silent** on the file inside it, which is a false green, not merely a coarse one.
+
+**The removal half is already done; only the addition is left, and only it needs a regeneration.** The untrue `db/lineage.py` entry was deleted from the manifest's `source_fingerprints` rather than refreshed, because deleting narrows an over-claim while refreshing would assert the cohort was derived with bytes it was not. The constant itself still lists `db/lineage.py` and was deliberately left alone: editing `cohort_evidence.py` stales that file's own digest, and it *is* in the derivation, so the same false-claim problem simply moves one file over. Both edits therefore belong to the regeneration, together: drop `db/lineage.py` from the constant, add `ingest/nba/schedule.py`, regenerate against the cohort database.
 
 ### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
 

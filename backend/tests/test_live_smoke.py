@@ -594,8 +594,44 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
             "Cup knockout bracket is published undecided until December; an empty set means "
             "the source changed what it publishes, not that the season is fully scheduled"
         )
+        assert len(observed) <= 6, (
+            f"{len(observed)} games are pending, but the Emirates NBA Cup knockout bracket "
+            "above group play is four quarterfinals and two semifinals — six. A correctly "
+            "labelled set larger than the bracket means the labels have stopped bounding the "
+            "class, so structural explicability no longer follows from them and ADR-013's "
+            f"premise needs re-checking: {sorted(observed)}"
+        )
         assert {labels[1] for labels in observed.values()} <= {"Quarterfinal", "Semifinal"}, (
             f"a pending game carries an unexpected sub-label: {sorted(observed.values())}"
+        )
+
+    def test_every_pending_game_still_has_a_reconcilable_date(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the source stops publishing a usable date for a pending game.
+
+        The parser deliberately degrades an unreconcilable pending date to
+        ``None`` rather than raising, because a strict check there meant one
+        bad timestamp returned no season at all — ADR-013's rejected outcome
+        through a different field. That leniency would be a silent loss if
+        nothing watched it, so the drift signal lives here instead.
+
+        A red means the schedule grid can no longer say *which week* is
+        provisional, only that some week is. That is a real degradation of the
+        screen and worth knowing about; it is not a reason to make the parser
+        strict again.
+        """
+        result = parse_schedule(
+            nba.schedule_league(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
+            season=FIXTURE_CURRENT_SEASON,
+        )
+
+        undated = [game.nba_game_id for game in result.pending_games if game.game_date is None]
+
+        assert not undated, (
+            f"pending games {undated} no longer carry a date whose EST and UTC fields "
+            "reconcile. The parser degraded them to None rather than refusing the season, so "
+            "nothing is broken -- but a consumer can no longer say which scoring period is "
+            "provisional for these games. Check whether the source changed its time fields "
+            "for undecided fixtures before changing any code"
         )
 
     def test_a_pending_game_still_carries_no_team_identity_at_all(

@@ -417,6 +417,99 @@ def test_schedule_parser_reads_every_pending_game_in_the_real_season() -> None:
     assert {game.game_subtype for game in result.pending_games} == {"in-season-knockout"}
 
 
+def test_a_degenerate_pending_date_does_not_cost_the_whole_season() -> None:
+    """Reproduces the defect a reviewer found: one bad date returned no season.
+
+    Under the strict reconciliation this raised out of `parse_schedule`, so a
+    single unreconcilable timestamp on a single undrawn Cup fixture returned
+    **nothing** — not 1,200 games with one flagged, not even a `--dry-run`
+    view. That is ADR-013's explicitly rejected outcome arriving through a
+    different field, and the source argues it is reachable: every pending game
+    carries `seriesText: "Date subject to change"`, and these same objects
+    already use a degenerate year-0001 sentinel for `gameTimeEst`.
+
+    Three shapes, because the mutation must reproduce the failure rather than
+    a neighbour of it: a date that disagrees with its UTC sibling, one that is
+    unparseable, and one that is absent entirely.
+    """
+    for mutation in ("disagree", "unparseable", "absent"):
+        payload = load(PENDING_FIXTURE)
+        hits = 0
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] != "0022601229":
+                    continue
+                hits += 1
+                if mutation == "disagree":
+                    game["gameDateTimeEst"] = "2026-12-08T00:30:00Z"
+                elif mutation == "unparseable":
+                    game["gameDateTimeEst"] = "the eighth of December"
+                else:
+                    del game["gameDateTimeEst"]
+        assert hits == 1, mutation
+
+        result = parse_schedule(payload, season="2026-27")
+
+        assert len(result.games) == 18, f"{mutation} cost resolved games"
+        assert len(result.pending_games) == 6, f"{mutation} cost a pending game"
+        assert result.unresolved_game_ids == ()
+        degraded = {
+            game.nba_game_id: game.game_date
+            for game in result.pending_games
+            if game.game_date is None
+        }
+        assert degraded == {"0022601229": None}, mutation
+        # Every other pending game keeps its date; the leniency is per game,
+        # not a blanket loss of the field.
+        assert all(
+            game.game_date is not None
+            for game in result.pending_games
+            if game.nba_game_id != "0022601229"
+        )
+
+
+def test_a_degenerate_date_on_a_RESOLVED_game_still_kills_the_import() -> None:
+    """The other half of the asymmetry, which is what makes it a judgement and not a hole.
+
+    A resolved game's date is persisted, joins `player_participation`, and is
+    the denominator of every expected-games number. Leniency there would be
+    the mislabelled-field bug this project already ate once. Asserted so that
+    anyone widening the pending leniency has to walk past this.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022600001":
+                game["gameDateTimeEst"] = "2026-10-20T00:30:00Z"
+
+    with pytest.raises(SourceContractError, match="inconsistent EST/UTC"):
+        parse_schedule(payload, season="2026-27")
+
+
+@pytest.mark.parametrize("field", ["teamName", "teamCity", "teamTricode", "teamSlug"])
+def test_every_identity_field_alone_makes_a_zero_id_game_a_failure(field: str) -> None:
+    """Each of the four naming fields must be load-bearing, not just the tricode.
+
+    A reviewer narrowed `_TEAM_IDENTITY_FIELDS` to `("teamTricode",)` and 224
+    tests stayed green — so three quarters of the guard was unexercised, and
+    `teamSlug` is the field the whole-object fixture was added to make
+    visible. Parametrised so removing any one field from the guard fails here.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                assert game["homeTeam"][field] is None
+                game["homeTeam"][field] = "Lakers" if field != "teamTricode" else "LAL"
+
+    result = parse_schedule(payload, season="2026-27")
+
+    assert result.unresolved_game_ids == ("0022601229",), (
+        f"a zero teamId beside a populated {field} must be a resolution failure"
+    )
+    assert "0022601229" not in result.pending_game_ids
+
+
 def test_a_zero_team_id_beside_a_named_team_is_a_failure_not_a_pending_game() -> None:
     """Mutation check for the guard ADR-013 keeps: reproduce the failure it guards.
 

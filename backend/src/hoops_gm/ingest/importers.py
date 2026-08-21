@@ -802,6 +802,16 @@ def _register_schedule_refresh(
     it remains able to detect a forged *resolved* cohort, which is the case
     the completeness contract was written for. The hole closes for each game
     as the bracket is drawn, because that is precisely when rows appear.
+
+    **A third face of the same root cause, worth knowing here:**
+    ``record_refresh`` is idempotent on ``(type, key, version, season)`` and
+    overwrites ``summary`` in place on a hit. Because the version does not
+    move with the pending set, two imports differing only in which games are
+    pending collide on one row and the later summary replaces the earlier.
+    That is the right outcome — the newer observation of the source wins —
+    but it means the *history* of the pending set is not kept anywhere, and a
+    consumer holding an older block cannot tell it has been superseded by
+    comparing versions. Only ``refreshed_at`` moves.
     """
 
     completeness = ScheduleCompleteness(

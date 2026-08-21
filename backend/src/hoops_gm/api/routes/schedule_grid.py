@@ -69,12 +69,17 @@ class PendingScheduleGameLineage(BaseModel):
     **Carries no team, and that is not an omission.** The source withheld the
     identity — ``teamId: 0`` with every naming field null — so this can say
     *which scoring period is provisional*, by date, and nothing about which
-    teams' counts will rise. A consumer that renders "this team has an
+    teams' counts will change. A consumer that renders "this team has an
     unscheduled game" is inventing an attribution the source declined to make.
+
+    ``game_date`` is ``None`` when the source's own time fields do not
+    reconcile — "we do not know when", stated rather than guessed. A consumer
+    must then treat the game as belonging to no known period rather than
+    dropping it: it is still a published game.
     """
 
     nba_game_id: str
-    game_date: date
+    game_date: date | None
     game_label: str
     game_sub_label: str
     game_subtype: str
@@ -90,19 +95,32 @@ class ScheduleRefreshLineage(BaseModel):
 
     ``unresolved_game_ids`` is provably always empty on a 200: the canonical
     verifier refuses a completeness block recording any, and this route maps
-    a verifier failure to a 409. It is carried anyway so a client is never
-    built on the assumption that a non-empty list is servable.
+    a verifier failure to a 409. The field is carried so a consumer can read
+    the claim it is trusting rather than infer it from the code — and,
+    separately, nothing should be built on the assumption that a non-empty
+    list is servable.
 
     ``pending_game_ids`` is the opposite case and **can** be non-empty on a
     200 (ADR-013): games the source published with teams not yet decided.
-    ``source_game_count == resolved_game_count + len(pending_game_ids)``;
-    only the resolved games have ``team_schedule`` rows, so a period holding
-    pending games may report counts that later rise.
+    ``source_game_count == resolved_game_count + len(pending_game_ids)``, so
+    **a 200 where source exceeds resolved is now normal** where before this
+    was the completeness contract's equality. Only the resolved games have
+    ``team_schedule`` rows, so a period holding pending games is provisional
+    and a consumer that displays source and resolved side by side must
+    display pending too rather than leave the difference unexplained.
 
-    **Do not cache the pending set keyed on ``version`` alone.** The version
-    is a fingerprint of persisted ``team_schedule`` rows, and a pending game
-    has none, so two cohorts differing only in their pending set share a
-    version. Cache it with the response, or re-read it.
+    **Provisional means the count can move either way, not that it is a
+    floor.** A drawn bracket adds games to the week it lands in; a rescheduled
+    fixture leaves one week and joins another, taking the first week *down*.
+    Only the season total is monotone.
+
+    **Do not cache the pending set keyed on ``version``, or on ``refresh_id``.**
+    The version is a fingerprint of persisted ``team_schedule`` rows and a
+    pending game has none, so two cohorts differing only in their pending set
+    share a version. ``refresh_id`` is no better: a re-import updates the same
+    row in place, so it is equally non-discriminating. ``refreshed_at`` is the
+    field that actually moves. Cache the pending set with the response, or
+    re-read it.
     """
 
     refresh_id: int

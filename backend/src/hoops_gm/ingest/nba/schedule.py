@@ -328,6 +328,18 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                 unresolved.append(game_id)
                 continue
 
+            if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
+                pending.append(
+                    PendingScheduleGame(
+                        nba_game_id=game_id,
+                        game_date=_pending_game_date(raw_game, game_id),
+                        game_label=_optional_text(raw_game, "gameLabel"),
+                        game_sub_label=_optional_text(raw_game, "gameSubLabel"),
+                        game_subtype=_optional_text(raw_game, "gameSubtype"),
+                    )
+                )
+                continue
+
             utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
             eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
             if eastern_tipoff.astimezone(UTC) != utc_tipoff:
@@ -336,18 +348,6 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                     f"{eastern_tipoff.isoformat()} != {utc_tipoff.isoformat()}"
                 )
             game_day = eastern_tipoff.date()
-
-            if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
-                pending.append(
-                    PendingScheduleGame(
-                        nba_game_id=game_id,
-                        game_date=game_day,
-                        game_label=_optional_text(raw_game, "gameLabel"),
-                        game_sub_label=_optional_text(raw_game, "gameSubLabel"),
-                        game_subtype=_optional_text(raw_game, "gameSubtype"),
-                    )
-                )
-                continue
 
             records.append(
                 ScheduleGameRecord(
@@ -482,6 +482,42 @@ def _rest_days_by_team_game(
             )
             previous = entry
     return rest_by_team_game
+
+
+def _pending_game_date(raw_game: Mapping[str, object], game_id: str) -> date | None:
+    """The Eastern date of a pending game, or ``None`` if it is not trustworthy.
+
+    **Deliberately lenient where the resolved path is strict, and the
+    asymmetry is the point.** A resolved game's date is persisted, joins
+    ``player_participation``, and is the denominator of every expected-games
+    number, so a bad one must stop everything. A pending game's date is
+    persisted nowhere: it exists only to tell a consumer *which scoring period
+    is provisional*.
+
+    Applying the strict reconciliation here meant one degenerate timestamp on
+    one undrawn Cup fixture returned **no season at all** — not 1,200 games
+    with one flagged, not even a ``--dry-run`` view. That is ADR-013's
+    explicitly rejected outcome arriving through a different field, and the
+    source argues it is reachable: all six pending games carry
+    ``seriesText: "Date subject to change"``, and the same objects already use
+    a degenerate year-0001 sentinel for ``gameTimeEst`` where a resolved game
+    uses 1900.
+
+    So an unreconcilable pending date degrades to ``None`` — "the source has
+    not told us when" — rather than being guessed at or raising. The drift
+    signal is not lost, it is moved to where it belongs: the live smoke
+    asserts every pending game still has a date today, so a source that starts
+    withholding them goes red loudly without costing the season.
+    """
+
+    try:
+        utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
+        eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
+    except SourceContractError:
+        return None
+    if eastern_tipoff.astimezone(UTC) != utc_tipoff:
+        return None
+    return eastern_tipoff.date()
 
 
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:

@@ -250,7 +250,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"\n{len(summary.pending_game_ids)} game(s) are published without teams and were "
             "recorded as pending, not imported: "
             f"{', '.join(summary.pending_game_labels)}. Counts for the periods holding them "
-            "will rise once the source assigns teams (ADR-013).",
+            "are provisional and can move either way once the source assigns teams: a drawn "
+            "bracket adds games, and a rescheduled fixture moves one out of its week "
+            "(ADR-013).",
             file=sys.stderr,
         )
     return EXIT_OK

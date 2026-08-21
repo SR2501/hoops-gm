@@ -30,7 +30,22 @@ rather than inferred:
 |---|---|---|
 | Resolved | `teamId > 0` with a valid three-letter `teamTricode` | Persisted |
 | **Pending** | `teamId: 0` **and** every one of `teamName`, `teamCity`, `teamTricode`, `teamSlug` absent, null or empty | Recorded, not persisted, does **not** block |
-| Unresolved | `teamId: 0` with **any** naming field populated, or `teamId > 0` naming a team the database does not hold | **Refuses the whole cohort** |
+| Unresolved | `teamId: 0` with **any** naming field populated | **Refuses the whole cohort** |
+
+A fourth refusal, separate from the three-way classification above: a game
+that resolves cleanly but names a `teamId` the database does not hold is
+refused by `_require_known_teams`, not by the parser. It never reaches
+`unresolved_game_ids`, because the parser has no view of `nba_teams`. Keeping
+these distinct matters — one is the source contradicting itself, the other is
+our own identity table being behind.
+
+**One asymmetry worth naming:** `_require_known_teams` walks only the resolved
+games. A game with one side pending and the other side a real but unknown
+`teamId` classifies as pending, so the unknown id is never reported. Nothing
+is persisted and the completeness invariant still holds, so this costs a
+diagnostic rather than correctness — but a half-decided Cup fixture is a
+realistic shape (group winners are known before the wildcards), and if the
+source ever publishes one, the known side is silently discarded.
 
 A pending game's block, verbatim from the live payload:
 
@@ -193,7 +208,13 @@ what makes it pending. A consumer may say the scoring period containing
 `game_date` is provisional; it may **not** attribute the game to a team.
 "DAL and LAL have an unscheduled game" is an attribution the source explicitly
 declined to make. The honest statement is period-scoped: *this week contains N
-games whose teams are not yet decided, so any count in it may rise.*
+games whose teams are not yet decided, so any count in it is provisional.*
+
+**Provisional is not the same as a floor.** A drawn bracket adds games to the
+week it lands in, but a rescheduled fixture leaves one week and joins another,
+taking the first week *down*. Only the season total is monotone. A consumer
+that renders "at least N games" is making the one-directional claim that
+ADR-012's living-refresh amendment exists to deny.
 
 The schedule-grid API surfaces this on `lineage.schedule`:
 
