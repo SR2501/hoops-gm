@@ -177,32 +177,76 @@ makes it a gate rather than a post-mortem.
 
 An earlier draft asked for `status_counts` broken down by declared partition.
 That was the wrong shape, and the better one below is `data-engineer`'s, adopted
-with attribution: baking `quant`'s split boundaries into an ingest artifact
-inverts ADR-006's isolation and forces a manifest regeneration every time the
-split moves. Publish instead:
+with attribution: baking `quant`'s split boundaries into an ingest artifact is a
+backward flow under **ADR-008**, whose decision is that layers are ordered
+`observations → projections → availability → valuation` and information flows one
+way only. A split boundary is an availability-layer parameter; the cohort
+manifest is an observations-layer artifact. It also forces a manifest
+regeneration every time the split moves, which needs no ADR at all.
+
+*(An earlier draft cited ADR-006 here, in four places. ADR-006 is "External
+adapters isolated behind contract tests" and concerns adapter-versus-upstream
+isolation — fixtures, contract tests, throttling. It says nothing about a
+downstream consumer's parameter entering an ingest artifact. `code-review` caught
+it: I adopted a reviewer's rationale without re-deriving the citation, which is
+the same defect as the PR #30 mis-citation one round earlier and is exactly what
+`gates.md` says to re-derive at the moment of writing.)*
+
+Publish instead:
 
 1. per-status counts of the **joined direct-outcome** set, **by game date**; and
-2. the exclusion classes — `unresolved_identity`, `without_participation_row`,
-   `explicit_unknown` — broken down **by status**.
+2. the exclusion classes — `unresolved_identity`, `without_nba_anchor`,
+   `without_participation_row` — broken down **by status**.
 
 That is partition-agnostic: it makes *any* chronological split checkable rather
-than only the currently declared one, needs no knowledge of this protocol, and
-discloses no outcome value. Everything required is already in scope in
-`_participation_join`.
+than only the currently declared one, and needs no knowledge of this protocol.
+Those three are the exact `continue` branches in `_participation_join`, and all
+three are **pure absence predicates**: `row.outcome` is not in scope on any of
+them, so publishing them by status discloses no outcome value.
 
-**A binding constraint on that disclosure, which neither document previously
-stated.** Three of those exclusion classes are pure absence predicates —
-`data-engineer` confirmed from the code that `row.outcome` is not in scope on any
-of them — so publishing them by status leaks nothing. But the manifest today
-holds one whole-cohort *outcome* marginal and one whole-cohort *status* marginal,
-which cannot be crossed. If anyone later adds `participation_outcome_counts`
-**by date**, then any date whose direct set is single-status yields that cell's
-full status x outcome contingency by subtraction, and this gate silently stops
-being pre-unblind without one line of this freeze changing. So:
+*(An earlier draft listed `explicit_unknown` as the third and called all three
+absence predicates. That was wrong twice over: `explicit_unknown` is defined by
+an outcome **value**, `ParticipationOutcome.UNKNOWN`, so it is a status x outcome
+cell rather than an absence; and it is not a `continue` branch in the generator at
+all. `code-review` found it.)*
 
-> **Outcome-valued counts stay whole-cohort. Only the denominator — direct-outcome
-> counts and exclusion classes, keyed by status and date — gets the finer
-> breakdown.**
+### The disclosure surface is a closed set, not a granularity rule
+
+An earlier draft stated the constraint as *"outcome-valued counts stay
+whole-cohort; only denominators get the finer breakdown."* **Both reviewers
+showed that rule is necessary but not sufficient, and it mis-sorted its own first
+two applications** — a direct-outcome count is itself defined by a predicate on
+the outcome value, so the rule forbade and permitted the same object.
+
+Three ways granularity fails as a safety property, all demonstrated by
+`data-engineer` against the *committed* manifest rather than hypothesised:
+
+- **It constrains coarseness, not informativeness.** The two existing
+  whole-cohort marginals already yield the exact global play rate
+  `292/1918 = 0.15224` and bound the non-`out` play rate at `≤ 292/410 = 0.712`.
+  Real inference, available today, from fields the granularity rule calls safe.
+- **It is stated per-manifest, and git makes cross-manifest differencing free.**
+  The manifest path has 12+ committed revisions, and the planned operation is
+  *widening the same window*, so cohort B ⊃ cohort A with both committed. Then
+  `M_B[outcome] − M_A[outcome]` is the outcome marginal of the added dates, and
+  the new by-date denominators supply their status composition. The granularity
+  rule is satisfied at every step. **The widening this document recommends is the
+  thing that opens it.**
+- **"Whole-cohort" is a label, not a size guarantee.** Coarseness depends on `N`;
+  on a small cohort a whole-cohort marginal is nearly row-level.
+
+A rule reached by enumerating attacks is stale the next time a field is added. So
+the constraint is stated as a closed set, which is what the gate actually needs —
+§2 and §8 condition 6 consume **only denominators**:
+
+> The pre-unblind disclosure surface carries **no outcome-valued count beyond the
+> single whole-cohort `participation_outcome_counts` the manifest already
+> contains**, which is inherited adapter evidence and not a gate input. **No new
+> outcome-keyed field may be added, at any granularity, in any manifest version.**
+
+`data-engineer` owns a contract test asserting the set of outcome-keyed manifest
+fields equals a frozen allow-list and never grows, landing with the widened
+cohort. That is enforceable in CI, which the granularity rule was not.
 
 ### An inadmissible cohort is not fitted
 
@@ -361,6 +405,33 @@ on game-date edges, never inside a date. The held-out range is declared, and its
 per-status direct-outcome counts checked under §2, **before** any outcome in it
 is read.
 
+**Inherited, not discovered — and this was checked rather than assumed.**
+`data-engineer` asked whether this rule merely reproduces v1's realized split,
+which only the author could settle because v1's date list lives in a local-only
+artifact. It does. v1 ran over 25 distinct game dates; its 12th is `2025-12-21`
+and its 18th is `2025-12-28`, so `floor(0.50 · 25) = 12` and
+`floor(0.25 · 25) = 6` recover v1's boundaries **exactly**: development
+`2025-12-08..2025-12-21`, selection `2025-12-22..2025-12-28`, holdout
+`2025-12-29..2026-01-04`.
+
+So §4 carries the same contamination as §5: it is the split under which the
+author has already seen v1's answers, expressed as a general rule rather than
+rediscovered. It is stated here because a rule that happens to reproduce the
+split you already unblinded is exactly the thing a reader must be able to
+discount, and no reader with only `origin` could have found it — the check needs
+`injury_status_conversion_v1_rows.json`, which was never pushed.
+
+The rule is retained anyway: a 50/25/25 chronological split is conventional and
+the alternative is picking different proportions *because* these ones are
+contaminated, which is a worse reason. On the corrected cohort's 26 game dates
+the same rule gives 13/6/7 rather than 12/6/7, so the boundary moves by one date.
+
+*(Note also that the ~4.5× widening multiplier in §2 inherits v1's 32% **row**
+share, while this section specifies a **date** rule. v1 shows the two differ —
+its holdout was 7 of 25 dates, 28%, but 32% of rows, because holdout dates were
+denser. Once a widened cohort exists the multiplier should be derived from this
+rule rather than from v1's realized row share.)*
+
 ---
 
 ## 5. Candidates
@@ -379,7 +450,8 @@ development threshold and still be unable to activate under §2 and §8. Passing
 is not a green light and must not be reported as one.
 
 **Inherited, not discovered** — see the contamination disclosure. The three-band
-grouping comes from v1's selection on 99%-overlapping data.
+grouping comes from v1's selection on data overlapping this cohort by at most
+99.18%, with no computable lower bound.
 
 ---
 
@@ -487,22 +559,35 @@ widens.
 
 The held-out evaluation runs **once**.
 
-**When this freeze binds: on merge to `main`.** Before merge it is a draft under
-review, and the corrections listed in the change log below were made in that
-window. Binding on merge preserves the guarantee the freeze exists for, because
-the widened cohort it commits to does not exist at merge time either — no split
-of it, no outcome in it, and no result from it can have informed the document.
-Claiming the unreviewed first draft was already immutable would assert a rigour
-the review process itself contradicts, and would have forced a v3 for a wrong
-citation.
+**When this freeze binds: at the earlier of (a) merge to `main`, and (b) the
+first row of the cohort it will be fitted against being collected.** Before that
+point it is a draft under review, and the corrections listed in the change log
+below were made in that window.
 
-**Every pre-merge change was reviewer-driven, and none was data-driven.** The
-delta is recorded in the change log so anyone can check that: no split boundary
-moved toward a result, no threshold was relaxed, and the only substantive changes
-to the protocol *tightened* it — the admissibility unit moved to the stricter of
-two denominators, and the split gained a rounding rule it lacked.
+**Condition (b) is the one that makes this a rule rather than this instance's
+rationalisation.** Both reviewers, independently, pointed out that an earlier
+draft bound only on merge and justified it with a fact specific to today — that
+the widened cohort does not exist at merge time. Merge time is not controlled:
+widening is an unscheduled owner decision with no recorded ordering against this
+branch, so a PR held open across the collection window would still have "bound on
+merge" while no longer being prospective. §1 already says the property is gone
+once the cohort exists; condition (b) makes §10 agree with it, and it is
+falsifiable from `scope` and the merge timestamp.
 
-After merge, any change to this protocol creates **v3** and leaves this freeze
+Binding at that point preserves the guarantee the freeze exists for, because
+between two moments that are both strictly before the data exists the choice is
+immaterial. Claiming the unreviewed first draft was already immutable would
+assert a rigour the review process itself contradicts, and would have forced a v3
+for a wrong citation — twice, as it turned out, since a second mis-citation was
+found in the round after that argument was written.
+
+**Every pre-merge change was reviewer-driven, and none was driven by an outcome
+of the fitting cohort.** The delta is tabulated below so it can be checked. **The
+table is a convenience, not the audit trail** — it lives inside the document it
+audits and could be amended by the same edit it records. The immutable record is
+`git log` on the pushed branch.
+
+After binding, any change to this protocol creates **v3** and leaves this freeze
 and its result intact. A post-unblind change is recorded beside the result and
 may never be presented as pre-registered.
 
@@ -543,20 +628,31 @@ may never be presented as pre-registered.
 
 ### Pre-merge review delta
 
-Recorded so the edit window between the first freeze commit and merge is
+Recorded so the edit window between the first freeze commit and binding is
 auditable rather than asserted. Independent `data-engineer` and `code-review`
-passes at `8f87fe8` produced these; each is reviewer-driven, none is data-driven,
-and every substantive change tightens the protocol.
+passes at `8f87fe8` and again at `6a4d209` produced these. **`git log` on the
+pushed branch is the authoritative record; this table can go stale and is a
+convenience.** It was itself incomplete after round 2 — four changes were missing
+— which `data-engineer` caught.
 
-| Change | Driver |
-|---|---|
-| §2 admissibility unit moved from canonical observations to **direct outcomes**, matching §8 condition 6 | both reviewers, independently — the pre-check was looser than the veto it pre-empts |
-| §2 manifest requirement replaced with a partition-agnostic by-date/by-status disclosure, plus the differencing invariant that outcome-valued counts stay whole-cohort | `data-engineer`; the original baked a `quant` split into an ingest artifact against ADR-006 |
-| §4 split denominator fixed to ordered distinct game dates with explicit `floor` rules and holdout-as-remainder | `code-review`; the draft used two denominators and no rounding rule, the same defect §7 faults v1 for |
-| Contamination disclosure now names the reachable v1 row-level artifact, records that the author has seen the v1 contingency, and replaces "roughly 99%" with the computable **≤99.18%** upper bound and an explicit absence of any lower bound | `code-review` found the omission; `data-engineer` supplied the bound and withdrew a claim that it was computable exactly |
-| §1 prospectivity claim narrowed from "could not have been consulted" to the cohort that will be fitted | `code-review` |
-| §3 PR #30 citation moved from the manifest field to `docs/handoff.md:7543`/`:8080` | both reviewers, independently |
-| §3 relabels `joined_player_games`, which is not by construction a direct-outcome count | `data-engineer` |
-| §3 records that the 1,650-minute correction had **already been made** by `data-engineer`, and that two committed documents assert the exclusion class this freeze declines to rely on | author, on re-reading; graded up from both reviewers' milder findings |
-| §8 condition 8 records that the joined fingerprint already commits the status x outcome contingency | `data-engineer` |
-| §10 states that the freeze binds on merge, and why | author, prompted by the above |
+| Change | Round | Driver |
+|---|---|---|
+| §2 admissibility unit moved from canonical observations to **direct outcomes**, matching §8 condition 6 | 1 | both reviewers, independently — the pre-check was looser than the veto it pre-empts |
+| §2 manifest requirement replaced with a partition-agnostic by-date/by-status disclosure | 1 | `data-engineer`; the original baked a `quant` split into an ingest artifact |
+| §4 split denominator fixed to ordered distinct game dates with explicit `floor` rules and holdout-as-remainder | 1 | `code-review`; the draft used two denominators and no rounding rule, the same defect §7 faults v1 for |
+| Contamination disclosure now names the reachable v1 row-level artifact, records that the author has seen the v1 contingency, and replaces "roughly 99%" with the **≤99.18%** upper bound and an explicit absence of any lower bound | 1 | `code-review` found the omission; `data-engineer` supplied the bound and withdrew a claim that it was computable exactly |
+| §1 prospectivity claim narrowed from "could not have been consulted" to the cohort that will be fitted | 1 | `code-review` |
+| §3 PR #30 citation moved from the manifest field to `docs/handoff.md:7543`/`:8080` | 1 | both reviewers, independently |
+| §3 relabels `joined_player_games`, which is not by construction a direct-outcome count | 1 | `data-engineer` |
+| §3 records that the 1,650-minute correction had **already been made** by `data-engineer`, and that two committed documents assert the exclusion class this freeze declines to rely on | 1 | author, on re-reading; graded up from both reviewers' milder findings |
+| §3 notes the joined fingerprint quoted beside the stale canonical one is **not** stale, scoping the claim | 1 | author, while fixing the above |
+| §8 condition 8 records that the joined fingerprint already commits the status x outcome contingency | 1 | `data-engineer` |
+| §2 adds v1's actual held-out `doubtful` count of **4** as empirical confirmation | 1 | author. **Taken from the unblinded v1 artifact during the review window** — it is a denominator, a count of rows rather than an outcome value, so it does not breach the input/outcome line this document draws; listed and labelled rather than omitted |
+| "What this freeze cannot do" gains two bullets: conduct is unfalsifiable, and v1-derived figures are unauditable without this clone | 1 | author, prompted by `code-review`'s High finding |
+| §10 binding clause, and change-log row 2 reworded | 1 | author |
+| §2 rationale re-cited from **ADR-006 to ADR-008**, in four places | 2 | `code-review`; ADR-006 is adapter-versus-upstream isolation and says nothing about this. Adopted a reviewer's rationale without re-deriving the citation — same class as the PR #30 mis-citation one round earlier |
+| §2 exclusion list corrected: `explicit_unknown` is an outcome **value**, not an absence predicate, and is not a `continue` branch at all; replaced with `without_nba_anchor` | 2 | `code-review` |
+| §2 granularity invariant replaced with a **closed-set allow-list**, after both reviewers showed the granularity rule was necessary but not sufficient and mis-sorted its own first two applications | 2 | `code-review` on the discriminator, `data-engineer` on cross-manifest differencing and the closed-set formulation |
+| §4 records that the split rule **exactly reproduces v1's realized boundaries**, so it is inherited rather than fresh; plus the row-share vs date-share note on the multiplier | 2 | `data-engineer` asked the question; author computed the answer from v1's row artifact |
+| §10 binding condition extended to *the earlier of merge and the first row of the fitting cohort existing*, and the delta table demoted to a convenience beneath `git log` | 2 | both reviewers, independently |
+| §5 stale restatement of "99%-overlapping data" corrected to the ≤99.18% bound | 2 | `code-review` |
