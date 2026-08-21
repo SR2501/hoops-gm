@@ -22,6 +22,7 @@ const HEALTH_STALE_AFTER_MS = 60_000
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/schedule', label: 'Schedule' },
+  { to: '/projections', label: 'Projections' },
   { to: '/system', label: 'System' },
 ] as const
 

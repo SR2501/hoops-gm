@@ -13991,3 +13991,465 @@ missing one.
 
 *Anything about a real Basketball Monster export.* Unchanged and still the
 largest gap.
+## 2026-08-21 - frontend - The imported projections are on screen, and two of its own markers can never fire
+
+**Unit:** `projections-ui`. `/projections` renders the current Basketball Monster cohort - 16
+per-game rates per player, the source's games-played assumption in its own column group, and
+the full import lineage - at `556936e` + this branch. Code gate green: lint clean, typecheck
+clean, 182 tests.
+
+**It is not a comparison, and the screen says so rather than implying one.** No blend profile,
+source weighting or activation pointer is persisted anywhere, so `lineage.blend` is
+unconditionally `null` and "not blended - single source" is rendered *from that fact* rather
+than from a key the client failed to find. `architect` confirmed the producer supports the
+reading (`ProjectionLineage.blend: None = None`, with a docstring saying exactly why the key
+exists) and that under ADR-015 it will **widen to an object** rather than start being omitted,
+so the strict null check keeps its meaning.
+
+**The finding worth the most: two of this screen's own absence markers cannot fire.** The key
+originally read as though a `.` marker were routine sparseness. Tracing the producer with
+`backend` showed otherwise for the only source this screen requests. Basketball Monster's
+`required_production_fields` is **set-equal to `CANONICAL_STAT_FIELDS` in both directions**,
+and `parser.py:293-296` refuses a row on a *non-empty* `missing_required_values` list - `any`,
+not `all`. A row with no games figure has no divisor, which nulls its 14 `SEASON_TOTAL`
+columns and, through `parser.py:448-450`, the 2 derived fields computed from them. So every
+stored BBM row carries an assumption *and* a value for every rate, by construction. Sparsity
+is reachable only through `MANUAL_PROFILE`, which this screen never requests.
+
+So the key now says a `.` **should not appear** for Basketball Monster and that seeing one
+means something upstream changed. That turns a marker a reader would have taken for ordinary
+sparseness into a signal. **`backend` then found the half I had not:** that set-equality is
+pinned by nothing - `grep required_production_fields backend/tests/` returns nothing across a
+1304-test suite. Adding a canonical field without adding it to BBM's required set would make it
+legitimately nullable while `_rates()` still splats it onto the wire, and my copy would become
+actively misleading via a one-line tuple edit no test opposes. They are adding the pin with
+this screen named as the consumer.
+
+**I turned down a fixture I had asked for, and the reason generalises.** I asked `backend` to
+make the seed's assumptions sparse. Their trace showed it is impossible for BBM and reachable
+only at `?source=manual` - which this screen never requests, since `source` is not a parameter
+on the client. A fixture of a payload the screen cannot display would have been a green test
+over a path no user reaches. *"Unreachable by construction, at `parser.py:293-296`"* is
+cheaper to disprove than a fixture and says more.
+
+**A false-positive guard is still a broken guard.** My first ADR-002 detector concatenated the
+rendered subtree's `textContent` and searched for `rate x assumed_games_played` as a string. It
+passed against a one-row synthetic payload and reported **over 200 violations against the real
+60-row cohort, every one false**: a table's `textContent` runs adjacent cells together, so
+`12.34` beside `5.67` contains `345`. The failure was the direction nobody guards against - too
+sensitive - and a guard that cries wolf on a correct screen is one the next person loosens.
+It now walks text nodes, where a number cannot span a boundary, and parses tokens back to
+numbers so a `toLocaleString()` total with a thousands separator is caught. Both properties
+have tests, including a negative control that renders a violating column and asserts the
+detector fires, and a no-false-positive case. **The seed's cohort size found this; a hand-built
+fixture never would have.**
+
+**A recording that has been through a serialiser is not a recording.** My first capture went
+through PowerShell's `ConvertFrom-Json`/`ConvertTo-Json`, which parsed `imported_at` into a
+`DateTime` and re-emitted it as `08/21/2026 15:57:03` - US locale, no timezone, no sub-second
+precision. Every structural assertion would have passed against it while the one field this
+project has already been bitten by was silently replaced by the capture tool's opinion. The
+committed fixture is `WriteAllBytes(response)`; `imported_at` is `2026-08-21T15:57:03.567066Z`.
+
+**Verified in a real browser** at 5182 against `hoops_gm.dev.seed_projections`, with
+`getComputedStyle` rather than markup - PR #47 shipped a rule that lost on specificity (0,1,0)
+against `.grid th, .grid td` at (0,1,1) and rendered nothing while every test passed, and jsdom
+resolves no cascade. Every rule resolved: `:has()` widened the measure to 1230px, the header
+pins at the scrollport top once the 51px caption scrolls away and holds at scrollTop 400/900/
+1500, the first column holds under horizontal scroll, and the four assumption states resolve to
+four distinct treatments. **My first sticky assertion was wrong** - it compared the header's
+position before and after scrolling and read the caption scrolling away as a failure. The
+header legitimately moves up by the caption height and *then* pins; asserting it never moves
+was asserting the wrong thing.
+
+**Could not verify:**
+- **That the `.` marker and the absent-assumption marker ever render against real data.** They
+  are unreachable for Basketball Monster by construction, so both are exercised only by
+  hand-built payloads - "code agrees with itself" evidence, which is exactly what a recorded
+  fixture exists to escape. The `unreadable` and `unexplained` states are worse: `backend`
+  traced both as unreachable through *any* current profile (`parser.py:224-239`,
+  `importer.py:721-722`). They are kept as contract guards and nothing in the UI claims they
+  occur, but I cannot show any of the four rendering correctly against a payload a producer
+  actually emitted.
+- **That my on-screen claim stays true.** It rests on two hand-maintained tuples being
+  set-equal, which no test enforces at time of writing. `backend`'s pin was not merged when I
+  wrote this. If it does not land, the copy is true and undefended.
+- **Anything about scale.** The recorded fixture is 60 players with invented numbers and
+  ordinary names - no long, accented or suffixed name, no realistic distribution, no
+  four-figure value. Nothing here is evidence this screen handles a 550-row auction board, and
+  the column widths have never met a real name.
+- **The identity-resolution tail.** `needs_review_count` and `unmatched_count` are 0 in every
+  payload that has ever existed, so the lineage panel's rendering of a non-zero value has never
+  run. Asserted at 0 in the recorded test *with a comment saying that is why it is untested*,
+  so `backend`'s `--unresolved N` will redden it and force the fixture and the docstring to be
+  updated together.
+- **The 24rem scrollport budget is a constant, not a measurement**, and it is already 11px
+  short at a 720px viewport before the reader does anything - 9 of 60 rows visible, scrollport
+  bottom at 731px against a 720px fold. Opening the lineage disclosure or surfacing the
+  integrity banner pushes it further. Same defect as the schedule grid's 18rem and the same
+  honest fix, which is one flex-column change for both pages rather than a second magic number.
+- **Whether `useAsync`'s retry interacts correctly with a real concurrent import.** The
+  retry-once path is driven by mocked 409s; I could not stage a genuine mid-read re-import
+  against the running service, so the timing the backend actually produces is untested here.
+
+## 2026-08-21 - frontend - The copy was false and the fixture in the same commit disproved it
+
+**Unit:** review round on `projections-ui`. `architect` and `code-review` at `e9fa5dd`, fixes at
+`731170f`. Nine findings, no ADR-002 or ADR-008 violation, no lane boundary crossed. Two of the
+nine put a false statement in front of the reader.
+
+**The most instructive one: I shipped copy my own fixture disproved.** The key said a `.`
+should not appear for Basketball Monster, because its `required_production_fields` is set-equal
+to `CANONICAL_STAT_FIELDS` and the parser drops a row on any missing required value. That chain
+is correct - `architect` re-derived it independently rather than trusting my comment. **The
+scope was not.** The same marker rendered `team_abbreviation` and `primary_position`, which come
+from *our* player record and say nothing about what the source published, and the recorded
+fixture committed in the same commit contains `Patrick Baldwin Jr.` with a null position. **One
+`.` was on screen from the moment the claim shipped**, and I had seen it in the browser output
+without connecting it.
+
+Type-check, lint and 182 tests were green over it. `gates.md` already names this shape - copy
+true of one condition and false of the next raising the same marker - and I reproduced it while
+writing a comment about being precise. Labels now carry an em dash: a different claim gets a
+different mark, and the key says which is which.
+
+**The guard was blind to two of the nine categories, and its own docstring said otherwise.** My
+ADR-002 detector discarded every product below 100, on the reasoning that "the smallest rate
+that matters times the smallest plausible games assumption still clears three figures". Both
+reviewers measured it against the committed fixture: **278 of 960 real products fall below the
+floor, including 60 of 60 steals and 60 of 60 blocks.** A `Season STL` column - two of the nine
+H2H categories, and exactly the mutation the file's own header says a reasonable person adds on
+purpose - would have rendered the forbidden product for all 60 players while the detector
+returned `[]`.
+
+The floor existed to stop a product colliding with an ordinary rate. **Magnitude was the wrong
+question**, because for steals and blocks the season total genuinely shares a numeric range with
+other per-game rates, so no threshold separates them. It now asks whether a value is one the
+screen was already going to show. Two consequences worth keeping: coverage is asserted **per
+field** rather than in aggregate, because an aggregate count is what let the floor hide two
+categories while looking well-exercised; and a second independent assertion pins the table's
+column inventory, which catches a per-week or rest-of-season column the detector cannot compute
+and therefore could never look for.
+
+**A helper that asserted against its own definition.** `forbiddenRenderings` was documented as
+the negative control's independent path - "a negative control that reused the detector could
+pass because both share a bug" - and its only assertion checked the function against its own
+construction. Neither half of the docstring was true: the real negative control never called it.
+Deleted, and the locale case now asserts through `renderedNumbers` so the "separator survives
+parsing" claim and the "detector fires" claim do not share a code path.
+
+**A message that quoted a different number from the check it explained.** The integrity banner
+reported the post-dedup row count while `rowCountMatchesLineage` compared the pre-dedup one, so a
+duplicated row produced *"carried 1 rate rows but its lineage block counts 1"* - announcing a
+disagreement between two identical numbers. No test caught it because every duplicate case in
+the suite set `projection_count` equal to the array length, making the check pass.
+
+**A structural guarantee that held everywhere except where it mattered.** `AssumptionCell` took
+the whole `row`, so `row.rates` was in scope inside the one branch that narrows `AssumptionState`
+into a bare number - the single place the forbidden product would have been one expression. The
+component docstring's claim was true of every other function in the file. Now it takes
+`assumption` and `playerId`.
+
+**Also closed:** the module claimed every comparison ran in both directions when the assumptions
+join deliberately does not (narrowed, with the reason and its cost stated); `assumed_games_played`
+had no plausibility bound while the same file bounds two other counts for the same stated reason;
+and `importer.py:721-722` was cited 32 lines off the guard it described - under the house rule
+the line number *is* the disprovability, so a wrong one costs the next reader the ninety seconds
+the rule buys.
+
+**`AsyncBoundary` fixed rather than the copy weakened.** Four refusal messages tell the reader to
+read "the backend's wording below" to learn which condition fired, and it rendered only on the
+cold path - missing from exactly the warm path those messages were written for, since a
+superseded cohort arrives while a screen is open. The defect predates this unit and belonged to
+that component. Fixing it also repairs the same inherited gap on the schedule screen.
+
+**The vocabulary pin landed here, as a merge condition.** Nothing enforced the set-equality my
+copy rests on: `grep required_production_fields backend/tests/` returned nothing across 1304
+tests. `backend` correctly declined to add it to a frozen tree mid-review, and the coordinator
+placed it on this PR instead - where the claim actually lives. Asserted as **sets rather than
+counts**, so a swap cannot pass, with mutation from both sides, and verified to redden against
+drift applied to the **real** tuples rather than only to an in-memory copy.
+
+**Verified again in a browser** after the fixes: zero `.` anywhere in the table body, one em dash
+in Pos, the column inventory exactly as agreed. Worth recording that the first check after the
+fix was **wrong because Vite had partially hot-reloaded** - the table showed the new marker while
+the key still showed the old copy, which looked like a contradiction in my own change. A forced
+restart on a clean port settled it. A stale bundle is a plausible-looking wrong answer, same as
+any other.
+
+**Could not verify:**
+- **Whether the detector's coincidence exclusion hides a real violation.** It now skips any
+  product equal to a legitimately rendered value. `discriminableProductCount` asserts every field
+  retains at least one discriminable product on both the synthetic and the recorded cohort, but
+  the excluded products are genuinely invisible and I cannot bound how many a real 550-row
+  Basketball Monster cohort would exclude - only that it is nonzero.
+- **The four assumption states against producer-emitted data.** Unchanged from the previous
+  entry and now sharper: `absent` and `unreadable` are unreachable for this source by
+  construction, `unexplained` through any profile, so three of four render only from hand-built
+  payloads.
+- **That the em dash is the right answer rather than merely a true one.** It distinguishes the
+  two claims, which is what the finding required. Whether a reader actually reads them as
+  different claims is a question about people, and nobody has looked at this screen but me.
+- **The identity-resolution tail**, unchanged: `needs_review_count` and `unmatched_count` are 0
+  in every payload that has existed, pinned at 0 with a comment saying why, so `backend`'s
+  `--unresolved N` will redden it deliberately.
+- **Whether `AsyncBoundary`'s warm-path change alters the schedule screen's rendering** in any
+  case its own tests do not cover. All 55 schedule tests pass and the change is additive, but I
+  did not drive a warm-path schedule refusal in a browser.
+
+## 2026-08-21 - frontend - A dependency that was real from the first commit and in nobody's ordering
+
+**Unit:** follow-up on `projections-ui` at `26e5886`. No code defect; a merge-order dependency
+nobody had written down.
+
+**What happened.** The coordinator checked out this PR head to look at the screen and ran the
+command `frontend/README.md` gives:
+
+```
+python -m hoops_gm.dev.seed_projections
+  -> No module named hoops_gm.dev.seed_projections
+```
+
+`seed_projections` exists only on `sr2501-projections-import-cli`, which is still open. This
+branch was built against that branch — correctly and unavoidably, since it was the only way to
+reach a 200 — and **the dependency was real from that moment.** It simply never became a
+sentence. My handoff recorded that the seed was `backend`'s and that I built against their head;
+it did not say *this cannot merge first*, which is the part that matters.
+
+**Why it is not merely tidiness.** Merged before the CLI, `/projections` would ship with no
+committed way to put a cohort behind it: the endpoint answers `projections_source_not_imported`
+and the screen renders that refusal. That is precisely the state `hoops_gm.dev.seed_schedule_grid`
+exists because a previous endpoint sat in — an endpoint that was fail-closed and permanently
+unavailable while looking rigorous. Shipping the screen first would recreate it one layer up.
+
+**The generalisable shape:** *a dependency that lives in a lane's working directory but in
+nobody's ordering is invisible until somebody runs the command.* It cannot be caught by a gate,
+because every gate passes — the branch is green, the screen works, the README is accurate about
+the tree it was written in. It is only false about the tree it will merge into. Both this lane's
+handoff and the coordinator's own relay of the two commands carried the same gap.
+
+Written into `frontend/README.md` and the `projections-ui` backlog entry rather than only here,
+because the person who hits it next will be reading one of those two and not this file.
+
+**Could not verify:**
+- **That this is the only such dependency in the unit.** I checked the one the coordinator hit.
+  The general question — what else in this branch only works because of an unmerged sibling — I
+  answered by inspection of the diff's imports and the README's commands, not by building a
+  clean checkout of `main` + this branch and exercising every documented path. The honest scope
+  of my check is "the commands I wrote down", not "everything this screen needs".
+- **That the ordering holds if the CLI's own review changes its seed.** `sr2501-projections-import-cli`
+  is in its sixth round with a blocking `data-engineer` finding against the seed. If the seed's
+  interface moves, my README's command moves with it, and I will not learn that from CI.
+
+## 2026-08-21 - frontend - Two matching digests are not "the cohort is unchanged"
+
+**Unit:** follow-up on `projections-ui` at `0f6430d`. `backend` reported that their seed
+remediation (`ee139a1` -> `ffa0662`) did not change what it writes, and that my recorded fixture
+therefore needs no re-capture. They gave evidence rather than reassurance: the write-affecting
+diff is one literal replaced by a constant holding the same literal, and both digests reproduce.
+
+**Verified from my committed file rather than accepted.** `content_sha256`
+`5970c8f2...` and `projection_values_sha256` `25a89365...` both match the values they quoted.
+Their conclusion is right and the fixture stands.
+
+**But the evidence does not reach as far as the claim, and the gap is a documented one.**
+`ReleasedProjectionImport` deliberately never selects `source_games_played_assumptions`, and the
+player labels are read outside any lineage scope - both stated as exemptions on
+`CurrentProjectionsResponse`, the first being the open `release-digests-assumptions` item. So
+**two matching digests are entirely consistent with the assumptions array or the labels having
+changed.** That is not hypothetical: the defect that opened `release-digests-assumptions` was a
+byte-identical re-import serving an *empty* assumptions array beside a clean lineage.
+
+So "the digests match, therefore the cohort is unchanged" is true of the rates and silently
+weaker for the two parts of the payload nobody digests. Same shape as the guarantees this
+project keeps finding: correct about what it covers, and read as covering more.
+
+**What I did about it, since the producer cannot pin these yet and the consumer can.** The
+recorded test now pins:
+- both digests as literals, so an unnoticed re-capture of a different cohort turns red and forces
+  this file's docstring to be revisited alongside the new fixture - the same discipline the
+  schedule grid uses on `schedule.version`, and the gap I had left: **nothing on my side would
+  previously have noticed a changed cohort**;
+- the assumptions array's length, its all-stated property, its 59-79 range and its first three
+  rows;
+- the first player's full label tuple.
+
+`imported_at` is deliberately **not** pinned to a literal - it is a wall clock and moves on every
+capture, so a literal would be flaky by construction. `backend` raised that as a thing to check
+and it was already correct, asserted by shape only.
+
+193 tests, lint and typecheck clean.
+
+**Could not verify:**
+- **~~An 8-byte difference between my captured payload (54159) and theirs (54167)~~ — RESOLVED
+  the same day, and the resolution is worth more than the item.** `backend` drove it: they
+  measured with `curl -w "\nHTTP %{http_code}"` and took `.Length` of the joined result, so
+  **`HTTP 200` — 8 characters — was inside the number they quoted as evidence about my payload.**
+  Their measurement apparatus, reported as a property of my system. My file was right at 54159,
+  captured twice identically.
+
+  The instructive half is what I nearly did instead. A plausible explanation was **available and
+  wrong**: `imported_at`'s microsecond string does vary in width, and `.475778` is 7 characters,
+  so a confident paragraph about float-string width would have closed the question at 7 ≈ 8 and
+  been entirely fiction. **A near-miss explanation is more dangerous than no explanation**,
+  because it terminates the search with something that survives a glance. Recording it as
+  unexplained was the only thing that left it open long enough to be settled. That is the
+  general form of the "could not verify" field working as intended rather than as a disclaimer.
+- **That my new assumption pins are the right *values*** rather than merely the current ones.
+  They are what the seed produced; nobody has checked them against anything external, and the
+  numbers are invented by construction.
+- **Whether the label digest matters.** I pinned one player's labels, not all sixty. A change to
+  a different player's team or position would pass.
+
+## 2026-08-21 - frontend - The resolver dropped three items and exited zero, and a recount could not see it
+
+**Unit:** rebasing `projections-ui` onto merged `main` (`0b28003`) after the import CLI landed.
+Head `1aa71ac`. Gate green: lint, typecheck, 193 frontend tests, the vocabulary pin against
+merged `main`'s own `profiles.py`, and a live browser pass.
+
+**The finding, and it is the sharpest doc-merge failure this project has hit.**
+`scripts/resolve_doc_conflicts.py` **silently deleted the three backlog items the import-CLI
+lane had just added** - `projections-import-cli`, `projection-import-process-concurrency`,
+`projections-seed` - while keeping my side of the header block. **It exited successfully.**
+
+Three things made it nearly invisible:
+
+1. **It printed a recomputed header twice in one rebase, with different numbers** - `118` at the
+   first conflict, `115` at the second. Both were mid-rebase states and neither was usable, which
+   is exactly what this file's own parenthetical has said since the last time a rebase corrupted
+   it. Taking either would have shipped a wrong total.
+2. **A recount of the finished file agrees with itself perfectly after a deletion.** 115 headings,
+   115 unique slugs, 115 markers, 42/1/72 - internally consistent, and wrong. The discipline I had
+   been applying all day *cannot detect this class*, because a dropped item removes its heading
+   and its marker together.
+3. **The file also ended up with two header blocks** carrying different totals - the same
+   corruption its own parenthetical documents from an earlier rebase, recurring.
+
+**What caught it:** comparing this file's *slug set* against `origin/main`'s, which is a different
+question from counting. `Compare-Object` on the two slug lists named all three losses immediately.
+**Recount the total, and separately diff the slug set against `main`. The first cannot see what
+the second is for**, and I had only ever done the first.
+
+Both checks are now named in the backlog header with that reasoning, so the next person does not
+have to rediscover which one catches which failure.
+
+**Restored by taking `origin/main`'s copy of the file and re-applying my two edits**, rather than
+patching three entries back in - a reconstruction whose result can be diffed against `main` and
+shown to differ only where I intended. Final state verified: 118 headings, 118 unique slugs, 118
+markers, 45/1/72, one header block, slug set **identical to `main`**.
+
+**Also corrected a claim this unit falsifies.** `projections-api-early` said `schedule-grid-ui`
+"is still the only thing in this repository a person can look at". It is not, as of this branch.
+Corrected by the lane that falsified it rather than left for someone to notice - the same
+obligation as the reader-count entry, in the direction of a claim going stale by someone else's
+success rather than by a merge.
+
+**The digest decision, made on my own evidence rather than the producer's.** The coordinator was
+explicit that whether to re-capture was mine to decide and needed its own evidence. Against a
+database seeded from merged `main` itself: `content_sha256` and `projection_values_sha256` both
+match the literals my recorded test pins; assumptions 60 rows, range 59-79, first three
+identical; `players[0]` identical; payload 54159 bytes. **No re-capture.** The covering evidence
+is `git diff --stat c0502e6 origin/main -- backend/src/` returning empty - the source tree the
+seed executes is byte-identical to the head I had already verified, so it cannot produce
+different output - and the run is the observation confirming it.
+
+**Browser, live against merged `main`'s seed:** 60 rows, zero absence markers anywhere in the
+table body, one em dash in Pos, "not blended - single source" from `blend === null`, no integrity
+banner, header pinning at the scrollport top and holding at scrollTop 1300 and 1900, first column
+holding under horizontal scroll, `:has()` widening at 1230px, and the assumption rule at 1.92px
+against the volume-pair rule at 0.64px so the categorical boundary reads heavier than the
+grouping one.
+
+**Could not verify:**
+- **Whether the resolver drops items on other lanes' rebases too.** I found this on mine and fixed
+  my file. I did not audit `main`'s current backlog against the union of what every merged lane
+  added, so I cannot say whether an earlier rebase already lost an item that nobody compared. The
+  check that would answer it is cheap and I did not run it, because it is not my file to audit -
+  but the failure is silent and nothing else looks for it.
+- **Whether `scripts/resolve_doc_conflicts.py` should be fixed rather than worked around.** It is
+  not this lane's file, PR #58 is already open against it, and I have twice now confirmed its
+  "conflict markers survive" warning as a false positive on `make_pending_date_payloads.py` while
+  it silently did real damage elsewhere in the same run. **A tool that cries wolf where it is
+  wrong and stays silent where it is right** is a worse shape than either alone, and I am
+  recording that rather than filing it, because filing it is `backend`'s call.
+- **That my restored entry text matches what the CLI lane wrote.** I took `main`'s file wholesale
+  so the three entries are byte-exact, but my own `projections-ui` additions were re-applied by
+  hand from my prior commit; I diffed the result against `main` and confirmed it differs only in
+  that entry and the header, which is weaker than a byte-comparison against my pre-rebase copy.
+
+## 2026-08-21 - frontend - A guard that fails slowly reads as green, and I never looked at CI
+
+**Unit:** blocker found by the coordinator on `09b5b06`, the head I had reported ready. Fixed at
+this head. 194 tests, lint and typecheck clean.
+
+**The defect.** `ProjectionsTable.recorded.test.tsx`'s absence-marker test ran ~1,020
+`getByTestId` calls - 60 players x 16 rates, plus 60 assumptions - each a full DOM traversal
+with testing-library's suggestion machinery attached. Measured at **6,161 ms against vitest's
+5,000 ms default**. It **timed out on the `push` run of the exact commit I offered for merge**
+while the `pull_request` run of the same commit passed, two seconds apart.
+
+**Why this one is worse than an assertion failure.** It is the guard behind a sentence the
+screen prints to the reader - *"a `.` should not appear for Basketball Monster"*. And a timeout
+is the failure mode a re-run erases: the natural response is "it passed on the other run, merge
+it", which converts an assertion that **never completed** into a permanent green check. Every
+other guard argued about on this branch fails loudly. **This one fails slowly, which reads as
+green.**
+
+**I did not look at CI. Not once.** The checks table did not hide the red run from me -
+`gh pr checks 63` lists it first - because I never ran it. I ran the gate locally, saw green, and
+reported ready. Local green and CI green are different claims and I substituted one for the
+other, in a unit whose whole subject is evidence not reaching as far as the claim it is offered
+for.
+
+**Worse: the signal was in my own console every single run and I read past it.** Vitest prints a
+slow test separately, and that line read 3,177 ms, then 3,309, 3,376, 3,714, **4,298** across my
+runs today. Monotonically climbing toward a limit I could have named. I quoted the *total* suite
+time in four different messages and never once read the line directly above it.
+
+**The fix, and why not the obvious one.** Not raising the timeout - that hides the symptom,
+leaves a six-second assertion in a growing suite, and guarantees the next person raises it
+again. One scoped `querySelectorAll` into a `Map`, then set comparison: **1,094 ms for the whole
+file.**
+
+The coordinator's condition on the fix was the valuable part. `getByTestId` *throws on a missing
+cell*, so the loop doubled as a completeness check - but it could never see an **extra** cell,
+because it only asked for what it expected. Asserting key-set equality covers both directions.
+**It caught a bug in my own replacement on its first run**: `[data-testid^="rate-"]` unscoped
+also matches the 16 `rate-header-*` column headers, 975 keys against 959 expected. The new
+assertion's first act was to fail on the exact direction the code it replaced was blind to.
+
+**The em dash defined by an entry that uses two more as punctuation.** The key defines `-` as
+meaning "we hold no label", then used em dashes as ordinary punctuation twice more in the same
+element, **including inside the sentence explaining that it is a distinct mark**. A styled swatch
+saves a sighted reader; a screen reader or anything consuming `textContent` receives the defined
+glyph and the punctuation as the same character two words apart. The `.` entries escaped this
+because that mark was wrapped in `<code>` mid-sentence - **the habit was right and had been
+applied to one of the two marks**, which is the same shape as every scope defect on this branch.
+Now pinned by a test asserting the key's text contains exactly one em dash.
+
+**Could not verify:**
+- **~~Whether the split `push`/`pull_request` result can happen without a timeout.~~ — RESOLVED,
+  and the answer makes this worse than the entry above describes.** I inferred the divergence
+  *was* the nondeterminism. The run history for this branch shows it was flaky on **both** event
+  types across **at least three heads**:
+
+  ```
+  a6be804  pull_request success   push success    <- the fix
+  09b5b06  pull_request success   push failure
+  b933c5f  pull_request FAILURE   push failure
+  efa8c55  push failure
+  ```
+
+  So this was not a `push`-specific artefact and not a single unlucky run. **`b933c5f` was red on
+  both.** The guard had been failing intermittently for hours, across the head I rebased, the
+  head I re-verified digests on, and the head I reported ready — and I reported "193 tests green"
+  from my own machine at every one of them. The correct reading is not "CI caught something at
+  the last moment" but "CI had been saying so for hours to nobody."
+- **Whether other tests in this suite are near the timeout.** I fixed the one that failed and
+  read the slow-test lines for the rest of the run, which are all far below - but I have not
+  measured the schedule suite's 55 tests individually, and that suite is larger than mine and
+  older. The class is now known to be live in this repository; nobody has swept for it.
+- **That my em-dash test would catch the general case.** It counts em dashes in `.grid__key`
+  and expects exactly one. It does not check the lede, the caption, the lineage panel or the
+  integrity banner, where the same confusion is possible and currently absent by luck rather
+  than by assertion.

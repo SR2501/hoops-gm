@@ -125,6 +125,23 @@ export function AsyncBoundary<T>({
   const refreshPending = status === 'loading'
   const dataIsEmpty = isEmpty?.(data) ?? false
   const failureWording = described?.summary ?? backendWording
+  // The backend's own words, on the warm path too.
+  //
+  // This previously computed `described?.summary ?? backendWording` and
+  // rendered only that — so whenever a view supplied a description, which is
+  // every refusal on both data screens, the backend's wording was unreachable
+  // once data was already on screen. Every error-copy module in this app tells
+  // the reader to read "the backend's wording below" to find out *which* of
+  // several conditions fired, and on the warm path there was nothing below.
+  //
+  // That mattered most exactly where the copy was most decision-bearing: a
+  // superseded cohort or a moved import arrives *while* a screen is open, so
+  // the warm path is the one those messages were written for. Found in review
+  // of the projections screen; the defect is older and belonged to this
+  // component, so it is fixed here rather than by weakening the copy that
+  // depends on it.
+  const showBackendWording =
+    backendWording !== null && backendWording !== described?.summary
 
   return (
     <>
@@ -138,6 +155,11 @@ export function AsyncBoundary<T>({
               <span className="stale-banner__detail" data-testid="async-stale-failure">
                 {failureWording}
                 {described?.action ? ` ${described.action}` : ''}
+                {showBackendWording ? (
+                  <span className="state__meta" data-testid="async-stale-backend-wording">
+                    Backend said: <q>{backendWording}</q>
+                  </span>
+                ) : null}
                 {code ? ` Code ${code}.` : ''}
                 {requestId ? ` Request ${requestId}.` : ''}
               </span>

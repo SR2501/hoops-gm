@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { DashboardPage } from './routes/DashboardPage'
 import { NotFoundPage } from './routes/NotFoundPage'
+import { ProjectionsPage } from './routes/ProjectionsPage'
 import { SchedulePage } from './routes/SchedulePage'
 import { SystemPage } from './routes/SystemPage'
 
@@ -17,6 +18,7 @@ export function App() {
       <Route element={<AppLayout />}>
         <Route index element={<DashboardPage />} />
         <Route path="schedule" element={<SchedulePage />} />
+        <Route path="projections" element={<ProjectionsPage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
