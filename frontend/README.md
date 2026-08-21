@@ -108,11 +108,29 @@ cd frontend
 npm run dev
 ```
 
+**`seed_projections` is `backend`'s and arrives with the projection import CLI.**
+Until that merges, `python -m hoops_gm.dev.seed_projections` does not exist on
+`main`, `/api/v1/leagues/1/projections/current` answers
+`projections_source_not_imported`, and `/projections` correctly shows that
+refusal rather than a cohort. That is a **merge-order dependency, not a defect**:
+the projections screen must not land before the command that can put data behind
+it, or it ships in exactly the state `seed_schedule_grid` exists because a
+previous endpoint sat in.
+
+Worth stating here rather than in a chat, because it is the kind of dependency
+that is real from the moment one lane builds against another's branch and
+invisible until somebody runs the command. It cost the coordinator a checkout to
+discover.
+
 If port 8000 is busy the server exits with `[Errno 10048]` and a curl against it
 returns **somebody else's 404**, which is indistinguishable from an answer.
 Read the server's own log before believing an unexpected status; use
 `python -m uvicorn "hoops_gm.app:create_app" --factory --host 127.0.0.1 --port 8017`
 and `VITE_API_PROXY_TARGET=http://127.0.0.1:8017` if so.
+
+The same class catches the dev server: if Vite hot-reloads only part of a change
+you get a page mixing new markup with old copy, which reads as a contradiction
+inside your own diff. Restart on a clean port before believing it.
 
 **The seeded projection numbers are invented — only the player names are real.**
 Sixty rows scroll; sixty rows are not a league. Nothing seen there is evidence

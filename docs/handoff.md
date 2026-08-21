@@ -14196,3 +14196,47 @@ any other.
 - **Whether `AsyncBoundary`'s warm-path change alters the schedule screen's rendering** in any
   case its own tests do not cover. All 55 schedule tests pass and the change is additive, but I
   did not drive a warm-path schedule refusal in a browser.
+
+## 2026-08-21 - frontend - A dependency that was real from the first commit and in nobody's ordering
+
+**Unit:** follow-up on `projections-ui` at `26e5886`. No code defect; a merge-order dependency
+nobody had written down.
+
+**What happened.** The coordinator checked out this PR head to look at the screen and ran the
+command `frontend/README.md` gives:
+
+```
+python -m hoops_gm.dev.seed_projections
+  -> No module named hoops_gm.dev.seed_projections
+```
+
+`seed_projections` exists only on `sr2501-projections-import-cli`, which is still open. This
+branch was built against that branch — correctly and unavoidably, since it was the only way to
+reach a 200 — and **the dependency was real from that moment.** It simply never became a
+sentence. My handoff recorded that the seed was `backend`'s and that I built against their head;
+it did not say *this cannot merge first*, which is the part that matters.
+
+**Why it is not merely tidiness.** Merged before the CLI, `/projections` would ship with no
+committed way to put a cohort behind it: the endpoint answers `projections_source_not_imported`
+and the screen renders that refusal. That is precisely the state `hoops_gm.dev.seed_schedule_grid`
+exists because a previous endpoint sat in — an endpoint that was fail-closed and permanently
+unavailable while looking rigorous. Shipping the screen first would recreate it one layer up.
+
+**The generalisable shape:** *a dependency that lives in a lane's working directory but in
+nobody's ordering is invisible until somebody runs the command.* It cannot be caught by a gate,
+because every gate passes — the branch is green, the screen works, the README is accurate about
+the tree it was written in. It is only false about the tree it will merge into. Both this lane's
+handoff and the coordinator's own relay of the two commands carried the same gap.
+
+Written into `frontend/README.md` and the `projections-ui` backlog entry rather than only here,
+because the person who hits it next will be reading one of those two and not this file.
+
+**Could not verify:**
+- **That this is the only such dependency in the unit.** I checked the one the coordinator hit.
+  The general question — what else in this branch only works because of an unmerged sibling — I
+  answered by inspection of the diff's imports and the README's commands, not by building a
+  clean checkout of `main` + this branch and exercising every documented path. The honest scope
+  of my check is "the commands I wrote down", not "everything this screen needs".
+- **That the ordering holds if the CLI's own review changes its seed.** `sr2501-projections-import-cli`
+  is in its sixth round with a blocking `data-engineer` finding against the seed. If the seed's
+  interface moves, my README's command moves with it, and I will not learn that from CI.
