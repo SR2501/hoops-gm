@@ -64,9 +64,7 @@ CONFLICT_END = ">>>>>>> "
 # line's own shape rather than on a heading's absence, because "contains no
 # heading" is true of an item's body as well as of the header, and that
 # ambiguity is what let a dependency edge be deleted at exit 0.
-_HEADER_COUNT = re.compile(
-    r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*"
-)
+_HEADER_COUNT = re.compile(r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*")
 _RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
 
 # Binary by extension, skipped without comment. Reporting a PDF as "not
@@ -75,8 +73,25 @@ _RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
 # fixtures. The report exists for a *text* file the scan could not decode,
 # which is the case that scanned clean and was claimed as covered.
 BINARY_SUFFIXES = frozenset(
-    {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".zip",
-     ".gz", ".db", ".sqlite", ".sqlite3", ".xlsx", ".docx", ".pptx", ".parquet"}
+    {
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".zip",
+        ".gz",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".xlsx",
+        ".docx",
+        ".pptx",
+        ".parquet",
+    }
 )
 
 
@@ -88,6 +103,8 @@ def is_conflict_marker(line: str) -> bool:
         or line.startswith(CONFLICT_END)
         or line == CONFLICT_SEPARATOR
     )
+
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKIP_DIRS = {
     ".git",
@@ -180,7 +197,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
     # So: anchor to the count region and refuse on everything else. A resolver
     # that only knows how to resolve one region should say so on the others
     # rather than treating "I have no rule for this" as "delete both sides".
-    def _collapse(match: "re.Match[str]") -> str:
+    def _collapse(match: re.Match[str]) -> str:
         block = match.group(0)
         if _HEADER_COUNT.search(block) or _RECOUNT_NOTE in block:
             return "__NOTE__\n"
@@ -194,9 +211,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
             f"total, so no other check here can see it.\n\n{excerpt}"
         )
 
-    text = re.sub(
-        r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", _collapse, text, flags=re.DOTALL
-    )
+    text = re.sub(r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", _collapse, text, flags=re.DOTALL)
 
     # And the guard that does not depend on the mechanism above being right:
     # no item **slug** may leave this function that entered it. A total can be
@@ -219,9 +234,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
     lines = text.split("\n")
     headings = [line for line in lines if line.startswith("### ")]
     markers = [
-        line
-        for line in lines
-        if re.match(r"^- \[[ x]\] \*\*(done|pending|blocked)\*\*", line)
+        line for line in lines if re.match(r"^- \[[ x]\] \*\*(done|pending|blocked)\*\*", line)
     ]
     names = [m.group(1) for h in headings if (m := re.match(r"^### `([^`]+)`", h))]
     dupes = sorted(n for n, k in collections.Counter(names).items() if k > 1)
@@ -258,7 +271,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
         # about an edit that did not happen.
         text = text.replace("__NOTE__", f"{header}\n\n{note}")
 
-    text, substitutions = re.subn(
+    text = re.sub(
         r"^\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*$",
         header,
         text,
@@ -267,10 +280,11 @@ def resolve_backlog(path: pathlib.Path) -> None:
     )
 
     # Assert the presence we expect rather than the absence of what we fear:
-    # exactly one header line, in the file we are about to write. Counting is
-    # cheap and it is the only thing that distinguishes "substituted", "carried
-    # in on the note" and "silently absent" — all three of which reach this
-    # line with `substitutions` telling a different story about each.
+    # exactly one header line, in the file we are about to write. Counting the
+    # finished text rather than trusting the substitution's return value,
+    # because the substitution reports how many lines it *replaced* and the
+    # question is how many exist — those differ precisely in the case that
+    # caused this, where it replaced none and the note had carried one in.
     written = len(
         re.findall(
             r"^\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*$",
@@ -379,9 +393,7 @@ def main(argv: list[str] | None = None) -> int:
 
     entries = sum(
         1
-        for line in (REPO_ROOT / "docs/handoff.md")
-        .read_text(encoding="utf-8")
-        .split("\n")
+        for line in (REPO_ROOT / "docs/handoff.md").read_text(encoding="utf-8").split("\n")
         if re.match(r"^## \d{4}-\d{2}-\d{2}", line)
     )
     print(f"  handoff dated entries: {entries}")

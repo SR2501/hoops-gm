@@ -26,9 +26,7 @@ import sys
 
 import pytest
 
-SCRIPT = (
-    pathlib.Path(__file__).resolve().parents[2] / "scripts" / "resolve_doc_conflicts.py"
-)
+SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "resolve_doc_conflicts.py"
 
 
 def _load(tmp_root: pathlib.Path):
@@ -150,10 +148,7 @@ def test_header_count_conflict_is_still_resolved(tmp_path):
     backlog.write_text(
         "# Build backlog\n\n"
         "<<<<<<< HEAD\n**1 done - 0 blocked - 1 pending - 2 total**\n=======\n"
-        "**0 done - 0 blocked - 2 pending - 2 total**\n>>>>>>> other\n\n"
-        + ITEM_A
-        + "\n"
-        + ITEM_B,
+        "**0 done - 0 blocked - 2 pending - 2 total**\n>>>>>>> other\n\n" + ITEM_A + "\n" + ITEM_B,
         encoding="utf-8",
     )
     module = _load(tmp_path)
