@@ -372,25 +372,39 @@ class TestNbaStatsIsAlive:
 
         This is the project's **only** source of a player position, and
         therefore of the third key risk R7 specifies the identity crosswalk to
-        match on. If it thins out, `players.primary_position` silently stops
-        being refreshed and every match quietly reverts to the two-key
-        comparison R7 was amended to describe.
+        match on.
+
+        **Asserted on the raw payload, deliberately.** ``parse_player_index``
+        already raises below the coverage floor, so measuring after parsing
+        would make every assertion here true by construction and the guidance
+        below unreachable — the parser's message would be the only one anyone
+        ever saw. Independent review caught exactly that in the first version
+        of this test. Reading the payload directly is what makes this test able
+        to fail on its own terms and to say what an operator should do.
 
         Observed 2026-08-20: 572 of 578 rows state one, 98.9%.
         """
-        records = parse_player_index(
-            nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
-            season=FIXTURE_CURRENT_SEASON,
-        )
+        payload = nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        rows = table["rowSet"]
 
-        assert len(records) > 400, f"only {len(records)} players listed"
-        stated = sum(1 for r in records if r.position)
-        coverage = stated / len(records)
+        assert len(rows) > 400, (
+            f"only {len(rows)} players listed. This is row *omission*, which the parser "
+            "cannot see — it validates the rows it is given. A short listing means stored "
+            "positions are refreshed for only part of the league"
+        )
+        stated = sum(1 for row in rows if str(row[column] or "").strip())
+        coverage = stated / len(rows)
         assert coverage >= MIN_POSITION_COVERAGE, (
-            f"only {stated} of {len(records)} players ({coverage:.1%}) have a listed "
+            f"only {stated} of {len(rows)} players ({coverage:.1%}) have a listed "
             "position. Treat stored primary_position values as stale, and check whether "
             "this column has become a per-game or starters-only field"
         )
+
+        # And the parser agrees with the raw reading, so the two cannot drift.
+        records = parse_player_index(payload, season=FIXTURE_CURRENT_SEASON)
+        assert sum(1 for r in records if r.position) == stated
 
     def test_the_nba_still_does_not_publish_a_point_guard(self, nba: NbaStatsClient) -> None:
         """FAILS IF: the NBA starts publishing fine-grained positions.
@@ -411,13 +425,20 @@ class TestNbaStatsIsAlive:
         computable function of NBA data — see `player-position-eligibility` in
         `docs/backlog.md`. Finer NBA positions would improve identity
         corroboration and nothing else without a separate decision.
-        """
-        records = parse_player_index(
-            nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
-            season=FIXTURE_CURRENT_SEASON,
-        )
 
-        stated = {r.position for r in records if r.position}
+        Read from the raw payload for the same reason as the test above: the
+        parser's vocabulary guard would otherwise raise first and this test
+        would have no reachable assertion at all.
+        """
+        payload = nba.player_index(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE)
+        table = payload["resultSets"][0]
+        column = table["headers"].index("POSITION")
+        stated = {
+            str(row[column]).strip().upper()
+            for row in table["rowSet"]
+            if str(row[column] or "").strip()
+        }
+
         fine = stated & {"PG", "SG", "SF", "PF"}
         assert not fine, (
             f"PlayerIndex now publishes {sorted(fine)}. This changes what the NBA states "

@@ -10881,3 +10881,103 @@ consequence worth carrying: **eligibility is read, never derived**, and anything
 from starts is a Model-gated prediction of a third party's behaviour that may never be
 displayed as eligibility. There is probably an ADR in where eligibility truth lives and how
 divergence is surfaced without being resolved, but it needs a real page capture first.
+
+## 2026-08-20 — data-engineer — Three exact-head reviews on the position lane; a suggested constraint would have deleted the crosswalk
+
+**Unit:** review round on PR #48 (`player-position-eligibility`, NBA half). `data-engineer`,
+`backend` and `code-review`, each at `08a79f6`. Nine findings actioned. Every one of them was
+something lint, mypy and 1,173 green tests were happy with.
+
+**The most valuable finding was a second consumer nobody had looked at.** `code-review` found
+that `projections.importer.build_player_targets` has **always** passed
+`position=player.primary_position` into `ResolvableRecord.build`. Because nothing ever wrote
+that column, that resolver has been silently position-blind for its entire life — and flips to
+position-aware the first time `build_crosswalk` runs. I had analysed the Fantrax crosswalk
+carefully and pinned it; I never looked for a second reader of the column I was populating. The
+same regression shape reproduces there, and it is now pinned by
+`TestProjectionTargetsAreNowPositionAware` and recorded in R7 and the adapter doc. The general
+lesson is the cheap one: **when you start populating a column that was always NULL, grep for
+its readers before reasoning about its effect.**
+
+**A review suggestion that execution falsified, which is the day's best example of why gates
+are not the mechanism.** `backend` proposed an all-or-none CHECK constraint over the four
+position columns — well-argued, precedented by `projections`' volume-pair CHECKs, and framed as
+"worth the batch rebuild". I implemented it. The migration suite went red on a test about
+absence splits, which looked unrelated. It was not: SQLite cannot add a CHECK in place, so it
+needs `batch_alter_table`, which rebuilds the table by copying, dropping the original and
+renaming — and **ten foreign keys point into `players`, eight of them `ON DELETE CASCADE`**,
+including `player_external_ids` (the crosswalk itself), `player_game_logs`,
+`player_participation` and `projections`. The rebuild cascades into all of them. On a real
+database that migration deletes a season of ingested data; in the suite it showed up as one
+surviving row where one was expected. Reverted to plain `add_column`, with the invariant held
+at the type level instead (`NbaPlayerPositionRecord.season` is now required) and the trade
+recorded in the revision docstring rather than left as an unexplained absence. **Neither the
+reviewer nor I could have reasoned our way to that; running it took four minutes.**
+
+**The constraint did earn something before it died.** While active it immediately rejected
+`test_projection_importer.seed_player`, which had been writing `primary_position` with no
+source, season or observed-at — a shape no real producer can write, which is one of this
+project's named defect classes. The helper now writes full provenance. So the constraint found
+a real fixture defect on its way to being reverted.
+
+**A vacuous check of my own, caught in the act.** While mutation-testing the two new guards I
+wrote a check that reported `RED (guard works)` for a test name **that did not exist**. pytest
+exits non-zero on a collection error, so a mutation run against a missing test is a red that
+proves nothing — the exact shape of the three vacuous alarms found earlier today, committed by
+me while building the machinery to avoid it. Fixed by asserting the test is **green before**
+mutation and only then treating red as evidence. That two-line baseline is now the standard I
+would apply to every mutation check in this repository.
+
+**`season` was a pure caller assertion — the `gameEt` shape, in my own new code.** `data-engineer`
+found that `season` is stamped onto every record and thence onto
+`players.primary_position_season`, whose entire justification is that a stored position must
+know which season it describes, and that nothing checked it against the data. Passing
+`season="1997-98"` to a 2026-27 payload silently stamped 1997-98 on 578 rows. The payload
+echoes `parameters.Season`; it is now corroborated against that, and absence of the echo
+withholds rather than fails.
+
+**Two live smoke assertions could not fail.** `code-review` showed that
+`parse_player_index` already raises on both the vocabulary and coverage conditions, so the
+smoke tests that asserted their complements *after* parsing were true by construction, and the
+careful operator guidance I wrote in their messages was unreachable —
+`test_the_nba_still_does_not_publish_a_point_guard` had zero reachable assertions. Both now
+read the raw payload before parsing, so the messages an operator sees are the ones written for
+them. I also claimed "four live smoke tests" in the commit message and the PR body; the diff
+adds **three**. I miscounted because a pre-existing box-score test matched my `-k position`
+filter. Corrected.
+
+**Also fixed:** `ImportCounts.created` was being incremented by an importer documented as never
+creating a row — it would have printed "569 created" beside `import_nba_players`' genuine "580
+created" (found independently by both `backend` and `data-engineer`); the crosswalk join
+ignored `current_for_source`, so a superseded NBA id could write a stale position with fresh
+provenance (`projections` already filters correctly); an orphaned link is now loud rather than
+counted as "skipped"; a naive `observed_at` is refused by the caller rather than by the column
+at flush time; and `PLAYER_FIRST_NAME`/`PLAYER_LAST_NAME` are read by the parser and were not
+pinned by `require()`, so a rename would have produced silent `None`s.
+
+**Could not verify:**
+- **PostgreSQL, still.** No Docker. The revision is back to three `add_column`s, which is the
+  least dialect-sensitive shape available, and `backend` independently generated the exact
+  Postgres DDL via Alembic offline mode and found it catalog-only and transactional. That is
+  stronger than my original argument and it is still not execution. Rests on CI.
+- **Whether the 33 persisted `DISAGREE` rows should exist at all.** `data-engineer` established
+  that they are written to `player_external_ids.position_evidence` on accepted matches and that
+  all of them are correct matches, so a durable known-weak verdict now accumulates rather than
+  living only in a report. I did not change it: the comparator and its weights are the identity
+  lane's, and suppressing a literally-true disagreement would be worse than recording it. But
+  the argument that it erodes what `AGREE`/`DISAGREE`/`UNKNOWN` are *for* is a good one and I
+  do not have a rebuttal.
+- **The cohort manifest is now three consecutive fingerprint-only edits deep** and has not been
+  regenerated since `a498dba`, with nothing in the artifact recording that. I did not add a
+  field saying so, because hand-writing a key the generator does not produce is the same
+  fabrication in a different direction. It needs a real regeneration against a backfilled
+  cohort, which needs state this worktree does not have. The manifest's
+  `position_evidence.what_would_be_needed` — "A source that prints a position for every player
+  on a roster... Not attempted here" — is now satisfied by this PR and will read as stale.
+- **Whether the projections regression matters in practice.** I pinned the shape; I did not run
+  a real Basketball Monster CSV through it, because the committed sample carries no positions.
+
+**Next:** unchanged — the Fantrax-eligibility half, specified in the backlog item with the
+owner's expectations attached and marked unverified. One addition for whoever re-tunes
+`_DISAGREEMENT_PENALTY["position"]`: there are now **two** call sites reading
+`primary_position`, and they move together.

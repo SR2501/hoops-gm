@@ -19,9 +19,32 @@ row keeps ``primary_position IS NULL``, which is true: nothing has ever
 populated it. Writing a source string onto rows whose position is unknown would
 assert provenance for a value that does not exist.
 
+**There is deliberately no all-or-none CHECK constraint, and that is a reversal
+made by executing rather than reasoning.** Review proposed one — the four
+position columns are conceptually all-or-none, and ``projections``' volume-pair
+CHECKs are the established precedent for making a bad state inexpressible. It
+was implemented, and the existing migration suite went red: SQLite cannot add a
+CHECK in place, so it requires ``batch_alter_table``, which rebuilds the table
+by creating a copy, dropping the original and renaming. **Ten foreign keys point
+into ``players`` and eight of them are ``ON DELETE CASCADE``** — including
+``player_external_ids`` (the crosswalk itself), ``player_game_logs``,
+``player_participation`` and ``projections``. Dropping the original table
+cascades into all of them. ``test_absence_split_activation_migration_allows_
+recurring_fingerprints`` caught it as one surviving row where it expected one,
+and the same rebuild would have silently deleted a season of ingested data on
+any real database.
+
+So the invariant is held one level up instead, where it costs nothing:
+``NbaPlayerPositionRecord.season`` is required with no default, and
+``import_player_positions`` writes all four columns together or none. That is
+weaker than a constraint — a raw SQL writer could still produce an incomplete
+triple — and the trade is recorded here rather than left as an unexplained
+absence. A constraint would need a safe rebuild of the most-referenced table in
+the schema, which is not a change to make in passing.
+
 Additive columns only — no constraint, no index, no data migration — so this is
 a plain ``add_column`` on both dialects rather than the batch rebuild 0002
-needed.
+needed, and it cannot touch a dependent row.
 
 Revision ID: 0016
 Revises: 0015
@@ -57,6 +80,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Bare drops, not batch mode, for the same cascade reason as the upgrade.
+    # SQLite has supported DROP COLUMN since 3.35 (2021); this project requires
+    # Python >= 3.12, whose bundled SQLite is far newer.
     op.drop_column("players", "primary_position_observed_at")
     op.drop_column("players", "primary_position_season")
     op.drop_column("players", "primary_position_source")

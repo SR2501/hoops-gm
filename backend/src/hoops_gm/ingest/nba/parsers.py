@@ -347,7 +347,36 @@ PLAYER_INDEX_POSITIONS: Final[frozenset[str]] = frozenset(
 MIN_POSITION_COVERAGE: Final = 0.90
 
 
-def parse_player_index(payload: Any, *, season: str | None = None) -> list[NbaPlayerPositionRecord]:
+def _require_declared_season(payload: Any, *, season: str, endpoint: str) -> None:
+    """Check the caller's season against the one the server says it served.
+
+    ``season`` is otherwise a pure caller assertion: it is stamped onto every
+    record and thence onto ``players.primary_position_season``, whose entire
+    justification is that a stored position needs to know which season it
+    describes. A value nobody checked is the ``gameEt`` shape — self-describing
+    and believed — so it is checked against something independent, which this
+    payload supplies for free in its ``parameters`` echo.
+
+    Absence is not treated as disagreement. If the endpoint stops echoing its
+    parameters this withholds rather than failing, because "the server did not
+    say" and "the server said something else" are different claims and only the
+    second is evidence of a problem.
+    """
+    parameters = payload.get("parameters") if isinstance(payload, dict) else None
+    if not isinstance(parameters, dict):
+        return
+    declared = str(parameters.get("Season") or "").strip()
+    if declared and declared != season:
+        raise SourceContractError(
+            f"requested season {season!r} but the payload declares {declared!r}; a position "
+            "stamped with the wrong season is worse than one with no season, because it "
+            "reads as deliberate provenance",
+            source=SOURCE,
+            endpoint=endpoint,
+        )
+
+
+def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRecord]:
     """Parse ``PlayerIndex`` — the NBA's listed position for every player.
 
     This is the source of ``players.primary_position``, and therefore of the
@@ -359,10 +388,20 @@ def parse_player_index(payload: Any, *, season: str | None = None) -> list[NbaPl
     would mean if it fired rather than merely raising.
     """
     endpoint = "PlayerIndex"
-    table = require_table(
-        result_tables(payload, endpoint=endpoint), "PlayerIndex", endpoint=endpoint
+    tables = result_tables(payload, endpoint=endpoint)
+    table = require_table(tables, "PlayerIndex", endpoint=endpoint)
+    table.require(
+        "PERSON_ID",
+        "POSITION",
+        "TEAM_ID",
+        "TEAM_ABBREVIATION",
+        # Read into the record, so pinned. An unpinned column that is read
+        # silently becomes None after a source rename — ``ResultTable.get``
+        # returns a default for an unknown column rather than raising.
+        "PLAYER_FIRST_NAME",
+        "PLAYER_LAST_NAME",
     )
-    table.require("PERSON_ID", "POSITION", "TEAM_ID", "TEAM_ABBREVIATION")
+    _require_declared_season(payload, season=season, endpoint=endpoint)
 
     records: list[NbaPlayerPositionRecord] = []
     seen: dict[int, str | None] = {}

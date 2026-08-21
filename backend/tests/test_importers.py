@@ -186,7 +186,11 @@ class TestPlayerPositionImport:
 
         counts = import_player_positions(crosswalked, records, observed_at=observed)
 
-        assert counts.created > 400
+        assert counts.updated > 400
+        # This importer never inserts a row, so `created` must stay at zero.
+        # An earlier version reported "569 created" for a step whose whole
+        # design is that it creates nothing.
+        assert counts.created == 0
         placed = crosswalked.scalars(
             select(Player).where(Player.primary_position.is_not(None))
         ).all()
@@ -208,13 +212,93 @@ class TestPlayerPositionImport:
         second = import_player_positions(crosswalked, records, observed_at=observed)
 
         assert second.created == 0
-        assert second.updated == first.created + first.updated
+        assert second.updated == first.updated
+        assert second.skipped == first.skipped
         assert (
             crosswalked.scalar(
                 select(func.count()).select_from(Player).where(Player.primary_position.is_not(None))
             )
             == before
         )
+
+    def test_a_superseded_nba_id_cannot_write_a_position(self, crosswalked: Session) -> None:
+        """A retired identifier is history, not a join key.
+
+        ``current_for_source`` exists so a superseded row stops being the one
+        joins pick up. Without that filter a stale NBA person id writes an old
+        season's position onto a current player and stamps it with fresh
+        provenance — a lie of exactly the kind the lineage columns exist to
+        prevent. The projection importer already filters this way.
+        """
+        player = crosswalked.scalars(select(Player)).first()
+        assert player is not None
+        crosswalked.add(
+            PlayerExternalId(
+                player_id=player.id,
+                source=ExternalSource.NBA,
+                current_for_source=None,  # superseded
+                external_id="99000001",
+                match_method=MatchMethod.ANCHOR_ID,
+            )
+        )
+        crosswalked.flush()
+
+        counts = import_player_positions(
+            crosswalked,
+            [NbaPlayerPositionRecord(nba_player_id=99000001, position="C", season="2019-20")],
+            observed_at=datetime(2026, 8, 20, tzinfo=UTC),
+        )
+
+        assert counts.skipped == 1
+        assert counts.updated == 0
+        crosswalked.refresh(player)
+        assert player.primary_position_season != "2019-20"
+
+    def test_a_naive_observed_at_is_refused_by_the_caller_not_the_column(
+        self, crosswalked: Session
+    ) -> None:
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, 12, 0))
+
+    def test_position_provenance_is_written_as_a_complete_set_or_not_at_all(
+        self, crosswalked: Session
+    ) -> None:
+        """The guarantee that is actually in force, and its honest limit.
+
+        A database CHECK would be stronger and was implemented, then reverted:
+        SQLite can only add one by rebuilding ``players``, and ten foreign keys
+        point into that table with eight ``ON DELETE CASCADE``, so the rebuild
+        deletes the crosswalk, the game logs, the participation ledger and the
+        projections. The existing migration suite caught it. See revision 0016.
+
+        What holds instead is that ``NbaPlayerPositionRecord.season`` is
+        required with no default, and this importer writes all four columns in
+        one block. So no *record* can express the incomplete state and no write
+        through this path produces one. A raw SQL writer still could, which is
+        why that is stated rather than implied.
+        """
+        records = parse_player_index(load("nba_playerindex_current.json"), season="2026-27")
+        import_player_positions(crosswalked, records, observed_at=datetime(2026, 8, 20, tzinfo=UTC))
+
+        rows = crosswalked.scalars(select(Player)).all()
+        assert rows
+        for player in rows:
+            stated = [
+                player.primary_position,
+                player.primary_position_source,
+                player.primary_position_season,
+                player.primary_position_observed_at,
+            ]
+            # All four present, or all four absent. Never a partial triple.
+            assert all(v is not None for v in stated) or all(v is None for v in stated), (
+                f"player {player.id} carries partial position provenance: {stated}"
+            )
+
+        # And the record type refuses to express it a step earlier.
+        with pytest.raises(TypeError):
+            NbaPlayerPositionRecord(nba_player_id=1, position="C")  # type: ignore[call-arg]
 
     def test_an_unstated_position_never_overwrites_a_known_one(self, crosswalked: Session) -> None:
         """Declining to state a position is not retracting one.
@@ -267,7 +351,7 @@ class TestPlayerPositionImport:
         with pytest.raises(ValueError, match="crosswalk"):
             import_player_positions(
                 session,
-                [NbaPlayerPositionRecord(nba_player_id=1, position="G")],
+                [NbaPlayerPositionRecord(nba_player_id=1, position="G", season="2026-27")],
                 observed_at=datetime(2026, 8, 20, tzinfo=UTC),
             )
 

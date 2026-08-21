@@ -58,6 +58,7 @@ from hoops_gm.ingest.nba.models import (
     NbaTeamRecord,
     PlayerBoxScoreRecord,
 )
+from hoops_gm.ingest.nba.parsers import SOURCE as NBA_SOURCE
 from hoops_gm.ingest.nba.schedule import ENDPOINT as SCHEDULE_ENDPOINT
 from hoops_gm.ingest.nba.schedule import SOURCE as SCHEDULE_SOURCE
 from hoops_gm.ingest.nba.schedule import ScheduleParseResult
@@ -281,7 +282,11 @@ def import_player_positions(
 
     Joined by NBA person id through ``player_external_ids``, never by name —
     this importer supplies one of the fields the *name* matcher corroborates
-    with, so matching it on a name would be circular.
+    with, so matching it on a name would be circular. The join takes only
+    ``current_for_source`` rows: a superseded identifier is retained as history
+    precisely so it stops being the one joins pick up, and applying a position
+    through a retired id would stamp fresh provenance on a stale reading. Same
+    filter the projection importer already uses for the same kind of join.
 
     A player the crosswalk has never seen is **skipped, not created**.
     ``import_nba_players`` is the one place a canonical row is introduced, and
@@ -295,20 +300,35 @@ def import_player_positions(
     not the source retracting one, and those must not be the same write — the
     same distinction ``inactives_available`` exists for on the participation
     side.
+
+    **The counts mean what they mean everywhere else in this module.** This
+    function never inserts a row, so ``created`` is never incremented — an
+    earlier version reported "569 created" for a step whose whole design is
+    that it creates nothing, which is the kind of confidently wrong operator
+    output this project keeps finding. ``updated`` counts rows whose position
+    lineage was written; ``skipped`` counts rows deliberately left alone.
     """
     counts = ImportCounts()
     links = {
         row.external_id: row.player_id
         for row in session.scalars(
-            select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.NBA)
+            select(PlayerExternalId).where(
+                PlayerExternalId.source == ExternalSource.NBA,
+                PlayerExternalId.current_for_source == ExternalSource.NBA.value,
+            )
         )
     }
     if not links:
         raise ValueError(
-            "no NBA player links exist; run the crosswalk before importing positions, "
-            "because this importer attaches an attribute to canonical players and "
-            "deliberately does not create them"
+            "no current NBA player links exist; run the crosswalk before importing "
+            "positions, because this importer attaches an attribute to canonical players "
+            "and deliberately does not create them"
         )
+    if observed_at.tzinfo is None:
+        # Checked here rather than left to UTCDateTime at flush time, where it
+        # surfaces as a StatementError wrapping a ValueError and names the
+        # column instead of the caller. import_league_settings does the same.
+        raise ValueError("observed_at must be timezone-aware")
 
     for record in records:
         player_id = links.get(str(record.nba_player_id))
@@ -317,18 +337,22 @@ def import_player_positions(
             continue
         player = session.get(Player, player_id)
         if player is None:
-            counts.skipped += 1
-            continue
+            # The link's player_id is a CASCADE foreign key, so this is a
+            # referential-integrity violation rather than an ordinary miss.
+            # Counting it as "skipped" would hide a broken database inside a
+            # number that also means "nothing to do here".
+            raise SourceContractError(
+                f"player_external_ids row for NBA id {record.nba_player_id} points at "
+                f"player {player_id}, which does not exist",
+                source=NBA_SOURCE,
+                endpoint="PlayerIndex",
+            )
 
-        changed = player.primary_position != record.position
         player.primary_position = record.position
         player.primary_position_source = NBA_POSITION_SOURCE
         player.primary_position_season = record.season
         player.primary_position_observed_at = observed_at
-        if changed:
-            counts.created += 1
-        else:
-            counts.updated += 1
+        counts.updated += 1
 
     session.flush()
     return counts

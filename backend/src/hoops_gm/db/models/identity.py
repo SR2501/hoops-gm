@@ -109,7 +109,15 @@ class Player(IntPk, TimestampMixin, Base):
     #: identical positions, so a changed value is a real event and needs a
     #: season to be a change *from*.
     primary_position_season: Mapped[str | None] = mapped_column(String(9))
-    #: When that reading was taken.
+    #: When that reading was taken. The four position columns are written
+    #: together or not at all by ``import_player_positions``, and
+    #: ``NbaPlayerPositionRecord.season`` is required so a caller cannot
+    #: assemble an incomplete triple. There is deliberately **no** database
+    #: CHECK enforcing that: SQLite can only add one by rebuilding the table,
+    #: and ten foreign keys point into ``players`` with eight of them
+    #: ``ON DELETE CASCADE``, so the rebuild deletes the crosswalk, the game
+    #: logs, the participation ledger and the projections. Implemented,
+    #: measured, reverted — see revision 0016.
     primary_position_observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     rookie_season: Mapped[str | None] = mapped_column(String(9))
     status: Mapped[PlayerStatus] = mapped_column(

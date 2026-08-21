@@ -183,11 +183,16 @@ class NbaPlayerPositionRecord:
     #: **Coarse.** The source vocabulary contains no ``PG``/``SG``/``SF``/``PF``
     #: distinction at all, on this endpoint or on any sibling checked.
     position: str | None
+    #: The season the listing was requested for. **Required, with no default.**
+    #: Position is stable but not immutable, and a stored attribute with no idea
+    #: which season it describes cannot be refreshed deliberately — a changed
+    #: value is a real event and needs a season to be a change *from*. An
+    #: optional season let a caller produce a position with no season, which is
+    #: exactly the incomplete provenance the ``players`` CHECK constraint now
+    #: makes inexpressible; making it required stops that state being reachable
+    #: a step earlier.
+    season: str
     first_name: str | None = None
     last_name: str | None = None
     team_id: int | None = None
     team_abbreviation: str | None = None
-    #: The season the listing was requested for. Position is stable but not
-    #: immutable, and a stored attribute with no idea which season it describes
-    #: cannot be refreshed deliberately.
-    season: str | None = None

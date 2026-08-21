@@ -474,6 +474,55 @@ class TestNbaPlayerIndexPosition:
 
     # -- the guards, each broken deliberately ------------------------------
 
+    def test_a_season_disagreement_with_the_payload_is_a_contract_error(self) -> None:
+        """The season was a pure caller assertion until independent review.
+
+        ``season`` is stamped onto every record and thence onto
+        ``players.primary_position_season``, whose entire justification is that
+        a stored position must know which season it describes. Nothing checked
+        it against the data — the `gameEt` shape, a self-describing value
+        believed rather than corroborated. The payload echoes the season the
+        server actually served, so it is checked against that.
+        """
+        payload = load("nba_playerindex_current.json")
+        assert payload["parameters"]["Season"] == "2026-27"
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="1997-98")
+        assert "1997-98" in str(caught.value)
+        assert "2026-27" in str(caught.value)
+
+    def test_a_payload_that_states_no_season_withholds_rather_than_fails(self) -> None:
+        """Absence is not disagreement — the rule the whole evidence model runs on.
+
+        If the endpoint stops echoing its parameters, "the server did not say"
+        must not be read as "the server contradicted us".
+        """
+        payload = load("nba_playerindex_current.json")
+        del payload["parameters"]
+
+        records = parse_player_index(payload, season="2026-27")
+        assert len(records) > 500
+
+    def test_the_name_columns_that_are_read_are_also_required(self) -> None:
+        """Every column this parser reads is pinned, not just the load-bearing ones.
+
+        ``ResultTable.get`` returns ``None`` for an unknown column rather than
+        raising, so a column that is read but not declared in ``require()``
+        turns a source rename into silent ``None``s instead of a contract
+        error. ``PLAYER_FIRST_NAME`` and ``PLAYER_LAST_NAME`` are read into
+        every record and were unpinned until independent review; nothing
+        consumes them yet, which is exactly why it would have gone unnoticed.
+        """
+        for column in ("PLAYER_FIRST_NAME", "PLAYER_LAST_NAME"):
+            payload = load("nba_playerindex_current.json")
+            payload["resultSets"][0]["headers"] = [
+                h for h in payload["resultSets"][0]["headers"] if h != column
+            ]
+            with pytest.raises(SourceContractError) as caught:
+                parse_player_index(payload, season="2026-27")
+            assert column in str(caught.value)
+
     def test_a_missing_position_column_is_a_contract_error(self) -> None:
         payload = load("nba_playerindex_current.json")
         payload["resultSets"][0]["headers"] = [
@@ -481,7 +530,7 @@ class TestNbaPlayerIndexPosition:
         ]
 
         with pytest.raises(SourceContractError) as caught:
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
         assert "POSITION" in str(caught.value)
 
     def test_a_new_position_value_is_a_contract_error_not_a_silent_passthrough(self) -> None:
@@ -498,7 +547,7 @@ class TestNbaPlayerIndexPosition:
         table["rowSet"][0][column] = "PG"
 
         with pytest.raises(SourceContractError) as caught:
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
         assert "'PG'" in str(caught.value)
         assert "vocabulary" in str(caught.value)
 
@@ -514,7 +563,7 @@ class TestNbaPlayerIndexPosition:
         table["rowSet"].append(list(table["rowSet"][0]))
 
         with pytest.raises(SourceContractError) as caught:
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
         assert "more than once" in str(caught.value)
 
     def test_a_lineup_slot_shaped_payload_trips_the_coverage_floor(self) -> None:
@@ -542,7 +591,7 @@ class TestNbaPlayerIndexPosition:
                 row[position] = ""
 
         with pytest.raises(SourceContractError) as caught:
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
         message = str(caught.value)
         assert "starting" in message
         assert "Do not persist" in message
@@ -555,7 +604,7 @@ class TestNbaPlayerIndexPosition:
             row[column] = ""
 
         with pytest.raises(SourceContractError):
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
 
     def test_the_coverage_floor_leaves_real_headroom(self) -> None:
         """The floor must be loose enough not to fire on an ordinary season.
@@ -576,7 +625,7 @@ class TestNbaPlayerIndexPosition:
         payload["resultSets"][0]["rowSet"] = []
 
         with pytest.raises(SourceContractError) as caught:
-            parse_player_index(payload)
+            parse_player_index(payload, season="2026-27")
         assert "no player rows" in str(caught.value)
 
 
