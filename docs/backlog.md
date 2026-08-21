@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 74 pending - 120 total**
+**45 done - 1 blocked - 76 pending - 122 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 120 `###` headings, 120 unique item slugs and 120 markers, 1:1, no
+two headers: 122 `###` headings, 122 unique item slugs and 122 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -30,6 +30,16 @@ behaved exactly as described: the recount moved 118 -> 120 and could not have
 seen a loss, while the slug diff against `origin/main` independently confirmed
 zero of main's 118 entries were dropped and exactly two were added. The script
 was not run on this file.
+
+**A dependency edge can be dangling and nothing says so.** Tracing the auction
+chain on 2026-08-21 to rule on sequencing turned up
+`schedule-cohort-fingerprint-list` depending on `injury-report-backfill`, which
+is not a slug in this file — the item is `injury-report-historical-backfill`.
+Left as found, because guessing which item another lane meant is worse than
+reporting it. Recorded because it is the same shape as the counts: **the graph
+is only as trustworthy as the last time someone resolved every edge against the
+slug set**, and until `adr-index-consistency-test` has a sibling doing that
+here, nothing does.
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
@@ -949,6 +959,45 @@ Typed action schema, backend command queue, userscript-side executor, and result
 
 Owner will follow the list, so list reliability is the product. Measure adherence per decision (~13 per auction, 10 mocks = ~130 observations). Track overall rate and where deviation clusters by position, price tier and draft stage. Separate systematic deviation (bias to guard against) from situational deviation (real information the model lacks, therefore a feature). Cannot measure whether a deviation was correct - mocks do not play out and scoring against the list own valuation is circular.
 
+### `adr-index-consistency-test` - Testing that the decision log's two indexes cannot drift
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+`docs/decisions/README.md` was found missing rows for ADR-013 and ADR-014 on
+2026-08-21, and `PLAIN-ENGLISH.md` stops at ADR-009 so ADR-010 through ADR-015
+are absent from it. Two indexes over one directory, drifting independently,
+neither with a test.
+
+The item is a test, not an edit. Editing both today leaves them drifting next
+week, and "I checked it by hand this time" is a claim with a one-rebase
+half-life — it has now been made by two lanes on two different days.
+
+Assert **both directions**, because only one of them is visible to a human
+reading the table:
+
+1. every `docs/decisions/ADR-0NN-*.md` has a row in the `README.md` index;
+2. every index row's relative link resolves to a file that exists.
+
+The second is the one a rename breaks and a reader cannot see: a plausible title
+beside a broken relative link is indistinguishable from a working one in
+rendered Markdown until it is clicked. The ADR-015 row was verified by a
+reviewer resolving the link, not by its author reading the table.
+
+Decide as part of the item whether `PLAIN-ENGLISH.md` is in scope. It is a
+different kind of index — prose, not a table, and deliberately selective — so
+requiring an entry per ADR may be wrong. If it is out of scope, say so in the
+file itself, because a reader currently cannot tell "stops at 009 on purpose"
+from "stopped at 009 by accident".
+
+Worth recording why this is filed rather than fixed: the two missing rows were
+found because a merge conflict happened to land on adjacent lines of that table.
+**That is a detector with no coverage guarantee** — it fires only when two lanes
+touch the same table in the same window. Two of the three index defects found
+that day surfaced by accident.
+
+Gate: Code gate.
+
 ### `auction-budget-manager` - Building the auction budget manager
 
 - [ ] **pending**
@@ -1008,7 +1057,7 @@ Backtest harness scoring the availability model against held-out seasons. Scores
 ### `availability-model` - Building the per-game availability model
 
 - [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it.
-- **Depends on:** `injury-status-conversion`, `participation-ledger`, `schedule-density`
+- **Depends on:** `injury-status-conversion`, `participation-ledger`, `participation-ledger-population`, `schedule-density`
 
 Per-player p(play) for each scheduled game, conditioned on B2B/density, rest days, road trips, age, career and recent minutes load, injury history and body part recurrence, current report status (via its conversion rate), and team playoff/tanking situation. Aggregates to expected games over any window (RoS, fantasy week, playoff weeks). Persists driver features for explainability.
 
@@ -1427,6 +1476,48 @@ AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not in
 - **Depends on:** `bridge-overlay`, `draft-recommender`
 
 DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for multi-format support and for ingesting snake mock corpora, but is no longer a draft-day deliverable. Snake draft surface: compact, collapsible, keyboard-toggled Shadow-DOM panel docked in the Fantrax draft room, positioned so it never obscures the draft board or player list. Must be sufficient to make a pick without leaving the tab. Fantrax must be the visible active tab during a draft because Chrome throttles background-tab timers to ~1/min after 5 minutes hidden, stalling Fantrax own draft polling.
+
+### `participation-ledger-population` - Populating the participation ledger at season scale
+
+- [ ] **pending**
+- **Depends on:** `participation-ledger`, `nba-stats-ingest`
+
+**The critical path of the entire auction chain, and until this item existed the
+backlog said otherwise.** `availability-model` needs per-game participation
+labels. `participation-ledger` is marked `done`, `schedule-density` is `done`,
+and `injury-status-conversion` therefore shows **zero open dependencies** — the
+graph reports it ready to start. It is not: the ledger's *ingest path* exists
+and the ledger is not *populated* at season scale, and nothing downstream can be
+fit against labels that have not been fetched.
+
+**This is the second instance of one pattern, and the first is three items
+away.** `injury-conversion-cohort-population` exists as its own item for exactly
+this reason, and its text names the failure: conflating "the tool exists and
+passes its tests" with "a representative cohort has been populated with it" is
+what let `injury-status-conversion` appear structurally ready — every dependency
+it listed marked `done` — while the cohort it actually needs did not exist. The
+identical conflation was sitting one layer down in `participation-ledger`, and
+it survived because the fix last time was a new item rather than a rule.
+
+**The rule, since it will recur:** on any item whose product is a populated
+table, `done` means *the path works*, not *the data is there*. Those are
+separate claims with separate evidence and they need separate items. Check every
+remaining ingest item against it rather than waiting for the third instance.
+
+**Why it is sequenced first rather than by dependency order.** Its cost is
+wall-clock, not effort — participation ingest was independently measured to
+dominate injury-report fetching by roughly 4x in elapsed time, under a
+throttle that cannot be raised without changing our posture toward the source.
+Effort-bound work can be parallelised across lanes; a fetch budget cannot.
+Draft day does not move, and on 2026-08-21 it was 58 days out.
+
+Done when the ledger holds a genuine multi-season cohort, its coverage is
+measured rather than assumed, and gaps are explicit rows rather than absent ones
+— `availability-model` must be able to tell "he did not play" from "we have no
+observation", which is the distinction the whole availability thesis rests on.
+
+Gate: Adapter gate — this runs the existing ingest against the live source at
+scale. No new model.
 
 ### `preseason-news-ingest` - Ingesting preseason availability news for draft day
 
