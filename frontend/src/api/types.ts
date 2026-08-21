@@ -82,7 +82,8 @@ export interface ApiErrorBody {
  * **The classification is ADR-013's, and the ADR now assigns every absence
  * cause.** The table at `:194-199` gives `not_offered` *wait* and `unreadable`,
  * `irreconcilable` and `implausible` *investigate* — four rows, because `''` is
- * not an absence cause but a date that resolved. It was decided from the live feed — all six pending games currently
+ * not an absence cause but a date that resolved. It was decided from the live
+ * feed — all six pending games currently
  * carry real dates, so every fault reason fires zero times and the
  * alarm-fatigue objection to `irreconcilable` on the fault side does not apply
  * on the evidence. `:201` records that `irreconcilable` sits there **by decision

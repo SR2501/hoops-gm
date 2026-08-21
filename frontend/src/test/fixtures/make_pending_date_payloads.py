@@ -1,4 +1,4 @@
-"""Derive the doctored ``ScheduleLeagueV2`` payloads behind two recorded fixtures.
+"""Derive the payloads behind the three recorded schedule-grid fixtures.
 
 Why this file exists
 --------------------
@@ -9,6 +9,9 @@ captured from a real database, seeded by the real importer. But the *input* that
 made the importer produce those four ``date_absence_reason`` values is not
 something the NBA has ever sent — all six pending games in the live 2026-27
 season carry reconcilable dates, so every non-empty reason fires zero times.
+``schedule-grid-current.recorded.json`` is the third, captured from the base
+undoctored; it is derived here too, with an empty edit set, so the payload the
+other two are edits *of* is itself pinned to a recording.
 
 The inputs were therefore authored. They were authored once, by hand, and one of
 the two was **overwritten before it was committed** — which is precisely the
@@ -24,20 +27,21 @@ docstrings *checkable* rather than asserted:
     python make_pending_date_payloads.py --verify
 
 re-derives all three payloads, asserts each derived pending set matches its
-fixture's ``pending_game_ids``, re-runs the importer's date classifier against
-the reasons **read out of the fixtures themselves**, and recomputes all 630
-per-period per-team count rows from the derived payload to compare against the
-recorded ones. If the producer reorders reconciliation and plausibility, a 1900
-pair stops being ``implausible`` — the frozen fixture would not notice, and this
-does. If somebody hand-edits a reason in the JSON, that fails here too, which is
-the conversion-into-a-mock this whole file exists to prevent.
+fixture's ``pending_game_ids``, compares **every field of every pending record**
+against the recording, recomputes all 630 per-period per-team count rows, and
+checks the lineage counters. If the producer reorders reconciliation and
+plausibility, a 1900 pair stops being ``implausible`` — the frozen fixture would
+not notice, and this does. If somebody hand-edits a reason in the JSON, that
+fails here too, which is the conversion-into-a-mock this whole file exists to
+prevent.
 
-The counts comparison is there because two earlier versions of this check were
-**green while pointed at the wrong artifact**. It pinned only the pending block,
-so a resolved game was free to move between scoring periods — a within-DST shift
-that reconciles cleanly, which is exactly what a re-capture would produce — while
-this printed success. Two of twelve games were checked and the success line was
-read as covering the response.
+The comparison is whole-record rather than field-by-field because three separate
+probes found this check **green while pointed at something it was not looking
+at** — the wrong base, a hardcoded expectation dict, then only the pending block
+while a resolved game moved period. Each fix closed the instance and left the
+next field open, and the fourth one found was ``game_date``: the field that
+decides which column carries the TBD marker, computed here and discarded. A
+field added to the contract now arrives as a mismatch rather than as silence.
 
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
@@ -132,13 +136,23 @@ RECORDED = {
 }
 
 
-def recorded_expectations(variant: str) -> tuple[list[str], dict[str, str]]:
-    """The pending ids and reasons the committed fixture actually records."""
+def recorded_expectations(variant: str) -> tuple[list[str], dict[str, dict]]:
+    """The pending ids and the *whole* pending record each fixture holds.
+
+    Not just the reason. Three separate probes found this function checking one
+    field at a time -- reason only, then reason plus counts -- and each time the
+    next unchecked field was the one that mattered. ``game_date`` was computed
+    and thrown away into ``_``, which is the field ``readPendingGames`` buckets
+    on to decide which column carries the TBD marker: both pending games could
+    move a week, reconcile cleanly, and this printed success while the marker
+    landed on a different period than the recording shows.
+
+    So it compares every field of the record, and a field added to the contract
+    arrives here as a mismatch rather than as silence.
+    """
     schedule = json.loads(RECORDED[variant].read_text(encoding="utf-8"))["lineage"]["schedule"]
-    reasons = {
-        game["nba_game_id"]: game["date_absence_reason"] for game in schedule["pending_games"]
-    }
-    return list(schedule["pending_game_ids"]), reasons
+    records = {game["nba_game_id"]: game for game in schedule["pending_games"]}
+    return list(schedule["pending_game_ids"]), records
 
 
 def recorded_counts(variant: str) -> tuple[dict, list[dict], list[dict]]:
@@ -149,9 +163,20 @@ def recorded_counts(variant: str) -> tuple[dict, list[dict], list[dict]]:
 def derived_counts(payload: dict, periods: list[dict], teams: list[dict], season: str) -> dict:
     """Per-period per-team game counts implied by the derived payload.
 
-    Recomputed with the producer's own parser rather than by re-reading dates
-    out of the raw JSON, so a change to how the producer resolves a date shows
-    up here instead of being reproduced by a second implementation of it.
+    **Half of this is the producer's and half is a reproduction, and the halves
+    matter differently.** Dates come from the producer's own ``parse_schedule``,
+    so a change to how it resolves a date fails here instead of being faithfully
+    re-derived by a second copy of that logic. The *period assignment* below is
+    not the producer's: the response's ``counts`` come from a SQL query over
+    ``ScoringPeriod`` rows, and this is an inclusive string-range scan written
+    here. `schedule_grid.py` names that hazard as its reason for refusing the
+    same duplication -- a second definition free to drift from the one that
+    produced the numbers.
+
+    It is accepted here because the alternative is standing up a database to run
+    one check, and because drift shows up as a mismatch against a recording that
+    *was* produced by the SQL. But if these ever disagree, this file is the more
+    likely one to be wrong.
     """
     sys.path.insert(0, str(REPO / "backend/src"))
     from hoops_gm.ingest.nba.schedule import parse_schedule
@@ -218,7 +243,7 @@ def verify() -> int:
     blessed by the check written to prevent hand-edits.
     """
     sys.path.insert(0, str(REPO / "backend/src"))
-    from hoops_gm.ingest.nba.schedule import _pending_game_date
+    from hoops_gm.ingest.nba.schedule import parse_schedule
 
     if set(RECORDED) != set(VARIANTS):
         raise SystemExit(
@@ -244,21 +269,48 @@ def verify() -> int:
             )
             continue
 
-        for game in pending_games(payload):
-            want = expected[game["gameId"]]
-            _, reason = _pending_game_date(game, game["gameId"], "2026-27")
-            status = "ok " if reason == want else "FAIL"
-            if reason != want:
+        for pending in parse_schedule(payload, season="2026-27").pending_games:
+            record = expected[pending.nba_game_id]
+            derived_record = {
+                "nba_game_id": pending.nba_game_id,
+                "game_date": pending.game_date.isoformat() if pending.game_date else None,
+                "game_label": pending.game_label,
+                "game_sub_label": pending.game_sub_label,
+                "game_subtype": pending.game_subtype,
+                "date_absence_reason": pending.date_absence_reason,
+            }
+            differing = {
+                field: (value, derived_record.get(field))
+                for field, value in record.items()
+                if derived_record.get(field) != value
+            }
+            if differing:
                 failures += 1
-            print(f"{status} {variant:7} {game['gameId']}  recorded {want:14} got {reason!r}")
+                detail = "; ".join(
+                    f"{field}: recorded {rec!r} derived {der!r}"
+                    for field, (rec, der) in differing.items()
+                )
+                print(f"FAIL {variant:7} {pending.nba_game_id}  {detail}")
+            else:
+                print(
+                    f"ok  {variant:7} {pending.nba_game_id}  every recorded field reproduced "
+                    f"(date {record['game_date']!r}, reason {record['date_absence_reason']!r})"
+                )
 
         # The resolved ten twelfths. Pinning only the pending block left a
         # resolved game free to move between scoring periods -- a within-DST
-        # shift that reconciles cleanly -- while this printed success, which is
-        # the third time this function has been green about an artifact it was
-        # not looking at. The counts are what the screen renders, so they are
-        # what gets compared.
+        # shift that reconciles cleanly -- while this printed success.
         fixture, periods, counts = recorded_counts(variant)
+        if len(counts) != len(periods) * len(fixture["teams"]):
+            failures += 1
+            print(
+                f"FAIL {variant:7} counts is not the dense {len(periods)}x"
+                f"{len(fixture['teams'])} cross product ({len(counts)} rows). The "
+                "comparison below iterates recorded rows, so a sparse recording "
+                "would let a derived-only row pass unseen."
+            )
+            continue
+
         derived = derived_counts(payload, periods, fixture["teams"], fixture["season"])
         mismatches = [
             row
@@ -277,6 +329,21 @@ def verify() -> int:
         else:
             print(f"ok  {variant:7} all {len(counts)} recorded count rows reproduced")
 
+        # Games outside every scoring period contribute to no count row, so the
+        # comparison above cannot see one appearing or vanishing. The lineage
+        # counters can, and they are already in the recording.
+        parsed = parse_schedule(payload, season=fixture["season"])
+        lineage = fixture["lineage"]["schedule"]
+        for label, derived_value, recorded_value in (
+            ("source_game_count", parsed.source_game_count, lineage["source_game_count"]),
+            ("resolved_game_count", len(parsed.games), lineage["resolved_game_count"]),
+        ):
+            if derived_value != recorded_value:
+                failures += 1
+                print(
+                    f"FAIL {variant:7} {label}: recorded {recorded_value}, derived {derived_value}."
+                )
+
     if failures:
         print(
             f"\n{failures} check(s) failed. Either the producer's classification moved, "
@@ -284,7 +351,10 @@ def verify() -> int:
             "hand-edited, in which case it has stopped being a recording."
         )
     else:
-        print("\nEvery recorded reason and count row is reproduced by the in-tree producer.")
+        print(
+            "\nEvery recorded pending record, count row and lineage counter is "
+            "reproduced by the in-tree producer."
+        )
     return 1 if failures else 0
 
 

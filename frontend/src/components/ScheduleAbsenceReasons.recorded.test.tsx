@@ -47,6 +47,13 @@
  * is now caught: reorder reconciliation and plausibility in the producer and a
  * 1900 pair stops being `implausible`, which `--verify` fails on and the fixture
  * alone would not.
+ *
+ * "Proven" is doing exact work there: proven that *a derivable input* produces
+ * these reasons and this response, **not** that it is byte-identical to the lost
+ * original — a different payload reaching the same response would be
+ * indistinguishable, and identity is not what the fixtures need. The generator's
+ * docstring states the same limit and marks `faults` as the less-anchored of the
+ * two, since only `absent` was ever checked against a surviving original.
  */
 
 import { describe, expect, it } from 'vitest'

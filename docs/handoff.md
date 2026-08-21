@@ -12494,3 +12494,97 @@ is corrected to "every absence cause… four rows".
 - **`schedule_content_version` is identical across all three grid fixtures**
   despite materially different pending sets. Round-one fingerprint defect, still
   open.
+
+## 2026-08-21 - frontend - A fourth hole in the same check, and the field the screen is about
+
+**Unit:** `schedule-grid-pending-periods`. `architect` and `code-review` both
+drove the fourth independently; `frontend` found it too. Three probes, one
+answer.
+
+### The one I asked for and did not want
+
+I said I was assuming a fourth hole existed until someone drove it and failed.
+Nobody failed.
+
+`--verify` did `_, reason = _pending_game_date(...)` — it **computed the pending
+game's date and threw it away**. Both pending games could move a week,
+reconcile cleanly, keep their reasons, and the check reported the fixture
+reproduced. Pending games are excluded from `parse_schedule(...).games`, so the
+630-row counts comparison added an hour earlier was structurally blind to them.
+
+`game_date` is the field `readPendingGames` buckets on to decide which column
+carries the `TBD` marker. **It is the field this entire unit exists to render**,
+and the check computed it and dropped it on the floor.
+
+Adding `current` as a variant is what made it live: the doctored variants all
+have `null` dates, so only the undoctored recording had a date to disagree with.
+The fix for hole three created the conditions to see hole four.
+
+### Stopping the one-field-at-a-time repair
+
+`architect`'s instruction, and it is the right one: compare the **whole**
+recorded pending record rather than the next field someone names. Three
+consecutive rounds went reason-only, then reason-plus-counts, then
+reason-plus-counts-plus-date, and each fix left the following field open —
+`game_label`, `game_sub_label` and `game_subtype` were next in line.
+
+It now compares every field of every pending record, so a field added to the
+contract arrives as a mismatch rather than as silence.
+
+**And it does so through the producer's own `pending_games`, not a
+reimplementation.** My first attempt mapped the fields by hand and failed
+immediately — I had guessed `seriesText` for `game_label` where the producer
+reads `gameLabel`. That failure was the useful part: a hand-mapped comparison is
+a second implementation of the producer, which is the hazard `architect` had
+just named one function away.
+
+### Two smaller holes, both driven, both closed
+
+`code-review` found `derived_counts` skips games outside every scoring period, so
+a game appearing or vanishing outside the calendar was invisible. The lineage
+counters can see it and were never compared; now they are, and an extra game on
+`2027-08-01` fails with `source_game_count: recorded 12, derived 13`.
+
+`architect` found the counts comparison is one-directional — it iterates recorded
+rows — and is complete **only because** the recording is the dense 21x30 cross
+product. That held in all three recordings and nothing asserted it. Now asserted;
+dropping the zero rows fails.
+
+### My driver had the defect it was testing for, twice
+
+Driving these, a PowerShell `-replace` failed to match. The run went green,
+indistinguishable from a caught mutation. **The skipped-mutation failure,
+happening inside the harness written to catch it.** Every case now asserts the
+edit changed the file first.
+
+Then a case passed **for the wrong reason**: moving a resolved game's EST field
+without its UTC sibling tripped the producer's reconciliation check, so the
+mutation was caught by `SourceContractError` rather than by the counts
+comparison it was written to test. Green-for-the-wrong-reason in a driver whose
+subject is green-for-the-wrong-reason. Fixed by moving both fields, and it now
+fails with `4 of 630 count rows differ`.
+
+Two candidate mutations were also discarded as unobservable by construction —
+removing the pairing assertion, removing the counts comparison. With nothing
+currently violating either guard, removing it changes no output. **A mutation has
+to create the condition the guard catches, not merely delete the guard.**
+
+### Could not verify
+
+- **Whether a fifth hole exists.** Four were found by four probes and none by me.
+  The check now covers pending records whole, all 630 count rows, the dense-grid
+  precondition and two lineage counters — and I said something like this after
+  the third one. The honest position is that I have no method for finding the
+  next one; the reviewers do, and it is *"what else could this be pointed at?"*
+- **`derived_counts` reproduces the period predicate rather than calling it.**
+  Dates come from `parse_schedule`, but bucketing is an inclusive string-range
+  scan written here while the response's counts come from SQL over
+  `ScoringPeriod`. `schedule_grid.py` names that exact duplication as a hazard
+  and refuses it. Accepted here to avoid standing up a database for one check,
+  and now stated in the docstring: if these disagree, this file is the more
+  likely one to be wrong.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6 are
+  numbers no reviewer can check.
+- **Anything a browser sees at this head.**
+- `architect`'s open item remains theirs: the ADR-013 revision landed on `main`
+  with no handoff entry and no backlog line.
