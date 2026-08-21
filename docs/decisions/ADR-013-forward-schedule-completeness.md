@@ -150,9 +150,49 @@ failure, reintroduced deliberately.
 make it distinguish two situations, not to make it see less.
 
 ## What would flip this
-
 If the source is ever observed publishing absent team identifiers for a reason other than
 an undetermined bracket — a partial outage, a schema change, a data error — then "pending"
 no longer means "not yet decided", and the distinction collapses. The live smoke must
 therefore assert the pending set is structurally explicable (currently: NBA Cup knockout
 labels), not merely that it is small. If that assertion fails, revert to refusing.
+
+### 2026-08-21 — what a pending game's `game_date` means, and what a consumer may conclude
+
+This ADR said nothing about `game_date`. Its semantics ended up defined in two docstrings
+on two unmerged branches and in no accepted decision — which is how a consumer came to
+quote a producer docstring **as an ADR clause**, in quotation marks, for the most
+load-bearing constraint on its screen. The obligation was real and the address was invented.
+That is this ADR's fault before it is the consumer's, and it is fixed here.
+
+**A pending game's `game_date` is nullable.** The key is always present; the value may be
+`null`. It is never absent, so a missing key remains a malformed block and must still be
+refused.
+
+**`null` means no trustworthy date could be derived. It does not name a cause.** Today it
+has three: the source published an unusable UTC value, the source published an unusable
+Eastern value, or the source declined to commit to a date at all. **Only the third is the
+source saying "not yet decided."** A consumer must therefore not render `null` as *"the
+source has not told us when"* — that attributes to the source a silence that may be our own
+failure to read what it said, and it errs toward comfort, because a reader told the source
+has not decided waits, while a reader told the date could not be read investigates.
+
+**Consequences for any consumer:**
+
+- A game with a `null` date belongs to **no scoring period** and must not be attributed to
+  one.
+- It must not be dropped from the pending set. It is a published game; only its date is
+  unavailable.
+- The **season-level** count of undecided games must stay complete even when the per-period
+  attribution cannot be made. Those are two different denominators, and a number that
+  quietly drops what it cannot place is worse than one that says it cannot place it.
+- A well-formed but degenerate date — the source emits a year-0001 sentinel for an
+  undecided tip-off — is indistinguishable at the client from a genuine out-of-calendar
+  date. A consumer's buckets therefore **partition what it can tell apart, not what the
+  states are**, and its copy must be true under every cause it cannot separate.
+
+**What would let this say more.** The producer currently wraps both date parses in one
+`except`, which is what gives `null` three causes. Narrowing it so `null` means only the
+irreconcilable case would let a consumer honestly say the source has not decided. Until
+then consumers are deliberately vaguer than the data could support, and that is the correct
+trade.
+
