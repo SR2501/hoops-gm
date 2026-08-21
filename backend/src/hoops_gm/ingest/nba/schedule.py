@@ -654,9 +654,23 @@ def _plausible_season_date(game_day: date, season: str) -> bool:
 
     try:
         start_year = int(season.split("-", 1)[0])
-    except ValueError:  # pragma: no cover - season shape is validated upstream
+        lower = date(start_year - 5, 1, 1)
+        upper = date(start_year + 6, 1, 1)
+    except ValueError:
+        # Both the parse AND the two window constructions, deliberately.
+        # `date()` raises ValueError for a year outside 1..9999, so a season
+        # whose leading year is <= 5 or >= 9994 made this guard -- whose whole
+        # purpose is to be *lenient* about an unexpected season shape -- crash
+        # out of `parse_schedule` with an uncaught ValueError and exit 1. That
+        # is the same crash-instead-of-a-typed-refusal class the OverflowError
+        # translation above exists to remove, reintroduced by putting new
+        # arithmetic outside an existing guard rather than inside it.
+        #
+        # Unreachable from this source, which publishes four-digit modern
+        # seasons. Kept because the leniency is the point: an unexpected
+        # season shape must not decide whether a real schedule imports.
         return True
-    return date(start_year - 5, 1, 1) <= game_day < date(start_year + 6, 1, 1)
+    return lower <= game_day < upper
 
 
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:

@@ -10046,3 +10046,65 @@ on the real writing path against SQLite; I have not seen it on Postgres. And
 the `OverflowError` translation is asserted for three shapes, not for the
 32,357 the reviewer swept — that sweep ran against the *pending* path, and I
 did not repeat it against the resolved one.
+
+---
+
+## 2026-08-21 — data-engineer — Final round: the new guard bypassed its own leniency guard
+
+**Changed:** Closed the eighth and final review round. One finding, of a
+different kind from the previous three, plus a corrected test of my own that
+the green-before-mutating rule caught.
+
+**The finding: I put new arithmetic outside an existing guard.**
+`_plausible_season_date` catches `ValueError` so that an unexpected season
+string is *lenient* — an odd season must never decide whether a real schedule
+imports. I placed the two `date()` window constructions **outside** that
+`try`, and `date()` raises `ValueError` for a year outside 1..9999. So a season
+leading with a year <= 5 crashed out of `parse_schedule` uncaught and exited 1.
+
+| season string | before | after |
+|---|---|---|
+| `0005-06` | uncaught `ValueError`, rc=1 | lenient, import proceeds |
+| `0003-04` | uncaught `ValueError`, rc=1 | lenient, import proceeds |
+| `0006-07` | rc=2 (control) | rc=2 |
+
+**That is the same crash-instead-of-a-typed-refusal class that the
+`OverflowError` translation in the very same commit exists to remove** —
+reintroduced two functions away, by the commit that removed it. Unreachable
+from this source, which publishes four-digit modern seasons, and fixed anyway:
+a lenient guard that raises is worse than no guard.
+
+**A different kind from the previous three, and that is why I took the round.**
+The last three findings were scope-of-application — a correct guard applied to
+one of the two places it belonged. This one is the inverse: **new code placed
+outside an existing guard's protection**, so the guard silently stopped
+covering the thing it was written to cover. Related but not the same, and the
+distinction matters because the habit that catches it is different: the first
+asks *where else is this true?*, this one asks *what was already protecting
+this line, and is it still?*
+
+**The mutation rule failed a check of mine for the second time tonight.** My
+first version of the new test asserted `9993-94` goes lenient. It does not —
+that season builds a perfectly valid window, and 2026 is legitimately outside
+it. Green-before-mutating caught it before the mutation ran, so the test that
+would have encoded a false claim never got the chance. Both times tonight that
+rule has caught **my check** rather than the code's, which is a use of it I did
+not anticipate when I read the bullet.
+
+**What the round substantiated, which is the other half of its value.** Both
+window boundaries driven through the CLI end to end; five season strings;
+every schedule fixture parsed against *its own* `seasonYear` rather than
+2026-27, including the 2025-26 cohort window — 84 raw timestamp values, none
+refused; all three placeholders still caught after the loosening; and a
+**43-mutation differential against the previous commit** proving the
+`reconciles` refactor preserved semantics exactly, with only the four intended
+differences.
+
+**Could not verify:** PostgreSQL, CI-only, on any head. And the differential
+above was run by the reviewer against `9dc708e`, not by me — I re-ran the three
+CLI reproductions and the mutation, not the 43-case sweep.
+
+**Next:** merge. This is the last round I will ask for. Eight rounds, and the
+findings have gone from season-killers to an unreachable season string; the
+remaining risk is concentrated in one function that this round characterised
+exhaustively, and a ninth would ask the same questions of the same code.

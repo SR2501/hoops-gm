@@ -703,6 +703,43 @@ def test_an_out_of_range_timestamp_on_a_RESOLVED_game_refuses_rather_than_crashi
             parse_schedule(payload, season="2026-27")
 
 
+@pytest.mark.parametrize(
+    "season",
+    ["0005-06", "0003-04", "0001-02", "9999-00", "not-a-season", "", "-27", "abcd-27"],
+)
+def test_an_unrepresentable_season_year_stays_lenient_instead_of_crashing(season: str) -> None:
+    """The leniency guard must cover the arithmetic it guards, not just the parse.
+
+    `_plausible_season_date` catches `ValueError` so that an unexpected season
+    shape is *lenient* — an odd season string must never decide whether a real
+    schedule imports. But the window construction was placed outside that
+    `try`, and `date()` raises `ValueError` for a year outside 1..9999. So a
+    season leading with a year <= 5, or >= 9994 at the upper end, crashed out
+    of `parse_schedule` uncaught and exited 1 — the same
+    crash-instead-of-a-typed-refusal class the `OverflowError` translation in
+    this very commit exists to remove, reintroduced by putting new arithmetic
+    outside an existing guard.
+
+    Unreachable from this source, which publishes four-digit modern seasons.
+    Asserted anyway because the guard's purpose is leniency, and a lenient
+    guard that raises is worse than no guard.
+    """
+    assert _plausible_season_date(date(2026, 12, 4), season) is True
+
+
+def test_a_representable_but_distant_season_still_refuses() -> None:
+    """The other side of that guard, and the reason it is not simply "return True".
+
+    `9993-94` builds a perfectly valid window — it is only the *unrepresentable*
+    ones that go lenient. A first draft of the test above included it and
+    asserted leniency; the green-before-mutating step caught that, which is the
+    second time tonight that rule has failed a check of mine rather than the
+    code's.
+    """
+    assert _plausible_season_date(date(2026, 12, 4), "9993-94") is False
+    assert _plausible_season_date(date(9993, 12, 4), "9993-94") is True
+
+
 def test_the_plausibility_bound_clears_the_real_season_by_years_not_by_days() -> None:
     """A refusal window the real data clears by one day is a trap that has not sprung.
 
