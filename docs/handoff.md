@@ -12737,3 +12737,80 @@ and that this function is only sound because its inputs are checked.
   remain unverifiable by any reviewer.
 - **Anything a browser sees**, across the last five heads.
 - `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - Cardinality, which every previous fix compared its way past
+
+**Unit:** `schedule-grid-pending-periods`. `architect` and `code-review` both
+found the sixth, from opposite ends of the same defect, and it is a class rather
+than an instance.
+
+### The class
+
+Every closure on this branch compared the **values** of a set whose
+**membership** the artifact under test declared. Five rounds of "which field is
+unchecked" never looked at "how many of them are there".
+
+`code-review` deleted 15 teams from the recordings along with their zero count
+rows: **exit 0.** Half the league vanishes from the grid and the check reports
+the recording reproduced. The density assertion could not object because it
+computes `len(periods) * len(fixture["teams"])` — **both operands from the
+artifact it is guarding.** It pins internal consistency, never completeness.
+
+`architect` came at it from the other side: add a 31st team upstream and it is
+also **exit 0**, because the comparison iterates the recording and reads
+`derived_teams.get(...)`. That is `recording ⊆ derived` — the exact
+one-directionality I fixed for pending records with a key-set union one commit
+earlier, and reintroduced one function later in the next commit. **Fixed and
+reintroduced within two commits of each other.**
+
+Membership is now compared before values, for teams, recordings, pending ids and
+periods. Both cases fail, plus a fourth recording dropped in the directory, which
+passed because `RECORDED` and `VARIANTS` are both hardcoded so an unknown file is
+absent from *both* — the orphan check now globs.
+
+### The diagnostic that failed for the right reason and said the wrong one
+
+`architect` found the period message printing two identical dicts as "differing".
+`zip(strict=False)` truncates to the common prefix, so a pure length change left
+the differing list empty and the fallback printed row 1 against row 1. Correct
+exit code, false explanation, in a file whose subject is diagnostics that do not
+mislead. Length is now its own branch: `period count differs: 20 recorded, 21
+derived`.
+
+### The provenance claim I got wrong in the other direction
+
+I called `weekly_periods` "the producer's own function". `architect` traced it:
+`weekly_periods` → `settings_document` → `import_league_settings` →
+`project_scoring_periods` → SQL → `periods[]`. **Hop zero is shared
+implementation; the four hops after it are agreement only**, and the function
+lives in `dev/`, so what is pinned is the demo seed reproducing itself. A real
+league whose periods come from imported settings is not covered.
+
+Having just been caught over-claiming a limit, I under-hedged a capability in
+the same file. The table now says so, and every row reads *tried and not found*
+rather than *out of reach* — including `team_id` and `league_id`, which
+`architect` noted were described in two vocabularies for one situation.
+
+### Stopping
+
+`architect`'s ruling, which I am taking: **the marginal defect this is now
+catching is smaller than the marginal defect of another review round.** Each
+round found a strictly smaller and more structural class — wrong value, wrong
+field, wrong operand, wrong cardinality — which is convergence rather than a
+sequence of failures, and the stopping point for a fixture-verification script
+passed about two rounds ago. The thing that makes the rest load-bearing is the
+backend `_pending_game_date` pin, and that is the `data-engineer` item.
+
+### Could not verify
+
+- **That there is no seventh.** I have been wrong every time I said otherwise.
+  The audit table now names where one would live: it is exhaustive over values
+  and, since this round, over membership — so the next one is likelier to be
+  about *ordering* or about a level of nesting I have not enumerated.
+- **That `weekly_periods` matches the API's period generation for a non-demo
+  league.** It does not; that is now stated rather than implied.
+- **The mutation harness**, still outside the repository. 33 of 33 and 6 of 6
+  remain unverifiable by any reviewer, and that is now the oldest and largest
+  open limitation on this branch.
+- **Anything a browser sees**, across the last six heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.

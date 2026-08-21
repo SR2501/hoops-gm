@@ -55,33 +55,57 @@ next person does not have to rediscover where the floor is:
 ``counts``            **derived** — all 630 rows, from the payload.
 ``lineage.schedule``  **partly derived** — ``source_game_count``,
                       ``resolved_game_count`` and every ``pending_games`` field.
-                      ``unresolved_game_ids`` and ``persisted_team_row_count``
-                      are covered transitively by producer invariants.
+                      ``persisted_team_row_count`` is covered transitively by the
+                      producer's ``persisted == 2 x resolved`` invariant.
+                      ``unresolved_game_ids`` is ``[]`` in all three recordings
+                      and the counts identity pins only *that it is empty* — if
+                      it were ever non-empty this row would be false.
                       ``refresh_id``, ``refreshed_at`` and the content-version
-                      fingerprint need a database and are **out of reach here**.
+                      fingerprint need a database: tried, no pure function found.
+                      (``lineage``'s three other children are the same database
+                      artifacts and none is rendered by the grid.)
 ``periods``           **derived** — all 21 windows including ``is_playoff``, via
-                      the producer's own ``weekly_periods``, which is a pure
-                      function of the first and last game dates. This one was
-                      read out of the recording for three rounds, and it is the
-                      other operand of the computation hole four was about:
-                      ``readPendingGames`` needs a pending date *and* a period
-                      window, and only the date was pinned. The counts could not
-                      object, because 610 of 630 rows are zero and only two
-                      periods hold a resolved game, so the December boundary
+                      ``weekly_periods``. Be precise about what that pins: it is
+                      the seed's function, and the chain is
+                      ``weekly_periods`` → ``settings_document`` →
+                      ``import_league_settings`` → ``project_scoring_periods`` →
+                      SQL → ``periods[]``. **Hop zero is shared implementation;
+                      the four hops after it are agreement only.** So this is not
+                      "the producer's own function" — it is the producer of an
+                      *input* the producer was seeded from, and a real league
+                      whose periods come from imported settings would not be
+                      covered. It was read out of the recording for three rounds,
+                      and it is the other operand of the computation hole four
+                      was about: ``readPendingGames`` needs a pending date *and*
+                      a period window, and only the date was pinned. The counts
+                      could not object, because 610 of 630 rows are zero and only
+                      two periods hold a resolved game, so the December boundary
                       that decides this feature sat in free space.
 ``teams``             **derived** for ``nba_team_id``, ``abbreviation`` and
-                      ``name``, from ``nba_static_teams.json``. ``team_id`` is a
-                      database key and is **out of reach here**.
+                      ``name``, from ``nba_static_teams.json``, membership
+                      first. ``team_id`` is assigned by seeding — **tried and no
+                      pure function found**, which is a weaker claim than "out of
+                      reach" and is the honest one after a floor turned out to be
+                      one import lower.
 ``season``            **legitimately an input.** It names which season to parse.
-``league_id``         an input.
+``league_id``         assigned by seeding, same category as ``team_id``: tried,
+                      no pure function found. Not the same thing as ``season``'s
+                      legitimacy, which is why they are no longer phrased alike.
 ===================== ===========================================================
 
 Two of those rows said *"an input, and this is the floor"* one commit ago, on my
 own reasoning that scoring periods come only from SQL. A reviewer went and found
 ``weekly_periods`` and drove the closure. **The floor was one function lower than
 I claimed**, and asserting where a method stops is exactly as falsifiable as
-asserting anything else — so the honest form of this table is a list of what has
-been *tried*, not a list of what is possible.
+asserting anything else — so every row above says *tried* rather than
+*impossible*.
+
+One thing the table's shape hides, and it is where a seventh would live: every
+row is about a **value** being wrong. The sixth hole was a **cardinality** —
+teams could be added upstream or deleted from a recording, and both passed,
+because each comparison checked the values of a set whose membership the artifact
+under test declared. Membership is now compared before values for teams,
+recordings, pending ids and periods.
 
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
@@ -310,9 +334,23 @@ def verify() -> int:
             "defect this function keeps being caught by."
         )
 
+    # ...and that assertion is between two hardcoded dicts, so a fourth
+    # recording dropped into this directory is absent from *both* and passes.
+    # The comment on RECORDED claims directory coverage; this is what makes the
+    # claim true rather than coincidental.
+    on_disk = set(pathlib.Path(__file__).parent.glob("schedule-grid-*.recorded.json"))
+    if on_disk != set(RECORDED.values()):
+        raise SystemExit(
+            "a schedule-grid recording exists that no variant derives: "
+            f"{sorted(p.name for p in on_disk - set(RECORDED.values()))}. "
+            "Add it to RECORDED and VARIANTS, or it is a recording nothing checks."
+        )
+
     failures = 0
     for variant in VARIANTS:
         recorded_ids, expected = recorded_expectations(variant)
+        fixture, periods, counts = recorded_counts(variant)
+        season = fixture["season"]
         payload = derive(variant)
         derived_ids = [game["gameId"] for game in pending_games(payload)]
 
@@ -325,7 +363,7 @@ def verify() -> int:
             )
             continue
 
-        for pending in parse_schedule(payload, season="2026-27").pending_games:
+        for pending in parse_schedule(payload, season=season).pending_games:
             record = expected[pending.nba_game_id]
             derived_record = {
                 "nba_game_id": pending.nba_game_id,
@@ -356,7 +394,6 @@ def verify() -> int:
         # The resolved ten twelfths. Pinning only the pending block left a
         # resolved game free to move between scoring periods -- a within-DST
         # shift that reconciles cleanly -- while this printed success.
-        fixture, periods, counts = recorded_counts(variant)
         if len(counts) != len(periods) * len(fixture["teams"]):
             failures += 1
             print(
@@ -377,7 +414,7 @@ def verify() -> int:
         # comparison cannot object, because 610 of 630 rows are zero and only
         # two periods hold a resolved game, so the December boundary sits in
         # free space.
-        parsed = parse_schedule(payload, season=fixture["season"])
+        parsed = parse_schedule(payload, season=season)
         game_days = sorted(record.game.game_date for record in parsed.games)
         derived_periods = [
             {
@@ -390,14 +427,24 @@ def verify() -> int:
         ]
         if derived_periods != periods:
             failures += 1
-            differing_rows = [
-                (rec, der) for rec, der in zip(periods, derived_periods, strict=False) if rec != der
-            ]
-            head = differing_rows[0] if differing_rows else (periods[0], derived_periods[0])
-            print(
-                f"FAIL {variant:7} {len(differing_rows) or 'all'} period row(s) differ; "
-                f"first recorded {head[0]} derived {head[1]}."
-            )
+            if len(derived_periods) != len(periods):
+                print(
+                    f"FAIL {variant:7} period count differs: {len(periods)} recorded, "
+                    f"{len(derived_periods)} derived."
+                )
+            else:
+                head = next(
+                    (rec, der)
+                    for rec, der in zip(periods, derived_periods, strict=True)
+                    if rec != der
+                )
+                differing_rows = [
+                    1 for rec, der in zip(periods, derived_periods, strict=True) if rec != der
+                ]
+                print(
+                    f"FAIL {variant:7} {len(differing_rows)} period row(s) differ; "
+                    f"first recorded {head[0]} derived {head[1]}."
+                )
         else:
             print(f"ok  {variant:7} all {len(periods)} period windows reproduced")
 
@@ -405,6 +452,24 @@ def verify() -> int:
             team.nba_team_id: (team.abbreviation, team.full_name)
             for team in parse_teams(json.loads(TEAMS.read_text(encoding="utf-8")))
         }
+        # Compare membership before values. Iterating the recording and reading
+        # `derived_teams.get(...)` is `recording subset derived` -- the same
+        # one-directionality closed for pending records one function earlier and
+        # reintroduced here. Both directions were driven: a 31st team added
+        # upstream was silent, and half the league could be *deleted* from a
+        # recording along with its zero count rows, because the density
+        # assertion multiplies by the array under test. Cardinality is the class
+        # every earlier fix missed -- each compared the values of a set whose
+        # membership the artifact under test declared.
+        recorded_team_ids = {team["nba_team_id"] for team in fixture["teams"]}
+        if recorded_team_ids != set(derived_teams):
+            failures += 1
+            print(
+                f"FAIL {variant:7} team membership differs: "
+                f"{len(recorded_team_ids)} recorded, {len(derived_teams)} derived; "
+                f"recorded-only {sorted(recorded_team_ids - set(derived_teams))}, "
+                f"derived-only {sorted(set(derived_teams) - recorded_team_ids)}."
+            )
         team_mismatches = [
             team
             for team in fixture["teams"]
@@ -421,7 +486,7 @@ def verify() -> int:
         else:
             print(f"ok  {variant:7} all {len(fixture['teams'])} team labels reproduced")
 
-        derived = derived_counts(payload, periods, fixture["teams"], fixture["season"])
+        derived = derived_counts(payload, derived_periods, fixture["teams"], season)
         mismatches = [
             row
             for row in counts
@@ -442,7 +507,7 @@ def verify() -> int:
         # Games outside every scoring period contribute to no count row, so the
         # comparison above cannot see one appearing or vanishing. The lineage
         # counters can, and they are already in the recording.
-        parsed = parse_schedule(payload, season=fixture["season"])
+        parsed = parse_schedule(payload, season=season)
         lineage = fixture["lineage"]["schedule"]
         for label, derived_value, recorded_value in (
             ("source_game_count", parsed.source_game_count, lineage["source_game_count"]),
