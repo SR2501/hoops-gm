@@ -23,13 +23,15 @@ import importlib.util
 import pathlib
 import subprocess
 import sys
+import types
+from typing import Any
 
 import pytest
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "resolve_doc_conflicts.py"
 
 
-def _load(tmp_root: pathlib.Path):
+def _load(tmp_root: pathlib.Path) -> types.ModuleType:
     """Import the script with REPO_ROOT pointed at a scratch tree.
 
     Imported rather than shelled out so a mutation can be applied to a live
@@ -40,7 +42,15 @@ def _load(tmp_root: pathlib.Path):
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.REPO_ROOT = tmp_root
+    # Typed `Any` for the assignment because mypy --strict cannot know a
+    # dynamically loaded module's attributes, while ruff rewrites `setattr`
+    # with a constant name back to attribute form. The `hasattr` assert is what
+    # keeps this honest: a typo would otherwise create a *new* attribute and
+    # leave every test silently pointed at the real repository — which is the
+    # exact defect review found in the round-3 `--help` test.
+    assert hasattr(module, "REPO_ROOT"), "script no longer defines REPO_ROOT"
+    loaded: Any = module
+    loaded.REPO_ROOT = tmp_root
     return module
 
 
@@ -55,7 +65,7 @@ ITEM_A = "### `alpha` - Alpha\n\n- [x] **done**\n- **Depends on:** `nothing`\n"
 ITEM_B = "### `beta` - Beta\n\n- [ ] **pending**\n- **Depends on:** `alpha`\n"
 
 
-def test_separator_is_matched_by_equality_not_by_prefix(tmp_path):
+def test_separator_is_matched_by_equality_not_by_prefix(tmp_path: pathlib.Path) -> None:
     """Pins the defect that wrote a separator *into* a resolved file.
 
     `=======` is exactly seven. An RST table rule of 21 and a setext underline
@@ -68,7 +78,7 @@ def test_separator_is_matched_by_equality_not_by_prefix(tmp_path):
     assert not module.is_conflict_marker("=" * 21 + " " + "=" * 59)
 
 
-def test_real_git_markers_are_all_recognised(tmp_path):
+def test_real_git_markers_are_all_recognised(tmp_path: pathlib.Path) -> None:
     """The matcher must accept what git actually emits, not what we assume.
 
     Includes the `|||||||` base marker, which only appears under `diff3` and
@@ -85,7 +95,7 @@ def test_real_git_markers_are_all_recognised(tmp_path):
         assert module.is_conflict_marker(line), line
 
 
-def test_help_writes_nothing(tmp_path):
+def test_help_writes_nothing(tmp_path: pathlib.Path) -> None:
     """Pins the defect where `--help` performed a full resolution.
 
     Run **in-process against a patched `REPO_ROOT`**, not as a subprocess with
@@ -113,7 +123,7 @@ def test_help_writes_nothing(tmp_path):
     assert (backlog.read_bytes(), handoff.read_bytes()) == before
 
 
-def test_two_surviving_headers_are_refused(tmp_path):
+def test_two_surviving_headers_are_refused(tmp_path: pathlib.Path) -> None:
     """Covers the `written == 2` path, which no test reached.
 
     A stash-style label (`<<<<<<< Updated upstream`) means the collapse regex —
@@ -139,7 +149,9 @@ def test_two_surviving_headers_are_refused(tmp_path):
     assert backlog.read_text(encoding="utf-8") == original
 
 
-def test_note_only_conflict_is_refused_rather_than_given_a_second_header(tmp_path):
+def test_note_only_conflict_is_refused_rather_than_given_a_second_header(
+    tmp_path: pathlib.Path,
+) -> None:
     """The recount note is accumulated incident history — merge it by hand.
 
     Pins the F2b regression: when the collapsed block held the note but *not*
@@ -170,7 +182,7 @@ def test_note_only_conflict_is_refused_rather_than_given_a_second_header(tmp_pat
     assert backlog.read_text(encoding="utf-8") == original
 
 
-def test_intro_prose_sharing_a_hunk_with_the_header_is_refused(tmp_path):
+def test_intro_prose_sharing_a_hunk_with_the_header_is_refused(tmp_path: pathlib.Path) -> None:
     """The real file's layout: intro sentence line 3, count line 5.
 
     One ordinary hunk covers both. The previous predicate — "block contains a
@@ -197,7 +209,7 @@ def test_intro_prose_sharing_a_hunk_with_the_header_is_refused(tmp_path):
     assert "Generated from the planning session" in backlog.read_text(encoding="utf-8")
 
 
-def test_diff3_base_section_refuses_by_name(tmp_path):
+def test_diff3_base_section_refuses_by_name(tmp_path: pathlib.Path) -> None:
     """A heading only in the base means both sides deleted it — not a loss.
 
     Refusing is right; the previous message blamed the slug guard and sent the
@@ -228,7 +240,7 @@ def test_diff3_base_section_refuses_by_name(tmp_path):
     assert "would drop" not in message, "blamed the slug guard for a diff3 file"
 
 
-def test_blank_only_conflict_is_refused_without_injecting_a_header(tmp_path):
+def test_blank_only_conflict_is_refused_without_injecting_a_header(tmp_path: pathlib.Path) -> None:
     """Pins the fourth iteration: the predicate was vacuously true on nothing.
 
     Two lanes deleting the same paragraph and leaving a different number of
@@ -261,7 +273,9 @@ def test_blank_only_conflict_is_refused_without_injecting_a_header(tmp_path):
     assert backlog.read_text(encoding="utf-8") == original
 
 
-def test_a_line_merely_containing_the_count_shape_is_not_a_count_line(tmp_path):
+def test_a_line_merely_containing_the_count_shape_is_not_a_count_line(
+    tmp_path: pathlib.Path,
+) -> None:
     """Defends `fullmatch` over `search`, which is the whole v3-to-v4 fix.
 
     Reverting that one word restores "block *contains* a count line", the
@@ -287,7 +301,7 @@ def test_a_line_merely_containing_the_count_shape_is_not_a_count_line(tmp_path):
     assert backlog.read_text(encoding="utf-8") == original
 
 
-def test_a_quoted_marker_line_is_content_not_structure(tmp_path):
+def test_a_quoted_marker_line_is_content_not_structure(tmp_path: pathlib.Path) -> None:
     """Pins the fifth iteration: markers classified by prefix, not position.
 
     A line of *content* beginning `<<<<<<< ` was read as structure, skipped by
@@ -320,7 +334,7 @@ def test_a_quoted_marker_line_is_content_not_structure(tmp_path):
     assert after == original
 
 
-def test_the_one_to_one_check_refuses_a_missing_status_marker(tmp_path):
+def test_the_one_to_one_check_refuses_a_missing_status_marker(tmp_path: pathlib.Path) -> None:
     """The last guard in the file that nothing pinned.
 
     Pre-existing rather than new here, but it is the one that catches a
@@ -342,7 +356,7 @@ def test_the_one_to_one_check_refuses_a_missing_status_marker(tmp_path):
     assert "not 1:1" in str(excinfo.value)
 
 
-def test_a_second_separator_is_content_not_structure(tmp_path):
+def test_a_second_separator_is_content_not_structure(tmp_path: pathlib.Path) -> None:
     """The classifier's own separator rule, which nothing covered.
 
     `_block_content_lines` carries a private copy of the separator test — the
@@ -378,7 +392,7 @@ def test_a_second_separator_is_content_not_structure(tmp_path):
     assert after.count("=======") == 2
 
 
-def test_the_real_cli_reads_sys_argv(tmp_path):
+def test_the_real_cli_reads_sys_argv(tmp_path: pathlib.Path) -> None:
     """Pins the *wiring*, which every in-process test leaves untouched.
 
     Review reverted `args = sys.argv[1:] if argv is None else argv` to
@@ -413,7 +427,7 @@ def test_the_real_cli_reads_sys_argv(tmp_path):
     assert (backlog.read_bytes(), handoff.read_bytes()) == before
 
 
-def test_body_conflict_is_refused_rather_than_collapsed(tmp_path):
+def test_body_conflict_is_refused_rather_than_collapsed(tmp_path: pathlib.Path) -> None:
     """The High finding: a conflict in an item's *body* was silently deleted.
 
     The block carries no `### ` heading and no status marker, so the slug guard
@@ -442,7 +456,7 @@ def test_body_conflict_is_refused_rather_than_collapsed(tmp_path):
     assert backlog.read_text(encoding="utf-8") == conflicted, "file was rewritten"
 
 
-def test_header_count_conflict_is_still_resolved(tmp_path):
+def test_header_count_conflict_is_still_resolved(tmp_path: pathlib.Path) -> None:
     """The anchor must not break the one case the script exists for.
 
     A refusal that fires on everything is not a fix, it is the cry-wolf guard
@@ -467,7 +481,9 @@ def test_header_count_conflict_is_still_resolved(tmp_path):
     assert "`alpha`" in text and "`beta`" in text
 
 
-def test_slug_guard_is_independent_of_the_anchor(tmp_path, monkeypatch):
+def test_slug_guard_is_independent_of_the_anchor(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The two layers must fail *separately*, which is the argument for both.
 
     Verified by mutation rather than by reading: the collapse predicate is
@@ -499,7 +515,7 @@ def test_slug_guard_is_independent_of_the_anchor(tmp_path, monkeypatch):
     assert backlog.read_text(encoding="utf-8") == conflicted, "file was rewritten"
 
 
-def test_quoted_begin_marker_is_refused_not_consumed(tmp_path):
+def test_quoted_begin_marker_is_refused_not_consumed(tmp_path: pathlib.Path) -> None:
     """An append-only doc quoting a marker at line start was silently eaten.
 
     `docs/handoff.md` quotes conflict markers today. Inline backticks survive
@@ -528,7 +544,7 @@ def test_quoted_begin_marker_is_refused_not_consumed(tmp_path):
     assert handoff.read_text(encoding="utf-8") == original
 
 
-def test_unreadable_files_are_reported_not_silently_passed(tmp_path):
+def test_unreadable_files_are_reported_not_silently_passed(tmp_path: pathlib.Path) -> None:
     """A verdict must not cover files the scan could not read.
 
     A latin-1 `.md` holding a complete conflict block scanned clean and the
