@@ -68,19 +68,59 @@ _HEADER_COUNT = re.compile(r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ tota
 _RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
 
 
-def _has_content(block: str) -> bool:
-    """True when a conflict block holds any non-blank, non-marker line."""
-    for line in block.split("\n"):
-        if (
-            line.startswith(CONFLICT_BEGIN)
-            or line.startswith(CONFLICT_END)
-            or line.startswith(CONFLICT_BASE)
-            or line == CONFLICT_SEPARATOR
-        ):
+def _block_content_lines(block: str) -> list[str]:
+    """The lines of a conflict block that are content, classified by position.
+
+    **A marker is structure because of where it is, not because of how it
+    starts.** Every previous form asked `line.startswith(CONFLICT_BEGIN)`, so a
+    line of *content* beginning `<<<<<<< ` was read as structure, skipped, and
+    the block judged to hold nothing but count lines — then deleted at exit 0
+    under "Safe to stage", which is the sentence this whole change exists to
+    make true.
+
+    The separator was already matched by equality; that is the fix this file is
+    named after. It was never carried to the other three markers. And the same
+    reasoning was written one function over in the same commit —
+    `resolve_append_only` refuses a begin marker seen inside an open block
+    precisely because it is *content, not structure* — so the argument existed,
+    correct, in this file, and did not reach here.
+
+    Review's generalisation, which is the reason this is a separate function:
+    **a predicate built on a classifier inherits every place the classifier is
+    wrong**, and `is_conflict_marker` is shared by three call sites needing
+    three different answers. `resolve_append_only` asks "is this structure
+    here?", `is_conflict_marker` asks "could this be a marker anywhere?" — a
+    deliberately broad question, because it guards staging and a false positive
+    there is safe — and this asks "is this something I would be deleting?".
+    One function answering all three is why the third was wrong.
+
+    Position is unambiguous for a block matched by the collapse regex: the
+    begin marker is the first line and the end marker the last. The separator
+    is the first line equal to `=======`; a second one is content. Base
+    markers cannot reach here — `resolve_backlog` refuses on any `|||||||` in
+    the file before the collapse runs.
+    """
+    lines = block.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    if not lines:
+        return []
+    last = len(lines) - 1
+    content: list[str] = []
+    seen_separator = False
+    for index, line in enumerate(lines):
+        if index in (0, last):
             continue
-        if line.strip():
-            return True
-    return False
+        if not seen_separator and line == CONFLICT_SEPARATOR:
+            seen_separator = True
+            continue
+        content.append(line)
+    return content
+
+
+def _has_content(block: str) -> bool:
+    """True when a conflict block holds any non-blank content line."""
+    return any(line.strip() for line in _block_content_lines(block))
 
 
 def _is_only_count_lines(block: str) -> bool:
@@ -91,7 +131,7 @@ def _is_only_count_lines(block: str) -> bool:
     thing I can regenerate" but "contains *nothing else*" — and **that alone is
     vacuously true of an empty block.**
 
-    Review found it with real `git merge` output, not a constructed case: two
+    Review found that with real `git merge` output, not a constructed case: two
     lanes deleting the same paragraph and leaving a different number of
     trailing blank lines produces a conflict whose entire content is blank.
     The old form skipped the markers, skipped the blanks, and returned True
@@ -115,14 +155,7 @@ def _is_only_count_lines(block: str) -> bool:
     mid-sentence at the next, exit 0, "Safe to stage".
     """
     saw_count = False
-    for line in block.split("\n"):
-        if (
-            line.startswith(CONFLICT_BEGIN)
-            or line.startswith(CONFLICT_END)
-            or line.startswith(CONFLICT_BASE)
-            or line == CONFLICT_SEPARATOR
-        ):
-            continue
+    for line in _block_content_lines(block):
         stripped = line.strip()
         if not stripped:
             continue

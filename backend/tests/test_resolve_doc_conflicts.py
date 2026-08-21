@@ -287,6 +287,61 @@ def test_a_line_merely_containing_the_count_shape_is_not_a_count_line(tmp_path):
     assert backlog.read_text(encoding="utf-8") == original
 
 
+def test_a_quoted_marker_line_is_content_not_structure(tmp_path):
+    """Pins the fifth iteration: markers classified by prefix, not position.
+
+    A line of *content* beginning `<<<<<<< ` was read as structure, skipped by
+    the predicate, and the block judged to hold nothing but count lines — then
+    deleted at exit 0 under "Safe to stage".
+
+    The same reasoning was already written one function over in the same
+    commit: `resolve_append_only` refuses a begin marker inside an open block
+    because it is content, not structure. The argument existed, correct, in
+    this file, and did not reach here.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        "<<<<<<< HEAD\n" + HEADER + "\n"
+        "<<<<<<< Updated upstream\n"
+        "=======\n" + HEADER + "\n"
+        ">>>>>>> other\n\n" + ITEM_A + "\n" + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit):
+        module.resolve_backlog(backlog)
+
+    after = backlog.read_text(encoding="utf-8")
+    assert "<<<<<<< Updated upstream" in after, "quoted marker was deleted"
+    assert after == original
+
+
+def test_the_one_to_one_check_refuses_a_missing_status_marker(tmp_path):
+    """The last guard in the file that nothing pinned.
+
+    Pre-existing rather than new here, but it is the one that catches a
+    resolution preserving every slug while dropping a status marker — which is
+    precisely the loss the slug guard is blind to.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    backlog.write_text(
+        _backlog(ITEM_A + "\n### `beta` - Beta\n\n- **Depends on:** `alpha`\n"),
+        encoding="utf-8",
+    )
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    assert "not 1:1" in str(excinfo.value)
+
+
 def test_the_real_cli_reads_sys_argv(tmp_path):
     """Pins the *wiring*, which every in-process test leaves untouched.
 
