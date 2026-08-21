@@ -137,7 +137,7 @@ two files drifts in one of them.
 
 ### Two questions no gate asks, because no gate looks at scope of application
 
-Added 2026-08-21. One lane shipped four defects in one unit that were **not logic errors**.
+Added 2026-08-21. One lane produced four defects in one unit that were **not logic errors**. None shipped — every one was found in review and fixed before merge, across eight rounds; this section is evidence the structure caught them, not that it let them through.
 Each guard was written *correctly* and then applied to one of the two places it belonged; a
 reviewer found the other every time. The plausibility bound went on the lenient path and not
 the strict one — and the strict one persists a value that joins `player_participation`. An
