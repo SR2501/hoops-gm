@@ -123,7 +123,35 @@ def resolve_backlog(path: pathlib.Path) -> None:
         return
     text = path.read_text(encoding="utf-8")
     had_conflict = CONFLICT_BEGIN in text
-    text = re.sub(r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", "__NOTE__\n", text, flags=re.DOTALL)
+    slugs_before = set(re.findall(r"^### `([^`]+)`", text, re.M))
+
+    # Collapse a conflicted block to the recomputed note **only when the block
+    # contains no backlog item**. The previous form replaced every conflict
+    # block, both sides, with a placeholder — so when two lanes added items in
+    # the same region, the resolver silently deleted all of them and exited
+    # zero. On 2026-08-21 that removed three entries a lane had merged minutes
+    # earlier, and every check we had agreed the result was fine: a recount of
+    # the finished file is *internally consistent after a deletion*, because a
+    # dropped item takes its heading and its marker with it.
+    def _collapse(match: "re.Match[str]") -> str:
+        block = match.group(0)
+        return block if "### " in block else "__NOTE__\n"
+
+    text = re.sub(
+        r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", _collapse, text, flags=re.DOTALL
+    )
+
+    # And the guard that does not depend on the mechanism above being right:
+    # no item may leave this function that entered it. A total can be recounted
+    # correctly and still be wrong; only the *set* sees a deletion.
+    slugs_after = set(re.findall(r"^### `([^`]+)`", text, re.M))
+    if lost := sorted(slugs_before - slugs_after):
+        sys.exit(
+            f"{path}: resolution would drop {len(lost)} backlog item(s): "
+            f"{', '.join(lost)}. Refusing to write. Resolve this file by hand "
+            "and diff its slug set against main."
+        )
+
     lines = text.split("\n")
     headings = [line for line in lines if line.startswith("### ")]
     markers = [
@@ -223,9 +251,26 @@ def main(argv: list[str] | None = None) -> int:
     # Verify BEFORE the caller stages anything. This is the entire point.
     survivors = surviving_markers()
     if survivors:
+        # A stop that gives the operator nothing to resolve it with is a stop
+        # they will learn to override, and they will override it using whatever
+        # reason is nearest to hand. On 2026-08-21 the nearest reason was a
+        # coordinator broadcast that this check false-positives on lines of
+        # seven equals signs — true, and the reason this file was being fixed.
+        # A true claim used as a general licence is worse than a false one,
+        # because checking it confirms it and the check does not reveal that
+        # its scope was narrower than its use. So the discriminator ships with
+        # the stop, where it reaches everyone who trips it and cannot be
+        # forgotten in transit.
         print("CONFLICT MARKERS SURVIVE - do not stage:")
         for line in survivors[:20]:
             print("   ", line)
+        print()
+        print("Before overriding, confirm this is not a real conflict:")
+        print("    git diff --name-only --diff-filter=U")
+        print(
+            "If that lists none of the files above, the hit is in committed "
+            "content rather than an unresolved merge \u2014 check the line itself."
+        )
         return 1
 
     entries = sum(
