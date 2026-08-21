@@ -385,12 +385,26 @@ a:focus-visible {
      engage. Thirty teams do not fit on a laptop, so the period numbers must
      stay put while the rows move under them.
 
-     The 18rem budgets for everything above the grid at the default window: the
-     page heading, the lede, the lineage summary and the key. It is a constant
-     rather than a measurement, so opening the lineage disclosure or wrapping
-     the key onto a second line pushes the bottom of the grid below the fold
-     and produces an inner scrollport inside the page scroll. Acceptable for a
-     single-user tool; the honest fix is a flex column with `min-height: 0`. */
+     The 18rem budgets for everything above the grid at the default window. It
+     was written for four things — the page heading, the lede, the lineage
+     summary and the key — and ADR-013 added a fifth, the pending notice, which
+     is present in every state this screen currently ships: non-empty today, and
+     "this response cannot say" whenever the backend predates the contract. The
+     budget was not raised to match, so what this comment described as the
+     *consequence* of a reader's deliberate act — opening the disclosure or
+     wrapping the key, pushing the grid's bottom below the fold and producing an
+     inner scrollport inside the page scroll — is now the default rather than an
+     edge case.
+
+     Measured at a 720px viewport with the notice present, scroll at zero and
+     the lineage collapsed: the first count sits at 583px against a 270px
+     budget, so five of thirty teams are visible and the league totals in
+     `tfoot` are reachable only through the inner scroll. The constant is left
+     alone here because changing it is a layout decision for the whole screen
+     rather than a side effect of a pending-games diff, and because the honest
+     fix is the one already named — a flex column with `min-height: 0` — not a
+     larger magic number. Tracked in `docs/backlog.md`. What is fixed is this
+     comment, which until now asserted a page that no longer exists. */
   max-height: calc(100vh - 18rem);
   min-height: 12rem;
   overflow: auto;

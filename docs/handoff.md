@@ -11613,27 +11613,57 @@ count below is a floor"* above *"Could not load the schedule grid"*, with no cou
 which they drove and I had not. And it costs no block above a grid already carrying a
 lineage panel, a notice and a key.
 
-**A measurement I can now report because the placement changed — and it does not say what
-I first wrote.** `frontend` declined to assert the table was below the fold without a
-browser, which was right. Measured in one, at a 720px viewport with the pending notice
-present:
+**A measurement I published four times, corrected a right answer into a wrong one, and only
+trusted once I could derive it.** `frontend` declined to assert the table was below the fold
+without a browser, which was right. The final figures are these, and unlike the previous
+three they come with the arithmetic that produces them, at a 720px viewport with the pending
+notice present, the lineage collapsed and both scrolls at zero:
 
 ```
-lineage collapsed (default) : header 480px, first number 527px  -> ~7 of 30 rows visible
-lineage expanded            : header 783px, first number 830px  -> grid entirely below the fold
+blocks above the grid   header 86 + lineage 35 + notice 99 + key 103   -> scrollport top 410px
+18rem budget            720 - 270                                     -> scrollport height 450px  (exact)
+caption 68px + header row 47px                                        -> first count 527px
+                                                                      -> 7 of 30 rows visible
+scrollport bottom                                                     -> 140px below the fold
+lineage expanded                                                      -> grid pushed off entirely
 ```
 
-I first wrote this up as "the grid is above the fold at this size", from a reading taken
-with the lineage panel expanded in one page and collapsed in another — a number that was
-right about nothing in particular. The honest version is that the grid *starts* above the
-fold by default and shows **about seven of thirty teams**, and that expanding the evidence
-panel pushes it off entirely, which is at least a deliberate act by the reader. The caption
-move removed 303 characters of prose above it and bought roughly two rows.
+The history is the point. Version one was "the grid is above the fold", from readings taken
+with the lineage panel expanded in one page and collapsed in another. Version two was 527px
+and about seven rows. Version three "corrected" that to 583px and five rows, from a page
+whose DOM I had been injecting into moments earlier — **I corrected a right number into a
+wrong one and published the wrong one to the coordinator.** Version four is above, and it is
+the first that can be checked without rerunning it: the block heights sum to the scrollport
+top, and `720 - 18rem` lands on the scrollport height exactly, which is what confirms the
+number rather than my having read it off a screen.
 
-So `frontend`'s density finding is not closed, it is quantified, and their framing of it
-survives the measurement: the key and the table are consulted continuously and come last,
-the caveat and the notice are read once and come first, which is inverted by frequency of
-need. Under a pick clock, seven rows is a scroll.
+Three of the four were taken by me in the same evening, in the same browser, at the same
+viewport. Nothing about the tooling changed; what changed each time was a condition I had
+not controlled and had not thought to state. **A measurement whose conditions are not
+recorded is not a measurement**, and this project already knew that about fixtures and
+recordings without my noticing it applies to a ruler.
+
+**`code-review` caught the sentence beside it, which was the misleading one.** I wrote that
+the caption move "removed 303 characters of prose above it and bought roughly two rows". The
+removed lede paragraph is exactly 303 characters — but the caption grew from 113 to 445 in
+the same change, and `caption-side: top` puts those characters *above the first row*, inside
+the same fixed-height scrollport. Prose above the first count did not fall by 303; it rose.
+Measured by reconstructing the old layout in the DOM rather than reverting the tree under two
+live reviewers, the change buys **33px against a 26px row — about one and a third rows** —
+and it buys that from the caption's smaller type and the paragraph's margin, which is a
+different and much smaller mechanism than the sentence claimed.
+
+**The most useful number here is the one nobody asked for.** The scrollport bottom sits 140px
+below the fold, so the nested scroll that `styles.css` describes as the *consequence* of a
+reader opening the disclosure is the default state — `tfoot`'s league totals, which exist so
+a team's count can be compared against the league, are reachable only through an inner
+scroll. `frontend` found the cause: the `18rem` constant was written for four blocks above
+the grid and ADR-013 added a fifth. The comment now says so and it is a backlog line; the fix
+is the flex column that comment already names, not a bigger magic number, and it is a
+whole-screen change rather than something to fold into a pending-games diff.
+
+So the density finding is not closed, it is quantified: **seven rows is a scroll under a pick
+clock**, one and a third rows is not a fix, and the grid's own footer is below the fold.
 
 **`architect` found a fresh over-generalisation in the previous entry, in the paragraph
 where I had just corrected a different one.** I wrote that *"every pair of semantic hues in
@@ -11691,6 +11721,17 @@ night, and disclosing it afterwards is a weaker remedy than not doing it.
 *None of these five fixes has been reviewed either.* Same as last round. The caption
 rewrite in particular is new copy that no reviewer has read, and copy is what three of
 tonight's findings were about.
+
+*The "exactly as strict as the backend's" claim below is now true only of part of the
+check.* `architect` verified my ids/records equality against the producer at PR #49. The
+duplicate-id clause was added **after** that verification and is strictly stricter than
+anything they read. It carries no false-reject risk — two distinct games cannot share an
+`nba_game_id` — but the sentence describes a check that has since grown. `code-review`
+caught the drift.
+
+*Every fold reading was taken after the caption move.* I have no before-reading in a
+browser; the 33px figure comes from reconstructing the previous markup in the DOM, which is
+a simulation of it rather than a measurement of the previous commit.
 
 *One "could not verify" from the previous entry is now closed, and it was the largest.*
 `sr2501-real-schedule-import` is pushed as PR #49, so I re-ran the whole verification

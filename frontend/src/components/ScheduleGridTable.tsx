@@ -39,9 +39,41 @@
  * two of which were found by driving it. It is where a reader's eye already is
  * when they are reading a number, rather than in a second muted paragraph under
  * one ending in a governance citation. It renders if and only if the table
- * does, so it cannot appear above "could not load the schedule grid" claiming
- * something about counts that are not on screen. And it costs no block above a
- * grid that already carries a lineage panel, a notice and a key.
+ * does — structurally, not by a conditional — so it cannot appear above "could
+ * not load the schedule grid" claiming something about counts that are not on
+ * screen. And it costs no *block* above the grid.
+ *
+ * **And it has two costs, which an earlier version of this comment listed none
+ * of, in the round whose subject was naming costs.**
+ *
+ * A `<caption>` is the table's accessible name. This one took that name from
+ * 113 characters to 407, and a name is announced on every entry into the table
+ * rather than once in document order. That is the same mechanic this file fixed
+ * one element down a round earlier — a sentence carried in both the accessible
+ * name and the description, announced twice on every focus change — arriving
+ * one level up and in the opposite direction. Attaching it to the table is
+ * still right in principle, because a reader who jumps straight to the grid by
+ * table navigation never heard the page paragraph at all. The clean split is
+ * name for the identifying clause and `aria-describedby` for the caveat, and
+ * that trade is not free either, since description is announced unreliably on
+ * `table`. Recorded rather than acted on; if the cost proves real the split is
+ * the fix.
+ *
+ * The second cost is that "no block" is true of the space *above* the grid and
+ * silent about the two rendered lines it adds *inside* `.grid-scroll`, above
+ * the first row. That is the scarcer space, because the scrollport height is a
+ * constant while the space above it is not.
+ *
+ * A third, measured after review raised it as a question: a `<caption>` box is
+ * laid out at **table** width, not scrollport width, so once the table is wider
+ * than its scrollport the caption's right-hand end sits outside the visible
+ * area and has to be scrolled to. Measured at this cohort's 21-period width:
+ * no overflow at 1230px or 1000px, 60px of it at 800px, 260px at 600px — the
+ * threshold is the table's own intrinsic width, around 860px here and wider
+ * with 25 periods. At 113 characters the caption was one short line and could
+ * not overflow; at 407 it can. Above the laptop this screen is designed for it
+ * does not arise, and the fix is the same name/description restructure deferred
+ * above rather than a separate one.
  *
  * **The make-up clause will go stale and no client-side condition can detect
  * it.** When the NBA publishes those games the sentence becomes false, and
@@ -112,9 +144,10 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
           Scheduled games per team, per {season} fantasy scoring period. Counts only — no
           availability, no opponent quality.{' '}
           <strong className="grid__caption-caveat">No count here is final.</strong> Make-up games
-          for teams eliminated early from the Emirates NBA Cup have not been released and will
-          raise season totals, and a re-ingest can move a fixture between weeks, so a weekly count
-          can fall as well as rise — in columns carrying no mark as much as in marked ones.
+          for teams eliminated early from the Emirates NBA Cup have not been released; they will
+          raise season totals <em>and the weekly counts they land in</em>. A re-ingest can also
+          move a fixture between weeks, so a weekly count can fall as well as rise — in columns
+          carrying no mark as much as in marked ones.
         </caption>
         <thead>
           <tr>

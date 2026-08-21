@@ -557,6 +557,23 @@ once checked:
   right on load and leaves a refresh that takes the pending set from empty to
   non-empty silent. The fix is a region that is empty at mount and live
   thereafter, if the cost is ever judged worth it.
+- **`.grid-scroll`'s `18rem` budget is now short by a block.** The constant was
+  written for four things above the grid; the pending notice is a fifth and is
+  present in every shipping state. Measured at a 720px viewport with scroll at
+  zero and the lineage collapsed, the first count sits at 583px against a 270px
+  budget — five of thirty teams visible, and `tfoot`'s league totals reachable
+  only through the inner scroll. The comment now says so. The fix is the one
+  that comment already names, a flex column with `min-height: 0`, rather than a
+  larger magic number; it is a whole-screen layout change and does not belong in
+  a pending-games diff. `frontend` owns it.
+- **The caption is the table's accessible name, now 407 characters.** Announced
+  on every entry into the table rather than once in document order. Attaching
+  the caveat to the table is right in principle — a reader arriving by table
+  navigation never heard the page paragraph — but the clean split is name for
+  the identifying clause and `aria-describedby` for the caveat. Not done here
+  because `aria-describedby` is announced unreliably on `table`, so the trade is
+  not obviously favourable and no one has tested either with a real screen
+  reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
 
 **Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
 every naming field null, so no team can be named and none is. A per-cell "this

@@ -825,6 +825,13 @@ describe('a season the source has not finished scheduling', () => {
     expect(grid).toHaveTextContent('Make-up games')
     expect(grid).toHaveTextContent('can fall as well as rise')
     expect(grid).toHaveTextContent('in columns carrying no mark as much as in marked ones')
+    // Make-up games land on dates, so they raise the weekly columns they fall
+    // in, not only the season total. Correcting "floor" to "not final" first
+    // reassigned this consequence to the Total column alone — right about the
+    // direction, wrong about the granularity, in the same sentence. ADR-013
+    // states it per period: anything consuming games-per-period must treat
+    // counts before December as provisional.
+    expect(grid).toHaveTextContent('and the weekly counts they land in')
     // The claim it must not make.
     expect(grid.textContent).not.toMatch(/is a floor/i)
   })
