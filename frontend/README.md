@@ -132,6 +132,13 @@ The same class catches the dev server: if Vite hot-reloads only part of a change
 you get a page mixing new markup with old copy, which reads as a contradiction
 inside your own diff. Restart on a clean port before believing it.
 
+**If you script the seed, do not retry on failure.** It refuses a database that
+already holds a projection import or a Basketball Monster crosswalk entry it did
+not create, raising `DemoSeedRefused` and exiting `2`. That is a refusal, not a
+transient — a wrapper treating any non-zero exit as "retry" will loop. The
+refusal exists because the earlier version silently retired a real crosswalk and
+installed synthetic links, exit 0, saying nothing.
+
 **The seeded projection numbers are invented — only the player names are real.**
 Sixty rows scroll; sixty rows are not a league. Nothing seen there is evidence
 the screen handles a real auction board.
