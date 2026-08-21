@@ -86,6 +86,14 @@ This supersedes `plan.md:517`'s `blend_profiles` sketch and defers its `blended_
 
 ## Consequences
 
+**A row becomes the thing that must be trusted, in place of an in-memory identity check.** Today
+nothing reaches `blend_projections` without having passed `define_blend_profile`'s validators,
+because `activate_blend_profile` compares the profile against the registry object. A table has no
+such guarantee: a hydrated profile is whatever the row says. Layer purity is what stops aggregates
+flowing backwards under ADR-008, and after this change **it is enforced by clause 2's re-validation
+or it is not enforced at all**. This is the consequence an implementer must not discover after the
+migration.
+
 The screen gets per-game rate against per-game rate, durably. It does not get parity with a
 published seasonal total: that needs `expected-games`, and reconstructing it by multiplying a rate
 by the source's assumption is a two-line ADR-002 violation that looks like a feature.
