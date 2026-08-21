@@ -21,13 +21,15 @@ Gates exist because this project's failure modes are unusual — see the four po
 
   **And a harness whose anchors can rot is a harness that can quietly stop testing.** A third lane found two of its twenty-two mutation anchors had gone stale when it introduced a local variable, so the harness printed `SKIP` — and *in a list of twenty-two, a skip reads almost exactly like a catch*. It only failed loudly because that script happened to count skips as failures, which its author had not done deliberately. **A skipped mutation is a failure, not a neutral result**, and a harness that reports it as anything else degrades silently as the code moves underneath it.
 
-  **Finally, red is not enough on its own: mutate the thing the docstring *names*, and check the failure matches the docstring's story.** A fourth lane had two mutation checks pass for reasons adjacent to the ones claimed — one reddened against the bug itself rather than the guard, another against a neighbouring condition. Both went red, both looked like evidence, and neither established what its docstring said it established. If a test claims to be pinned by a parked id, remove the parked id; if it stays green, the pin was something else.
+  **Finally, red is not enough on its own: mutate the thing the docstring *names*, and check the failure matches the docstring's story.** A fourth lane had two mutation checks pass for reasons adjacent to the ones claimed — one reddened against the bug itself rather than the guard, another against a neighbouring condition. Both went red, both looked like evidence, and neither established what its docstring said it established. If a test claims to be pinned by a parked id, remove the parked id; if it stays green, the pin was something else. **And a red that any edit would produce is not attribution at all.** A mutation deleting a sub-condition in `_require_declared_season` survived a **1,247-test suite** — green everywhere except one fingerprint test, which fires on any byte change to the file and would fire for whitespace. It reddened, it looked like the suite catching a defect, and it established nothing about behaviour. **A file-digest check is the reassuring half of a test at file scope**: it is guaranteed to notice, and guaranteed not to tell you what it noticed. Discount it when reading a mutation result, and note the untested route there was the *likelier* drift — a payload keeping its envelope and losing one field is more probable than one losing the envelope.
 
   That paragraph is about a red arriving for the wrong reason. **The same attribution failure happens to greens, and nothing mutates a passing test.** A lane cited a guard as evidence its classifier handled epoch sentinels; the guard was catching a year-0001 value only because `America/New_York` ran on −04:56 local mean time before 1883, so the value misses reconciliation by four minutes. The source's *actual* placeholder convention is 1900, which reconciles exactly and would have passed. The guard had never done the job it was credited with, and it was one year from being asked. **A guard that passes for a reason other than the one claimed is indistinguishable from one that works, until the neighbouring case arrives** — so when a passing test is offered as evidence of a property, state which line establishes it. The cleanest instance is a *test*, not a guard: one named `accepts a null game_date but still refuses one that is simply absent` omitted the sibling **reason** field as well as the date, so the refusal came from the missing reason. The assertion passed, the name described exactly the right thing, it had passed review, and the mutation widening the date check went **uncaught**. Reading could not have found it — only a mutation aimed at the check the test *claims* to exercise. That is why `NOT CAUGHT` must be a failure rather than a curiosity: it is the only signal that distinguishes a test from a test-shaped object. See R55 in `risks.md` for the other half: what an agreeing check can establish at all.
 
   **And the green-before-mutating rule earns its place twice over.** It was written to stop a mutation that proves nothing; it has also twice stopped a *test asserting something false* from being committed, because the assertion failed before the mutation ran. One lane's new test claimed a season string of `9993-94` would be treated leniently; it would not, because that season builds a valid window that 2026 is legitimately outside. Neither use was anticipated when the rule was written, and the second is the more valuable: a mutation that proves nothing is merely useless, while a committed test encoding a false claim misleads for as long as it stays green.
 
-- **A reviewer that mutates code needs its own worktree.** Reviewer-enforced, not CI-enforced. Reviewer sub-agents share the author's tree by default, and mutation is a write. On one unit a reviewer's narrowed constant was left behind after its run and was caught only by the test written for that constant; one of its writes landed mid-run and produced a `JSONDecodeError` in an unrelated suite that read exactly like a real failure; and its own mutation was clobbered by an author write, **briefly reporting a false green**. Both directions produce a result that means nothing, and only one of them looks wrong. Use a detached worktree for any review that writes.
+- **Read the rendered result, not only the diff.** A section inserted by anchoring on a heading consumed that heading, orphaning the paragraph beneath it so *“Recorded here because they cost a session to find”* had no antecedent for “they”. **The diff looked correct**; only the rendered document showed the break. Anchor edits on surrounding prose rather than on a heading, and read the result.
+
+- **A reviewer that mutates code needs its own worktree.** Reviewer-enforced, not CI-enforced. Reviewer sub-agents share the author's tree by default, and mutation is a write. On one unit a reviewer's narrowed constant was left behind after its run and was caught only by the test written for that constant; one of its writes landed mid-run and produced a `JSONDecodeError` in an unrelated suite that read exactly like a real failure; and its own mutation was clobbered by an author write, **briefly reporting a false green**. Both directions produce a result that means nothing, and only one of them looks wrong. Use a detached worktree for any review that writes. **And the author side of the same rule: do not start work while a review is outstanding.** One lane edited files mid-review three times after being asked to hold the tree still, and **the reviewers disclosed it every time rather than the author** — which makes it a habit rather than a lapse, and the fix is not intending harder. A verdict on a tree that moved underneath it is not a verdict, and the author is the only party who can tell whether it moved.
 
 Enforced by CI, except the three bullets marked otherwise.
 
@@ -187,6 +189,23 @@ Both are the same failure as the mutation bullets above — success inferred fro
 signal — which is why they are here rather than in a tools directory. **A tool rebuilt from an
 accurate description gets re-read; a committed script gets run without being understood.**
 
+**That rule governs safety, not evidence, and the distinction cost a lane its strongest
+number.** A mutation harness reporting *33 of 33 caught* lived outside the repository for nine
+review rounds, so **no reviewer could ever check the figure that carried the unit**. Its failure
+direction is silent — a broken harness reports success — which by the rule above argues for
+describing it. That is the wrong conclusion. **If a tool's output is cited as evidence, it must
+be in the repository regardless of failure direction, because the citation is what is being
+audited.** Describe a tool you want re-derived; commit a tool whose numbers appear in a review.
+
+**And the question that found seven holes in one verification script, which is the most
+reusable thing on this page:** *for each thing this file compares, what is the key set, and is
+it asserted or assumed?* All seven answered **assumed**. The last one had a visible
+consequence: overwriting one non-zero count row with a duplicate of a zero row left the
+cardinality intact, so a row-counting density check passed and a comparison iterating the rows
+it received never looked up the vanished pair — and on the screen a real count became the
+marker meaning *the backend sent no count*. **Two independent checks shared one proxy.** Assert
+membership of every key set a comparison depends on, not its size.
+
 ### Rounds have a cost, and the cost is prose
 
 One unit on 2026-08-21 ran six review rounds. It found **two behavioural defects a user
@@ -218,6 +237,8 @@ previous round wrote, a further round examines the previous fix** — and that r
 end on evidence, because each round genuinely produces some. It ends only on judgement. Round
 eight found a defect in a guard round seven had added; a ninth would have examined round
 eight's. Stop there, and say that is why.
+
+**And the two shapes are not exclusive within one series, which is why the stop call belongs outside it.** A nine-round unit was mostly the *converging* kind — wrong artifact, wrong field, wrong operand, wrong cardinality, wrong key set, each round a strictly smaller and more structural class in the **original** work. But two of its rounds were the thrashing kind: a one-directional key comparison fixed in one commit and reintroduced one function later, and a claim that went over-stated, then over-corrected, then right. **A series can converge and thrash at the same time, and the author cannot reliably tell which is dominant from inside it.** Have someone outside the series make the stop call.
 
 Two corollaries, both earned the same night:
 
