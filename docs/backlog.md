@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 72 pending - 118 total**
+**45 done - 1 blocked - 76 pending - 122 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 118 `###` headings, 118 unique item slugs and 118 markers, 1:1, no
+two headers: 122 `###` headings, 122 unique item slugs and 122 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -25,7 +25,21 @@ held. Found by diffing this file's slug set against `origin/main`'s, which is th
 only check that catches a *dropped* item — a recount of the finished file agrees
 with itself perfectly after a deletion. **Recount the total, and separately
 compare the slug set against `main`; the first cannot see what the second is
-for.**
+for.** The blend-recipe lane rebased onto `fc23239` under that rule and the pair
+behaved exactly as described: the recount moved 118 -> 120 and could not have
+seen a loss, while the slug diff against `origin/main` independently confirmed
+zero of main's 118 entries were dropped and exactly two were added. The script
+was not run on this file.
+
+**A dependency edge can be dangling and nothing says so.** Tracing the auction
+chain on 2026-08-21 to rule on sequencing turned up
+`schedule-cohort-fingerprint-list` depending on `injury-report-backfill`, which
+is not a slug in this file — the item is `injury-report-historical-backfill`.
+Left as found, because guessing which item another lane meant is worse than
+reporting it. Recorded because it is the same shape as the counts: **the graph
+is only as trustworthy as the last time someone resolved every edge against the
+slug set**, and until `adr-index-consistency-test` has a sibling doing that
+here, nothing does.
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
@@ -945,6 +959,45 @@ Typed action schema, backend command queue, userscript-side executor, and result
 
 Owner will follow the list, so list reliability is the product. Measure adherence per decision (~13 per auction, 10 mocks = ~130 observations). Track overall rate and where deviation clusters by position, price tier and draft stage. Separate systematic deviation (bias to guard against) from situational deviation (real information the model lacks, therefore a feature). Cannot measure whether a deviation was correct - mocks do not play out and scoring against the list own valuation is circular.
 
+### `adr-index-consistency-test` - Testing that the decision log's two indexes cannot drift
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+`docs/decisions/README.md` was found missing rows for ADR-013 and ADR-014 on
+2026-08-21, and `PLAIN-ENGLISH.md` stops at ADR-009 so ADR-010 through ADR-015
+are absent from it. Two indexes over one directory, drifting independently,
+neither with a test.
+
+The item is a test, not an edit. Editing both today leaves them drifting next
+week, and "I checked it by hand this time" is a claim with a one-rebase
+half-life — it has now been made by two lanes on two different days.
+
+Assert **both directions**, because only one of them is visible to a human
+reading the table:
+
+1. every `docs/decisions/ADR-0NN-*.md` has a row in the `README.md` index;
+2. every index row's relative link resolves to a file that exists.
+
+The second is the one a rename breaks and a reader cannot see: a plausible title
+beside a broken relative link is indistinguishable from a working one in
+rendered Markdown until it is clicked. The ADR-015 row was verified by a
+reviewer resolving the link, not by its author reading the table.
+
+Decide as part of the item whether `PLAIN-ENGLISH.md` is in scope. It is a
+different kind of index — prose, not a table, and deliberately selective — so
+requiring an entry per ADR may be wrong. If it is out of scope, say so in the
+file itself, because a reader currently cannot tell "stops at 009 on purpose"
+from "stopped at 009 by accident".
+
+Worth recording why this is filed rather than fixed: the two missing rows were
+found because a merge conflict happened to land on adjacent lines of that table.
+**That is a detector with no coverage guarantee** — it fires only when two lanes
+touch the same table in the same window. Two of the three index defects found
+that day surfaced by accident.
+
+Gate: Code gate.
+
 ### `auction-budget-manager` - Building the auction budget manager
 
 - [ ] **pending**
@@ -1004,7 +1057,7 @@ Backtest harness scoring the availability model against held-out seasons. Scores
 ### `availability-model` - Building the per-game availability model
 
 - [ ] **pending** - **2026-08-21, `quant`: blocked on the same missing populated database as `injury-status-conversion`, and independently of it.** `p(play)` needs direct non-play labels at scale from `player_participation`, and `docs/models/reliability-metrics.md` already records why the historical `PlayerGameLogs` evidence cannot substitute: it "contains appearances but not complete non-appearance labels, so there is no honest held-out target." Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence. Schedule density is available as a pure-calendar computation; the labels are not. So this item is blocked by two separate routes - its `injury-status-conversion` dependency, and its own need for participation labels - and closing only the first would not unblock it.
-- **Depends on:** `injury-status-conversion`, `participation-ledger`, `schedule-density`
+- **Depends on:** `injury-status-conversion`, `participation-ledger`, `participation-ledger-population`, `schedule-density`
 
 Per-player p(play) for each scheduled game, conditioned on B2B/density, rest days, road trips, age, career and recent minutes load, injury history and body part recurrence, current report status (via its conversion rate), and team playoff/tanking situation. Aggregates to expected games over any window (RoS, fantasy week, playoff weeks). Persists driver features for explainability.
 
@@ -1034,6 +1087,144 @@ From the blind mock captures, identify systematic tendencies worth flagging live
 - **Depends on:** `adherence-experiment`, `behavioural-baseline`, `overlay-auction-panel`
 
 Once adherence data shows systematic tendencies, surface them live in the overlay - for example that the current bid is well over list on a position the owner has consistently overpaid for across prior mocks. Requires enough captures to distinguish tendency from noise. Read-only advisory, not a block.
+
+### `blend-override-persistence` - Persisting manual projection overrides safely
+
+- [ ] **pending**
+- **Depends on:** `blend-recipe-persistence`, `player-identity`
+
+Split out of `blend-recipe-persistence` by ADR-015 clause 5, because overrides
+are the only recipe component that carries a decision-bearing number and the
+only one whose key nothing pins. A `ManualProjectionOverride` names a
+`player_id`; `players.id` is a surrogate with no natural key and
+`normalized_name` is documented as deliberately non-unique *because* collisions
+must stay resolvable — so storing the observed name and refusing on mismatch is
+blindest on exactly the population that generates the risk. The identity remedy
+must therefore not be the name: use `birth_date`, or the `player_external_ids`
+row identity observed at authoring.
+
+Two further hazards that only appear once overrides are durable, both of which
+this item must close before it is done:
+
+- **A persisted override is indistinguishable from a durability-shaded rate.**
+  "His true per-game scoring is 24.1" and "I'll shade him to 22 because he'll
+  only play 55 games" are both `points_per_game`, and `expected-games` would
+  then multiply the second by our own `p(play)` — availability counted twice,
+  R41's mechanism with the owner's own hand as the aggregator, after which no
+  query separates "he is good" from "he is durable" for that player. The remedy
+  is definitional and belongs in the model card: an override replaces a per-game
+  rate **at normal health and role**, and no schema test can detect one that
+  does not.
+- **A bare ratio can reach the output on the hydration path.** On the read path
+  `blend_projections` takes `values` verbatim and the only re-check is
+  `_validate_shooting_values`, which iterates `fg`/`fg3`/`ft` and ignores field
+  names it does not recognise. The check that an override supplies exactly the
+  category's `production_fields` lives in `_validate_manual_overrides`, which is
+  definition-path only. A ratio category on assists or turnovers is expressible,
+  so a persisted single bare ratio would flow untouched into the blended output
+  — the naive-percentage bug arriving through the one door nobody was watching.
+
+Refusal must be a **read refusal**, typed and retryable per ADR-014. Dropping
+the override and blending anyway fails unsafe: the screen would show an
+uncorrected number the owner believes is corrected.
+
+Gate: **Code gate and Model gate** — the model card's Inputs section currently
+describes overrides as transient values, and that claim changes here.
+
+### `blend-recipe-persistence` - Persisting the blend recipe so the owner's weights survive a restart
+
+- [ ] **pending**
+- **Depends on:** `csv-importer`, `projection-blending`
+
+ADR-015. `projection-blending` is complete but not durable: `BlendCatalog` is a
+caller-owned in-memory value, so owner-authored per-category weights die at
+process exit and there is no persistent "our number" to put beside a source's.
+Persist the **recipe** — selected sources, per-category weights, target scoring
+profile — and keep the **binding** to specific `ReleasedProjectionImport`
+records transient, recomputing the blend on read. Persisting `BlendProfile`
+whole would weld both lifetimes into a migration, and the failure that produces
+is a fresh Basketball Monster CSV on draft morning making the owner's weights
+unusable rather than stale. Supersedes `plan.md:517`'s `blend_profiles`; its
+`blended_projections` stays deferred.
+
+Gate: **Code gate and Model gate.** The Model gate is satisfied by a revision of
+`docs/models/projection-blending.md` and an explicit inputs-versioning
+statement — **not** by a backtest or a calibration table. `gates.md` names
+`blending` in the Model gate's applies-to list, and no gate may be waived by the
+agent whose work it applies to, so the earlier Code-gate-only argument was wrong
+even though its premises were right: version 1 does fit no parameters and there
+is no held-out experiment to run, which is why the backtest and calibration
+bullets are inapplicable rather than skipped. The bullets that do bite are
+"version the output — every stored number records the model version and inputs
+that produced it", which the recipe *is* the inputs half of, and the model
+card's own "not durable across process restart" failure mode, which this item
+retires. The Adapter gate does not apply — no external source is called. The
+*fitted-model* half of the Model gate attaches the moment `weight_basis` widens
+past `user_configured`, which is why criterion 9 makes that widening a
+migration.
+
+Acceptance criteria, each falsifiable:
+
+1. A recipe defined, activated and read back **after a process restart** yields
+   a byte-identical `content_sha256` and an identical `BlendResult` fingerprint.
+2. Importing a **newer** CSV for a selected source leaves the recipe active and
+   readable, and the blend against the new import succeeds without the owner
+   re-authoring weights. This is the criterion that fails if anyone persists the
+   binding.
+3. Re-ingesting **byte-identical league settings** leaves the recipe active and
+   blendable. `derive_scoring_profile` mints a new profile version for a new
+   snapshot row even when content is unchanged, and activation repoints, so a
+   recipe storing `scoring_profile_id` dies here. Store `(league_id, name)` plus
+   a category-content fingerprint and re-resolve at read.
+4. A `BlendProfile` hydrated from the tables and passed straight to
+   `blend_projections` is **re-validated**, not trusted.
+   `_validate_source_selection`, `_normalize_category_weights` and the
+   `weight_basis` layer-purity raise each have exactly one call site today —
+   inside `define_blend_profile` — and the in-memory registry identity check is
+   what currently guarantees they ran. A table replaces that check. Driven by
+   constructing a profile that would fail each validator and asserting the read
+   path refuses it.
+5. `blended_projections` is **still** in `test_portability.py`'s `not_yet` set
+   after this lands, and no table holds a blended per-game value. `not_yet`
+   holds `blend_profiles` and `blended_projections` on adjacent lines; only the
+   first may be removed, and the second is the assertion that no output is
+   stored.
+6. A schema test asserts the recipe tables carry no games-played,
+   expected-games, availability or seasonal-total column, no column derived by
+   multiplying a rate by a count, and **no cohort or player-filter column** —
+   the last because filtering the pool by durability moves every downstream
+   z-score through its denominator (ADR-002).
+7. At most one active recipe per `(league_id, name)` is enforced **by the
+   database**, demonstrated by a failing insert, on both SQLite and PostgreSQL —
+   *and* two differently-named recipes can be active in one league at once,
+   demonstrated by a succeeding insert. `BlendCatalog.active` is keyed on
+   `(league_id, name)`, so `LeagueScoringProfile`'s bare
+   `UniqueConstraint(active_league_id)` is the **wrong** constraint here and
+   would silently narrow existing behaviour; use
+   `UniqueConstraint(active_league_id, name)` plus the companion
+   `CheckConstraint(active_league_id IS NULL OR active_league_id = league_id)`.
+   A partial index needs `sqlite_where=`/`postgresql_where=`, which
+   `test_portability.py`'s dialect-branch pattern matches — that guard walks
+   `src/hoops_gm` only, so it will **not** catch the same keyword in the
+   migration.
+8. The recipe stores each source as its `ExternalSource` enum value, not
+   `projection_sources.id`; a re-seed that changes that row's id leaves the
+   recipe resolvable.
+9. `weight_basis` is constrained to `user_configured` **by the database**, so
+   widening it is a migration rather than an `UPDATE`. `portable_enum` is
+   VARCHAR on both dialects and `WeightBasis` already carries
+   `learned_accuracy`, `market_calibrated` and `mock_calibrated`.
+10. Redefining an identical recipe after deactivation reproduces the same
+    `content_sha256` while producing a new `version`, pinning that version is
+    history-dependent and the digest is not.
+
+Manual overrides are **out of scope** — see `blend-override-persistence`.
+
+Each new guard needs a mutation that reproduces the failure it guards against,
+asserted green before mutating and asserted to have actually applied. `quant`
+owns the recipe/binding split in `projections/blending.py` and the model-card
+update; `backend` owns the tables, migration and any route — the same seam
+already recorded for the scoring profile in `ownership.md`.
 
 ### `bridge-overlay` - Building the in-page recommendation overlay
 
@@ -1285,6 +1476,48 @@ AUCTION IS THE CONFIRMED FORMAT (2026-08-17) - this is now critical path, not in
 - **Depends on:** `bridge-overlay`, `draft-recommender`
 
 DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for multi-format support and for ingesting snake mock corpora, but is no longer a draft-day deliverable. Snake draft surface: compact, collapsible, keyboard-toggled Shadow-DOM panel docked in the Fantrax draft room, positioned so it never obscures the draft board or player list. Must be sufficient to make a pick without leaving the tab. Fantrax must be the visible active tab during a draft because Chrome throttles background-tab timers to ~1/min after 5 minutes hidden, stalling Fantrax own draft polling.
+
+### `participation-ledger-population` - Populating the participation ledger at season scale
+
+- [ ] **pending**
+- **Depends on:** `participation-ledger`, `nba-stats-ingest`
+
+**The critical path of the entire auction chain, and until this item existed the
+backlog said otherwise.** `availability-model` needs per-game participation
+labels. `participation-ledger` is marked `done`, `schedule-density` is `done`,
+and `injury-status-conversion` therefore shows **zero open dependencies** — the
+graph reports it ready to start. It is not: the ledger's *ingest path* exists
+and the ledger is not *populated* at season scale, and nothing downstream can be
+fit against labels that have not been fetched.
+
+**This is the second instance of one pattern, and the first is three items
+away.** `injury-conversion-cohort-population` exists as its own item for exactly
+this reason, and its text names the failure: conflating "the tool exists and
+passes its tests" with "a representative cohort has been populated with it" is
+what let `injury-status-conversion` appear structurally ready — every dependency
+it listed marked `done` — while the cohort it actually needs did not exist. The
+identical conflation was sitting one layer down in `participation-ledger`, and
+it survived because the fix last time was a new item rather than a rule.
+
+**The rule, since it will recur:** on any item whose product is a populated
+table, `done` means *the path works*, not *the data is there*. Those are
+separate claims with separate evidence and they need separate items. Check every
+remaining ingest item against it rather than waiting for the third instance.
+
+**Why it is sequenced first rather than by dependency order.** Its cost is
+wall-clock, not effort — participation ingest was independently measured to
+dominate injury-report fetching by roughly 4x in elapsed time, under a
+throttle that cannot be raised without changing our posture toward the source.
+Effort-bound work can be parallelised across lanes; a fetch budget cannot.
+Draft day does not move, and on 2026-08-21 it was 58 days out.
+
+Done when the ledger holds a genuine multi-season cohort, its coverage is
+measured rather than assumed, and gaps are explicit rows rather than absent ones
+— `availability-model` must be able to tell "he did not play" from "we have no
+observation", which is the distinction the whole availability thesis rests on.
+
+Gate: Adapter gate — this runs the existing ingest against the live source at
+scale. No new model.
 
 ### `preseason-news-ingest` - Ingesting preseason availability news for draft day
 

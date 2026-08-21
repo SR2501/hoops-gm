@@ -14453,3 +14453,124 @@ Now pinned by a test asserting the key's text contains exactly one em dash.
   and expects exactly one. It does not check the lede, the caption, the lineage panel or the
   integrity banner, where the same confusion is possible and currently absent by luck rather
   than by assertion.
+
+## 2026-08-21 - architect - Two reviews found the same defect class in an ADR about enumeration
+
+**Unit:** ADR-015, where "our number" lives. Doc-only: the ADR, its index row, and two backlog
+items. `quant` and `code-review` at exact head `1234f0c`, each in its own detached worktree.
+
+**The brief I was given was wrong in the direction that makes the work sound bigger,** and the
+coordinator said so himself when I reported it. I was told there is nowhere to persist a blend
+profile and that "our number" does not exist. The blend *contract* is complete and marked `done`:
+`define_blend_profile`, `activate_blend_profile`, `blend_projections`, exact-rational weights,
+made/attempt volume blending, layer-purity rejection. Only **durability** is missing - `BlendCatalog`
+is a caller-owned frozen dataclass. That turned "design a thing" into "make an existing thing
+survive a restart", which is a much better specified job.
+
+**The finding: `BlendProfile` welds two lifetimes under one identity.** The *recipe* - sources,
+per-category weights, target scoring profile - is owner-authored and should survive a data refresh.
+The *binding* - the exact `ReleasedProjectionImport` with its `import_id` and
+`projection_values_sha256` - is correctly killed by one. Both sit inside `_profile_content_sha256`.
+Persisting the profile whole writes that weld into a migration, and the failure it produces is the
+owner importing a fresh Basketball Monster CSV on draft morning and finding his weights **unusable
+rather than stale**. `code-review` drove it rather than reading it: after landing a newer import,
+both `blend_projections` and `blend_active_projections` raised `StaleProjectionInputError` while
+`current_blend_profile` still returned the profile. Active pointer intact, computation impossible,
+no automatic re-derivation.
+
+**Both reviews then found the same class of defect in my ADR, which is an ADR about enumerating
+keys.** A guarantee narrower than the set I enumerated.
+
+- **`code-review`, and this is the sharper of the two.** I prescribed `LeagueScoringProfile`'s bare
+  `UniqueConstraint(active_league_id)` and wrote "exactly as `LeagueScoringProfile` does", while the
+  acceptance criterion asserted at most one active recipe per `(league_id, name)`. A bare unique on
+  one column cannot see `name`: it enforces one active row per **league**. But `BlendCatalog.active`
+  is a tuple of `(league_id, name, profile_id)` and `current_blend_profile` selects on both, so two
+  differently-named recipes may be active at once today. My schema would have silently forbidden
+  that while the criterion beside it claimed the opposite. Confirmed by building the real metadata
+  and getting the `IntegrityError`. Now `UniqueConstraint(active_league_id, name)`, plus the
+  companion `CheckConstraint("active_league_id IS NULL OR active_league_id = league_id")` that both
+  reviewers noticed I had dropped from a four-constraint set I described as copied.
+- **`quant`: `scoring_profile_id` is a binding I had classified as recipe**, and it reproduces the
+  draft-morning failure through a door I never looked at. `build_scoring_profile` filters reuse
+  candidates on `settings_snapshot_id == settings_snapshot.id` (`profiles.py:441`) and its docstring
+  states that a same-content match against a *different* snapshot row always mints a new version.
+  Activation repoints, so a recipe pinned on `scoring_profile_id` dies on a **league-settings
+  re-ingest that changed no scoring rule at all** - no new CSV required. The recipe now references
+  `(league_id, name)` plus a category-content fingerprint, which `_profile_fingerprint`
+  (`profiles.py:298-311`) already computes and which deliberately excludes snapshot-row identity.
+
+**A structural consequence I had not stated at all.** `_validate_source_selection`,
+`_normalize_category_weights`, `_validate_manual_overrides` and the `weight_basis` layer-purity raise
+have **exactly one call site each**, inside `define_blend_profile`; neither `blend_projections` nor
+`_assert_profile_current` re-runs them. Today the only thing guaranteeing a validated profile reaches
+the blend is `activate_blend_profile`'s in-memory `registered != profile` identity check. **A table
+replaces that check.** Enumerated the call sites myself rather than taking the count. Hydration must
+re-validate, and `weight_basis` needs a database `CheckConstraint` - `portable_enum` is VARCHAR on
+both dialects and `WeightBasis` already carries `learned_accuracy` and `mock_calibrated`, so
+"widening requires a migration" was a requirement I stated with no mechanism behind it.
+
+**I dropped manual overrides from the unit, on `quant`'s argument.** They are the only recipe
+component carrying a decision-bearing number and the only one whose key nothing pins. My proposed
+remedy - store the observed `full_name`/`normalized_name` and refuse on mismatch - is blindest
+exactly where the risk concentrates: `normalized_name` is documented non-unique *because* collisions
+must stay resolvable, and a crosswalk remap between two players sharing one is the remap that
+happens. Worse, a persisted override is indistinguishable from a durability-shaded rate, which
+`expected-games` would then multiply by our own `p(play)` - availability counted twice with the
+owner's own hand as the aggregator, R41's mechanism. And on the read path `_validate_shooting_values`
+iterates `fg`/`fg3`/`ft` via `by_field.get()` and ignores names it does not recognise, so a persisted
+bare ratio on assists or turnovers would flow untouched into the output. Split to
+`blend-override-persistence` with an identity remedy that is not the name. The motivating story is
+entirely about weights; overrides never appear in it.
+
+**The gate was wrong and I argued it well enough to be convincing.** I assigned Code gate only, on
+the grounds that version 1 fits no parameters and there is no held-out experiment to run. Those
+premises are true and they do not reach the conclusion: `gates.md` names `blending` explicitly in the
+Model gate's applies-to list, `gates.md` says no gate may be waived by the agent whose work it
+applies to, and the bullet that bites is "version the output - every stored number records the model
+version and inputs that produced it", which the recipe *is* the inputs half of. The model card also
+lists "not durable across process restart" as a known failure mode, and retiring that is a card
+revision, which is itself a Model gate artifact. Now Code **and** Model, satisfied by the card and an
+inputs-versioning statement, with no backtest and no calibration table.
+
+**One claim I nearly inherited.** I wrote that `test_portability.py` forbids
+`sqlite_where`/`postgresql_where`, taken from the `LeagueScoringProfile` docstring. My literal grep
+found nothing, because the guard is a regex (`sqlite_\w+\s*=`). Executing it confirmed the claim -
+and showed `_source_files()` walks `src/hoops_gm` only, so **`backend/alembic/versions/` is not
+covered**. The docstring I inherited it from does not mention that, and the implementer writes both a
+model and a migration. Both reviewers re-derived it independently at my request rather than reading
+my note.
+
+**Backlog header:** re-derived from the finished file three times - 114/40/1/73 before the edits,
+115/40/1/74 after the first, 116/40/1/75 after review split the second item out. That third recount
+is the one an incremented header would have missed. `scripts/resolve_doc_conflicts.py` independently
+recomputed 116/40/1/75.
+
+**Could not verify:**
+- **Everything in ADR-015 is a design assertion about code that does not exist.** No hydration path,
+  no recipe table, no route. The hydration-bypass and bare-ratio findings are complete call-site
+  enumerations plus reading, not executed bypasses. Both are cheap to disprove by building the
+  hydration path and calling `blend_projections` on a directly-constructed profile, and whoever
+  builds it should do exactly that before trusting clause 2.
+- **No test was run and no migration was applied.** `quant`'s F1 - the settings re-ingest killing a
+  recipe pinned on `scoring_profile_id` - is the single most valuable unrun hypothesis here, and it
+  is the one I would drive first: derive from snapshot v1, activate, define, re-ingest byte-identical
+  settings, derive and activate again, then read the recipe.
+- **Nothing was checked on PostgreSQL.** The `UniqueConstraint(active_league_id, name)` argument rests
+  on NULLs being distinct in a unique tuple, which is standard but was demonstrated only against
+  SQLite metadata.
+- **The flip condition's premise is unmeasured.** ADR-015 says materialisation flips on measured
+  latency and demands the cohort size and the measured time. Nothing in the repository records either,
+  so I cannot say materialisation is not *already* justified for a draft board - only that no evidence
+  exists in either direction.
+- **Whether `plan.md:517` diverging from ADR-015 needs more than the one line I gave it.** `plan.md`
+  carries no superseded banner, unlike `PLAIN-ENGLISH.md`, so a reader may still treat its
+  `blend_profiles`/`blended_projections` sketch as live. I named it in the ADR and the backlog item
+  and did not edit `plan.md`, which is a judgement I am not confident in.
+- **Observed, not fixed:** `PLAIN-ENGLISH.md` stops at ADR-009, so ADR-010 through ADR-015 are absent
+  from it. The decisions index was separately missing two rows as recently as this morning. Two
+  indexes over the same directory drifting independently is a pattern, not two incidents, and neither
+  has a test.
+- **`ownership.md` gained no row.** I claimed the existing scoring-profile seam (`quant` defines
+  semantics, `backend` owns persistence) covers this by analogy rather than adding one. If that is
+  wrong it will surface as an ownership argument when the tables are built.

@@ -32,6 +32,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [012](ADR-012-per-week-game-distribution.md) | Per-week game distribution is a living schedule dependency across decisions | **Accepted** | Weekly game volume is re-ingested and cascaded into projections, SOS, valuations, draft, trades, lineups, streaming, and weekly planning |
 | [013](ADR-013-forward-schedule-completeness.md) | Forward-schedule completeness: source-declared pending is not a resolution failure | **Accepted** | A game the source publishes without teams is recorded as pending, not refused and not dropped; a pending game's `game_date` is nullable and names its cause |
 | [014](ADR-014-read-endpoints-detect-not-lock.md) | Read endpoints detect a moved cohort; they do not lock to prevent one | *Proposed* | A read must not hold a lock that can block a writer; bracket the read between two canonical releases and refuse instead |
+| [015](ADR-015-blend-recipe-durable-binding-transient.md) | The blend recipe is durable; its binding to imports is transient | *Proposed* | Owner-authored weights survive a refresh; the imports they were executed against do not, and the blend is recomputed on read rather than stored |
 
 ## Accepted
 
