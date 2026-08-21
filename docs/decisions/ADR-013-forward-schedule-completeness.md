@@ -115,12 +115,25 @@ they will be least settled precisely when the marking stops.
 Until a second mechanism exists, **every consumer of games-per-period must state
 unconditionally that no count is final** — not merely mark the columns it can identify.
 
-Note the direction carefully, because the obvious wording is wrong. *"Counts are a floor"*
-is true of a season total, which only rises as fixtures are published. It is **false of a
-per-period count**: ADR-012's living-refresh amendment exists because re-ingest changes
-shape, and a rescheduled game leaves one week and joins another, taking the first week
-**down**. So the honest statement names both directions, and "floor" errs toward false
-comfort at exactly the granularity a manager plans a week on.
+Note the direction and the granularity, because both obvious wordings are wrong.
+
+*"Counts are a floor"* is true of a **season total**, which only rises as fixtures are
+published, and **false of a per-period count**: ADR-012's living-refresh amendment exists
+because re-ingest changes shape, and a rescheduled game leaves one week and joins another,
+taking the first week **down**.
+
+But correcting only the direction leaves a second error, and it is the more damaging one.
+It is tempting to say the make-up games raise the *season total* while weekly columns move
+only by the occasional reschedule. **That is false.** Make-up games are played on dates:
+they land in specific weekly columns, roughly two per team and on the order of sixty
+league-wide. So the largest unbooked block lands **per period**, in weeks nobody can name
+yet — and a reader told that weekly counts move only by the odd reschedule has been given
+false comfort about the exact quantity they plan a week on, which is the reason this
+paragraph exists.
+
+The honest statement therefore names both directions **and** keeps them at period
+granularity: a weekly count can fall when a fixture is rescheduled out of it, and can rise
+when a make-up game is scheduled into it.
 
 Representing unpublished make-up games is a separate unit; it needs a source that says how
 many games a team is owed, which `ScheduleLeagueV2` does not currently provide.
