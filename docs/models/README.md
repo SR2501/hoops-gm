@@ -69,3 +69,20 @@ A model that says 70% and is right 70% of the time is more useful for a lineup d
   user-configured per-game source blending; no learned source-quality claim
 - `contingent-value.md` — usage redistribution on absence
 - `auction-inflation.md` — live price movement during an auction
+
+## Frozen pre-registrations
+
+A pre-registration is not a model card and does not claim the Model gate. It is
+the protocol — question, cohort, splits, metrics, decision rule, stopping rule —
+committed **before** the held-out outcomes are examined, so that a later result
+can be read against a plan nobody could have adjusted to fit it. A card reports
+what happened; a pre-registration constrains what may be reported.
+
+They live here beside the card they will eventually be read with, and they are
+never amended in place: a change before any unblind is a new dated freeze naming
+the prior one, and a change after an unblind creates a new version and may not be
+presented as pre-registered.
+
+- [`injury-status-conversion-preregistration.md`](injury-status-conversion-preregistration.md)
+  — v2, frozen 2026-08-21. No model fitted; records that the committed
+  2025-12-08..2026-01-04 cohort cannot satisfy the activation rule on arithmetic.
