@@ -14281,11 +14281,20 @@ and it was already correct, asserted by shape only.
 193 tests, lint and typecheck clean.
 
 **Could not verify:**
-- **An 8-byte difference between my captured payload (54159) and theirs (54167)** on runs whose
-  digests are identical. Non-digested fields are the obvious candidate and `imported_at`'s
-  microsecond string can vary in length, but I did not diff the two payloads - I do not have
-  theirs - so I am recording an unexplained discrepancy rather than an explanation. It does not
-  affect the pinned values.
+- **~~An 8-byte difference between my captured payload (54159) and theirs (54167)~~ — RESOLVED
+  the same day, and the resolution is worth more than the item.** `backend` drove it: they
+  measured with `curl -w "\nHTTP %{http_code}"` and took `.Length` of the joined result, so
+  **`HTTP 200` — 8 characters — was inside the number they quoted as evidence about my payload.**
+  Their measurement apparatus, reported as a property of my system. My file was right at 54159,
+  captured twice identically.
+
+  The instructive half is what I nearly did instead. A plausible explanation was **available and
+  wrong**: `imported_at`'s microsecond string does vary in width, and `.475778` is 7 characters,
+  so a confident paragraph about float-string width would have closed the question at 7 ≈ 8 and
+  been entirely fiction. **A near-miss explanation is more dangerous than no explanation**,
+  because it terminates the search with something that survives a glance. Recording it as
+  unexplained was the only thing that left it open long enough to be settled. That is the
+  general form of the "could not verify" field working as intended rather than as a disclaimer.
 - **That my new assumption pins are the right *values*** rather than merely the current ones.
   They are what the seed produced; nobody has checked them against anything external, and the
   numbers are invented by construction.
