@@ -203,7 +203,19 @@
     }
   ],
   "operator": "data-engineer",
-  "requests_issued": 13,
+  "request_accounting": {
+    "additional_live_smoke_fetches_not_part_of_the_probe": 4,
+    "live_requests_breakdown": {
+      "exploratory_archive_depth_pass": 7,
+      "exploratory_boundary_narrowing_pass": 6,
+      "exploratory_contents_inspection_pass": 4,
+      "recording_pass_captured_below": 13
+    },
+    "live_requests_for_the_whole_probe": 30,
+    "live_requests_this_recording_pass": 13,
+    "note": "An earlier version of this file published `requests_issued: 13`, which was the recording pass alone and was read as the whole probe's spend. It was not: three exploratory passes ran first -- archive depth, contents inspection, and narrowing the parser boundary -- and the probe client was constructed with no raw store, so none of those responses were cached and each was a real request. The recording pass then re-fetched the timestamps it needed. 7 + 4 + 6 + 13 = 30. Live spend is an owner-facing budget quantity on this project, so the artifact now states which number it is reporting rather than leaving a reader to assume. The four live-smoke fetches are listed separately because they belong to a test that will run again, not to this one-off probe.",
+    "observations_recorded_here": 13
+  },
   "retrieved_at_utc": "2026-08-21T20:02:48.753897+00:00",
   "schema_version": 1
 }

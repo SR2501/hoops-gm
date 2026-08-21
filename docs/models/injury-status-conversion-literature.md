@@ -2,7 +2,10 @@
 
 **Owner:** `data-engineer`, with `quant` concerns
 **Status:** findings only. **No model is fitted and no conversion rate is emitted here.**
-**Probe run:** 2026-08-21, 30 live requests against `ak-static.cms.nba.com`
+**Probe run:** 2026-08-21, **30 live requests** against `ak-static.cms.nba.com` —
+four passes, of which only the last 13 are recorded as observations in the
+evidence artifact. See its `request_accounting` block; an earlier version
+published `requests_issued: 13` and was read as the whole spend.
 
 This is not a model card and it does not claim the Model gate. It answers the
 question that has to be settled before a multi-season sweep is worth starting:
@@ -21,10 +24,18 @@ NBA injury-report label → play conversion, and the widely repeated rates
 primary source. So our own fit is worth running. **The archive will support it**:
 reports are reachable back to at least the 2019-20 season, and the three seasons
 this project's parser can read — 2023-24, 2024-25, 2025-26 — are exactly the
-three the sweep wants. Every status, including the scarce `PROBABLE` and
-`DOUBTFUL`, appears in all three. The binding constraint is not the archive and
-is not the injury reports; **it is the participation ledger the cohort must join
-against**, which is roughly 2.7× the requests and 4× the wall time.
+three the sweep wants. **`PROBABLE` appears in all three**, which is the claim
+the plan depended on; `DOUBTFUL` is established by probe for 2023-24 and 2024-25
+and by the committed cohort manifest for 2025-26 (see §3). The binding constraint
+is not the archive and is not the injury reports; **it is the participation
+ledger the cohort must join against**, which is **3.7× the requests and 2.0× the
+wall time** for one season.
+
+**Read §4's projections with the caveat in §4.1 attached.** They scale a single
+blended per-game `doubtful` rate across seasons, and §5 argues that the two
+reporting-cadence eras must never be pooled. Those two things are in tension, the
+tension is not resolvable from anything committed, and it bears directly on the
+go/no-go this document recommends.
 
 ---
 
@@ -81,7 +92,7 @@ is worth.
 NBA injury models systematically produce *inverted* effects — heavy recent
 workload appearing protective — because the risk set is progressively enriched
 for players healthy enough to keep playing. That is the healthy-worker survivor
-effect, and it is a selection-on-the-outcome bias. It is the reason §4 of this
+effect, and it is a selection-on-the-outcome bias. It is the reason §5 of this
 document rejects a minutes floor.
 
 It is also worth reading its calibration section beside our own Model gate. It
@@ -151,18 +162,33 @@ the activation floor for `doubtful` and leave the model unactivatable on
 `probable` instead — a multi-hour sweep spent to remain blocked on a different
 status than the one we set out to fix.
 
-**It is false.** Driven, from live bytes:
+**It is false.** Driven, from live bytes. Reports are listed in date order and
+the two count columns are aligned to that order:
 
-| Season | Reports probed | `probable` | `doubtful` |
+| Season | Reports probed (date order) | `probable` | `doubtful` |
 |---|---:|---|---|
-| 2023-24 | 4 | 2, 7, 3, 0 | 3, 2, 1, 0 |
-| 2024-25 | 3 | 13, 8, 10 | 5, 4, 4 |
-| 2025-26 | 1 | 5 | — (cohort manifest records 21 across four weeks) |
+| 2023-24 | 4 — 10-25, 11-15, 01-10, 03-15 | 2, 7, 3, 0 | **0, 2, 3, 1** |
+| 2024-25 | 3 — 11-15, 01-15, 03-15 | 8, 13, 10 | 4, 5, 4 |
+| 2025-26 | 1 — 11-01 | 5 | **0** — see below |
 
-Both scarce statuses are present throughout. `DOUBTFUL` does not appear on every
-single report, which is expected at these rates and is why the contract test
-asserts across the union of a season's probed reports rather than from one
-capture.
+*(The 2023-24 `doubtful` row was previously printed as `3, 2, 1, 0` — the right
+multiset in the wrong order, which claimed the opening-night report carried three
+`doubtful` when it carried none. Caught in review, re-derived from the evidence
+file, and the reason the column order is now stated explicitly in the header.)*
+
+**`PROBABLE` is present in all three seasons**, which is the claim the plan
+depended on and the claim the contract test asserts, from the PDF bytes.
+
+**`DOUBTFUL` is present in 2023-24 and 2024-25, and the single 2025-26 report
+this probe captured contains none.** That is a fact about one capture rather than
+about the season — `DOUBTFUL` at these rates does not appear on every report —
+and the 2025-26 evidence for it is the committed cohort manifest's **21**
+observations across four weeks, which is a different artifact under a different
+gate. An earlier version of this section claimed both statuses "present
+throughout" and said a contract test asserted it across a union of reports; the
+test asserted only `PROBABLE`, and a three-season `DOUBTFUL` assertion would have
+failed. The tests now assert `DOUBTFUL` for the two seasons that support it and
+pin 2025-26's absence explicitly so it cannot be quietly widened back.
 
 ### Finding 2 — the archive reaches back further than the parser does
 
@@ -175,11 +201,23 @@ archive-depth boundary at all.
 | 2022-23 and earlier, back to 2019-20 | **yes** | no |
 
 Reports from 2019-20, 2020-21, 2021-22 and 2022-23 fetch cleanly — HTTP 200,
-valid PDF magic, five pages of genuine injury data with real players, real
-matchups and real designations. **They are complete reports, not placeholders.**
-What changed at the 2023-24 season boundary is the *layout*: pre-2023 reports
-print words separated by spaces, later ones do not, and this parser's
-column-bounds detection does not survive the difference.
+valid PDF magic, and a response size consistent with a real report. What changed
+at the 2023-24 season boundary is the *layout*: pre-2023 reports print words
+separated by spaces, later ones do not, and this parser's column-bounds detection
+does not survive the difference.
+
+**How far "they are complete reports, not placeholders" actually reaches, which
+is less far than this document first claimed.** Only **one** of those five
+captures — `2023-01-11`, the committed fixture — has its bytes in the repository,
+and a test asserts it is a genuine five-page report with real designations. The
+other four were inspected during the probe and are not committed, and the
+evidence artifact records only their URL, size, SHA-256 and parse error: **no
+page count, no entry count, no text excerpt.** So for `2023-04-05`, `2022-01-12`,
+`2021-02-10` and `2020-01-15` the completeness claim is not checkable from this
+repository by anyone, which is the same failure this document indicts in the dead
+Sloan URL at §2 — *pointing at nothing, while looking like provenance*. What is
+checkable for all five is that they fetched, that they are PDFs of a plausible
+size, and that this parser refuses them.
 
 The boundary is bracketed between **2023-04-05** (refused) and **2023-10-25**
 (parsed), i.e. it falls in the 2023 offseason.
@@ -201,9 +239,15 @@ behaviour, not a limitation, and it is pinned by a committed fixture
 asserting that the fixture **is a complete report** — because a parser refusing a
 stub would prove nothing.
 
-Four mutation checks were run against these guards, each reproducing the failure
-its docstring names, with green asserted before mutating and the mutation
-asserted to have applied. All four were caught; no skips.
+Mutation checks were run against these guards, and **independent review found two
+of the original four were weak evidence** — one reddened on a neighbouring
+condition rather than the property its docstring named, and one reddened all
+three parametrisations at once, so it established "an empty counter fails" rather
+than per-season discrimination. Both have been replaced, and the reviewers' own
+successful attacks were re-run against the corrected tests and now fail. The
+`DOUBTFUL` assertion is attributed by a mutation that stops the parser producing
+`DOUBTFUL` at all, which reddens exactly the two `DOUBTFUL` tests with their own
+assertion message and nothing else.
 
 ### Consequence for scope
 
@@ -226,10 +270,15 @@ not from prose. Committed cohort: **173 games, 26 game dates**, `doubtful` 21,
 | Full regular season | 1,230 games | 30 × 82 / 2 |
 | Scaling factor | 7.11× | 1,230 / 173 |
 | Projected whole-season `doubtful` | ~149 | 21 × 7.11 |
-| Game dates in a full season | ~170 | schedule shape |
-| Holdout share, §4 date rule | 25.3% | (170 − ⌊85⌋ − ⌊42⌋) / 170 |
-| **Projected held-out `doubtful`** | **~38 canonical, ~37 direct** | × 98.5% join rate |
+| Game dates in a full season | **164** | measured, `LeagueGameFinder` preflight |
+| Holdout share, §4 date rule | 25.0% | (164 − ⌊82⌋ − ⌊41⌋) / 164 |
+| **Projected held-out `doubtful`** | **~37 canonical, ~37 direct** | × 98.5% join rate |
 | Activation floor, §8 condition 6 | 30 | frozen protocol |
+
+*(An earlier version used ~170 game dates "from schedule shape" while the same
+document's preflight had measured **164**. The conclusion is unchanged — 25.0%
+against 25.3%, ~37 either way — but the one number the live preflight bought was
+contradicted forty lines away from where it was published.)*
 
 **One season clears the floor by ~23%, which is not a margin.** Three reasons:
 
@@ -248,6 +297,52 @@ supported by arithmetic, not only by ambition.
 **None of this substitutes for the measured count.** The gate is the per-status
 direct-outcome count in the declared holdout. These figures are a planning aid
 for a spend decision and are not a preregistered threshold.
+
+### 4.1 This projection contradicts §5, and the bias runs the wrong way for the go/no-go
+
+Raised by `quant` in review, and it is the most consequential finding against
+this document.
+
+The table above scales **one blended per-game `doubtful` rate** uniformly across
+seasons. §5 argues the 2025-12-22 cadence change is a **mandatory stratum**
+because the canonical observation moves from a 13:00 ET day-of report to within
+15 minutes of tip. **Both cannot stand.** The canonical unit is the *latest
+pre-tip-off observation*, so how close to tip it sits determines how many players
+are still labelled `doubtful` rather than resolved to `out` or `available`.
+Shorter lead time ⇒ more resolution ⇒ **fewer canonical `doubtful`**.
+
+The era weights make the direction concrete:
+
+| Population | Legacy-cadence share | Effect on `doubtful` density |
+|---|---:|---|
+| Committed cohort, 2025-12-08..2026-01-04 | ~50% of days | the measured 0.1214/game |
+| Full 2025-26, 2025-10-21..2026-04-12 | ~36% of days | **lower** than 0.1214 |
+| 2024-25 and 2023-24 | **100%** | **higher** than 0.1214 |
+
+So the one-season projection is an **over**estimate — the same direction as the
+seasonality argument above but for a larger and better-evidenced reason — while
+the two- and three-season figures (~75, ~113) are **under**estimates, because
+those seasons are entirely legacy-cadence.
+
+**The practical consequence is adverse exactly where it matters.** The Unit 3
+go/no-go is measured on 2025-26, which is the single season where this bias is
+largest and pushes the projection *up*. A ~23% margin that this document already
+calls "not a margin" is being applied to the season most likely to fall short of
+it.
+
+**This cannot be sized from anything committed.** The cohort manifest publishes
+whole-cohort `status_counts` only, with no by-date or by-era split, so the
+era-conditional `doubtful` rate is not computable today. Unit 2's per-status
+by-game-date denominators would make it computable — and Unit 2 is currently
+scheduled *after* the sweep decision it would inform. That ordering is worth
+revisiting.
+
+**A second unit error in the same figures.** The two- and three-season totals are
+in **canonical** observations while the floor of 30 is in **direct outcomes**.
+Direct outcomes are a subset, so the comparison is optimistic by the exclusion
+rate (~1.5% on the committed cohort, but not guaranteed stable across seasons).
+The one-season row applies the 98.5% join rate and is consistent; the multi-season
+sentence does not.
 
 ### The sweep is a box-score ingest with an injury-report attachment
 
@@ -364,10 +459,25 @@ actively harmful:
    rather than among stars — a star is `out` or he plays. The effect of a floor
    on the binding cell is unknown until the data exists, so the cut cannot be
    justified before the sweep it is meant to shrink.
-4. **A reversible alternative loses nothing.** Ingest every listed player, carry
-   a per-observation role/minutes covariate, and let `quant` report per-status
-   rates stratified by role band as a pre-declared sensitivity. That converts an
-   irreversible ingest-time decision into a reversible analysis-time one.
+4. **A reversible alternative loses most of it, and is not free.** Ingest every
+   listed player and carry a per-observation role covariate, so the choice of
+   whether to condition on it is made at analysis time rather than destroyed at
+   ingest time. That is strictly better than filtering — a filter cannot be
+   undone, a covariate can be ignored — but `quant` is right that it does not
+   escape the problem it was offered against: **a role covariate measured
+   contemporaneously is as downstream of availability as a minutes filter is**,
+   so conditioning on it reintroduces the same selection, and a covariate
+   measured *from the same games* leaks the outcome. If it is used at all it must
+   be defined on a prior window (e.g. role as of the preceding season, or a
+   rolling window strictly before the game date), and that definition is the
+   `quant` deliverable, not this one.
+
+   **And it is not "pre-declared".** An earlier version of this section called it
+   a pre-declared sensitivity; the frozen protocol pre-declares no role
+   stratification of any kind. Its declared sensitivities are unresolved
+   identity, missing participation row, explicit unknown outcome, and the
+   lead-time bands. Adding one after the fact is a v3 conversation with `quant`,
+   not something this document can assert.
 
 ### Regular season only
 
@@ -391,6 +501,23 @@ close to tip-off it was read.
 So per-season and per-era rates must be reported **before** any pooled rate, and
 a pooled rate must not be published if the strata disagree. This makes the trend
 analysis mandatory rather than a bonus.
+
+**But stratifying by era does not identify what this section implies it does,
+and `quant` is right about that.** Era and lead-time band are near-collinear by
+construction: legacy candidates top out at a 13:00 ET day-of report, while the
+15-minute era adds offsets reaching 15 minutes before tip, so "which era" and
+"how long before tip" are close to the same variable. Reporting per-era rates
+therefore does **not** separate *the label means something different since the
+cadence change* from *a label read 15 minutes before tip is more informative than
+one read nine hours before*. It renames the confounding rather than resolving it.
+
+That is not an argument for pooling — pooling is strictly worse, because it hides
+the discontinuity instead of displaying it. It is a limit on what a per-era table
+may be said to show, and it belongs beside the number when one is eventually
+published. Separating the two would need lead-time variation *within* an era,
+which the 15-minute era's four offsets do provide and the legacy era's two
+candidates largely do not. Whether that is enough is a `quant` question and is
+not settled here.
 
 ---
 
@@ -456,16 +583,28 @@ Separated by whether the belief was **driven** — established by running someth
 - **Archive reach back to 2019-20.** Fetched; five real reports inspected.
 - **The parser boundary at the 2023-24 season start.** Bracketed by a refused
   2023-04-05 and a parsed 2023-10-25.
-- **`PROBABLE` and `DOUBTFUL` present in 2023-24 and 2024-25.** Counted from
-  seven parsed reports.
-- **The pre-2023 files are complete reports, not placeholders.** Text extracted
-  and read.
+- **`PROBABLE` present in all three sweep seasons; `DOUBTFUL` in 2023-24 and
+  2024-25.** Counted from seven parsed reports, and asserted in the contract test
+  from the PDF bytes rather than from a recorded count. The single 2025-26 probe
+  report carries no `DOUBTFUL`; that season's evidence for it is the committed
+  cohort manifest's 21 observations.
+- **The 2023-01-11 file is a complete report, not a placeholder.** Text
+  extracted, read, and pinned by a committed fixture and test. **The other four
+  pre-2023 captures are *not* committed**, and the evidence artifact records only
+  their URL, size, SHA-256 and parse error — so "complete report" for
+  `2023-04-05`, `2022-01-12`, `2021-02-10` and `2020-01-15` is **reasoned from
+  what I saw during the probe and is not checkable by any other reader.** Listed
+  here rather than under Driven, after review pointed out it was the same
+  pointing-at-nothing failure this document indicts elsewhere.
 - **The Sloan URL in the search summary is dead.** HTTP 404; working paths
   substituted.
 - **All five other citations resolve with exact-matching titles.** Crossref,
   arXiv and PyPI APIs, 2026-08-21.
-- **The four guards catch what their docstrings claim.** Mutation harness, green
-  before, mutation applied, red, reverted, green.
+- **The four guards catch what their docstrings claim.** *Withdrawn.* Two of the
+  four original mutations were shown by review to establish something other than
+  what they claimed. The corrected statement is above: the guards were rebuilt,
+  the reviewers' successful attacks re-run and now caught, and the `DOUBTFUL`
+  assertion attributed by a mutation aimed at the property its docstring names.
 - **The 2025-26 participation ingest size.** Read-only `LeagueGameFinder`
   preflight: 1,230 games, 164 game dates, 2025-10-21 to 2026-04-12, so 2,462
   requests and a 45.1-minute throttle floor.

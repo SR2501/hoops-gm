@@ -13762,3 +13762,158 @@ starting it.
 No fit was run, no cohort was regenerated, no conversion rate was emitted, and no owner-only
 decision was made. The decision to run the participation ingest is the coordinator's and is now
 recorded on `injury-conversion-cohort-widening`.
+
+## 2026-08-21 — data-engineer — Review found my central test was a test of my own bookkeeping
+
+**Unit:** remediation of Unit 1 after independent `quant` and `code-review` passes at exact head
+`6b569a9`, each in its own detached worktree. **Both found real defects. Neither verdict was on
+a tree that moved.** Also records a `--raw-root` change that was authorised, built, and then
+reverted for a reason worth keeping.
+
+### The finding that matters: my vocabulary test never read a byte the NBA produced
+
+`test_the_rare_statuses_are_present_in_every_planned_sweep_season` asserted against
+`status_counts` in `nba-injury-report-archive-reach-probe.json` — **a file this lane wrote**.
+`code-review` moved all three fixture PDFs out of the tree and the test **passed**; it then
+deleted a `probable` key from the JSON while leaving the PDF byte-identical and the test
+**failed**. The PDF said `PROBABLE` was there; the test said it was not.
+
+It carried the right name, the right docstring, and the sentence *"these fixtures are why we
+know"* — about fixtures it never opened. This is `gates.md`'s test-shaped object, and the
+uncomfortable part is that **the recorded counts were all correct**: I re-parsed every fixture
+and the JSON matches exactly. The artifact was accurate and the test was still worthless,
+because accuracy and independence are different properties and only one of them was being
+checked.
+
+Now parsed from the fixture bytes. The reviewers' successful attacks were re-run against the
+corrected tests: moving the PDFs away is caught, editing the JSON correctly does nothing.
+
+### The claim I never asserted, and could not have
+
+Both reviewers, independently: the test name said "statuses" plural and the docstring named
+`DOUBTFUL` explicitly, justifying a design choice by it. **The word appears nowhere in the
+assertion.** `quant` stripped every `doubtful` key from the evidence and all nine tests stayed
+green.
+
+Worse, the claim was **false as written**. The single 2025-26 report I probed (2025-11-01)
+contains **zero** `doubtful` — so a three-season `DOUBTFUL` assertion would have failed on the
+day I wrote the docstring saying it held. §1 and Finding 1 both said "present throughout".
+
+Corrected everywhere: `DOUBTFUL` is asserted for 2023-24 and 2024-25, where the probe supports
+it; 2025-26's absence is **pinned by its own test** so a later author cannot read the asymmetry
+as an oversight and widen it back. That season's `doubtful` evidence is the cohort manifest's 21
+observations, a different artifact under a different gate.
+
+### Two of my four mutations proved something other than what they claimed
+
+`code-review` replayed them. **M4** substituted another complete report, so it reddened on the
+masthead date check — fixture *identity*, which is M3's job — and never reached a single
+completeness assertion. **M2** repointed the filter at a season with no parsed reports, so all
+three parametrisations reddened together: it established "an empty counter fails", not
+per-season discrimination. And `docs/handoff.md` singled out M2 as *"the one I would point a
+reviewer at"*. It was the weakest of the four.
+
+Both replaced. The `DOUBTFUL` guard is now attributed by a mutation that makes the parser stop
+emitting `DOUBTFUL` at all — identity, mastheads and digests untouched — and **exactly the two
+`DOUBTFUL` tests redden, with their own assertion message.** That is the difference between a
+red and an attributable red, and I had written four checks without producing one.
+
+### A hole whose stated reason was false
+
+My digest test skipped any fixture without a `committed_fixture` key, "rather than claim a
+provenance record that does not exist." **It exists.** The probe recorded that fixture's SHA-256
+like every other observation; only the key name was missing. `code-review` truncated the
+2025-11-01 fixture from seven pages to two and **all nine tests stayed green**. Matching is now
+on source URL, and an unmatchable fixture is a failure rather than a `continue`.
+
+### Numbers, again
+
+- **§1 still said 2.7× and 4×** — the exact figures the previous commit exists to retract, in
+  the paragraph a coordinator reads. I corrected §4 and §5 and never re-read the abstract.
+- **"30 requests" against the artifact's `requests_issued: 13`**, found by both reviewers. Both
+  were true of different things and nothing said so: 7 + 4 + 6 exploratory + 13 recorded = 30,
+  and the probe client had no store so nothing was cached. The artifact now carries a
+  `request_accounting` block. Live spend is an owner-facing budget number and should never have
+  been the approximate one.
+- **The 2023-24 `doubtful` row was mis-ordered** — `3, 2, 1, 0` where the evidence says
+  `0, 2, 3, 1`. Right multiset, wrong pairing, under a table captioned "Driven, from live
+  bytes"; it claimed opening night carried three `doubtful` when it carried none.
+- **§4 used ~170 game dates "from schedule shape" when my own preflight measured 164**, forty
+  lines away. Conclusion unchanged (~37 either way); the one number the live request bought was
+  contradicted in the same document.
+- A dangling `§4` reference that should have been `§5`, from the same renumbering that produced
+  the "Unit 2" the coordinator caught.
+
+### `quant`'s structural finding, which is the most consequential thing here
+
+**§4 scales one blended per-game `doubtful` rate across seasons while §5 argues the two cadence
+eras must never be pooled. Both cannot stand.** The canonical unit is the latest pre-tip-off
+observation, so lead time determines how many players are still `doubtful` rather than resolved.
+Shorter lead ⇒ fewer canonical `doubtful`.
+
+Era weights: the committed cohort is ~50% legacy-cadence, full 2025-26 is ~36%, and 2024-25 and
+2023-24 are **100%**. So the one-season projection is an **over**estimate and the two- and
+three-season figures are **under**estimates — and the bias is largest and adverse on **2025-26,
+the season the binding go/no-go is measured on**, against a margin I had already called "not a
+margin".
+
+It cannot be sized from anything committed: the manifest publishes whole-cohort `status_counts`
+with no by-date or by-era split. **Unit 2 would make it computable and is scheduled after the
+decision it would inform.** That ordering should be revisited. Recorded as §4.1.
+
+`quant` also showed the two/three-season figures are in **canonical** units while the floor is
+in **direct** outcomes; that my "reversible alternative" role covariate is as downstream of
+availability as the filter it replaces unless defined on a strictly prior window, and is not
+"pre-declared" by anything in the freeze; and that **era and lead-time band are near-collinear**,
+so per-era stratification renames the confounding rather than resolving it. All recorded.
+
+`quant` found **no CRITICAL issues**, confirmed no outcome value reaches a pre-unblind artifact,
+and confirmed the folklore rates appear in exactly two prose lines with no join able to reach
+them — checked by `git grep`, not reasoned.
+
+### The `--raw-root` work: authorised, built, reverted
+
+The coordinator authorised a `--raw-root` flag after I found the raw store follows CWD while the
+database is anchored to repo root. I built it: shared resolver, absolute paths, tilde expansion,
+stderr announcement, 11 tests, 5 mutations all caught. **The guard I wrote to catch a second
+private copy immediately found two more** — `record_fixtures.py` and `schedule_import.py` — so
+the trap was in four places, not two.
+
+Then it failed on something I should have checked first. `test_every_recorded_source_fingerprint_matches_the_file_today`
+pins the committed cohort manifest to SHA-256s of **exactly the three files the flag has to
+touch**: `ingest/backfill.py`, `injury_report/backfill.py`, `cohort_evidence.py`. Changing them
+makes the manifest's provenance a claim about files that no longer exist, and regenerating it
+needs the ingest database — which is empty, and which the sweep exists to populate. **Circular:
+the fix needs the regeneration and the regeneration needs the fix.**
+
+Reverted, tree clean at `6b569a9`. And it turned out to be unnecessary: `DATABASE_URL` has no
+`env_prefix`, so the database is redirectable by environment variable today, and the raw store
+is redirectable by choosing the working directory. **Both artifacts can be pinned to a durable
+location with zero code change.** The flag remains worth having and should land with the
+regeneration that will rewrite those fingerprints anyway.
+
+I also printed the announcement to stdout first, which turned `schedule_import`'s JSON output
+into a `JSONDecodeError` — caught by that command's own tests, not mine. Diagnostics about where
+a tool is working are not part of its output contract.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when written. Local: 1,292 offline tests, Ruff, strict mypy
+  over 141 files, backlog 41/1/74/116 recomputed from the finished file, all links resolve.
+- **That the completeness claim holds for four of the five pre-2023 captures.** `quant` was
+  right that this was listed as driven and is not checkable by anyone else — their bytes are not
+  committed and the artifact records only URL, size, digest and parse error. **Reasoned**, and
+  now labelled that way. Only `2023-01-11` is pinned.
+- **The size of the era bias in §4.1.** The direction is established from the candidate
+  strategies and the era weights; the magnitude needs by-era denominators that do not exist.
+  **Reasoned.**
+- **That no other test in this unit asserts against its own bookkeeping.** I found this one
+  because a reviewer moved the fixtures. I have not re-audited the remaining tests by that
+  method, and the defect class is specifically that it reads correctly.
+- **Whether reverting the `--raw-root` work was the right call rather than the safe one.** The
+  alternative — updating fingerprints by hand — would publish provenance nobody could check, so
+  I am confident in the direction. I am not confident the flag should wait for a regeneration
+  that has no date.
+
+No fit was run, no cohort regenerated, no conversion rate emitted, no live source called beyond
+the probe already recorded, and no owner-only decision made.

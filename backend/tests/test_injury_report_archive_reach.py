@@ -21,6 +21,7 @@ evidence, including the SHA-256 of each response.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from datetime import datetime
@@ -59,6 +60,11 @@ SUPPORTED_SEASONS: dict[str, tuple[str, datetime]] = {
 UNSUPPORTED_LAYOUT_FIXTURE = "nba_injury_report_2023-01-11_0530pm_unsupported_layout.pdf"
 UNSUPPORTED_LAYOUT_INSTANT = datetime(2023, 1, 11, 17, 30, tzinfo=EASTERN)
 
+#: Seasons whose probed capture actually contains a `DOUBTFUL` designation.
+#: 2025-26 is absent on purpose — see
+#: `test_the_2025_26_probe_report_genuinely_has_no_doubtful`.
+SEASONS_WITH_A_PROBED_DOUBTFUL = frozenset({"2023-24", "2024-25"})
+
 
 def _parse(fixture_name: str, instant: datetime):  # type: ignore[no-untyped-def]
     return parse_injury_report_pdf(
@@ -77,29 +83,71 @@ def test_each_planned_sweep_season_still_parses(season: str) -> None:
 
 
 @pytest.mark.parametrize("season", sorted(SUPPORTED_SEASONS))
-def test_the_rare_statuses_are_present_in_every_planned_sweep_season(season: str) -> None:
-    """`PROBABLE` and `DOUBTFUL` exist in all three seasons, not just the newest.
+def test_probable_is_present_in_every_planned_sweep_season(season: str) -> None:
+    """`PROBABLE` exists in all three seasons — asserted from the PDF bytes.
 
     This is the claim the whole three-season plan rests on. Secondary sources
     state the NBA vocabulary is Out/Doubtful/Questionable/Available with no
     PROBABLE at all; if that were true, widening the cohort would fix
     `doubtful` and leave the conversion model unactivatable on `probable`
-    instead. It is false, and these fixtures are why we know.
+    instead.
 
-    `DOUBTFUL` is the scarcer of the two and does not appear on every single
-    report, so this asserts across the union of that season's probed reports
-    via the recorded evidence rather than from one fixture alone.
+    **It parses the committed fixture rather than reading a recorded count,
+    and that distinction is the whole point of the test.** An earlier version
+    asserted against `status_counts` in
+    `nba-injury-report-archive-reach-probe.json` — a file this lane wrote.
+    Review moved every fixture PDF out of the tree and it still passed, then
+    deleted a `probable` key from the JSON while leaving the PDF untouched and
+    it failed. It was a test of our own bookkeeping wearing the name of a test
+    about the NBA.
     """
-    evidence = json.loads(PROBE_EVIDENCE.read_text(encoding="utf-8"))
-    seen: Counter[str] = Counter()
-    for observation in evidence["observations"]:
-        if observation["season"] != season or observation["parse_outcome"] != "parsed":
-            continue
-        seen.update(observation["status_counts"])
-
-    assert seen[InjuryReportStatus.PROBABLE.value] > 0, (
-        f"{season}: no PROBABLE observed across the probed reports"
+    fixture_name, instant = SUPPORTED_SEASONS[season]
+    parsed = _parse(fixture_name, instant)
+    statuses = Counter(entry.status for entry in parsed.entries)
+    assert statuses[InjuryReportStatus.PROBABLE] > 0, (
+        f"{season}: no PROBABLE designation in {fixture_name}"
     )
+
+
+@pytest.mark.parametrize("season", sorted(SEASONS_WITH_A_PROBED_DOUBTFUL))
+def test_doubtful_is_present_where_the_probe_actually_observed_it(season: str) -> None:
+    """`DOUBTFUL` exists in 2023-24 and 2024-25 — from the PDF bytes, again.
+
+    **Deliberately not all three seasons, and the reason is a correction.** The
+    prose and an earlier docstring both claimed `PROBABLE` and `DOUBTFUL` were
+    established for every planned sweep season. Only `PROBABLE` was ever
+    asserted, and the `DOUBTFUL` half could not have been: the single 2025-26
+    report this probe captured (2025-11-01) contains **zero** `doubtful`, so a
+    three-season assertion would fail today.
+
+    `DOUBTFUL` at these rates does not appear on every report, so absence in one
+    capture is not evidence of absence in a season. The 2025-26 evidence for
+    `doubtful` is the committed cohort manifest's 21 observations across four
+    weeks, which is a different artifact under a different gate — so this test
+    claims only the two seasons it can actually show.
+    """
+    fixture_name, instant = SUPPORTED_SEASONS[season]
+    parsed = _parse(fixture_name, instant)
+    statuses = Counter(entry.status for entry in parsed.entries)
+    assert statuses[InjuryReportStatus.DOUBTFUL] > 0, (
+        f"{season}: no DOUBTFUL designation in {fixture_name}"
+    )
+
+
+def test_the_2025_26_probe_report_genuinely_has_no_doubtful() -> None:
+    """Pin the asymmetry above, so it cannot be quietly widened back.
+
+    Without this, a later author sees two seasons asserted where three were
+    described, assumes an oversight, and adds 2025-26 to the parametrisation.
+    This states that the omission is a fact about the capture rather than a gap
+    in the test, and it will fail if that ever stops being true — at which point
+    widening the parametrisation is correct.
+    """
+    fixture_name, instant = SUPPORTED_SEASONS["2025-26"]
+    parsed = _parse(fixture_name, instant)
+    statuses = Counter(entry.status for entry in parsed.entries)
+    assert statuses[InjuryReportStatus.DOUBTFUL] == 0
+    assert statuses[InjuryReportStatus.PROBABLE] > 0
 
 
 def test_the_pre_2023_layout_is_refused_not_silently_misparsed() -> None:
@@ -138,31 +186,77 @@ def test_the_unsupported_fixture_really_is_a_complete_report() -> None:
     assert "Questionable" in text
 
 
-def test_the_recorded_probe_evidence_matches_the_committed_fixtures() -> None:
-    """Every fixture this file loads is traceable to a recorded live response."""
-    import hashlib
+def test_the_recorded_probe_evidence_matches_every_committed_fixture() -> None:
+    """Every fixture this file loads is traceable to a recorded live response.
 
+    **The earlier version of this had a hole, and the reason given for it was
+    false.** It skipped any fixture without a `committed_fixture` key, on the
+    stated grounds that the 2025-11-01 capture predated the probe and so had no
+    provenance record. It has one: the probe re-fetched that timestamp and
+    recorded its SHA-256 like every other observation. The only thing missing
+    was a key name, and a reviewer used the gap to truncate that fixture from
+    seven pages to two with all nine tests here still green.
+
+    So the match is now made on the **source URL**, which every observation
+    carries, and any fixture that cannot be tied to a recorded response is a
+    failure rather than a skip.
+    """
     evidence = json.loads(PROBE_EVIDENCE.read_text(encoding="utf-8"))
-    by_fixture = {
-        observation["committed_fixture"]: observation
-        for observation in evidence["observations"]
-        if "committed_fixture" in observation
-    }
+    by_url = {observation["source_url"]: observation for observation in evidence["observations"]}
 
     expected = {name for name, _ in SUPPORTED_SEASONS.values()}
     expected.add(UNSUPPORTED_LAYOUT_FIXTURE)
 
-    for fixture_name in expected:
+    unverified: list[str] = []
+    for fixture_name in sorted(expected):
         path = FIXTURES / fixture_name
-        if not path.exists():
-            pytest.fail(f"fixture missing: {fixture_name}")
-        key = f"backend/tests/fixtures/{fixture_name}"
-        if key not in by_fixture:
-            # The 2025-11-01 fixture predates this probe and is recorded as an
-            # observation without a `committed_fixture` key; skip rather than
-            # claim a provenance record that does not exist.
-            continue
+        assert path.exists(), f"fixture missing: {fixture_name}"
+
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        assert digest == by_fixture[key]["sha256"], (
+        match = next(
+            (obs for obs in by_url.values() if obs["sha256"] == digest),
+            None,
+        )
+        if match is None:
+            unverified.append(
+                f"{fixture_name} (sha256 {digest[:16]}…) matches no recorded response"
+            )
+
+    assert not unverified, (
+        "these committed fixtures have no recorded live provenance:\n  " + "\n  ".join(unverified)
+    )
+
+
+def test_every_committed_fixture_byte_matches_its_recorded_digest() -> None:
+    """The digests are checked per fixture, so a swap cannot cancel out.
+
+    The test above establishes that each fixture appears *somewhere* in the
+    record. This one pins each fixture to the response recorded for its own
+    URL, so exchanging two fixtures' bytes fails rather than satisfying the
+    set-membership check twice.
+    """
+    evidence = json.loads(PROBE_EVIDENCE.read_text(encoding="utf-8"))
+    by_fixture = {
+        observation["committed_fixture"].rsplit("/", 1)[-1]: observation
+        for observation in evidence["observations"]
+        if "committed_fixture" in observation
+    }
+    # The 2025-11-01 capture predates this probe's fixture-recording pass, so it
+    # carries no `committed_fixture` key. It is still recorded, by URL.
+    by_fixture["nba_injury_report_2025-11-01_0530pm.pdf"] = next(
+        obs
+        for obs in evidence["observations"]
+        if obs["source_url"].endswith("Injury-Report_2025-11-01_05PM.pdf")
+    )
+
+    expected = {name for name, _ in SUPPORTED_SEASONS.values()}
+    expected.add(UNSUPPORTED_LAYOUT_FIXTURE)
+    assert expected <= set(by_fixture), (
+        f"no recorded response for: {sorted(expected - set(by_fixture))}"
+    )
+
+    for fixture_name in sorted(expected):
+        digest = hashlib.sha256((FIXTURES / fixture_name).read_bytes()).hexdigest()
+        assert digest == by_fixture[fixture_name]["sha256"], (
             f"{fixture_name} does not match the SHA-256 recorded at retrieval"
         )

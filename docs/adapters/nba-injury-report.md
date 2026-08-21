@@ -151,7 +151,9 @@ that in advance — the live smoke test exists specifically to catch it.
 
 ### There is a third era, older than both, and this parser cannot read it
 
-Established by live probe on 2026-08-21 (30 requests; evidence and per-response
+Established by live probe on 2026-08-21 (30 live requests across four passes, of
+which the final 13 are recorded as observations; see the artifact's
+`request_accounting`. Evidence and per-response
 SHA-256s in
 [`nba-injury-report-archive-reach-probe.json`](nba-injury-report-archive-reach-probe.json)).
 
