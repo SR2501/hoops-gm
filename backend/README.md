@@ -230,8 +230,17 @@ read the demo as evidence that a real league's calendar joins correctly.
 ## Why the projections endpoint takes no lock
 
 It reads `projection_sources`, `projection_imports`, `projections`, `players`
-and `source_games_played_assumptions` without locking any of them, and refuses
-if any of it moved while it was reading.
+and `source_games_played_assumptions` without locking any of them.
+
+**The guarantee is narrower than "nothing moved", and the narrow version is the
+true one.** What is pinned is exactly what `ReleasedProjectionImport` covers —
+one lineage record over the `projections` rows — so a rate edit, a row added or
+removed, a superseded import or broken profile lineage are all caught. What is
+*not* pinned: `players` is checked for membership, never for its label values,
+so a player renamed mid-request is served without comment; and
+`source_games_played_assumptions` is not digested at all, because the canonical
+release deliberately never selects that table. Both are stated again on the
+response model, where a consumer will meet them.
 
 An earlier version took the importer's own `projection_sources` row `FOR UPDATE`
 and claimed both dialects therefore serialized. **The SQLite half was false**:
@@ -253,19 +262,29 @@ and the two immutable lineage records are compared whole. The trade in one line:
 a lock prevents the race and blocks the owner's import; the digest detects it and
 asks the caller to retry.
 
-**What "detects" means precisely, because the looser phrasing was wrong and a
-screen would have been built on it.** A committed write landing *before* the rows
-are loaded is seen by the second release and the request is refused. A committed
-write landing *after* the rows are loaded is **not** seen — the route holds those
-ORM objects strongly, so the second release digests the same instances — and a
-consistent *older* snapshot is served.
+**What "detects" means precisely, because two looser phrasings were wrong in
+turn and a screen would have been built on either.** Three regimes, driven:
 
-Both satisfy the only guarantee this endpoint makes: **the rates and the lineage
-block beside them always describe the same cohort state.** What is not promised
-is freshness. A 200 can describe a cohort superseded microseconds earlier. For a
-descriptive projections screen that is correct; a caller needing "latest"
-re-requests and compares `projection_values_sha256`, which is what that field is
-for.
+1. a write landing *before* the rows are loaded is seen and refused;
+2. a write landing *after* them that leaves the row primary keys alone — an
+   in-place edit — is not seen, because the route holds those ORM objects
+   strongly and the second release digests the same instances. A consistent
+   *older* snapshot is served;
+3. a write landing after them that **replaces the primary keys** — which is every
+   re-import, since the importer deletes and re-inserts the cohort — defeats that
+   shadowing, and the request is refused.
+
+**Regime 3 is dialect-dependent.** PostgreSQL's `SERIAL` never recycles, so a
+re-import always lands there. SQLite recycles the top free rowid, so in a
+one-import database the same race lands in regime 2. An earlier version of this
+section said the construction behaves identically on both dialects; it does not,
+and that was a claim nobody had run.
+
+**The guarantee is unconditional even though the behaviour is not:** on any 200
+the rates and the lineage block beside them describe the same cohort state. What
+is not promised is freshness, and what is not *measured* is how often a
+PostgreSQL deployment answers 409 in regime 3 — no real server was available. A
+caller needing "latest" re-requests and compares `projection_values_sha256`.
 
 **`projections_inconsistent_cohort` is retryable.** It is the only one of the
 eight that is. A client should retry once and **keep the last good payload on

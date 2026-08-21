@@ -10385,7 +10385,7 @@ operator actions; keep one code when every member implies the same action. The
 test is the remedy, not the cause.** Under it `projections_incomplete_evidence`
 stays one code and the open schedule-grid question resolves as *discriminate*.
 
-**Now true:** 28 tests. The endpoint writes nothing, blocks nothing, and refuses
+**Now true:** 30 tests. The endpoint writes nothing, blocks nothing, and refuses
 rather than serving a cohort its lineage does not describe. Four concurrent
 polls all succeed; a concurrent hand-run import never fails.
 
@@ -10595,6 +10595,115 @@ residue is a fake credential in a tracked fixture, and it is a plausible
 explanation for the unattributed schedule-grid flakes recorded above — though not
 proof of one.
 
+
+**Sixth round: `architect` returned "yes — mergeable", and every remaining finding
+was in prose.** That is the shape of the whole unit's ending and worth stating
+plainly: five rounds produced **two behavioural defects a user would have seen**
+— the lock race serving a 200 whose digest described a different cohort, and the
+200 reporting no games-played assumption when the source published 70 and 78 —
+and roughly fifteen documentation defects, **most of them created by the rounds
+that fixed the behavioural ones.**
+
+Five prose-integrity fixes made, none needing judgement:
+
+*"Refuses if anything moved" survived in two more places* after round four
+corrected it in three. The README's section-opening sentence promised the
+guarantee over five tables when it covers one, with the correction seventeen
+lines below it — and the opening sentence is what a frontend lane skimming for
+"can I trust this" reads. `projections.py:348` and the handler's own inline
+comment carried the same falsified phrasing. **Fourth surviving instance of this
+lane's named defect class, naming the exact array round five's 200 lied about.**
+
+*Two authoritative documents said the family had eight members when it has nine*
+— the new `projections-ui` entry and the new `ownership.md` seam row, both
+written in round four, seventy lines from a correct count in the same file.
+**This is the round-two defect (backlog said four, docstring said five) recurring
+in the same file in the round after it was fixed.**
+
+*ADR-014 pointed at a backlog item that does not exist here.* Reworded so the
+decision does not depend on a name landing in another lane's PR; a decision log
+shipping a pointer to a task nobody filed is worse than one describing the work.
+
+*And ADR-014 was missing the one clause that would have prevented round five.*
+It pinned whatever the lineage record covers and said nothing about the rest of
+the response — so a third endpoint could apply it faithfully and still assemble
+an array on a key the record says nothing about. The clause is now in the
+Decision, in the lane's own formulation because it generalises better than mine:
+
+> **A consistency guarantee is only as wide as the set of keys someone
+> enumerated.** Before claiming one, list every key the response is assembled on
+> and name what pins each. A surrogate key is not stable: an importer that
+> rewrites a cohort in place changes it while the content digest, the row count
+> and the parent id all stay identical.
+
+`architect` also drew the boundary I had left implicit, and it is now on the
+response model where a consumer meets it: **`projections` and `lineage` are
+inside the guarantee; `players` is inside it for membership only, not for its
+labels; `source_games_played_assumptions` is outside it entirely**, subset-checked
+so it cannot name an uncarried player but not digested. "Guaranteed on any 200"
+is only honest if the list is exhaustive, so the list now says where it stops.
+The durable fix is `release-digests-assumptions`, filed: the canonical release
+should digest that table so the array inherits the mechanism instead of borrowing
+its credibility — and ADR-002 makes it delicate, because the assumption must be
+digested *alongside* the rates as separate evidence and never folded into
+`projection_values_sha256`.
+
+**Two of `architect`'s observations are about this project rather than this unit,
+and I am recording them rather than acting on them.** First: the response is
+assembled from five tables joined on four keys while the guarantee is one digest
+over one of them, so "is this consistent?" silently narrows to "did the digested
+thing move?" — round two's lock and round five's surrogate keys are the same
+failure with different nouns. Second, on R22: the review half of governance
+earned its cost twice over on this unit, and **the documentation half has crossed
+over.** The mitigation for R49 is not more prose but less — state a mechanism
+once where readership is most durable, reference it elsewhere. `architect` is
+carrying that as a call into the next unit rather than re-litigating this one,
+and I think he is right that this unit is evidence for it: `projections.py` is
+roughly half docstring, and three uncorrected copies of a phrase fixed in round
+four were findable with one grep.
+
+**And a sixth-round finding on my own remediation, which is where this unit's
+pattern finally names itself.** `code-review` cleared H1 (drove a byte-identical
+re-import landing at four different points, plus the mutation, all correct) and
+found nothing at High or Critical. It then falsified the sentence I had written
+*while fixing round five*: I documented, in five places, that a write landing
+after the row load is unconditionally invisible because the route holds the ORM
+objects strongly. **That shadowing depends on the row primary keys being
+unchanged**, and a re-import replaces all of them. Driven three ways:
+
+| write lands after the row load | result |
+|---|---|
+| in-place edit, ids unchanged | `200`, pre-edit rates — shadowed |
+| re-import, ids recycled (SQLite, one import) | `200` — shadowed |
+| re-import, ids not recycled (what PostgreSQL always does) | `409` |
+
+So the construction does **not** "behave identically on both dialects", which is
+a sentence I wrote in the commit that removed the lock. The *guarantee* is
+unconditional — a 200's rates and lineage always describe the same cohort — but
+the *behaviour* is dialect-dependent, and the retry guidance was calibrated on
+SQLite measurements alone. Corrected in all five places, and the PostgreSQL 409
+rate for that regime is now recorded as unmeasured rather than implied to be
+rare. `test_the_write_after_regime_depends_on_primary_key_stability` pins both
+branches.
+
+**My first mutation check for it was wrong in the same way as round five's.** I
+attributed the non-recycling to an explicitly parked `id=900`; removing the
+parking left the test green, because what actually keeps `max(rowid)` above the
+freed range is a row from *another import* surviving the delete. Removing that
+block collapses regime 3 into regime 2 and the test fails. **Twice now I have
+written a mutation check that confirmed the wrong mechanism** — the first time
+the test passed against the bug, this time it passed for a reason adjacent to the
+one claimed. The rule that catches it is to mutate the thing the docstring names
+and check the failure matches the docstring's story, not merely that something
+went red.
+
+`code-review` also caught two breakages in my uncommitted tree that would have
+shipped: a blank line inserted inside the `ownership.md` seam table, splitting it
+so the last two rows render as literal pipe text, and a comment I truncated
+mid-sentence against the next line of code. Neither was visible to ruff, format
+or mypy — all three were green over both. That is a small, concrete instance of
+the wider point: **the gates do not read prose, and prose is where this unit's
+remaining defects live.**
 
 **Next:** unchanged. `frontend` builds the screen tomorrow against a contract
 whose *shape* did not move in this round — only its guarantees got smaller and

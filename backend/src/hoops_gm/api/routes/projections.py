@@ -49,23 +49,37 @@ view. And a refusal's code does not reach the server log: the middleware records
 to an operator. The second is inherited and app-wide rather than introduced
 here, and is tracked as ``error-code-observability`` in ``docs/backlog.md``.
 
-**What "detected" precisely means, because the looser phrasing was wrong.**
-Review drove the two regimes apart and they differ:
+**What "detected" precisely means, because two looser phrasings were wrong in
+turn.** Three regimes, driven apart rather than reasoned about:
 
 * a committed write landing **before** the rows are loaded is seen by the second
   release, the two lineage records differ, and the request is refused;
-* a committed write landing **after** the rows are loaded is *not* seen — the
-  route holds those ``Projection`` objects strongly, so the second release's
-  query returns the same instances with their already-loaded values — and a
-  consistent **older** snapshot is served.
+* a write landing **after** the rows are loaded, leaving the row primary keys
+  unchanged — an in-place edit — is *not* seen. The route holds those
+  ``Projection`` objects strongly, so the second release's query returns the same
+  instances with their already-loaded values, and a consistent **older** snapshot
+  is served;
+* a write landing after the rows are loaded that **replaces the primary keys** —
+  which is every re-import, because ``_import_projection_rows`` deletes and
+  re-inserts the whole cohort — defeats that shadowing. The second release loads
+  fresh instances, the digests differ, and the request is refused.
 
-Both satisfy the only guarantee this route makes: **the rates and the lineage
-block beside them always describe the same cohort state**, because both are read
-off the same objects. What is *not* promised, and was carelessly implied by
-"refuses if anything moved", is freshness. A 200 can describe a cohort that was
-superseded microseconds ago. For a descriptive projections screen that is
-correct and desirable; a caller needing "latest" must re-request and compare
-``projection_values_sha256``, which is exactly what that field is for.
+**The third regime is dialect-dependent and an earlier version of this module
+claimed the construction "behaves identically on both dialects".** It does not.
+PostgreSQL's ``SERIAL`` never recycles, so a re-import always changes the keys
+and always lands in the third regime. SQLite recycles the top free rowid, so in a
+database holding one import the keys come back identical and the same race lands
+in the second. Driven three ways: in-place edit → ``200`` with pre-edit rates on
+both; re-import with recycled ids → ``200``; re-import with a parked rowid, which
+is what PostgreSQL does unconditionally → ``409``.
+
+**The guarantee is unconditional even though the behaviour is not**: on any 200
+the rates and the lineage block beside them describe the same cohort state,
+because either they came from the same objects or the digests would have
+differed. What is *not* promised is freshness, and what is not *measured* is how
+often a PostgreSQL deployment answers 409 in the third regime — no real server
+was available to this lane. A caller needing "latest" re-requests and compares
+``projection_values_sha256``, which is what that field is for.
 """
 
 from __future__ import annotations
@@ -288,6 +302,30 @@ class CurrentProjectionsResponse(BaseModel):
     players whose source stated an assumption appear, and it may be empty. A
     consumer must join it by ``player_id`` and treat a missing entry as "the
     source said nothing", never as zero.
+
+    **Which of those is actually pinned, because the list above is exhaustive
+    and the rest of the payload is not covered by it.** The two guarantees are
+    enforced by :func:`_assert_cohort_is_stable`, which compares the canonical
+    lineage record — and that record covers the ``projections`` rows and nothing
+    else. So:
+
+    * ``projections`` and ``lineage`` are inside it: they cannot describe
+      different cohorts.
+    * ``players`` is inside it only for *membership*. The labels
+      (``full_name``, ``team_abbreviation``, ``primary_position``) are read
+      outside any fingerprint, so a player renamed mid-request is served with
+      the newer label. The risk is a fresher label on the right player, never a
+      rate on the wrong one.
+    * ``source_games_played_assumptions`` is **outside** it. The canonical
+      release deliberately never selects that table, so nothing digests it. It
+      is joined on ``projection_import_id`` and subset-checked against the
+      players carried here, which makes a claim for an uncarried player
+      inexpressible — but a *changed* assumption is not detected. Closing that
+      needs the canonical release to digest the table, which is a change to the
+      producer's contract and is tracked as ``release-digests-assumptions``.
+
+    A consumer reading "guaranteed on any 200" is entitled to know where the
+    list stops. It stops here.
     """
 
     league_id: int
@@ -345,10 +383,11 @@ def _projection_source_id(session: Session, *, source: ExternalSource) -> int | 
 
     So the guarantee is *observed* instead of *assumed*:
     :func:`_assert_cohort_is_stable` brackets every read between two runs of the
-    canonical release and refuses if anything moved. A concurrent import can
+    canonical release and refuses when the second release can see a change. A concurrent import can
     make this endpoint answer 409, and cannot make it answer 200 with a lineage
     block that does not describe the rates beside it. That is the smaller
-    construction, it behaves identically on both dialects, and — unlike the
+    construction, its guarantee holds on both dialects (though *when* it refuses
+    does not — see the module docstring's three regimes), and — unlike the
     lock — it is the mechanism the tests actually exercise.
 
     The trade in one line: **a lock prevents the race and blocks the owner's
@@ -515,15 +554,20 @@ def _assert_cohort_is_stable(
     thing the digest exists to pin; invoking the one canonical function twice is
     not.
 
-    **What it can and cannot observe, established by driving both regimes rather
-    than by reading the code.** A committed write landing *before* the row load
-    is caught. A committed write landing *after* it is not: the caller holds the
-    ``Projection`` objects strongly, so this second release's query returns those
-    same instances with their already-loaded values and digests the state the
-    response is about to serve. That is not the hole it looks like — it is the
-    reason the guarantee holds at all. **The digest and the rates are computed
-    from the same objects, so they cannot describe different cohorts.** What is
-    given up is freshness, not consistency, and freshness was never the promise.
+    **What it can and cannot observe, established by driving all three regimes
+    rather than by reading the code.** A committed write landing *before* the row
+    load is caught. One landing *after* it is caught only if it changed the row
+    primary keys: an in-place edit leaves the caller's strong references intact,
+    so this second release returns those same instances and digests the state the
+    response is about to serve, while a re-import replaces every key and is
+    therefore seen. That second case is **dialect-dependent** — PostgreSQL's
+    ``SERIAL`` never recycles so a re-import always trips it; SQLite recycles the
+    top free rowid, so in a one-import database it does not.
+
+    Either way the guarantee holds, and it holds for the same reason in both:
+    **the digest and the rates are computed from the same objects, so they cannot
+    describe different cohorts.** What is given up is freshness, not consistency,
+    and freshness was never the promise.
 
     Three things it genuinely cannot see, in decreasing order of plausibility.
     The import's five audit counts are read outside this comparison and are
@@ -532,7 +576,8 @@ def _assert_cohort_is_stable(
     which trips the currency check). A change made and exactly reverted between
     the two releases is invisible. And a change to
     ``source_games_played_assumptions`` alone is not digested, because
-    ``ReleasedProjectionImport`` deliberately never selects that table.
+    ``ReleasedProjectionImport`` deliberately never selects that table — tracked
+    as ``release-digests-assumptions``.
     """
 
     if len(rows) != released.projection_count:
@@ -735,7 +780,10 @@ def get_current_projections(
         )
 
     # --- everything between this release and the one in `_assert_cohort_is_stable`
-    # --- is bracketed: if any of it moved, the request is refused rather than served.
+    # --- is bracketed. Bracketed is not the same as covered: the comparison
+    # --- pins the `projections` rows and nothing else, so `players`' labels and
+    # --- the assumptions array are read inside the window but outside the
+    # --- guarantee. `CurrentProjectionsResponse` says where the list stops.
     released = _released_import(session, import_id=import_id, source=source)
     rows = _projection_rows(session, import_id=import_id)
     players = _projection_players(session, rows)

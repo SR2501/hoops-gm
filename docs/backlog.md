@@ -419,17 +419,45 @@ could make a hand-run import fail with `database is locked`; it also mutated
 `updated_at` through `TimestampMixin`. Instead every read is **bracketed between
 two runs of the canonical release**.
 
-**What that detects, stated at the strength it was driven at.** A committed write
-landing *before* the rows are loaded is caught and refused. One landing *after*
-is not — the route holds the ORM objects strongly, so the second release digests
-the same instances — and a consistent *older* snapshot is served. Both satisfy
-the guarantee: the rates and the lineage block beside them always describe the
-same cohort state. Freshness is not promised, and an earlier version of this
-entry implied it was. `projections_inconsistent_cohort` is the only retryable
+**What that detects, stated at the strength it was driven at.** A write landing
+*before* the rows are loaded is caught. One landing *after* them is caught only
+if it replaced the row primary keys — an in-place edit is shadowed by the route's
+own strong references and a consistent *older* snapshot is served, while a
+re-import replaces every key and is seen. That last is dialect-dependent:
+PostgreSQL's `SERIAL` never recycles, SQLite can. The guarantee is unconditional
+either way — the rates and the lineage block beside them always describe the same
+cohort state — but the behaviour is not, and two earlier versions of this entry
+said otherwise (first "refuses if anything moved", then "identically on both
+dialects"). Freshness is not promised. `projections_inconsistent_cohort` is the only retryable
 code of the eight; a client retries once and keeps the last good payload rather
 than clearing the view. Driven with real committed writes from a second
 connection, with monkeypatching confined to *timing* rather than to the loader's
 result.
+
+### `release-digests-assumptions` - Bringing the games-played assumptions inside the release digest
+
+- [ ] **pending**
+- **Depends on:** `projections-api-early`
+
+`ReleasedProjectionImport` digests the `projections` rows and deliberately never selects
+`source_games_played_assumptions`, so `projections-api-early`'s assumptions array is the
+one part of that response outside the guarantee the endpoint makes about itself. The
+array is joined on `projection_import_id` and subset-checked against the players carried,
+which makes a claim for an uncarried player inexpressible — but a *changed* assumption is
+not detected, and the array's documented semantics ("a missing entry means the source
+said nothing") are a strong claim with nothing pinning them.
+
+Found by `architect` reviewing the fix for the defect it enables: a byte-identical
+re-import mid-read served a 200 with an **empty** assumptions array, reporting that
+Basketball Monster published no games-played assumption when it published 70 and 78. The
+route-level fix closes that instance; this closes the class, by making the array inherit
+the same mechanism that already catches a rate edit instead of borrowing its credibility.
+
+A producer-contract change in `hoops_gm.projections.blending`, not an API change. ADR-002
+is the constraint that makes it delicate: the assumption must be digested *alongside* the
+rates as separate evidence, never folded into `projection_values_sha256`, or the
+separation the table exists to enforce is lost at the fingerprint. On completion, retire
+the exemption stated on `CurrentProjectionsResponse` and amend ADR-014.
 
 ### `projections-ui` - Putting the imported projections on screen
 
@@ -452,7 +480,7 @@ feature. Second, `projections_inconsistent_cohort` is retryable and means a
 concurrent import moved the cohort — retry once and keep the last good payload on
 screen, because an empty board mid-auction is worse than a slightly stale one.
 The other seven codes are terminal and need a human. Third,
-`projections_incomplete_evidence` is a family of eight members with one shared
+`projections_incomplete_evidence` is a family of nine members with one shared
 remedy, so its copy must be true of all of them and must not substring-match
 `detail`.
 

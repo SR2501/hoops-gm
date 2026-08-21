@@ -542,6 +542,88 @@ def test_an_import_whose_stored_rate_went_negative_is_refused(
     assert _error_of(response) == "projections_incomplete_evidence"
 
 
+def test_the_write_after_regime_depends_on_primary_key_stability(
+    app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim "behaves identically on both dialects" was wrong, and this pins why.
+
+    A write landing after the row load is shadowed by the route's own strong
+    references **only while the row primary keys are unchanged**. A re-import
+    replaces every key, so the second release loads fresh instances and the
+    request is refused instead. That is unconditional on PostgreSQL, whose
+    ``SERIAL`` never recycles, and conditional on SQLite, which does.
+
+    Both branches are asserted here so the difference is a fact in the suite
+    rather than a sentence in a docstring: the guarantee is unconditional, the
+    behaviour is not.
+    """
+
+    # Regime 2: in-place edit, keys untouched -> shadowed, older snapshot served.
+    unmutated = projections_route._projection_rows
+
+    def edit_only(session: Session, *, import_id: int) -> list[Projection]:
+        rows = unmutated(session, import_id=import_id)
+        worker = app.state.database.session_factory()
+        try:
+            worker.execute(
+                update(Projection)
+                .where(Projection.projection_import_id == import_id)
+                .values(assists_per_game=9.0)
+            )
+            worker.commit()
+        finally:
+            worker.close()
+        return rows
+
+    monkeypatch.setattr(projections_route, "_projection_rows", edit_only)
+    shadowed = client.get(PROJECTIONS_URL.format(league_id=seeded))
+    assert shadowed.status_code == 200
+    assert 9.0 not in [p["assists_per_game"] for p in shadowed.json()["projections"]]
+
+    # Regime 3: the same edit behind a re-import that replaces the keys ->
+    # refused. What stops SQLite recycling the ids is a row from *another*
+    # import surviving the delete, which keeps max(rowid) above the freed range;
+    # the explicit id=900 makes that margin unambiguous rather than incidental.
+    # Verified by mutation: remove this block and the case collapses into
+    # regime 2 and returns 200.
+    with app.state.database.session() as session:
+        seed_player(session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="PG")
+        other = import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Manual",
+            season=SEASON,
+            csv_bytes=b"player_name,points_per_game\nSpare Parker,10.0\n",
+        ).projection_import
+        session.execute(
+            update(Projection).where(Projection.projection_import_id == other.id).values(id=900)
+        )
+        assert session.scalar(select(func.max(Projection.id))) == 900
+
+    def reimport_then_edit(session: Session, *, import_id: int) -> list[Projection]:
+        rows = unmutated(session, import_id=import_id)
+        worker = app.state.database.session_factory()
+        try:
+            _import_bbm(worker)
+            # A value the first release did not see. Phase 1 already committed
+            # 9.0, so reusing it would leave the digest unchanged and the test
+            # would pass for the wrong reason.
+            worker.execute(
+                update(Projection)
+                .where(Projection.projection_import_id == import_id)
+                .values(assists_per_game=5.5)
+            )
+            worker.commit()
+        finally:
+            worker.close()
+        return rows
+
+    monkeypatch.setattr(projections_route, "_projection_rows", reimport_then_edit)
+    refused = client.get(PROJECTIONS_URL.format(league_id=seeded))
+    assert refused.status_code == 409
+    assert _error_of(refused) == "projections_inconsistent_cohort"
+
+
 def test_a_byte_identical_reimport_mid_read_does_not_empty_the_assumptions(
     app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -555,13 +637,15 @@ def test_a_byte_identical_reimport_mid_read_does_not_empty_the_assumptions(
     nothing", when Basketball Monster published 70 and 78. A lie, not a blank,
     in the one array carrying the ADR-002 thesis.
 
-    **The parked rowid is the point of this test.** SQLite recycles the top free
-    rowid, so in a database holding one import the re-inserted rows land back on
-    the same ids and the defect is invisible — the shape every other test in
-    this file builds. PostgreSQL's ``SERIAL`` never recycles, so it fires
-    unconditionally there. Parking a high rowid first reproduces on SQLite what
-    the Postgres seam does anyway, which is the whole reason ADR-001 keeps that
-    seam.
+    **Forcing the ids apart is the point of this test.** SQLite recycles the top
+    free rowid, so in a database holding one import the re-inserted rows land
+    back on the same ids and the defect is invisible — the shape every other test
+    in this file builds. PostgreSQL's ``SERIAL`` never recycles, so it fires
+    unconditionally there. What prevents recycling here is a row from *another*
+    import surviving the delete and keeping ``max(rowid)`` above the freed range;
+    the explicit ``id=900`` makes that margin unambiguous. That reproduces on
+    SQLite what the Postgres seam does anyway, which is the whole reason ADR-001
+    keeps that seam.
     """
 
     before = client.get(PROJECTIONS_URL.format(league_id=seeded)).json()
@@ -571,10 +655,10 @@ def test_a_byte_identical_reimport_mid_read_does_not_empty_the_assumptions(
     ]
 
     with app.state.database.session() as session:
-        # Park a high rowid that SURVIVES the re-import, so SQLite cannot
-        # recycle ids 1 and 2 back. It has to belong to a *different* import,
-        # because `_import_projection_rows` deletes every row of the import it
-        # is rewriting — an earlier version of this test parked and deleted a
+        # A row that SURVIVES the re-import, so SQLite cannot recycle ids 1 and
+        # 2 back. It has to belong to a *different* import, because
+        # `_import_projection_rows` deletes every row of the import it is
+        # rewriting — an earlier version of this test parked and then deleted a
         # row of the same import, which left `max(rowid)` unchanged and made the
         # test pass against the very bug it was written for.
         spare = seed_player(
