@@ -342,6 +342,42 @@ def test_the_one_to_one_check_refuses_a_missing_status_marker(tmp_path):
     assert "not 1:1" in str(excinfo.value)
 
 
+def test_a_second_separator_is_content_not_structure(tmp_path):
+    """The classifier's own separator rule, which nothing covered.
+
+    `_block_content_lines` carries a private copy of the separator test — the
+    first `=======` is structure, a second is content. Review found that rule
+    correct in the code and unreached by any test: dropping `not
+    seen_separator` left the whole suite green while a literal `=======` in
+    the block was deleted at exit 0.
+
+    It matters more than an ordinary gap because a seven-wide row of `=` is a
+    Markdown setext underline and an RST table rule, which is **defect #1 of
+    this change**. The fix for that was applied to `is_conflict_marker` and
+    never travelled to the classifier's own copy — the same shape as the fifth
+    iteration, a correct rule that did not reach the second place it was needed.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        "<<<<<<< HEAD\n" + HEADER + "\n"
+        "=======\n" + HEADER + "\n"
+        "=======\n"
+        ">>>>>>> other\n\n" + ITEM_A + "\n" + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit):
+        module.resolve_backlog(backlog)
+
+    after = backlog.read_text(encoding="utf-8")
+    assert after == original, "a second separator was consumed as structure"
+    assert after.count("=======") == 2
+
+
 def test_the_real_cli_reads_sys_argv(tmp_path):
     """Pins the *wiring*, which every in-process test leaves untouched.
 

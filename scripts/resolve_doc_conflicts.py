@@ -393,6 +393,15 @@ def resolve_backlog(path: pathlib.Path) -> None:
     # because the substitution reports how many lines it *replaced* and the
     # question is how many exist — those differ precisely in the case that
     # caused this, where it replaced none and the note had carried one in.
+    #
+    # **Do not simplify this away on the grounds that the block predicates
+    # already refuse.** They cannot see one case and this is what covers it: a
+    # line of content beginning `>>>>>>> ` terminates the collapse regex early,
+    # so the block is truncated *before* `_block_content_lines` is ever called
+    # and no amount of position-classification reaches it. Review demonstrated
+    # the path — the truncated block collapses, the note injects a header, one
+    # already exists outside, and this refuses seven lines before the write.
+    # `>>>>>>> ` as content is the one marker position cannot classify.
     written = len(
         re.findall(
             r"^\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*$",
