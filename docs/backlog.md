@@ -590,10 +590,15 @@ capture a fixture.
 
 **The committed Basketball Monster fixture cannot do this**, which is the finding
 that shaped the unit: its two rows are named *Player Alpha* and *Player Gamma*,
-they match no player in `nba_playerindex_current.json`, so the importer accepts
-zero resolutions and `release_projection_import` raises. Seeding it through the
-real importer produces a new refusal, not a 200. It stays untouched — it is
-Adapter-gate evidence of the column contract and is doing that job.
+they match no canonical player, so the importer accepts zero resolutions and
+`release_projection_import` raises. Seeding it through the real importer produces
+a new refusal, not a 200. It stays untouched — it is Adapter-gate evidence of the
+column contract and is doing that job. (The population they fail to match is
+`nba_commonallplayers_current.json`, which `import_nba_players` reads;
+`nba_playerindex_current.json` only supplies positions and creates no players.
+Three docstrings named the wrong one, and a reviewer noted *both* files contain
+an "Alpha" — Alpha Diallo — so a reader checking the claim by grepping the name
+got a hit either way, while the normalised key `alpha|player` matches nothing.)
 
 The demo CSV is generated **in memory at seed time** from the canonical players
 the same run imported, in the verified profile's exact committed header order,
