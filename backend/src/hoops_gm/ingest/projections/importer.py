@@ -36,6 +36,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hoops_gm.db.lineage import lock_projection_source_scope
 from hoops_gm.db.models.enums import ExternalSource, ScoringType
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.projections import (
@@ -226,6 +227,18 @@ def _hold_import_lock_until_transaction_end(
     session: Session,
     key: str,
 ) -> None:
+    """Serialize importers sharing one database connection.
+
+    This is the *in-process* half of the pair, and it is not redundant with
+    :func:`_lock_projection_source_scope`. Under ``StaticPool`` — which
+    :func:`hoops_gm.db.session.create_db_engine` selects for an in-memory
+    SQLite URL, and which the test suite therefore runs on — two ``Session``
+    objects share **one** DBAPI connection, so SQLite's write reservation is
+    already held by both and cannot separate them. Nothing but this lock does.
+
+    It is also the half that does nothing across processes, which is R58 and
+    why the other one exists.
+    """
     held = session.info.setdefault(_SESSION_LOCKS_KEY, {})
     if key in held:
         return
@@ -250,6 +263,25 @@ def _hold_import_lock_until_transaction_end(
 
     session.info[_SESSION_LOCK_LISTENER_KEY] = True
     event.listen(session, "after_transaction_end", release_locks)
+
+
+def _lock_projection_source_scope(session: Session, source: ExternalSource, season: str) -> None:
+    """Serialize importers of one source **across processes**, on both dialects.
+
+    Delegates to :func:`hoops_gm.db.lineage.lock_projection_source_scope`, which
+    is where the mechanism and the R58 history are documented, and which is the
+    only module in this codebase allowed to reach the lock primitive.
+
+    **This is a writer taking a writer's lock**, which is why it is not the
+    construction ``projections-api-early`` removed from the read endpoint. A
+    reservation-holding *read* is a writer on SQLite and can make a hand-run
+    import fail with ``database is locked``; an importer emits DML
+    unconditionally, so this only moves the reservation earlier inside a
+    transaction that was always going to take it. It is taken after parsing, so
+    no parse time is spent holding it.
+    """
+
+    lock_projection_source_scope(session, source=source.value, season=season)
 
 
 def _validate_lineage_against_profile_version(
@@ -1002,15 +1034,17 @@ def import_projection_csv(
         session,
         source.value,
     )
+    # Before the read it protects, not after it. The old `FOR UPDATE` ran once
+    # the source row had already been read and once the import row had already
+    # been created, so even on PostgreSQL it was closing the window later than
+    # it opened.
+    _lock_projection_source_scope(session, source, season)
 
     source_row = get_or_create_projection_source(
         session,
         source=source,
         display_name=display_name,
         assumed_scoring_type=assumed_scoring_type,
-    )
-    session.scalar(
-        select(ProjectionSource.id).where(ProjectionSource.id == source_row.id).with_for_update()
     )
     profile_version_row = _get_or_create_profile_version(
         session,
@@ -1029,11 +1063,6 @@ def import_projection_csv(
         original_filename=original_filename,
         assumed_scoring_type=assumed_scoring_type,
         raw_payload_ref=raw_payload_ref,
-    )
-    session.scalar(
-        select(ProjectionImport.id)
-        .where(ProjectionImport.id == projection_import.id)
-        .with_for_update()
     )
 
     counts, identity_report = _import_projection_rows(

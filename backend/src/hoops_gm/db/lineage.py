@@ -647,6 +647,50 @@ def league_settings_artifact_key(league_id: int) -> str:
     return f"league-settings:{league_id}"
 
 
+def projection_source_artifact_key(source: str) -> str:
+    """The lock-only lineage scope for one projection publisher's imports."""
+
+    return f"projection-source:{source}"
+
+
+def lock_projection_source_scope(session: Session, *, source: str, season: str) -> None:
+    """Serialize two importers of the same projection source and season.
+
+    **Last in the canonical order** — see :func:`lock_refresh_scope`. This is a
+    per-source derived scope, so anything composing a projection import with a
+    settings or schedule writer must take those first. ``import_projection_csv``
+    takes no other transaction lock, so today it is a leaf.
+
+    Replaces a ``SELECT ... FOR UPDATE`` on the ``projection_sources`` row that
+    was inert on SQLite (R58), for two independent reasons: pysqlite emits
+    ``BEGIN`` before DML and not before a ``SELECT``, and on a repeat import of
+    an already-registered source no DML had been emitted at that point — the
+    ORM issues no ``UPDATE`` when ``display_name`` is unchanged, which is
+    exactly what running the same import twice looks like; and SQLAlchemy's
+    SQLite dialect renders no ``FOR UPDATE`` text at all. The in-process
+    ``threading.Lock`` in the importer still separates threads and does nothing
+    between processes.
+
+    It lives here rather than in ``ingest/projections/`` so ``db/lineage.py``
+    stays the only module reaching ``acquire_transaction_lock``. Two lock-order
+    tests monkeypatch that name *on this module*, and a second importer of the
+    primitive would blind both recorders while leaving them green —
+    ``test_lineage_locks_are_acquired_through_exactly_one_import`` pins it, and
+    caught this change doing exactly that.
+
+    Registering no ``refresh_runs`` row is deliberate: this is a lock scope, not
+    a claim that a projection refresh has been published. ``quant`` owns
+    registering projection refreshes when those exist.
+    """
+
+    lock_refresh_scope(
+        session,
+        artifact_type=RefreshArtifactType.PROJECTION,
+        artifact_key=projection_source_artifact_key(source),
+        season=season,
+    )
+
+
 def lock_league_settings_scope(session: Session, *, league_id: int, season: str) -> None:
     """Serialize settings writers with calendar derivation and projection readers.
 
