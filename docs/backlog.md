@@ -4,11 +4,14 @@ Generated from the planning session on 2026-08-17. **This is the authoritative t
 
 **40 done - 1 blocked - 73 pending - 114 total**
 
-(Counted from the status markers themselves at this head, not carried forward from
-either lane: 114 `###` headings and 114 markers, 1:1, no duplicates. Neither
-pre-merge header was a usable input, because each was computed before the other
-lane's items landed. An earlier header claimed 37 done / 63 pending against an
-actual 36 / 64, and that drift predates all three lanes.)
+(Recomputed from the status markers in this finished file, never reconciled from
+two headers: 114 `###` headings and 114 markers, 1:1, no duplicate
+item names. Neither side of a rebase conflict is ever a usable input here, because
+each was computed before the other lane's items landed - one lane measured main at
+39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
+reconciliation could have reached the answer. The position lane sharpened
+`player-position-eligibility` without closing it: the NBA-position half landed, the
+Fantrax-eligibility half did not, so that marker stays `pending`.)
 
 
 A task is ready when every dependency is done. Update the status line when you finish one.
@@ -201,18 +204,36 @@ Crosswalk resolver joining Fantrax IDs, NBA IDs and projection-CSV name strings.
 
 ### `player-position-eligibility` - Ingesting player position and Fantrax position eligibility
 
-- [ ] **pending**
-- **Depends on:** *(nothing, for the NBA-position half)*; `player-identity` for the Fantrax-eligibility half
+- [ ] **pending** — *NBA-position half landed 2026-08-20; Fantrax-eligibility half outstanding*
+- **Depends on:** *(nothing, for the NBA-position half — **done**)*; `player-identity` for the Fantrax-eligibility half
 
-**The dependency deliberately does not point at `player-identity` for the whole item.** `player-identity` specifies matching on "normalized name + team + **position**" — with no position data in the project, that third field does not exist, so ordering all position work behind identity would leave the highest-risk foundational item permanently short of one of the three fields it was specified to use. The NBA-position half needs no crosswalk and should land first; only Fantrax eligibility, which is per-player-per-league, needs the crosswalk.
+**The dependency deliberately does not point at `player-identity` for the whole item.** `player-identity` specifies matching on "normalized name + team + **position**" — with no position data in the project, that third field did not exist, so ordering all position work behind identity would have left the highest-risk foundational item permanently short of one of the three fields it was specified to use. The NBA-position half needed no crosswalk and landed first; only Fantrax eligibility, which is per-player-per-league, needs the crosswalk.
 
-**This project currently has no player position data at all.** Surfaced 2026-08-20 by the injury-cohort regeneration: the only position-shaped field this project ingests is `BoxScoreTraditionalV3.position`, which is emitted for exactly five players per team per game — the starting lineup — always in the sequence `F,F,C,G,G`, and blank for everyone else. It is a lineup slot, not a player attribute. Verified over all 346 team-games of the cohort window; a distribution over it is forced to 2F:2G:1C for any cohort whatsoever.
+#### NBA-position half — done (2026-08-20)
 
-That is load-bearing well beyond availability evidence. This is a 9-category head-to-head Fantrax league, where **position eligibility governs roster construction, lineup legality and therefore the entire draft board** — a draft tool that cannot tell a centre from a point guard is not a draft tool. Fantrax eligibility is also its own quantity: it is league-configured, multi-position, can differ from any single NBA-published position, and changes during a season as a player accrues games at a new slot.
+`PlayerIndex` supplies the NBA's listed position for every player in one request, and it is persisted on `players.primary_position` with source, season and observed-at lineage (migration 0016). Contract tests, live smoke and the full evidence are in `docs/adapters/nba-stats.md`. R7's third matching key is now real: crosswalk position evidence went from 576 `UNKNOWN` and nothing else to 531 `AGREE` / 35 `DISAGREE` / 10 `UNKNOWN`.
 
-Ingest a source that states a position for every rostered player, plus Fantrax's own eligibility per player per league, keeping the two distinct rather than collapsing them — an NBA position is a fact about the player, Fantrax eligibility is a fact about the league's rules applied to that player, and only the second determines whether a lineup is legal. Adapter gate applies: recorded fixture, offline contract test, live smoke that may fail loudly, documented throttling and failure behaviour. Landing the NBA-position half also feeds back into `player-identity`'s confidence, which was specified to corroborate on position and has never been able to.
+**It is coarse, and this does not close the draft-board requirement.** The vocabulary is `G/F/C` plus hybrids, with **no `PG`/`SG`/`SF`/`PF` on any NBA endpoint checked** — `PlayerIndex`, `CommonPlayerInfo` and `CommonTeamRoster` all agree, and `PlayerIndex` rejects a `PlayerPosition=PG` filter with `{"PlayerPosition": ["Invalid parameters"]}`. It separates a centre from a guard. It cannot express a Fantrax lineup slot.
 
-The `injury-conversion-cohort-population` waiver of its own "positions" criterion is one downstream consequence of this gap, not the reason for this item.
+#### Fantrax-eligibility half — outstanding, and it is a different quantity
+
+**Fantrax's stated eligibility is the only authoritative source. It is read, never derived.** Whatever Fantrax says a player is eligible at *is* what he is eligible at, because that is what the lineup validator enforces on draft night. There is no computation that outranks it.
+
+Everything below is **the owner's expectation, recorded with its provenance and to be confirmed nearer the season** — not established fact. A threshold written down as fact when it was someone's recollection is how a wrong number becomes load-bearing.
+
+* **The player pages are the source of truth, not necessarily the API.** The pages are a UI surface and `getPlayerIds` is an endpoint; they may disagree, and if they do, *the pages win*. Capture both and compare rather than assuming the convenient one is authoritative — the same discipline that caught `gameEt` and `MATCHUP`.
+* **It updates on a cadence — believed weekly.** So a stored eligibility value needs a **staleness window**, not merely a timestamp: the system must be able to say "this is as of Tuesday and may be up to seven days behind". Freshness is part of the contract, not metadata.
+* **It is monotonic and time-dependent.** Eligibility never decreases, and eligibility on draft day is not eligibility in March. Any stored value carries an **as-of** date; a snapshot without one silently becomes wrong.
+* **The owner's general expectation of the rule** is that starting at a position **5 times** grants eligibility there, never lost. He is explicit that other sites and leagues differ and that **Fantrax does not abide by it 100%**, so *there will at times be a rule/logical mismatch that takes some catching up*.
+* **Therefore anything derived from starts is a prediction of a third party's behaviour, not a reading of eligibility.** Counting starts and presenting the output as eligibility would be modelling an undocumented, not-strictly-followed policy and dressing it as fact — the confident, plausible, wrong number `AGENTS.md` opens with. If it is ever built it belongs to `quant` behind the **Model gate**, labelled as an expectation with its calibration stated, and it may never be displayed as eligibility or used to construct a lineup Fantrax would reject.
+* **The divergence is the product, not a nuisance.** The useful framing keeps the two claims separate: *"Fantrax lists him at G. He has started at forward 4 times, and the usual pattern suggests F eligibility is due; pages update about weekly."* One read, one inferred, never blended. A player four starts from gaining eligibility is exactly the league-specific, time-sensitive fact Basketball Monster does not provide, and it matters at the draft and on waivers.
+* **Adaptability is a stated design requirement.** The owner: *a lot of the rules in these leagues require very dynamic tools.* That argues against hard-coding league rules as constants, and for holding them as data with provenance and building things that **detect divergence** rather than assume conformance. It applies well beyond position eligibility.
+
+**A checkable lead, verified offline against the committed fixture on 2026-08-20:** `getPlayerIds` already carries a `position` field per row, and the parser already reads it to separate the 30 franchise entities (`position: "Tm"`) from the 1,788 players. The player values *are* fine-grained — `SG` 486, `PG` 345, `SF` 339, `PF` 310, `C` 246, plus a small tail of `F` 31, `G` 30 and one `Default`. **But it is a single value per row, not a multi-position eligibility set**, and Fantrax eligibility is routinely multi-slot. So this is plausibly the *primary* position rather than the eligibility list, and that is the first thing to check against a player page. Do not assume the convenient reading.
+
+**There is probably an ADR here** — where eligibility truth lives, what freshness it carries, and how divergence is surfaced without being resolved — but that is for the lane that builds it, with evidence from a real capture.
+
+The `injury-conversion-cohort-population` waiver of its own "positions" criterion was one downstream consequence of the NBA-position gap, now closed.
 
 ### `playoff-schedule` - Analysing fantasy playoff week schedules
 

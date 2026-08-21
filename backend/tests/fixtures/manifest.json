@@ -263,6 +263,19 @@
     "source": "nba_stats",
     "trimmed": true
   },
+  "nba_playerindex_current.json": {
+    "byte_size": 209774,
+    "byte_size_basis": "canonical_lf_bytes",
+    "captured_at": "2026-08-21T02:40:09.068100+00:00",
+    "endpoint": "PlayerIndex",
+    "note": "The listed NBA position for every player, one row per person id. This is the only position source this project has: BoxScoreTraditionalV3.position is a starting-lineup slot (five per team per game, F,F,C,G,G), not a player attribute. Untrimmed on purpose - the contract test asserts on coverage and on the position vocabulary across the whole league, and both assertions are meaningless over an arbitrary prefix of the rows.",
+    "params": {
+      "league_id": "00",
+      "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": false
+  },
   "nba_scheduleleaguev2_2026_27.json": {
     "byte_size": 7795,
     "captured_at": "2026-08-17T19:00:10.010000+00:00",

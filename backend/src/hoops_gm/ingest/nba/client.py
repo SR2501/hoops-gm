@@ -114,6 +114,27 @@ class NbaStatsClient:
             max_age=ROSTER_MAX_AGE if max_age is None else max_age,
         )
 
+    def player_index(self, *, season: str, max_age: timedelta | None = None) -> Any:
+        """Fetch the league-wide player listing, which carries listed position.
+
+        One request for every player in the league, which is what makes this
+        the position source rather than ``CommonPlayerInfo`` — the latter
+        states the same position in long form (``"Guard"`` against ``"G"``,
+        checked 14/14 on 2026-08-20) but costs one throttled request *per
+        player*, so ~580 players is a ten-minute sweep to learn what this
+        endpoint says in one.
+
+        ``season``, not ``season_nullable``; there is no ``league_id_nullable``
+        here either. This client's endpoints spell their parameters
+        inconsistently, which is why every call site is pinned by a live smoke
+        test rather than trusted.
+        """
+        return self.fetch(
+            "PlayerIndex",
+            {"league_id": "00", "season": season},
+            max_age=ROSTER_MAX_AGE if max_age is None else max_age,
+        )
+
     def league_game_finder(
         self,
         *,
@@ -267,6 +288,7 @@ def _default_endpoint_factory(endpoint: str, **kwargs: Any) -> Any:
         commonallplayers,
         leaguegamefinder,
         playergamelogs,
+        playerindex,
         scheduleleaguev2,
     )
 
@@ -274,6 +296,7 @@ def _default_endpoint_factory(endpoint: str, **kwargs: Any) -> Any:
         "CommonAllPlayers": commonallplayers.CommonAllPlayers,
         "LeagueGameFinder": leaguegamefinder.LeagueGameFinder,
         "PlayerGameLogs": playergamelogs.PlayerGameLogs,
+        "PlayerIndex": playerindex.PlayerIndex,
         "ScheduleLeagueV2": scheduleleaguev2.ScheduleLeagueV2,
         "BoxScoreTraditionalV3": boxscoretraditionalv3.BoxScoreTraditionalV3,
         "BoxScoreSummaryV3": boxscoresummaryv3.BoxScoreSummaryV3,

@@ -10765,3 +10765,119 @@ enumerated".
 **Next:** unchanged. `frontend` builds the screen tomorrow against a contract
 whose *shape* did not move in this round — only its guarantees got smaller and
 truer.
+## 2026-08-20 — data-engineer — Player position exists after all; R7's third key is real, and it is coarse
+
+**Unit:** `player-position-eligibility`, NBA-position half. Ingest a real player position
+from a source this project can already reach, persist it with lineage, and make it
+available to the identity crosswalk. Fantrax eligibility explicitly out of scope.
+
+**The first question was whether a suitable source exists at all, and it does.**
+`PlayerIndex` on `stats.nba.com`, one request, league-wide: 578 rows for 2026-27, 582 for
+2025-26, `POSITION` stated on 572 of 578.
+
+**I did not take the field at its word.** The brief warned this was a prime place for
+another lineup-slot-in-disguise, so I attacked that hypothesis specifically and it died
+five ways: one row per `PERSON_ID` with zero duplicates, against a per-team-per-game field;
+per-team groups of 15–24 rather than five, with wildly uneven mixes (ATL 13 `G`, 7 `F`,
+2 `C`); hybrids `G-F`/`F-C` that a five-slot string cannot express; **490 players shared
+between the two seasons, 490 identical positions, zero changes**; and independent
+corroboration on a different endpoint — two players sampled per position value, 14 total,
+against `CommonPlayerInfo.POSITION`, 14/14 exact. Six 2026-27 rows state no position; all
+six are `FROM_YEAR: 2026` and `CommonPlayerInfo` returns `''` for them too, so they are
+persisted `NULL` rather than guessed.
+
+**The limitation is the more important half of the finding.** The vocabulary is
+`G/F/C` plus hybrids and contains **no `PG`/`SG`/`SF`/`PF` anywhere**. Three endpoints
+agree (`PlayerIndex` `G`, `CommonPlayerInfo` `"Guard"`, `CommonTeamRoster` `G`), and
+`PlayerIndex` rejects a `PlayerPosition=PG` filter outright with
+`{"PlayerPosition": ["Invalid parameters"]}` — the parameter exists in `nba_api`'s
+signature and the server refuses the value. So this separates a centre from a guard, which
+is what R7 needs, and **it is not Fantrax eligibility and cannot be made into it by
+derivation**: eligibility is a policy decision by a third party, monotonic, updated on a
+cadence, and not a computable function of NBA game data. Someone will otherwise reach for
+this field to build lineup legality and be quietly wrong, which is today's defect class, so
+it is stated in the model docstring, the column comment, the adapter doc, the backlog item
+and the live smoke's failure message.
+
+**What it did to the crosswalk, measured rather than claimed.** Position evidence across
+candidate pairs went from **576 `UNKNOWN` and nothing else** to **531 `AGREE` /
+35 `DISAGREE` / 10 `UNKNOWN`**. Accepted matches: 570 before, 570 after — **and not the
+same 570.** I compared the sets, not the sizes, precisely because this repository has
+already been bitten by a count ("never a count — the count is what let the first defect
+survive review"), and the count here is identical by coincidence. Gained
+`Johnson, Jalen`: Fantrax carries two rows of that name, one ATL/`SF` and one no-team/`SG`,
+the NBA has one ATL/`F`, and position agrees with the first and contradicts the second —
+the duplicate-name disambiguation R7 specified position to perform, working on a genuine
+duplicate. Lost `Tillman, Xavier`: Fantrax `C` no-team, NBA `F`, the same human read two
+defensible ways, and with no team to offset the 0.12 position penalty a correct match falls
+to 0.730 and under the accept floor.
+
+**A finding for the identity lane, which I deliberately did not act on.** All 35
+disagreements are of the second kind — Klay Thompson `SF`/`G`, Evan Mobley `PF`/`C`, Kevon
+Looney `C`/`F`. **Position disagreement is weak evidence of identity mismatch**, for
+exactly the reason `evidence.py` already records for lowering the *team* penalty: the two
+sources are genuine, differing classifications rather than contradictions. The penalty
+likely wants the same downward re-tuning. The matcher is not mine to rewrite, so the
+trade-off is pinned in an executable test and recorded in R7 rather than left as a surprise
+when somebody asks where Xavier Tillman went.
+
+**Guards, and each one broken on purpose before I trusted it.** Four new checks: required
+columns, position vocabulary (fatal even for a merely *new* value), one row per person id,
+and a 90% coverage floor. I neutered each in the parser and confirmed its test goes red —
+five mutations, five reds, source restored. The coverage floor was broken in the shape that
+matters rather than a convenient one: I rebuilt the payload as a starters-only field, five
+positions per team and the rest blank, which the vocabulary guard cannot see (the values
+are still `G`/`F`/`C`) and the duplicate guard cannot see (still one row each). I also
+recorded what these guards **cannot** observe: a payload that keeps full coverage and this
+exact vocabulary while the values come to mean something else. Nothing asserted over a
+single payload can see that, which is why the cross-season stability check exists in the
+live smoke and why its floor is 95% rather than 100% — a genuine re-listing of one player
+must not make it permanently red.
+
+**A real alarm fired on me and I did not weaken it.** The committed injury-cohort manifest
+fingerprints `ingest/nba/parsers.py` and `ingest/backfill.py`, both of which I changed, and
+the suite went red. Regenerating needs gitignored operational state I do not have, so
+following PR #43's precedent I checked the change mechanically instead of by reading it:
+AST comparison with docstrings stripped shows `parsers.py` gained exactly one top-level
+definition and altered none, and `backfill.py` altered only `build_crosswalk` — which a
+call-graph closure from the manifest's own two `operator.commands` entry points
+(`backfill_nba_identity`, `backfill_season`) proves is **not reachable**, while every one of
+the six functions that is reachable is AST-identical. The cohort's derivation is unchanged,
+so refreshing those two fingerprints asserts something true. The committed file is
+byte-identical to its own renderer and the generator reads no clock, so the two-line diff
+is exactly what a regeneration over the same state would produce.
+
+**Could not verify:**
+- **PostgreSQL.** Migration 0016 was exercised on SQLite only — upgrade, downgrade, upgrade,
+  columns confirmed appearing and disappearing. There is no Docker on this machine, so the
+  ADR-001 portability claim rests on CI against the exact pushed head. The revision is
+  additive `add_column` with no constraint, index or data migration, which is the least
+  dialect-sensitive shape available, but that is an argument, not a test.
+- **That the accept-floor loss is limited to one player.** `Tillman, Xavier` is the only
+  regression against the *committed fixtures*. Against live rosters on another day the
+  count could differ, and I did not sweep multiple days to bound it.
+- **Whether 0.12 is the right position penalty.** I measured its effect and did not tune it.
+  Re-tuning without a held-out set would be fitting to one fixture pair.
+- **Fantrax's `getPlayerIds` position semantics.** Checked offline against the committed
+  fixture only: 1,788 player rows carrying `SG` 486, `PG` 345, `SF` 339, `PF` 310, `C` 246,
+  plus `F` 31, `G` 30 and one `Default`, with the 30 `Tm` rows being franchises. It is fine
+  grained, but it is **one value per row and Fantrax eligibility is routinely multi-slot**,
+  so it is plausibly the primary position rather than the eligibility list. I did not check
+  it against a Fantrax player page, which the owner says is the actual source of truth.
+  Recorded in the backlog item as an open question, not acted on.
+- **The live smoke on a CI runner.** All four new live tests pass from this machine. R26
+  shows this network is not representative, and `stats.nba.com` answers a laptop differently
+  from a GitHub runner.
+- **Cross-lane fingerprint collision.** `db/lineage.py` is one of the five files the cohort
+  manifest fingerprints, and another `data-engineer` lane is changing it tonight for
+  ADR-013. That lane will trip the same alarm, and whichever of us lands second invalidates
+  the other's refresh. Flagged to the coordinator; not resolvable from inside one lane.
+
+**Next:** The Fantrax-eligibility half is specified in the backlog item with the owner's
+expectations attached and marked unverified — pages over API, weekly cadence needing a
+staleness window rather than a timestamp, monotonic with an as-of date, and the 5-starts
+rule recorded as a general expectation Fantrax does not strictly follow. The design
+consequence worth carrying: **eligibility is read, never derived**, and anything computed
+from starts is a Model-gated prediction of a third party's behaviour that may never be
+displayed as eligibility. There is probably an ADR in where eligibility truth lives and how
+divergence is surfaced without being resolved, but it needs a real page capture first.

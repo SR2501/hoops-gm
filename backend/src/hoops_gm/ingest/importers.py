@@ -53,6 +53,7 @@ from hoops_gm.ingest.league_settings import LeagueSettingsDocument
 from hoops_gm.ingest.nba.models import (
     GameParticipation,
     NbaGameRecord,
+    NbaPlayerPositionRecord,
     NbaPlayerRecord,
     NbaTeamRecord,
     PlayerBoxScoreRecord,
@@ -257,6 +258,76 @@ def import_nba_players(session: Session, records: Sequence[NbaPlayerRecord]) -> 
             link.external_name = record.display_last_comma_first
             link.normalized_name = normalized.key
             link.external_team = record.team_abbreviation
+            counts.updated += 1
+
+    session.flush()
+    return counts
+
+
+#: Provenance stamped onto every position this importer writes. ``source`` on
+#: its own would not distinguish the league-wide listing from the per-player
+#: endpoint that states the same thing in long form, and refreshing deliberately
+#: means knowing which one was read.
+NBA_POSITION_SOURCE = f"{ExternalSource.NBA.value}:PlayerIndex"
+
+
+def import_player_positions(
+    session: Session,
+    records: Sequence[NbaPlayerPositionRecord],
+    *,
+    observed_at: datetime,
+) -> ImportCounts:
+    """Persist the NBA's listed position onto canonical players.
+
+    Joined by NBA person id through ``player_external_ids``, never by name —
+    this importer supplies one of the fields the *name* matcher corroborates
+    with, so matching it on a name would be circular.
+
+    A player the crosswalk has never seen is **skipped, not created**.
+    ``import_nba_players`` is the one place a canonical row is introduced, and
+    it does so from ``CommonAllPlayers``. A position listing is not evidence
+    that a person exists; it is an attribute of a person already established.
+    Letting it create rows would give this project two independent inventors of
+    identity, which is R7's failure mode with extra steps.
+
+    A record whose position is ``None`` is skipped rather than written as a
+    NULL over an existing value. The source declining to state a position is
+    not the source retracting one, and those must not be the same write — the
+    same distinction ``inactives_available`` exists for on the participation
+    side.
+    """
+    counts = ImportCounts()
+    links = {
+        row.external_id: row.player_id
+        for row in session.scalars(
+            select(PlayerExternalId).where(PlayerExternalId.source == ExternalSource.NBA)
+        )
+    }
+    if not links:
+        raise ValueError(
+            "no NBA player links exist; run the crosswalk before importing positions, "
+            "because this importer attaches an attribute to canonical players and "
+            "deliberately does not create them"
+        )
+
+    for record in records:
+        player_id = links.get(str(record.nba_player_id))
+        if player_id is None or record.position is None:
+            counts.skipped += 1
+            continue
+        player = session.get(Player, player_id)
+        if player is None:
+            counts.skipped += 1
+            continue
+
+        changed = player.primary_position != record.position
+        player.primary_position = record.position
+        player.primary_position_source = NBA_POSITION_SOURCE
+        player.primary_position_season = record.season
+        player.primary_position_observed_at = observed_at
+        if changed:
+            counts.created += 1
+        else:
             counts.updated += 1
 
     session.flush()
