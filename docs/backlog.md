@@ -593,22 +593,25 @@ once checked:
   because `aria-describedby` is announced unreliably on `table`, so the trade is
   not obviously favourable and no one has tested either with a real screen
   reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
-- **The doctored-payload technique should probably not live under
-  `frontend/src/test/fixtures/`.** `make_pending_date_payloads.py` is a Python
-  script that imports `backend/src` to make *frontend* fixtures, so it belongs to
-  neither side cleanly and no rule in the tree says where it goes. It is here
-  because that is where the artifacts it explains are, and being findable beat
-  being correctly filed. `architect` owns the placement; the trigger is the
-  second time anyone needs the same trick, because a technique used twice from
-  two lanes is dev tooling and should be filed as such.
-- **Nothing pins `input -> reason` in CI.** `--verify` re-runs the producer's
-  classifier over the derived payloads, but it is a script a person runs, not a
-  test a gate runs. The clean version is a backend test that imports the two
-  payloads and asserts the four reasons, which would fail in CI the moment the
-  producer reclassifies rather than the next time somebody thinks to check.
-  `data-engineer` owns it; the trigger is any change to `_pending_game_date`.
+- **The doctored-payload derivation should move under `backend/`, and one action
+  closes two problems.** `make_pending_date_payloads.py` is a Python script under
+  `frontend/src/test/fixtures/` that imports `backend/src` to make *frontend*
+  fixtures, so it belongs to neither side. The cost is measurable rather than
+  aesthetic: the only ruff config is `backend/pyproject.toml` and CI runs
+  `ruff check .` with `working-directory: backend`, so nothing in this repository
+  lints, formats or type-checks the file where it sits. Separately, nothing in CI
+  pins `input -> reason`; `--verify` is a script a person runs, and the clean
+  version is a backend test importing the derived payloads and asserting the four
+  reasons. **That test requires the derivation to live under `backend/`, so doing
+  the gate does the move.** Filed as one item rather than two, because two items
+  with one fix diverge — one gets done and the other stays open describing a
+  solved problem. `data-engineer` owns it; the trigger is the next touch of the
+  schedule-ingestion lane, not "any change to `_pending_game_date`", which only
+  someone already thinking about this file would notice. `architect` holds only
+  the ruling that it moves.
 
-**Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
+**Period-scoped, never cell-scoped.**
+A pending game carries `teamId: 0` with
 every naming field null, so no team can be named and none is. A per-cell "this
 team has an unscheduled game" badge would invent the one attribution the source
 withheld; the recorded contract test asserts every cell in a pending column

@@ -79,29 +79,31 @@ export interface ApiErrorBody {
  * - `irreconcilable` — both parsed and disagree; the source contradicting
  *   itself.
  *
- * **The classification is a ruling, and this tree does not yet contain it.** It
- * was decided from the live feed — all six pending games currently carry real
- * dates, so every fault reason fires zero times and the alarm-fatigue objection
- * to putting `irreconcilable` on the fault side does not apply on the evidence.
- * That reasoning lands in ADR-013 through a revision that is **not in this
- * tree**: at this head the ADR states the five-value set (`:222`) but assigns no
- * action to any member, and the one place it touches the question it does so
- * through exit codes (`:240`, grouping `irreconcilable` with `not_offered`).
+ * **The classification is ADR-013's, and the ADR now assigns all five.** The
+ * table at `:194-199` gives `not_offered` *wait* and `unreadable`,
+ * `irreconcilable` and `implausible` *investigate*; `''` is not an absence
+ * cause. It was decided from the live feed — all six pending games currently
+ * carry real dates, so every fault reason fires zero times and the
+ * alarm-fatigue objection to `irreconcilable` on the fault side does not apply
+ * on the evidence. `:201` records that `irreconcilable` sits there **by decision
+ * rather than by derivation**, which is the honest form: a consumer cannot
+ * distinguish a sloppy sentinel from a genuine contradiction.
  *
- * So do not read the lines above as *reported from the ADR*; they are the ruling
- * this client was built to, recorded here because the file that should hold it
- * does not yet. **This branch must not merge ahead of that revision**, or the
- * code cites a decision its own ADR contradicts on the page. If you are reading
- * this after both have landed, `:240` is the line to check.
+ * That citation is worth more than most because the ADR did not always say it,
+ * and the history is the reason this comment is long. An earlier version here
+ * reconstructed the whole classification from the producer's **exit codes** — it
+ * exits non-zero on `unreadable` and `implausible` only — and that was wrong,
+ * because an exit code answers *should this import fail* and this screen answers
+ * *should a human look*. Two questions, one signal, and it was taken because it
+ * was the one available. ADR-013 `:268-269` now names that conflation as how
+ * `irreconcilable` was first classified wrongly, so the trap is documented at
+ * the source rather than only here.
  *
- * An earlier version of this comment reconstructed the classification from the
- * producer's exit codes — it exits non-zero on `unreadable` and `implausible`
- * only — and that reconstruction was wrong, because an exit code answers *should
- * this import fail* and this screen answers *should a human look*. Two questions,
- * one signal, and it was taken because it was the one available.
- * `irreconcilable` is a fault here while leaving the import at exit 0. That
- * `:240` still encodes the same inference is why the citation above is scoped
- * rather than asserted.
+ * A later version of this comment then said the ADR assigned no action to any
+ * member. That was false too — it already assigned three — and a reviewer caught
+ * it: a correction over-claiming in the same direction as the thing it
+ * corrected, discarding the evidence that supported this client. Both errors
+ * were about the same document and both ran toward a bigger gap than existed.
  *
  * The reason it is a fault is worth keeping, because `code-review` found it and
  * it is sharper than the argument that won: the producer's own docstring says
@@ -118,12 +120,20 @@ export interface ApiErrorBody {
  * **One asymmetry to carry forward when this set grows.** The inversion below
  * makes the *action* safe by default — an unrecognised reason routes to
  * investigate. It does not make the *explanation* safe. The copy for the fault
- * branch says a value came and could not be used, which is true of all four
- * causes here and would be false of a new cause meaning *nothing was published*:
- * such a reason would get the right action and a wrong reason for it. That is
- * unreachable today because the boundary refuses reasons outside this list, so
- * a new one arrives as a contract error rather than as false copy. Adding a
- * member is therefore a copy change too, not only a list change.
+ * branch says a value came and could not be used, which is true of the three
+ * causes that reach it and is **already false of `not_offered`**, where the
+ * source published a game and no date at all. What keeps that from being a
+ * visible defect is the *routing*, not the copy: `not_offered` goes to
+ * `awaitingSource`, so the fault wording never describes it. A new cause
+ * meaning *nothing was published* would route to investigate — correct action —
+ * and be described as a value we could not use, which would be false.
+ *
+ * So the mechanism a future editor has to preserve is the routing, and the
+ * hypothetical is not hypothetical: a current member already violates the
+ * clause and is saved only by never reaching it. That is unreachable today
+ * because the boundary refuses reasons outside this list, so a new one arrives
+ * as a contract error rather than as false copy. Adding a member is therefore a
+ * copy change too, not only a list change.
  */
 export const DATE_ABSENCE_REASONS = [
   '',
