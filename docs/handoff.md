@@ -15023,6 +15023,14 @@ predicted:
    two-absences failure two other lanes hit today, in the verification tool rather than the code. It
    now reads the OpenAPI document, which is also the artefact the frontend lane will generate a
    client from.
+
+   Two things generalise out of this and both are repository facts, not observations about my
+   module. **Any test in this repository that scans `app.routes` is probably vacuous** - the routes
+   are not there to be found, and a scan reports a clean pass. And the broader rule the day has now
+   produced four instances of: *a check that iterates must first assert it found something to
+   iterate over.* Zero routes, zero swatches, zero cells and zero games are each indistinguishable
+   from the property holding perfectly. "Assert the presence you expect, not the absence of what you
+   fear" is the same rule stated for a single value; this is the collection form of it.
 3. **`extra="forbid"` was missing on the request models.** The mutation that exposed it was a bid
    carrying a `player_label`. Pydantic's default silently drops the field, so the recorder is told
    the bid was accepted *and* believes the player was captured, and only one of those is true. For a
@@ -15037,13 +15045,50 @@ does not work - typing `"Jalen Johnson 2"` is refused identically. An ordinary w
 (`"Jalen Johnson (ATL)"` keys distinctly), so the message now asks for a team abbreviation and says
 why a digit will not do. Anyone recording a mock would have hit this in the first ten minutes.
 
-**Environment hazard, for whoever is next on this machine.** There is **no virtualenv**. `hoops_gm`
-resolves to a stale namespace package in `AppData\Roaming\Python\Python314\site-packages\hoops_gm`
-containing only `schedule_context`, and `_editable_impl_hoops_gm_backend.pth` points at
-`sr2501-congenial-umbrella\backend\src` - **a worktree that no longer exists**. Every Python
-invocation needs `$env:PYTHONPATH="$PWD\src"` from `backend/`, or you silently import another lane's
-code, or nothing. Check with `python -c "import hoops_gm; print(hoops_gm.__file__)"` - it must print
-a path inside your own worktree. This cost about an hour.
+**Environment hazard, and it has already caused a published false verification.** There is **no
+virtualenv** on this machine. `hoops_gm` resolves to a stale namespace package at
+`AppData\Roaming\Python\Python314\site-packages\hoops_gm` containing only `schedule_context`, and
+`_editable_impl_hoops_gm_backend.pth` points at `sr2501-congenial-umbrella\backend\src` - **a
+worktree that no longer exists**. Every Python invocation needs `$env:PYTHONPATH="$PWD\src"` from
+`backend/`.
+
+The dangerous part is the *shape* of the failure, and I had it slightly wrong until I drove it.
+**`import hoops_gm` succeeds.** It resolves to the stale namespace package, so any check of the form
+"can I import the package" passes. What fails is `hoops_gm.app`, one level down, at
+`conftest.py:20`, and pytest exits **4** - a collection error, not a test failure. So the honest
+check is not `import hoops_gm` but:
+
+    python -c "from hoops_gm.app import create_app; import hoops_gm; print(hoops_gm.__file__)"
+
+which must print a path inside your own worktree. A bare `import hoops_gm` prints `None` and looks
+survivable.
+
+This is not a footnote. The coordinator's mutation harness ran pytest by subprocess without
+`PYTHONPATH`, every run exited 4, the harness scored any non-zero exit as "mutation caught", and two
+full matrices of green results were published that were entirely `ModuleNotFoundError`. Review
+caught it by getting the opposite answer on one mutation.
+
+**My own harness had the same latent bug, and I only know it did not fire because I went back and
+checked.** It asserted green-before, which catches a *persistently* broken environment - but
+`caught = not run(...)` still treated any non-zero exit as a catch, so a mutation that broke
+**collection** rather than an **assertion** would have scored as caught. Four of my fifteen
+mutations insert code rather than swapping an expression, which is exactly the shape that can raise
+at import time. Rebuilt to discriminate exit codes instead of truthiness:
+
+| pytest rc | meaning | scored as |
+| --- | --- | --- |
+| 0 | passed | not caught |
+| **1** | **a test failed** | **the only thing that counts as caught** |
+| 2 / 3 / 4 / 5 | interrupted, internal error, collection error, nothing collected | harness failure, reported as such |
+
+Re-run: all fifteen caught at `rc == 1`, including all four code-inserting ones. So the earlier
+result was right, but it was right by luck of the environment rather than by construction, and I
+could not have said which before re-running. I then confirmed the discrimination is real rather than
+decorative by clearing `PYTHONPATH` and running the harness again: every entry reported
+`[NOT GREEN rc=4]` and none reported a catch. That is the falsification, not the argument.
+
+Two harnesses in one day, both scoring `rc != 0` as success. **A mutation harness that treats
+pytest's exit code as a boolean is measuring whether pytest ran, not whether the guard works.**
 
 **Backlog:** recounted from the finished file after merging `origin/main` - 122 headings, 122 unique
 slugs, 122 markers, 1:1, giving 45 done / 1 blocked / 76 pending / 122 total, which matches the
