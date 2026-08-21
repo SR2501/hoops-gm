@@ -13124,3 +13124,174 @@ annotations and no status marker — recounted rather than assumed for that reas
 No cohort was regenerated, no live source was called, no Fantrax access was used, no paid
 source was consulted, and no owner-only decision was made. The widening decision is stated for
 the owner and explicitly not taken here.
+
+## 2026-08-21 — quant — Review round: I published a false claim about my own evidence, and the reviewer disproved it with one `git show`
+
+**Unit:** independent exact-head `data-engineer` and `code-review` passes at `8f87fe8`, on the
+frozen-protocol unit in the entry above. Both reviewed a tree that did not move. Eleven
+findings actioned across `docs/models/injury-status-conversion-preregistration.md` and
+`docs/backlog.md`. The entry above is append-only and stands as written; this corrects it.
+
+### The finding that matters: my "no row-level data anywhere" claim was false
+
+The entry above states *"There is no status x outcome contingency and no row-level data
+anywhere in the repository"*, and the backlog said no conversion rate was *"fittable from any
+committed artifact"*. **Both are false, and the counter-example is a commit my own document
+cites twice.** `3285e647` — the preserved v1 branch — carries
+`backend/tests/model_evidence/injury_status_conversion_v1_rows.json`: 594,951 bytes, 1,934
+records, each with status, participation outcome, game date, lead time and exclusion reason.
+`code-review` computed the full v1 status x outcome contingency from it in seconds and pasted
+it into the review.
+
+**The damage is to the disclosure, not only the wording.** My contamination disclosure
+enumerated the *aggregates* I had seen — selected structure, three band probabilities, Brier
+scores, calibration table, five-status ineligibility. That reads as though summaries were all
+that was available. Row-level outcomes for the near-identical cohort were one `git show` away
+the entire time, and I did not say so. **A disclosure that understates what was available is a
+bad disclosure regardless of what was actually used**, and whether I opened that file before
+drafting is a claim about my own conduct that no reader can check — so the corrected document
+does not rest on it and records that the contingency is now certainly known, because the
+review put it in front of me.
+
+**What survives, narrowed.** The prospectivity argument is no longer "the data could not have
+been consulted". It is that the **widened** cohort this protocol will be fitted against has not
+been collected, so no split of it, no outcome in it and no result from it can have informed the
+document. The corrected cohort still has no row-level artifact anywhere. That is a weaker
+sentence and a true one.
+
+**And "roughly 99% overlap" was evidenced by set sizes, which do not establish overlap.**
+`data-engineer` supplied the bound and then withdrew half its own finding: per status, shared
+rows cannot exceed the smaller count, so **at most 1,932 of 1,948 are shared, ≤99.18%**, and
+there is **no non-trivial lower bound** until the cohort database exists. It first said the
+true overlap was computable because I hold v1's rows; an overlap needs *both* sides' keys, and
+the corrected side has none — a check proposed against data that isn't there, inside a review
+of a document whose central finding is that a fit can't run against data that isn't there.
+The cohorts are also demonstrably **not nested**: `doubtful` 22→21 and `questionable` 152→151
+both shrank while the correction *added* two games.
+
+### The gate I built to prevent a wasted unblind could not have prevented it
+
+**Both reviewers found this independently, which is why I trust it.** My §2 admissibility gate
+measured **canonical observations**; §8 condition 6, the veto it exists to pre-empt, measures
+**direct outcomes**. Canonical ≥ direct, so the pre-check was the *looser* of the two: a cohort
+could clear the gate at 30 and be vetoed at 29. The exclusions are status-concentrated, not
+uniform — v1's 28 land entirely on `out` (26) and `questionable` (2) — so this is not a
+rounding concern. **A pre-check stated in the wrong unit is not a weaker gate; it is a gate
+that passes the case it was built to catch.**
+
+The requirement I placed on `data-engineer` was also the wrong shape, and its replacement is
+theirs: **per-status direct-outcome counts by game date, plus exclusion classes by status.**
+Mine asked for counts by *declared partition*, which bakes a `quant` split into an ingest
+artifact against ADR-006 and forces a regeneration whenever the split moves. Theirs is
+partition-agnostic and makes any split checkable.
+
+**They then found the constraint that keeps it pre-unblind, which neither document had.** Three
+exclusion classes are pure absence predicates — verified from the code that `row.outcome` is
+not in scope on any of those branches — so publishing them by status leaks nothing. But if
+anyone later adds `participation_outcome_counts` **by date**, any date whose direct set is
+single-status yields that cell's contingency by subtraction, and **the gate stops being
+pre-unblind without one line of the freeze changing.** The invariant is now written down:
+*outcome-valued counts stay whole-cohort; only denominators get the finer breakdown.*
+
+### The defect I criticised v1 for, committed in my own §4
+
+`code-review` found the split specified against **two different denominators** — "the
+admissible cohort's date range" in the lead-in, "share of game dates" in the table — with no
+rounding rule. For the committed cohort those differ: 26 game dates against 28 calendar days,
+and 25% of 26 is 6.5. §7 of the same document faults v1 because it *"requested lead-time
+stratification without defining boundaries"*. I repeated that exact class **in the section that
+determines every downstream number**, where it would have let a future author pick the boundary
+with the cohort in hand. Now: ordered distinct game dates, `floor(0.50·N)` and `floor(0.25·N)`,
+holdout as remainder so the partitions are exhaustive by construction.
+
+### Two citation defects, and one claim of novelty that was not novel
+
+**The PR #30 attribution pointed at a field that contains no such record.** I cited the
+manifest's own `source_fingerprint_method` as recording the correction; it states the method
+and no history, and the string `#30` appears nowhere in that file. It is `docs/handoff.md:7543`
+and `:8080`. Both reviewers caught it. A provenance error inside a section headed *"re-derived
+from files at this head"* is the failure the section exists to prevent.
+
+**And my third "correction to the record" had already been made — by the lane I was
+correcting.** `docs/handoff.md:7719-7722` says it plainly: *"My earlier framing of the tail as
+a precondition for `quant` was right in direction and wrong in the detail that matters: it
+would have sent them looking for a tail absent from the data they use."* I read PR #39's first
+entry, not the remediation round that superseded it, and published the result as a novel
+correction. **A claim of the form "the record is wrong" is invalidated by another lane's later
+work** — the same class as the stale `80b3e563…` fingerprint I was flagging in the same
+paragraph. `data-engineer` graded this as over-cautious hedging and, on being shown the four
+following lines, said it had stopped reading four lines early by the same mechanism. Both of us
+hit it inside one review.
+
+Relatedly, I described the 1,650-minute row's exclusion class as something the record could not
+settle. Two committed documents assert it — `docs/adapters/nba-injury-report.md:1309` in bold,
+and `docs/handoff.md:7717-7718`. The freeze now declines to *rely* on it because it is not
+checkable from the manifest, which is a different statement from the record being silent.
+
+### One thing the review gave back
+
+`data-engineer` pointed out that `sha256_sorted_joined_stable_records` already hashes each
+row's status **and** outcome together. So the committed cohort's full contingency is
+**cryptographically committed at this head** — not a leak, since preimage resistance holds, but
+it means a future fit's contingency can be checked against a fingerprint published before
+anyone unblinded. My condition 8 leaned on that harder than it said, and now says so.
+
+### What was verified sound
+
+Both reviewers independently re-derived every manifest figure and confirmed them exact.
+`code-review` attacked the load-bearing arithmetic and confirmed it holds under **either** unit,
+since direct outcomes are a subset of canonical observations — so the `doubtful` ≤ 21 < 30
+argument is conservative rather than merely valid, and v1's actual held-out `doubtful` was **4**.
+`data-engineer` traced `_participation_join` to prove the joined set is a subset of the
+canonical set with `status_counts` a strict upper bound. Both confirmed the handoff append was
+purely additive with the 11,243-line prefix byte-identical, the backlog header reproducing at
+114/40/1/73 with no marker changed, the LF digest byte-equal to the git blob, and the
+`reliability-metrics.md` and `PlayerGameLogs` quotations accurate in context.
+
+### On amending a freeze
+
+The freeze now states it **binds on merge**, with the pre-merge review delta tabulated so the
+edit window is auditable rather than asserted. Its first draft said amending in place defeats
+its purpose, which would have forced a v3 for a wrong citation. Binding on merge preserves the
+actual guarantee — the widened cohort does not exist at merge time either — and claiming an
+unreviewed first draft was already immutable would assert a rigour the review process itself
+contradicts. Every pre-merge change is reviewer-driven, none data-driven, and the substantive
+ones **tightened** the protocol: the admissibility unit moved to the stricter denominator and
+the split gained a rounding rule it lacked.
+
+### A defect in this entry's own predecessor, found while appending it
+
+The previous entry was appended without a terminating newline, so `docs/handoff.md` ended
+mid-line. Appending after it produced a diff showing **one deletion** — the unterminated line
+being terminated, content byte-identical — and left the new heading with no blank line before
+it. I caught it by reading the diff and the rendered seam rather than trusting that "append
+cannot delete". So this commit is 172 insertions and 1 deletion, and **the deletion is my own
+missing newline being fixed, not a modified entry.** Recorded because "append-only" is verified
+by reviewers with a numstat, and this file will now show a clean 0-deletion append next time.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when this was written. Local gates green: 1,271 tests, Ruff
+  lint and format, strict mypy over 140 files, and `git status` clean afterwards, so no
+  `test_secret_scan.py` fixture residue.
+- **That I did not consult the v1 rows before drafting the first freeze.** Unfalsifiable by any
+  reader, so the corrected document is written not to depend on it. I have certainly seen the
+  contingency now.
+- **Any v1-derived figure, by anyone without this clone.** `3285e647` is on a local-only branch
+  that was never pushed. The ≤99.18% bound, the exclusion-by-status split and the held-out
+  `doubtful` count of 4 are all uncheckable from `origin`. That is a real audit gap in the
+  contamination disclosure and I have no way to close it without publishing invalidated-cohort
+  rows, which the backlog rules non-consumable.
+- **The lower bound on cohort overlap.** Not computable until the cohort database exists.
+- **Whether `80b3e563…` was inherited anywhere else.** The coordinator took that sweep.
+- **That the differencing-attack invariant is complete.** I reasoned about one attack — a
+  per-date outcome marginal — with `data-engineer`. Neither of us enumerated the space of
+  disclosures that could cross the margins, and neither of us ran an attack against a real
+  manifest, because no widened manifest exists.
+- **The corrected entry's own claim that every pre-merge change was reviewer-driven.** It is
+  checkable against the two review transcripts and the tabulated delta, but those transcripts
+  live in session state rather than in the repository, so a future reader has the table and my
+  word for it.
+
+No cohort was regenerated, no live source was called, no fit was run, no number was emitted,
+and no owner-only decision was made.
