@@ -150,9 +150,71 @@ failure, reintroduced deliberately.
 make it distinguish two situations, not to make it see less.
 
 ## What would flip this
-
 If the source is ever observed publishing absent team identifiers for a reason other than
 an undetermined bracket — a partial outage, a schema change, a data error — then "pending"
 no longer means "not yet decided", and the distinction collapses. The live smoke must
 therefore assert the pending set is structurally explicable (currently: NBA Cup knockout
 labels), not merely that it is small. If that assertion fails, revert to refusing.
+
+### 2026-08-21 — what a pending game's `game_date` means, and what a consumer may conclude
+
+This ADR said nothing about `game_date`. Its semantics ended up defined in two docstrings
+on two unmerged branches and in no accepted decision — which is how a consumer came to
+quote a producer docstring **as an ADR clause**, in quotation marks, for the most
+load-bearing constraint on its screen. The obligation was real and the address was invented.
+That is this ADR's fault before it is the consumer's, and it is fixed here.
+
+**A pending game's `game_date` is nullable.** The key is always present; the value may be
+`null`. It is never absent, so a missing key remains a malformed block and must still be
+refused.
+
+**`null` means no trustworthy date could be derived, and the response says which cause.**
+Three are possible: the source offered no date at all, the source offered one that could not
+be read, or the two time fields could not be reconciled. **Only the first is the source
+saying "not yet decided."** The producer therefore emits a sibling field:
+
+    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable}
+
+a closed, validated set, **cross-checked against `game_date`** so that a reason without an
+absence, or an absence without a reason, is refused — the two halves of one fact cannot
+disagree on the wire.
+
+This replaces an earlier draft of this section which said `null` does not name a cause and
+that a consumer must therefore render it vaguely. That was true of the contract as first
+built, and the producer found a third option better than the two on the table: neither
+conflate the causes nor refuse the import over an unreadable date on a field nothing
+persists, but **record the cause**. It is this repository's own "capture reason codes, not
+just the outcome" — the rule it already applies to a DNP — applied to a parse result.
+
+**The consumer obligation follows from the reason, and the error direction is why it
+matters.** `not_offered` means *wait*: the bracket is undrawn and a date will arrive.
+`unreadable` means *investigate*: we failed to read something the source did send, or the
+schema moved. Rendering the second as the first tells an operator to wait through a defect.
+The live smoke asserts `unreadable` never occurs against the real source, because that value
+is a fault or a schema change rather than an undecided bracket.
+
+**Consequences for any consumer:**
+
+- A game with a `null` date belongs to **no scoring period** and must not be attributed to
+  one.
+- It must not be dropped from the pending set. It is a published game; only its date is
+  unavailable.
+- The **season-level** count of undecided games must stay complete even when the per-period
+  attribution cannot be made. Those are two different denominators, and a number that
+  quietly drops what it cannot place is worse than one that says it cannot place it.
+- A well-formed but degenerate date — the source emits a year-0001 sentinel for an
+  undecided tip-off — is indistinguishable at the client from a genuine out-of-calendar
+  date. A consumer's buckets therefore **partition what it can tell apart, not what the
+  states are**, and its copy must be true under every cause it cannot separate.
+
+**What would let this say more.** Nothing further is required here. The producer's reason
+codes already let a consumer distinguish the case that means *wait* from the case that means
+*investigate*, which is the distinction this section was written because the contract could
+not express.
+
+What a consumer still **cannot** do is distinguish a well-formed but degenerate date — the
+year-0001 sentinel the source emits for an undecided tip-off — from a genuine
+out-of-calendar date, because both are valid days. That one is not a producer gap; it is a
+limit of what a date value can carry, and the correct response is the bucket rule above
+rather than a client-side heuristic about what a date means.
+
