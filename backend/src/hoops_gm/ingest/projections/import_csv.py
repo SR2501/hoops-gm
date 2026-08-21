@@ -137,8 +137,13 @@ _SOURCE_CHOICES: Final = tuple(
 )
 
 #: NBA season form: four digits, a hyphen, and the last two digits of the
-#: following year.
-_SEASON_PATTERN: Final = re.compile(r"^(\d{4})-(\d{2})$")
+#: following year. ``[0-9]`` rather than ``\d`` because ``\d`` is Unicode-aware
+#: and accepted Arabic-Indic digits; used with ``fullmatch`` rather than
+#: ``match`` because ``$`` matches *before* a trailing newline, so ``match``
+#: accepted ``"2026-27\n"`` and returned it verbatim into
+#: ``projection_imports.season``. Both found by driving the validator rather
+#: than by reading it.
+_SEASON_PATTERN: Final = re.compile(r"([0-9]{4})-([0-9]{2})")
 
 
 def nba_season(value: str) -> str:
@@ -165,7 +170,7 @@ def nba_season(value: str) -> str:
     from that precedent.
     """
 
-    match = _SEASON_PATTERN.match(value)
+    match = _SEASON_PATTERN.fullmatch(value)
     if match is None:
         raise argparse.ArgumentTypeError(
             f"{value!r} is not an NBA season; expected the form 2026-27"

@@ -13819,3 +13819,173 @@ unexercised until the owner runs it.
 *That the two reviewers between them found everything.* They found the same
 blocker independently, which is reassuring about that finding and says nothing
 about the ones neither looked for.
+
+---
+
+## 2026-08-21 — backend — Round three: my fix to the leak filter was a coverage regression
+
+**Changed:** Remediation of `ffa0662` after re-reviews at that exact head.
+`data-engineer` **APPROVED** with three low findings; `code-review` requested
+changes on two. All taken. 6 files.
+
+**`data-engineer` attacked the blocker rather than reading it** — seven
+hand-built database states, including the two I had flagged as untested. The two
+checks backstop each other: the `original_filename` collision I worried about is
+caught by the crosswalk check, and a link outliving its import is caught by the
+same. The only state clearing both is a real import named
+`synthetic-projections-demo.csv` that resolved **zero** rows, which it drove, and
+which has no crosswalk behind it to retract. Row counts across four tables
+identical before and after a refused run.
+
+**`code-review` established the disclosed gaps are structurally unreachable**,
+which upgrades my disclosure from belief to mechanism: `Projection.projection_import_id`
+and `SourceGamesPlayedAssumption.projection_id` are **non-nullable FKs**, so
+neither table can hold a row without a `projection_imports` row the guard does
+inspect. Other-source crosswalk rows are untouchable because `import_resolutions`
+scopes read, supersede and write to one source and the seed only passes
+`BASKETBALL_MONSTER`.
+
+**`projection_sources` is the exception, and both reviewers are right about
+different halves.** `data-engineer` hand-built a database holding only a
+`projection_sources` row: the seed proceeded and overwrote `display_name` and
+`assumed_scoring_type`. `code-review` established that **no committed path
+produces that state**, since the only writer runs inside the transaction that
+creates the import row. So it is unreachable through the application, reachable
+by hand, and harmless when reached. My handoff said *"I believe those cannot be
+reached"* — corrected here to what was driven.
+
+**Second time today "I believe it is unreachable" was wrong, and both times in a
+disclosure rather than in code.** `AGENTS.md` makes the could-not-verify field
+mandatory and lanes are disciplined about *enumerating* gaps; nothing disciplines
+the justification attached to each one. *"I could not verify X"* is checkable and
+gets checked. *"…and I believe X is unreachable"* is a load-bearing claim
+arriving in the same breath, wearing the humility of the section around it, and
+nobody reviews it because the section reads as an admission rather than an
+assertion. **State what was not checked, and separately whether the reason it is
+believed harmless was driven or reasoned.**
+
+---
+
+### The two blocking findings, both in what I had just remediated
+
+**1. My fix to the stdout leak filter was a net coverage regression.** The census
+`code-review` ran on the same file the test uses:
+
+```
+old  (len(cell) > 4)    : 131 checked
+new  (not is_number)    :  60 checked
+checked by OLD, not NEW :  75   all numeric — the per-game rates
+gained by NEW           :   4   'bam', 'jose', 'nate', 'trey'
+```
+
+`import_csv.py` promises *"No rate, no player name from the file, and no raw
+cell value reaches stdout."* **For a real Basketball Monster export the rates
+are the paid content**, and my fix made them the one class the test cannot see.
+I replaced a filter broader than its rationale with a filter broader than its
+rationale in the opposite direction, and the second one read as a tightening.
+
+The rationale said short numbers collide with printed counts. That justifies
+exempting `60`. It does not justify exempting `1182.1`. The exemption is now
+exactly the collision class named: `^[0-9]{1,3}$`. The population is asserted
+from **both** sides — a short name and a decimal must both be present — because
+each half has now been silently emptied once.
+
+**2. "Refuses before anything is written" was claimed four times and pinned
+nowhere.** `code-review` moved `require_safe_projection_target` from the first
+statement to immediately after `import_projection_csv`, ran the full suite, and
+got **1316 passed** — then reproduced the entire original blocker through a raw
+session, which is how five of my own tests call the function.
+
+My test asserts *committed* state, and `Database.session()` rolls back on
+exception, so **a guard that writes and then refuses is rescued by the caller and
+looks identical to one that refused first.** The new test reads through the same
+session before any rollback, so the caller cannot do the guard's job for it. The
+mutation is now in the harness and reddens on the exact relocation.
+
+That is `gates.md`'s rule landing on me precisely: the guard had a mutation for
+*whether* it refuses and none for the property its docstring spends four
+paragraphs on.
+
+### The rest
+
+`nba_season` accepted `"2026-27\n"` — `$` matches before a trailing newline — and
+`"٢٠٢٦-27"`, because `\d` is Unicode-aware. Neither escapes `--report-dir`, but
+both land in `projection_imports.season` as a value no reader will query, which
+is the half the docstring calls worse in practice. Now `fullmatch` and `[0-9]`,
+with both shapes in the parametrized rejection.
+
+**The renamed source test still asserted a property nothing checks**, and both
+reviewers proved it independently by replacing `_SOURCE_CHOICES` with a
+hand-maintained literal and watching every test stay green. *"Is derived"* is not
+runtime-observable, which is an argument for not naming a test after it rather
+than for testing harder. Renamed to the conjunction of what it establishes, and
+the strict-subset sibling is deleted — two assertions where one contains the
+other is a count of two and a coverage of one.
+
+The foreign-import refusal message claimed seeding *"would retract every real
+player_external_ids row"*. False for a `manual` import: `_owns_current_source_crosswalk`
+scopes by source and the seed only calls `import_resolutions` for Basketball
+Monster. Refusing on any foreign import is still right — over-broad in the safe
+direction — but **a refusal message overstating the harm is the mirror image of
+the docstring defect this change corrects**: understated scope read as broader
+protection, then overstated harm read as broader coverage. One mechanism, two
+signs. The message now says what it refuses on and, separately, where the harm is
+real.
+
+**A third instance of the same shape, in a message rather than in code.** I told
+`frontend` its fixture was safe and led with two matching digests. Those pin the
+rates and **not** `source_games_played_assumptions` — `ReleasedProjectionImport`
+never selects it — nor the player labels. The defect that opened
+`release-digests-assumptions` was a byte-identical re-import serving an *empty*
+assumptions array beside clean lineage: my exact evidence, offered, missing
+exactly that. The one-line diff I sent second is what actually established the
+claim, because it covers everything the seed writes. **Lead with the item whose
+mechanism covers the most of the claim, not the item that looks most like
+proof.** A digest looks like proof; a one-line diff does not.
+
+**And a measurement that contained its own instrument.** I quoted a payload of
+54167 bytes at `frontend`; it measured 54159 and recorded the 8-byte gap as
+unexplained rather than reaching for the available explanation. Driven: the
+payload is 54159, twice, and my number included the literal string `HTTP 200`
+from my own `curl -w` format. The plausible explanation was *available and
+wrong* — `imported_at` microseconds do vary and `.475778` is seven characters, so
+a confident paragraph about float-string width would have closed 7 ≈ 8 as
+fiction. Recording it as unexplained is the only thing that left it open long
+enough to settle, which is the could-not-verify field working as designed rather
+than as a disclaimer.
+
+**Now true:** 1318 tests. 14 mutations, all caught, applied and reverted, each
+asserting green-before. Includes `code-review`'s own guard-relocation mutation
+and **both** directions of the leak-filter defect, so neither can return.
+
+**Could not verify:**
+
+*PostgreSQL on this head.* Not yet re-earned. It was green and `headSha`-verified
+on `ee139a1`, which no longer exists.
+
+*The TOCTOU on `require_safe_projection_target`.* It is an unlocked read; a real
+import committing between the check and the demo import slips through. Not
+reachable in a single-operator workflow and not worth a lock in developer
+tooling — now stated in the docstring rather than decided silently, because "not
+reachable" is a claim and this unit has been wrong about one twice.
+
+*Seeding a real `backfill nba-identity` database still contaminates it*, verified
+by `data-engineer` as **reachable and non-destructive**: a demo league, schedule,
+580 fixture players and a BM crosswalk are written, and every real row survives
+unmutated because `import_nba_players` is an upsert that retracts nothing. The
+irreversible half is gone; the contamination is not, and no docstring claims
+otherwise.
+
+*Non-current crosswalk rows are correctly ignored* — driven, history survives
+verbatim — recorded so the next reader does not re-derive it.
+
+*The zero-slack `AUTO_ACCEPT_CONFIDENCE` identity.* `0.70 + 0.15 == 0.85` exactly,
+`grep UNIQUE_NAME_BONUS tests/` returns nothing, and it is defended only by
+consequence. Filed for `identity`'s owner rather than added here: the consequence
+**mislabels the failure**, since tuning `0.70 → 0.68` produces a red reading *"the
+demo cohort of 8 row(s) resolved to no player"*, which names this seed rather
+than the invariant broken. A signal pointing at the wrong module is worse than a
+missing one.
+
+*Anything about a real Basketball Monster export.* Unchanged and still the
+largest gap.

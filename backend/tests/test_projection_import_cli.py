@@ -15,6 +15,7 @@ than the resolver's luck on a hand-written name.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -305,17 +306,25 @@ def test_no_value_from_the_file_reaches_stdout(
     """The export is paid content, and a terminal scrollback is a paste away.
 
     Checked against the file's own bytes rather than a list of fields somebody
-    remembered to add. **Only cells that parse as numbers are exempt**, and only
-    because a short number genuinely does collide with a count by coincidence —
-    ``60`` appearing in the summary says nothing about the file.
+    remembered to add. **Only cells that could plausibly collide with a printed
+    count are exempt**, and the exemption is deliberately narrow: an integer of
+    three digits or fewer. ``60`` in the summary says nothing about the file;
+    ``1182.1`` cannot collide with any count this module prints.
 
-    An earlier version filtered on ``len(cell) > 4`` and justified it as
-    excluding short *numeric* cells. It did not do that: a review's census over
-    the 12-row demo file found it checked 59 of 138 cells and dropped 79,
-    including ``'bam'`` — a real NBA first name, which is precisely the class
-    the module docstring promises never reaches stdout. A leak of any name of
-    four characters or fewer passed. The filter now matches its own rationale,
-    so every name is checked at every length.
+    This filter has now been wrong twice, in opposite directions, and both
+    versions were broader than the rationale written beside them.
+
+    * ``len(cell) > 4``, justified as excluding short *numeric* cells, actually
+      excluded 79 of 138 cells including ``'bam'`` — a real NBA first name,
+      which is the paid-content class the module docstring names first.
+    * ``not is_number``, fixing that, dropped **every numeric cell**: 131
+      checked became 60, and the 75 lost were the per-game rates. For a real
+      Basketball Monster export **the rates are the paid content**, so the
+      second fix exempted the larger half of the thing being protected while
+      reading as a tightening.
+
+    So the population is asserted from both sides now: it must contain a short
+    name *and* a decimal value, so neither half can be silently emptied again.
     """
     content = demo_csv(seeded)
     path = write_csv(tmp_path, content)
@@ -325,43 +334,44 @@ def test_no_value_from_the_file_reaches_stdout(
 
     out = capsys.readouterr().out
     lines = content.decode("utf-8").splitlines()
-
-    def is_number(cell: str) -> bool:
-        try:
-            float(cell)
-        except ValueError:
-            return False
-        return True
+    collides_with_a_count = re.compile(r"^[0-9]{1,3}$")
 
     checked = [
-        cell for line in lines[1:] for cell in line.split(",") if cell and not is_number(cell)
+        cell
+        for line in lines[1:]
+        for cell in line.split(",")
+        if cell and not collides_with_a_count.match(cell)
     ]
-    # The guard is only as good as its population: assert real names are in it,
-    # so a future filter change that quietly empties it fails here rather than
-    # passing over nothing.
-    assert any(len(cell) <= 4 for cell in checked), checked
-    assert len(checked) >= 2 * len(lines[1:])
+
+    # A guard is only as good as its population. Both halves are asserted
+    # present, because each was silently emptied once.
+    assert any(len(cell) <= 4 and not cell.replace(".", "").isdigit() for cell in checked), checked
+    assert any("." in cell for cell in checked), checked
 
     assert [cell for cell in checked if cell in out] == []
 
 
-def test_the_source_choices_are_derived_from_the_registry_rather_than_hand_maintained(
+def test_the_offered_sources_exclude_anchor_namespaces_and_include_one_that_always_refuses(
     capsys: pytest.CaptureFixture[str], seeded: Database, tmp_path: Path
 ) -> None:
-    """What the derivation actually buys, and what it does not.
+    """Named for what it checks, after two names that were not.
 
-    An earlier version of this test was named ``…are_exactly_the_sources_that
-    _can_write_production`` and asserted set equality against **the identical
-    expression the implementation uses**. It could only fail if someone
-    hardcoded the list, and it could not distinguish "can write production" from
-    "has a profile" — which is what its name claimed. R55's agreeing check.
+    The first version, ``…are_exactly_the_sources_that_can_write_production``,
+    asserted set equality against **the identical expression the implementation
+    uses** — R55's agreeing check. The second,
+    ``…are_derived_from_the_registry_rather_than_hand_maintained``, fixed the
+    assertions but kept a name nothing checked: **both reviewers independently
+    replaced ``_SOURCE_CHOICES`` with a hand-maintained literal and watched
+    every test in this file stay green.**
 
-    Two separate properties, established separately:
+    "Is derived" is not a runtime-observable property, which is an argument for
+    not naming a test after it rather than for testing harder. So the name is
+    now the conjunction of the two things actually established:
 
-    * the offered set excludes identity-anchor namespaces, checked against the
-      enum rather than against the implementation's own expression;
-    * ``fantasypros`` is offered **and cannot write production**, driven through
-      ``main`` — which is the fact the old name denied.
+    * no identity-anchor namespace is offered — asserted against
+      ``ExternalSource``, not against the implementation's own expression;
+    * an offered source can still refuse, driven through ``main``, which is the
+      fact the first name denied.
     """
     from hoops_gm.db.models.enums import ExternalSource
 
@@ -370,12 +380,11 @@ def test_the_source_choices_are_derived_from_the_registry_rather_than_hand_maint
     )
     choices = set(action.choices or ())
 
+    assert choices
     assert action.default == ExternalSource.BASKETBALL_MONSTER.value
-    # Independent of `_SOURCE_CHOICES`' own derivation: no anchor namespace.
     assert ExternalSource.NBA.value not in choices
     assert ExternalSource.FANTRAX.value not in choices
 
-    # And the half the old name got wrong: an offered source that always refuses.
     assert "fantasypros" in choices
     path = write_csv(tmp_path, demo_csv(seeded))
     capsys.readouterr()
@@ -385,7 +394,17 @@ def test_the_source_choices_are_derived_from_the_registry_rather_than_hand_maint
 
 @pytest.mark.parametrize(
     "bad",
-    ["2026-2027", "2026", "26-27", "2026-28", "2026_27", "../../pwned", ""],
+    [
+        "2026-2027",
+        "2026",
+        "26-27",
+        "2026-28",
+        "2026_27",
+        "../../pwned",
+        "",
+        "2026-27\n",
+        "\u0662\u0660\u0662\u0666-27",
+    ],
     ids=[
         "four-digit-end",
         "no-end",
@@ -394,6 +413,8 @@ def test_the_source_choices_are_derived_from_the_registry_rather_than_hand_maint
         "underscore",
         "traversal",
         "empty",
+        "trailing-newline",
+        "arabic-indic-digits",
     ],
 )
 def test_a_season_that_is_not_an_nba_season_is_rejected_before_anything_runs(
@@ -463,23 +484,3 @@ def test_a_database_failure_is_reported_as_one_and_writes_nothing(
 
     assert "database error" in capsys.readouterr().err
     assert row_counts(seeded) == (0, 0, 0)
-
-
-def test_a_source_the_importer_would_reject_as_a_namespace_is_never_offered() -> None:
-    """The one thing the derivation genuinely buys, checked against the enum.
-
-    ``nba`` and ``fantrax`` are identity-anchor namespaces; ``import_projection_csv``
-    rejects them outright as "not a projection CSV source". Asserted against
-    ``ExternalSource`` rather than against ``_SOURCE_CHOICES``' own expression,
-    so this cannot become the agreeing check its predecessor was.
-    """
-    from hoops_gm.db.models.enums import ExternalSource
-
-    action = next(
-        action for action in build_parser()._actions if "--source" in action.option_strings
-    )
-    choices = set(action.choices or ())
-
-    assert choices
-    assert ExternalSource.NBA.value not in choices
-    assert ExternalSource.FANTRAX.value not in choices

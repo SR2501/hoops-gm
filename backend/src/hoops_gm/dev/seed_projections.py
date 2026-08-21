@@ -339,7 +339,26 @@ def require_safe_projection_target(session: Session) -> None:
 
     Called **before** :func:`~hoops_gm.dev.seed_schedule_grid.seed_schedule_grid`
     so it refuses before anything at all is written, which is the principle that
-    module already establishes.
+    module already establishes. That ordering is pinned by
+    ``test_the_refusal_happens_before_anything_is_written``, which reads through
+    the *same session* before any rollback — because a committed-state assertion
+    cannot tell "refused first" from "wrote, refused, and was rescued by the
+    caller's rollback". A review established that by moving this call one line
+    and watching 1,316 tests stay green while the original blocker reproduced.
+
+    **Overstating what a refusal prevents is the same defect as overstating what
+    a guard covers.** The messages below say what this refuses on and, for the
+    case where the harm is real, what the harm is — not one implying the other.
+    A ``manual`` import is refused too, and no Basketball Monster crosswalk was
+    ever at risk from it: ``_owns_current_source_crosswalk`` scopes by source
+    and this seed only ever calls ``import_resolutions`` for
+    ``BASKETBALL_MONSTER``.
+
+    **This is an unlocked read, and therefore a TOCTOU.** A real import
+    committing between this check and the demo import would slip through. Not
+    reachable in the single-operator workflow this tool exists for, and not
+    worth a lock in developer tooling — recorded because "not reachable" is a
+    claim, and this unit has already been wrong twice today about believing one.
     """
 
     foreign_import = session.execute(
@@ -351,10 +370,12 @@ def require_safe_projection_target(session: Session) -> None:
         raise DemoSeedRefused(
             f"this database holds projection import {foreign_import.id} "
             f"({foreign_import.original_filename!r}), which this seed did not create. "
-            "Seeding would make the demo cohort the newest import for its source and "
-            "retract every real player_external_ids row to a non-current state, "
-            "replacing the crosswalk with synthetic-demo-* entries. Nothing was written. "
-            "Use a throwaway --database-url."
+            "This refuses on any foreign projection import regardless of source, because "
+            "deciding per-source which imports are safe to seed alongside is a judgement "
+            "this tool should not be making. For a Basketball Monster import specifically, "
+            "seeding would make the demo cohort the newest for that source and retract "
+            "every real player_external_ids row to a non-current state. Nothing was "
+            "written. Use a throwaway --database-url."
         )
 
     # Checked separately rather than inferred from the absence of an import row:

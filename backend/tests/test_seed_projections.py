@@ -14,7 +14,9 @@ from sqlalchemy import func, select
 
 from hoops_gm.db.models.enums import ExternalSource, MatchMethod
 from hoops_gm.db.models.identity import Player, PlayerExternalId
+from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection, ProjectionImport
+from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_projections import (
     DEMO_COHORT_SIZE,
@@ -185,6 +187,69 @@ def test_the_seed_refuses_a_database_holding_a_real_import(database: Database) -
     assert current_bbm_links() == before
     with database.session() as check:
         assert check.scalar(select(func.count()).select_from(ProjectionImport)) == 1
+
+
+def test_the_refusal_happens_before_anything_is_written(database: Database) -> None:
+    """The ordering claim, pinned — because the outcome claim does not pin it.
+
+    "It refuses before anything is written" is stated in three docstrings and
+    the handoff, and is explicitly contrasted with the two later refusals that
+    *do* fire after writes. Nothing established it: a review moved
+    ``require_safe_projection_target`` from the first statement of
+    ``seed_projections`` to immediately after ``import_projection_csv``, ran the
+    full suite, and got **1316 passed**. It then reproduced the entire original
+    blocker — real crosswalk retracted, ``synthetic-demo-*`` current — through a
+    raw session, which is how five tests in this file call the function.
+
+    The reason the sibling test cannot see it: it asserts *committed* state, and
+    ``Database.session()`` rolls back on exception, so a guard that writes and
+    then refuses is rescued by the caller and looks identical to one that
+    refused first. This uses a raw ``session_factory()`` session and asserts
+    **inside it, before any rollback**, so the caller cannot do the guard's job
+    for it.
+    """
+    with database.session() as setup:
+        import_nba_players(
+            setup, parse_common_all_players(load_fixture(DEFAULT_FIXTURES_DIR, PLAYERS_FIXTURE))
+        )
+    with database.session() as setup:
+        rows = build_demo_csv(unique_named_players(setup, limit=4)).decode().splitlines()
+        real = "\n".join(
+            [rows[0], *(r.replace(DEMO_SOURCE_ID_PREFIX, "bbm-real-") for r in rows[1:])]
+        )
+        import_projection_csv(
+            setup,
+            source=ExternalSource.BASKETBALL_MONSTER,
+            display_name="Basketball Monster 2026-27",
+            season=SEASON,
+            csv_bytes=(real + "\n").encode("utf-8"),
+            original_filename="owner-real-export.csv",
+        )
+
+    session = database.session_factory()
+    try:
+        with pytest.raises(DemoSeedRefused):
+            seed_projections(session, cohort_size=COHORT)
+
+        # Read through the *same* session, before any rollback. If the guard had
+        # moved after the writers, these would be non-zero here even though a
+        # committed-state assertion would still pass.
+        assert session.scalar(select(func.count()).select_from(League)) == 0
+        assert session.scalar(select(func.count()).select_from(NbaGame)) == 0
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(PlayerExternalId)
+                .where(
+                    PlayerExternalId.source == ExternalSource.BASKETBALL_MONSTER,
+                    PlayerExternalId.external_id.startswith(DEMO_SOURCE_ID_PREFIX),
+                )
+            )
+            == 0
+        )
+    finally:
+        session.rollback()
+        session.close()
 
 
 def test_the_seed_refuses_a_stray_crosswalk_entry_with_no_import(database: Database) -> None:
