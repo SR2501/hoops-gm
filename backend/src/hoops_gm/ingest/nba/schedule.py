@@ -342,9 +342,28 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                 )
                 continue
 
-            utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
-            eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
-            if eastern_tipoff.astimezone(UTC) != utc_tipoff:
+            try:
+                utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
+                eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
+                reconciles = eastern_tipoff.astimezone(UTC) == utc_tipoff
+            except OverflowError as exc:
+                # `astimezone` raises this, not SourceContractError, for a
+                # conversion outside datetime.min/max. Untranslated it escaped
+                # `main()`'s handlers entirely and exited 1 with a traceback,
+                # where every other malformed timestamp on a resolved game
+                # exits 2 with "refused, nothing written". The exit code is the
+                # machine-readable channel, so an out-of-range value must not
+                # be the one shape that bypasses it.
+                #
+                # The lenient path already absorbed this; this is the same
+                # one-sidedness that put the plausibility bound on one branch
+                # and not the other, found by a reviewer at the third time of
+                # asking.
+                raise _contract(
+                    f"{game_id} has a tipoff outside the representable date range "
+                    f"({type(exc).__name__}: {exc})"
+                ) from exc
+            if not reconciles:
                 raise _contract(
                     f"{game_id} has inconsistent EST/UTC tipoff fields: "
                     f"{eastern_tipoff.isoformat()} != {utc_tipoff.isoformat()}"

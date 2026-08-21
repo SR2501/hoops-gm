@@ -9981,3 +9981,61 @@ consequence, and `architect` is filing it rather than letting it into this PR.
 
 **Next:** round seven re-run on this head, because the resolved-side guard and
 the loosened bound both postdate the one it is running against.
+
+---
+
+## 2026-08-21 — data-engineer — Round seven: behaviour-only, one finding, same one-sidedness a third time
+
+**Changed:** Scoped round seven to behaviour and told the reviewer to report no
+prose at all. It returned four areas behaviourally clean and one real finding.
+
+**Four clean, and the evidence is better than mine was.** The reviewer swept
+16 shapes across the `not_offered`/`unreadable` split, **32,357 adversarial
+timestamp pairs** through `_pending_game_date` with zero escapes, every day
+from 2026-06-25 to 2028-07-23 against the plausibility window including the DST
+spring-forward gap and both fall-back folds, and — the part I had not done —
+**exit 5 on the real writing path** rather than only in dry-run, confirming the
+database afterwards is byte-identical to a clean run. Nothing is rolled back.
+
+**The finding: `OverflowError` still escaped the resolved branch.** I fixed it
+on the lenient path and not the strict one. Again. `main()` catches
+`SourceUnavailable`, `SourceContractError` and `SQLAlchemyError`, so a resolved
+game whose timestamps sit within one non-UTC offset of `datetime.min`/`max`
+aborted with an **uncaught traceback and exit 1**, where every other malformed
+timestamp exits 2 with "refused, nothing written".
+
+That matters because **exit codes are this command's machine-readable
+channel** — the thing I added exit 5 to make trustworthy. An out-of-range value
+was the one shape that bypassed it. Reproduced through `main()` rather than the
+parser, before and after:
+
+```
+resolved y0001+offset   !!! UNCAUGHT OverflowError   ->  rc=2
+resolved y9999          !!! UNCAUGHT OverflowError   ->  rc=2
+resolved y0001 plain    rc=2 (control, unchanged)
+```
+
+**Three instances of one class in one lane, and the count is the finding.**
+The plausibility bound on the lenient path and not the strict one. The
+producer/reader invariant enforced on read and not on construction. Now
+`OverflowError` absorbed on one branch and not its sibling. Each time I wrote
+the guard correctly and applied it to one of the two places it belonged, and
+each time a reviewer found the other. **The class is not "I forget the
+resolved path" — it is that a fix written while reasoning about one branch does
+not automatically get asked "where else is this true?", and nothing in my
+process asks it.** That question is cheap and I did not have it.
+
+**On the round's character, which is what I was asked to watch.** Round seven
+was behaviour-only by construction and returned one behavioural defect plus
+four substantiated clean areas. That is not a round manufacturing its own
+findings. But it is also the **third** consecutive round whose finding is the
+same class, which argues the remaining risk is concentrated rather than broad —
+and a further round asking the same questions would be the shape the
+projections lane warned about. My read: this is the last round that pays for
+itself unless the re-run on the new head returns something of a different kind.
+
+**Could not verify:** PostgreSQL, still CI-only. The reviewer verified exit 5
+on the real writing path against SQLite; I have not seen it on Postgres. And
+the `OverflowError` translation is asserted for three shapes, not for the
+32,357 the reviewer swept — that sweep ran against the *pending* path, and I
+did not repeat it against the resolved one.

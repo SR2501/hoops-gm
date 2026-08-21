@@ -672,6 +672,37 @@ def test_a_pending_record_cannot_be_built_with_an_absence_and_no_reason() -> Non
         )
 
 
+def test_an_out_of_range_timestamp_on_a_RESOLVED_game_refuses_rather_than_crashing() -> None:
+    """The third instance of the same one-sidedness, and the one that reached the exit code.
+
+    `_pending_game_date` absorbed `OverflowError`; the resolved branch did
+    not, and `main()` catches only `SourceUnavailable`, `SourceContractError`
+    and `SQLAlchemyError`. So a resolved game whose timestamps sit within one
+    non-UTC offset of `datetime.min`/`max` aborted with an uncaught traceback
+    and exit 1, where every other malformed timestamp exits 2 with "refused,
+    nothing written".
+
+    **Exit codes are the machine-readable channel of this command**, so an
+    out-of-range value must not be the one shape that bypasses it. Asserted as
+    a `SourceContractError` rather than "does not crash", because the point is
+    that it joins the documented refusal class.
+    """
+    shapes = (
+        ("gameDateTimeUTC", "0001-01-01T00:00:00+23:59"),
+        ("gameDateTimeEst", "9999-12-31T23:59:59.999999"),
+        ("gameDateTimeUTC", "9999-12-31T23:59:59Z"),
+    )
+    for field, value in shapes:
+        payload = load(PENDING_FIXTURE)
+        for entry in payload["leagueSchedule"]["gameDates"]:
+            for game in entry["games"]:
+                if game["gameId"] == "0022600001":
+                    game[field] = value
+
+        with pytest.raises(SourceContractError):
+            parse_schedule(payload, season="2026-27")
+
+
 def test_the_plausibility_bound_clears_the_real_season_by_years_not_by_days() -> None:
     """A refusal window the real data clears by one day is a trap that has not sprung.
 
