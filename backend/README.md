@@ -53,6 +53,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 | `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
+| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null` — see below. Fails closed with one of eight typed codes, of which **`projections_inconsistent_cohort` is the only retryable one**: retry once and keep the last good payload on screen rather than clearing the view. **A client must not multiply a rate by `assumed_games_played`:** that number is the exact divisor the importer used to produce the rates, so the product recovers the source's published seasonal total to within floating-point rounding, and that fusion is permitted only at `expected-games`. Display it; do not compute with it. |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -225,6 +226,114 @@ The demo's scoring periods are Monday-to-Sunday weeks derived from the NBA game
 dates, not a real Fantrax calendar, and its playoff weeks are synthesized — the
 settings contract cannot express "authoritatively zero playoff periods". Do not
 read the demo as evidence that a real league's calendar joins correctly.
+
+## Why the projections endpoint takes no lock
+
+It reads `projection_sources`, `projection_imports`, `projections`, `players`
+and `source_games_played_assumptions` without locking any of them.
+
+**The guarantee is narrower than "nothing moved", and the narrow version is the
+true one.** What is pinned is exactly what `ReleasedProjectionImport` covers —
+one lineage record over the `projections` rows — so a rate edit, a row added or
+removed, a superseded import or broken profile lineage are all caught. What is
+*not* pinned: `players` is checked for membership, never for its label values,
+so a player renamed mid-request is served without comment; and
+`source_games_played_assumptions` is not digested at all, because the canonical
+release deliberately never selects that table. Both are stated again on the
+response model, where a consumer will meet them.
+
+An earlier version took the importer's own `projection_sources` row `FOR UPDATE`
+and claimed both dialects therefore serialized. **The SQLite half was false**:
+pysqlite emits `BEGIN` only before DML, and SQLAlchemy drops `FOR UPDATE` on
+SQLite, so a read-only session held nothing at all. A concurrent writer
+committed straight through it and the endpoint served a 200 whose rates were
+post-write beside a pre-write `projection_values_sha256`.
+
+Adding SQLite's write reservation makes the lock real, and it was tried and
+rejected. It turns every read into a *writer* on the development database, so an
+open dashboard tab can make a hand-run `import_projection_csv` fail with
+`database is locked`; it mutates `updated_at` through `TimestampMixin`'s
+`onupdate`, held harmless only by a rollback nobody would notice deleting; and
+on PostgreSQL it stalls an import for the whole request. For a single-user local
+tool whose writer is a person at a keyboard, that is the wrong way round.
+
+So every read is **bracketed between two runs of `release_projection_import`**
+and the two immutable lineage records are compared whole. The trade in one line:
+a lock prevents the race and blocks the owner's import; the digest detects it and
+asks the caller to retry.
+
+**What "detects" means precisely, because two looser phrasings were wrong in
+turn and a screen would have been built on either.** Three regimes, driven:
+
+1. a write landing *before* the rows are loaded is seen and refused;
+2. a write landing *after* them that leaves the row primary keys alone — an
+   in-place edit — is not seen, because the route holds those ORM objects
+   strongly and the second release digests the same instances. A consistent
+   *older* snapshot is served;
+3. a write landing after them that **replaces the primary keys** — which is every
+   re-import, since the importer deletes and re-inserts the cohort — defeats that
+   shadowing, and the request is refused.
+
+**Regime 3 is dialect-dependent.** PostgreSQL's `SERIAL` never recycles, so a
+re-import always lands there. SQLite recycles the top free rowid, so in a
+one-import database the same race lands in regime 2. An earlier version of this
+section said the construction behaves identically on both dialects; it does not,
+and that was a claim nobody had run.
+
+**The guarantee is unconditional even though the behaviour is not:** on any 200
+the rates and the lineage block beside them describe the same cohort state. What
+is not promised is freshness, and what is not *measured* is how often a
+PostgreSQL deployment answers 409 in regime 3 — no real server was available. A
+caller needing "latest" re-requests and compares `projection_values_sha256`.
+
+**`projections_inconsistent_cohort` is retryable.** It is the only one of the
+eight that is. A client should retry once and **keep the last good payload on
+screen rather than clearing the view** — an empty draft board mid-auction is
+worse than a slightly stale one. (One member of that code, an orphaned
+`player_id`, is not retryable, but a foreign key makes it unreachable through the
+route; it is driven directly against the helper.) The other seven are terminal
+and need a human: import a CSV, fix the crosswalk, re-import under a verified
+profile.
+
+## Why the projections endpoint serves no blend
+
+`GET /api/v1/leagues/{league_id}/projections/current` reports the **imported**
+per-game cohort, not a blended one, and `lineage.blend` is a typed key that is
+always `null`.
+
+That is not an omission. `hoops_gm.projections.blending` computes a blend from a
+`BlendCatalog`, and that catalog is an explicitly caller-owned in-memory value:
+`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
+rather than writing one, because the accepted schema has no blend tables and
+adding them is an architecture decision rather than a side effect of blending.
+So no blend profile, no activation pointer and no source weights are persisted
+anywhere for an HTTP request to read. Serving a blend here would mean the route
+constructing a profile itself, which is choosing weights, which is a number a
+decision rests on — the Model gate, and `quant`'s to pass.
+
+The key exists so a consumer renders "not blended" from a fact rather than
+inferring it from a key it failed to find. At the JSON level it is also where a
+persisted blend would surface: a key that has always been `null` starting to
+carry an object is additive for a client. At the *contract* level that is not
+free — `ProjectionLineage.blend` is typed `None`, not `BlendLineage | None`, so
+surfacing a blend is a schema change and not a fill-in. Say the second, because
+the first reads like the work is already provisioned for and it is not.
+
+## Do not multiply a projection rate by the source's games-played assumption
+
+`source_games_played_assumptions` is what the source assumed and what our
+availability model will replace. It is **also the exact divisor these rates were
+derived with** — for a season-total source like Basketball Monster the importer
+produced `minutes_per_game` as `2415 / 70` — so multiplying a rate by it
+recovers the source's published seasonal total to within floating-point
+rounding. The decomposition ADR-002 mandates is reversible at the wire by a
+two-line join.
+
+Doing that join is the production-and-availability fusion ADR-002 permits only
+at `expected-games`, which is not built. **A client may display the assumption
+and must not compute with it.** Rendering "projected season total" from this
+payload is an ADR-002 violation implemented one layer away from where anyone is
+looking for it.
 
 ## Migrations
 

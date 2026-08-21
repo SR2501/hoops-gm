@@ -30,6 +30,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [010](ADR-010-local-bridge-pairing.md) | One-time local pairing for the browser bridge | **Accepted** | A displayed, single-use local code provisions the userscript bearer secret without putting it in source control |
 | [011](ADR-011-strength-of-schedule-sequencing.md) | Strength of schedule is a living projection dependency, not schedule intelligence | **Accepted** | SOS and every projection set form a versioned recursive loop with at least weekly refreshes and cascaded downstream outputs |
 | [012](ADR-012-per-week-game-distribution.md) | Per-week game distribution is a living schedule dependency across decisions | **Accepted** | Weekly game volume is re-ingested and cascaded into projections, SOS, valuations, draft, trades, lineups, streaming, and weekly planning |
+| [014](ADR-014-read-endpoints-detect-not-lock.md) | Read endpoints detect a moved cohort; they do not lock to prevent one | *Proposed* | A read must not hold a lock that can block a writer; bracket the read between two canonical releases and refuse instead |
 
 ## Accepted
 

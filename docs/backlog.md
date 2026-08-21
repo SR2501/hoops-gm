@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**39 done - 1 blocked - 71 pending - 111 total**
+**40 done - 1 blocked - 73 pending - 114 total**
 
 (Counted from the status markers themselves at this head, not carried forward from
-either lane: 111 `###` headings and 111 markers, 1:1, no duplicates. Neither
+either lane: 114 `###` headings and 114 markers, 1:1, no duplicates. Neither
 pre-merge header was a usable input, because each was computed before the other
 lane's items landed. An earlier header claimed 37 done / 63 pending against an
 actual 36 / 64, and that drift predates all three lanes.)
@@ -319,6 +319,178 @@ fixtures, through the production importers, and the endpoint returns a real
 200 against it (see `backend/README.md`). The first attempt at this item was
 fail-closed but permanently unavailable, which is why the seed path is part of
 the deliverable rather than a convenience.
+
+### `projections-api-early` - Exposing the imported per-game projection cohort
+
+- [x] **done**
+- **Depends on:** `csv-importer`, `projection-blending`
+
+Loopback-only `GET /api/v1/leagues/{league_id}/projections/current`, with
+`?source=` defaulting to Basketball Monster: the per-game production rates one
+projection source published, exactly as the importer decomposed them, plus the
+`players` labels a browser screen needs and every fingerprint behind the numbers
+— the CSV bytes, the parsing recipe, and the digest over the stored normalised
+rates that changes when a row is edited in place while the other two look
+untouched. The foundation of the draft board. Browser-*reachable*, not
+browser-visible: the screen is `projections-ui`'s, below, and `schedule-grid-ui`
+is still the only thing in this repository a person can look at.
+
+Descriptive only. No valuation, z-score, G-score, ranking, auction price, risk
+adjustment, availability fusion or recommendation crosses this boundary — those
+are `quant`'s behind the Model gate (ADR-002, ADR-008). The only arithmetic in
+the route is `len()`.
+
+**A client must not multiply a rate by `assumed_games_played`.** That number is
+not merely a games-played figure: for a season-total source it is the exact
+divisor the importer used to produce the rates beside it, so the product
+recovers the source's published seasonal total to within floating-point
+rounding. The ADR-002 decomposition is reversible at the wire by a two-line join, and doing
+that join is the fusion ADR-002 permits only at `expected-games`, which is not
+built. Display the assumption; do not compute with it.
+
+**It serves the *imported* cohort, not a blended one, and `lineage.blend` is a
+typed key that is always `null`.** `projection-blending` computes a blend from a
+`BlendCatalog` that is an explicitly caller-owned in-memory value —
+`define_blend_profile` and `activate_blend_profile` each return a *new* catalog
+because the accepted schema has no blend tables, by design. So no blend profile,
+activation pointer or source weights are persisted for any HTTP request to read,
+and serving a blend would mean the route choosing weights itself. The key exists
+so a consumer renders "not blended" from a fact rather than from a key it failed
+to find; at the JSON level it is also where a blend would surface, though the
+declared type is `None` rather than `BlendLineage | None`, so that is a schema
+change and not a fill-in. Persisting blend profiles is a separate `architect` +
+`quant` unit, and is on the path to the owner's stated requirement of seeing
+Basketball Monster and our own numbers side by side during the draft.
+
+ADR-002's separation is in the wire format, not only in the schema: the source's
+own games-played assumption is a separate top-level array, never a key inside a
+rate object, mirroring the one-to-one table it comes from, and a test asserts
+`games`/`expected_games`/`rank`/`aav`/`z_score`/`g_score` appear in no rate
+object and at no top level. No shooting percentage is ever computed — makes and
+attempts only.
+
+Currency, profile verification and row validity come from
+`blending.release_projection_import`, the canonical function the rest of the
+pipeline already trusts, never from a second reader in the route; the route's
+own "which import" query is a *selector* the canonical release arbitrates, so
+drift in the definition of "current" fails closed rather than serving a
+superseded cohort. Eight typed codes in `ErrorResponse.error`:
+`projections_local_only`, `projections_league_not_found`,
+`projections_source_unsupported`, `projections_source_not_imported`,
+`projections_not_current`, `projections_incomplete`,
+`projections_incomplete_evidence` and `projections_inconsistent_cohort`.
+
+`projections_incomplete_evidence` is a **family of nine driven members** —
+unverified import row, unverified profile-version row, season outside verified
+scope, self-contradicting immutable lineage, a negative rate, a non-finite rate,
+a half-present three-point made/attempted pair (the only pair with no CHECK
+constraint), a row whose denormalised season drifted from its import, and makes
+exceeding attempts. That last was called *unreachable* through two review rounds
+on the ground that the CHECK constraints block it at the same `+0.001` tolerance
+the validator uses; the constant is the same but the arithmetic is not — the
+CHECK is IEEE-754 double, the validator compares exact `Fraction`s — so a band
+about one ULP wide inserts and then fails validation. Driven. It stays one code
+under `architect`'s rule — *split when two members imply different operator
+actions; keep one when every member implies the same one* — because re-importing
+rewrites the whole row cohort and so repairs every member. **This enumeration was
+short at five, then at eight, before it was nine**, and each recount came from
+someone walking the raise sites rather than reading the previous list. A consumer
+must render a summary true of every member and must not substring-match `detail`,
+which is free-form prose. `test_the_blending_error_family_is_pinned` fails if
+`ProjectionBlendError` gains a subclass, so convergence is decided rather than
+inherited.
+
+Guaranteed on any 200 or refused instead: `players` and `projections` describe
+the same `player_id` set, each exactly once, both ordered; and
+`len(projections) == lineage.projection_import.projection_count`.
+`source_games_played_assumptions` is deliberately sparse and absent never means
+zero.
+
+**The route takes no lock, and that is the decision rather than the omission.**
+An earlier version took the importer's `projection_sources` row `FOR UPDATE` and
+claimed both dialects serialized; review drove it and the SQLite half was false,
+because pysqlite emits `BEGIN` only before DML and SQLAlchemy drops `FOR UPDATE`
+— a concurrent writer committed straight through the reader and produced a 200
+whose rates were post-write beside a pre-write digest. Adding SQLite's write
+reservation fixed that and cost more than it bought: every read became a writer,
+so concurrent polls serialized against each other (measured at 2.05s and 4.17s,
+with an untyped 500 for the loser of a slower pair) and an open dashboard tab
+could make a hand-run import fail with `database is locked`; it also mutated
+`updated_at` through `TimestampMixin`. Instead every read is **bracketed between
+two runs of the canonical release**.
+
+**What that detects, stated at the strength it was driven at.** A write landing
+*before* the rows are loaded is caught. One landing *after* them is caught only
+if it replaced the row primary keys — an in-place edit is shadowed by the route's
+own strong references and a consistent *older* snapshot is served, while a
+re-import replaces every key and is seen. That last is dialect-dependent:
+PostgreSQL's `SERIAL` never recycles, SQLite can. The guarantee is unconditional
+either way — the rates and the lineage block beside them always describe the same
+cohort state — but the behaviour is not, and two earlier versions of this entry
+said otherwise (first "refuses if anything moved", then "identically on both
+dialects"). Freshness is not promised. `projections_inconsistent_cohort` is the only retryable
+code of the eight; a client retries once and keeps the last good payload rather
+than clearing the view. Driven with real committed writes from a second
+connection, with monkeypatching confined to *timing* rather than to the loader's
+result.
+
+### `release-digests-assumptions` - Bringing the games-played assumptions inside the release digest
+
+- [ ] **pending**
+- **Depends on:** `projections-api-early`
+
+`ReleasedProjectionImport` digests the `projections` rows and deliberately never selects
+`source_games_played_assumptions`, so `projections-api-early`'s assumptions array is the
+one part of that response outside the guarantee the endpoint makes about itself. The
+array is joined on `projection_import_id` and subset-checked against the players carried,
+which makes a claim for an uncarried player inexpressible — but a *changed* assumption is
+not detected, and the array's documented semantics ("a missing entry means the source
+said nothing") are a strong claim with nothing pinning them.
+
+Found by `architect` reviewing the fix for the defect it enables: a byte-identical
+re-import mid-read served a 200 with an **empty** assumptions array, reporting that
+Basketball Monster published no games-played assumption when it published 70 and 78. The
+route-level fix closes that instance; this closes the class, by making the array inherit
+the same mechanism that already catches a rate edit instead of borrowing its credibility.
+
+A producer-contract change in `hoops_gm.projections.blending`, not an API change. ADR-002
+is the constraint that makes it delicate: the assumption must be digested *alongside* the
+rates as separate evidence, never folded into `projection_values_sha256`, or the
+separation the table exists to enforce is lost at the fingerprint. On completion, retire
+the exemption stated on `CurrentProjectionsResponse` and amend ADR-014.
+
+### `projections-ui` - Putting the imported projections on screen
+
+- [ ] **pending**
+- **Depends on:** `projections-api-early`
+
+The draft board's first surface: every player in the current Basketball Monster
+cohort with their per-game rates, at `/projections`. Consumes
+`projections-api-early`'s endpoint and renders exactly what it returns — no
+ranking, no valuation, no z-score or G-score, no availability weighting and no
+"who should I draft" judgement, all of which are `quant`'s behind the Model gate.
+
+**Three contract obligations the endpoint cannot enforce for it.** First, the
+source's games-played assumption may be *displayed* and must never be multiplied
+by a rate: that number is the divisor the importer used, so the product recovers
+Basketball Monster's published seasonal total, and doing that join is the fusion
+ADR-002 permits only at `expected-games`. Rendering "projected season total" from
+this payload is an ADR-002 violation that is two lines long and looks like a
+feature. Second, `projections_inconsistent_cohort` is retryable and means a
+concurrent import moved the cohort — retry once and keep the last good payload on
+screen, because an empty board mid-auction is worse than a slightly stale one.
+The other seven codes are terminal and need a human. Third,
+`projections_incomplete_evidence` is a family of nine members with one shared
+remedy, so its copy must be true of all of them and must not substring-match
+`detail`.
+
+`source_games_played_assumptions` is sparse: absent means the source said
+nothing, never zero, and must render distinguishably from a stated value — the
+same distinction `schedule-grid-ui` spent four review rounds getting right.
+Position eligibility is *not* available: this project ingests no Fantrax position
+data, and `player-position-eligibility` is still pending, so a draft board cannot
+filter or group by position yet. `players[].primary_position` is NBA's own label
+and is nullable.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 
