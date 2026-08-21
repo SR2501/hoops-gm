@@ -12814,3 +12814,90 @@ backend `_pending_game_date` pin, and that is the `data-engineer` item.
   open limitation on this branch.
 - **Anything a browser sees**, across the last six heads.
 - `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - Assumed key sets, and the first hole that reached the screen
+
+**Unit:** `schedule-grid-pending-periods`. `frontend` found the seventh and it is
+the only one in this sequence with a visible consequence.
+
+### The one that reaches the screen
+
+Overwrite one non-zero count row with a duplicate of a zero row. The list is
+still 630 rows, so the density check — which counted rows — passed, and because
+the comparison iterated recorded rows, the vanished `(period, team)` pair was
+never looked up. **Exit 0 on all three recordings.**
+
+The consequence is not confined to the tool. `endpoints.ts` deliberately
+tolerates a sparse `counts` rather than blanking the page, so the missing pair
+renders as **`·`** — one of the three states this branch exists to keep distinct,
+and the one that asserts *the backend sent no count*. A real number would have
+become a marker claiming the opposite. **The single defect this screen was built
+to prevent, arriving through its own verification tool.**
+
+And the recorded test shared the blind spot exactly:
+`ScheduleGridTable.recorded.test.tsx` asserts `counts` has
+`teams.length * periods.length` entries, and the cell census still counts 630
+with one of them a `·`. Two independent checks, one shared proxy.
+
+Closed by asserting what "dense" actually means — the recorded key set equals the
+full cross product — which subsumes the length check it replaces.
+
+### A false disposition, in the row below the one that had just been wrong
+
+I left `unresolved_game_ids` and `persisted_team_row_count` unchecked as
+"covered transitively by producer invariants". Driven by `frontend`: set
+`unresolved_game_ids` to a non-empty list and `--verify` exits 0.
+
+The invariants are real and they are the reason these are *cheap*, not the reason
+to skip them. **A producer invariant guarantees the producer will not emit a bad
+value; this file's stated threat is a hand-edit to a committed recording**, which
+no producer invariant covers. So the two fields most strongly guaranteed upstream
+were the two the recording could lie about most freely.
+
+`persisted_team_row_count` sat inside a sentence about needing a database and is
+`2 * len(parsed.games)` — arithmetic on a number three lines above it. I reasoned
+from *"something else covers it"* to *"nothing is needed here"* without checking
+whether it was one line away, **in the same commit that rewrote the table to say
+it lists what has been tried rather than what is possible**, and in the row below
+the one where that exact reasoning had just been shown wrong.
+
+### The root I left assumed after closing the leaf
+
+The audit table was exhaustive over six top-level keys *as the recording has
+them*, with nothing enforcing that there were six. Adding a seventh exited 0.
+That is the pending record's key-set union one level up — closed for the leaf,
+assumed at the root. Now `RESPONSE_KEYS`.
+
+### The property I sold short
+
+I corrected "the producer's own `weekly_periods`" to a hedge about agreement.
+`frontend` traced it further and the truth is **stronger** than either version:
+`weekly_periods` is the seed's *input* to `project_scoring_periods`, which is the
+production transform that writes the rows. So the comparison **spans** production
+code — change how periods are projected, re-capture, and this still fails.
+
+Every other check here, `parse_schedule` above all, *is* the production
+transform, so a faithful re-capture reproduces a producer change invisibly. This
+one is the only exception in the file, and I had just written it down as the
+weakest link.
+
+### The procedure, which replaces asking whether I am finished
+
+From `frontend`, and it is why this stops being luck: **for each thing this file
+compares, what is the key set, and is it asserted or assumed?** Every one of the
+seven holes has been an answer of "assumed". Membership is now asserted for the
+response's top-level keys, the recordings on disk, pending record fields, pending
+ids, periods, teams, and the 630 `(period, team)` pairs.
+
+### Could not verify
+
+- **That the procedure is exhausted.** It is mechanical now, which is the point —
+  anyone can re-run it without needing the insight that produced it.
+- **The recorded test still uses the length proxy.** I did not change
+  `ScheduleGridTable.recorded.test.tsx`, because `--verify` now catches the case
+  and touching an assertion I have not driven end to end is how this file got
+  into trouble. Worth a follow-up, not a silent edit.
+- **The mutation harness**, still outside the repository, and now the largest
+  open limitation on this branch by some distance.
+- **Anything a browser sees**, across the last seven heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.

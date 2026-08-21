@@ -65,19 +65,24 @@ next person does not have to rediscover where the floor is:
                       (``lineage``'s three other children are the same database
                       artifacts and none is rendered by the grid.)
 ``periods``           **derived** — all 21 windows including ``is_playoff``, via
-                      ``weekly_periods``. Be precise about what that pins: it is
-                      the seed's function, and the chain is
-                      ``weekly_periods`` → ``settings_document`` →
-                      ``import_league_settings`` → ``project_scoring_periods`` →
-                      SQL → ``periods[]``. **Hop zero is shared implementation;
-                      the four hops after it are agreement only.** So this is not
-                      "the producer's own function" — it is the producer of an
-                      *input* the producer was seeded from, and a real league
-                      whose periods come from imported settings would not be
-                      covered. It was read out of the recording for three rounds,
-                      and it is the other operand of the computation hole four
-                      was about: ``readPendingGames`` needs a pending date *and*
-                      a period window, and only the date was pinned. The counts
+                      ``weekly_periods``. Be precise, because the property here
+                      is stronger than anything else in this file.
+                      ``weekly_periods`` is not the producer and not a second
+                      implementation of it: it is the **seed's input** to the
+                      production transform, which is
+                      ``calendar/scoring_periods.py``'s
+                      ``project_scoring_periods``, and that is what writes the
+                      rows the response reports. So the comparison *spans*
+                      production code. Change how periods are projected,
+                      re-capture, and this still fails — because the derived side
+                      does not move with the producer. Every other check here,
+                      ``parse_schedule`` above all, **is** the production
+                      transform, so a faithful re-capture reproduces a producer
+                      change invisibly. This one is the exception.
+                      It was read out of the recording for three rounds, and it
+                      is the other operand of the computation hole four was
+                      about: ``readPendingGames`` needs a pending date *and* a
+                      period window, and only the date was pinned. The counts
                       could not object, because 610 of 630 rows are zero and only
                       two periods hold a resolved game, so the December boundary
                       that decides this feature sat in free space.
@@ -101,11 +106,18 @@ asserting anything else — so every row above says *tried* rather than
 *impossible*.
 
 One thing the table's shape hides, and it is where a seventh would live: every
-row is about a **value** being wrong. The sixth hole was a **cardinality** —
-teams could be added upstream or deleted from a recording, and both passed,
-because each comparison checked the values of a set whose membership the artifact
-under test declared. Membership is now compared before values for teams,
-recordings, pending ids and periods.
+row is about a **value** being wrong. The sixth hole was a **cardinality** and
+the seventh a **key set** — teams could be added upstream or deleted from a
+recording, and a non-zero count row could be overwritten by a duplicate zero row
+while the total stayed at 630. Each passed because a comparison checked the
+values of a set whose membership the artifact under test declared.
+
+`frontend`'s procedure is what replaced guessing, and it is the thing to apply
+next rather than another field: **for each thing this file compares, what is the
+key set, and is it asserted or assumed?** Every hole so far has been an answer of
+"assumed". Membership is now asserted for the response's top-level keys, the
+recordings on disk, pending record fields, pending ids, periods, teams, and the
+630 (period, team) pairs.
 
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
@@ -189,6 +201,10 @@ VARIANTS: dict[str, dict[str, tuple[str, str]]] = {
 #: report "all claims hold" while somebody had hand-edited a reason in the JSON
 #: -- the precise conversion-of-recording-into-mock this file exists to prevent,
 #: inside the check written to prevent it.
+#: The response's top-level keys, one row each in the audit table above. Named
+#: so the table is an assertion rather than a prose claim about an assertion.
+RESPONSE_KEYS = frozenset({"league_id", "season", "lineage", "teams", "periods", "counts"})
+
 RECORDED = {
     # Undoctored: the base as committed, which every other comparison is
     # anchored on. Included so `--verify` pins the payload the other two are
@@ -351,6 +367,19 @@ def verify() -> int:
         recorded_ids, expected = recorded_expectations(variant)
         fixture, periods, counts = recorded_counts(variant)
         season = fixture["season"]
+        # The audit table below is exhaustive over the response's top-level keys
+        # *as the recording currently has them*, and nothing enforced that there
+        # were six. This is the pending record's key-set union one level up: I
+        # closed it for the leaf and left it assumed at the root.
+        if set(fixture) != RESPONSE_KEYS:
+            failures += 1
+            print(
+                f"FAIL {variant:7} response shape changed: "
+                f"unexpected {sorted(set(fixture) - RESPONSE_KEYS)}, "
+                f"missing {sorted(RESPONSE_KEYS - set(fixture))}. The per-key "
+                "audit in this module's docstring is now incomplete."
+            )
+            continue
         payload = derive(variant)
         derived_ids = [game["gameId"] for game in pending_games(payload)]
 
@@ -394,13 +423,30 @@ def verify() -> int:
         # The resolved ten twelfths. Pinning only the pending block left a
         # resolved game free to move between scoring periods -- a within-DST
         # shift that reconciles cleanly -- while this printed success.
-        if len(counts) != len(periods) * len(fixture["teams"]):
+        # Completeness is a claim about *which* (period, team) pairs are present,
+        # and asserting it by row count was a proxy that came apart. Overwrite
+        # one non-zero row with a duplicate of a zero row: still 630 rows, dense
+        # check passes, and because the comparison iterates recorded rows the
+        # vanished pair is never looked up. That one reaches the screen -- the
+        # client deliberately tolerates a sparse `counts` rather than blanking
+        # the page, so the missing pair renders as `·`, which asserts *the
+        # backend sent no count*. A real number would become a marker claiming
+        # the opposite. The recorded test shared the blind spot, because it
+        # asserts the same length.
+        expected_keys = {
+            (period["period_number"], team["team_id"])
+            for period in periods
+            for team in fixture["teams"]
+        }
+        recorded_keys = {(row["period_number"], row["team_id"]) for row in counts}
+        if recorded_keys != expected_keys:
             failures += 1
             print(
                 f"FAIL {variant:7} counts is not the dense {len(periods)}x"
-                f"{len(fixture['teams'])} cross product ({len(counts)} rows). The "
-                "comparison below iterates recorded rows, so a sparse recording "
-                "would let a derived-only row pass unseen."
+                f"{len(fixture['teams'])} cross product: {len(counts)} rows, "
+                f"{len(recorded_keys)} distinct pairs, "
+                f"{len(expected_keys - recorded_keys)} missing, "
+                f"{len(recorded_keys - expected_keys)} unexpected."
             )
             continue
 
@@ -512,6 +558,20 @@ def verify() -> int:
         for label, derived_value, recorded_value in (
             ("source_game_count", parsed.source_game_count, lineage["source_game_count"]),
             ("resolved_game_count", len(parsed.games), lineage["resolved_game_count"]),
+            # These two were left out as "covered transitively by producer
+            # invariants", which is a false disposition: an invariant guarantees
+            # the *producer* will not emit a bad value, and this file's stated
+            # threat is a hand-edit to a committed recording. So the two fields
+            # most strongly guaranteed upstream were the two the recording could
+            # lie about most freely. Both are one line and neither needs a
+            # database -- `persisted == 2 x resolved` is arithmetic on a number
+            # three lines up.
+            ("unresolved_game_ids", [], lineage["unresolved_game_ids"]),
+            (
+                "persisted_team_row_count",
+                2 * len(parsed.games),
+                lineage["persisted_team_row_count"],
+            ),
         ):
             if derived_value != recorded_value:
                 failures += 1
