@@ -2,16 +2,30 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-(Recomputed from the status markers in this finished file, never
-reconciled from two headers: 118 `###` headings and
-118 markers, 1:1, no duplicate item names. Neither side of a
-rebase conflict is a usable input here, because each was computed before
-the other lane's items landed.)
+**45 done - 1 blocked - 72 pending - 118 total**
+
+(Recomputed from the status markers in this finished file, never reconciled from
+two headers: 118 `###` headings, 118 unique item slugs and 118 markers, 1:1, no
+duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
 reconciliation could have reached the answer. The position lane sharpened
 `player-position-eligibility` without closing it: the NBA-position half landed, the
 Fantrax-eligibility half did not, so that marker stays `pending`.
+
+**And on 2026-08-21 the resolver's own output was the unusable input.** Rebasing
+`projections-ui` onto merged `main`, `scripts/resolve_doc_conflicts.py` printed a
+recomputed header twice in one rebase — `118` at the first conflict and `115` at
+the second — and its resolution **silently dropped the three items the import-CLI
+lane had just added** (`projections-import-cli`,
+`projection-import-process-concurrency`, `projections-seed`) while leaving both
+header blocks behind. It exited successfully. Taking its number would have shipped
+a file that had lost three entries and disagreed with itself about how many it
+held. Found by diffing this file's slug set against `origin/main`'s, which is the
+only check that catches a *dropped* item — a recount of the finished file agrees
+with itself perfectly after a deletion. **Recount the total, and separately
+compare the slug set against `main`; the first cannot see what the second is
+for.**
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
@@ -355,8 +369,10 @@ projection source published, exactly as the importer decomposed them, plus the
 — the CSV bytes, the parsing recipe, and the digest over the stored normalised
 rates that changes when a row is edited in place while the other two look
 untouched. The foundation of the draft board. Browser-*reachable*, not
-browser-visible: the screen is `projections-ui`'s, below, and `schedule-grid-ui`
-is still the only thing in this repository a person can look at.
+browser-visible: the screen is `projections-ui`'s, below. That entry has since
+shipped, so the sentence this paragraph used to end with — that `schedule-grid-ui`
+is the only thing in this repository a person can look at — is no longer true and
+was corrected by the lane that falsified it rather than left to go stale.
 
 Descriptive only. No valuation, z-score, G-score, ranking, auction price, risk
 adjustment, availability fusion or recommendation crosses this boundary — those
@@ -515,11 +531,120 @@ data, and `player-position-eligibility` is still pending, so a draft board canno
 filter or group by position yet. `players[].primary_position` is NBA's own label
 and is nullable.
 
-(Recomputed from the status markers in this finished file, never
-reconciled from two headers: 115 `###` headings and
-115 markers, 1:1, no duplicate item names. Neither side of a
-rebase conflict is a usable input here, because each was computed before
-the other lane's items landed.)
+**Sparsity is unreachable for the source this screen requests, which changed the
+copy.** Basketball Monster's `required_production_fields` is set-equal to
+`CANONICAL_STAT_FIELDS` in both directions, and `parser.py:293-296` refuses a row
+on *any* missing required value — so a row with no games figure has no divisor,
+nulls its 14 `SEASON_TOTAL` columns and (via `parser.py:448-450`) the 2 derived
+fields, and is dropped. Every stored Basketball Monster row therefore carries an
+assumption *and* a value for every rate. Sparsity is reachable only through
+per-game profiles such as `MANUAL_PROFILE`, which this screen never requests. So
+the screen states that an absence marker *should not appear* rather than
+implying routine sparseness, and `backend/tests/test_projection_vocabulary_pin.py`
+is what keeps that claim true — nothing enforced the set-equality before it.
+
+The same care does **not** extend to the Team and Pos columns: those labels come
+from our own player record, so their absence says nothing about what the source
+published, and they carry a different marker. Shipped sharing one marker, caught
+in review against the recorded fixture in the same commit.
+
+### `projections-import-cli` - Giving the owner a command that imports his projection CSV
+
+- [x] **done**
+- **Depends on:** `csv-importer`
+
+`python -m hoops_gm.ingest.projections.import_csv <season> <path>` — the
+operator surface `csv-importer` never had. The importer was a library function
+with no `main` and there is no HTTP write path for projections, so the owner's
+paid Basketball Monster export could only reach the database if somebody wrote
+Python at a REPL, and `projections-api-early` shipped an endpoint over a table
+nothing filled. Reads `Settings`, so there is no `--database-url` to leak — both
+prior credential leaks in this repository were leaks *of that flag*, and a test
+pins the option set. Prints no rate, no player row and no cell value from the
+file: the export is paid content and a terminal scrollback is a paste away.
+Source names reach only the unresolved-players CSV under gitignored
+`data/reports/projections/`. `raw_payload_ref` stays unset with the reason
+recorded — `RawPayloadStore.put` hard-codes `.json.gz` and models an HTTP
+capture, so a CSV through it would invent a request; `content_sha256` already
+binds the import to its exact bytes.
+
+`--dry-run` is a **rehearsal, not a preview**: it runs the real import including
+identity resolution and rolls back, because "how many of my 550 players matched"
+is the number that decides whether an import is usable and it needs a session. It
+therefore holds the write lock for its duration and says so in `--help`. It does
+not relax profile verification, so a green dry run cannot promise an import that
+then refuses. The rollback is asserted by counting three tables, not by trusting
+a context manager.
+
+Exit `5` means **imported, and the cohort is smaller than the file**. Its two
+causes — parser-rejected rows and unresolved identities — imply the same action,
+so they share one code under `architect`'s rule, with counts that discriminate.
+The alternative was exit `0` on an import where a hundred players silently failed
+to match. Also closes `projection-import-process-concurrency`, below.
+
+### `projection-import-process-concurrency` - Making the projection import lock real
+
+- [x] **done**
+- **Depends on:** `csv-importer`
+
+R58. `import_projection_csv` guarded a repeat import with `SELECT ... FOR UPDATE`
+on `projection_sources`, which serialised nothing on SQLite: pysqlite emits
+`BEGIN` only before DML and a repeat import of an unchanged source emits none
+before that statement, and SQLAlchemy's SQLite dialect renders no `FOR UPDATE`
+text at all. Replaced by `db.lineage.lock_projection_source_scope`, delegating to
+`lock_refresh_scope` so `db/lineage.py` stays the only module reaching
+`acquire_transaction_lock` — two lock-order recorders monkeypatch that one name,
+and the first version of the fix blinded them and was caught by the test that
+exists to notice. Taken before the source row is read rather than after, since
+the old clause closed the window later than it opened. Registers no
+`refresh_runs` row: a lock scope is not a published refresh, and `quant` owns
+registering those.
+
+**Filed here because R58 said it was filed and it was not** — it existed in the
+risk row's mitigation text and in no backlog entry, which is the check nobody
+runs on their own register. Closed with the severity honestly narrowed: the
+window was real, but four concurrent processes at a barrier against one SQLite
+file with the lock disabled converged correctly on every round, with identical
+bytes and with divergent cohorts. SQLite serialises writers at the file level
+once DML begins. The corruption the 🟡 implied was never reproduced.
+
+### `projections-seed` - Making the projections endpoint answer 200 offline
+
+- [x] **done**
+- **Depends on:** `projections-api-early`, `projections-import-cli`
+
+`python -m hoops_gm.dev.seed_projections`. `/projections/current` had never
+returned 200 outside pytest: it fails closed on an unimported source, and
+`seed_schedule_grid` seeds no players and no projections, so
+`projections_source_not_imported` was the only answer anybody had ever seen from
+it — the same blind spot that made the previous schedule endpoint permanently
+unavailable with nobody noticing. `projections-ui` could not drive its screen or
+capture a fixture.
+
+**The committed Basketball Monster fixture cannot do this**, which is the finding
+that shaped the unit: its two rows are named *Player Alpha* and *Player Gamma*,
+they match no canonical player, so the importer accepts zero resolutions and
+`release_projection_import` raises. Seeding it through the real importer produces
+a new refusal, not a 200. It stays untouched — it is Adapter-gate evidence of the
+column contract and is doing that job. (The population they fail to match is
+`nba_commonallplayers_current.json`, which `import_nba_players` reads;
+`nba_playerindex_current.json` only supplies positions and creates no players.
+Three docstrings named the wrong one, and a reviewer noted *both* files contain
+an "Alpha" — Alpha Diallo — so a reader checking the claim by grepping the name
+got a hit either way, while the normalised key `alpha|player` matches nothing.)
+
+The demo CSV is generated **in memory at seed time** from the canonical players
+the same run imported, in the verified profile's exact committed header order,
+and goes through `import_projection_csv` unmodified — `seed_schedule_grid`'s
+production-importer standard, applied to a second importer. No committed CSV, on
+purpose: a checked-in file of real NBA names beside real captures would read as
+one. Names are real because Basketball Monster publishes no team or position
+column, so a name is the resolver's only evidence; only players whose normalised
+name is unique are used, so each row lands at exactly `AUTO_ACCEPT_CONFIDENCE`
+and resolution succeeds by construction rather than by luck. **The numbers are
+invented** and the docstring says so first: nothing derived from the cohort is a
+projection anyone should look at, and a fixture captured from it proves shape and
+nothing else.
 
 ### `schedule-grid-pending-periods` - Showing that a scoring period is not fully scheduled
 
