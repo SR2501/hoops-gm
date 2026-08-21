@@ -212,9 +212,63 @@ codes already let a consumer distinguish the case that means *wait* from the cas
 *investigate*, which is the distinction this section was written because the contract could
 not express.
 
-What a consumer still **cannot** do is distinguish a well-formed but degenerate date — the
-year-0001 sentinel the source emits for an undecided tip-off — from a genuine
-out-of-calendar date, because both are valid days. That one is not a producer gap; it is a
-limit of what a date value can carry, and the correct response is the bucket rule above
-rather than a client-side heuristic about what a date means.
+### 2026-08-21 — the set is five, and the sentinel no longer reaches a consumer
+
+Written by the implementing lane at `architect`'s request, because PR #49 is what makes the
+section above untrue. Status unchanged; this records what the accepted decision produced.
+
+The set is **five**, not four:
+
+    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable, implausible}
+
+`implausible` is a fault, not an absence: the value **parsed, reconciled, and was still not a
+date the source can have meant** — it falls outside a loose July-to-July window around the
+season the payload itself names. It exists because **agreement is not validity**. This source
+uses `1900-01-01` as a live epoch placeholder for a time-only field on every resolved game in
+the recorded fixture; the same convention in the *date* fields reconciles exactly, because
+1900's Eastern offset genuinely is −05:00. Without the window it was stored as a decided date
+in 1900 with no reason at all — strictly worse than `null`, which at least says we do not
+know.
+
+**Two codes now mean *investigate*, not one**, and both carry the live-smoke assertion:
+`unreadable` and `implausible` must never occur against the real source. The reasoning for
+`implausible` is the stronger of the two — "never occurs" is a claim about our classifier
+rather than about the source's restraint, and the 1900 convention is *already observed* in a
+sibling field, so nothing but the window stops it appearing in this one.
+
+**Exit codes, because the difference is waiting versus paging someone.** The operator command
+exits `0` for `not_offered` and `irreconcilable` — the source declining to commit is the case
+this whole ADR exists to tolerate — and **`5` for `unreadable` and `implausible`**. Exit 5 is
+**not a refusal**: rows are written and the cohort is registered. It says a successful import
+contains something a human should look at, so a schema change on the read path is not reported
+solely by a nightly smoke that is allowed to fail and does not run in CI.
+
+**Correction to the paragraph above: the sentinel no longer reaches a consumer from this
+producer, and the "not a producer gap" claim was wrong.** Driven through the parser rather
+than reasoned about — every sentinel shape yields `game_date: null` with a cause:
+
+| payload shape | result |
+|---|---|
+| year-0001 pair, correctly converted | `implausible` |
+| year-0001 pair, naive-`Z` sibling | `irreconcilable` |
+| year-0001 in one field only | `irreconcilable` |
+| year-0001 with a non-UTC offset | `unreadable` |
+| 1900 pair, correctly converted | `implausible` |
+| 1900 pair, naive-`Z` sibling | `irreconcilable` |
+
+And on a **resolved** game a placeholder pair now **refuses the import** rather than degrading,
+because a resolved date is persisted, joins `player_participation`, and is the denominator of
+every expected-games number — there, a wrong date is indistinguishable from a real one
+downstream. A consumer's documented inability to tell a sentinel from a genuine out-of-calendar
+date is therefore **unreachable from this producer**. It remains true in general, about any
+date value from any source, and a consumer should say so precisely rather than delete it.
+
+This is ADR-014's clause in producer/reader clothing: a consistency guarantee is only as wide
+as the set someone enumerated, and the same one-sidedness appeared twice in this unit — a
+reader enforcing *date absent iff reason present* while the producer did not, and a
+plausibility bound applied to the lenient path while the strict one went without.
+
+What a consumer still cannot do is distinguish a degenerate date from a genuine
+out-of-calendar one **when some other producer hands it one**, because both are valid days.
+The bucket rule above stands for that case.
 
