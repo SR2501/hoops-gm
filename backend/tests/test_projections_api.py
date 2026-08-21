@@ -30,8 +30,6 @@ returns fewer rows than the release digested.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterator
 from pathlib import Path
 from threading import Barrier, Thread
 from typing import Any
@@ -39,19 +37,13 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Dialect
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.routes import projections as projections_route
-from hoops_gm.api.routes.projections import (
-    ProjectionRates,
-    _lock_projection_source,
-    _projection_players,
-    _source_lock_statement,
-)
+from hoops_gm.api.routes.projections import ProjectionRates, _projection_players
 from hoops_gm.app import create_app
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
@@ -59,7 +51,6 @@ from hoops_gm.db.models.enums import ExternalSource, FieldEvidence, MatchMethod
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.projections import Projection, ProjectionImport, ProjectionSource
-from hoops_gm.db.session import Database
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.projections import CANONICAL_STAT_FIELDS, import_projection_csv
 from hoops_gm.projections.blending import (
@@ -69,6 +60,7 @@ from hoops_gm.projections.blending import (
     ProjectionBlendError,
     StaleProjectionInputError,
     UnknownProjectionInputError,
+    release_projection_import,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "projections"
@@ -545,8 +537,55 @@ def test_an_import_whose_stored_rate_went_negative_is_refused(
     assert _error_of(response) == "projections_incomplete_evidence"
 
 
+def test_a_row_whose_season_drifted_from_its_import_is_refused(
+    app: FastAPI, client: TestClient, seeded: int
+) -> None:
+    """The family member review found missing from the route's own enumeration.
+
+    Operationally it looks different from the rest — a denormalised column on a
+    stored row drifting from its parent reads like data repair rather than
+    re-import — which is why it tests ``architect``'s splitting rule. It does
+    not break it: re-importing the same bytes rewrites the whole row cohort, so
+    the remedy still converges at *produce a good import*, and the code stays
+    shared.
+    """
+
+    assert client.get(PROJECTIONS_URL.format(league_id=seeded)).status_code == 200
+
+    with app.state.database.session() as session:
+        session.execute(update(Projection).values(season="2019-20"))
+
+    response = client.get(PROJECTIONS_URL.format(league_id=seeded))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "projections_incomplete_evidence"
+
+
+def test_a_half_present_three_point_pair_is_refused(
+    app: FastAPI, client: TestClient, seeded: int
+) -> None:
+    """The seventh member, reachable only for three-pointers.
+
+    ``projections`` has ``fg_volume_pair_complete`` and ``ft_volume_pair_complete``
+    CHECK constraints and **no** ``fg3_volume_pair_complete``, so this is the one
+    made/attempted pair that can be broken in the database at all. Driving it
+    pins both facts: that the refusal works, and that the asymmetry is real
+    rather than a reading of the model file.
+    """
+
+    assert client.get(PROJECTIONS_URL.format(league_id=seeded)).status_code == 200
+
+    with app.state.database.session() as session:
+        session.execute(update(Projection).values(three_pointers_attempted_per_game=None))
+
+    response = client.get(PROJECTIONS_URL.format(league_id=seeded))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "projections_incomplete_evidence"
+
+
 # --------------------------------------------------------------------------
-# Guards the lock is supposed to make unreachable, driven by mutation
+# Guards driven by real committed writes landing mid-request
 # --------------------------------------------------------------------------
 
 
@@ -591,24 +630,40 @@ def test_a_selector_that_disagrees_with_canonical_currency_is_refused(
 
 
 def test_a_row_cohort_shorter_than_the_release_is_refused(
-    client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
+    app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The failure: a body whose rates are not the rows the lineage block describes.
+    """A real committed DELETE lands between the release and the row load.
 
-    Reproduced by mutating the row load to drop one row after the canonical
-    release has already digested two. Without the guard this returns 200 with
-    ``projection_count: 2`` beside a single player's rates — a success-shaped
-    partial answer, which is the one thing this endpoint promises never to give.
+    Review's objection to the earlier version was right: monkeypatching the
+    loader to slice a row off reproduces "the loader returned fewer rows", not
+    "the database changed underneath the request", which is the failure the
+    guard exists for. So the mutation here changes only *timing* — the loader
+    still loads whatever is there — and a second connection really commits a
+    delete in the window. Nothing about the route's logic is patched.
+
+    Without the guard this returns 200 with one player's rates beside
+    ``projection_count: 2``: a success-shaped partial answer.
     """
 
     unmutated = projections_route._projection_rows
     assert len(client.get(PROJECTIONS_URL.format(league_id=seeded)).json()["projections"]) == 2
 
-    monkeypatch.setattr(
-        projections_route,
-        "_projection_rows",
-        lambda session, *, import_id: unmutated(session, import_id=import_id)[:-1],
-    )
+    def delete_one_row_first(session: Session, *, import_id: int) -> list[Projection]:
+        worker = app.state.database.session_factory()
+        try:
+            victim = worker.scalar(
+                select(Projection.id)
+                .where(Projection.projection_import_id == import_id)
+                .order_by(Projection.player_id.desc())
+                .limit(1)
+            )
+            worker.execute(delete(Projection).where(Projection.id == victim))
+            worker.commit()
+        finally:
+            worker.close()
+        return unmutated(session, import_id=import_id)
+
+    monkeypatch.setattr(projections_route, "_projection_rows", delete_one_row_first)
     response = client.get(PROJECTIONS_URL.format(league_id=seeded))
 
     assert response.status_code == 409
@@ -617,46 +672,75 @@ def test_a_row_cohort_shorter_than_the_release_is_refused(
 
 
 def test_a_cohort_that_moved_under_the_read_is_refused(
-    client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
+    app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The failure the cardinality check could never see: a same-sized edit.
+    """The failure the cardinality check could never see: a same-size edit.
 
-    Reproduced rather than reasoned about. The row load is mutated to make a real
-    in-place write — a rate changed, the row count untouched — between the
-    canonical release that digested the cohort and the response that carries it.
-    Without the re-release comparison this returns 200 with the *post-write*
-    rates beside the *pre-write* ``projection_values_sha256``: a lineage block
-    that does not describe the numbers next to it, which is precisely what the
-    digest exists to make impossible.
-
-    This is also the concrete form of the SQLite defect review found. The lock
-    is what should stop the write landing at all; the guard is what catches it
-    if the lock is wrong, and the lock was wrong once already.
+    Also a real committed write from a second connection, for the same reason.
+    A rate changes, the row count does not. Without the re-release comparison
+    this returns 200 with the *post-write* rates beside the *pre-write*
+    ``projection_values_sha256`` — the lineage block failing to describe the
+    numbers next to it, which is exactly what review demonstrated at the head
+    before this guard existed.
     """
 
     unmutated = projections_route._projection_rows
     before = client.get(PROJECTIONS_URL.format(league_id=seeded)).json()
     assert before["projections"][0]["assists_per_game"] != 9.0
 
-    def moving_load(session: Session, *, import_id: int) -> list[Projection]:
-        rows = unmutated(session, import_id=import_id)
-        session.execute(
-            update(Projection)
-            .where(Projection.projection_import_id == import_id)
-            .values(assists_per_game=9.0)
-        )
-        session.flush()
-        return rows
+    def edit_a_rate_first(session: Session, *, import_id: int) -> list[Projection]:
+        worker = app.state.database.session_factory()
+        try:
+            worker.execute(
+                update(Projection)
+                .where(Projection.projection_import_id == import_id)
+                .values(assists_per_game=9.0)
+            )
+            worker.commit()
+        finally:
+            worker.close()
+        return unmutated(session, import_id=import_id)
 
-    monkeypatch.setattr(projections_route, "_projection_rows", moving_load)
+    monkeypatch.setattr(projections_route, "_projection_rows", edit_a_rate_first)
     response = client.get(PROJECTIONS_URL.format(league_id=seeded))
 
     assert response.status_code == 409
     assert _error_of(response) == "projections_inconsistent_cohort"
     assert (
         before["lineage"]["projection_import"]["projection_values_sha256"]
-        in (response.json()["detail"])
+        in response.json()["detail"]
     )
+
+
+def test_an_import_that_disappears_mid_request_is_refused(
+    app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third `projections_not_current` raiser, which review found undriven.
+
+    It was marked ``# pragma: no cover`` on the belief that the canonical
+    release had just loaded the row. With no lock and a weakly-referencing
+    identity map, ``session.get`` is a real query and a concurrent delete can
+    miss it. Driven with a real committed delete rather than reasoned about,
+    and the pragma is gone.
+    """
+
+    unmutated = projections_route._projection_rows
+
+    def delete_the_import_first(session: Session, *, import_id: int) -> list[Projection]:
+        rows = unmutated(session, import_id=import_id)
+        worker = app.state.database.session_factory()
+        try:
+            worker.execute(delete(ProjectionImport).where(ProjectionImport.id == import_id))
+            worker.commit()
+        finally:
+            worker.close()
+        return rows
+
+    monkeypatch.setattr(projections_route, "_projection_rows", delete_the_import_first)
+    response = client.get(PROJECTIONS_URL.format(league_id=seeded))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "projections_not_current"
 
 
 def test_an_unlabelled_player_is_refused_rather_than_rendered_blank(session: Session) -> None:
@@ -678,165 +762,135 @@ def test_an_unlabelled_player_is_refused_rather_than_rendered_blank(session: Ses
 
 
 # --------------------------------------------------------------------------
-# Locking
+# Concurrency, without a lock
 # --------------------------------------------------------------------------
 
 
-def test_the_read_locks_the_row_the_importer_locks_first() -> None:
-    """The lock is the importer's own, compiled where it is actually visible.
+def test_a_read_writes_nothing(app: FastAPI, client: TestClient) -> None:
+    """The route takes no lock, so it must also take no write.
 
-    ``import_projection_csv`` takes ``projection_sources`` ``FOR UPDATE`` before
-    anything else; this read takes the same row and nothing after it, so its
-    lock order is a strict prefix of the writer's and the two cannot deadlock.
-    Compiled against PostgreSQL because SQLite never emits the clause — a test
-    that only ran the statement on SQLite would pass with
-    ``.with_for_update()`` deleted.
-    """
-
-    compiled = str(
-        _source_lock_statement(ExternalSource.BASKETBALL_MONSTER).compile(dialect=POSTGRES_DIALECT)
-    )
-
-    assert "FROM projection_sources" in compiled
-    assert compiled.rstrip().endswith("FOR UPDATE")
-
-
-@pytest.mark.sqlite_only
-def test_the_read_actually_blocks_a_concurrent_writer_on_sqlite(database: Database) -> None:
-    """The claim that was rhetoric until review drove it, now driven here.
-
-    ``FOR UPDATE`` alone is not serialization on SQLite: SQLAlchemy drops the
-    clause, and pysqlite's legacy transaction handling emits ``BEGIN`` only
-    before DML, so a read-only session holds **nothing**. This asserts the
-    positive fact — that with the write reservation the reader holds, a
-    concurrent writer cannot commit through it and the reader's view does not
-    move underneath the response it is building.
-
-    Written the way the failure happens rather than the way the code reads: a
-    real second connection, a real competing write, and an assertion about what
-    the reader can still see afterwards.
-    """
-
-    setup = database.session_factory()
-    setup.add(ProjectionSource(source=ExternalSource.BASKETBALL_MONSTER, display_name="before"))
-    setup.commit()
-    setup.close()
-
-    outcome: list[str] = []
-
-    def competing_writer() -> None:
-        worker = database.session_factory()
-        try:
-            worker.execute(update(ProjectionSource).values(display_name="after"))
-            worker.commit()
-            outcome.append("committed")
-        except OperationalError:
-            outcome.append("blocked")
-        finally:
-            worker.rollback()
-            worker.close()
-
-    reader = database.session_factory()
-    try:
-        assert _lock_projection_source(reader, source=ExternalSource.BASKETBALL_MONSTER) is not None
-
-        thread = Thread(target=competing_writer, daemon=True)
-        thread.start()
-        thread.join(timeout=30)
-        assert not thread.is_alive(), "the competing writer never finished"
-
-        assert outcome == ["blocked"]
-        assert reader.scalar(select(ProjectionSource.display_name)) == "before"
-    finally:
-        reader.rollback()
-        reader.close()
-
-
-@pytest.fixture
-def locked_rows() -> Iterator[list[str]]:
-    """The table each row-locking statement targets, in execution order.
-
-    Hooked at the ORM level and compiled against PostgreSQL *inside the
-    listener*, rather than reading the SQL the local dialect happened to emit.
-    That is the whole point: SQLite silently drops ``FOR UPDATE``, so a capture
-    taken after dialect compilation would record an empty list on the
-    development database and pass every ordering assertion vacuously — the
-    "green while asking an adjacent question" failure this repository keeps
-    finding. Compiling the *statement* makes the check mean the same thing on
-    both dialects and lets it run everywhere.
-
-    Targets rather than whole statements, because the importer locks its source
-    row by ``id`` while this read locks it by ``source``. Comparing SQL text
-    would compare predicates, which is not what "lock order" means.
-    """
-
-    captured: list[str] = []
-
-    def record(state: Any) -> None:
-        try:
-            compiled = str(state.statement.compile(dialect=POSTGRES_DIALECT))
-        except Exception:  # pragma: no cover - non-compilable statement, not a lock
-            return
-        if "FOR UPDATE" not in compiled.upper():
-            return
-        match = re.search(r"\bFROM\s+(\w+)", compiled, flags=re.IGNORECASE)
-        captured.append(match.group(1) if match else compiled)
-
-    event.listen(Session, "do_orm_execute", record)
-    try:
-        yield captured
-    finally:
-        event.remove(Session, "do_orm_execute", record)
-
-
-def test_the_executed_lock_order_is_a_prefix_of_the_importers(
-    app: FastAPI, client: TestClient, locked_rows: list[str]
-) -> None:
-    """Driven, not enumerated.
-
-    The static version of this claim is the one the schedule-grid lane found to
-    be wrong: an ordering does not exist until two functions are composed at
-    runtime, and a 44-site enumeration declared an ABBA deadlock impossible
-    while it was already there. So both paths are executed and their emitted
-    lock sequences are compared.
-
-    A prefix is the strongest ordering property available here and it is what
-    makes deadlock impossible rather than unlikely: this read never asks for a
-    lock the importer has not already taken, so there is no pair to invert.
+    The rejected alternative acquired SQLite's write reservation with an
+    ``UPDATE``, which mutates ``updated_at`` through ``TimestampMixin``'s
+    ``onupdate`` and made every dashboard poll a writer. This pins the property
+    that replaced it: a read leaves the source row exactly as it found it, on
+    the success path and on a refusal alike.
     """
 
     with app.state.database.session() as session:
         league_id = _seed_league(session)
         _seed_fixture_players(session)
         _import_bbm(session)
-    importer_locks = list(locked_rows)
-    locked_rows.clear()
 
+    def source_row() -> tuple[Any, Any]:
+        probe = app.state.database.session_factory()
+        try:
+            row = probe.execute(
+                select(ProjectionSource.updated_at, ProjectionSource.display_name)
+            ).one()
+            return (row[0], row[1])
+        finally:
+            probe.close()
+
+    before = source_row()
     assert client.get(PROJECTIONS_URL.format(league_id=league_id)).status_code == 200
-    reader_locks = list(locked_rows)
+    assert source_row() == before
 
-    assert importer_locks[:2] == ["projection_sources", "projection_imports"]
-    assert reader_locks == ["projection_sources"]
-    assert importer_locks[: len(reader_locks)] == reader_locks
+    assert (
+        client.get(
+            PROJECTIONS_URL.format(league_id=league_id),
+            params={"source": ExternalSource.FANTASYPROS.value},
+        ).status_code
+        == 409
+    )
+    assert source_row() == before
 
 
-def test_a_concurrent_import_never_yields_an_untyped_failure(
+def test_concurrent_reads_all_succeed(app: FastAPI, client: TestClient) -> None:
+    """Four overlapping polls, which the write-reservation design could not promise.
+
+    On SQLite a reservation-holding read is a writer, so concurrent polls
+    contend for the single writer and one can be told ``database is locked``.
+    Taking no lock removes that entirely, and this pins it rather than assuming
+    it.
+    """
+
+    with app.state.database.session() as session:
+        league_id = _seed_league(session)
+        _seed_fixture_players(session)
+        _import_bbm(session)
+
+    statuses: list[int] = []
+
+    def poll() -> None:
+        statuses.append(client.get(PROJECTIONS_URL.format(league_id=league_id)).status_code)
+
+    threads = [Thread(target=poll, daemon=True) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not [thread for thread in threads if thread.is_alive()]
+    assert statuses == [200, 200, 200, 200]
+
+
+def test_a_read_never_blocks_the_owners_import(app: FastAPI, client: TestClient) -> None:
+    """The reason the lock was removed, asserted rather than asserted-in-prose.
+
+    A hand-run ``import_projection_csv`` must not fail because a dashboard tab
+    is polling. Under the rejected write-reservation design this writer was told
+    ``database is locked`` — that behaviour was driven, and it is what made the
+    trade wrong for a single-user local tool whose writer is a person at a
+    keyboard.
+    """
+
+    with app.state.database.session() as session:
+        league_id = _seed_league(session)
+        _seed_fixture_players(session)
+        _import_bbm(session)
+
+    barrier = Barrier(2, timeout=30)
+    failures: list[str] = []
+    statuses: list[int] = []
+
+    def poll() -> None:
+        barrier.wait()
+        for _ in range(3):
+            statuses.append(client.get(PROJECTIONS_URL.format(league_id=league_id)).status_code)
+
+    def owner_import() -> None:
+        worker = app.state.database.session_factory()
+        try:
+            barrier.wait()
+            _import_bbm(worker, csv_bytes=load_bytes(BBM_FIXTURE).replace(b",2415,", b",2390,"))
+            worker.commit()
+        except Exception as exc:
+            failures.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            worker.rollback()
+            worker.close()
+
+    threads = [Thread(target=poll, daemon=True), Thread(target=owner_import, daemon=True)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not [thread for thread in threads if thread.is_alive()]
+    assert failures == [], "a concurrent read must never make the owner's import fail"
+    assert statuses and set(statuses) <= {200, 409}
+
+
+def test_a_concurrent_import_never_serves_a_lineage_that_does_not_describe_its_rates(
     app: FastAPI, client: TestClient
 ) -> None:
-    """Both paths run at once on whichever dialect the suite is using.
+    """The property that replaced the lock, driven under real contention.
 
-    Asserts the pair does not deadlock and that the reader either serves a
-    self-consistent cohort or refuses with a documented code — never a 500, and
-    never a body whose rates disagree with the count in its own lineage block.
-
-    **Daemon threads with bounded joins, not a ``ThreadPoolExecutor``.** Review
-    caught the earlier version turning its own subject into a hang: a pool's
-    context manager calls ``shutdown(wait=True)`` and joins unconditionally, so
-    a genuinely stuck worker — the single failure mode this test exists to
-    detect, and one SQLite has no deadlock detector to break — would have joined
-    forever after the future's timeout fired. Every wait here is bounded and
-    every thread is a daemon, so a deadlock reports as a failure instead of
-    burning the job's wall clock.
+    Review's objection to the earlier version was that on a 200 it checked only
+    cardinality — the same blind spot as the guard it was meant to exercise, so
+    it could not fail on the divergence that actually matters. This re-releases
+    the served import afterwards and compares the **digest**, which is a content
+    claim rather than a count wearing a content claim's clothes.
     """
 
     with app.state.database.session() as session:
@@ -846,7 +900,6 @@ def test_a_concurrent_import_never_yields_an_untyped_failure(
 
     barrier = Barrier(2, timeout=30)
     responses: list[Any] = []
-    writer_errors: list[str] = []
 
     def reader() -> None:
         barrier.wait()
@@ -858,10 +911,6 @@ def test_a_concurrent_import_never_yields_an_untyped_failure(
             barrier.wait()
             _import_bbm(worker, csv_bytes=load_bytes(BBM_FIXTURE).replace(b",2415,", b",2390,"))
             worker.commit()
-        except OperationalError as exc:
-            # SQLite has no queue: the loser of the write reservation is told so
-            # rather than made to wait. That is contention, not a deadlock.
-            writer_errors.append(type(exc).__name__)
         finally:
             worker.rollback()
             worker.close()
@@ -877,8 +926,29 @@ def test_a_concurrent_import_never_yields_an_untyped_failure(
     assert len(responses) == 1
     response = responses[0]
     assert response.status_code in {200, 409}
-    if response.status_code == 200:
-        body = response.json()
-        assert len(body["projections"]) == body["lineage"]["projection_import"]["projection_count"]
-    else:
+    if response.status_code != 200:
         assert _error_of(response).startswith("projections_")
+        return
+
+    body = response.json()
+    lineage = body["lineage"]["projection_import"]
+    assert len(body["projections"]) == lineage["projection_count"]
+
+    # The content claim: whatever was served, its digest is the digest of the
+    # rates that came with it. Re-released through the canonical function so
+    # this test does not re-implement the normalisation either.
+    verify = app.state.database.session_factory()
+    try:
+        current = release_projection_import(
+            verify,
+            import_id=lineage["import_id"],
+            source=ExternalSource.BASKETBALL_MONSTER,
+        )
+        assert current.projection_values_sha256 == lineage["projection_values_sha256"]
+        assert current.projection_count == len(body["projections"])
+    except StaleProjectionInputError:
+        # The served import was superseded after the response was built. That is
+        # not a contradiction in the response; it is the world moving on.
+        pass
+    finally:
+        verify.close()

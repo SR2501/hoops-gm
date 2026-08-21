@@ -227,6 +227,34 @@ dates, not a real Fantrax calendar, and its playoff weeks are synthesized — th
 settings contract cannot express "authoritatively zero playoff periods". Do not
 read the demo as evidence that a real league's calendar joins correctly.
 
+## Why the projections endpoint takes no lock
+
+It reads `projection_sources`, `projection_imports`, `projections`, `players`
+and `source_games_played_assumptions` without locking any of them, and refuses
+if any of it moved while it was reading.
+
+An earlier version took the importer's own `projection_sources` row `FOR UPDATE`
+and claimed both dialects therefore serialized. **The SQLite half was false**:
+pysqlite emits `BEGIN` only before DML, and SQLAlchemy drops `FOR UPDATE` on
+SQLite, so a read-only session held nothing at all. A concurrent writer
+committed straight through it and the endpoint served a 200 whose rates were
+post-write beside a pre-write `projection_values_sha256`.
+
+Adding SQLite's write reservation makes the lock real, and it was tried and
+rejected. It turns every read into a *writer* on the development database, so an
+open dashboard tab can make a hand-run `import_projection_csv` fail with
+`database is locked`; it mutates `updated_at` through `TimestampMixin`'s
+`onupdate`, held harmless only by a rollback nobody would notice deleting; and
+on PostgreSQL it stalls an import for the whole request. For a single-user local
+tool whose writer is a person at a keyboard, that is the wrong way round.
+
+So every read is **bracketed between two runs of `release_projection_import`**
+and the two immutable lineage records are compared whole. A concurrent import
+can make this endpoint answer `409 projections_inconsistent_cohort`, and cannot
+make it answer 200 with a lineage block that does not describe the rates beside
+it. The trade in one line: a lock prevents the race and blocks the owner's
+import; the digest detects it and asks the caller to retry.
+
 ## Why the projections endpoint serves no blend
 
 `GET /api/v1/leagues/{league_id}/projections/current` reports the **imported**

@@ -379,19 +379,44 @@ superseded cohort. Eight typed codes in `ErrorResponse.error`:
 `projections_source_unsupported`, `projections_source_not_imported`,
 `projections_not_current`, `projections_incomplete`,
 `projections_incomplete_evidence` and `projections_inconsistent_cohort`.
-`projections_incomplete_evidence` is a **family** — unverified profile, season
-outside verified scope, self-contradicting immutable lineage, a stored rate gone
-negative — and stays one code because splitting it would make the route
-re-derive which member fired. A consumer must render a summary true of every
-member and must not substring-match `detail`, which is free-form prose.
+
+`projections_incomplete_evidence` is a **family of eight driven members** —
+unverified import row, unverified profile-version row, season outside verified
+scope, self-contradicting immutable lineage, a negative rate, a non-finite rate,
+a half-present three-point made/attempted pair (the only pair with no CHECK
+constraint), and a row whose denormalised season drifted from its import. A
+ninth, makes-exceeding-attempts, is blocked by CHECK constraints and
+unreachable. It stays one code under `architect`'s rule — *split when two
+members imply different operator actions; keep one when every member implies the
+same one* — because re-importing rewrites the whole row cohort and so repairs
+every member. The enumeration is the one that was driven end to end, not the one
+read off the source: an earlier version of this entry listed four members and
+the route listed five, and both were short. A consumer must render a summary
+true of every member and must not substring-match `detail`, which is free-form
+prose. `test_the_blending_error_family_is_pinned` fails if
+`ProjectionBlendError` gains a subclass, so convergence is decided rather than
+inherited.
 
 Guaranteed on any 200 or refused instead: `players` and `projections` describe
 the same `player_id` set, each exactly once, both ordered; and
 `len(projections) == lineage.projection_import.projection_count`.
 `source_games_played_assumptions` is deliberately sparse and absent never means
-zero. The read takes the importer's own `projection_sources` row lock and
-nothing after it, so its lock order is a strict prefix of the writer's — asserted
-by executing both paths and comparing, not by enumerating call sites.
+zero.
+
+**The route takes no lock, and that is the decision rather than the omission.**
+An earlier version took the importer's `projection_sources` row `FOR UPDATE` and
+claimed both dialects serialized; review drove it and the SQLite half was false,
+because pysqlite emits `BEGIN` only before DML and SQLAlchemy drops `FOR UPDATE`
+— a concurrent writer committed straight through the reader and produced a 200
+whose rates were post-write beside a pre-write digest. Adding SQLite's write
+reservation fixed that and cost more than it bought: every read became a writer,
+so an open dashboard tab could make a hand-run import fail with `database is
+locked`, and it mutated `updated_at` through `TimestampMixin`. Instead every
+read is **bracketed between two runs of the canonical release** and refused if
+anything moved. A concurrent import can make this endpoint answer 409; it cannot
+make it answer 200 with a lineage block that does not describe the rates beside
+it. Driven under real contention with real committed writes, not monkeypatched
+row loaders.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 

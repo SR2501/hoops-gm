@@ -56,9 +56,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import Select, Update
 
 from hoops_gm.api.deps import SessionDep
 from hoops_gm.api.schemas import ErrorResponse
@@ -288,84 +287,44 @@ def _error(status_code: int, code: str, detail: str) -> HTTPException:
     )
 
 
-def _source_lock_statement(source: ExternalSource) -> Select[tuple[int]]:
-    """The exact statement :func:`_lock_projection_source` executes.
+def _projection_source_id(session: Session, *, source: ExternalSource) -> int | None:
+    """The registered source row id, or ``None`` if it has never been registered.
 
-    Split out so a test can compile it against PostgreSQL and see the ``FOR
-    UPDATE`` clause, which no SQLite run can ever emit.
+    **This route takes no lock, and that is a decision rather than an omission.**
+
+    An earlier version took ``projection_sources`` ``FOR UPDATE`` — the
+    importer's own first row lock — and claimed both dialects therefore
+    serialized. That claim was false on SQLite, where pysqlite emits ``BEGIN``
+    only before DML and SQLAlchemy drops ``FOR UPDATE`` entirely, so a read-only
+    session held nothing: review drove a concurrent writer straight through it
+    and produced a 200 whose rates were post-write beside a pre-write
+    ``projection_values_sha256``.
+
+    The obvious repair was to add SQLite's write reservation. It works, and it
+    was rejected on the second look, because of what it costs the person this
+    tool is for: it makes every read a *writer* on the development database, so
+    an open dashboard tab can make a hand-run ``import_projection_csv`` fail with
+    ``database is locked``. It also mutates ``updated_at`` through
+    ``TimestampMixin``'s ``onupdate`` — a read endpoint writing to the row it
+    reads, held harmless only by a rollback nobody would notice deleting — and
+    on PostgreSQL it stalls an import for the whole request while labelling
+    players and serialising a model.
+
+    So the guarantee is *observed* instead of *assumed*:
+    :func:`_assert_cohort_is_stable` brackets every read between two runs of the
+    canonical release and refuses if anything moved. A concurrent import can
+    make this endpoint answer 409, and cannot make it answer 200 with a lineage
+    block that does not describe the rates beside it. That is the smaller
+    construction, it behaves identically on both dialects, and — unlike the
+    lock — it is the mechanism the tests actually exercise.
+
+    The trade in one line: **a lock prevents the race and blocks the owner's
+    import; the digest detects it and asks the caller to retry.** For a
+    single-user local tool where the writer is a person at a keyboard, the
+    second is the right way round.
     """
 
-    return select(ProjectionSource.id).where(ProjectionSource.source == source).with_for_update()
-
-
-def _source_write_reservation(source: ExternalSource) -> Update:
-    """A no-op update on the same row, executed purely for the lock it takes.
-
-    ``display_name`` is set to itself, so the row's content cannot change. This
-    is the device ``db/lineage.py``'s ``lock_refresh_scope`` uses to acquire
-    SQLite's database-wide write reservation, reproduced here rather than
-    imported: ``test_lineage_locks_are_acquired_through_exactly_one_import``
-    pins ``db/lineage.py`` as the **only** module reaching
-    ``acquire_transaction_lock``, because both schedule-grid lock-order tests
-    record lineage locks by monkeypatching that one name and a second importer
-    would make them go blind while staying green. This lock is a row lock on the
-    projection source, not a lineage scope, so it has no business borrowing that
-    primitive.
-    """
-
-    return (
-        update(ProjectionSource)
-        .where(ProjectionSource.source == source)
-        .values(display_name=ProjectionSource.display_name)
-    )
-
-
-def _lock_projection_source(session: Session, *, source: ExternalSource) -> int | None:
-    """Serialize this read against a concurrent import of the same source.
-
-    ``import_projection_csv`` takes ``SELECT projection_sources.id ... FOR
-    UPDATE`` as its first database-level lock, then the matching
-    ``projection_imports`` row. This read takes the same row and nothing after
-    it, so its lock order is a strict prefix of the writer's and there is no
-    pair to invert. Taking a *different* lock, such as one of
-    ``db/lineage.py``'s refresh scopes, would look rigorous and serialize
-    nothing, because the projection importer does not use them.
-
-    Returns the source row id, or ``None`` when the source has never been
-    registered — the caller turns that into a refusal rather than a 500.
-
-    **Two statements, because one dialect's lock is the other's no-op.** The
-    reservation is what SQLite serializes on; the ``FOR UPDATE`` select is a real
-    row lock on PostgreSQL and is dropped entirely by SQLite. On PostgreSQL the
-    reservation alone would in fact suffice — an ``UPDATE`` takes the same row
-    lock — but the ``FOR UPDATE`` is kept because it is the importer's *own*
-    statement, so the prefix property is observable in the same form on both
-    sides rather than inferred from two different statements that happen to take
-    equivalent locks. Neither statement branches on the dialect (ADR-001); each
-    is simply a no-op on the dialect it was not written for.
-
-    **An earlier version of this docstring claimed SQLite serialized on its own
-    shared read lock, "held from this session's first statement until the
-    transaction ends". That was false and was caught in review by driving it.**
-    pysqlite's legacy transaction handling emits ``BEGIN`` only before DML, never
-    before a ``SELECT``, so a read-only session held nothing at all: a concurrent
-    writer committed straight through it, and the reader's next read saw the new
-    value. The reservation is what makes the claim true, and it was confirmed the
-    same way — with it, the same writer fails to commit and the reader's view
-    stays put (``test_the_read_actually_blocks_a_concurrent_writer_on_sqlite``).
-    The lesson generalises: a mechanism stated rather than exercised is not
-    evidence, and the SQLite half of this was rhetoric until something failed.
-
-    **What it still cannot observe.** Neither dialect is WAL — the engine sets
-    no ``journal_mode`` and no ``busy_timeout`` — so a SQLite writer that loses
-    the race gets ``database is locked`` rather than waiting, and SQLite
-    contention on this endpoint surfaces as an untyped 500 rather than as one of
-    the documented codes. That is inherited and app-wide rather than introduced
-    here.
-    """
-
-    session.execute(_source_write_reservation(source))
-    return session.scalar(_source_lock_statement(source))
+    return session.scalar(select(ProjectionSource.id).where(ProjectionSource.source == source))
 
 
 def _current_import_candidate(session: Session, *, source_id: int, season: str) -> int | None:
@@ -398,27 +357,64 @@ def _released_import(
     Three outcomes, because they call for three different operator actions.
 
     ``projections_not_current`` — the import this response would have described
-    is no longer the one on record. **One fact, two ways to reach it:** it was
-    superseded by a newer import for the same source and season, or it was
-    removed outright between the selector and the release. Either way the
-    consumer's action is identical: re-request. Nothing else shares this code.
+    is no longer the one on record. **Four raise sites, one fact.** Two are
+    here: superseded by a newer import for the same source and season
+    (``StaleProjectionInputError``), or removed outright between the selector
+    and the release (``UnknownProjectionInputError``). A third is the audit read
+    in the handler, which can miss the row for the same reason. A fourth —
+    ``release_projection_import`` refusing an import that belongs to a different
+    source — is mapped here and is unreachable, because the source id is
+    resolved through ``uq_projection_sources_source`` and the candidate is
+    filtered by it. An earlier version of this paragraph said "two ways" and
+    "nothing else shares this code"; review enumerated the sites and both
+    clauses were wrong. Every reachable one asks the caller for the same thing:
+    re-request.
 
     ``projections_incomplete`` — the import exists and is current but carries no
     usable rows, which for a real CSV means every row failed identity
     resolution. The fix is in the crosswalk, not the file.
+    ``MissingProjectionDataError``'s other raiser, a repeated ``player_id``
+    within one import, is made inexpressible by
+    ``uq_projections_import_player``, so the copy is safe for every reachable
+    case.
 
-    ``projections_incomplete_evidence`` — the catch-all for every other way the
-    canonical release refuses: an unverified profile, a season outside the
-    profile's verified scope, immutable profile lineage that contradicts itself,
-    a stored rate that is negative or non-finite, a made/attempted pair that is
-    half-present. It is a *family*, and it stays one because splitting it would
-    mean this route re-deriving which member fired, which is exactly the second
-    verifier this module refuses to be. A consumer must render a summary general
-    enough to be true of every member and must **not** substring-match
-    ``detail``, which is free-form English with interpolated ids rather than a
-    contract surface. It is also the code any future ``ProjectionBlendError``
-    subclass lands on — deliberately, so a new refusal reaching this route is a
-    typed 409 rather than an untyped 500.
+    ``projections_incomplete_evidence`` — every other way the canonical release
+    refuses. **The enumeration below was driven end to end in review, not read
+    off the source, and the previous version of it was short by two:**
+
+    1. ``profile_verified`` false on the import row;
+    2. ``verified`` false on its profile-version row (same message, different row);
+    3. the import's season outside the profile's verified season scope;
+    4. immutable profile lineage that contradicts itself;
+    5. a stored rate that is negative;
+    6. a stored rate that is non-finite;
+    7. a half-present made/attempted pair — **reachable only for three-pointers**,
+       because ``projections`` has ``fg_volume_pair_complete`` and
+       ``ft_volume_pair_complete`` CHECK constraints and no
+       ``fg3_volume_pair_complete``;
+    8. a ``projections`` row whose denormalised ``season`` disagrees with its
+       import's.
+
+    A ninth, "makes greater than attempts", is in the family by type and
+    unreachable in practice: all three ``*_made_within_attempted`` CHECKs block
+    it at the same ``+0.001`` tolerance the validator uses.
+
+    **It stays one code**, under ``architect``'s rule that a family splits when
+    two members imply different operator actions. Member 8 is the one that
+    tests the rule — it looks like data repair rather than re-import — but
+    re-importing the same bytes rewrites the whole row cohort through
+    ``_import_projection_rows``, so its remedy converges with the rest at
+    *produce a good import*. Splitting would also mean this route re-deriving
+    which member fired, which is exactly the second verifier this module refuses
+    to be.
+
+    A consumer must render a summary true of every member and must **not**
+    substring-match ``detail``, which is free-form English with interpolated ids
+    rather than a contract surface. This is also the code any future
+    ``ProjectionBlendError`` subclass lands on — deliberately, so a new refusal
+    is a typed 409 rather than an untyped 500, and
+    ``test_the_blending_error_family_is_pinned`` fails when the subclass set
+    changes so that convergence is decided rather than inherited.
     """
 
     try:
@@ -629,14 +625,10 @@ def get_current_projections(
     response_league_id = league.id
     response_season = league.season
 
-    # Take the importer's own source-row lock before reading anything, so the
-    # currency check, the release digest and the rows below all describe one
-    # instant. Nothing else is locked: this route reads no settings snapshot,
-    # no schedule cohort and no derived calendar, so taking
-    # `lock_league_settings_scope` would add a second lock to the ordering
-    # graph and buy nothing. `leagues.season` is written once at creation and
-    # by no production writer thereafter.
-    source_id = _lock_projection_source(session, source=source)
+    # No lock is taken; see `_projection_source_id`. Correctness comes from
+    # bracketing every read below between two runs of the canonical release,
+    # which observes a cohort that moved rather than assuming one cannot.
+    source_id = _projection_source_id(session, source=source)
     if source_id is None:
         raise _error(
             409,
@@ -653,19 +645,41 @@ def get_current_projections(
             f"no {source.value} projection import exists for season {response_season!r}",
         )
 
+    # --- everything between this release and the one in `_assert_cohort_is_stable`
+    # --- is bracketed: if any of it moved, the request is refused rather than served.
     released = _released_import(session, import_id=import_id, source=source)
     rows = _projection_rows(session, import_id=import_id)
-    _assert_cohort_is_stable(session, rows=rows, released=released, source=source)
-
-    projection_import = session.get(ProjectionImport, import_id)
-    if projection_import is None:  # pragma: no cover - the release just loaded this row
+    players = _projection_players(session, rows)
+    claims = _games_played_claims(session, rows)
+    # An explicit column read rather than `session.get`, deliberately.
+    # `release_projection_import` has already put this row in the identity map,
+    # so `session.get` would answer from memory and could never observe the row
+    # going away — a refusal branch that reads correctly and can never fire,
+    # which is the defect class this repository keeps finding. This is a real
+    # query, and `test_an_import_that_disappears_mid_request_is_refused` drives
+    # it with a real committed delete.
+    audit = session.execute(
+        select(
+            ProjectionImport.original_filename,
+            ProjectionImport.row_count,
+            ProjectionImport.matched_count,
+            ProjectionImport.needs_review_count,
+            ProjectionImport.unmatched_count,
+            ProjectionImport.rejected_count,
+        ).where(ProjectionImport.id == import_id)
+    ).first()
+    if audit is None:
+        # Same code as a superseded import because the caller's action is
+        # identical — re-request. With no lock this is reachable, not defensive.
         raise _error(
             409,
             "projections_not_current",
             f"projection import {import_id} disappeared while it was being read",
         )
+    _assert_cohort_is_stable(session, rows=rows, released=released, source=source)
+    # --- end of the bracketed region.
 
-    response = CurrentProjectionsResponse(
+    return CurrentProjectionsResponse(
         league_id=response_league_id,
         season=response_season,
         source=source,
@@ -682,22 +696,15 @@ def get_current_projections(
                 projection_values_sha256=released.projection_values_sha256,
                 projection_count=released.projection_count,
                 assumed_scoring_type=released.assumed_scoring_type,
-                original_filename=projection_import.original_filename,
-                row_count=projection_import.row_count,
-                matched_count=projection_import.matched_count,
-                needs_review_count=projection_import.needs_review_count,
-                unmatched_count=projection_import.unmatched_count,
-                rejected_count=projection_import.rejected_count,
+                original_filename=audit[0],
+                row_count=audit[1],
+                matched_count=audit[2],
+                needs_review_count=audit[3],
+                unmatched_count=audit[4],
+                rejected_count=audit[5],
             ),
         ),
-        players=_projection_players(session, rows),
+        players=players,
         projections=[_rates(row) for row in rows],
-        source_games_played_assumptions=_games_played_claims(session, rows),
+        source_games_played_assumptions=claims,
     )
-
-    # Built entirely from copied values above, so releasing the source-row lock
-    # here cannot expire anything the response still needs. Rolling back rather
-    # than letting the dependency commit keeps a read endpoint from ending a
-    # transaction with a write.
-    session.rollback()
-    return response

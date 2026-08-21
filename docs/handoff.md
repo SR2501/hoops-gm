@@ -10287,3 +10287,139 @@ load-bearing) and anything to compare Basketball Monster against, which is the
 persisted-blend unit `architect` is scoping. Whoever takes that unit should start
 from `lineage.blend` and note it is typed `None`, so widening it is a schema
 change rather than a fill-in.
+---
+
+## 2026-08-20 — backend — Projections API: the lock came out, and why that is the fix
+
+**Changed:** Second review round on the same unit. `backend` and `architect`
+returned after the entry above was written, and between them found six more
+things. The largest outcome: **the endpoint now takes no lock at all**, and that
+is a deliberate reversal rather than a retreat.
+
+**Why the lock came out.** The entry above records fixing the false SQLite claim
+by adding a write reservation. That worked, and `backend`'s Finding 4 argued the
+whole construction was wrong for this endpoint, which on the second look is
+right. A reservation-holding read is a *writer* on SQLite, so an open dashboard
+tab can make the owner's hand-run `import_projection_csv` fail with `database is
+locked` — my own test asserted that writer-blocking as a *feature*. It also
+mutated `updated_at` through `TimestampMixin`'s `onupdate`, which I found by
+driving `code-review`'s question and which made a rollback nobody would notice
+deleting into the only thing keeping a read endpoint from writing. And on
+PostgreSQL it stalled an import for the whole request while labelling players
+and serialising a model.
+
+So the guarantee is now **observed rather than assumed**: every read is
+bracketed between two runs of `release_projection_import` and the immutable
+lineage records are compared whole. A concurrent import can make the endpoint
+answer 409; it cannot make it answer 200 with a lineage block that does not
+describe the rates beside it. That deleted the reservation, the `FOR UPDATE`,
+the rollback subtlety, both lock-order tests, the compile-against-PostgreSQL
+trick and roughly sixty lines of dialect prose. **The lock was the thing making
+the module hard to reason about, and the guard was doing the work the whole
+time.**
+
+Worth recording precisely because the previous entry praised the lock-order test
+as the best thing in the diff, and `architect` did too. It was good work on a
+mechanism that should not have existed. A well-tested wrong construction is
+still a wrong construction, and the test quality is not evidence for the design.
+
+**`backend`'s other findings, all real.** The refusal-family enumeration was
+short by two: it listed five members and there are eight, driven end to end —
+including a `projections` row whose denormalised `season` drifts from its
+import, which *looks* like a different operator action and is the case that
+tests `architect`'s splitting rule. It does not break it, because re-importing
+rewrites the whole row cohort, so every member converges at "produce a good
+import" and the code stays shared. A half-present made/attempted pair turns out
+to be reachable **only** for three-pointers, because `projections` has
+`fg_volume_pair_complete` and `ft_volume_pair_complete` CHECK constraints and no
+`fg3_volume_pair_complete`; both are now driven. `docs/backlog.md` had described
+the same family with four members, so the two authoritative descriptions
+disagreed and both were short — the exact thing `gates.md` names.
+
+`projections_not_current` had three raise sites, not the two its docstring
+asserted, and the third was marked `# pragma: no cover` on the belief the row
+was already loaded. It is genuinely reachable. That branch is now an explicit
+column read rather than `session.get`, *because* `session.get` would answer from
+the identity map and could never observe the row going away — a refusal that
+reads correctly and can never fire. Driven with a real committed delete.
+
+`backend` also showed the writer's real lock order was not what my docstring
+claimed — the first acquisition is a process-wide `threading.Lock`, the first
+database-level lock is an `INSERT`, and a third table sits between the two I
+named. The conclusion held for a better reason than the one I gave. Moot now,
+and the lesson is not: I staked a safety property on a claim about a module I do
+not own, when a claim about my own code was available and airtight.
+
+**Two tests were asserting something adjacent to the failure they named**, and
+both are rewritten. They monkeypatched the row loader to slice or shorten its
+result, which reproduces "the loader returned fewer rows" and not "the database
+changed underneath the request". Now the mutation changes only *timing* and a
+second connection really commits a delete or an edit in the window. The
+concurrency test asserted only cardinality on a 200 — the same blind spot as the
+guard it was exercising — and now re-releases the served import and compares the
+digest.
+
+**From `architect`, all applied:** the README section had been inserted
+mid-section and orphaned four paragraphs of schedule-grid prose under a
+projections heading (moved); `ProjectionBlendError.__subclasses__()` is now
+pinned so a future member cannot join a shared code unexamined; the
+`CANONICAL_STAT_FIELDS` cross-owner seam is declared in `ownership.md`; the
+audit counts' partition is asserted over an import whose terms differ rather
+than a fixture of zeros; and the **no-multiply prohibition** is stated in the
+README and backlog. That last is `architect`'s sharpest catch and I had not seen
+it: `assumed_games_played` is the exact divisor the importer used, so
+`rate × assumption` reconstructs Basketball Monster's published seasonal total to
+the float. ADR-002's decomposition is perfectly reversible at the wire, and the
+prohibition now lives in the two files a frontend lane opens rather than only in
+Python docstrings.
+
+Two prose overclaims `architect` re-derived and falsified are corrected: "the
+second browser-visible thing in this repository" (browser-*reachable*; the
+screen is tomorrow's lane) and "persisted blend profiles have somewhere to
+surface", true of the JSON and false of the contract, since `blend` is typed
+`None` rather than `BlendLineage | None`.
+
+`architect`'s reusable rule, recorded because it settles an open question:
+**split or discriminate a refusal family when two of its members imply different
+operator actions; keep one code when every member implies the same action. The
+test is the remedy, not the cause.** Under it `projections_incomplete_evidence`
+stays one code and the open schedule-grid question resolves as *discriminate*.
+
+**Now true:** 28 tests. The endpoint writes nothing, blocks nothing, and refuses
+rather than serving a cohort its lineage does not describe. Four concurrent
+polls all succeed; a concurrent hand-run import never fails.
+
+**Could not verify:**
+
+*Native PostgreSQL*, still. No Docker here. Removing the lock removes the
+PostgreSQL-specific machinery that most needed a real server, which narrows the
+gap rather than closing it — but the bracketed-read guarantee under READ
+COMMITTED has only been driven on SQLite locally. CI is the evidence.
+
+*The ABA hole is now the only residual and it is larger without the lock.* A
+change made and exactly reverted between the two releases is invisible. I
+believe it is unreachable through `import_projection_csv`, whose only same-cohort
+path rewrites value-identical rows, but I did not drive it, and the whole lesson
+of this lane is that I should stop believing undriven mechanisms.
+
+*The three-pointer CHECK asymmetry is now load-bearing in a test.* If
+`data-engineer` adds `fg3_volume_pair_complete`, `test_a_half_present_three_point_pair_is_refused`
+starts failing on an `IntegrityError` rather than the 409 it asserts. That is a
+correct failure — the constraint would be an improvement — but it is a test in
+`api/` that a change in `db/models/` will break, and I did not add it to the
+ownership matrix because I did not want to declare a second seam in a review
+round.
+
+*Everything the previous entry could not verify still stands* and is not
+repeated, except the two items the lock removal retired: there is no longer a
+`FOR UPDATE` path asserted only by compilation, and no writer-blocking behaviour
+to characterise.
+
+*I did not re-review my own remediation.* Three of the six findings in this
+round were about claims that had already passed a review round — my own reviews
+included. The third round is running against the pushed head; whatever it finds
+is the answer to how well this one went.
+
+**Next:** unchanged. `frontend` builds the screen tomorrow against a contract
+whose *shape* did not move in this round — only its guarantees got smaller and
+truer.
