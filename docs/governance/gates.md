@@ -189,6 +189,23 @@ Both are the same failure as the mutation bullets above — success inferred fro
 signal — which is why they are here rather than in a tools directory. **A tool rebuilt from an
 accurate description gets re-read; a committed script gets run without being understood.**
 
+**That rule governs safety, not evidence, and the distinction cost a lane its strongest
+number.** A mutation harness reporting *33 of 33 caught* lived outside the repository for nine
+review rounds, so **no reviewer could ever check the figure that carried the unit**. Its failure
+direction is silent — a broken harness reports success — which by the rule above argues for
+describing it. That is the wrong conclusion. **If a tool's output is cited as evidence, it must
+be in the repository regardless of failure direction, because the citation is what is being
+audited.** Describe a tool you want re-derived; commit a tool whose numbers appear in a review.
+
+**And the question that found seven holes in one verification script, which is the most
+reusable thing on this page:** *for each thing this file compares, what is the key set, and is
+it asserted or assumed?* All seven answered **assumed**. The last one had a visible
+consequence: overwriting one non-zero count row with a duplicate of a zero row left the
+cardinality intact, so a row-counting density check passed and a comparison iterating the rows
+it received never looked up the vanished pair — and on the screen a real count became the
+marker meaning *the backend sent no count*. **Two independent checks shared one proxy.** Assert
+membership of every key set a comparison depends on, not its size.
+
 ### Rounds have a cost, and the cost is prose
 
 One unit on 2026-08-21 ran six review rounds. It found **two behavioural defects a user
