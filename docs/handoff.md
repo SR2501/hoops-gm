@@ -14428,14 +14428,27 @@ applied to one of the two marks**, which is the same shape as every scope defect
 Now pinned by a test asserting the key's text contains exactly one em dash.
 
 **Could not verify:**
+- **~~Whether the split `push`/`pull_request` result can happen without a timeout.~~ — RESOLVED,
+  and the answer makes this worse than the entry above describes.** I inferred the divergence
+  *was* the nondeterminism. The run history for this branch shows it was flaky on **both** event
+  types across **at least three heads**:
+
+  ```
+  a6be804  pull_request success   push success    <- the fix
+  09b5b06  pull_request success   push failure
+  b933c5f  pull_request FAILURE   push failure
+  efa8c55  push failure
+  ```
+
+  So this was not a `push`-specific artefact and not a single unlucky run. **`b933c5f` was red on
+  both.** The guard had been failing intermittently for hours, across the head I rebased, the
+  head I re-verified digests on, and the head I reported ready — and I reported "193 tests green"
+  from my own machine at every one of them. The correct reading is not "CI caught something at
+  the last moment" but "CI had been saying so for hours to nobody."
 - **Whether other tests in this suite are near the timeout.** I fixed the one that failed and
   read the slow-test lines for the rest of the run, which are all far below - but I have not
   measured the schedule suite's 55 tests individually, and that suite is larger than mine and
   older. The class is now known to be live in this repository; nobody has swept for it.
-- **Whether the split `push`/`pull_request` result can happen without a timeout.** Both runs
-  execute the same job on the same commit, so a deterministic failure should appear in both. I
-  am inferring that the divergence *is* the nondeterminism rather than confirming it - a
-  flaky-on-both-runs failure would look identical from where I stand.
 - **That my em-dash test would catch the general case.** It counts em dashes in `.grid__key`
   and expects exactly one. It does not check the lede, the caption, the lineage panel or the
   integrity banner, where the same confusion is possible and currently absent by luck rather
