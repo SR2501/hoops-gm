@@ -350,6 +350,20 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                     f"{eastern_tipoff.isoformat()} != {utc_tipoff.isoformat()}"
                 )
             game_day = eastern_tipoff.date()
+            if not _plausible_season_date(game_day, season):
+                # The same epoch-placeholder trap as the pending path, and far
+                # worse here: a resolved game's date is persisted, joins
+                # `player_participation`, and is the denominator of every
+                # expected-games number. The EST/UTC reconciliation above
+                # cannot catch it, because a placeholder *pair* agrees exactly
+                # -- 1900's Eastern offset really is -05:00. Refused rather
+                # than degraded, because on this side a wrong date is
+                # indistinguishable from a real one downstream.
+                raise _contract(
+                    f"{game_id} resolves to {game_day.isoformat()}, which is not in season "
+                    f"{season}; its EST and UTC fields agree, so this is a plausible-looking "
+                    "epoch placeholder rather than a parse error"
+                )
 
             records.append(
                 ScheduleGameRecord(

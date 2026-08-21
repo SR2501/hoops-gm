@@ -62,6 +62,7 @@ from hoops_gm.ingest.nba import (
     playoff_scheduled_game_counts,
     scheduled_game_counts,
 )
+from hoops_gm.ingest.nba.schedule import _plausible_season_date
 
 pytestmark = pytest.mark.adapter_contract
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -669,6 +670,44 @@ def test_a_pending_record_cannot_be_built_with_an_absence_and_no_reason() -> Non
             game_subtype="in-season-knockout",
             date_absence_reason="not_offered",
         )
+
+
+def test_a_reconciling_epoch_placeholder_on_a_RESOLVED_game_refuses_the_season() -> None:
+    """The half of the placeholder trap I fixed on the lenient path and not the strict one.
+
+    A resolved game's date is **persisted**, joins ``player_participation``,
+    and is the denominator of every expected-games number, so a placeholder
+    that reconciles is far worse here than on the pending side — and the
+    EST/UTC reconciliation cannot see it, because a placeholder *pair* agrees
+    exactly. Verified before the fix: the parser returned a resolved game with
+    ``game_date = 1900-01-01`` and imported it.
+
+    Refused rather than degraded, because on this side a wrong date is
+    indistinguishable from a real one downstream.
+    """
+    payload = load(PENDING_FIXTURE)
+    for entry in payload["leagueSchedule"]["gameDates"]:
+        for game in entry["games"]:
+            if game["gameId"] == "0022600001":
+                game["gameDateTimeEst"] = "1900-01-01T00:00:00Z"
+                game["gameDateTimeUTC"] = "1900-01-01T05:00:00Z"
+
+    with pytest.raises(SourceContractError, match="not in season 2026-27"):
+        parse_schedule(payload, season="2026-27")
+
+
+def test_every_real_game_in_the_fixture_is_inside_its_own_season_window() -> None:
+    """The plausibility bound must not be able to refuse a legitimate game.
+
+    Driven over the whole recorded cohort rather than a sampled date, because
+    a bound that is wrong at an edge is wrong exactly where the season starts
+    and ends — 2026-10-20 and 2027-04-11 here.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+
+    assert len(result.games) == 18
+    assert all(_plausible_season_date(record.game.game_date, "2026-27") for record in result.games)
+    assert all(game.date_absence_reason == "" for game in result.pending_games)
 
 
 def test_a_degenerate_date_on_a_RESOLVED_game_still_kills_the_import() -> None:
