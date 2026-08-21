@@ -80,6 +80,45 @@ rather than bolted onto the lane implementing this ADR.
 This amendment corrects a factual claim in Consequences. **The decision itself is
 unchanged**, which is why this is an amendment rather than a superseding ADR.
 
+### 2026-08-20 — a differing pending set overwrites its predecessor in place
+
+Following from the above, and worse than it. `record_refresh` is idempotent on
+`(artifact_type, artifact_key, version, season)`, and on a hit it **overwrites `summary`
+in place** (`db/lineage.py:349-355`). The registered version does not cover the pending
+set. So two imports whose only difference is which games are pending compute the *same*
+version, collide on that key, and the second **destroys the first's completeness block**
+rather than superseding it. There is no row recording that the claim was ever different.
+
+Three consequences of one root cause — *the version does not cover everything the summary
+asserts*:
+
+1. A consumer must not cache the pending set keyed on the schedule version.
+2. `verify_refresh` cannot detect a forged or drifted pending set.
+3. A re-registration silently replaces a differing pending claim at the same version.
+
+Persisting pending games addresses all three, which is why it is one unit and not three.
+
+### 2026-08-20 — the contract represents only one of the two incompletenesses this ADR names
+
+The Context above names two reasons the forward schedule is unfinished: six knockout games
+whose teams are undecided, **and** teams eliminated early receiving make-up games, so 80
+games per team today becomes 82 later. The contract carries the first and not the second.
+`pending_game_ids` enumerates games the source published without teams; a make-up game has
+not been published at all and cannot appear in any list of published games.
+
+**This fails worst at the moment it looks fixed.** When the bracket is drawn in December,
+pending goes to zero, every pending marker disappears, and a screen marking only pending
+columns goes quiet — while every team is still short about two games. Marking one kind of
+incompleteness implies its converse: that unmarked columns are settled. They are not, and
+they will be least settled precisely when the marking stops.
+
+Until a second mechanism exists, **every consumer of games-per-period must state
+unconditionally that counts are a floor**, not merely mark the columns it can identify.
+That is a weaker guarantee than this ADR's Decision implies and it is stated here rather
+than left to each consumer to discover. Representing unpublished make-up games is a
+separate unit; it needs a source that says how many games a team is owed, which
+`ScheduleLeagueV2` does not currently provide.
+
 ## Rejected
 
 **Wait until December.** Delivers none of the value to avoid 0.5% incompleteness, and
