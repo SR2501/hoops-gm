@@ -21,6 +21,15 @@
   --warn: #e4b83f;
   --error: #f2685f;
 
+  /* Source-declared pending (ADR-013): the schedule is unfinished, which is
+     not a fault and must not borrow the vocabulary of one. `--warn` already
+     means "our data is missing" on this screen — the `·` cell — and reusing it
+     would give the two states a reader most needs to tell apart the same
+     colour. A cool hue reads as "not decided yet" rather than "something went
+     wrong", and it is far enough from `--accent` that a period which is both a
+     fantasy playoff week and unscheduled shows two distinguishable marks. */
+  --pending: #7aa7f0;
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -491,6 +500,71 @@ a:focus-visible {
   color: var(--accent);
   font-size: 0.66rem;
   letter-spacing: 0.04em;
+}
+
+/* A scoring period the *source* has not finished scheduling (ADR-013).
+   Structural like the playoff rule and for the same reason: it is a category,
+   not a magnitude, so it gets an edge rather than a tint. Dashed rather than
+   solid, because the distinction it draws is "not settled yet" against the
+   playoff rule's "settled and different".
+
+   It runs the full height of the column — header, every cell, both footer rows
+   — because the claim is about the column. A reader who meets a `0` in row
+   twenty-two needs the rule beside it to connect that cell to the `TBD` badge
+   thirty rows up. Drawn by the cells rather than by a `<col>`: `<col>` borders
+   are ignored under `border-collapse: separate`, which this table needs so its
+   sticky header and team column keep their own edges.
+
+   Qualified by `th`/`td` deliberately. `.grid th, .grid td` above sets a 1px
+   solid right border at specificity (0,1,1), so the bare class at (0,1,0) lost
+   and this rule rendered nothing at all — every column looked identical while
+   the markup, the `data-pending` attributes and every test passed. It was found
+   by reading `getComputedStyle` in a real browser, which is the only place it
+   was ever visible: jsdom does no cascade resolution, so no unit test could
+   have caught it. The playoff rule escapes the same fate only by accident, in
+   setting `border-left` where the base rule sets `border-right`. */
+.grid th.grid__col--pending,
+.grid td.grid__col--pending {
+  border-inline-end: 2px dashed var(--pending);
+}
+
+/* Distinct from `.grid__playoff-badge` by more than colour: dashed border and
+   a different hue, so the two are told apart without relying on either. A
+   period can be both, and in a fantasy playoff week that pairing is the most
+   consequential cell on the grid. */
+.grid__pending-badge {
+  display: inline-block;
+  margin-block-start: 2px;
+  padding: 0 3px;
+  border: 1px dashed var(--pending);
+  border-radius: 3px;
+  color: var(--pending);
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+}
+
+.grid__pending-note {
+  margin: 0 0 var(--space-3);
+  border-color: var(--pending);
+  border-style: dashed;
+  color: var(--text);
+}
+
+/* Not an error colour. Nothing has gone wrong when the NBA has not yet played
+   the group stage that decides a bracket; the schedule is simply unfinished,
+   and the note says so in the same hue as the marker it explains. */
+.grid__pending-note strong {
+  color: var(--pending);
+}
+
+/* Pending ids read as a list because they are checked one at a time against
+   ADR-013's falsification condition — each label has to look like a knockout
+   round — and a comma-joined run of six ids is not something anyone checks. */
+.lineage__list {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  display: grid;
+  gap: 2px;
 }
 
 .grid__team-abbr {

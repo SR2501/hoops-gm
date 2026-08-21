@@ -11241,3 +11241,173 @@ reviewer rather than adding a `try/except` at the call site.
 - **`ingest/importers.py` is still unwatched by the cohort fingerprint** and on the
   derivation path, changed by both this lane and #49. Third item blocked on the same missing
   database.
+## 2026-08-20 — frontend — Three states where there were two: a period the source has not finished scheduling
+
+**Changed:** ADR-013's pending games surfaced on `/schedule`. A scoring period holding
+one is marked `TBD` with a dashed column rule; a notice states the period-scoped claim;
+the lineage panel gains the pending count and lists each game''s id, date and labels.
+Types, the response validator, the model layer, the table, the lineage panel, the page
+and the stylesheet. Recorded fixture re-captured. **Zero backend files.**
+
+**Now true:** A reader can tell three things apart that used to be two. `0` is a real
+count of zero scheduled games. `·` is data the backend did not send. A `TBD` column is
+the **source** not having decided who plays. Each has its own colour, marker and wording:
+default text; `--warn` yellow with a diagonal hatch; and a new `--pending` token with a
+dashed rule. The new token exists because `--warn` already means "our data is missing" on
+this screen, and the two states a reader most needs to separate would otherwise have
+shared a hue — pending is not a fault. `+?` is deliberately not reused: it means a sum is
+short because a count did not arrive, which is a different claim from a numerator that is
+not final. A pending block that is *absent* is a fourth statement — "this response cannot
+say" — and is never read as "nothing is pending". When the set is empty there is no banner
+at all; the lineage says "none", because a caution that fires when nothing is wrong
+devalues the one beside it that means something.
+
+**The correction that defined this unit, and it held.** The brief originally asked to show
+that DAL and LAL have an unscheduled game. The data cannot support it and the coordinator
+retracted it before I started. A pending game carries `teamId: 0` with `teamName`,
+`teamCity`, `teamTricode` and `teamSlug` all null — not having teams *is* the record — so
+`pending_game_ids` can never say which teams are affected. There is no per-cell pending
+state anywhere in this diff, and the recorded contract test asserts over all thirty cells
+of the real pending column that each carries the same `data-state`, the same accessible
+name and no extra title as a cell in any other column. `GridCell` does receive
+`inPendingPeriod`, because the column rule has to be drawn by the cells — `<col>` borders
+are ignored under `border-collapse: separate`, which this table needs for its sticky edges
+— so the discipline is enforced by that test rather than by withholding the prop.
+
+**Reading the lane''s source beat trusting the brief, twice.** The frozen contract in my
+brief was `game_id` / `label` / `sub_label` with nullable labels. The actual model in
+`api/routes/schedule_grid.py` is `nba_game_id` / `game_label` / `game_sub_label`, all
+non-nullable, plus a fifth field `game_subtype` the brief never mentioned. Built to the
+brief, every pending game would have rendered "no label given" and the lineage list would
+have been empty of exactly the evidence ADR-013''s flip condition turns on.
+
+Second: I had built two reconciliation states — an id with no matching record, and a
+record absent from the id list — and `db/lineage.py:_pending_games` forbids both. It
+derives the ids from the records and refuses any stored block where they name different
+games in a different order, so neither can appear in a 200 and UI for them could never
+render. I deleted them. That is the `countsDisagree` argument applied to my own work.
+
+I kept the unreadable-`game_date` guard, on an explicitly different footing, and the line
+is worth stating because it is the one that decides these cases. The id/record agreement
+is forbidden by a **stated, enforced invariant**. The wire date format is forbidden by
+nothing: it holds only because Pydantic''s default encoder happens to serialize `date` as
+`YYYY-MM-DD`, no invariant is written over it, and the failure it prevents is *silent* —
+`''12/04/2026'' <= ''2026-12-13''` is a perfectly well-formed comparison that answers a
+question about neither date, and unguarded it would place a game in a wrong column, or in
+none, with equal confidence and no mention. A guard against a silent wrong answer earns
+its place; a note about a state an invariant forbids does not.
+
+**Rendering found what reading could not.** My column rule rendered *nothing*.
+`.grid th, .grid td` sets a 1px solid right border at specificity (0,1,1) and
+`.grid__col--pending` was (0,1,0), so it lost every time. The markup was right, the
+`data-pending` attributes were right, and every test was green while all 21 columns looked
+identical. It surfaced only from `getComputedStyle` in a real browser. The playoff rule
+escapes the same fate by accident, in setting `border-left` where the base sets
+`border-right`.
+
+**Nine states driven end to end against a real running service, not reasoned about.** The
+`data-engineer` lane''s backend was snapshotted to a scratch directory and run on its own
+port with its own database, so nothing of theirs was touched; for the states a correct
+backend cannot produce — a sparse `counts`, an absent pending block — a small proxy served
+mutations of a **captured real 200** rather than a hand-built body. Driven: pending
+present and placed; pending empty; pending block absent; all three cell states on one
+screen; a pending game dated outside every scoring period; an unreadable `game_date`; a
+malformed block (correctly refused with `invalid_response` and no grid drawn); four
+pending games across three periods including one that is both a fantasy playoff week and
+unscheduled, where the orange solid left rule and the blue dashed right rule are visibly
+distinct; the real demo cohort; and a pending game carrying the **live** labels
+`Quarterfinal` / `in-season-knockout`, added after `architect` pointed out that my fixture
+nulls those fields and I had therefore only ever rendered the case with nothing to check.
+
+**Recorded fixture: compared before it was replaced.** Teams, periods, all 630 counts and
+the content version are byte-identical to the previous recording; the delta is the pending
+block, `source_game_count` 10 → 12, and the timestamp — exactly what ADR-013 moved and
+nothing else. Replacing was right here only because the demo seed genuinely changed
+underneath. It also caught something no hand-written fixture would have: `game_sub_label`
+and `game_subtype` arrive as **empty strings**, so the empty-label rendering path exists
+because a recording found it rather than because anyone anticipated it.
+
+**And I then over-claimed that finding, which the coordinator caught.** I wrote that the
+empty strings were "the real shape". They are the shape of *this fixture*, which was
+trimmed before those fields mattered; the live payload carries `Quarterfinal` /
+`Semifinal` and `in-season-knockout`. So the recording exercises the degenerate label case
+and structurally cannot exercise the ordinary one — which is the case a reader actually
+checks ADR-013''s flip condition against, and the entire reason the list exists. Corrected
+in three places, and the labelled case is now driven with the live values both in a test
+and in a browser. **A recording proves something true of a fixture, not of the source, and
+the gap between those is exactly the width of whatever the fixture was trimmed for.** That
+is a limit on recorded fixtures I had not stated before and it belongs beside the one
+about them being blind to a change of meaning under an unchanged shape.
+
+**Measured: the schedule content version is blind to the pending set — and the ADR is
+wrong, not the code.** `architect` confirmed this is a false claim in an *Accepted* ADR
+and is amending ADR-013 and filing the persistence question as a follow-up. `schedule_content_version` is computed over persisted `team_schedule`
+rows (`importers.py:801`), and a pending game has none. The old demo seed (10 source / 10
+resolved) and the new one (12 source / 10 resolved / **2 pending**) both produce
+`9bcac1c60490b41a` — I hold both responses and diffed them field by field. ADR-013 says
+"the content fingerprint changes with them — correctly, because the facts changed", and
+that is not currently true for the pending set alone. It self-heals when a bracket is
+*drawn*, since that creates rows, so the hole is narrow: two refreshes differing only in
+which games are pending share a version, and anything caching on it shows a stale pending
+set. Not my call and not touched.
+
+**Code gate:** ESLint clean, `tsc --noEmit` clean, 102 tests across 8 files, up from 77.
+**Nine mutations applied and all nine caught**, each restoring the file afterwards: the
+period end bound made exclusive; the ISO guard removed; lexicographic comparison replaced
+by `Date`; an absent block read as `present: true`; the count taken from the records
+instead of the invariant''s ids; a cell attributing a pending game to its team; `+?`
+reused for a pending column; an out-of-calendar pending game dropped from the notice; and
+a malformed block accepted. The harness is a Python script driving vitest, kept out of the
+repository — `docs/governance/ownership.md` puts dev tooling under
+`backend/src/hoops_gm/dev/`, and a frontend-driving Python file at repo root is a
+placement decision I did not think was mine, so the mutations are stated in the PR instead.
+
+**Backlog** recounted at this head, not reconciled: 110 headings to 110 markers, 1:1, 110
+unique slugs, zero duplicates, zero conflict markers — **40 done / 1 blocked / 69 pending
+/ 110 total**. The new item names no dependency slug for the ADR-013 backend work, because
+that lane had not created one and citing a slug that does not exist is the same class of
+false claim as everything else in this entry.
+
+**Could not verify:**
+
+*The base branch never moved.* `sr2501-real-schedule-import` sat at `81ee15a` — identical
+to my own HEAD — for this entire unit, with thirteen files uncommitted in its worktree.
+Everything above about the backend contract was read from, and driven against,
+**uncommitted working-tree code that can still change**. The recorded fixture was captured
+from that snapshot. Both must be redone against the lane''s landed head, and the fixture
+re-compared rather than blindly re-captured.
+
+*No automated check guards the CSS specificity fix, and none can.* jsdom does no cascade
+resolution, so the defect that made every column look identical is invisible to the entire
+suite before and after the fix. I deliberately did not add a text-match assertion on the
+selector: **it would pass on a future override that broke it just as thoroughly, which is
+the false-confidence version of the thing.** The only verification is a browser, and the
+only record of it is this paragraph. That is a real limit on what a frontend test suite can
+promise, and it is not specific to this rule — every visual claim this dashboard makes
+rests on a cascade no test in this repository resolves.
+
+*I confirmed visual distinctness by computed style, not by eye.* `getComputedStyle`
+reports three different colours, a dashed versus solid versus hatched treatment, and the
+column rule present on all 33 elements of a pending column. It cannot tell me the result
+is legible at a glance under a pick clock, or that `--pending` `#7aa7f0` has adequate
+contrast on `--bg-sunken` — I did not measure a contrast ratio. Nobody has looked at this
+screen with the intent of using it.
+
+*The recording cannot show two of the four pending states.* No backend at this revision
+emits an empty pending block or an absent one, so "the season is fully scheduled" and
+"this response cannot say" are covered only by hand-built payloads — which can prove the
+code agrees with itself and nothing more. The empty case is what every response will carry
+from December onwards, which makes it the least-evidenced state and the most common one.
+
+*The proxy variants are mutations of a real 200, which is better than a hand-built body
+and is not the same as the backend producing them.* A malformed block, an out-of-calendar
+date and an unreadable date were all authored by me. If the backend ever emits one for a
+reason I have not imagined, the copy I wrote may be describing the wrong thing.
+
+*Nothing here was reviewed at this head yet.* The three independent reviews are pending on
+the pushed SHA.
+
+**Next:** PR open against `sr2501-real-schedule-import`, stacked and not mergeable until
+that lane lands. On landing: rebase forward (checking `git merge-base --is-ancestor` first),
+re-capture and compare the fixture against committed code, re-run the code gate and the
+mutation harness, then retarget to `main`.

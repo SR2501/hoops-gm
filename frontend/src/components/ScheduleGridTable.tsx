@@ -13,8 +13,27 @@
  * was the one count drawn differently from the rest. It is also the wrong count
  * to de-emphasise — ADR-012's sparse-period amendment makes a zero-game period
  * one of the most decision-bearing values in the table. The only visual
- * distinctions here are between a count, an absent count, and a playoff period,
- * all of which are categories rather than magnitudes.
+ * distinctions here are between a count, an absent count, a playoff period and
+ * a period the source has not finished scheduling, all of which are categories
+ * rather than magnitudes.
+ *
+ * **The pending marker is on the column and never on a cell.** ADR-013's
+ * pending games are published by the source with `teamId: 0` and every team
+ * name field null, so there is no team to attribute one to. A per-cell "DAL:
+ * not yet scheduled" badge would invent exactly the attribution the source
+ * withheld. What is true is period-scoped — *this column contains games whose
+ * teams are not decided, so any count in it may rise* — and that is what the
+ * header says.
+ *
+ * `GridCell` does receive `inPendingPeriod`, because a column rule has to be
+ * drawn by the cells (`<col>` borders are ignored under `border-collapse:
+ * separate`, which this table needs for its sticky edges). It is a fact about
+ * the *period*, named that way so it cannot be mistaken for one about the team,
+ * and it touches nothing but the column rule: a cell's `data-state` and its
+ * accessible name are identical whether or not its column is pending. A zero in
+ * a TBD column is still a zero, and still says so. The recorded contract test
+ * asserts that over all thirty cells of the real pending column, because a rule
+ * stated in a comment is a rule nothing enforces.
  */
 
 import type { ScheduleGridModel } from './scheduleGridModel'
@@ -26,7 +45,15 @@ interface ScheduleGridTableProps {
 }
 
 export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
-  const { rows, periods, periodTotals, periodReportingTeams, periodMissing, teamCount } = model
+  const {
+    rows,
+    periods,
+    periodTotals,
+    periodReportingTeams,
+    periodMissing,
+    periodPending,
+    teamCount,
+  } = model
   const seasonTotal = periodTotals.reduce((sum, value) => sum + value, 0)
   const anyMissing = model.integrity.missingCells > 0
 
@@ -48,34 +75,44 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
             <th scope="col" className="grid__corner">
               Team
             </th>
-            {periods.map((period) => (
-              <th
-                key={period.period_number}
-                scope="col"
-                className={period.is_playoff ? 'grid__period grid__period--playoff' : 'grid__period'}
-                data-testid={`period-header-${String(period.period_number)}`}
-                title={`Period ${String(period.period_number)}: ${formatPeriodRange(period)}${
-                  period.is_playoff ? ' (fantasy playoff period)' : ''
-                }`}
-              >
-                <span className="grid__period-number" aria-hidden="true">
-                  {period.period_number}
-                </span>
-                <span className="grid__period-dates" aria-hidden="true">
-                  {formatIsoDay(period.start_date)}
-                </span>
-                {period.is_playoff ? (
-                  <span className="grid__playoff-badge" aria-hidden="true">
-                    PO
+            {periods.map((period, index) => {
+              const pending = periodPending[index] ?? []
+              const pendingNote = describePendingPeriod(pending.length)
+              return (
+                <th
+                  key={period.period_number}
+                  scope="col"
+                  className={periodClass('grid__period', period.is_playoff, pending.length > 0)}
+                  data-testid={`period-header-${String(period.period_number)}`}
+                  data-pending={pending.length > 0 ? 'true' : 'false'}
+                  title={`Period ${String(period.period_number)}: ${formatPeriodRange(period)}${
+                    period.is_playoff ? ' (fantasy playoff period)' : ''
+                  }${pendingNote === null ? '' : `. ${pendingNote}`}`}
+                >
+                  <span className="grid__period-number" aria-hidden="true">
+                    {period.period_number}
                   </span>
-                ) : null}
-                <span className="visually-hidden">
-                  {`Period ${String(period.period_number)}, ${formatPeriodRange(period)}${
-                    period.is_playoff ? ', fantasy playoff period' : ''
-                  }`}
-                </span>
-              </th>
-            ))}
+                  <span className="grid__period-dates" aria-hidden="true">
+                    {formatIsoDay(period.start_date)}
+                  </span>
+                  {period.is_playoff ? (
+                    <span className="grid__playoff-badge" aria-hidden="true">
+                      PO
+                    </span>
+                  ) : null}
+                  {pending.length > 0 ? (
+                    <span className="grid__pending-badge" aria-hidden="true">
+                      TBD
+                    </span>
+                  ) : null}
+                  <span className="visually-hidden">
+                    {`Period ${String(period.period_number)}, ${formatPeriodRange(period)}${
+                      period.is_playoff ? ', fantasy playoff period' : ''
+                    }${pendingNote === null ? '' : `. ${pendingNote}`}`}
+                  </span>
+                </th>
+              )
+            })}
             <th scope="col" className="grid__total-header" title="Total scheduled games this season">
               Total
             </th>
@@ -99,6 +136,7 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
                   periodNumber={period.period_number}
                   teamId={row.team.team_id}
                   isPlayoff={period.is_playoff}
+                  inPendingPeriod={(periodPending[index] ?? []).length > 0}
                 />
               ))}
               <TotalCell
@@ -118,18 +156,29 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
             <th scope="row" className="grid__team">
               League
             </th>
-            {periods.map((period, index) => (
-              <TotalCell
-                key={period.period_number}
-                value={periodTotals[index] ?? 0}
-                missing={periodMissing[index] ? 1 : 0}
-                className="grid__cell--league"
-                testId={`league-total-${String(period.period_number)}`}
-                incompleteLabel={`Period ${String(period.period_number)} league team-games ${String(
-                  periodTotals[index] ?? 0,
-                )}, incomplete — at least one team had no data`}
-              />
-            ))}
+            {periods.map((period, index) => {
+              const pending = (periodPending[index] ?? []).length
+              const total = periodTotals[index] ?? 0
+              return (
+                <TotalCell
+                  key={period.period_number}
+                  value={total}
+                  missing={periodMissing[index] ? 1 : 0}
+                  className={periodClass('grid__cell--league', false, pending > 0)}
+                  testId={`league-total-${String(period.period_number)}`}
+                  incompleteLabel={`Period ${String(period.period_number)} league team-games ${String(
+                    total,
+                  )}, incomplete — at least one team had no data`}
+                  pendingLabel={
+                    pending > 0
+                      ? `Period ${String(period.period_number)} league team-games ${String(
+                          total,
+                        )} so far. ${describePendingPeriod(pending) ?? ''}`
+                      : null
+                  }
+                />
+              )
+            })}
             <TotalCell
               value={seasonTotal}
               missing={anyMissing ? 1 : 0}
@@ -151,6 +200,8 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
                 testId={`league-mean-${String(period.period_number)}`}
                 label={`Period ${String(period.period_number)} mean games per team`}
                 setNoun="that reported"
+                pendingGames={(periodPending[index] ?? []).length}
+                className={periodClass('', false, (periodPending[index] ?? []).length > 0)}
               />
             ))}
             <MeanCell
@@ -160,6 +211,7 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
               testId="league-mean-season"
               label="Season mean games per team"
               setNoun="with a complete row"
+              pendingGames={model.pending.declaredCount}
             />
           </tr>
         </tfoot>
@@ -169,7 +221,34 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
 }
 
 /**
- * The league mean, so "is this team's 2 unusual for this period?" does not
+ * The one sentence this feature exists to say, in the terms the data supports.
+ *
+ * Period-scoped and count-bearing, with no team in it. "Any count in this
+ * column may rise" is the actionable part: it is what stops a reader taking a
+ * `0` here for a confirmed bye. It deliberately does not say *whose* count may
+ * rise, because a pending game carries `teamId: 0` and four null team fields —
+ * naming a team would be inventing the one thing the source withheld.
+ */
+function describePendingPeriod(pendingGames: number): string | null {
+  if (pendingGames <= 0) {
+    return null
+  }
+  const games = pendingGames === 1 ? '1 game' : `${String(pendingGames)} games`
+  return `This period contains ${games} whose teams are not yet decided, so any count in this column may rise.`
+}
+
+/** Column classes shared by a period's header, cells and footer aggregates. */
+function periodClass(base: string, isPlayoff: boolean, isPending: boolean): string {
+  return [
+    base,
+    isPlayoff && base !== '' ? `${base}--playoff` : '',
+    isPending ? 'grid__col--pending' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+/**
  * require dividing by 30 in your head under a pick clock.
  *
  * The denominator is the teams that **reported** in that period, not every team
@@ -187,20 +266,39 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
  * matter entirely — that acquires the playoff/partial/sparse-week choices that
  * make `schedule-grid-reference-distribution` a Model-gated `quant` item.
  */
-function MeanCell({ total, reporting, expected, testId, label, setNoun }: MeanCellProps) {
+function MeanCell({
+  total,
+  reporting,
+  expected,
+  testId,
+  label,
+  setNoun,
+  pendingGames,
+  className,
+}: MeanCellProps) {
   const partial = reporting < expected
   const value = reporting === 0 ? '—' : (total / reporting).toFixed(1)
-  const description = partial
+  const base = partial
     ? `${label}: ${value}, over the ${String(reporting)} of ${String(expected)} ${setNoun}`
     : `${label}: ${value}`
+  // Two independent reasons this number is provisional, and they stack. The
+  // partial clause says the *denominator* is short; the pending clause says the
+  // *numerator* is not final yet. Collapsing them would leave a reader unable
+  // to tell which of the two is happening.
+  const pendingNote = describePendingPeriod(pendingGames)
+  const description = pendingNote === null ? base : `${base}. ${pendingNote}`
+  const provisional = partial || pendingNote !== null
 
   return (
     <td
-      className={`grid__cell grid__cell--mean${partial ? ' grid__total--partial' : ''}`}
+      className={['grid__cell', 'grid__cell--mean', partial ? 'grid__total--partial' : '', className]
+        .filter(Boolean)
+        .join(' ')}
       data-testid={testId}
       data-state={partial ? 'partial' : 'complete'}
+      data-pending={pendingNote === null ? 'false' : 'true'}
       aria-label={description}
-      {...(partial ? { title: description } : {})}
+      {...(provisional ? { title: description } : {})}
     >
       {value}
       {partial ? (
@@ -229,6 +327,18 @@ interface MeanCellProps {
    * sets, in the row whose entire purpose is saying what a mean is over.
    */
   setNoun: string
+  /**
+   * Pending games bearing on this mean, which is a statement about the
+   * numerator and so a different thing from `reporting < expected`.
+   *
+   * No visible mark is added for it. The `+?` glyph already means "this is
+   * short by an unknown amount because data is missing", and reusing it for
+   * "the schedule is not finished" would merge the two states the column header
+   * exists to keep apart. The column rule and the `TBD` badge above carry the
+   * pending signal; this only makes the tooltip and accessible name honest.
+   */
+  pendingGames: number
+  className?: string
 }
 
 interface TotalCellProps {
@@ -237,6 +347,8 @@ interface TotalCellProps {
   missing: number
   testId: string
   incompleteLabel: string
+  /** Set when this total sits under a period the source has not finished scheduling. */
+  pendingLabel?: string | null
   className?: string
 }
 
@@ -245,19 +357,35 @@ interface TotalCellProps {
  * is smaller than the truth, and saying so only in screen-reader text would
  * leave the two most scannable numbers on the grid — the ones a reader compares
  * teams by — looking exactly as trustworthy as a complete sum.
+ *
+ * A pending period makes a total provisional for an unrelated reason, and gets
+ * a label rather than the `+?` mark for the reason `MeanCellProps.pendingGames`
+ * gives: one glyph cannot mean two things and stay useful.
  */
-function TotalCell({ value, missing, testId, incompleteLabel, className }: TotalCellProps) {
+function TotalCell({
+  value,
+  missing,
+  testId,
+  incompleteLabel,
+  pendingLabel,
+  className,
+}: TotalCellProps) {
   const incomplete = missing > 0
   const classes = ['grid__cell', 'grid__total', className, incomplete ? 'grid__total--partial' : '']
     .filter(Boolean)
     .join(' ')
+  // Incompleteness is the more serious of the two and wins the label when both
+  // apply: a sum missing cells is wrong now, where a sum under a pending period
+  // is right now and will change later.
+  const label = incomplete ? incompleteLabel : (pendingLabel ?? null)
 
   return (
     <td
       className={classes}
       data-testid={testId}
       data-state={incomplete ? 'partial' : 'complete'}
-      {...(incomplete ? { 'aria-label': incompleteLabel, title: incompleteLabel } : {})}
+      data-pending={pendingLabel == null ? 'false' : 'true'}
+      {...(label === null ? {} : { 'aria-label': label, title: label })}
     >
       {value}
       {incomplete ? (
@@ -275,18 +403,34 @@ interface GridCellProps {
   teamId: number
   periodNumber: number
   isPlayoff: boolean
+  /**
+   * Whether this cell's **period** contains pending games — never whether this
+   * team does, which is unknowable.
+   *
+   * Used for the column rule and nothing else. It must not reach `data-state`
+   * or the accessible name: a `0` in a TBD column is a real zero today, and the
+   * cell says exactly that.
+   */
+  inPendingPeriod: boolean
 }
 
-function GridCell({ games, teamAbbreviation, teamId, periodNumber, isPlayoff }: GridCellProps) {
+function GridCell({
+  games,
+  teamAbbreviation,
+  teamId,
+  periodNumber,
+  isPlayoff,
+  inPendingPeriod,
+}: GridCellProps) {
   const testId = `cell-${String(teamId)}-${String(periodNumber)}`
-  const playoffClass = isPlayoff ? ' grid__cell--playoff' : ''
+  const columnClass = periodClass('grid__cell', isPlayoff, inPendingPeriod)
 
   // Absence is not zero. A blank here would let the reader guess, so it gets a
   // marker of its own and an unambiguous label.
   if (games === null) {
     return (
       <td
-        className={`grid__cell grid__cell--nodata${playoffClass}`}
+        className={`${columnClass} grid__cell--nodata`}
         data-testid={testId}
         data-state="no-data"
         aria-label={`${teamAbbreviation}, period ${String(periodNumber)}: no data`}
@@ -299,7 +443,7 @@ function GridCell({ games, teamAbbreviation, teamId, periodNumber, isPlayoff }: 
 
   return (
     <td
-      className={`grid__cell${playoffClass}`}
+      className={columnClass}
       data-testid={testId}
       data-state={games === 0 ? 'zero' : 'count'}
       aria-label={`${teamAbbreviation}, period ${String(periodNumber)}: ${String(games)} ${

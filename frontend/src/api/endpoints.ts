@@ -106,6 +106,42 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
+/**
+ * The ADR-013 pending block, which is optional on the wire but not lax.
+ *
+ * Absent is allowed: this dashboard ships ahead of the backend lane that emits
+ * it, and rejecting the whole response would replace a screen that can state
+ * "this response cannot say whether the season is fully scheduled" with a blank
+ * one and a generic contract error. `readPendingGames` reports the absence as
+ * its own state rather than reading it as "nothing is pending".
+ *
+ * Present-but-malformed is *not* allowed, for the same reason a negative game
+ * count is not: a `pending_games` entry without a readable `game_date` cannot
+ * be placed on the calendar, and a partially-parsed pending set would under-
+ * report the very incompleteness it exists to declare. Same split as
+ * `isScheduleGridCount` — tolerate a gap you can describe, reject a value that
+ * cannot be true.
+ */
+function isSchedulePendingGame(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.nba_game_id === 'string' &&
+    typeof value.game_date === 'string' &&
+    typeof value.game_label === 'string' &&
+    typeof value.game_sub_label === 'string' &&
+    typeof value.game_subtype === 'string'
+  )
+}
+
+function isPendingBlock(value: Record<string, unknown>): boolean {
+  const ids = value.pending_game_ids
+  const games = value.pending_games
+  if (ids === undefined && games === undefined) {
+    return true
+  }
+  return isStringArray(ids) && Array.isArray(games) && games.every(isSchedulePendingGame)
+}
+
 function isScheduleRefreshLineage(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -115,7 +151,8 @@ function isScheduleRefreshLineage(value: unknown): boolean {
     typeof value.source_game_count === 'number' &&
     typeof value.resolved_game_count === 'number' &&
     typeof value.persisted_team_row_count === 'number' &&
-    isStringArray(value.unresolved_game_ids)
+    isStringArray(value.unresolved_game_ids) &&
+    isPendingBlock(value)
   )
 }
 

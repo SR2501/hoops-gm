@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**40 done - 1 blocked - 73 pending - 114 total**
+**41 done - 1 blocked - 73 pending - 115 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers: 114 `###` headings and 114 markers, 1:1, no duplicate
@@ -513,8 +513,41 @@ data, and `player-position-eligibility` is still pending, so a draft board canno
 filter or group by position yet. `players[].primary_position` is NBA's own label
 and is nullable.
 
-### `schedule-grid-ui` - Putting the raw schedule grid on screen
+### `schedule-grid-pending-periods` - Showing that a scoring period is not fully scheduled
 
+- [x] **done**
+- **Depends on:** `schedule-grid-ui`
+
+ADR-013 lets a refresh register with games the source published without
+deciding their teams, so the grid can now show a count that is honest and
+incomplete at the same time. A scoring period containing one is marked `TBD` in
+its header with a dashed column rule, and a notice states the only thing the
+data supports: *this period contains N games whose teams are not yet decided, so
+any count in this column may rise*.
+
+This also depends on the backend emitting `lineage.schedule.pending_game_ids`
+and `pending_games`, which is the `data-engineer` lane implementing ADR-013 and
+had no backlog slug when this was written. If that lane adds one, this item's
+dependency list should gain it.
+
+**Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
+every naming field null, so no team can be named and none is. A per-cell "this
+team has an unscheduled game" badge would invent the one attribution the source
+withheld; the recorded contract test asserts every cell in a pending column
+carries the same state and the same accessible name as a cell anywhere else.
+
+Three states are now kept apart where there were two: `0` is a real count,
+`·` is data the backend did not send, and a `TBD` column is the source not
+having decided. Each has its own colour, marker and wording, and `+?` is
+deliberately not reused for pending — it means a sum is short because data is
+missing, which is a different claim. A pending block that is *absent* is a
+fourth statement, "this response cannot say", and is never read as "nothing is
+pending". The lineage panel gains the pending count and lists each game's id,
+date and labels, because ADR-013 reverts to refusing if the pending set stops
+being explicable as an undetermined bracket and a bare count shows nothing to
+check that against.
+
+### `schedule-grid-ui` - Putting the raw schedule grid on screen
 - [x] **done**
 - **Depends on:** `schedule-grid-early`
 

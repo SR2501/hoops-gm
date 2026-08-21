@@ -10,13 +10,26 @@
  * common way a schedule tool lies to the person reading it, so `null` is
  * reserved for absence and rendered as its own marker.
  *
+ * ADR-013 adds a third thing that is neither: a game the **source** has
+ * published without deciding its teams. That is not a hole in our data and not
+ * a zero — it is the schedule itself being unfinished. Crucially it is
+ * **period-scoped and never cell-scoped**, because a pending game has no teams
+ * by definition and so can never be attributed to a row. `readPendingGames`
+ * places it on the calendar and nowhere else; there is deliberately no API here
+ * for asking whether a *cell* is pending, because the data cannot answer it.
+ *
  * Everything here is descriptive arithmetic — sums of integers the backend
  * sent. No thresholds, no "light week", no judgement about whether a count is
  * good. Those belong to `quant` behind the Model gate (ADR-009), and inventing
  * them in a UI would ship an unbacktested model in CSS.
  */
 
-import type { ScheduleGrid, ScheduleGridPeriod, ScheduleGridTeam } from '../api/types'
+import type {
+  ScheduleGrid,
+  ScheduleGridPeriod,
+  ScheduleGridTeam,
+  SchedulePendingGame,
+} from '../api/types'
 
 export interface ScheduleGridRow {
   team: ScheduleGridTeam
@@ -57,11 +70,158 @@ export interface ScheduleGridModel {
   periodReportingTeams: number[]
   /** Periods where at least one team's count was not sent. */
   periodMissing: boolean[]
+  /**
+   * Pending games falling in each period, in `periods` order.
+   *
+   * Parallel to `periodTotals` rather than keyed by period number so the table
+   * can index it the same way it indexes everything else.
+   */
+  periodPending: SchedulePendingGame[][]
+  pending: PendingGamesSummary
   integrity: ScheduleGridIntegrity
 }
 
 function cellKey(teamId: number, periodNumber: number): string {
   return `${String(teamId)}:${String(periodNumber)}`
+}
+
+/* --- Pending games (ADR-013) ---------------------------------------------- */
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * What the response said about games the source has not yet assigned teams to.
+ *
+ * Every field here exists because it supports a sentence a reader can act on,
+ * and each names a distinct way the pending set can fail to reach a column.
+ * They are kept apart rather than summed into one "problems" count because
+ * "the backend sent no pending block at all" and "one pending game is dated
+ * outside every scoring period" call for different responses from the person
+ * reading them.
+ */
+export interface PendingGamesSummary {
+  /**
+   * Whether the response carried the ADR-013 block at all.
+   *
+   * `false` is **not** "nothing is pending". It is "this response cannot say",
+   * and the UI must render it as a third thing rather than as a clean bill of
+   * health. A backend predating ADR-013 refused unfinished seasons outright,
+   * so its silence did once imply completeness — but that is an inference about
+   * a backend version the client cannot see, and encoding it here would put a
+   * guess where a fact belongs.
+   */
+  present: boolean
+  /** Size of `pending_game_ids` — the set the completeness invariant counts. */
+  declaredCount: number
+  /** Pending games successfully placed in one of the periods on screen. */
+  placedCount: number
+  /**
+   * Detail entries whose `game_date` fell in no period the grid displays.
+   *
+   * Genuinely reachable: a fantasy calendar need not span the whole NBA season,
+   * and the NBA Cup knockout dates sit in early-to-mid December where a league
+   * that starts late would have no period.
+   */
+  outsidePeriods: SchedulePendingGame[]
+  /**
+   * Detail entries whose `game_date` is not a readable ISO day.
+   *
+   * Kept, where the two id/record reconciliation states this once carried were
+   * dropped, and the line between them is worth stating. `pending_game_ids` and
+   * `pending_games` disagreeing is forbidden by an explicit backend invariant —
+   * the ids are *derived* from the records and any stored block where they
+   * differ is refused — so UI for it could never render, which is the same
+   * error as a caution that fires only when nothing is wrong.
+   *
+   * An unreadable date is forbidden by nothing: it is merely improbable,
+   * because Pydantic's default encoder happens to serialize `date` as
+   * `YYYY-MM-DD`. No invariant is stated over the wire format, and the failure
+   * it prevents is silent rather than loud — `'12/04/2026' <= '2026-12-13'`
+   * compares false and would drop a game out of its column without a word. A
+   * guard against a silent wrong answer earns its place; a note about an
+   * impossible one does not.
+   */
+  undated: SchedulePendingGame[]
+}
+
+export const EMPTY_PENDING: PendingGamesSummary = {
+  present: false,
+  declaredCount: 0,
+  placedCount: 0,
+  outsidePeriods: [],
+  undated: [],
+}
+
+/**
+ * Bucket pending games into the scoring periods already on screen.
+ *
+ * Entirely client-side and needs nothing more from the backend: the response
+ * carries `periods[].start_date/end_date` and each pending game carries a
+ * `game_date`. Comparison is lexicographic on the ISO strings rather than via
+ * `Date`, for the reason `formatIsoDay` documents — `new Date('2026-12-07')` is
+ * UTC midnight rendered in the local zone, and a period boundary off by a day
+ * puts a game in the wrong column, which is a wrong answer rather than a
+ * cosmetic one. Bounds are inclusive at both ends because a scoring period
+ * owns its last day.
+ *
+ * The count comes from `pending_game_ids` and the placement from
+ * `pending_games`, matching which field each question is stated over: the
+ * completeness invariant is written in terms of the ids, and only the records
+ * carry a date. The backend guarantees the two name the same games, so no
+ * reconciliation happens here.
+ *
+ * A date matching more than one period is assigned to the first, so the
+ * per-period buckets and the leftovers always sum to the games that had a
+ * readable date. Overlapping periods would be a calendar defect upstream.
+ */
+export function readPendingGames(
+  schedule: ScheduleGrid['lineage']['schedule'],
+  periods: ScheduleGridPeriod[],
+): { summary: PendingGamesSummary; periodPending: SchedulePendingGame[][] } {
+  const ids = schedule.pending_game_ids
+  const games = schedule.pending_games
+  const periodPending: SchedulePendingGame[][] = periods.map(() => [])
+
+  if (ids === undefined || games === undefined) {
+    return { summary: { ...EMPTY_PENDING, present: false }, periodPending }
+  }
+
+  const outsidePeriods: SchedulePendingGame[] = []
+  const undated: SchedulePendingGame[] = []
+  let placedCount = 0
+
+  for (const game of games) {
+    if (!ISO_DAY.test(game.game_date)) {
+      undated.push(game)
+      continue
+    }
+
+    const index = periods.findIndex(
+      (period) => period.start_date <= game.game_date && game.game_date <= period.end_date,
+    )
+    if (index === -1) {
+      outsidePeriods.push(game)
+      continue
+    }
+    periodPending[index]?.push(game)
+    placedCount += 1
+  }
+
+  return {
+    summary: {
+      present: true,
+      declaredCount: ids.length,
+      placedCount,
+      outsidePeriods,
+      undated,
+    },
+    periodPending,
+  }
+}
+
+/** Pending games the response declared but the grid could not put in a column. */
+export function unplacedPendingCount(summary: PendingGamesSummary): number {
+  return summary.declaredCount - summary.placedCount
 }
 
 export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
@@ -111,6 +271,8 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
     return { team, cells, total, missingCells: rowMissing }
   })
 
+  const { summary, periodPending } = readPendingGames(grid.lineage.schedule, grid.periods)
+
   return {
     rows,
     periods: grid.periods,
@@ -118,6 +280,8 @@ export function buildScheduleGridModel(grid: ScheduleGrid): ScheduleGridModel {
     periodTotals,
     periodReportingTeams,
     periodMissing,
+    periodPending,
+    pending: summary,
     integrity: {
       missingCells,
       unmatchedRows,

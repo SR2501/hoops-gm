@@ -13,7 +13,17 @@
  *
  * `persisted_team_row_count` is shown next to what the grid actually counted,
  * because the two describe the same cohort and a reader can only compare them
- * if both are on the same line.
+ * if both are on the same line. ADR-013 puts `pending` on that same line, since
+ * the completeness invariant now reads
+ * `source == resolved + pending` and a reader cannot check an equation with a
+ * term missing from it.
+ *
+ * The pending games are listed by id with their dates and labels rather than
+ * merely counted. The count is what the invariant needs; the labels are what
+ * lets someone check ADR-013's own falsification condition — pending is only
+ * *defensible* while the pending set is structurally explicable as an
+ * undetermined bracket, and "Emirates NBA Cup — Quarterfinal" is that evidence.
+ * A bare count of six would satisfy the arithmetic and show nothing.
  *
  * There is deliberately **no warning** when they differ. On a successful
  * response they differ whenever a persisted game falls outside every scoring
@@ -26,7 +36,7 @@
  * reader, who has the period boundaries on the same screen.
  */
 
-import type { ScheduleGridLineage } from '../api/types'
+import type { ScheduleGridLineage, SchedulePendingGame } from '../api/types'
 import { describeRefreshAge, REFRESH_CADENCE_DAYS } from './scheduleGridModel'
 
 interface ScheduleLineageProps {
@@ -41,10 +51,31 @@ interface ScheduleLineageProps {
   countedTeamGames: number
 }
 
+/**
+ * `Emirates NBA Cup — Quarterfinal — In-Season Tournament`, or whichever parts
+ * carried text.
+ *
+ * ADR-013's "what would flip this" clause turns on the pending set staying
+ * *structurally explicable*: pending only means "the bracket is undetermined"
+ * for as long as the pending games look like knockout fixtures. These labels
+ * are the only evidence of that on screen. If they ever stop reading like
+ * rounds of a cup, the distinction between "not decided yet" and "the feed is
+ * broken" has collapsed, and this row is where a person would notice. A bare
+ * count of six would satisfy the arithmetic and show nothing.
+ */
+function describePendingGame(game: SchedulePendingGame): string {
+  const context = [game.game_label, game.game_sub_label, game.game_subtype].filter(
+    (part) => part !== '',
+  )
+  return context.length === 0 ? 'no label given' : context.join(' — ')
+}
+
 export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLineageProps) {
   const { schedule } = lineage
   const age = describeRefreshAge(schedule.refreshed_at, now)
   const pastCadence = age.days !== null && age.days >= REFRESH_CADENCE_DAYS
+  const pendingIds = schedule.pending_game_ids
+  const pendingGames = schedule.pending_games ?? []
 
   return (
     <details className="lineage" data-testid="schedule-lineage">
@@ -80,8 +111,27 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
           <dt>Games</dt>
           <dd data-testid="schedule-game-counts">
             {schedule.source_game_count} from source · {schedule.resolved_game_count} resolved ·{' '}
+            {pendingIds === undefined ? 'pending not reported' : `${pendingIds.length} pending`} ·{' '}
             {schedule.persisted_team_row_count} team rows persisted · {countedTeamGames} counted in
             this grid
+          </dd>
+        </div>
+        <div className="facts__row">
+          <dt>Pending games</dt>
+          <dd data-testid="schedule-pending-games">
+            {pendingIds === undefined ? (
+              'not reported — this response predates the pending-games contract, so it cannot say whether the season is fully scheduled'
+            ) : pendingIds.length === 0 ? (
+              'none — every game the source published has teams assigned'
+            ) : (
+              <ul className="lineage__list">
+                {pendingGames.map((game) => (
+                  <li key={game.nba_game_id}>
+                    <code>{game.nba_game_id}</code> · {game.game_date} · {describePendingGame(game)}
+                  </li>
+                ))}
+              </ul>
+            )}
           </dd>
         </div>
         <div className="facts__row">
@@ -115,13 +165,19 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
       </dl>
 
       {/*
-        No `countsDisagree` note. `lineage.py:164` and `:169` reject any refresh
-        carrying unresolved ids or a source/resolved mismatch before the
-        completeness object is built, so neither state can appear in a 200 this
-        endpoint serves — a note for them could never render. The figures stay
-        on the facts row above, where a reader can see them; defending in the
-        UI against a state the backend's invariants forbid is the same error as
-        the persisted-count note, in the harmless direction.
+        Still no `countsDisagree` note. ADR-013 replaces the old
+        `resolved == source` invariant with
+        `source == resolved + pending_game_ids.length`, and the backend enforces
+        it before the completeness object is built, so a response this endpoint
+        serves cannot carry a disagreement for a note to describe. The three
+        figures sit on the facts row above where a reader can do the addition
+        themselves; a note that can never render is the same error as the
+        persisted-count note, in the harmless direction.
+
+        What *is* checkable from here — and is checked, in `SchedulePage` — is
+        whether the pending games the response declared could actually be placed
+        on the calendar it also sent. That is a property of the pair, not of
+        either side, so no backend invariant covers it.
       */}
     </details>
   )

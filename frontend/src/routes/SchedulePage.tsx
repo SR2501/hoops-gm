@@ -19,7 +19,11 @@ import { useAsync } from '../api/useAsync'
 import { AsyncBoundary } from '../components/AsyncBoundary'
 import { ScheduleGridTable } from '../components/ScheduleGridTable'
 import { ScheduleLineage } from '../components/ScheduleLineage'
-import { buildScheduleGridModel } from '../components/scheduleGridModel'
+import {
+  buildScheduleGridModel,
+  unplacedPendingCount,
+  type ScheduleGridModel,
+} from '../components/scheduleGridModel'
 
 /**
  * The single league this build serves (ADR-001: one owner, one local league).
@@ -86,6 +90,8 @@ function ScheduleGridView({
         countedTeamGames={model.periodTotals.reduce((sum, value) => sum + value, 0)}
       />
 
+      <PendingNotice model={model} />
+
       {!integrity.isDense ? (
         <p className="state state--error grid__integrity" role="status" data-testid="grid-integrity">
           This grid is not complete.
@@ -116,6 +122,10 @@ function ScheduleGridView({
           <span className="grid__playoff-badge">PO</span> fantasy playoff period
         </span>
         <span className="grid__key-item">
+          <span className="grid__pending-badge">TBD</span> this period contains games whose teams
+          the source has not decided — counts in that column may rise
+        </span>
+        <span className="grid__key-item">
           <span className="grid__cell grid__total grid__total--partial grid__key-swatch">+?</span>{' '}
           total or mean is missing at least one period
         </span>
@@ -128,6 +138,108 @@ function ScheduleGridView({
 
       <ScheduleGridTable model={model} season={grid.season} />
     </>
+  )
+}
+
+/**
+ * What the grid cannot say by drawing numbers: the schedule itself is not
+ * finished (ADR-013).
+ *
+ * **Why this is period-scoped and not per-cell.** A pending game is published
+ * by the source with `teamId: 0` and `teamName`, `teamCity`, `teamTricode` and
+ * `teamSlug` all null. Not having teams is the whole content of the record, so
+ * no amount of client-side work can say which rows are affected. "DAL: game not
+ * yet scheduled" would be an attribution the source explicitly withheld, and
+ * inventing it here would be this project's recurring defect class committed on
+ * purpose. What the data does support is a statement about a column, so that is
+ * what is made.
+ *
+ * **Why it is not a `state--error`.** Nothing has gone wrong. The NBA has not
+ * yet played the group stage that decides the bracket, and a refresh reporting
+ * that is a refresh working correctly. It is styled as a note, and it does not
+ * appear at all once the pending set is empty — a caution that fires when
+ * nothing is wrong devalues the one beside it that means something.
+ *
+ * **The three states this screen now keeps apart.** A `0` is a real count of
+ * zero scheduled games. A `·` is data the backend did not send. A `TBD` column
+ * is the source not having decided yet. They are three different claims about
+ * three different parties, and the whole difficulty of this unit is that the
+ * first two are cell-level and the third cannot be.
+ */
+function PendingNotice({ model }: { model: ScheduleGridModel }) {
+  const { pending, periods, periodPending } = model
+
+  // Absent is its own state and is *not* read as "nothing is pending". A
+  // response that cannot say whether the season is finished is different from
+  // one that says it is, and the difference matters most to exactly the reader
+  // who would otherwise take a 0 for a bye.
+  if (!pending.present) {
+    return (
+      <p className="state grid__pending-note" role="status" data-testid="grid-pending-unknown">
+        <strong>Whether this season is fully scheduled is unknown.</strong> This response carried no
+        pending-games block, so it cannot say whether the source has published games with their
+        teams still undecided. Any count here may be understated by an amount this screen cannot
+        measure.
+      </p>
+    )
+  }
+
+  if (pending.declaredCount === 0) {
+    return null
+  }
+
+  const marked = periods
+    .map((period, index) => ({ period, count: (periodPending[index] ?? []).length }))
+    .filter((entry) => entry.count > 0)
+  // Placed + outside + undated accounts for every game `pending_games`
+  // described, so a shortfall against `pending_game_ids` — the term the
+  // completeness invariant is written over — is a fourth thing none of the
+  // clauses below explains. It cannot arise from this backend, which derives
+  // the ids from the records, but the arithmetic on screen has to close either
+  // way: a reader who adds the marked columns and gets less than the declared
+  // total is owed the difference rather than left to find it.
+  const unexplained =
+    unplacedPendingCount(pending) - pending.outsidePeriods.length - pending.undated.length
+  const games = pending.declaredCount === 1 ? '1 game' : `${String(pending.declaredCount)} games`
+
+  return (
+    <p className="state grid__pending-note" role="status" data-testid="grid-pending">
+      <strong>This season is not fully scheduled.</strong> The source has published {games} without
+      deciding which teams play in {pending.declaredCount === 1 ? 'it' : 'them'}, so this grid
+      cannot say which teams are affected — that is what pending means, and no team column below
+      carries the information.{' '}
+      {marked.length > 0 ? (
+        <>
+          {marked.length === 1 ? 'Scoring period ' : 'Scoring periods '}
+          {marked
+            .map((entry) => `${String(entry.period.period_number)} (${String(entry.count)})`)
+            .join(', ')}{' '}
+          {marked.length === 1 ? 'is' : 'are'} marked TBD. Any count in{' '}
+          {marked.length === 1 ? 'that column' : 'those columns'} may rise, so a 0 there is today’s
+          count and not a confirmed bye.{' '}
+        </>
+      ) : null}
+      {pending.outsidePeriods.length > 0
+        ? `${String(
+            pending.outsidePeriods.length,
+          )} of them fall outside every scoring period this grid shows, so no column can carry them: ${pending.outsidePeriods
+            .map((game) => `${game.nba_game_id} on ${game.game_date}`)
+            .join(', ')}. `
+        : ''}
+      {pending.undated.length > 0
+        ? `${String(
+            pending.undated.length,
+          )} carried a date this screen could not read, so nothing can be said about which period they fall in: ${pending.undated
+            .map((game) => `${game.nba_game_id} (${game.game_date})`)
+            .join(', ')}. `
+        : ''}
+      {unexplained > 0
+        ? `A further ${String(
+            unexplained,
+          )} were counted in the pending total but not described, so this screen cannot say when they fall. `
+        : ''}
+      Ids, dates and labels are in the lineage panel above.
+    </p>
   )
 }
 
