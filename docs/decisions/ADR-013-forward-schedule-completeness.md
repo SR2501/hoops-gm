@@ -49,6 +49,37 @@ fixtures, and the content fingerprint changes with them — correctly, because t
 changed. Anything downstream that consumes games-per-period must treat counts before
 December as provisional; `quant` should not fit anything to an 80-game team season.
 
+## Amendments
+
+### 2026-08-20 — the content fingerprint does not cover the pending set
+
+The Consequences paragraph above says the content fingerprint changes as the pending set
+resolves. **That is true only when a bracket is drawn, and false for a change in the
+pending set alone.** Measured by the frontend lane on two real responses: a cohort of
+10 source / 10 resolved and one of 12 source / 10 resolved / **2 pending** both fingerprint
+to `9bcac1c60490b41a`.
+
+The mechanism is that `schedule_content_version` is computed over persisted `team_schedule`
+rows (`ingest/importers.py`), and a pending game has no rows by definition. So two refreshes
+differing only in *which* games are pending share a version.
+
+Two consequences, and the second is the larger one.
+
+**A consumer must not cache the pending set keyed on the schedule version alone.** The hole
+is narrow — it closes the moment a bracket is drawn, because that creates rows — but a
+reader who assumes the version covers everything the completeness block reports will be
+wrong in exactly this way.
+
+**The pending set is currently unverifiable.** `verify_refresh` recomputes a fingerprint
+from persisted content and compares it to the registered label; pending games have no
+persisted artifact to recompute from, so a forged or drifted `pending_game_ids` cannot be
+detected by the mechanism that detects every other kind of schedule drift. Closing that
+requires persisting pending games — schema and migration — and is filed as a separate unit
+rather than bolted onto the lane implementing this ADR.
+
+This amendment corrects a factual claim in Consequences. **The decision itself is
+unchanged**, which is why this is an amendment rather than a superseding ADR.
+
 ## Rejected
 
 **Wait until December.** Delivers none of the value to avoid 0.5% incompleteness, and
