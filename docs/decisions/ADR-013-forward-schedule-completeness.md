@@ -265,9 +265,13 @@ know.
 rather than about the source's restraint, and the 1900 convention is *already observed* in a
 sibling field, so nothing but the window stops it appearing in this one.
 
-**Exit codes, because the difference is waiting versus paging someone.** The operator command
-exits `0` for `not_offered` and `irreconcilable` — the source declining to commit is the case
-this whole ADR exists to tolerate — and **`5` for `unreadable` and `implausible`**. Exit 5 is
+**Exit codes answer a different question from the operator table above, and conflating them is
+how `irreconcilable` was first classified wrongly.** An exit code answers *should this import
+fail*; the reason table answers *should a human look*. They are not the same question and one
+signal cannot serve both. The operator command exits `0` for `not_offered` **and**
+`irreconcilable` — tolerating an undated pending game is the case this whole ADR exists for, and
+it stays true of `irreconcilable` even though that reason now means *investigate*, because a
+game nothing persists must never fail the season's import — and **`5` for `unreadable` and `implausible`**. Exit 5 is
 **not a refusal**: rows are written and the cohort is registered. It says a successful import
 contains something a human should look at, so a schema change on the read path is not reported
 solely by a nightly smoke that is allowed to fail and does not run in CI.
