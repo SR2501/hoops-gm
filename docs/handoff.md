@@ -13649,3 +13649,116 @@ No live source was called beyond the 30 probe requests and 4 live-smoke fetches,
 no number a decision rests on was emitted, and no owner-only decision was made. The decision to
 widen remains the owner's; this unit establishes only that widening *can* work and what it will
 cost.
+
+## 2026-08-21 — data-engineer — Two numbers in my own report were wrong, and a coordinator sequenced off one of them
+
+**Unit:** correction to the Unit 1 report at `3c503a2`, prompted by the coordinator promoting
+the participation ingest to the pre-draft critical path and asking for exact figures. **No new
+live spend beyond one read-only `LeagueGameFinder` preflight.**
+
+### The promotion, and why I am not arguing with it
+
+The coordinator traced the dependency graph and found `availability-model` blocked by **two
+independent routes** — its `injury-status-conversion` dependency, and its own need for direct
+non-play labels from `player_participation`. `quant` had recorded the second on
+`availability-model`; I had recorded the cost of it in a plan. **Neither of us could see the
+other half**, and everything from `expected-games` through `auction-nomination` waits on those
+labels regardless of what the conversion study concludes.
+
+So the participation ingest is not the expensive half of my unit. It is the spine, and my unit
+was the only thing that would have caused it to happen. I agree with the promotion, and the
+corrected arithmetic below makes the case *stronger* than the numbers I originally published.
+
+### Correction 1: I counted one request per game. It is two.
+
+`backfill_season` fetches **`BoxScoreTraditionalV3` and `BoxScoreSummaryV3` per game**, because
+only the per-game endpoints carry DNP comments and inactive lists. Driven by read-only
+preflight against the real season rather than scaled from the cohort:
+
+**2025-26 regular season: 1,230 games, 164 game dates, 2025-10-21..2026-04-12 → 2,462 requests,
+45.1-minute throttle floor at 1.1 s.**
+
+My report said "~1,230 requests, 23 min floor". Exactly half. The ratios I published were
+consequently wrong too: participation dominates injury reports by **3.7x in requests and 2.0x in
+wall time** for one season, and **~5.5x / ~3x** across three — not the 2.7x/4x I wrote.
+
+The conclusion survives and strengthens. That is not a defence: **a coordinator promoted work to
+the critical path partly on a number I got wrong**, and it happened to be wrong in the direction
+that made the argument weaker rather than stronger, which is luck rather than method.
+
+### Correction 2: "there is no partial-season shortcut" was false, and it constrained the plan
+
+That claim belongs to the *injury-report* backfill's `enforce_expected_game_coverage`. I applied
+it to participation, which is a different code path with no such gate — `backfill_season` takes
+`--start`, `--end` and `--limit-games` and filters through `_participation_games_in_scope`
+without consulting any coverage gate.
+
+And the injury-report gate is narrower than my phrasing suggested: `expected` is filtered by
+`--start`/`--end` *before* comparison, and there is an explicit `allow_missing_games` escape
+hatch a deliberately partial run must name. So the real constraint is **whatever window you
+request must be complete within itself**, never "you must ingest whole seasons".
+
+**This makes the promoted work easier than the coordinator was told.** Participation is
+chunkable into month-sized slices with a commit after every game.
+
+Worth naming the shape: correction 1 was a *miscount*, and a reviewer could have caught it by
+reading. Correction 2 was a **claim about component A applied to component B** — both real,
+both true of their own subject, joined by a sentence. Nothing in the text looked uncertain, and
+the gate it cited genuinely exists. That is the same class as citing the right principle from
+the wrong ADR: a borrowed constraint feels verified because it *is* verified, somewhere else.
+
+### Resume behaviour, driven from the code rather than its docstrings
+
+Asked for explicitly, because this will run the better part of an hour on a home machine.
+
+There is no checkpoint file; resuming is re-running the command. It is safe because
+`session.commit()` fires after every game, `import_participation` upserts on
+`(game_id, player_id)`, and `COMPLETED_GAME_MAX_AGE` is 3,650 days. **And replay is fast for a
+non-obvious reason**: `NbaStatsClient.fetch` checks the cache *before* `_invoke`, and
+`limiter.acquire()` is inside `_invoke`, so a cache hit pays no throttle. A resumed run replays
+at disk speed and only drops to 1.1 s/request on reaching new work.
+
+**Is a resumed run provably equivalent to an uninterrupted one? No.** Three divergences:
+
+1. **The cache windows are asymmetric.** Per-game is 3,650 days; `LeagueGameFinder` and
+   `PlayerGameLogs` use `SEASON_MAX_AGE`, which is **12 hours**. A resume more than 12 hours
+   later re-fetches both and proceeds from whatever the source says then. For a completed season
+   the slate is static, so it *should* be identical — but that is an empirical claim about a
+   finished season, not a guarantee the code makes, and I have not tested it.
+2. **A cached bad response replays its failure deterministically.** Fetch-succeeded,
+   parse-failed leaves the bad bytes in the raw store, so resuming reproduces the identical
+   failure. Reproducible, and unrecoverable without clearing the entry: a failure that looks
+   transient is not retried by resuming.
+3. **The failure list does not survive across invocations.** `result.failures` is reported at
+   the end of *that* run and persisted nowhere. Interrupted twice means three failure lists and
+   no union. For a 45-minute job that is a real gap, and it argues for capturing stdout to a
+   file rather than trusting a terminal.
+
+None of these is a defect in the ingest as scoped. They are what an operator should know before
+starting it.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when written. Local gates green.
+- **That a refetched `LeagueGameFinder` for a finished season returns an identical slate.**
+  **Reasoned** from the season being over. The asymmetric cache windows that make it matter are
+  **driven**, from the constants.
+- **Anything above the throttle floor.** The 2,462 request count is driven and 45.1 minutes is
+  an exact floor. Retries, 429s, parse failures and disk time are unmodelled, so the floor must
+  not be read as a duration estimate. I have not run a season ingest.
+- **Whether the injury-report sweep needs the participation sweep at all.** `tipoff_utc` is
+  written by *two* paths — per-game `BoxScoreSummaryV3` during participation, and
+  `ScheduleLeagueV2` via `import_schedule`, which is **one request per season**. If
+  `ScheduleLeagueV2` still serves a completed season, the two halves decouple entirely and the
+  injury-report sweep needs one request for tip-off coverage rather than 2,462. **I did not
+  spend that request.** It is the first thing the next unit should check, and it could remove
+  the participation ingest from the injury-report critical path without removing it from the
+  `availability-model` one.
+- **That no other claim in the Unit 1 report is component-A-applied-to-component-B.** I found
+  this one because a coordinator asked for exact figures. I have not re-audited the rest of that
+  document for the same shape, and the defect class is specifically that it does not read as
+  uncertain.
+
+No fit was run, no cohort was regenerated, no conversion rate was emitted, and no owner-only
+decision was made. The decision to run the participation ingest is the coordinator's and is now
+recorded on `injury-conversion-cohort-widening`.

@@ -251,20 +251,94 @@ for a spend decision and are not a preregistered threshold.
 
 ### The sweep is a box-score ingest with an injury-report attachment
 
+**Corrected 2026-08-21, after the coordinator promoted this work and asked for
+exact figures.** The first version of this table said ~1,230 participation
+requests per season and a 23-minute floor. **It counted one request per game;
+the ingest makes two** — `BoxScoreTraditionalV3` for who dressed and
+`BoxScoreSummaryV3` for the inactive list and the tip-off instant — because only
+the per-game endpoints carry DNP comments and inactive lists. The figures below
+are re-derived from a read-only `LeagueGameFinder` preflight against the real
+2025-26 season, not scaled from the cohort.
+
 | Work | Requests | Throttle | Wall time |
 |---|---:|---|---|
 | Injury reports, 2025-26 (mixed era) | ~670 | 2.0 s | ~22 min |
 | Injury reports, each legacy season | ~340 | 2.0 s | ~11 min |
 | **Reports, 3 seasons** | **~1,350** | | **~45 min** |
-| Participation / box scores, per season | ~1,230 | 1.1 s | 23 min floor, 45–90 min real |
-| **Participation, 3 seasons** | **~3,690** | | **2–4.5 h** |
+| Participation, 2025-26 (**measured**: 1,230 games, 164 game dates) | **2,462** | 1.1 s | **45.1 min floor** |
+| **Participation, 3 seasons** | **~7,386** | | **~2.3 h floor** |
 
-This is unremarkable traffic and politeness is not in tension with it. But the
-shape is the opposite of what the framing suggests: **participation dominates
-report fetching by ~2.7× in requests and ~4× in wall time**, and
-`enforce_expected_game_coverage` is fail-closed on every expected game being
-ingested, so **there is no partial-season shortcut**. A season is ingested whole
-or not at all.
+So participation dominates report fetching by **3.7× in requests and 2.0× in
+wall time for one season**, and **~5.5× / ~3×** across three. The earlier
+version of this document said 2.7× and 4×; both were wrong, and the conclusion
+they supported is stronger than the numbers that were used to argue it.
+
+**A second correction, and this one loosened a constraint rather than tightening
+it.** The earlier version said "there is no partial-season shortcut". That is a
+property of the *injury-report* backfill's `enforce_expected_game_coverage`, and
+it was applied here to participation, which is a different code path with no
+such gate: `backfill_season` takes `--start`, `--end` and `--limit-games` and
+filters the participation loop through `_participation_games_in_scope` without
+consulting any coverage gate at all.
+
+And the injury-report gate itself is narrower than that phrasing suggests. It is
+scoped to the **requested range** — `expected` is filtered by `--start`/`--end`
+before comparison — and carries an explicit `allow_missing_games` escape hatch
+that a deliberately partial run must name. So the real constraint is *whatever
+window you request must be complete within itself*, not *you must ingest whole
+seasons*.
+
+**Consequence: participation is chunkable by date range**, with a
+`session.commit()` after every game, so a month-sized slice is a legitimate unit
+of work rather than a compromise.
+
+### Resume behaviour, and whether a resumed run equals an uninterrupted one
+
+Recorded because the participation ingest was promoted to the critical path and
+will run for the better part of an hour on a home machine. All of this is read
+from the code, not inferred from the docstrings.
+
+**Resume mechanism.** There is no checkpoint file. Resuming is re-running the
+same command. Three properties make that safe:
+
+- `session.commit()` fires after **every game**, so committed work is durable at
+  per-game granularity.
+- `import_participation` upserts on `(game_id, player_id)` against the rows
+  already present, so replaying a game is a no-op rather than a duplicate.
+- `COMPLETED_GAME_MAX_AGE` is **3,650 days**, so a completed game's two
+  responses are served from the raw store essentially forever.
+
+**Replay is fast, and for a non-obvious reason.** `NbaStatsClient.fetch` checks
+the cache *before* `_invoke`, and `limiter.acquire()` lives inside `_invoke`. So
+a cache hit pays no throttle at all. A resumed run replays every already-fetched
+game at disk speed and only slows to 1.1 s/request when it reaches new work.
+Interruption therefore costs re-parsing and re-upserting, not re-fetching.
+
+**Is a resumed run provably equivalent to an uninterrupted one? No.** Three
+divergences, in descending order of how much they should worry an operator:
+
+1. **The cache windows are asymmetric.** Per-game endpoints are pinned for 3,650
+   days, but `LeagueGameFinder` and `PlayerGameLogs` use `SEASON_MAX_AGE`, which
+   is **12 hours**. A run resumed more than 12 hours later re-fetches both, and
+   the game list and season logs it then works from are whatever the source says
+   at that moment. For a **completed** season — 2025-26 ended 2026-04-12 — the
+   schedule is static and the refetch should be identical, but that is an
+   empirical claim about a finished season rather than a guarantee the code
+   makes. For an in-progress season the two runs would genuinely differ.
+2. **A cached bad response is replayed identically.** If a fetch succeeded and
+   the *parse* failed, the response is already in the raw store, so resuming
+   reproduces the same failure deterministically. That is good for
+   reproducibility and bad for recovery: a failure that looks transient is not
+   retried by resuming, and only clearing the raw-store entry will re-fetch it.
+3. **The failure list does not survive across invocations.** Per-game failures
+   are collected into `result.failures` and reported at the end of *that* run.
+   An operator who is interrupted twice sees three separate failure lists and no
+   union; nothing persists them. For a 45-minute job that is a real gap — the
+   run is resumable but its *error record* is not.
+
+None of these is a defect in the participation ingest as scoped. They are the
+things worth knowing before starting it, and (3) in particular argues for
+capturing stdout to a file rather than trusting the terminal.
 
 ---
 
@@ -331,11 +405,33 @@ sweep"; that is **Unit 3** below, unchanged in substance.
 | Unit | Work | Network | Gate |
 |---|---|---|---|
 | **1** | This document + the archive-reach probe | 30 requests, done | Adapter + Code |
+| **1b** | **2025-26 participation ingest — promoted to the critical path** | ~2,462, ~45 min floor | Adapter |
 | **2** | Manifest disclosure contract test: outcome-keyed field allow-list, `joined_direct_outcomes`, per-status direct-outcome counts by game date, exclusion classes by status | none | Code |
-| **3** | 2025-26 full regular season: participation, then reports, then manifest | ~1,900 | Adapter |
-| **4** | 2024-25 | ~1,570 | Adapter |
-| **5** | 2023-24 | ~1,570 | Adapter |
+| **3** | 2025-26 injury reports + regenerated manifest | ~670 | Adapter |
+| **4** | 2024-25 (participation + reports) | ~2,800 | Adapter |
+| **5** | 2023-24 (participation + reports) | ~2,800 | Adapter |
 | **6** | Per-season and per-era trend report, handed to `quant` | none | Code |
+
+**Unit 1b is not part of the conversion study, and that is the point.** The
+coordinator traced the dependency graph after approving this plan and found that
+`availability-model` is blocked by two independent routes — its
+`injury-status-conversion` dependency *and* its own need for direct non-play
+labels from `player_participation` — so closing only the first would not unblock
+it. Everything downstream of `availability-model` (`expected-games`,
+`zscore-engine`, `gscore-engine`, `risk-adjusted-valuation`, `auction-values`
+and the auction capabilities beyond) waits on those labels regardless of what
+this conversion study concludes. The participation ingest is therefore the
+spine, and this lane was merely the first thing that would have caused it to
+happen.
+
+It is sequenced first, it is **not** low-priority, and it is the one item here
+whose cost is wall-clock rather than effort — 45 minutes of throttled fetching
+cannot be compressed on the day we discover we need it. The literature review
+and the conversion study keep their original low priority.
+
+**The `PROBABLE` question governed the conversion study, not the participation
+ingest.** Those were coupled only by living in one plan. A probe result that
+killed the three-season sweep would not have touched Unit 1b.
 
 **Unit 2 must land before any widened manifest is generated** — it is the
 disclosure surface the frozen protocol's admissibility gate reads.
@@ -370,15 +466,28 @@ Separated by whether the belief was **driven** — established by running someth
   arXiv and PyPI APIs, 2026-08-21.
 - **The four guards catch what their docstrings claim.** Mutation harness, green
   before, mutation applied, red, reverted, green.
+- **The 2025-26 participation ingest size.** Read-only `LeagueGameFinder`
+  preflight: 1,230 games, 164 game dates, 2025-10-21 to 2026-04-12, so 2,462
+  requests and a 45.1-minute throttle floor.
+- **Resume mechanics and the three divergences above.** Read from
+  `backfill_season`, `NbaStatsClient.fetch`, `import_participation` and the
+  cache-window constants, not from their docstrings.
 
 ### Reasoned, not driven — treat accordingly
 
 - **The full-season `doubtful` projection (~149).** Scaled from one December
   window. The seasonality argument for it being an *over*estimate is reasoning,
   not measurement, and it is the number the Unit 3 go/no-go exists to replace.
-- **Participation wall-time estimates.** Derived from the client's 1.1 s interval
-  and game counts. No season ingest has been run; retries, 429s and parse
-  failures are not modelled.
+- **Participation wall-time estimates.** The **request count** is now driven
+  (2,462 for 2025-26) and the 45.1-minute figure is an exact throttle floor. What
+  remains reasoned is everything above that floor: no season ingest has been run,
+  so retries, 429s, parse failures and disk time are unmodelled, and the floor
+  should not be read as an estimate of the real duration.
+- **That a resumed run reproduces an uninterrupted one on a completed season.**
+  The *mechanism* is driven — the 12-hour `SEASON_MAX_AGE` against the 3,650-day
+  per-game window is read from the constants. That a refetch of a finished
+  season's `LeagueGameFinder` returns an identical slate is **reasoned**, from
+  the season being over, and I have not tested it.
 - **That the PDF table layout is stable *within* each of the three seasons.** Four
   reports were probed for 2023-24 and three for 2024-25, spread across each
   season — not exhaustive. A mid-season layout change inside a supported season
