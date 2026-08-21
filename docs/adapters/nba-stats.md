@@ -252,7 +252,37 @@ of identity mismatch**, for the same reason `evidence.py` already lowered the
 The penalty is the identity lane's to re-tune; this lane recorded the effect
 and pinned it in a test rather than changing a matcher it does not own.
 
-#### Three things the endpoint does that no code path shows
+#### Failing this guard takes the whole crosswalk offline
+
+Stated because the guard table below says what each check *sees*, not what
+firing costs, and the cost here is disproportionate to the field.
+
+`build_crosswalk` calls `parse_player_index` unguarded, before resolution. The
+vocabulary guard is deliberately fatal **even for a merely new value** — if the
+NBA adds one hybrid such as `G-C`, the parse raises, and the entire NBA↔Fantrax
+crosswalk cannot be rebuilt **at all**: not the name key, not the team key,
+neither of which has anything to do with position. That is the highest-risk
+foundational item in the project taken down by a corroborating third key the
+matcher weights at **0.12**, until somebody edits `PLAYER_INDEX_POSITIONS`.
+
+The obvious alternative — let position fail soft and rebuild the crosswalk
+two-key, which is what this project did for its entire life until 2026-08-20 —
+is **not** taken, and the reasoning is worth recording rather than leaving to be
+rediscovered:
+
+* A changed vocabulary means every *stored* position describes the old one, so
+  the failure is not "we lack a corroborator today", it is "the corroborator we
+  already persisted may now be wrong". Continuing quietly is the silent-degrade
+  failure ADR-006 exists to prevent.
+* A soft failure here would be invisible in exactly the situation that most
+  needs a human: a source-wide relabelling.
+
+But the blast radius is real, and if this fires close to draft day the fix is a
+one-line vocabulary edit plus a deliberate re-read of what changed — **not** a
+`try/except` added under time pressure. Anyone tempted by the latter should
+change it here, with a reviewer, rather than at the call site.
+
+
 
 Recorded here because they cost a session to find and a future lane would
 otherwise re-derive them from scratch.
