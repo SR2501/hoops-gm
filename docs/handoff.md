@@ -13432,3 +13432,53 @@ and the backlog at 114/40/1/73 with no marker changed.
 
 No cohort was regenerated, no live source was called, no fit was run, no number a decision
 rests on was emitted, and no owner-only decision was made.
+
+## 2026-08-21 — quant — Rebased onto `556936e`; a claim about a commit's own diff did not survive it
+
+**Unit:** rebase of the frozen-protocol lane onto merged `main` before opening the PR. No
+content change to the freeze, the backlog annotations or any entry's substance.
+
+**Two doc conflicts, both resolved with `scripts/resolve_doc_conflicts.py`**, in
+`docs/handoff.md` where another lane had appended in the same window. All three of this lane's
+entries survive; zero conflict markers remain in any doc file. The resolver's
+`CONFLICT MARKERS SURVIVE` warning fired both times on
+`frontend/src/test/fixtures/make_pending_date_payloads.py` — the known seven-equals false
+positive PR #58 fixes. Verified rather than assumed: those lines are a reStructuredText table
+rule inside a docstring, in a file this lane never touched and which git did not list as
+conflicted.
+
+**Backlog header recomputed from the finished file, not reconciled:**
+**41 done / 1 blocked / 73 pending / 115 total**, 115 `###` headings against 115 markers, 1:1,
+no duplicate names. `main` gained one done item while this branch was out. I re-derived this
+independently of the resolver's own recount and got the same numbers; the resolver's output is
+not the evidence.
+
+**And the rebase falsified a claim I had made about a commit's own diff.** The entry two above
+says *"this commit is 172 insertions and 1 deletion, and the deletion is my own missing newline
+being fixed"*, and its commit message says the same. After rebasing it is **171 insertions and
+0 deletions**: on the new base the preceding entry was another lane's, which already ended with
+a newline, so the fix that commit was partly named for became unnecessary and disappeared. The
+commit is now titled *"and fix a missing newline I left"* for a fix it no longer contains.
+
+The substance is unaffected — the append is still strictly additive, which was the property
+being asserted — but the *number* attached to it is now wrong, and so is the title. **A claim
+about a diff is a claim about a base**, and rebasing changes the base underneath it. That is
+the same class as the reader count invalidated by another lane merging, and as my own
+"correction to the record" that another lane had already made: **a fact about the repository
+decays when the repository moves**, and self-referential facts decay fastest, because nothing
+in the file points at them.
+
+I did not rewrite the two commits to correct their messages. Doing so would rewrite commits
+that two reviewers approved at an exact head, and the whole unit rests on those verdicts being
+verdicts on a tree that did not move. Recorded here instead, which is the trade the append-only
+rule is for.
+
+**Could not verify:**
+- **CI on the rebased head.** Being pushed as this is written; the coordinator requires green
+  before merge, and the local gates are not that check.
+- **That no other lane's entry was altered by the resolver.** I verified my own three entries
+  survive, that the dated-entry count is consistent, and that no markers remain — I did not
+  diff every other lane's entry against its pre-rebase form.
+- **Whether the resolver has other false-positive classes** beyond the seven-equals one. It
+  also performed its resolution when invoked with `--help`, which is worth knowing before
+  someone runs it expecting usage text: it ignores arguments and acts.
