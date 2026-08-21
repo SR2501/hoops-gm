@@ -1,6 +1,7 @@
 # ADR-013 — Forward-schedule completeness: source-declared pending is not a resolution failure
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-08-20 by the project owner
 **Date:** 2026-08-20
 
 ## Context
