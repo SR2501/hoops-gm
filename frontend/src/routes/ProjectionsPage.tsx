@@ -102,7 +102,7 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
         >
           This cohort does not line up with itself.
           {!integrity.rowCountMatchesLineage
-            ? ` The response carried ${String(model.rows.length)} rate rows but its lineage block counts ${String(model.lineage.projection_import.projection_count)}, so these are not exactly the rows the backend verified.`
+            ? ` The response carried ${String(model.carriedRowCount)} rate rows but its lineage block counts ${String(model.lineage.projection_import.projection_count)}, so these are not exactly the rows the backend verified.`
             : ''}
           {integrity.ratesWithoutPlayer > 0
             ? ` ${String(integrity.ratesWithoutPlayer)} player(s) have rates but no player record and are shown under a bare id.`
@@ -136,24 +136,26 @@ function ProjectionsView({ payload }: { payload: CurrentProjections }) {
           <span className="grid__cell grid__key-swatch">0.00</span> the source published zero
         </span>
         <span className="grid__key-item">
-          <span className="grid__cell grid__cell--nodata grid__key-swatch">·</span> the source
-          did not publish this quantity — <strong>not zero</strong>
+          <span className="grid__cell grid__cell--nodata grid__key-swatch">·</span> in a rate
+          column: the source did not publish that quantity — <strong>not zero</strong>
         </span>
         <span className="grid__key-item">
-          {/* Stated because a marker whose meaning is "this never happens" is
-              more useful than one a reader assumes is routine. Basketball
-              Monster's `required_production_fields` is set-equal to the
-              canonical rate vocabulary, and `parser.py:293-296` drops a row on
-              *any* missing required value, so a stored row always carries
-              every rate and a games figure.
-
-              This sentence depends on those two tuples staying set-equal, and
-              at time of writing nothing in CI enforces that — `backend` is
-              adding the pin. If it drifts, this becomes the misleading claim
-              rather than the useful one. See `projectionsModel.ts`. */}
+          <span className="grid__cell grid__key-swatch">—</span> in Team or Pos:{' '}
+          <em>we</em> hold no label for this player. A different claim, and it says nothing
+          about what the source published — which is why it is a different mark.
+        </span>
+        <span className="grid__key-item">
+          {/* Scoped to the rate columns and to Source GP. An earlier version of
+              this sentence said "a `·` should not appear" without qualification,
+              and the fixture committed beside it disproved that immediately —
+              a player with a null `primary_position` rendered one in the Pos
+              column. The reasoning was about rates and was sound; its scope was
+              not. Labels now carry `—`, so this claim covers only the marks it
+              was ever true of. */}
           A <code>·</code> should not appear for Basketball Monster: its import profile requires
           every rate shown here and a games-played figure, and a row missing any of them is
-          rejected rather than stored. If one appears, something upstream has changed.
+          rejected rather than stored. If one appears, something upstream has changed. This is
+          about the rate columns and Source GP, not the Team and Pos labels.
         </span>
         <span className="grid__key-item">
           <strong>Source GP</strong> is what Basketball Monster assumed about games played. It is

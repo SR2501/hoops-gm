@@ -14,16 +14,18 @@
  * at all and is separated from them by a rule for exactly that reason.
  *
  * **ADR-002, structurally.** The assumption column reads `row.assumption`, a
- * discriminated union, and the rate columns read `row.rates`. There is no
- * object in this component holding a rate and a games-played figure as sibling
- * numbers, so writing the forbidden product requires destructuring a union
- * member first — a deliberate act, not a typo. See `AssumptionState` for why
+ * discriminated union, and the rate columns read `row.rates`. `AssumptionCell`
+ * — the one function that narrows that union into a bare number — is passed
+ * only `assumption` and `playerId`, so the rates are not in scope at the moment
+ * narrowing happens. Writing the forbidden product therefore requires changing
+ * a signature, not just typing an expression. See `AssumptionState` for why
  * that structure is the load-bearing guarantee and the DOM test is only a
  * backstop.
  */
 
-import type { ProjectionRow, ProjectionsModel } from './projectionsModel'
+import type { AssumptionState, ProjectionRow, ProjectionsModel } from './projectionsModel'
 import {
+  NO_LABEL,
   NOT_PUBLISHED,
   PROJECTION_RATE_FIELDS,
   RATE_LABELS,
@@ -112,8 +114,18 @@ function ProjectionTableRow({ row }: { row: ProjectionRow }) {
           </span>
         )}
       </th>
-      <td className="projections__team">{player?.team_abbreviation ?? NOT_PUBLISHED}</td>
-      <td className="projections__pos">{player?.primary_position ?? NOT_PUBLISHED}</td>
+      <td className="projections__team">{player?.team_abbreviation ?? NO_LABEL}</td>
+      <td
+        className="projections__pos"
+        data-testid={`position-${String(row.playerId)}`}
+        title={
+          player?.primary_position == null
+            ? 'Our player record holds no position for this player. This says nothing about what Basketball Monster published.'
+            : "NBA's own label, not Fantrax eligibility."
+        }
+      >
+        {player?.primary_position ?? NO_LABEL}
+      </td>
 
       {PROJECTION_RATE_FIELDS.map((field) => {
         const value = row.rates[field]
@@ -134,7 +146,7 @@ function ProjectionTableRow({ row }: { row: ProjectionRow }) {
         )
       })}
 
-      <AssumptionCell row={row} />
+      <AssumptionCell assumption={row.assumption} playerId={row.playerId} />
     </tr>
   )
 }
@@ -144,12 +156,26 @@ function ProjectionTableRow({ row }: { row: ProjectionRow }) {
  *
  * A number here is **not** a rate and must never be read as one, which is why
  * it sits behind a rule and under a header that says whose assumption it is.
- * It is shown because "the source assumed 70 games; our availability model will
- * replace that" is the product thesis in one line — and it is shown *only*.
+ * It is shown because "the source assumed 70 games, we will replace that" is
+ * the product thesis in one line — and it is shown *only*.
+ *
+ * **Takes `assumption` and `playerId` rather than the whole row, and that is
+ * the point.** This is the one function that narrows `AssumptionState` into a
+ * bare `number`, so it is the one place where the forbidden product would be a
+ * single expression. Review found it previously took `row`, which put
+ * `row.rates` in scope at exactly that moment and made the component
+ * docstring's claim — that no scope holds a rate and a games figure as sibling
+ * numbers — true everywhere except where it mattered. Passing the two fields
+ * it uses keeps the rates unreachable from here.
  */
-function AssumptionCell({ row }: { row: ProjectionRow }) {
-  const { assumption } = row
-  const testId = `assumption-${String(row.playerId)}`
+function AssumptionCell({
+  assumption,
+  playerId,
+}: {
+  assumption: AssumptionState
+  playerId: number
+}) {
+  const testId = `assumption-${String(playerId)}`
 
   switch (assumption.kind) {
     case 'stated':

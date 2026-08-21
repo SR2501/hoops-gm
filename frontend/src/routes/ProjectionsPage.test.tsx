@@ -262,6 +262,53 @@ describe('ProjectionsPage', () => {
         vi.useRealTimers()
       }
     })
+    it('quotes the backend wording on the warm path, not just the cold one', async () => {
+      // Four refusal messages tell the reader to read "the backend's wording
+      // below" to learn which condition fired. Review found it was rendered
+      // only on the cold path, so on a failed refresh — the path those
+      // messages were actually written for — there was nothing below.
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        let call = 0
+        const fetchMock = vi.fn(() => {
+          call += 1
+          return Promise.resolve(
+            call === 1
+              ? new Response(JSON.stringify(payload()), {
+                  status: 200,
+                  headers: { 'Content-Type': 'application/json' },
+                })
+              : new Response(
+                  JSON.stringify({
+                    error: 'projections_not_current',
+                    detail: 'a newer import superseded this cohort',
+                    request_id: 'req-9',
+                  }),
+                  { status: 409, headers: { 'Content-Type': 'application/json' } },
+                ),
+          )
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        renderWithRouter(<ProjectionsPage />)
+        await screen.findByTestId('projections-table')
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(STALE_AFTER_MS + 1_000)
+        })
+        const refresh = await screen.findByRole('button', { name: /refresh/i })
+        act(() => {
+          refresh.click()
+        })
+
+        await waitFor(() => {
+          expect(screen.getByTestId('async-stale-backend-wording')).toBeInTheDocument()
+        })
+        expect(screen.getByText(/a newer import superseded this cohort/)).toBeInTheDocument()
+        expect(screen.getByTestId('projections-table')).toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   describe('refusal copy', () => {
@@ -297,6 +344,62 @@ describe('ProjectionsPage', () => {
     const banner = await screen.findByTestId('projections-integrity')
     expect(banner).toHaveTextContent(/duplicate rate row/i)
     expect(within(screen.getByTestId('projections-table')).getAllByRole('row')).toHaveLength(2)
+  })
+
+  it('quotes the number the row-count check actually compared', async () => {
+    // Review found the banner reporting the post-dedup row count while the
+    // check that fired used the pre-dedup one, so with a duplicated row it
+    // announced a disagreement between two identical numbers: "carried 1 rate
+    // rows but its lineage block counts 1".
+    const base = payload({ projections: [rates(1), rates(1)] })
+    mockFetch({
+      [PATH]: {
+        body: {
+          ...base,
+          lineage: {
+            ...base.lineage,
+            projection_import: { ...base.lineage.projection_import, projection_count: 1 },
+          },
+        },
+      },
+    })
+    renderWithRouter(<ProjectionsPage />)
+
+    const banner = await screen.findByTestId('projections-integrity')
+    expect(banner).toHaveTextContent('carried 2 rate rows but its lineage block counts 1')
+  })
+
+  it('refuses a negative games-played assumption rather than rendering it', async () => {
+    // A count rendered verbatim under a header saying the source assumed it.
+    // The same bound the file already applies to schedule counts and rates.
+    mockFetch({
+      [PATH]: {
+        body: payload({
+          source_games_played_assumptions: [
+            { player_id: 1, assumed_games_played: -5, assumed_games_played_raw: '-5' },
+          ],
+        }),
+      },
+    })
+    renderWithRouter(<ProjectionsPage />)
+
+    const summary = await screen.findByTestId('async-error-summary')
+    expect(summary).toHaveTextContent(/did not match the projections contract/i)
+  })
+
+  it('accepts a fractional assumption, which the producer permits', async () => {
+    mockFetch({
+      [PATH]: {
+        body: payload({
+          source_games_played_assumptions: [
+            { player_id: 1, assumed_games_played: 70.5, assumed_games_played_raw: '70.5' },
+          ],
+        }),
+      },
+    })
+    renderWithRouter(<ProjectionsPage />)
+
+    expect(await screen.findByTestId('assumption-1')).toHaveTextContent('70.5')
   })
 
   it('refuses a payload whose blend key is absent rather than reading it as unblended', async () => {

@@ -398,14 +398,36 @@ function isProjectionRates(value: unknown): value is ProjectionRates {
   )
 }
 
+/**
+ * A games-played assumption is a count, and gets the same bound as the other
+ * two counts this file validates.
+ *
+ * `isScheduleGridCount` and `isRateValue` both reject a negative value with the
+ * same stated reason — rendering it verbatim would put a number on screen that
+ * cannot be true — and this is rendered verbatim by `AssumptionCell` under a
+ * header saying Basketball Monster assumed it. The bound went on the two paths
+ * that were reasoned about and not on the third; found in review, which is the
+ * "where else is this true?" question `gates.md` records.
+ *
+ * **Not required to be an integer.** The producer permits a fractional
+ * assumption and the recorded fixture would once have carried `70.5`, so
+ * demanding integrality would reject a legitimate payload. The producer also
+ * bounds it above at 100 games (`parser.py:241-253`), which is deliberately
+ * *not* mirrored here: a ceiling this client invented would refuse a payload
+ * the backend considers valid the moment that constant moves, and the failure
+ * would look like a contract error rather than a disagreement about a bound.
+ * Rejecting a negative count needs no such coordination.
+ */
+function isAssumedGames(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+}
+
 function isSourceGamesPlayedClaim(value: unknown): value is SourceGamesPlayedClaim {
   return (
     isRecord(value) &&
     Number.isInteger(value.player_id) &&
     'assumed_games_played' in value &&
-    (value.assumed_games_played === null ||
-      (typeof value.assumed_games_played === 'number' &&
-        Number.isFinite(value.assumed_games_played))) &&
+    isAssumedGames(value.assumed_games_played) &&
     'assumed_games_played_raw' in value &&
     (typeof value.assumed_games_played_raw === 'string' ||
       value.assumed_games_played_raw === null)

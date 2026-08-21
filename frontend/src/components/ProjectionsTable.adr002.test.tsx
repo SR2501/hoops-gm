@@ -33,10 +33,16 @@
 
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { PROJECTION_RATE_FIELDS } from '../api/types'
 import type { CurrentProjections, ProjectionRates } from '../api/types'
-import { detectForbiddenProducts, forbiddenProducts } from '../test/adr002'
+import {
+  detectForbiddenProducts,
+  discriminableProductCount,
+  renderedNumbers,
+  tableColumnHeaders,
+} from '../test/adr002'
 import { ProjectionsTable } from './ProjectionsTable'
-import { buildProjectionsModel } from './projectionsModel'
+import { buildProjectionsModel, RATE_LABELS } from './projectionsModel'
 
 /** Realistic per-game rates against a realistic, awkward games assumption. */
 const RATES: ProjectionRates = {
@@ -103,23 +109,6 @@ function payload(): CurrentProjections {
   }
 }
 
-/**
- * Every string form a seasonal total could plausibly be rendered as.
- *
- * Kept for the negative control below, which asserts on a *specific* rendering
- * rather than on the detector's own logic — a negative control that reused the
- * detector could pass because both share a bug.
- */
-function forbiddenRenderings(product: number): string[] {
-  const forms = new Set<string>()
-  for (const digits of [0, 1, 2, 3]) {
-    forms.add(product.toFixed(digits))
-    forms.add(product.toLocaleString('en-US', { maximumFractionDigits: digits }))
-  }
-  forms.add(String(product))
-  return [...forms].filter((form) => form.replace(/[^0-9]/g, '').length >= 3)
-}
-
 describe('ADR-002: the screen never multiplies a rate by the games assumption', () => {
   it('renders no rate × assumed_games_played product anywhere', () => {
     const model = buildProjectionsModel(payload())
@@ -128,11 +117,17 @@ describe('ADR-002: the screen never multiplies a rate by the games assumption', 
     expect(detectForbiddenProducts(container, model)).toEqual([])
   })
 
-  it('had products to look for — the detector did not pass by examining nothing', () => {
-    // A green verifier does not tell you it looked at the right artifact, or
-    // at any artifact. Sixteen rates against one stated assumption, minus the
-    // handful whose product falls below the meaningful-total floor.
-    expect(forbiddenProducts(buildProjectionsModel(payload())).length).toBeGreaterThan(8)
+  it('can discriminate a product in every rate field — not just in aggregate', () => {
+    // **The shape of this assertion is the finding.** The previous version
+    // asserted an aggregate count of products checked, and a magnitude floor
+    // was silently excluding every steal and every block. An aggregate number
+    // looked healthy while two of the nine categories were invisible. Per
+    // field, a category that stops being discriminable turns this red.
+    const counts = discriminableProductCount(buildProjectionsModel(payload()))
+
+    for (const field of PROJECTION_RATE_FIELDS) {
+      expect(counts[field], `${field} has no discriminable product`).toBeGreaterThan(0)
+    }
   })
 
   it('fails when a season-total column is added — the guard is not vacuous', () => {
@@ -152,34 +147,57 @@ describe('ADR-002: the screen never multiplies a rate by the games assumption', 
     )
   })
 
+  it('fails on a season-total for a low-volume category too', () => {
+    // Steals, whose season total is ~22 and sat under the old magnitude floor
+    // for all 60 players in the real cohort. This is the case that was
+    // undetectable, driven directly.
+    const model = buildProjectionsModel(payload())
+    const total = RATES.steals_per_game! * ASSUMED_GAMES
+    const { container } = render(
+      <>
+        <ProjectionsTable model={model} />
+        <p>Projected season steals: {total.toFixed(1)}</p>
+      </>,
+    )
+
+    expect(total).toBeLessThan(100)
+    expect(detectForbiddenProducts(container, model)).toContain(
+      `player 1 steals_per_game → ${String(total)}`,
+    )
+  })
+
   it('catches a total formatted with a thousands separator', () => {
     // `toLocaleString()` is what someone reaches for on a four-figure total,
     // and a naive string search for `1924.7` would not find `1,924.7`. This is
     // why the detector parses rendered tokens back to numbers rather than
     // matching their string forms.
+    //
+    // Asserted through `renderedNumbers` as well as the detector, so the claim
+    // that the separator survives parsing does not rest on the same code path
+    // as the claim that the detector fires. An earlier version of this file
+    // asserted a helper against its own definition and could not fail.
     const model = buildProjectionsModel(payload())
     const total = RATES.points_per_game! * ASSUMED_GAMES
+    const formatted = total.toLocaleString('en-US', { maximumFractionDigits: 1 })
     const { container } = render(
       <>
         <ProjectionsTable model={model} />
-        <p>Season points: {total.toLocaleString('en-US', { maximumFractionDigits: 1 })}</p>
+        <p>Season points: {formatted}</p>
       </>,
     )
 
-    expect(total).toBeGreaterThan(1000)
-    expect(forbiddenRenderings(total)).toContain(
-      total.toLocaleString('en-US', { maximumFractionDigits: 1 }),
-    )
+    expect(formatted).toContain(',')
+    expect(renderedNumbers(container)).toContainEqual(Number(formatted.replace(/,/g, '')))
     expect(detectForbiddenProducts(container, model).length).toBeGreaterThan(0)
   })
 
   it('does not fire on an ordinary correct render — no cross-cell false positives', () => {
     // The first version of this detector concatenated the subtree's
     // `textContent` and reported 200-odd violations against the real cohort,
-    // every one of them a substring spanning the junction between two adjacent
-    // cells. A guard that cries wolf on a correct screen gets loosened by
-    // whoever meets it next, so the absence of false positives is asserted
-    // rather than assumed.
+    // every one a substring spanning the junction between two adjacent cells.
+    // A guard that cries wolf on a correct screen gets loosened by whoever
+    // meets it next, so the absence of false positives is asserted rather than
+    // assumed.
     const many = { ...payload() }
     many.projections = [RATES, { ...RATES, player_id: 2 }, { ...RATES, player_id: 3 }]
     many.players = [1, 2, 3].map((id) => ({
@@ -199,6 +217,23 @@ describe('ADR-002: the screen never multiplies a rate by the games assumption', 
     const { container } = render(<ProjectionsTable model={model} />)
 
     expect(detectForbiddenProducts(container, model)).toEqual([])
+  })
+
+  it('renders exactly the agreed columns and no others', () => {
+    // A second, independent mechanism. The detector asks "is this specific
+    // forbidden value on screen", which cannot see a per-week or
+    // rest-of-season column because it cannot compute one. This asks "has a
+    // column appeared that nobody agreed to", which catches all of them.
+    const model = buildProjectionsModel(payload())
+    const { container } = render(<ProjectionsTable model={model} />)
+
+    expect(tableColumnHeaders(container)).toEqual([
+      'Player',
+      'Team',
+      'Pos',
+      ...PROJECTION_RATE_FIELDS.map((field) => RATE_LABELS[field]),
+      'Source GP',
+    ])
   })
 
   it('shows the assumption itself, because displaying it is the point', () => {

@@ -14,13 +14,26 @@
  * worse than one carrying a marked hole. So the validator checks value sanity
  * and this module checks collection consistency, out loud.
  *
- * **Membership, not cardinality.** Every check below compares *key sets in both
- * directions*. This is not defensive symmetry; it is the specific defect a
- * sibling lane shipped and caught: a comparison that iterates the rows it
- * received cannot notice a row replaced by a duplicate of another. The count
- * holds, the census holds, and a real value silently becomes the marker meaning
- * "nothing was sent". Length equality is reported as its own signal *in
- * addition to* membership, never as a proxy for it.
+ * **Membership, not cardinality — for the two comparisons where both directions
+ * are meaningful.** `players ↔ rates` is checked both ways
+ * (`playersWithoutRates`, `ratesWithoutPlayer`). This is not defensive
+ * symmetry; it is the specific defect a sibling lane shipped and caught: a
+ * comparison that iterates the rows it received cannot notice a row replaced by
+ * a duplicate of another. The count holds, the census holds, and a real value
+ * silently becomes the marker meaning "nothing was sent". Length equality is
+ * reported as its own signal *in addition to* membership, never as a proxy.
+ *
+ * **`assumptions → rates` is deliberately one-directional**, and saying so is
+ * the point — an earlier version of this paragraph claimed *every* check went
+ * both ways, which was false of this one and would have let the next editor
+ * stop looking. An assumption naming a player we carry no rates for is a fault
+ * (`assumptionsWithoutRates`); a rate carrying no assumption is the modelled
+ * `absent` state, which the wire contract declares legitimate, so counting it
+ * as an integrity fault would fire on every well-formed sparse cohort. Note
+ * what that costs: for Basketball Monster, where the screen's own copy says an
+ * absent assumption *cannot* occur, one would render as `·` and this model
+ * would still report the cohort consistent. The recorded test pins the absence
+ * of that case rather than the model doing it.
  *
  * **The table is built from `projections`, not from `players`.** The rates are
  * what the cohort *is* — `projection_count` counts them — so a rate row with no
@@ -62,8 +75,8 @@ import type {
  *   why it gets its own member and is counted rather than folded into `absent`.
  *   The two fields are independently nullable in the backend schema, so it is
  *   expressible — but `backend` traced the producer and
- *   `importer.py:721-722` returns before creating the row when both are
- *   `None`, so no current writer can emit one. It is kept as a **contract
+ *   `importer.py:686-690` (`_write_games_played_assumption`) returns before
+ *   creating the row when both are `None`, so no current writer can emit one. It is kept as a **contract
  *   guard**, not as a state a user will meet, and nothing in the UI claims it
  *   occurs. Following the convention PR #47 arrived at for date absence:
  *   enumerate the benign readings and let an unrecognised state fall to the
@@ -172,6 +185,19 @@ export interface ProjectionsModel {
   season: string
   source: string
   rows: ProjectionRow[]
+  /**
+   * Rate rows the response *carried*, before duplicates were dropped.
+   *
+   * Distinct from `rows.length`, and carried explicitly because the integrity
+   * banner must be able to quote the number the failing check actually
+   * compared. `rowCountMatchesLineage` tests this against
+   * `projection_count`; the banner previously reported `rows.length` instead,
+   * so with a duplicated row it announced a disagreement while displaying two
+   * identical numbers — "carried 1 rate rows but its lineage block counts 1".
+   * Found in review. A message that picks a different operand from the check
+   * it explains is worse than no message.
+   */
+  carriedRowCount: number
   integrity: ProjectionsIntegrity
 }
 
@@ -278,12 +304,32 @@ export function buildProjectionsModel(payload: CurrentProjections): ProjectionsM
     season: payload.season,
     source: payload.source,
     rows,
+    carriedRowCount: payload.projections.length,
     integrity,
   }
 }
 
 /** The marker for a quantity the source did not publish. Never a zero. */
 export const NOT_PUBLISHED = '·'
+
+/**
+ * The marker for a label *we* do not hold, which is a different claim.
+ *
+ * `team_abbreviation` and `primary_position` come from our own player record —
+ * the second through an outer join that yields `null` when the crosswalk has no
+ * position — so their absence says nothing about what Basketball Monster
+ * published. Sharing `NOT_PUBLISHED` with the rate columns made the screen's
+ * key false: it tells the reader a `·` should not appear for this source,
+ * which is true of rates and was never true of labels. The committed fixture
+ * disproved it on the same commit that shipped it — `Patrick Baldwin Jr.` has
+ * a null `primary_position` and rendered a `·` under a key saying one means
+ * something upstream changed.
+ *
+ * Found in review. The reasoning behind the copy was sound and its *scope* was
+ * not, which is the failure `gates.md` records as copy true of one condition
+ * and false of the next raising the same marker.
+ */
+export const NO_LABEL = '—'
 
 /**
  * Two decimals, always, including trailing zeros.

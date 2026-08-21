@@ -52,9 +52,13 @@ import recorded from '../test/fixtures/projections-current.recorded.json'
 import { isCurrentProjections } from '../api/endpoints'
 import { PROJECTION_RATE_FIELDS } from '../api/types'
 import type { CurrentProjections } from '../api/types'
-import { detectForbiddenProducts, forbiddenProducts } from '../test/adr002'
+import {
+  detectForbiddenProducts,
+  discriminableProductCount,
+  tableColumnHeaders,
+} from '../test/adr002'
 import { ProjectionsTable } from './ProjectionsTable'
-import { buildProjectionsModel } from './projectionsModel'
+import { buildProjectionsModel, NO_LABEL, NOT_PUBLISHED, RATE_LABELS } from './projectionsModel'
 
 const payload = recorded as unknown as CurrentProjections
 
@@ -167,14 +171,67 @@ describe('the recorded projections response', () => {
     expect(detectForbiddenProducts(container, model)).toEqual([])
   })
 
-  it('has something for the detector to have looked at', () => {
+  it('has something for the detector to have looked at, in every field', () => {
     // The green above means nothing if the cohort yielded no products to check
     // — a verifier that passes because it examined nothing is the defect this
-    // project keeps finding. 60 players × 16 rates, all with stated
-    // assumptions, so this should be in the high hundreds.
-    const model = buildProjectionsModel(payload)
+    // project keeps finding. **Per field, not in aggregate:** the previous
+    // magnitude floor excluded 278 of 960 real products here, including 60 of
+    // 60 steals and 60 of 60 blocks, while an aggregate count looked healthy.
+    const counts = discriminableProductCount(buildProjectionsModel(payload))
 
-    expect(forbiddenProducts(model).length).toBeGreaterThan(500)
+    for (const field of PROJECTION_RATE_FIELDS) {
+      expect(counts[field], `${field} has no discriminable product`).toBeGreaterThan(0)
+    }
+  })
+
+  it('renders exactly the agreed columns and no others', () => {
+    const model = buildProjectionsModel(payload)
+    const { container } = render(<ProjectionsTable model={model} />)
+
+    expect(tableColumnHeaders(container)).toEqual([
+      'Player',
+      'Team',
+      'Pos',
+      ...PROJECTION_RATE_FIELDS.map((field) => RATE_LABELS[field]),
+      'Source GP',
+    ])
+  })
+
+  it('renders no absence marker in any rate cell or Source GP cell', () => {
+    // The assertion behind the screen's own copy, which tells the reader a `·`
+    // should not appear for this source. Scoped to the cells the claim is
+    // about — review found the unqualified version false against this very
+    // fixture, because a player with a null `primary_position` rendered one in
+    // the Pos column under a key saying it meant something upstream changed.
+    const model = buildProjectionsModel(payload)
+    render(<ProjectionsTable model={model} />)
+
+    for (const row of model.rows) {
+      for (const field of PROJECTION_RATE_FIELDS) {
+        expect(screen.getByTestId(`rate-${String(row.playerId)}-${field}`)).not.toHaveTextContent(
+          NOT_PUBLISHED,
+        )
+      }
+      expect(screen.getByTestId(`assumption-${String(row.playerId)}`)).toHaveAttribute(
+        'data-assumption',
+        'stated',
+      )
+    }
+  })
+
+  it('has a player with no position, which is why labels carry their own marker', () => {
+    // Pins the case that disproved the earlier copy, so nobody restores the
+    // unqualified claim. A label we do not hold says nothing about what
+    // Basketball Monster published, and shares no marker with one that does.
+    const unlabelled = payload.players.filter((player) => player.primary_position === null)
+    expect(unlabelled.length).toBeGreaterThan(0)
+
+    const model = buildProjectionsModel(payload)
+    render(<ProjectionsTable model={model} />)
+
+    const cell = screen.getByTestId(`position-${String(unlabelled[0]?.player_id ?? 0)}`)
+    expect(cell).toHaveTextContent(NO_LABEL)
+    expect(cell).not.toHaveTextContent(NOT_PUBLISHED)
   })
 
   it('renders no rate as null, because Basketball Monster cannot publish one', () => {
