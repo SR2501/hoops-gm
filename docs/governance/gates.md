@@ -23,7 +23,13 @@ Gates exist because this project's failure modes are unusual — see the four po
 
   **Finally, red is not enough on its own: mutate the thing the docstring *names*, and check the failure matches the docstring's story.** A fourth lane had two mutation checks pass for reasons adjacent to the ones claimed — one reddened against the bug itself rather than the guard, another against a neighbouring condition. Both went red, both looked like evidence, and neither established what its docstring said it established. If a test claims to be pinned by a parked id, remove the parked id; if it stays green, the pin was something else.
 
-Enforced by CI, except the two bullets marked otherwise.
+  That paragraph is about a red arriving for the wrong reason. **The same attribution failure happens to greens, and nothing mutates a passing test.** A lane cited a guard as evidence its classifier handled epoch sentinels; the guard was catching a year-0001 value only because `America/New_York` ran on −04:56 local mean time before 1883, so the value misses reconciliation by four minutes. The source's *actual* placeholder convention is 1900, which reconciles exactly and would have passed. The guard had never done the job it was credited with, and it was one year from being asked. **A guard that passes for a reason other than the one claimed is indistinguishable from one that works, until the neighbouring case arrives** — so when a passing test is offered as evidence of a property, state which line establishes it. See R55 in `risks.md` for the other half: what an agreeing check can establish at all.
+
+  **And the green-before-mutating rule earns its place twice over.** It was written to stop a mutation that proves nothing; it has also twice stopped a *test asserting something false* from being committed, because the assertion failed before the mutation ran. One lane's new test claimed a season string of `9993-94` would be treated leniently; it would not, because that season builds a valid window that 2026 is legitimately outside. Neither use was anticipated when the rule was written, and the second is the more valuable: a mutation that proves nothing is merely useless, while a committed test encoding a false claim misleads for as long as it stays green.
+
+- **A reviewer that mutates code needs its own worktree.** Reviewer-enforced, not CI-enforced. Reviewer sub-agents share the author's tree by default, and mutation is a write. On one unit a reviewer's narrowed constant was left behind after its run and was caught only by the test written for that constant; one of its writes landed mid-run and produced a `JSONDecodeError` in an unrelated suite that read exactly like a real failure; and its own mutation was clobbered by an author write, **briefly reporting a false green**. Both directions produce a result that means nothing, and only one of them looks wrong. Use a detached worktree for any review that writes.
+
+Enforced by CI, except the three bullets marked otherwise.
 
 ---
 
@@ -126,8 +132,35 @@ defect — a seed writing a position with no provenance, a shape no real produce
 So, alongside the gate matching your work: **state what each check can and cannot observe
 at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
 the moment you write it, from the code beside it.** The failure modes and their evidence are
-recorded as R49–R54 in `risks.md` — deliberately in one place, because a lesson restated in
+recorded as R49–R56 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
+
+### Two questions no gate asks, because no gate looks at scope of application
+
+Added 2026-08-21. One lane shipped four defects in one unit that were **not logic errors**.
+Each guard was written *correctly* and then applied to one of the two places it belonged; a
+reviewer found the other every time. The plausibility bound went on the lenient path and not
+the strict one — and the strict one persists a value that joins `player_participation`. An
+invariant was enforced on read and not on construction, so a record could be written that no
+reader will accept. `OverflowError` was absorbed on one branch and not its sibling, so the
+one shape that bypassed the exit-code channel was the shape that unit had just added an exit
+code to make trustworthy.
+
+The fourth was the inverse and is why this is two questions rather than one. A guard caught
+`ValueError` so that an odd season string could never decide whether a real schedule imports
+— and the new window construction was placed **outside** that `try`, where `date()` raises
+`ValueError` for a year outside 1..9999. The guard silently stopped covering what it was
+written for, in the commit that removed the same class two functions away.
+
+So, when you write or move a guard, ask both:
+
+- **Where else is this true?** A fix written while reasoning about one branch does not get
+  asked this by anything in the process.
+- **What was already protecting this line, and is it still?** New code placed inside a
+  function is not automatically inside the guarantees that function was making.
+
+Neither is a gate and neither should become one: a checklist item gets ticked, which is how
+a guard comes to pass for the wrong reason. They are questions to ask while writing.
 
 ### Rounds have a cost, and the cost is prose
 
@@ -147,6 +180,29 @@ A corrected restatement is a new copy that can go stale independently, and lint,
 and type-checking read none of it — a reviewer on that unit caught a blank line splitting a
 governance table so its last two rows rendered as literal pipe text, with ruff, format and
 mypy all green over it.
+
+**And know which argument actually lets you stop.** Another unit the same night ran eight
+rounds, every one of which found something real, and the lane's first reason for stopping was
+diminishing returns: the severity gradient was steep — season-killer, then a poisoned
+availability denominator, then an unreachable season string beginning with a year ≤ 5 — and
+the remaining risk sat in one function it had characterised exhaustively. All true, and it
+does not terminate: there is always one more round with some expected value.
+
+The argument that terminates is different. **Once a round begins finding defects in code the
+previous round wrote, a further round examines the previous fix** — and that regress does not
+end on evidence, because each round genuinely produces some. It ends only on judgement. Round
+eight found a defect in a guard round seven had added; a ninth would have examined round
+eight's. Stop there, and say that is why.
+
+Two corollaries, both earned the same night:
+
+- **Do not push a prose improvement onto a head the coordinator is about to merge.** One lane
+  declined to, on the grounds that it would restart the PostgreSQL runs three other lanes were
+  queued behind, to sharpen a paragraph whose substance was already recorded. That is this
+  section's rule arriving at the moment it is most expensive.
+- **The cost applies to governance itself.** This entry was written alongside nine others in
+  one night; three were folded into others before landing and one shrank to two sentences,
+  after reading this file rather than recalling having written it.
 
 ---
 
