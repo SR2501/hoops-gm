@@ -9618,3 +9618,98 @@ still a subset of the manifest's 173).
 **Next:** PR open against `main`. Two follow-ups filed
 (`schedule-pending-persistence`, `schedule-cohort-fingerprint-list`). The
 frontend lane is stacked on this branch and has the confirmed field names.
+
+---
+
+## 2026-08-20 — data-engineer — Four review rounds, two defects I created, one better answer than mine
+
+**Changed:** Closed findings from four independent reviews of the ADR-013 unit
+(`data-engineer`, `backend`, `architect`, `code-review`) at `1716044`, then
+rebased onto `a632b65`.
+
+**The finding that mattered most would have cost the deliverable.** `parse_schedule`
+applied the strict EST/UTC reconciliation to pending games, so **one degenerate
+timestamp on one undrawn Cup fixture returned no season at all** — not 1,200 games
+with one flagged, not even a `--dry-run` view. That is ADR-013's explicitly rejected
+outcome arriving through a different field, and the reviewer showed the source argues
+it is reachable: all six pending games carry `seriesText: "Date subject to change"`,
+and the same objects already use a **year-0001 sentinel** for `gameTimeEst` where a
+resolved game uses 1900. I had written a docstring justifying the strict check as
+"the one unchecked time claim in the parser". There was no claim there to check: on a
+pending game `gameDateTimeUTC` is the source's own arithmetic on `gameDateTimeEst`, so
+the check compared a derivation against the thing it was derived from. That is the
+`gameEt` lesson — check against something *independent* — failed in the direction of
+looking rigorous.
+
+A pending date now degrades to `None`. A **resolved** game's date stays strict,
+because that one is persisted and joins `player_participation`, and both halves of
+the asymmetry are tests. The drift signal did not disappear; it moved to the live
+smoke, which asserts every pending game still has a reconcilable date.
+
+**A guard I wrote that could never fire, two files from where I wrote about that
+hazard.** The pending-and-unresolved overlap check sat below the blanket unresolved
+refusal, which is strictly stronger. Three reviewers found it independently. R50, in
+the same PR whose handoff describes catching R50 in the parser — I recognised the
+shape when reasoning about someone else's code and not in my own. Reordered above,
+and the test asserts the **message**, because asserting only that it raises passes
+either way, which is exactly how it survived.
+
+**ADR-013's new arithmetic opened a hole I did not see.** Once
+`source == resolved + pending`, a block declaring *every* game pending validates with
+zero resolved games and zero persisted rows — and `verify_refresh` then fingerprints
+an empty cohort against itself and answers "current". Refused now.
+
+**The architect's answer on the fingerprint is better than mine and I took it.** I
+refreshed the `db/lineage.py` digest after proving the file is not in the cohort's
+derivation. The old digest was true-about-the-past; the new one is false. Refreshing
+swapped a true-but-irrelevant record for a false-and-irrelevant one to silence an
+alarm — ADR-006's "regenerating a fixture to silence a contract test" one level up.
+**Deleting the entry narrows an over-claim instead**, needs no regeneration, and the
+alarm iterates the manifest's own dict rather than the constant. I reasoned correctly
+all the way to "adding a path would be a false claim" and stopped one step short of
+"so is refreshing the one already there".
+
+One correction to the architect's version: I left `DEFAULT_SOURCE_FINGERPRINT_PATHS`
+alone. Editing `cohort_evidence.py` stales *its* digest, and that file **is** in the
+derivation, so the same false-claim problem moves one file over. Both edits belong to
+the regeneration. `schedule-cohort-fingerprint-list` is rewritten to say so.
+
+**Mutation checks, now to the standard `main` adopted tonight — green, mutate, red,
+restore, each red attributed:**
+
+```
+_TEAM_IDENTITY_FIELDS narrowed to ("teamTricode",)
+   green -> 3 of 4 parametrised cases red -> green
+resolved_game_count == 0 guard removed
+   green -> red -> green
+pending date made strict again
+   green -> red -> green
+overlap guard moved back below the general refusal
+   green -> red -> green
+```
+
+The identity-field one is the point of the new bullet: a reviewer narrowed that
+constant and **224 tests stayed green**, so three quarters of the guard was
+unexercised, and `teamSlug` — the field the whole-object fixture was added to make
+visible — was tested nowhere.
+
+**And the bullet caught me while I was using it.** My first pending-date mutation
+reported green. The replacement string never matched, because I wrote `` `n `` inside
+a single-quoted PowerShell string. A mutation that does not apply looks exactly like a
+guard that works. Every mutation above now asserts its target is present before
+mutating and asserts the pre-mutation green.
+
+**Two assertions that could not fail**, both found by review: `"team" not in key`
+against a model with no team field, and a refusal test checking the two tables written
+*last* while ignoring `nba_teams`, which is written first and is where a leak would
+show.
+
+**Could not verify:** everything in the previous entry stands. Added here: the four
+reviews were at `1716044` and this head is `bb68fff` rebased onto `a632b65`, so the
+re-review is on new code — the clock restarted, correctly. I have not re-run the live
+smoke since adding the pending-set cardinality ceiling and the date probe; the
+cardinality ceiling of six is derived from the bracket's shape (4 quarterfinals + 2
+semifinals), not from an observation of a season where it was exceeded. And
+PostgreSQL remains CI-only.
+
+**Next:** re-review on the new head, then merge. Three PRs are queued behind this one.
