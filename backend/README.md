@@ -53,7 +53,7 @@ Serves on `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 | `POST /api/v1/bridge/handshake` | Authenticated userscript protocol handshake. |
 | `POST /api/v1/bridge/payloads` | Authenticated, bounded raw bridge-envelope capture. |
 | `GET /api/v1/leagues/{league_id}/schedule-grid/current` | Loopback-only. Raw game counts for every NBA team in every one of the league's scoring periods, with the exact schedule, projection, calendar and settings lineage behind them. Descriptive only — no thresholds or "light week" judgement (ADR-009). Fails closed with a typed code in `ErrorResponse.error` rather than serving partial or unverifiable counts. |
-| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null` — see below. Fails closed with one of eight typed codes. **A client must not multiply a rate by `assumed_games_played`:** that number is the exact divisor the importer used to produce the rates, so the product reconstructs the source's published seasonal total to the float, and that fusion is permitted only at `expected-games`. Display it; do not compute with it. |
+| `GET /api/v1/leagues/{league_id}/projections/current` | Loopback-only. The current *imported* per-game projection cohort for the league's season (`?source=` defaults to Basketball Monster), with every import fingerprint, the profile that read it, and the source's own games-played assumption in its own array (ADR-002 — never inside a rate). Descriptive only: no blend, no valuation, no ranking, no availability fusion. `lineage.blend` is a typed key that is always `null` — see below. Fails closed with one of eight typed codes, of which **`projections_inconsistent_cohort` is the only retryable one**: retry once and keep the last good payload on screen rather than clearing the view. **A client must not multiply a rate by `assumed_games_played`:** that number is the exact divisor the importer used to produce the rates, so the product recovers the source's published seasonal total to within floating-point rounding, and that fusion is permitted only at `expected-games`. Display it; do not compute with it. |
 
 `GET /bridge/userscript.user.js` reads `userscript/dist/hoops-gm.user.js`
 from disk on every request — nothing is cached in the process, so a rebuild
@@ -249,11 +249,32 @@ on PostgreSQL it stalls an import for the whole request. For a single-user local
 tool whose writer is a person at a keyboard, that is the wrong way round.
 
 So every read is **bracketed between two runs of `release_projection_import`**
-and the two immutable lineage records are compared whole. A concurrent import
-can make this endpoint answer `409 projections_inconsistent_cohort`, and cannot
-make it answer 200 with a lineage block that does not describe the rates beside
-it. The trade in one line: a lock prevents the race and blocks the owner's
-import; the digest detects it and asks the caller to retry.
+and the two immutable lineage records are compared whole. The trade in one line:
+a lock prevents the race and blocks the owner's import; the digest detects it and
+asks the caller to retry.
+
+**What "detects" means precisely, because the looser phrasing was wrong and a
+screen would have been built on it.** A committed write landing *before* the rows
+are loaded is seen by the second release and the request is refused. A committed
+write landing *after* the rows are loaded is **not** seen — the route holds those
+ORM objects strongly, so the second release digests the same instances — and a
+consistent *older* snapshot is served.
+
+Both satisfy the only guarantee this endpoint makes: **the rates and the lineage
+block beside them always describe the same cohort state.** What is not promised
+is freshness. A 200 can describe a cohort superseded microseconds earlier. For a
+descriptive projections screen that is correct; a caller needing "latest"
+re-requests and compares `projection_values_sha256`, which is what that field is
+for.
+
+**`projections_inconsistent_cohort` is retryable.** It is the only one of the
+eight that is. A client should retry once and **keep the last good payload on
+screen rather than clearing the view** — an empty draft board mid-auction is
+worse than a slightly stale one. (One member of that code, an orphaned
+`player_id`, is not retryable, but a foreign key makes it unreachable through the
+route; it is driven directly against the helper.) The other seven are terminal
+and need a human: import a CSV, fix the crosswalk, re-import under a verified
+profile.
 
 ## Why the projections endpoint serves no blend
 
@@ -285,9 +306,9 @@ the first reads like the work is already provisioned for and it is not.
 availability model will replace. It is **also the exact divisor these rates were
 derived with** — for a season-total source like Basketball Monster the importer
 produced `minutes_per_game` as `2415 / 70` — so multiplying a rate by it
-reproduces the source's published seasonal total to the float. The
-decomposition ADR-002 mandates is perfectly reversible at the wire by a two-line
-join.
+recovers the source's published seasonal total to within floating-point
+rounding. The decomposition ADR-002 mandates is reversible at the wire by a
+two-line join.
 
 Doing that join is the production-and-availability fusion ADR-002 permits only
 at `expected-games`, which is not built. **A client may display the assumption

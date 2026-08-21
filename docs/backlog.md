@@ -332,8 +332,8 @@ projection source published, exactly as the importer decomposed them, plus the
 — the CSV bytes, the parsing recipe, and the digest over the stored normalised
 rates that changes when a row is edited in place while the other two look
 untouched. The foundation of the draft board. Browser-*reachable*, not
-browser-visible: the screen is `projections-ui`'s, and `schedule-grid-ui` is
-still the only thing in this repository a person can look at.
+browser-visible: the screen is `projections-ui`'s, below, and `schedule-grid-ui`
+is still the only thing in this repository a person can look at.
 
 Descriptive only. No valuation, z-score, G-score, ranking, auction price, risk
 adjustment, availability fusion or recommendation crosses this boundary — those
@@ -343,8 +343,8 @@ the route is `len()`.
 **A client must not multiply a rate by `assumed_games_played`.** That number is
 not merely a games-played figure: for a season-total source it is the exact
 divisor the importer used to produce the rates beside it, so the product
-reconstructs the source's published seasonal total to the float. The ADR-002
-decomposition is perfectly reversible at the wire by a two-line join, and doing
+recovers the source's published seasonal total to within floating-point
+rounding. The ADR-002 decomposition is reversible at the wire by a two-line join, and doing
 that join is the fusion ADR-002 permits only at `expected-games`, which is not
 built. Display the assumption; do not compute with it.
 
@@ -380,20 +380,23 @@ superseded cohort. Eight typed codes in `ErrorResponse.error`:
 `projections_not_current`, `projections_incomplete`,
 `projections_incomplete_evidence` and `projections_inconsistent_cohort`.
 
-`projections_incomplete_evidence` is a **family of eight driven members** —
+`projections_incomplete_evidence` is a **family of nine driven members** —
 unverified import row, unverified profile-version row, season outside verified
 scope, self-contradicting immutable lineage, a negative rate, a non-finite rate,
 a half-present three-point made/attempted pair (the only pair with no CHECK
-constraint), and a row whose denormalised season drifted from its import. A
-ninth, makes-exceeding-attempts, is blocked by CHECK constraints and
-unreachable. It stays one code under `architect`'s rule — *split when two
-members imply different operator actions; keep one when every member implies the
-same one* — because re-importing rewrites the whole row cohort and so repairs
-every member. The enumeration is the one that was driven end to end, not the one
-read off the source: an earlier version of this entry listed four members and
-the route listed five, and both were short. A consumer must render a summary
-true of every member and must not substring-match `detail`, which is free-form
-prose. `test_the_blending_error_family_is_pinned` fails if
+constraint), a row whose denormalised season drifted from its import, and makes
+exceeding attempts. That last was called *unreachable* through two review rounds
+on the ground that the CHECK constraints block it at the same `+0.001` tolerance
+the validator uses; the constant is the same but the arithmetic is not — the
+CHECK is IEEE-754 double, the validator compares exact `Fraction`s — so a band
+about one ULP wide inserts and then fails validation. Driven. It stays one code
+under `architect`'s rule — *split when two members imply different operator
+actions; keep one when every member implies the same one* — because re-importing
+rewrites the whole row cohort and so repairs every member. **This enumeration was
+short at five, then at eight, before it was nine**, and each recount came from
+someone walking the raise sites rather than reading the previous list. A consumer
+must render a summary true of every member and must not substring-match `detail`,
+which is free-form prose. `test_the_blending_error_family_is_pinned` fails if
 `ProjectionBlendError` gains a subclass, so convergence is decided rather than
 inherited.
 
@@ -410,13 +413,56 @@ because pysqlite emits `BEGIN` only before DML and SQLAlchemy drops `FOR UPDATE`
 — a concurrent writer committed straight through the reader and produced a 200
 whose rates were post-write beside a pre-write digest. Adding SQLite's write
 reservation fixed that and cost more than it bought: every read became a writer,
-so an open dashboard tab could make a hand-run import fail with `database is
-locked`, and it mutated `updated_at` through `TimestampMixin`. Instead every
-read is **bracketed between two runs of the canonical release** and refused if
-anything moved. A concurrent import can make this endpoint answer 409; it cannot
-make it answer 200 with a lineage block that does not describe the rates beside
-it. Driven under real contention with real committed writes, not monkeypatched
-row loaders.
+so concurrent polls serialized against each other (measured at 2.05s and 4.17s,
+with an untyped 500 for the loser of a slower pair) and an open dashboard tab
+could make a hand-run import fail with `database is locked`; it also mutated
+`updated_at` through `TimestampMixin`. Instead every read is **bracketed between
+two runs of the canonical release**.
+
+**What that detects, stated at the strength it was driven at.** A committed write
+landing *before* the rows are loaded is caught and refused. One landing *after*
+is not — the route holds the ORM objects strongly, so the second release digests
+the same instances — and a consistent *older* snapshot is served. Both satisfy
+the guarantee: the rates and the lineage block beside them always describe the
+same cohort state. Freshness is not promised, and an earlier version of this
+entry implied it was. `projections_inconsistent_cohort` is the only retryable
+code of the eight; a client retries once and keeps the last good payload rather
+than clearing the view. Driven with real committed writes from a second
+connection, with monkeypatching confined to *timing* rather than to the loader's
+result.
+
+### `projections-ui` - Putting the imported projections on screen
+
+- [ ] **pending**
+- **Depends on:** `projections-api-early`
+
+The draft board's first surface: every player in the current Basketball Monster
+cohort with their per-game rates, at `/projections`. Consumes
+`projections-api-early`'s endpoint and renders exactly what it returns — no
+ranking, no valuation, no z-score or G-score, no availability weighting and no
+"who should I draft" judgement, all of which are `quant`'s behind the Model gate.
+
+**Three contract obligations the endpoint cannot enforce for it.** First, the
+source's games-played assumption may be *displayed* and must never be multiplied
+by a rate: that number is the divisor the importer used, so the product recovers
+Basketball Monster's published seasonal total, and doing that join is the fusion
+ADR-002 permits only at `expected-games`. Rendering "projected season total" from
+this payload is an ADR-002 violation that is two lines long and looks like a
+feature. Second, `projections_inconsistent_cohort` is retryable and means a
+concurrent import moved the cohort — retry once and keep the last good payload on
+screen, because an empty board mid-auction is worse than a slightly stale one.
+The other seven codes are terminal and need a human. Third,
+`projections_incomplete_evidence` is a family of eight members with one shared
+remedy, so its copy must be true of all of them and must not substring-match
+`detail`.
+
+`source_games_played_assumptions` is sparse: absent means the source said
+nothing, never zero, and must render distinguishably from a stated value — the
+same distinction `schedule-grid-ui` spent four review rounds getting right.
+Position eligibility is *not* available: this project ingests no Fantrax position
+data, and `player-position-eligibility` is still pending, so a draft board cannot
+filter or group by position yet. `players[].primary_position` is NBA's own label
+and is nullable.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 

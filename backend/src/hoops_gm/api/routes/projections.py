@@ -39,15 +39,33 @@ rate. It is published so a screen can *show* what the source assumed and that
 our availability model will override it. It is never fused here.
 
 **Two operational limits worth knowing before this sits behind a dashboard
-poll.** This read locks the importer's own ``projection_sources`` row for the
-whole request, so a concurrent ``import_projection_csv`` for the same source
-blocks until it finishes; on SQLite that lock is the database-wide write
-reservation, so a slow poll delays *any* writer, and a writer that loses the
-race gets ``database is locked`` rather than waiting. And a refusal's code does
-not reach the server log: the middleware records ``status_code`` only, so five
-of the eight refusals read identically as ``409`` to an operator. The second is
-inherited and app-wide rather than introduced here, and is tracked as
-``error-code-observability`` in ``docs/backlog.md``.
+poll.** This read takes **no lock** (see :func:`_projection_source_id`), so a
+concurrent import is detected rather than excluded: it can make this endpoint
+answer ``409 projections_inconsistent_cohort``, which means *retry*, not
+*something is broken*. A client that polls must treat that code as transient,
+retry once, and keep the last good payload on screen rather than clearing the
+view. And a refusal's code does not reach the server log: the middleware records
+``status_code`` only, so five of the eight refusals read identically as ``409``
+to an operator. The second is inherited and app-wide rather than introduced
+here, and is tracked as ``error-code-observability`` in ``docs/backlog.md``.
+
+**What "detected" precisely means, because the looser phrasing was wrong.**
+Review drove the two regimes apart and they differ:
+
+* a committed write landing **before** the rows are loaded is seen by the second
+  release, the two lineage records differ, and the request is refused;
+* a committed write landing **after** the rows are loaded is *not* seen — the
+  route holds those ``Projection`` objects strongly, so the second release's
+  query returns the same instances with their already-loaded values — and a
+  consistent **older** snapshot is served.
+
+Both satisfy the only guarantee this route makes: **the rates and the lineage
+block beside them always describe the same cohort state**, because both are read
+off the same objects. What is *not* promised, and was carelessly implied by
+"refuses if anything moved", is freshness. A 200 can describe a cohort that was
+superseded microseconds ago. For a descriptive projections screen that is
+correct and desirable; a caller needing "latest" must re-request and compare
+``projection_values_sha256``, which is exactly what that field is for.
 """
 
 from __future__ import annotations
@@ -226,13 +244,23 @@ class SourceGamesPlayedClaim(BaseModel):
 
     **Do not multiply a rate by this number.** It is not merely *a* games-played
     figure — for a season-total source like Basketball Monster it is the exact
-    divisor the importer used to produce the per-game rates beside it, so the
-    product reconstructs the source's published seasonal total to the float. The
-    decomposition ADR-002 mandates is therefore perfectly reversible at the wire
-    by a two-line join, and doing that join is the fusion ADR-002 permits only at
-    ``expected-games``, which does not exist yet. A client may **display** the
-    assumption — showing "the source assumed 70 games, we will replace that" is
-    the product thesis in one line — and must not compute with it.
+    divisor the importer used to produce the per-game rates beside it
+    (``ingest/projections/parser.py`` stores ``value / assumed_games_played``),
+    so the product recovers the source's published seasonal total **to within
+    floating-point rounding**. The decomposition ADR-002 mandates is therefore
+    reversible at the wire by a two-line join, and doing that join is the fusion
+    ADR-002 permits only at ``expected-games``, which does not exist yet. A
+    client may **display** the assumption — showing "the source assumed 70 games,
+    we will replace that" is the product thesis in one line — and must not
+    compute with it.
+
+    *An earlier version of this paragraph said "to the float" and "perfectly
+    reversible". Review measured it: over 200,000 realistic pairs, 8.3% do not
+    round-trip exactly, and fractional games-played values fail routinely
+    (``2415/70.5*70.5 != 2415``). The worked example in the README, ``2415/70``,
+    happens to be exact — which is precisely why the stronger claim read as
+    verified. The prohibition is unchanged and if anything stronger; only the
+    mechanism was overstated.*
 
     ``assumed_games_played_raw`` is the source's own text ("70", "68 GP") kept
     verbatim, so a consumer can show what was actually published rather than a
@@ -302,9 +330,14 @@ def _projection_source_id(session: Session, *, source: ExternalSource) -> int | 
 
     The obvious repair was to add SQLite's write reservation. It works, and it
     was rejected on the second look, because of what it costs the person this
-    tool is for: it makes every read a *writer* on the development database, so
-    an open dashboard tab can make a hand-run ``import_projection_csv`` fail with
-    ``database is locked``. It also mutates ``updated_at`` through
+    tool is for. It makes every read a *writer* on the development database, so
+    **concurrent polls of this endpoint serialize against each other** — review
+    measured a pair at 2.05s and 4.17s, and a slower pair produced an untyped
+    500 for the loser, which is not one of the eight documented codes. It can
+    make a hand-run ``import_projection_csv`` fail with ``database is locked``
+    once a request outlives pysqlite's five-second busy timeout (the timeout is
+    real: an earlier version of this note claimed losers do not wait at all, and
+    review clocked one waiting 5.6s). It also mutates ``updated_at`` through
     ``TimestampMixin``'s ``onupdate`` — a read endpoint writing to the row it
     reads, held harmless only by a rollback nobody would notice deleting — and
     on PostgreSQL it stalls an import for the whole request while labelling
@@ -393,11 +426,20 @@ def _released_import(
        ``ft_volume_pair_complete`` CHECK constraints and no
        ``fg3_volume_pair_complete``;
     8. a ``projections`` row whose denormalised ``season`` disagrees with its
-       import's.
+       import's;
+    9. makes exceeding attempts.
 
-    A ninth, "makes greater than attempts", is in the family by type and
-    unreachable in practice: all three ``*_made_within_attempted`` CHECKs block
-    it at the same ``+0.001`` tolerance the validator uses.
+    **Member 9 was called unreachable through two review rounds and is not.**
+    The claim was that the three ``*_made_within_attempted`` CHECK constraints
+    block it "at the same ``+0.001`` tolerance the validator uses". The constant
+    is the same; the *arithmetic* is not. The CHECK is evaluated in IEEE-754
+    double, while ``_validate_shooting_values`` compares exact
+    ``Fraction(str(value))`` against ``Fraction(1, 1000)``, so there is a band
+    about one ULP wide where the row inserts and the validator raises. Review
+    drove it end to end at ``attempted = 20.45098885``,
+    ``made = 20.451988850000003``. Practical data risk is nil — no real shooting
+    line has makes at or above attempts — but the *stated blocking mechanism*
+    was false, and that is the part a later reader would have relied on.
 
     **It stays one code**, under ``architect``'s rule that a family splits when
     two members imply different operator actions. Member 8 is the one that
@@ -473,10 +515,24 @@ def _assert_cohort_is_stable(
     thing the digest exists to pin; invoking the one canonical function twice is
     not.
 
-    **What it can and cannot observe.** It cannot see a change made and exactly
-    reverted between the two releases. It also costs a second row load and
-    digest, which is the price of not trusting the lock — and the SQLite half of
-    that lock was false until review drove it, so the price is worth paying.
+    **What it can and cannot observe, established by driving both regimes rather
+    than by reading the code.** A committed write landing *before* the row load
+    is caught. A committed write landing *after* it is not: the caller holds the
+    ``Projection`` objects strongly, so this second release's query returns those
+    same instances with their already-loaded values and digests the state the
+    response is about to serve. That is not the hole it looks like — it is the
+    reason the guarantee holds at all. **The digest and the rates are computed
+    from the same objects, so they cannot describe different cohorts.** What is
+    given up is freshness, not consistency, and freshness was never the promise.
+
+    Three things it genuinely cannot see, in decreasing order of plausibility.
+    The import's five audit counts are read outside this comparison and are
+    rewritten in place by a byte-identical re-import, so they can be one import
+    behind the rates (narrow: a byte-*different* file makes a new import row,
+    which trips the currency check). A change made and exactly reverted between
+    the two releases is invisible. And a change to
+    ``source_games_played_assumptions`` alone is not digested, because
+    ``ReleasedProjectionImport`` deliberately never selects that table.
     """
 
     if len(rows) != released.projection_count:
@@ -540,32 +596,65 @@ def _projection_players(session: Session, rows: list[Projection]) -> list[Projec
     return players
 
 
-def _games_played_claims(session: Session, rows: list[Projection]) -> list[SourceGamesPlayedClaim]:
+def _games_played_claims(
+    session: Session, *, import_id: int, rows: list[Projection]
+) -> list[SourceGamesPlayedClaim]:
     """The source's own availability assumptions, for the rows in this cohort.
 
     Sparse on purpose: a source that published only rates has no row here, and
     inventing one to fill the shape is precisely what ADR-002 forbids.
+
+    **Joined on ``projection_import_id``, never on the ``Projection.id`` values
+    this request happens to be holding.** An earlier version did the latter, and
+    review drove the consequence: ``_import_projection_rows`` *deletes and
+    re-inserts* the whole row cohort even for a byte-identical re-import, so the
+    surrogate keys change while the import id, the rates, the row count and the
+    digest all stay identical. A re-import landing inside the read window
+    therefore produced a **200 with an empty assumptions array** — and this
+    response documents an absent entry as "the source said nothing", so the
+    screen would have said Basketball Monster published no games-played
+    assumption when it published 70 and 78. Not a blank: a lie, in the one array
+    that carries the ADR-002 thesis.
+
+    That it was invisible locally is the sharper half. SQLite recycles the top
+    free rowid, so in a database holding exactly one import the re-inserted rows
+    land back on the same ids and the bug disappears — which is the shape every
+    test builds. PostgreSQL's ``SERIAL`` never recycles, so it fires on every
+    such race. A SQLite behaviour masking a defect on the Postgres seam is
+    exactly what ADR-001 exists to prevent.
+
+    The subset check below is what makes the join safe rather than merely
+    different: it guarantees the claims describe players the response actually
+    carries, whichever generation of rows the join happened to see.
     """
 
-    projection_ids = [row.id for row in rows]
-    player_id_by_projection = {row.id: row.player_id for row in rows}
+    player_ids = {row.player_id for row in rows}
     claims = [
         SourceGamesPlayedClaim(
-            player_id=player_id_by_projection[projection_id],
+            player_id=player_id,
             assumed_games_played=assumed_games_played,
             assumed_games_played_raw=assumed_games_played_raw,
         )
-        for projection_id, assumed_games_played, assumed_games_played_raw in session.execute(
+        for player_id, assumed_games_played, assumed_games_played_raw in session.execute(
             select(
-                SourceGamesPlayedAssumption.projection_id,
+                Projection.player_id,
                 SourceGamesPlayedAssumption.assumed_games_played,
                 SourceGamesPlayedAssumption.assumed_games_played_raw,
             )
-            .where(SourceGamesPlayedAssumption.projection_id.in_(projection_ids))
-            .order_by(SourceGamesPlayedAssumption.projection_id)
+            .join(Projection, SourceGamesPlayedAssumption.projection_id == Projection.id)
+            .where(Projection.projection_import_id == import_id)
+            .order_by(Projection.player_id)
         )
     ]
-    return sorted(claims, key=lambda claim: claim.player_id)
+    stray = sorted({claim.player_id for claim in claims} - player_ids)
+    if stray:
+        raise _error(
+            409,
+            "projections_inconsistent_cohort",
+            f"the games-played assumptions name players {stray} that this response does not "
+            "carry rates for; the import's row cohort changed while it was being read",
+        )
+    return claims
 
 
 def _rates(row: Projection) -> ProjectionRates:
@@ -650,14 +739,16 @@ def get_current_projections(
     released = _released_import(session, import_id=import_id, source=source)
     rows = _projection_rows(session, import_id=import_id)
     players = _projection_players(session, rows)
-    claims = _games_played_claims(session, rows)
-    # An explicit column read rather than `session.get`, deliberately.
-    # `release_projection_import` has already put this row in the identity map,
-    # so `session.get` would answer from memory and could never observe the row
-    # going away — a refusal branch that reads correctly and can never fire,
-    # which is the defect class this repository keeps finding. This is a real
-    # query, and `test_an_import_that_disappears_mid_request_is_refused` drives
-    # it with a real committed delete.
+    claims = _games_played_claims(session, import_id=import_id, rows=rows)
+    # An explicit column read rather than `session.get`, and the reason is
+    # narrower than the one first written here. That reason was "the release has
+    # already put this row in the identity map, so `session.get` would answer
+    # from memory" — which review falsified by instrumenting: the map holds no
+    # `ProjectionImport` at this point, it having been collected. So `session.get`
+    # would in fact have issued a query, most of the time. **That is the
+    # argument for this form, not against it**: whether it queries depends on
+    # garbage-collection timing, and a refusal branch whose reachability depends
+    # on GC is one nobody can reason about. This always queries.
     audit = session.execute(
         select(
             ProjectionImport.original_filename,

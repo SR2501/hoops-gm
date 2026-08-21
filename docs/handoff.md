@@ -10202,8 +10202,8 @@ which is true of the JSON and false of the contract, since `blend` is typed
 **The sharpest thing `architect` found is one I had not seen: the payload is
 exactly invertible.** `assumed_games_played` is not merely a games-played figure
 — it is the exact divisor the importer used to produce the rates beside it, so
-`rate × assumption` reconstructs Basketball Monster's published seasonal total
-to the float. ADR-002's decomposition is perfectly reversible at the wire by a
+`rate × assumption` recovers Basketball Monster's published seasonal total to
+within floating-point rounding. ADR-002's decomposition is reversible at the wire by a
 two-line join, and that join is the fusion ADR-002 permits only at
 `expected-games`, which does not exist. The prohibition now lives in the README
 endpoint table and the backlog entry — the two files a frontend lane opens — not
@@ -10368,8 +10368,8 @@ audit counts' partition is asserted over an import whose terms differ rather
 than a fixture of zeros; and the **no-multiply prohibition** is stated in the
 README and backlog. That last is `architect`'s sharpest catch and I had not seen
 it: `assumed_games_played` is the exact divisor the importer used, so
-`rate × assumption` reconstructs Basketball Monster's published seasonal total to
-the float. ADR-002's decomposition is perfectly reversible at the wire, and the
+`rate × assumption` recovers Basketball Monster's published seasonal total to
+within floating-point rounding. ADR-002's decomposition is reversible at the wire, and the
 prohibition now lives in the two files a frontend lane opens rather than only in
 Python docstrings.
 
@@ -10419,6 +10419,182 @@ to characterise.
 round were about claims that had already passed a review round — my own reviews
 included. The third round is running against the pushed head; whatever it finds
 is the answer to how well this one went.
+
+**Third round, appended to this entry rather than a new one, because it is the
+same unit and the branch is unmerged.** `code-review` returned against `ad70a89`
+— the head with the write reservation — and its two structural findings were
+already retired by removing the lock. It measured what I had only asserted:
+with the reservation, two overlapping GETs serialized at **2.05s and 4.17s**,
+and a slower pair produced an **untyped 500** for the loser, which is not one of
+the eight documented codes. That is a stronger argument for removing the lock
+than the one I gave, and I did not have it when I removed it.
+
+**Two claims of mine it falsified by measurement, both corrected in place:**
+
+*The seasonal-total reversal is not exact.* I wrote that `rate × assumption`
+reconstructs the source's published total "to the float" and that ADR-002's
+decomposition is "perfectly reversible". It is not: the importer stores
+`value / assumed_games_played` as an IEEE-754 double, and I re-drove the
+review's measurement — over 200,000 realistic pairs, **8.3% fail exact
+round-trip**, and fractional games-played values fail routinely
+(`2415/70.5*70.5 != 2415`). **The worked example I put in the README, `2415/70`,
+happens to be one of the exact ones** — which is exactly why the stronger claim
+read as verified. The prohibition is unchanged and if anything stronger; only my
+mechanism was overstated, and overstating a mechanism is what converts a
+checkable claim into an unfalsifiable one.
+
+*pysqlite does install a busy handler.* I wrote that a losing SQLite writer
+"gets `database is locked` rather than waiting". `sqlite3.connect` defaults to
+`timeout=5.0`; review clocked a loser waiting **5.6s** before failing. Moot now
+that no lock is taken, and corrected wherever it survived.
+
+`code-review` also found the refusal half of `test_a_read_writes_nothing`
+vacuous: it asked for an unimported source, which refuses *before* the source
+row is touched, so the assertion held for a reason unrelated to the property. It
+now breaks profile verification instead, so the refusal happens after both rows
+have been read.
+
+It explicitly cleared, each by driving rather than reading: dataclass equality
+really compares `projection_values_sha256`; `autoflush=False` means the second
+release has no side effect on the rows already loaded; the audit-count partition
+is a general property of the parser rather than a fixture artifact; the
+`ProjectionBlendError` subclass enumeration is import-order-safe (it walked and
+imported every module in the package to check); and the concurrency test cannot
+hang.
+
+**Fourth round, same entry, same reason.** `architect` re-reviewed `d73485e`,
+**upheld the lock removal** and required nine changes; all are made. The two
+that matter are corrections to claims I had just written.
+
+*The detection property is weaker than I said, and I drove it to find out how.*
+Three documents said "every read is bracketed and refuses if anything moved".
+That is true only of a write landing **before** the row load. One landing
+**after** is invisible, because the route holds the `Projection` objects
+strongly and the second release's query returns those same instances. Driven:
+write-before gives `409 projections_inconsistent_cohort`; write-after gives
+`200` with a consistent *older* snapshot — rates `[4.3, 4.3]` and digest
+`05856dbb...`, while a fresh request immediately after returns `[9.0, 9.0]` and
+`2c73eae9...`.
+
+**Both satisfy the actual guarantee** — the rates and the lineage beside them are
+read off the same objects, so they cannot describe different cohorts — and the
+identity-map shadowing that makes it hold is now named, where before the
+*opposite* property (weak refs, collectible) was named as the reason the guard
+was needed. Both are true at different moments and nothing said which regime
+applied where. **Freshness was never the promise and I implied it was.** That
+belonged in "Could not verify" and was not there, which is the more useful
+failure to record: I wrote the strong version because it read well, not because
+I had run it.
+
+*The identity-map premise on the audit read was backwards.* I justified the
+explicit column select on the ground that `session.get` would answer from the
+identity map and could never observe the row going away. `architect`
+instrumented it: the map holds no `ProjectionImport` at that point, so
+`session.get` **would** have queried. The decision stands and the reason is now
+the honest one — whether it queries depends on garbage-collection timing, and a
+refusal branch whose reachability depends on GC is one nobody can reason about.
+
+Also applied: the module docstring still described the removed lock in the
+present tense, in the paragraph explicitly addressed to a dashboard poll —
+**third instance of this lane's own named defect class, in the round whose whole
+subject was removing that mechanism**. `projections_inconsistent_cohort` is now
+marked **retryable** in the contract with the client obligation (retry once, keep
+the last good payload; an empty draft board mid-auction is worse than a stale
+one). The partition fixture now has a non-zero `rejected` term. `projections-ui`
+was a dangling reference in the authoritative task list and is now a real entry
+carrying the three obligations the endpoint cannot enforce for it. The
+three-pointer CHECK asymmetry is declared in `ownership.md` — I had deferred it,
+and deferring a known seam because it is late is not a reason. And ADR-014 is
+written `Proposed`, carrying the rule, both rejected lock designs with their
+measurements, and the statement that `schedule_grid`'s lock is debt rather than
+precedent.
+
+`architect` recorded two things I could not have. `import_projection_csv`'s own
+`with_for_update()` at `importer.py:1013` is inert on SQLite by exactly the
+finding this lane produced, so two *processes* importing concurrently — the
+owner's terminal alongside the running server, his actual workflow — are not
+serialized. **My previous entry's generalisation that every other
+`with_for_update()` in the codebase is safe does not survive re-derivation** for
+that call site. It is `data-engineer`/`backend`'s rather than this route's, and
+it is flagged rather than fixed here. And two reviewer agents wrote probe files
+into this worktree during the round; they are deleted, but no reviewer could
+guarantee the tree they tested was the tree they started with, which is a real
+cost of running four lanes unattended in one checkout.
+
+**Fifth round, and it found the most serious defect of the whole unit — a 200
+that told a lie about the data.** `backend` re-reviewed `d73485e`, upheld the
+lock-free design ("removing the lock was correct, and I want to say that
+plainly"), then found what the design's own analysis had missed.
+
+**H1 — the identity ABA.** `_games_played_claims` keyed on `Projection.id`, the
+surrogate keys captured in `rows`. `_import_projection_rows` **deletes and
+re-inserts the whole row cohort even for a byte-identical re-import**, so the
+import id, the rates, the row count and the digest are all unchanged while every
+surrogate key is new, and the one-to-one assumption rows cascade away with the
+old ones. A re-import landing inside the read window therefore served a **200
+with `source_games_played_assumptions: []`** — and this response documents an
+absent entry as *"the source said nothing"*, so a screen would have reported
+that Basketball Monster published no games-played assumption when it published
+70 and 78. **Not a blank: a lie, in the one array carrying the ADR-002 thesis.**
+Fixed by joining on `projection_import_id` with a subset check against the
+players the response carries, which makes the empty-array outcome inexpressible
+rather than unlikely.
+
+**Two things about it are worth more than the fix.** First, I analysed the wrong
+half of the ABA hole. I asked "can the *digest* ABA?" and answered correctly — a
+same-bytes re-import is value-identical, so it cannot. The question that mattered
+was "**what else is this response keyed on?**", and the answer was surrogate keys
+the digest says nothing about. Second, **SQLite hid it**: it recycles the top
+free rowid, so in a database holding one import the rows land back on the same
+ids and the defect vanishes — the shape every test in this file builds.
+PostgreSQL's `SERIAL` never recycles, so it fires unconditionally there. A SQLite
+behaviour masking a defect on the Postgres seam is precisely what ADR-001 keeps
+that seam for, and it took a reviewer parking a high rowid to make the
+development database tell the truth.
+
+My first attempt at the regression test **passed under mutation** — I parked the
+rowid on the same import, which the re-import deletes, leaving `max(rowid)`
+unchanged. It now parks on a different import, and the mutation reproduces the
+reported failure exactly: `assert []`, "an empty array here means 'the source
+said nothing', which would be false". A mutation check that does not reproduce
+the bug is the same false comfort as a test that does not, and mine did not until
+I made it.
+
+**M4 — the ninth family member is reachable, and I called it unreachable twice.**
+The claim was that the `*_made_within_attempted` CHECKs block
+makes-exceeding-attempts "at the same `+0.001` tolerance the validator uses". The
+constant is the same; the arithmetic is not — the CHECK is IEEE-754 double, the
+validator compares exact `Fraction(str(value))` against `Fraction(1, 1000)`,
+leaving a band about one ULP wide. Driven at `attempted = 20.45098885`,
+`made = 20.451988850000003`. **This enumeration has now been recounted three
+times — five, then eight, then nine — and every recount came from someone walking
+the raise sites rather than reading the previous list.**
+
+**M5 — the test named after the guard almost never reached it.** Its writer
+imported byte-*different* content, creating a new import, so the reader lost the
+*currency* race instead: review ran the body eight times and got
+`projections_not_current` seven of them, exiting before the content assertion.
+The writer now re-imports identical bytes, which converges on the same import row
+— so a 200 is the common outcome, the digest comparison actually runs, and it is
+the same race that produced H1. Five consecutive runs green.
+
+Also fixed: the test-file docstring still said two guards "sit behind a lock",
+false twice over; and `POSTGRES_DIALECT` / `postgresql` / `Dialect` survived as
+dead residue of the deleted compile-against-PostgreSQL helper, which ruff does
+not flag because a module-level binding counts as used.
+
+**A hazard `backend` reproduced that belongs to nobody's lane and bit both of us.**
+`tests/test_secret_scan.py::test_a_credential_planted_in_a_committed_fixture_is_caught`
+writes a fake `userSecretId` into the **tracked** fixture
+`backend/tests/fixtures/nba_static_teams.json` and restores it in a `finally`.
+Two overlapping pytest processes interleave write and restore, the restore loses,
+and the working tree is left holding a planted credential in a committed file. I
+hit it independently and restored it with `git checkout`; it never reached a
+commit, verified with `git log -- <path>`. It is worse than a flake because the
+residue is a fake credential in a tracked fixture, and it is a plausible
+explanation for the unattributed schedule-grid flakes recorded above — though not
+proof of one.
+
 
 **Next:** unchanged. `frontend` builds the screen tomorrow against a contract
 whose *shape* did not move in this round — only its guarantees got smaller and

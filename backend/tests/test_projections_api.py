@@ -19,13 +19,12 @@ mapping carries verified evidence. The helper mirrors what ``import_nba_players`
 produces and matches ``test_projection_importer.py``'s. Players are an input to
 the crosswalk rather than anything this endpoint verifies.
 
-**Two guards here cannot be reached through the route and are driven anyway.**
-The currency guard and the cohort-cardinality guard both sit behind a lock that
-is supposed to make them impossible, which is exactly why an assertion that they
-work is worthless until something has made them fire. Each is driven by a
-mutation that reproduces the failure it exists to catch: a selector that
-disagrees with the canonical definition of "current", and a row load that
-returns fewer rows than the release digested.
+**Two guards here are not reachable by a request racing nothing, and are driven
+anyway.** A guard nobody has made fire is an untested assertion, so each is
+driven by a real committed write from a second connection landing inside the
+read window — the mutation changes only *timing*, never the loader's result.
+The unlabelled-player guard is genuinely unreachable through the route, a
+foreign key seeing to that, and is driven directly against its helper.
 """
 
 from __future__ import annotations
@@ -37,9 +36,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select, update
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.engine import Dialect
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.routes import projections as projections_route
@@ -64,9 +61,6 @@ from hoops_gm.projections.blending import (
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "projections"
-#: ``postgresql.dialect`` is untyped in SQLAlchemy's stubs. Built once here so
-#: the annotation lives in one place rather than at every compile site.
-POSTGRES_DIALECT: Dialect = postgresql.dialect()  # type: ignore[no-untyped-call]
 BBM_FIXTURE = "basketball_monster_sample.csv"
 SEASON = "2026-27"
 PROJECTIONS_URL = "/api/v1/leagues/{league_id}/projections/current"
@@ -328,16 +322,27 @@ def test_the_audit_counts_actually_partition_the_file(app: FastAPI, client: Test
     """A docstring calling five numbers a partition invites a screen to add them up.
 
     Driven over an import whose terms are genuinely different — one row matched,
-    one unmatched — because the two-matched fixture satisfies the sum trivially
-    and would satisfy it under a broken importer too. Nothing in the schema
-    enforces this: ``projection_imports`` carries only five ``>= 0`` checks.
+    one unmatched, one rejected before identity resolution ever ran — because a
+    fixture where the terms are zero satisfies the sum trivially and would
+    satisfy it under a broken importer too. Review required the ``rejected``
+    term specifically, since it is the one that partitions the file *before* the
+    other three partition what survived. Nothing in the schema enforces this:
+    ``projection_imports`` carries only five ``>= 0`` checks.
     """
 
-    half_matched = load_bytes(BBM_FIXTURE).replace(b"Gamma,Player", b"Nameless,Nobody")
+    lines = load_bytes(BBM_FIXTURE).split(b"\n")
+    header, alpha, gamma = lines[0], lines[1], lines[2]
+    # A third data row the parser must refuse outright: a non-numeric games
+    # value, which is fatal before any crosswalk lookup happens.
+    rejected_row = gamma.replace(b"Gamma,Player,78", b"Broken,Player,not-a-number")
+    mixed = b"\n".join(
+        [header, alpha, gamma.replace(b"Gamma,Player", b"Nameless,Nobody"), rejected_row, b""]
+    )
+
     with app.state.database.session() as session:
         league_id = _seed_league(session)
         _seed_fixture_players(session)
-        _import_bbm(session, csv_bytes=half_matched)
+        _import_bbm(session, csv_bytes=mixed)
 
     lineage = client.get(PROJECTIONS_URL.format(league_id=league_id)).json()["lineage"][
         "projection_import"
@@ -349,8 +354,8 @@ def test_the_audit_counts_actually_partition_the_file(app: FastAPI, client: Test
         lineage["needs_review_count"],
         lineage["unmatched_count"],
     )
-    assert parts == (0, 1, 0, 1), "the terms must differ or the sum proves nothing"
-    assert lineage["row_count"] == sum(parts)
+    assert parts == (1, 1, 0, 1), "the terms must differ, and rejected must be non-zero"
+    assert lineage["row_count"] == sum(parts) == 3
     assert lineage["projection_count"] == 1
 
 
@@ -537,6 +542,90 @@ def test_an_import_whose_stored_rate_went_negative_is_refused(
     assert _error_of(response) == "projections_incomplete_evidence"
 
 
+def test_a_byte_identical_reimport_mid_read_does_not_empty_the_assumptions(
+    app: FastAPI, client: TestClient, seeded: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identity ABA, which the value ABA analysis missed entirely.
+
+    ``_import_projection_rows`` deletes and re-inserts the whole row cohort even
+    for a byte-identical re-import, so ``Projection.id`` changes while the import
+    id, the rates, the row count and the digest all stay identical. Keying the
+    assumptions lookup on the captured surrogate keys therefore produced a **200
+    with an empty array** — which this response documents as "the source said
+    nothing", when Basketball Monster published 70 and 78. A lie, not a blank,
+    in the one array carrying the ADR-002 thesis.
+
+    **The parked rowid is the point of this test.** SQLite recycles the top free
+    rowid, so in a database holding one import the re-inserted rows land back on
+    the same ids and the defect is invisible — the shape every other test in
+    this file builds. PostgreSQL's ``SERIAL`` never recycles, so it fires
+    unconditionally there. Parking a high rowid first reproduces on SQLite what
+    the Postgres seam does anyway, which is the whole reason ADR-001 keeps that
+    seam.
+    """
+
+    before = client.get(PROJECTIONS_URL.format(league_id=seeded)).json()
+    assert [c["assumed_games_played"] for c in before["source_games_played_assumptions"]] == [
+        70.0,
+        78.0,
+    ]
+
+    with app.state.database.session() as session:
+        # Park a high rowid that SURVIVES the re-import, so SQLite cannot
+        # recycle ids 1 and 2 back. It has to belong to a *different* import,
+        # because `_import_projection_rows` deletes every row of the import it
+        # is rewriting — an earlier version of this test parked and deleted a
+        # row of the same import, which left `max(rowid)` unchanged and made the
+        # test pass against the very bug it was written for.
+        spare = seed_player(
+            session, nba_id=99, name="Spare Parker", team_abbreviation="NYK", position="PG"
+        )
+        other_import = import_projection_csv(
+            session,
+            source=ExternalSource.MANUAL,
+            display_name="Manual",
+            season=SEASON,
+            csv_bytes=b"player_name,points_per_game\nSpare Parker,10.0\n",
+        ).projection_import
+        session.execute(
+            update(Projection)
+            .where(Projection.projection_import_id == other_import.id)
+            .values(id=900)
+        )
+        assert session.scalar(select(func.max(Projection.id))) == 900
+        assert spare.id is not None
+
+    unmutated = projections_route._projection_rows
+
+    def reimport_identical_bytes_first(session: Session, *, import_id: int) -> list[Projection]:
+        rows = unmutated(session, import_id=import_id)
+        worker = app.state.database.session_factory()
+        try:
+            _import_bbm(worker)
+            worker.commit()
+        finally:
+            worker.close()
+        return rows
+
+    monkeypatch.setattr(projections_route, "_projection_rows", reimport_identical_bytes_first)
+    response = client.get(PROJECTIONS_URL.format(league_id=seeded))
+
+    assert response.status_code == 200
+    body = response.json()
+    lineage = body["lineage"]["projection_import"]
+    # The re-import converged on the same import row, so nothing the digest
+    # covers moved — which is exactly why the surrogate-key version escaped.
+    assert lineage["import_id"] == before["lineage"]["projection_import"]["import_id"]
+    assert (
+        lineage["projection_values_sha256"]
+        == before["lineage"]["projection_import"]["projection_values_sha256"]
+    )
+    claims = body["source_games_played_assumptions"]
+    assert claims, "an empty array here means 'the source said nothing', which would be false"
+    assert [c["assumed_games_played"] for c in claims] == [70.0, 78.0]
+    assert {c["player_id"] for c in claims} == {p["player_id"] for p in body["players"]}
+
+
 def test_a_row_whose_season_drifted_from_its_import_is_refused(
     app: FastAPI, client: TestClient, seeded: int
 ) -> None:
@@ -559,6 +648,37 @@ def test_a_row_whose_season_drifted_from_its_import_is_refused(
 
     assert response.status_code == 409
     assert _error_of(response) == "projections_incomplete_evidence"
+
+
+def test_makes_exceeding_attempts_is_refused(app: FastAPI, client: TestClient, seeded: int) -> None:
+    """The ninth member, called unreachable through two review rounds.
+
+    The CHECK constraint ``fg3_made_within_attempted`` evaluates
+    ``made <= attempted + 0.001`` in IEEE-754 double, while
+    ``blending._validate_shooting_values`` compares exact ``Fraction(str(value))``
+    against ``Fraction(1, 1000)``. Same constant, different arithmetic, so a band
+    about one ULP wide inserts cleanly and then fails validation.
+
+    The values below are review's, reproduced rather than re-derived. Practical
+    data risk is nil; the point is that "the CHECK blocks it" was a stated
+    mechanism nobody had run, which is the habit this file exists to break.
+    """
+
+    assert client.get(PROJECTIONS_URL.format(league_id=seeded)).status_code == 200
+
+    with app.state.database.session() as session:
+        session.execute(
+            update(Projection).values(
+                three_pointers_attempted_per_game=20.45098885,
+                three_pointers_made_per_game=20.451988850000003,
+            )
+        )
+
+    response = client.get(PROJECTIONS_URL.format(league_id=seeded))
+
+    assert response.status_code == 409
+    assert _error_of(response) == "projections_incomplete_evidence"
+    assert "makes greater than attempts" in response.json()["detail"]
 
 
 def test_a_half_present_three_point_pair_is_refused(
@@ -774,6 +894,13 @@ def test_a_read_writes_nothing(app: FastAPI, client: TestClient) -> None:
     ``onupdate`` and made every dashboard poll a writer. This pins the property
     that replaced it: a read leaves the source row exactly as it found it, on
     the success path and on a refusal alike.
+
+    **The refusal half is deliberately a late one.** Review caught an earlier
+    version asking for an unimported source, which refuses *before* the source
+    row is ever touched — so the assertion held for a reason unrelated to the
+    property, which is a vacuous pass wearing a coverage claim. This one breaks
+    the import's profile verification instead, so the refusal happens after the
+    source row and the import row have both been read.
     """
 
     with app.state.database.session() as session:
@@ -795,14 +922,14 @@ def test_a_read_writes_nothing(app: FastAPI, client: TestClient) -> None:
     assert client.get(PROJECTIONS_URL.format(league_id=league_id)).status_code == 200
     assert source_row() == before
 
-    assert (
-        client.get(
-            PROJECTIONS_URL.format(league_id=league_id),
-            params={"source": ExternalSource.FANTASYPROS.value},
-        ).status_code
-        == 409
-    )
-    assert source_row() == before
+    with app.state.database.session() as session:
+        session.execute(update(ProjectionImport).values(profile_verified=False))
+    after_break = source_row()
+
+    response = client.get(PROJECTIONS_URL.format(league_id=league_id))
+    assert response.status_code == 409
+    assert _error_of(response) == "projections_incomplete_evidence"
+    assert source_row() == after_break
 
 
 def test_concurrent_reads_all_succeed(app: FastAPI, client: TestClient) -> None:
@@ -886,11 +1013,19 @@ def test_a_concurrent_import_never_serves_a_lineage_that_does_not_describe_its_r
 ) -> None:
     """The property that replaced the lock, driven under real contention.
 
-    Review's objection to the earlier version was that on a 200 it checked only
-    cardinality — the same blind spot as the guard it was meant to exercise, so
-    it could not fail on the divergence that actually matters. This re-releases
-    the served import afterwards and compares the **digest**, which is a content
-    claim rather than a count wearing a content claim's clothes.
+    **The writer re-imports byte-identical bytes on purpose.** An earlier version
+    imported *different* bytes, which creates a new ``ProjectionImport``, so the
+    reader lost the *currency* race instead — review ran the body eight times and
+    got ``projections_not_current`` seven of them, meaning the test named after
+    ``_assert_cohort_is_stable`` almost never reached its content assertion.
+    Byte-identical content converges on the same import row, so a 200 is the
+    common outcome and the content claim is actually checked. It is also the
+    exact race that produced the empty-assumptions defect.
+
+    Review's other objection was that on a 200 this asserted only cardinality —
+    the same blind spot as the guard it was meant to exercise. It now re-releases
+    the served import and compares the **digest**, and checks the assumptions
+    array is still populated.
     """
 
     with app.state.database.session() as session:
@@ -909,7 +1044,7 @@ def test_a_concurrent_import_never_serves_a_lineage_that_does_not_describe_its_r
         worker = app.state.database.session_factory()
         try:
             barrier.wait()
-            _import_bbm(worker, csv_bytes=load_bytes(BBM_FIXTURE).replace(b",2415,", b",2390,"))
+            _import_bbm(worker)
             worker.commit()
         finally:
             worker.rollback()
@@ -933,6 +1068,12 @@ def test_a_concurrent_import_never_serves_a_lineage_that_does_not_describe_its_r
     body = response.json()
     lineage = body["lineage"]["projection_import"]
     assert len(body["projections"]) == lineage["projection_count"]
+    # The assumptions array is the one the identity race emptied. Absent means
+    # "the source said nothing", and Basketball Monster said 70 and 78.
+    assert [c["assumed_games_played"] for c in body["source_games_played_assumptions"]] == [
+        70.0,
+        78.0,
+    ]
 
     # The content claim: whatever was served, its digest is the digest of the
     # rates that came with it. Re-released through the canonical function so
@@ -946,9 +1087,5 @@ def test_a_concurrent_import_never_serves_a_lineage_that_does_not_describe_its_r
         )
         assert current.projection_values_sha256 == lineage["projection_values_sha256"]
         assert current.projection_count == len(body["projections"])
-    except StaleProjectionInputError:
-        # The served import was superseded after the response was built. That is
-        # not a contradiction in the response; it is the world moving on.
-        pass
     finally:
         verify.close()
