@@ -702,9 +702,7 @@ describe('a season the source has not finished scheduling', () => {
     renderWithRouter(<App />, { route: '/schedule' })
 
     const notice = await screen.findByTestId('grid-pending')
-    expect(notice).toHaveTextContent(
-      '1 of them has no date the source has committed to',
-    )
+    expect(notice).toHaveTextContent('1 of them was published with no date at all')
     // The reason code travels with the id, so the claim is checkable.
     expect(notice).toHaveTextContent('no-date (not_offered)')
     expect(notice).toHaveTextContent('1 of them carried a date this screen could not read')
@@ -829,7 +827,7 @@ describe('a season the source has not finished scheduling', () => {
     expect(screen.getByTestId('schedule-game-counts')).toHaveTextContent('3 pending')
     // The per-week view is honestly short, and says why for each.
     expect(notice).toHaveTextContent('Scoring period 1 (1) is marked TBD')
-    expect(notice).toHaveTextContent('has no date the source has committed to')
+    expect(notice).toHaveTextContent('was published with no date at all')
     expect(notice).toHaveTextContent('outside every scoring period this grid shows')
     // And all three are listed, so the reader can reconcile 3 against 1 column.
     const listed = screen.getByTestId('schedule-pending-games')
@@ -865,31 +863,37 @@ describe('a season the source has not finished scheduling', () => {
 
     const notice = await screen.findByTestId('grid-pending')
     expect(notice).toHaveTextContent('The source has published 1 game without deciding')
-    expect(notice).toHaveTextContent('That game has no date the source has committed to')
+    expect(notice).toHaveTextContent('That game was published with no date at all')
     expect(notice.textContent).not.toContain('of them')
     // And it never says the source withheld a date, because it may not have.
     expect(notice.textContent).not.toMatch(/without saying when|has not decided when/)
   })
 
   it('never renders an investigate-class cause in wait-class words', async () => {
-    // The error ADR-013 names as the one that matters. `not_offered` and
-    // `irreconcilable` are the source's state and mean wait; `unreadable` and
-    // `implausible` are ours and mean investigate — the producer exits non-zero
-    // on exactly those two, so this mirrors its classification rather than
-    // inventing one. Told to wait, an operator waits through a defect.
+    // The error ADR-013 names as the one that matters. `not_offered` is the
+    // only cause that means wait; everything else means investigate, and told
+    // to wait an operator waits through a defect.
+    //
+    // An earlier version of this comment justified the split as mirroring the
+    // producer's exit codes — "it exits non-zero on exactly those two". That
+    // was a reconstruction, not a rule, and ADR-013 overturned it by moving
+    // `irreconcilable` to the fault side while the import still exits 0 on it.
+    // The two answer different questions: an exit code asks whether the import
+    // should fail, this screen asks whether a human should look.
     //
     // This is the third time this screen has drawn the same line: `0` vs `·` at
     // cell level, `TBD` vs `·` at column level, and now the source's undecided
-    // vs our failure at the reason level. It is also the line an earlier
-    // version of this file crossed, saying "none came with it" for all four —
-    // false for three of them, in the direction that tells a reader to relax.
+    // vs something worth a look at the reason level. It is also the line an
+    // earlier version of this file crossed, saying "none came with it" for all
+    // four — false for three of them, in the direction that tells a reader to
+    // relax.
     mockFetch({
       [GRID_PATH]: {
         body: withPendingGames([
           pendingGame({
             nba_game_id: 'wait-1',
             game_date: null,
-            date_absence_reason: 'irreconcilable',
+            date_absence_reason: 'not_offered',
           }),
           pendingGame({
             nba_game_id: 'look-1',
@@ -905,8 +909,8 @@ describe('a season the source has not finished scheduling', () => {
 
     const notice = await screen.findByTestId('grid-pending')
     // Wait-class: no action asked of anyone.
-    expect(notice).toHaveTextContent('1 of them has no date the source has committed to')
-    expect(notice).toHaveTextContent('wait-1 (irreconcilable)')
+    expect(notice).toHaveTextContent('1 of them was published with no date at all')
+    expect(notice).toHaveTextContent('wait-1 (not_offered)')
     // Investigate-class: explicitly not a waiting matter.
     expect(notice).toHaveTextContent('needs looking at rather than waiting out')
     expect(notice).toHaveTextContent('look-1 (implausible)')
@@ -915,8 +919,8 @@ describe('a season the source has not finished scheduling', () => {
     // particular is "both fields agreed and named a 1900 placeholder", which is
     // the case most easily mistaken for the source simply not having said.
     const text = notice.textContent ?? ''
-    const waitClause = text.indexOf('has no date the source has committed to')
-    const lookClause = text.indexOf('needs looking at rather than waiting out')
+    const waitClause = text.indexOf('was published with no date at all')
+    const lookClause = text.indexOf('looking at rather than waiting out')
     expect(waitClause).toBeGreaterThan(-1)
     expect(lookClause).toBeGreaterThan(-1)
     expect(waitClause).not.toBe(lookClause)
@@ -1179,9 +1183,11 @@ describe('a season the source has not finished scheduling', () => {
     expect(header).toHaveTextContent('This period contains 1 game')
   })
   it('refuses a pending block that is present but not the contract', async () => {
-    // Absent is tolerated because the screen can describe it. Malformed is not:
-    // a half-read pending set would under-report the incompleteness it exists
-    // to declare, which is worse than drawing nothing.
+    // Malformed is refused for the same reason an absent block now is: a
+    // half-read pending set would under-report the very incompleteness it
+    // exists to declare, which is worse than drawing nothing. (Absence used to
+    // be tolerated and described; that tolerance went with the backend lane it
+    // was waiting for.)
     const base = scheduleGrid()
     mockFetch({
       [GRID_PATH]: {

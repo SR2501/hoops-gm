@@ -68,20 +68,35 @@ export interface ApiErrorBody {
  * **The split that matters is what it tells an operator to do**, and it is not
  * the split a reader would guess from the names:
  *
- * - `not_offered` — both time fields absent. The source has not committed.
- * - `irreconcilable` — both parsed and disagree; the source contradicts itself.
+ * - `not_offered` — both time fields absent. The source has not committed, and
+ *   this is the **only** cause that means *wait*.
  * - `unreadable` — a value was published and *we* could not read it, or the
  *   schema moved. **Our failure.**
  * - `implausible` — both parsed, agreed, and named a date nowhere near the
  *   season. Agreement is not validity: the NBA uses a `1900-01-01` epoch as a
  *   live placeholder, and a placeholder pair reconciles perfectly. **Our
  *   failure to reject a placeholder earlier.**
+ * - `irreconcilable` — both parsed and disagree; the source contradicting
+ *   itself.
  *
- * The producer classes the last two as faults and exits non-zero on them
- * (`schedule_import.py:_FAULT_ABSENCE_REASONS`), while the first two leave it
- * at exit 0. So the first two mean *wait* and the last two mean *investigate*,
- * and ADR-013 states the error that matters as rendering an investigate-class
- * cause as a wait-class one.
+ * **The classification is ADR-013's decision, not a derivation from anything in
+ * this repository.** An earlier version of this comment reconstructed it from
+ * the producer's exit codes — it exits non-zero on `unreadable` and
+ * `implausible` only — and that reconstruction was wrong, because an exit code
+ * answers *should this import fail* and this screen answers *should a human
+ * look*. `irreconcilable` is a fault here while leaving the import at exit 0.
+ *
+ * The reason it is a fault is worth keeping, because `code-review` found it and
+ * it is sharper than the argument that won: the producer's own docstring says
+ * an epoch placeholder pair in the date fields **reconciles perfectly** for
+ * 1900 (`-05:00`) and fails only *by accident* for year 0001, because
+ * `America/New_York` ran on `-04:56` local mean time before 1883. So the same
+ * phenomenon — a sentinel in both fields — lands in `implausible` or
+ * `irreconcilable` depending on a nineteenth-century offset, and in
+ * `unreadable` if the hour happens to overflow `datetime.min`. One thing, three
+ * labels, on criteria no operator can act on. That argues both that
+ * `irreconcilable` belongs with the faults and that the cleaner repair is
+ * upstream in the producer's own set.
  */
 export const DATE_ABSENCE_REASONS = [
   '',
@@ -93,8 +108,37 @@ export const DATE_ABSENCE_REASONS = [
 
 export type DateAbsenceReason = (typeof DATE_ABSENCE_REASONS)[number]
 
-/** Absence causes that mean *investigate*, mirroring the producer's own set. */
-export const FAULT_ABSENCE_REASONS: readonly DateAbsenceReason[] = ['unreadable', 'implausible']
+/**
+ * Absence causes that mean *wait*.
+ *
+ * **Enumerated on the wait side on purpose, and it is the whole design.** The
+ * obvious shape is a fault list with everything else defaulting to wait; this
+ * is the inversion, so a reason nobody has enumerated — a value added to the
+ * contract next month, a typo, anything — falls to **investigate**. ADR-013
+ * names rendering an investigate-class cause as a wait-class one as the error
+ * that matters, and a default has to point somewhere: it points at the
+ * expensive-but-safe answer rather than the comforting one.
+ *
+ * It also removes a guarantee rather than restating it. There was a
+ * `FAULT_ABSENCE_REASONS` here documented as *mirroring* the producer's
+ * `_FAULT_ABSENCE_REASONS`, and ADR-013's ruling on `irreconcilable` made that
+ * false — the sets diverge now, deliberately. Rewriting the comment to describe
+ * a superset would have left a cross-file claim that nothing enforces, of
+ * exactly the kind this branch has removed three times. **The producer has no
+ * constant this one could mirror**, because it never asks "should a human
+ * look" — its frozenset answers "should this import fail", which is a different
+ * question, and reading one as the other is the mistake that put
+ * `irreconcilable` on the wrong side in the first place.
+ *
+ * `not_offered` is the only member and that is not an anomaly: it is an action
+ * with one known cause, and it is the one cause whose meaning is certain by
+ * construction — both time fields absent, nothing published. The fault side is,
+ * by the ruling's own words, a decision about causes a consumer *cannot* tell
+ * apart. Collapsing the certain case into the uncertain one would leave one
+ * clause spanning two operator actions, which is the flattening this whole
+ * split exists to remove.
+ */
+export const WAIT_ABSENCE_REASONS: readonly DateAbsenceReason[] = ['not_offered']
 
 export interface SchedulePendingGame {
   nba_game_id: string

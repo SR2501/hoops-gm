@@ -556,15 +556,31 @@ once checked:
   right on load and leaves a refresh that takes the pending set from empty to
   non-empty silent. The fix is a region that is empty at mount and live
   thereafter, if the cost is ever judged worth it.
-- **`irreconcilable` is classified as wait-class on an inference.** The screen
-  splits absence causes into wait (`not_offered`, `irreconcilable`) and
-  investigate (`unreadable`, `implausible`), mirroring the producer's
-  `_FAULT_ABSENCE_REASONS`, which excludes `irreconcilable` so the import stays
-  exit 0. ADR-013's prose gives the wait/investigate meaning for `not_offered`
-  and `unreadable` and says nothing about which side `irreconcilable` falls on.
-  The source contradicting itself is arguably worth a look even when it does
-  not block an import. `architect` owns the call; the trigger is anyone
-  disputing it, and I would rather they did.
+- **`irreconcilable` was classified as wait-class on an inference, and ADR-013
+  has now decided it.** The screen split absence causes into wait
+  (`not_offered`, `irreconcilable`) and investigate (`unreadable`,
+  `implausible`), mirroring the producer's `_FAULT_ABSENCE_REASONS`, which
+  excludes `irreconcilable` so the import stays exit 0. That was a
+  reconstruction rather than a rule: an exit code answers *should this import
+  fail*, and the screen answers *should a human look*.
+
+  **Resolved: `irreconcilable` is a fault.** `architect` ruled it from the live
+  feed rather than by argument — the alarm-fatigue objection to widening the
+  fault set is a claim about volume, and all six real pending games carry a
+  date and an empty reason, so every fault reason fires zero times today. The
+  caveat is recorded in ADR-013: if that stops being true, revisit the row
+  rather than letting an operator learn to ignore the channel.
+
+  `code-review` supplied the sharper argument, which is about drift and which
+  frequency data cannot retire: the producer's own docstring says an epoch
+  placeholder pair **reconciles perfectly** for 1900 (`-05:00`) and fails only
+  by accident for year 0001, because `America/New_York` ran on `-04:56` local
+  mean time before 1883 — so one phenomenon lands in `implausible`,
+  `irreconcilable` or `unreadable` depending on a nineteenth-century offset and
+  the hour. **The cleaner repair is upstream in `_FAULT_ABSENCE_REASONS`**, and
+  that is `data-engineer`'s to weigh; the client no longer depends on it either
+  way, because it enumerates the *wait* set and defaults everything else to
+  investigate.
 - **`.grid-scroll`'s `18rem` budget is now short by a block.** The constant was
   written for four things above the grid; the pending notice is a fifth and is
   present in every shipping state. Measured at a 720px viewport with scroll at

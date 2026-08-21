@@ -310,32 +310,47 @@ describe('readPendingGames', () => {
 
   it('sorts an absent date by what it tells an operator to do, not by its shape', () => {
     // The error ADR-013 names as the one that matters: rendering an
-    // investigate-class cause as a wait-class one. `not_offered` and
-    // `irreconcilable` are the source's state — wait. `unreadable` and
-    // `implausible` are ours — investigate; the producer exits non-zero on
-    // exactly those two, so this mirrors its own classification rather than
-    // inventing one.
+    // investigate-class cause as a wait-class one. `not_offered` is the only
+    // cause that means wait — both time fields absent, nothing published.
+    //
+    // `irreconcilable` sits with the faults **by ADR-013's decision, not by
+    // derivation**. An earlier version of this test put it on the wait side and
+    // justified that in a comment as mirroring the producer's exit codes, which
+    // was a reconstruction rather than a rule: an exit code answers "should
+    // this import fail", and this screen answers "should a human look".
     const model = buildScheduleGridModel(
       withPending([
         pending({ game_date: null, date_absence_reason: 'not_offered' }, 'wait-a'),
-        pending({ game_date: null, date_absence_reason: 'irreconcilable' }, 'wait-b'),
-        pending({ game_date: null, date_absence_reason: 'unreadable' }, 'look-a'),
-        pending({ game_date: null, date_absence_reason: 'implausible' }, 'look-b'),
+        pending({ game_date: null, date_absence_reason: 'irreconcilable' }, 'look-a'),
+        pending({ game_date: null, date_absence_reason: 'unreadable' }, 'look-b'),
+        pending({ game_date: null, date_absence_reason: 'implausible' }, 'look-c'),
       ]),
     )
 
-    expect(model.pending.awaitingSource.map((game) => game.nba_game_id)).toEqual([
-      'wait-a',
-      'wait-b',
-    ])
+    expect(model.pending.awaitingSource.map((game) => game.nba_game_id)).toEqual(['wait-a'])
     expect(model.pending.dateFaulted.map((game) => game.nba_game_id)).toEqual([
       'look-a',
       'look-b',
+      'look-c',
     ])
     // None of them reaches a column, and all four are still counted.
     expect(model.pending.declaredCount).toBe(4)
     expect(model.pending.placedCount).toBe(0)
     expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
+  })
+
+  it('sends an unrecognised reason to investigate rather than to wait', () => {
+    // The wait set is the enumerated one, so a default has to point somewhere
+    // and it points at the expensive-but-safe answer. The boundary refuses
+    // reasons outside the closed set, so this can only fire on a response the
+    // API would not serve — which is the point: the safe direction survives
+    // someone else loosening the boundary.
+    const model = buildScheduleGridModel(
+      withPending([pending({ game_date: null, date_absence_reason: 'newly-invented' }, 'x')]),
+    )
+
+    expect(model.pending.dateFaulted.map((game) => game.nba_game_id)).toEqual(['x'])
+    expect(model.pending.awaitingSource).toEqual([])
   })
 
   it('separates a date the source has not set from one this screen cannot read', () => {

@@ -12095,3 +12095,122 @@ three of the last four rounds' findings were about.
 **Next:** exact-head reviews on the pushed SHA, then undraft. A final docs-only rebase will
 be needed after #48 and #45 merge, since those overlap only on `handoff.md` and
 `backlog.md`.
+
+---
+
+## 2026-08-21 — frontend — Enumerating the safe side, and four reasons that finally exist as producer bytes
+
+**Changed:** `irreconcilable` moved to the fault side per ADR-013, but not the way I was
+going to move it. Both reviewers converged on a better shape than the one in my brief, and
+the screen now enumerates the **wait** set rather than the fault set.
+
+**The inversion is the whole design and it was `frontend`'s.** I was going to widen
+`FAULT_ABSENCE_REASONS` to three members and write a comment explaining that it no longer
+mirrors the producer's set. Enumerating the other side is strictly better and closes three
+problems at once:
+
+- An unrecognised reason — a value added to the contract next month, a typo — now falls to
+  **investigate** rather than wait. A default has to point somewhere, and the comforting
+  direction is the error ADR-013 names. My version defaulted to wait.
+- `FAULT_ABSENCE_REASONS` ceases to exist, so there is no frontend constant that could be
+  claimed to mirror a producer constant. **The superset-versus-mirror problem stops being
+  expressible** rather than being documented.
+- It states the real relationship: the producer has no constant this could mirror, because
+  its frozenset answers *should this import fail* and this screen answers *should a human
+  look*. Reading one as the other is what put `irreconcilable` on the wrong side to begin
+  with.
+
+**`code-review` found the argument that beats the one that won, and it is a drift argument
+frequency data cannot retire.** The producer's own docstring says an epoch placeholder pair
+in both date fields **reconciles perfectly** for 1900, because 1900's Eastern offset really
+is `-05:00`, and fails only *by accident* for year 0001, because `America/New_York` ran on
+`-04:56` local mean time before 1883. They ran it:
+
+```
+1900-01-01  offset -5:00:00   pair reconciles      -> implausible     -> INVESTIGATE
+0001-01-01  offset -4:56:02   pair does not        -> irreconcilable  -> WAIT (before)
+0001-01-01T00:00Z  overflows datetime.min          -> unreadable      -> INVESTIGATE
+0001-01-01T12:00Z  does not                        -> irreconcilable  -> WAIT (before)
+```
+
+One phenomenon — a sentinel in both fields — landing in three different action classes on
+criteria no operator can act on: a nineteenth-century offset, and the hour of day. That
+supports the ruling *and* says the cleaner repair is upstream in the producer's own set,
+which is now a backlog note for `data-engineer`. The client no longer depends on it either
+way.
+
+**`architect` gave the rule I most want carried forward, and it is about which claims to
+edit.** *Correct what asserts the present; append to what records the past.* Six
+mirroring/derivation claims existed; four were present-tense assertions in code and are
+fixed, and two are handoff entries that were **left exactly as they were** — including the
+wait/investigate table in the previous entry that this ruling makes wrong. Editing those to
+match would destroy the only property that makes an audit trail worth keeping. The
+four-version fold measurement is valuable *because* the three wrong ones are still there.
+
+The coupling words to search for are `exactly`, `mirrors`, `the same set as`, `derived
+from`. Each is a guarantee about another file that nothing enforces.
+
+**And `frontend` predicted exactly which one I would leave standing.** The `awaitingSource`
+docstring said *"the producer leaves the import at exit 0 for these, because they are the
+source's state rather than a fault on our side."* Strike `irreconcilable` from the member
+list and **that sentence stays literally true** — `not_offered` really is exit 0 — while the
+inference it licenses, exit 0 implies wait, is precisely what the ruling overturned. It
+passes review as a true statement. Deleted rather than amended; it is the most survivable
+form of a stale citation, because nothing about it reads as false.
+
+**All four non-empty absence reasons now exist as producer bytes.** This was
+`code-review`'s (d) and `architect` raised the same thing with more weight: every non-empty
+reason fires **zero times** against the live source, so the whole mechanism — both buckets —
+rested on payloads written from the TypeScript interfaces, which are structurally blind to
+a field rename or a serialisation change. Two new recorded fixtures fix that, and neither is
+hand-written: each was produced by driving the **in-tree importer** with a doctored
+`ScheduleLeagueV2` *source* payload, seeding a real database, serving it and capturing the
+response. The only thing authored is the upstream payload the NBA would have sent.
+
+- `schedule-grid-date-faults.recorded.json` — a 1900 epoch pair (`implausible`) and a pair
+  one day apart (`irreconcilable`).
+- `schedule-grid-date-absent.recorded.json` — both fields empty (`not_offered`) and one
+  field withheld (`unreadable`).
+
+**A mutation I wrote that could not fail.** One of the new mutations inserted a lint comment
+— a change with no semantics — so nothing caught it, and the harness said so. Deleted rather
+than repaired: a mutation that cannot fail is the exact thing this harness exists to find in
+*tests*, and keeping it would have been that defect one level up. There is no honest
+replacement, because what the recorded fixtures uniquely catch is a **producer-side** change
+and no client-side mutation can simulate one. That is a limit of mutation testing, not a gap
+in the fixtures.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **124 tests across 9 files** (from 118).
+**28 of 28 mutations caught**, three new: the classification inverted back to enumerating
+faults; the wait copy reverted to hedging across a cause that has left; and an unrecognised
+reason defaulting to wait.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated. The wait/investigate table
+in the entry above is now wrong and is deliberately left standing.*
+
+*None of this round has been reviewed.* Five rounds on this branch, five that found
+something real.
+
+*The two new fixtures prove the producer classifies **my** doctored inputs that way, not
+that the NBA will ever send them.* The source payloads are authored; only the response bytes
+are the producer's. That is a genuine step up from hand-built objects and it is not the same
+as observing the real thing.
+
+*`code-review`'s correction to my ADR report was right and I had over-claimed to the
+coordinator.* I reported line 176 as *"'Three are possible' with a four-value set"*, which
+invites the reply that it is internally consistent — `""` is not an absence cause, so three
+causes and three named is correct. The real defect is narrower: that set **omits
+`implausible`**, so a validator built from it rejects a well-formed response. Both blocks
+also sit under dated headings inside `## Amendments` and the later one says the earlier is
+untrue, so it is scoped by position more than I allowed. The coordinator acted on my
+framing; I have corrected it.
+
+*Nobody has read the new copy but me.* "Needs looking at rather than waiting out" is my
+phrasing for a distinction ADR-013 states abstractly, and copy is what most of this
+branch's findings have been about.
+
+**Next:** exact-head reviews, then undraft. A final docs-only rebase after #48 and #56
+merge — and **not** copying ADR text into this PR, so the four-versus-five problem cannot
+recur through a merge.

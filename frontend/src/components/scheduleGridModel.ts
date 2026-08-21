@@ -24,7 +24,7 @@
  * them in a UI would ship an unbacktested model in CSS.
  */
 
-import { FAULT_ABSENCE_REASONS } from '../api/types'
+import { WAIT_ABSENCE_REASONS } from '../api/types'
 import type {
   ScheduleGrid,
   ScheduleGridPeriod,
@@ -116,23 +116,30 @@ export interface PendingGamesSummary {
   /**
    * Pending games with no date, where the source has **not committed** to one.
    *
-   * `date_absence_reason` of `not_offered` (both time fields absent) or
-   * `irreconcilable` (both parsed and disagree — the source contradicting
-   * itself). The producer leaves the import at exit 0 for these, because they
-   * are the source's state rather than a fault on our side.
+   * `date_absence_reason` of `not_offered`: both time fields absent, nothing
+   * published. The only cause whose meaning is certain by construction, and the
+   * only one that means *wait*.
    *
-   * **Operator action: wait.** A date will arrive when the bracket is drawn or
-   * the source stops contradicting itself.
+   * **Operator action: wait.** A date arrives when the bracket is drawn.
+   *
+   * `irreconcilable` used to sit here, on the grounds that the producer leaves
+   * the import at exit 0 for it. That sentence stayed *literally true* after
+   * ADR-013 moved it — `not_offered` really is exit 0 — while the inference it
+   * licensed, exit 0 implies wait, was exactly what the ruling overturned. So
+   * it is deleted rather than amended: a claim that stops being the reason and
+   * keeps the grammar of one is the most survivable form of a stale citation,
+   * because it passes review as a true statement.
    */
   awaitingSource: SchedulePendingGame[]
   /**
-   * Pending games with no date, where **something on our side went wrong**.
+   * Pending games with no date, where **something needs looking at**.
    *
-   * `unreadable` — a value was published and we could not parse it, or the
-   * schema moved. `implausible` — both fields parsed, agreed, and named a date
-   * nowhere near the season: the NBA uses a `1900-01-01` epoch as a live
-   * placeholder, and a placeholder pair reconciles perfectly, so **agreement is
-   * not validity**. The producer classes both as faults and exits non-zero.
+   * Everything that is not `not_offered`: `unreadable` (a value was published
+   * and we could not parse it, or the schema moved), `implausible` (both fields
+   * parsed, agreed, and named a date nowhere near the season — the NBA uses a
+   * `1900-01-01` epoch as a live placeholder and a placeholder pair reconciles
+   * perfectly, so **agreement is not validity**), and `irreconcilable` (both
+   * parsed and disagree).
    *
    * **Operator action: investigate.** Kept apart from `awaitingSource` for the
    * one reason ADR-013 names as the error that matters — *"rendering an
@@ -143,7 +150,7 @@ export interface PendingGamesSummary {
    * first time the contract could support it. `0` versus `·` separates a real
    * count from our gap at cell level; `TBD` separates the source's undecided
    * from our gap at column level; this separates the source's undecided from
-   * our failure at the reason level. An earlier version of this file collapsed
+   * something worth a look at the reason level. An earlier version collapsed
    * all four causes into one bucket and rendered them as *"none came with it"*,
    * which is false for three of them and false toward comfort.
    */
@@ -230,14 +237,20 @@ export function readPendingGames(
   for (const game of games) {
     // Sorted by what it tells an operator to do, before anything about format.
     // The producer has already decided it could derive no date; all this does
-    // is keep its reason from being flattened into one message. ADR-013 names
-    // rendering an investigate-class cause as a wait-class one as the error
-    // that matters, and it is the direction that comforts.
+    // is keep its reason from being flattened into one message.
+    //
+    // The *wait* set is the enumerated one, so anything unrecognised falls to
+    // investigate. ADR-013 names rendering an investigate-class cause as a
+    // wait-class one as the error that matters, and a default has to point
+    // somewhere — this one points at the expensive-but-safe answer. The
+    // boundary already refuses reasons outside the closed set, so this can only
+    // fire on a value the API would not serve; it costs nothing and it means
+    // the safe direction survives the boundary being loosened by someone else.
     if (game.game_date === null) {
-      if ((FAULT_ABSENCE_REASONS as readonly string[]).includes(game.date_absence_reason)) {
-        dateFaulted.push(game)
-      } else {
+      if ((WAIT_ABSENCE_REASONS as readonly string[]).includes(game.date_absence_reason)) {
         awaitingSource.push(game)
+      } else {
+        dateFaulted.push(game)
       }
       continue
     }

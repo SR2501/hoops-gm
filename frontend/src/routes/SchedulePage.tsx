@@ -240,8 +240,8 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
         : ''}
       {pending.awaitingSource.length > 0
         ? `${subject(pending.awaitingSource.length)} ${
-            pending.awaitingSource.length === 1 ? 'has' : 'have'
-          } no date the source has committed to, so ${
+            pending.awaitingSource.length === 1 ? 'was' : 'were'
+          } published with no date at all, so ${
             pending.awaitingSource.length === 1 ? 'it falls' : 'they fall'
           } in no column here: ${pending.awaitingSource
             .map((game) => `${game.nba_game_id} (${game.date_absence_reason})`)
@@ -250,7 +250,11 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
       {pending.dateFaulted.length > 0
         ? `${subject(pending.dateFaulted.length)} ${
             pending.dateFaulted.length === 1 ? 'carries' : 'carry'
-          } no date because a published value could not be used, which needs looking at rather than waiting out: ${pending.dateFaulted
+          } no date because a published value could not be used, so ${
+            pending.dateFaulted.length === 1 ? 'it falls' : 'they fall'
+          } in no column here and ${
+            pending.dateFaulted.length === 1 ? 'it needs' : 'they need'
+          } looking at rather than waiting out: ${pending.dateFaulted
             .map((game) => `${game.nba_game_id} (${game.date_absence_reason})`)
             .join(', ')}. `
         : ''}
