@@ -10007,13 +10007,20 @@ timestamp exits 2 with "refused, nothing written".
 That matters because **exit codes are this command's machine-readable
 channel** — the thing I added exit 5 to make trustworthy. An out-of-range value
 was the one shape that bypassed it. Reproduced through `main()` rather than the
-parser, before and after:
+parser:
 
-```
-resolved y0001+offset   !!! UNCAUGHT OverflowError   ->  rc=2
-resolved y9999          !!! UNCAUGHT OverflowError   ->  rc=2
-resolved y0001 plain    rc=2 (control, unchanged)
-```
+| resolved-game payload | before | after |
+|---|---|---|
+| `gameDateTimeUTC = 0001-01-01T00:00:00+23:59` | uncaught `OverflowError`, rc=1 | rc=2 |
+| `gameDateTimeUTC = 9999-12-31T23:59:59Z` | uncaught `OverflowError`, rc=1 | rc=2 |
+| `gameDateTimeUTC = 0001-01-01T00:00:00Z` (control) | rc=2 | rc=2 |
+
+The control is the point: the same class of garbage that stays inside
+`datetime`'s range already exited 2 cleanly, and only the out-of-range shapes
+escaped. An earlier draft of this table wrote both states in one column with an
+arrow, which read correctly and was ambiguous about which value was which —
+**the night's dominant defect class arriving in a report instead of in code**,
+in the one file nobody rewrites. Caught in review of the report itself.
 
 **Three instances of one class in one lane, and the count is the finding.**
 The plausibility bound on the lenient path and not the strict one. The
