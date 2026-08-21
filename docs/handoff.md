@@ -14091,3 +14091,108 @@ was asserting the wrong thing.
 - **Whether `useAsync`'s retry interacts correctly with a real concurrent import.** The
   retry-once path is driven by mocked 409s; I could not stage a genuine mid-read re-import
   against the running service, so the timing the backend actually produces is untested here.
+
+## 2026-08-21 - frontend - The copy was false and the fixture in the same commit disproved it
+
+**Unit:** review round on `projections-ui`. `architect` and `code-review` at `e9fa5dd`, fixes at
+`731170f`. Nine findings, no ADR-002 or ADR-008 violation, no lane boundary crossed. Two of the
+nine put a false statement in front of the reader.
+
+**The most instructive one: I shipped copy my own fixture disproved.** The key said a `.`
+should not appear for Basketball Monster, because its `required_production_fields` is set-equal
+to `CANONICAL_STAT_FIELDS` and the parser drops a row on any missing required value. That chain
+is correct - `architect` re-derived it independently rather than trusting my comment. **The
+scope was not.** The same marker rendered `team_abbreviation` and `primary_position`, which come
+from *our* player record and say nothing about what the source published, and the recorded
+fixture committed in the same commit contains `Patrick Baldwin Jr.` with a null position. **One
+`.` was on screen from the moment the claim shipped**, and I had seen it in the browser output
+without connecting it.
+
+Type-check, lint and 182 tests were green over it. `gates.md` already names this shape - copy
+true of one condition and false of the next raising the same marker - and I reproduced it while
+writing a comment about being precise. Labels now carry an em dash: a different claim gets a
+different mark, and the key says which is which.
+
+**The guard was blind to two of the nine categories, and its own docstring said otherwise.** My
+ADR-002 detector discarded every product below 100, on the reasoning that "the smallest rate
+that matters times the smallest plausible games assumption still clears three figures". Both
+reviewers measured it against the committed fixture: **278 of 960 real products fall below the
+floor, including 60 of 60 steals and 60 of 60 blocks.** A `Season STL` column - two of the nine
+H2H categories, and exactly the mutation the file's own header says a reasonable person adds on
+purpose - would have rendered the forbidden product for all 60 players while the detector
+returned `[]`.
+
+The floor existed to stop a product colliding with an ordinary rate. **Magnitude was the wrong
+question**, because for steals and blocks the season total genuinely shares a numeric range with
+other per-game rates, so no threshold separates them. It now asks whether a value is one the
+screen was already going to show. Two consequences worth keeping: coverage is asserted **per
+field** rather than in aggregate, because an aggregate count is what let the floor hide two
+categories while looking well-exercised; and a second independent assertion pins the table's
+column inventory, which catches a per-week or rest-of-season column the detector cannot compute
+and therefore could never look for.
+
+**A helper that asserted against its own definition.** `forbiddenRenderings` was documented as
+the negative control's independent path - "a negative control that reused the detector could
+pass because both share a bug" - and its only assertion checked the function against its own
+construction. Neither half of the docstring was true: the real negative control never called it.
+Deleted, and the locale case now asserts through `renderedNumbers` so the "separator survives
+parsing" claim and the "detector fires" claim do not share a code path.
+
+**A message that quoted a different number from the check it explained.** The integrity banner
+reported the post-dedup row count while `rowCountMatchesLineage` compared the pre-dedup one, so a
+duplicated row produced *"carried 1 rate rows but its lineage block counts 1"* - announcing a
+disagreement between two identical numbers. No test caught it because every duplicate case in
+the suite set `projection_count` equal to the array length, making the check pass.
+
+**A structural guarantee that held everywhere except where it mattered.** `AssumptionCell` took
+the whole `row`, so `row.rates` was in scope inside the one branch that narrows `AssumptionState`
+into a bare number - the single place the forbidden product would have been one expression. The
+component docstring's claim was true of every other function in the file. Now it takes
+`assumption` and `playerId`.
+
+**Also closed:** the module claimed every comparison ran in both directions when the assumptions
+join deliberately does not (narrowed, with the reason and its cost stated); `assumed_games_played`
+had no plausibility bound while the same file bounds two other counts for the same stated reason;
+and `importer.py:721-722` was cited 32 lines off the guard it described - under the house rule
+the line number *is* the disprovability, so a wrong one costs the next reader the ninety seconds
+the rule buys.
+
+**`AsyncBoundary` fixed rather than the copy weakened.** Four refusal messages tell the reader to
+read "the backend's wording below" to learn which condition fired, and it rendered only on the
+cold path - missing from exactly the warm path those messages were written for, since a
+superseded cohort arrives while a screen is open. The defect predates this unit and belonged to
+that component. Fixing it also repairs the same inherited gap on the schedule screen.
+
+**The vocabulary pin landed here, as a merge condition.** Nothing enforced the set-equality my
+copy rests on: `grep required_production_fields backend/tests/` returned nothing across 1304
+tests. `backend` correctly declined to add it to a frozen tree mid-review, and the coordinator
+placed it on this PR instead - where the claim actually lives. Asserted as **sets rather than
+counts**, so a swap cannot pass, with mutation from both sides, and verified to redden against
+drift applied to the **real** tuples rather than only to an in-memory copy.
+
+**Verified again in a browser** after the fixes: zero `.` anywhere in the table body, one em dash
+in Pos, the column inventory exactly as agreed. Worth recording that the first check after the
+fix was **wrong because Vite had partially hot-reloaded** - the table showed the new marker while
+the key still showed the old copy, which looked like a contradiction in my own change. A forced
+restart on a clean port settled it. A stale bundle is a plausible-looking wrong answer, same as
+any other.
+
+**Could not verify:**
+- **Whether the detector's coincidence exclusion hides a real violation.** It now skips any
+  product equal to a legitimately rendered value. `discriminableProductCount` asserts every field
+  retains at least one discriminable product on both the synthetic and the recorded cohort, but
+  the excluded products are genuinely invisible and I cannot bound how many a real 550-row
+  Basketball Monster cohort would exclude - only that it is nonzero.
+- **The four assumption states against producer-emitted data.** Unchanged from the previous
+  entry and now sharper: `absent` and `unreadable` are unreachable for this source by
+  construction, `unexplained` through any profile, so three of four render only from hand-built
+  payloads.
+- **That the em dash is the right answer rather than merely a true one.** It distinguishes the
+  two claims, which is what the finding required. Whether a reader actually reads them as
+  different claims is a question about people, and nobody has looked at this screen but me.
+- **The identity-resolution tail**, unchanged: `needs_review_count` and `unmatched_count` are 0
+  in every payload that has existed, pinned at 0 with a comment saying why, so `backend`'s
+  `--unresolved N` will redden it deliberately.
+- **Whether `AsyncBoundary`'s warm-path change alters the schedule screen's rendering** in any
+  case its own tests do not cover. All 55 schedule tests pass and the change is additive, but I
+  did not drive a warm-path schedule refusal in a browser.
