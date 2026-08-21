@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 72 pending - 118 total**
+**45 done - 1 blocked - 74 pending - 120 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 118 `###` headings, 118 unique item slugs and 118 markers, 1:1, no
+two headers: 120 `###` headings, 120 unique item slugs and 120 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -25,7 +25,11 @@ held. Found by diffing this file's slug set against `origin/main`'s, which is th
 only check that catches a *dropped* item — a recount of the finished file agrees
 with itself perfectly after a deletion. **Recount the total, and separately
 compare the slug set against `main`; the first cannot see what the second is
-for.**
+for.** The blend-recipe lane rebased onto `fc23239` under that rule and the pair
+behaved exactly as described: the recount moved 118 -> 120 and could not have
+seen a loss, while the slug diff against `origin/main` independently confirmed
+zero of main's 118 entries were dropped and exactly two were added. The script
+was not run on this file.
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
