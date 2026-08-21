@@ -99,10 +99,23 @@ participation and projections. **On a real database that migration silently dele
 season of ingested data.** In the suite it surfaced as one surviving row where one was
 expected.
 
-Neither reviewer nor author could have reasoned to it; running it took four minutes. So the
-rule is not "review harder" and not "trust reviewers less" — it is that **a suggestion is a
-hypothesis until it has been run**, and the blast radius of an unrun suggestion is not
-bounded by how well it was argued.
+Neither reviewer nor author could have reasoned to it; running it took four minutes. And
+the reason is not that the reviewer was careless — **the suggestion was correct about the
+invariant and wrong only about the cost, and the cost was invisible from the code under
+review.** The reviewer was reading a model file and a migration; the danger lived in ten
+`ON DELETE CASCADE` foreign keys in *other* model files, plus a SQLite implementation
+detail. No amount of care reading that diff surfaces it.
+
+So two rules, the second more useful to whoever writes the next migration:
+
+- **A suggestion is a hypothesis until it has been run**, and its blast radius is not
+  bounded by how well it was argued.
+- **A migration's risk is bounded by what references the table, not by what the migration
+  says.**
+
+Keep both halves of what happened. While briefly active, that same constraint caught a real
+defect — a seed writing a position with no provenance, a shape no real producer can write.
+**A check can be simultaneously right about its invariant and unshippable.**
 
 So, alongside the gate matching your work: **state what each check can and cannot observe
 at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
