@@ -11613,13 +11613,27 @@ count below is a floor"* above *"Could not load the schedule grid"*, with no cou
 which they drove and I had not. And it costs no block above a grid already carrying a
 lineage panel, a notice and a key.
 
-**A measurement I can now report because the placement changed.** `frontend` declined to
-assert the table was below the fold without a browser, which was right. Measured in one:
-caption top 411px, first cell 527px, viewport 720px — the grid is above the fold at this
-size, and the caption move removed 303 characters of prose above it. Their broader point
-stands and I am not claiming otherwise: the key and the table are consulted continuously
-and come last, the caveat and the notice are read once and come first, which is inverted
-by frequency of need.
+**A measurement I can now report because the placement changed — and it does not say what
+I first wrote.** `frontend` declined to assert the table was below the fold without a
+browser, which was right. Measured in one, at a 720px viewport with the pending notice
+present:
+
+```
+lineage collapsed (default) : header 480px, first number 527px  -> ~7 of 30 rows visible
+lineage expanded            : header 783px, first number 830px  -> grid entirely below the fold
+```
+
+I first wrote this up as "the grid is above the fold at this size", from a reading taken
+with the lineage panel expanded in one page and collapsed in another — a number that was
+right about nothing in particular. The honest version is that the grid *starts* above the
+fold by default and shows **about seven of thirty teams**, and that expanding the evidence
+panel pushes it off entirely, which is at least a deliberate act by the reader. The caption
+move removed 303 characters of prose above it and bought roughly two rows.
+
+So `frontend`'s density finding is not closed, it is quantified, and their framing of it
+survives the measurement: the key and the table are consulted continuously and come last,
+the caveat and the notice are read once and come first, which is inverted by frequency of
+need. Under a pick clock, seven rows is a scroll.
 
 **`architect` found a fresh over-generalisation in the previous entry, in the paragraph
 where I had just corrected a different one.** I wrote that *"every pair of semantic hues in
@@ -11677,6 +11691,16 @@ night, and disclosing it afterwards is a weaker remedy than not doing it.
 *None of these five fixes has been reviewed either.* Same as last round. The caption
 rewrite in particular is new copy that no reviewer has read, and copy is what three of
 tonight's findings were about.
+
+*One "could not verify" from the previous entry is now closed, and it was the largest.*
+`sr2501-real-schedule-import` is pushed as PR #49, so I re-ran the whole verification
+against **committed** backend code rather than a working tree: added a detached worktree at
+`1716044`, seeded a fresh database, served it, and captured the response. It is
+**byte-identical to the committed fixture ignoring the two timestamps** — same 12/10/2
+completeness, same `9bcac1c60490b41a`, same 630 counts, same empty `game_sub_label` and
+`game_subtype`. Capture-and-*compare*: nothing moved, so nothing was replaced. Every
+contract citation in these three entries now rests on code that exists in a branch, and the
+screen was driven end to end against it.
 
 *I still have not measured whether any of this is legible under a pick clock.* The fold
 measurement is one viewport on one machine. Nobody has used this screen to make a decision.
