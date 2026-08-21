@@ -14958,3 +14958,150 @@ would need the Model gate.
   reason; marking my own commissioning items `done` is not a call I should make unreviewed.
 - **The ownership row is recorded, not derived.** I did not re-examine whether `backend` is the right
   owner; `architect` ruled and I wrote it down.
+
+## 2026-08-21 - backend - A guard nobody could break is a guard nobody tested
+
+**Changed:** `draft-tracker`'s persistence and API half. Three tables in migration `0017` -
+`drafts`, `draft_participants`, `draft_events` - plus `hoops_gm/draft/state.py` (pure derivation),
+`hoops_gm/draft/service.py` (the only writer), `hoops_gm/api/routes/drafts.py` (five endpoints),
+`hoops_gm/dev/seed_draft.py`, and two test modules. `docs/backlog.md` gained a "what landed, what
+did not" note on the item; the marker stays `pending`, see below.
+
+**The shape, in one paragraph.** The ordered append-only event log is the only stored fact. There is
+no stored current state anywhere: board, rosters, spend, the open lot and whose turn it is are
+re-derived by `derive_state()` on every single read. That is deliberate and it is the decision the
+rest follows from - a stored summary is a second thing that can be wrong, with nothing available to
+say which of the two is lying. Corrections are `void` events; there is no update path and no delete
+path, and consequently the surface offers no `PUT`, `PATCH` or `DELETE` at all. Because everything
+at or below a sequence is immutable, `last_sequence` is a complete version token, so **no read or
+write takes a lock** (ADR-014) and a stale writer is refused with `draft_sequence_conflict` (409)
+rather than blocked. Validation is one rule, not two: `_append()` builds the candidate event, calls
+`derive_state(existing + [candidate])`, and inserts only if that succeeded - so the writer and the
+reader cannot drift, and a refused append leaves no row and no hole in the sequence.
+
+**This is a local write to our own Postgres. It is not the automation write path.** Nothing here
+sends anything to Fantrax; there is no Fantrax client, no action executor, no outbound call of any
+kind in this diff. So it needs no `safety` sign-off, and I am stating that here rather than leaving
+the next reader to work it out from the absence of evidence.
+
+**Scope held.** No valuation, no auction price estimate, no inflation, no recommendation, no
+`p(play)`. The log stores what happened. `remaining_budget` is published because it is arithmetic
+over recorded facts and a recorder needs it to type the next bid; `max_bid` is deliberately absent
+because that is a decision, and it belongs to `auction-budget-manager`.
+
+**Now true:**
+
+- A mock auction and a mock snake draft record end to end. Driven, not argued: `python -m
+  hoops_gm.dev.seed_draft` produces both, and I then drove all five endpoints against a real uvicorn
+  process over HTTP - the nomination/bid/sale cycle, `draft_sequence_conflict` on a replayed append,
+  `draft_pick_out_of_turn`, `draft_player_already_taken`, `draft_no_open_lot`, and 405 on
+  `PUT`/`PATCH`/`DELETE`.
+- Code gate on SQLite: ruff, ruff format, mypy strict and 1370 tests green, plus `alembic upgrade
+  head` from empty and `downgrade base`, plus `test_models_and_migrations_agree`.
+- The format is snapshotted from `draft-format-abstraction` onto the draft row at creation and the
+  league is never consulted again for a recorded draft. The league's current format is published as
+  `league_format_drift` instead of being reconciled, so a screen can say "these prices were paid in
+  a 4-team $200 league and the league row now reads 12-team $300" rather than showing one and
+  labelling it the other.
+
+**What the mutation harness found, which review did not.** Fifteen guards, each broken on purpose,
+each demanding a named test go red - assert target text present, assert green, mutate, assert the
+file changed on disk, assert red, revert, assert green. Three results were not what reading the code
+predicted:
+
+1. **`test_the_surface_publishes_no_decision_numbers` did not catch a `max_bid` field.** It walked a
+   populated auction response looking for forbidden keys. An auction publishes `next_pick: null`, so
+   `NextPickOut` never appeared in the body and a decision number added to that model was invisible.
+   A guard that only sees the fields some fixture happened to populate is a guard over the fixture.
+   It now walks the OpenAPI component schemas transitively from the draft paths, which name every
+   field of every response model whether or not any test populates it, and asserts
+   `"NextPickOut" in seen` first so an empty walk cannot read as success.
+2. **`test_the_draft_surface_offers_no_way_to_edit_or_delete` was vacuous.** It scanned
+   `client.app.routes` for `APIRoute`s and found **zero** draft routes, because this FastAPI keeps
+   an included router as a single lazy `_IncludedRouter` entry. Every "no mutating method" assertion
+   below that passed over an empty set. The presence assertion caught it - the same difference-of-
+   two-absences failure two other lanes hit today, in the verification tool rather than the code. It
+   now reads the OpenAPI document, which is also the artefact the frontend lane will generate a
+   client from.
+3. **`extra="forbid"` was missing on the request models.** The mutation that exposed it was a bid
+   carrying a `player_label`. Pydantic's default silently drops the field, so the recorder is told
+   the bid was accepted *and* believes the player was captured, and only one of those is true. For a
+   tool whose entire job is recording what happened, silently discarding part of what someone
+   recorded is the worst available behaviour. Now a 422.
+
+**A normalisation fact I got wrong by reading and right by running.** The within-draft duplicate key
+is `normalize_key`, which strips digits and generational suffixes: `"Player 1"` and `"Player 2"` both
+key to `"player"`, and `"Gary Payton II"` keys to `"gary payton"`. My own test fixtures collided on
+it. The refusal message used to say "record a label that distinguishes them", which is advice that
+does not work - typing `"Jalen Johnson 2"` is refused identically. An ordinary word does survive
+(`"Jalen Johnson (ATL)"` keys distinctly), so the message now asks for a team abbreviation and says
+why a digit will not do. Anyone recording a mock would have hit this in the first ten minutes.
+
+**Environment hazard, for whoever is next on this machine.** There is **no virtualenv**. `hoops_gm`
+resolves to a stale namespace package in `AppData\Roaming\Python\Python314\site-packages\hoops_gm`
+containing only `schedule_context`, and `_editable_impl_hoops_gm_backend.pth` points at
+`sr2501-congenial-umbrella\backend\src` - **a worktree that no longer exists**. Every Python
+invocation needs `$env:PYTHONPATH="$PWD\src"` from `backend/`, or you silently import another lane's
+code, or nothing. Check with `python -c "import hoops_gm; print(hoops_gm.__file__)"` - it must print
+a path inside your own worktree. This cost about an hour.
+
+**Backlog:** recounted from the finished file after merging `origin/main` - 122 headings, 122 unique
+slugs, 122 markers, 1:1, giving 45 done / 1 blocked / 76 pending / 122 total, which matches the
+existing header. Separately `Compare-Object`d the slug set against `origin/main`: **identical**,
+nothing dropped, nothing added. That diff is the check that mattered - before merging it showed four
+items on main and absent from my branch (`adr-index-consistency-test`, `blend-override-persistence`,
+`blend-recipe-persistence`, `participation-ledger-population`). They were additions I had not yet
+merged rather than deletions I had caused, but a recount of my own file was internally consistent at
+118 and could not have told me that. I did not run `scripts/resolve_doc_conflicts.py` at all.
+
+**`draft-tracker` stays `pending`, and I want to be argued with about it if that is wrong.** I was
+asked to mark it done if it genuinely is. It is not. Its own description asks for a board and a
+roster construction view - that is the stacked `frontend` lane - and says "fed by the bridge and
+official API", and nothing feeds this log automatically; every event arrives because a person posted
+it. I used the marker form `player-position-eligibility` already established at
+`docs/backlog.md:223`, so the item reads as half-landed rather than untouched, and the header count
+is unaffected because no marker changed.
+
+**Could not verify:**
+
+- **Nothing was run against PostgreSQL. (Driven only that it is unavailable; the cross-dialect claim
+  itself is reasoned.)** No Postgres service and no Docker on this machine - checked, not assumed.
+  So the ADR-001 half of the Code gate is unmet by observation. What I can say is narrower: the new
+  models use only `Numeric(10, 2)`, `UTCDateTime`, `portable_enum` and ANSI `CHECK` expressions with
+  no dialect-specific functions, `test_portability.py` passes, and
+  `test_every_enum_column_has_its_own_check_listing_every_member` passes. The specific thing I would
+  drive first on Postgres is the `IntegrityError` path in `_append`: Postgres aborts the whole
+  transaction on a constraint violation where SQLite does not, and although the code does call
+  `session.rollback()` - which is the Postgres-correct thing - I have only ever seen it take the
+  SQLite path.
+- **Concurrent appends were never actually raced. (Reasoned.)** The sequence is computed as
+  `max + 1` in Python and made safe by a unique constraint on `(draft_id, sequence)`, so two
+  simultaneous writers should produce one success and one `draft_sequence_conflict`. I proved the
+  conflict path by replaying a stale `expected_last_sequence`, which exercises the *check*, not the
+  race. Cheap to disprove: two threads, one draft, no `expected_last_sequence`.
+- **`draft_pick_out_of_turn` may be too strict for real recording. (Reasoned, and I would like this
+  challenged.)** An ordered draft refuses a pick from the wrong seat. That is right for a draft the
+  tool is watching and possibly wrong for a person catching up after missing two picks, who then
+  cannot record either of them until they reconstruct the order. I chose refusal because a board
+  with picks attributed to the wrong seats is worse than a board with a gap, and because the void
+  path makes a mis-entry recoverable. If the owner hits this in a live mock, the fix is a recorded
+  `skipped` event, not relaxing the check.
+- **There is no SSE endpoint, and that is a decision rather than an omission. (Reasoned.)** An SSE
+  generator holds a database session open for the life of the connection, which is the worst
+  available failure mode for the one hour of the year this must not break. Polling `GET
+  /drafts/{id}` is cheap because the whole state derives from one indexed query. I have not measured
+  the derivation cost at a full 12-team roster-16 auction - about 200 selections and perhaps 600
+  events - so "cheap" is an argument from the query plan, not a timing.
+- **Append-only is enforced by construction and by the absence of a route, not by the database.**
+  A raw `UPDATE` against `draft_events` succeeds. There is a `sqlite_only` test that *proves* it
+  does, precisely so this narrow claim cannot quietly be read as a broad one. A trigger would need
+  dialect-specific SQL, which `test_portability.py` forbids.
+- **The `player_id` crosswalk is not exercised.** Every event recorded in anger so far carries a
+  `player_label` and a null `player_id`, so `unresolved_player_count` is currently just the
+  selection count. The two-players-one-name escape hatch is tested with synthetic ids, never against
+  a real crosswalk resolution.
+- **I rendered both edits through GitHub's own markdown renderer** (`gh api /markdown`) and read the
+  backlog entry back as text rather than trusting the diff, after a different lane's error today was
+  caught only by a rendered read. What I did *not* do is read the surrounding 14,000-line handoff
+  file rendered, so a structural problem I introduced above or below my own entry would be invisible
+  to me.
