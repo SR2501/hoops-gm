@@ -13482,3 +13482,181 @@ rule is for.
 - **Whether the resolver has other false-positive classes** beyond the seven-equals one. It
   also performed its resolution when invoked with `--help`, which is worth knowing before
   someone runs it expecting usage text: it ignores arguments and acts.
+---
+
+## 2026-08-21 — backend — The owner can import his projections, and the endpoint answers 200
+
+**Changed:** `ingest/projections/import_csv.py` (the operator command),
+`dev/seed_projections.py` (the demo seed), `db/lineage.py`
+(`lock_projection_source_scope`), `ingest/projections/importer.py` (R58), three
+test modules, and the usual docs. 10 files.
+
+**Now true**, driven rather than asserted:
+
+```
+python -m hoops_gm.ingest.projections.import_csv 2026-27 bbm.csv --dry-run
+  -> 60 rows, 60 accepted, 60 would be written, rolled back
+python -m hoops_gm.dev.seed_projections
+  -> 580 players, 569 positions, cohort 60, 60 projections, 0 unresolved
+curl .../api/v1/leagues/1/projections/current
+  -> HTTP 200, 60 players with names/teams/positions, 60 rates,
+     60 games-played assumptions in their own array
+```
+
+That 200 is the first this endpoint has ever returned outside pytest.
+
+**The gap was verified before it was filled.** Eleven `argparse`/`main` entry
+points exist under `backend/`; none imports projections. `grep
+import_projection_csv api/` returns one hit and it is a comment. So there was no
+command path and no HTTP path, and `projections-api-early` had shipped an
+endpoint over a table nothing filled.
+
+**The finding that reshaped the unit, and it was not in anyone's brief.** I was
+asked to seed the endpoint from the committed Basketball Monster fixture. That
+fixture's two rows are named **Player Alpha** and **Player Gamma** — its own
+metadata says the paid rows were removed and the committed ones are synthetic —
+and they match no player in `nba_playerindex_current.json`. So the importer
+accepts zero resolutions, writes zero rows, and `blending.py:615` raises
+`MissingProjectionDataError`. **Seeding it produces a new refusal, not a 200.**
+The coordinator's concern had been that a two-row fixture proves nothing about
+column width or cohort size; the binding problem is one step earlier — it proves
+nothing at all here, because it never becomes a row.
+
+So the demo CSV is generated **in memory at seed time** from the canonical
+players the same run imported, in the verified profile's exact committed header
+order, and goes through `import_projection_csv` unmodified. No committed CSV, on
+purpose: a checked-in file of real NBA names sitting beside real captures would
+read as a recording. Names are real because Basketball Monster publishes no team
+and no position column, so a name is the resolver's only evidence — 0.70,
+promoted by `UNIQUE_NAME_BONUS` to exactly `AUTO_ACCEPT_CONFIDENCE`. Selecting
+only unique normalised names is what makes resolution succeed *by construction*
+rather than by luck, which is why this could be committed to inside one session
+instead of hoping the resolver cooperated. The numbers are invented and the
+docstring says so in its first line.
+
+**R58 closed, and its severity honestly reduced.** The mechanism is real and I
+re-derived it one line more specifically than the register had it:
+`get_or_create_projection_source` ends `row.display_name = display_name;
+session.flush()`, and the ORM emits **no `UPDATE` when the value is unchanged** —
+which is exactly a repeat import — so no DML had opened the transaction when the
+`FOR UPDATE` ran. Separately, SQLAlchemy's SQLite dialect renders no `FOR UPDATE`
+text at all, so that clause never serialised anything on SQLite under any
+conditions.
+
+**But I could not reproduce harm, and that matters more than the fix.** Four
+concurrent processes at a barrier against one SQLite file, with the lock
+disabled, converged correctly on every round — both with byte-identical imports
+and with divergent cohorts (2 imports / 65 rows, stable over three rounds).
+SQLite serialises writers at the file level once DML begins, and the
+reconciliation here is idempotent per import row. The *window* was real and is
+now closed; the corruption the 🟡 implied was never evidenced. I have downgraded
+the row rather than let a closed defect keep an unearned severity.
+
+**Two corrections to R58's own text.** It said running an import beside the
+running server is the owner's workflow; there are four `@router.post` sites in
+`api/`, all in `bridge.py` and `lineage.py`, and **no projection write path** —
+that case is a reader beside a writer, already handled by PR #45's bracketed
+release. The unserialised case is two import processes, which is narrower and is
+the one my command creates. The coordinator wrote that row from a lane report
+rather than from the routes and has accepted it as R56 again.
+
+**The fix's first version was wrong and a merged test caught it.** I put
+`acquire_transaction_lock` directly in `ingest/projections/importer.py`.
+`test_lineage_locks_are_acquired_through_exactly_one_import` failed: two
+lock-order recorders monkeypatch `hoops_gm.db.lineage.acquire_transaction_lock`,
+and that only captures anything because `db/lineage.py` is the sole module
+reaching the primitive. A second importer would have **blinded both recorders
+while leaving them green**. The lock now lives in `db/lineage.py` as
+`lock_projection_source_scope`, delegating to `lock_refresh_scope` (which the
+same test pins to one call site). That is a better design for an unrelated
+reason: the reservation targets `refresh_runs`, so the `updated_at` bump on
+`projection_sources` I had been carefully avoiding became structurally
+impossible.
+
+**A docstring claim I refused to inherit, now executable.** `lock_refresh_scope`
+says SQLite "reserves its database-wide writer through a no-op update". For a
+projection source there is no `refresh_runs` row, so that is a **zero-row**
+`UPDATE`, and whether that still takes the reservation is not obvious.
+`test_the_lock_takes_a_real_write_reservation_before_any_other_dml` drives it
+from a second connection with `busy_timeout = 250`. It does. The sentence was
+true; it is now checked rather than believed.
+
+**Mutation checks: seven, and two were NOT CAUGHT on the first run.** Both were
+defects in my own tests, and both are the failure the gates describe.
+
+- `updated_at` invariance passed whether or not the bug was present, because
+  SQLite's `CURRENT_TIMESTAMP` has one-second resolution and the whole test ran
+  inside one tick. Fixed by backdating the stored value to 2020, so any
+  `onupdate` firing is visible regardless of clock granularity.
+- The seed's uniqueness filter could not be caught at all: **all 580 players in
+  the fixture normalise to 580 distinct keys**, so `== 1` and `>= 1` select the
+  identical set. The guard is genuinely defensive. It is now exercised directly
+  against a constructed duplicate, and the seed docstring says the filter selects
+  nothing out today so nobody reads it as active.
+
+A third mutation — deleting the `_lock_projection_source_scope` call from the
+importer — was also NOT CAUGHT, correctly: a single-process import does not need
+the lock to succeed, so no functional test can see its removal. **A guard whose
+removal no test can see is a guard that will be removed by accident**, so there
+is now a test that records the lock and asserts the projection scope is taken
+*first*.
+
+**The harness caught itself before it caught anything else.** Its first run
+reported `NOT GREEN before mutating` for seven passing tests: `addopts` already
+carries `-q`, my extra one made it `-qq`, and `-qq` suppresses the summary line
+the harness was reading for the word "passed". A verifier concluding from absent
+output is the same survivors defect as R57's, in the tool built to find it. It
+now asserts `1 passed`/`1 failed` explicitly, so a collection error or a wrong
+test id fails rather than reads as a result.
+
+**One near-miss worth recording because it was luck.** I curl'd the endpoint,
+got a 404, and nearly wrote it up as a routing problem. Port 8000 was already
+held by another process; my server had exited with `[Errno 10048]` and the 404
+came from somebody else's application. The reply looked exactly like an answer
+from mine. Read the server's own log before believing a response — a reply on the
+right port from the wrong process is indistinguishable from a reply from yours.
+
+**`projection-import-process-concurrency` did not exist.** R58 said it was
+"filed"; it appeared in no backlog entry. Filed now and closed, alongside
+`projections-import-cli` and `projections-seed`. The backlog header was also
+internally inconsistent — the header said 115 while the parenthetical two lines
+below said 114 — because a rebase updated one and not the other. Recounted from
+the finished file: 118 headings, 118 markers, 1:1, no duplicate names, 44 done /
+1 blocked / 73 pending. `README.md`'s absolute item count is **removed** rather
+than corrected: it moved three times today, and restating a daily-changing number
+is R53.
+
+**Could not verify:**
+
+*PostgreSQL, and this is the one that matters.* The old `FOR UPDATE` **did**
+work on PostgreSQL, so replacing it with an advisory lock taken earlier is a real
+behaviour change on the dialect where the defect did not exist. No Docker here;
+everything above was driven on SQLite. CI's postgres job is the evidence and I
+have not seen it green on this head yet.
+
+*That the fix prevents anything.* Stated plainly because the temptation is to
+report the fix and not the null result: I disabled the lock and ran four
+processes at a barrier, twice over, and could not make the old defect produce a
+wrong outcome. The lock is correct and cheap and the window was genuine, but this
+unit closes a *reachability* argument, not a demonstrated corruption.
+
+*Whether `--dry-run` holding the write reservation will annoy the owner.* It is
+a deliberate trade — a rehearsal computed differently from the performance is not
+a rehearsal — and it is stated in `--help`. Nobody has run it beside a real
+import on a real database.
+
+*The seed against a database that is not empty.* It inherits
+`require_safe_demo_target` from `seed_schedule_grid`, which I did not re-drive;
+I only exercised it against fresh throwaway databases.
+
+*Anything about a real Basketball Monster export.* I have never seen one. Every
+row this unit has been driven with is synthetic, including the ones with real
+names on them, so "the importer handles the owner's file" is untested by
+construction and stays untested until he runs it. Column width, long names,
+accented names, suffixes and a 550-row cohort are all unexercised.
+
+*Whether 60 is a useful demo size for the frontend.* Guessed, not asked.
+
+**Next:** `frontend` can build against a database that answers. Two commands and
+this head are in that lane's session directly rather than relayed, because a
+command relayed by a coordinator is a command nobody ran.

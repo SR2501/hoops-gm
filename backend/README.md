@@ -227,6 +227,79 @@ dates, not a real Fantrax calendar, and its playoff weeks are synthesized — th
 settings contract cannot express "authoritatively zero playoff periods". Do not
 read the demo as evidence that a real league's calendar joins correctly.
 
+### Projections on screen
+
+`seed_schedule_grid` seeds no players and no projections, so
+`/api/v1/leagues/{id}/projections/current` could only ever answer
+`projections_source_not_imported` — it had never returned 200 outside pytest.
+`seed_projections` composes the schedule seed and then adds both:
+
+```bash
+cd backend
+python -m hoops_gm.dev.seed_projections --database-url sqlite:///./projections_demo.db
+DATABASE_URL=sqlite:///./projections_demo.db python -m hoops_gm
+curl "http://127.0.0.1:8000/api/v1/leagues/1/projections/current"
+```
+
+**The projection numbers it writes are invented.** Nothing derived from that
+cohort is a projection anyone should look at, and a fixture captured from the
+screen it drives proves *shape* and nothing else — not column width, not long
+names, not a real cohort size, not a real distribution. Sixty players is enough
+to scroll and sort and is not a league.
+
+Only the **names** are real, and they have to be: Basketball Monster's contract
+publishes no team and no position column, so a name is the only evidence the
+identity resolver has, and a seed that invented names would resolve nothing. The
+demo CSV is generated in memory at seed time from the canonical players the same
+run imported, in the verified profile's exact committed header order, and goes
+through `import_projection_csv` unmodified. There is no committed demo CSV, on
+purpose: a checked-in file of real NBA names beside real captures would read as
+one.
+
+The committed Basketball Monster fixture cannot do this job.
+`tests/fixtures/projections/basketball_monster_sample.csv` holds two rows named
+*Player Alpha* and *Player Gamma* — its metadata says the paid rows were removed
+and the committed ones are synthetic — so it resolves to zero players, writes
+zero rows, and `release_projection_import` then raises. Seeding it through the
+real importer produces **a new refusal, not a 200**. That fixture is Adapter-gate
+evidence of the column contract and is doing that job correctly.
+
+## Importing a real projection CSV
+
+```bash
+cd backend
+# Rehearse: does the real thing, reports the real match count, rolls back.
+python -m hoops_gm.ingest.projections.import_csv 2026-27 ~/bbm-2026-27.csv --dry-run
+
+# Do it.
+python -m hoops_gm.ingest.projections.import_csv 2026-27 ~/bbm-2026-27.csv
+```
+
+Players must already exist — run `python -m hoops_gm.ingest.backfill crosswalk
+--season 2026-27` first, or there is nothing for the CSV's names to resolve
+against.
+
+`--dry-run` is a rehearsal rather than a preview: it runs the real import,
+identity resolution included, and rolls back. That means it holds the database
+write lock for its duration and a concurrent real import will wait. It does not
+relax profile verification, so a green dry run cannot promise an import that
+then refuses.
+
+Nothing from inside the file is printed. The export is paid content whose rows
+are deliberately absent from this repository, and a terminal scrollback is one
+paste away from being somewhere else. The summary is counts, identifiers and
+digests; source names appear only in the unresolved-players CSV under gitignored
+`data/reports/projections/`.
+
+There is no `--database-url`, for the reason `hoops_gm.ingest.schedule_import`
+has none: both prior credential leaks in this repository were leaks *of that
+flag*.
+
+Exit codes: `0` clean · `2` refused, nothing written · `3` no such file · `4`
+database refused, nothing written · **`5` imported, and the cohort is smaller
+than the file**. `5` exists because the alternative is exit `0` on an import
+where a hundred players silently failed to match.
+
 ## Why the projections endpoint takes no lock
 
 It reads `projection_sources`, `projection_imports`, `projections`, `players`
