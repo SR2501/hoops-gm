@@ -9451,3 +9451,170 @@ tomorrow's nightly live-smoke run is the **first execution anywhere** of four al
 in #39; a red one is information, and someone must read it and append the outcome including
 "all green". Injury-status conversion remains paused at `3285e647`; runtime activation
 remains vetoed pending refreshed Model-gate evidence.
+
+---
+
+## 2026-08-20 — data-engineer — The real 2026-27 season is loadable by one command
+
+**Changed:** Implemented ADR-013's pending/failure distinction in
+`ingest/nba/schedule.py`, `db/lineage.py` and `ingest/importers.py`; added
+`hoops_gm.ingest.schedule_import`, the first operator command that fetches
+`ScheduleLeagueV2` and imports a forward season; plumbed pending into the
+schedule-grid lineage block; retired the demo seed's TBD filter. 16 files.
+
+**Now true:** The real 2026-27 NBA season loads into a real database with one
+command, verified end to end rather than asserted:
+
+```
+python -m hoops_gm.ingest.schedule_import 2026-27
+  -> 30 nba_teams, 1200 nba_games, 2400 team_schedule rows, 80 per team for all 30
+     source 1206 = resolved 1200 + pending 6, version e80a3aecca0e86eb, cohort "current"
+  re-run -> same version, one refresh row (converges, does not advance "current")
+```
+
+The six pending games are `0022601201`-`04` (2026-12-04/05) and
+`0022601229`/`30` (2026-12-08), recorded with dates and labels.
+
+**The distinction is determinable from the payload, not guessed.** I was asked
+to report rather than guess if it were not. A pending team block is
+`{"teamId": 0, "teamName": null, "teamCity": null, "teamTricode": null,
+"teamSlug": null}` — id zero *and* every naming field null — beside
+`gameStatusText: "TBD"`, `gameSubtype: "in-season-knockout"` and
+`gameSubLabel: "Quarterfinal"`/`"Semifinal"`. Pending requires all of it. A zero
+id beside *any* populated naming field is the source naming a team it gave no
+id for, which is a resolution failure and still refuses.
+
+**That third branch is not decoration; it is what keeps the refusal reachable.**
+Without it today's parser could only resolve, zero out, or raise, and
+`unresolved_game_ids` would be a guard that reads correctly and can never fire —
+R50 exactly, in code I was about to ship. The mutation check drives it both
+ways: set `teamTricode: "LAL"` on a real zero-id Cup game, confirm the parser
+moves it pending -> unresolved, then confirm `import_schedule` actually refuses
+and writes nothing. A classifier that classifies correctly beside an importer
+that ignores the classification would have been the same false comfort.
+
+**Only `wins`/`losses`/`score`/`seed` are excluded from the identity check**,
+and that mattered: they are zero for *every* not-yet-played game, so a naive
+"all fields empty" rule would have classified the entire future schedule as
+contradictory.
+
+**Contract shape, final field names.** I reported `game_id`/`label`/`sub_label`
+to the coordinator and shipped `nba_game_id`/`game_label`/`game_sub_label`,
+plus `game_date` and a fifth field `game_subtype` I had not mentioned. The
+frontend lane caught it by reading the source rather than the relay. No harm
+done, and the lesson is not "report more carefully" but that a contract
+reported one way and shipped another is the same shape as a docstring that
+outruns its implementation. The authoritative shape now lives in
+`docs/adapters/nba-schedule.md`, which is checkable against the Pydantic model.
+
+**A pending game carries no team, and consumers must not invent one.** The
+coordinator had briefed the frontend that DAL and LAL "have an unscheduled
+game". The source explicitly withheld that attribution; the honest statement is
+period-scoped — *this week contains N games whose teams are not yet decided, so
+any count in it may rise* — applied to every team in the column. This is stated
+on `PendingScheduleGameLineage` where a consumer meets it, not only in prose.
+
+**Two cross-boundary changes, both approved, both declared.**
+`api/routes/schedule_grid.py` is purely additive: two fields plumbed from a
+block I produce. `dev/seed_schedule_grid.py` is not, and was forced —
+`resolved_schedule_payload`/`reconcile_dropped_games` existed only to work
+around the refusal ADR-013 removes, and reconciled against an
+`unresolved_game_ids` my change correctly empties, so the seed would have
+refused itself. Retiring a workaround, not deleting a guard. The consequence is
+strictly good: the demo goes 12 source / 10 resolved / **2 pending**, so the
+local demo database now exercises the pending path instead of hiding it, and
+the frontend lane can drive its new state locally rather than mocking it. Grid
+counts and `scheduled_team_games` are unchanged, because the filter only ever
+removed games that never resolved.
+
+**The operator command has no `--database-url`.** I was asked to guard the leak;
+I removed the flag instead and read `Settings` like `ingest/backfill.py` does.
+Both prior defects were leaks *of that flag* — a verbatim print, then libpq's
+`password` query argument slipping past `hide_password=True`, which masks
+`URL.password` and nothing else. Guarding it failed twice; there is now nothing
+in `argv` to print, and a test asserts the parser exposes exactly
+`{-h, --help, --max-age-hours, --dry-run}`.
+
+**The schedule version does not cover the pending set.** `schedule_content_version`
+fingerprints persisted `team_schedule` rows and a pending game has none, so two
+cohorts differing only in which games are pending share a version — the demo
+seed's 10-source cohort and its 12-source, 2-pending successor both fingerprint
+to `9bcac1c60490b41a`. So **a consumer must not cache the pending set keyed on
+the schedule version alone**, and `verify_refresh` cannot detect a forged
+pending list, though it still detects a forged resolved cohort. Pinned by
+`test_the_schedule_version_does_not_change_when_only_the_pending_set_changes`,
+documented on `_register_schedule_refresh` and on the API model, and filed as
+`schedule-pending-persistence` because closing it is schema and migration.
+
+**`persisted_team_row_count == 2 * resolved_game_count` when make-up games
+arrive:** nothing special happens. A later refresh has different counts and a
+different fingerprint, correctly, because rows changed. A changing count is not
+drift; it is the season being published. What a reader should *not* conclude is
+that a stable count means a stable season — 80 games per team today becomes 82
+once eliminated Cup teams get their make-ups, and `quant` must not fit anything
+to an 80-game team season.
+
+**Fixtures, and a gap in the old one.** Captured my own live payload
+(2,474,177 bytes, 173 dates) and reconciled it against the committed
+`nba_scheduleleaguev2_2026_27.json`: all 12 games present, **every retained
+field byte-identical**, including both pending team blocks. But that fixture is
+*field-trimmed* — six keys per game, four per team block — so its pending games
+carry `gameSubLabel: null` and no `gameSubtype` at all. An offline test against
+it alone therefore proves nothing about the labels ADR-013's flip condition
+turns on. `nba_scheduleleaguev2_2026_27_pending_knockout.json` (81,749 bytes,
+whole unmodified objects, all six pending games plus 18 resolved) is what
+covers them, and the manifest says so for both files.
+
+**The live smoke asserts the pending set is structurally explicable**, not
+merely small: every pending game must carry an Emirates NBA Cup label and the
+`in-season-knockout` subtype, sub-labels confined to Quarterfinal/Semifinal, and
+an *empty* pending set fails too, because the bracket is published undecided
+until December. A count-only assertion would stay green through exactly the
+scenario that invalidates the ADR. Ran green against the live source tonight.
+
+**The cohort manifest's fingerprint list watches the wrong file, and I found it
+the hard way.** `DEFAULT_SOURCE_FINGERPRINT_PATHS` includes
+`backend/src/hoops_gm/db/lineage.py`, which the generator never imports a symbol
+from, and omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which it directly
+calls for the `schedule_league_v2` reconciliation view. My change touched both:
+the alarm fired on the file outside the derivation and stayed silent on the file
+inside it. I updated the stale `db/lineage.py` digest and **did not** add the
+missing path, because recording today's bytes for a newly-watched file would
+claim the cohort was derived with code it was not. Filed as
+`schedule-cohort-fingerprint-list`.
+
+Note what I could *not* borrow: the precedent for updating that digest
+(commit `a6ec4ca`) justified itself by proving the change AST-identical. Mine is
+not — it changes executable logic. What I verified instead is narrower and I am
+stating it as such: `cohort_evidence.py` imports no symbol from `db/lineage.py`,
+none of the changed symbols (`ScheduleCompleteness`, `schedule_completeness`,
+`_pending_games`) is on any path it calls, and the one changed file it *does*
+call into produces an identical result over the committed 2025-26 cohort-window
+fixture (6 source / 6 resolved / 0 pending, the four in-window ids unchanged and
+still a subset of the manifest's 173).
+
+**Could not verify:**
+
+- **A full regeneration of the cohort manifest.** It needs a fully backfilled
+  cohort database and the injury-report captures, both gitignored. So the
+  digest I recorded is justified by the call-graph argument above, not by
+  reproduction. This is the weakest claim in the unit.
+- **That the 1,200 resolved games are correct against any independent view.**
+  The cross-source reconciliation that does that needs `LeagueGameFinder` and
+  `PlayerGameLogs` rows, which a forward schedule has none of. There is no
+  second witness to a season that has not been played.
+- **PostgreSQL.** No Docker locally; native Postgres is CI-only. Every claim
+  above is SQLite. The completeness block is JSON in both, but I have not run
+  this code against Postgres and am not claiming to have.
+- **Anything about make-up games.** I assert only that a later refresh will
+  differ; I have not seen the source publish one, and the shape it arrives in
+  is unobserved.
+- **Whether `_optional_text`'s leniency is right.** It normalises a missing
+  label to `""` rather than refusing, on the grounds that a blank
+  `gameSubLabel` should not cost a whole season's import. If the source ever
+  drops labels wholesale, the live smoke goes red and the offline suite does
+  not — which is the intended split, but it is a judgement, not a measurement.
+
+**Next:** PR open against `main`. Two follow-ups filed
+(`schedule-pending-persistence`, `schedule-cohort-fingerprint-list`). The
+frontend lane is stacked on this branch and has the confirmed field names.

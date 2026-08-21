@@ -263,7 +263,7 @@
     "manifest_is_a_pure_function_of_persisted_state": true,
     "source_fingerprint_method": "SHA-256 of each file's bytes with CRLF normalised to LF, which equals the SHA-256 of the committed Git blob for a file Git stores with LF endings and is invariant across checkout newline configuration and operating system.",
     "source_fingerprints": {
-      "backend/src/hoops_gm/db/lineage.py": "8181cf7ea6091dcd4e634b8335dae8d3410550758f45c02c28899d5f2bcb1865",
+      "backend/src/hoops_gm/db/lineage.py": "19edfdb9dcf1df16bdca054fed9c7ecd2b7600596b6f9d5a2205c6a48e0423a1",
       "backend/src/hoops_gm/ingest/backfill.py": "419e6f5a9e7b05fc58bd2614cf980a7a8945fd8c72421dd78fbfed996a4dd62d",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
       "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "4c93e41605f779dd54e663436101b739ded141e40a3bf3855bbcd9f3b77d21ee",

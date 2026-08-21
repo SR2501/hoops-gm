@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from sqlalchemy import select, update
@@ -86,19 +86,64 @@ def content_fingerprint(parts: Iterable[str]) -> str:
 
 
 @dataclass(frozen=True)
+class PendingScheduleGame:
+    """A game the source published with its team identities explicitly absent.
+
+    Not a parse failure. ``ScheduleLeagueV2`` publishes the Emirates NBA Cup
+    knockout fixtures before group play decides who plays in them, with
+    ``teamId`` zero and every one of ``teamName``, ``teamCity``,
+    ``teamTricode`` and ``teamSlug`` null. That is the source stating the
+    bracket is undetermined, not the source failing to tell us something
+    (ADR-013).
+
+    Defined here rather than beside the parser because it is part of what a
+    refresh row *records*, and ``db`` may not import ``ingest``. The labels
+    are carried because ADR-013's "what would flip this" turns on them:
+    pending only means "not yet decided" while the pending set stays
+    structurally explicable, and neither a consumer nor the live smoke can
+    check that against a bare list of game ids.
+
+    **It carries no team, by definition.** A consumer may say the scoring
+    period containing ``game_date`` is provisional; it may not attribute the
+    game to a team, because that is the one thing the source withheld.
+    """
+
+    nba_game_id: str
+    game_date: date
+    game_label: str
+    game_sub_label: str
+    game_subtype: str
+
+
+@dataclass(frozen=True)
 class ScheduleCompleteness:
     """What the schedule source reported and what was actually persisted.
 
     Recorded on the refresh row so "why is this the current schedule cohort"
     is answerable from the database alone: the exact scope, the source's own
-    game count, how many of those resolved to real teams, which game IDs did
-    not, and how many ``team_schedule`` rows exist for exactly that scope.
+    game count, how many of those resolved to real teams, which game IDs the
+    source has not yet assigned teams to, which did not resolve, and how many
+    ``team_schedule`` rows exist for exactly that scope.
 
     Field names are the unambiguous ones on purpose.
     ``persisted_team_row_count`` counts *rows* (two per game), not games, and
     the two are easy to confuse in a hurry when the only thing distinguishing
     a correct season from a half-imported one is whether a number is 1,230 or
     2,460.
+
+    **``pending_game_ids`` and ``unresolved_game_ids`` are not synonyms.**
+    Under ADR-013 a pending game is one the source published with its team
+    identities explicitly absent — an undrawn Emirates NBA Cup bracket — and
+    it is recorded rather than refused. An unresolved game is a resolution
+    *failure* and is still refused, so this list is empty on every registered
+    refresh. The invariant is
+    ``source_game_count == resolved_game_count + len(pending_game_ids)``.
+
+    ``pending_games`` carries the same set with the date and labels a consumer
+    needs to say *which* period is provisional, and to check ADR-013's
+    flip condition that the pending set stays structurally explicable. It is
+    cross-checked against ``pending_game_ids`` rather than derived from it at
+    read time, so the two cannot silently disagree.
     """
 
     season: str
@@ -107,6 +152,11 @@ class ScheduleCompleteness:
     resolved_game_count: int
     unresolved_game_ids: tuple[str, ...]
     persisted_team_row_count: int
+    pending_games: tuple[PendingScheduleGame, ...] = ()
+
+    @property
+    def pending_game_ids(self) -> tuple[str, ...]:
+        return tuple(game.nba_game_id for game in self.pending_games)
 
     def as_summary(self) -> dict[str, object]:
         return {
@@ -115,8 +165,91 @@ class ScheduleCompleteness:
             "source_game_count": self.source_game_count,
             "resolved_game_count": self.resolved_game_count,
             "unresolved_game_ids": list(self.unresolved_game_ids),
+            "pending_game_ids": list(self.pending_game_ids),
+            "pending_games": [
+                {
+                    "nba_game_id": game.nba_game_id,
+                    "game_date": game.game_date.isoformat(),
+                    "game_label": game.game_label,
+                    "game_sub_label": game.game_sub_label,
+                    "game_subtype": game.game_subtype,
+                }
+                for game in self.pending_games
+            ],
             "persisted_team_row_count": self.persisted_team_row_count,
         }
+
+
+def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]:
+    """Read the pending block, treating its absence as "no pending games".
+
+    A completeness block written before ADR-013 has no pending keys, and that
+    is not missing information: the contract it was written under required
+    ``source_game_count == resolved_game_count``, so its pending set was
+    necessarily empty. Reading it as ``()`` recovers exactly what it claimed.
+    A block that *does* carry the keys is held to them, in both directions —
+    the ids and the records must name the same games in the same order, so a
+    reader can use either without checking which one is stale.
+    """
+
+    key = SCHEDULE_COMPLETENESS_SUMMARY_KEY
+    has_ids = "pending_game_ids" in raw
+    has_records = "pending_games" in raw
+    if not has_ids and not has_records:
+        return ()
+    if not has_ids or not has_records:
+        present, missing = (
+            ("pending_game_ids", "pending_games")
+            if has_ids
+            else ("pending_games", "pending_game_ids")
+        )
+        raise ValueError(f"{key} records {present} without {missing}")
+
+    ids = raw["pending_game_ids"]
+    records = raw["pending_games"]
+    if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+        raise ValueError(f"{key}.pending_game_ids is not a list of strings")
+    if not isinstance(records, list):
+        raise ValueError(f"{key}.pending_games is not a list")
+
+    parsed: list[PendingScheduleGame] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError(f"{key}.pending_games contains a non-object")
+        try:
+            nba_game_id = record["nba_game_id"]
+            game_date = record["game_date"]
+            labels = tuple(
+                record[field] for field in ("game_label", "game_sub_label", "game_subtype")
+            )
+        except KeyError as exc:
+            raise ValueError(f"{key}.pending_games entry is missing {exc.args[0]!r}") from exc
+        if not isinstance(nba_game_id, str) or not isinstance(game_date, str):
+            raise ValueError(f"{key}.pending_games entry has a non-string id or date")
+        if not all(isinstance(label, str) for label in labels):
+            raise ValueError(f"{key}.pending_games entry has a non-string label")
+        try:
+            parsed_date = date.fromisoformat(game_date)
+        except ValueError as exc:
+            raise ValueError(f"{key}.pending_games entry has an unparseable date") from exc
+        parsed.append(
+            PendingScheduleGame(
+                nba_game_id=nba_game_id,
+                game_date=parsed_date,
+                game_label=str(labels[0]),
+                game_sub_label=str(labels[1]),
+                game_subtype=str(labels[2]),
+            )
+        )
+
+    if [game.nba_game_id for game in parsed] != list(ids):
+        raise ValueError(
+            f"{key}.pending_game_ids and .pending_games name different games: "
+            f"{list(ids)} != {[game.nba_game_id for game in parsed]}"
+        )
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{key}.pending_game_ids contains duplicates")
+    return tuple(parsed)
 
 
 def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness | None:
@@ -151,6 +284,7 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a non-string scope")
     if not isinstance(unresolved, list) or not all(isinstance(item, str) for item in unresolved):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY}.unresolved_game_ids is not a list")
+    pending = _pending_games(raw)
     counts = (source_game_count, resolved_game_count, persisted_team_row_count)
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a non-integer count")
@@ -164,12 +298,18 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
     if unresolved:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records {len(unresolved)} unresolved game id(s); "
-            "a refresh is only registered once the source cohort is fully resolved"
+            "a refresh is only registered once every game the source claims to have assigned "
+            "resolves; a game the source has not assigned yet belongs in pending_game_ids"
         )
-    if source_game_count != resolved_game_count:
+    if set(pending_ids := [game.nba_game_id for game in pending]) & set(unresolved):
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records the same game as pending and unresolved: "
+            f"{sorted(set(pending_ids) & set(unresolved))}"
+        )
+    if source_game_count != resolved_game_count + len(pending):
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports {source_game_count} source game(s) but "
-            f"{resolved_game_count} resolved"
+            f"{resolved_game_count} resolved and {len(pending)} pending"
         )
     if persisted_team_row_count != 2 * resolved_game_count:
         raise ValueError(
@@ -184,6 +324,7 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
         resolved_game_count=int(resolved_game_count),
         unresolved_game_ids=tuple(str(item) for item in unresolved),
         persisted_team_row_count=int(persisted_team_row_count),
+        pending_games=pending,
     )
 
 

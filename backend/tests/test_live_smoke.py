@@ -31,6 +31,7 @@ import csv
 import io
 import os
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -55,6 +56,7 @@ from hoops_gm.ingest.nba import (
     parse_common_all_players,
     parse_league_game_finder,
     parse_player_game_logs,
+    parse_schedule,
     parse_teams,
 )
 from hoops_gm.ingest.projections import (
@@ -492,6 +494,141 @@ class TestNbaStatsIsAlive:
 
         with pytest.raises(SourceContractError):
             _default_endpoint_factory("BoxScoreSummaryV2", game_id=FIXTURE_MIDSEASON_GAME_ID)
+
+
+class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
+    """ADR-013's flip condition, driven against the live source.
+
+    The decision to record a game with absent team identities as *pending*
+    rather than refusing rests entirely on one empirical claim: the source
+    withholds team identities **because a bracket is undecided**, and for no
+    other reason. If it ever does so for a different reason — a partial
+    outage, a schema change, a data error — then "pending" stops meaning "not
+    yet decided" and the distinction collapses into the silent-degradation
+    failure the completeness contract exists to prevent.
+
+    So these assert the pending set is *structurally explicable*, not merely
+    small. A count-only assertion would stay green through exactly the
+    scenario that invalidates the ADR: six games pending for six different
+    reasons is indistinguishable from six pending Cup fixtures if all you
+    count is six.
+
+    **What these cannot see:** whether the resolved games are correct. That is
+    the offline contract test's job. And a source that stopped publishing the
+    Cup bracket altogether would show as zero pending, which fails the count
+    assertion below rather than passing silently.
+    """
+
+    #: Every label the pending class is allowed to carry. Not a wildcard: the
+    #: point is that an unrecognised label is a finding, not a variation.
+    EXPLICABLE_LABELS: ClassVar[set[str]] = {"Emirates NBA Cup"}
+    EXPLICABLE_SUBTYPES: ClassVar[set[str]] = {"in-season-knockout"}
+
+    def test_the_forward_season_accounts_for_every_game_it_publishes(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: the completeness invariant stops holding against live data.
+
+        ``source == resolved + pending`` is the invariant ADR-013 replaced
+        ``source == resolved`` with. Asserted here against the real payload
+        because the committed fixture is a slice, and a slice cannot notice
+        the source growing a fourth class of game.
+        """
+        result = parse_schedule(
+            nba.schedule_league(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
+            season=FIXTURE_CURRENT_SEASON,
+        )
+
+        assert result.unresolved_game_ids == (), (
+            "the live schedule now reports games whose teams the source named but did not "
+            f"identify: {list(result.unresolved_game_ids)}. This is a resolution failure, not "
+            "an undecided bracket, and import_schedule will correctly refuse the season"
+        )
+        assert result.source_game_count == len(result.games) + len(result.pending_games), (
+            f"{result.source_game_count} source games do not account for "
+            f"{len(result.games)} resolved plus {len(result.pending_games)} pending"
+        )
+        assert len(result.games) >= 1200, (
+            f"only {len(result.games)} games resolved for {FIXTURE_CURRENT_SEASON}; 1,200 "
+            "resolved on 2026-08-20 and the count only rises as the NBA fills the calendar"
+        )
+
+    def test_every_pending_game_is_an_undecided_cup_fixture(self, nba: NbaStatsClient) -> None:
+        """FAILS IF: the source withholds team identities for a new reason.
+
+        **This is the assertion ADR-013 says to revert on.** A red here does
+        not mean the parser broke; it means the premise did. Read the labels
+        in the failure message before changing anything, and if pending no
+        longer means "not yet decided", go back to refusing.
+
+        Zero pending is also a failure, deliberately. The Cup bracket is drawn
+        in December and its knockout fixtures are published undecided every
+        season, so an empty pending set before then means the source stopped
+        publishing them — which changes what a complete season is, and is
+        exactly as much of a finding as an inexplicable one.
+        """
+        result = parse_schedule(
+            nba.schedule_league(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE),
+            season=FIXTURE_CURRENT_SEASON,
+        )
+
+        observed = {
+            game.nba_game_id: (game.game_label, game.game_sub_label, game.game_subtype)
+            for game in result.pending_games
+        }
+        inexplicable = {
+            game_id: labels
+            for game_id, labels in observed.items()
+            if labels[0] not in self.EXPLICABLE_LABELS or labels[2] not in self.EXPLICABLE_SUBTYPES
+        }
+
+        assert not inexplicable, (
+            "the source published games with no teams assigned for a reason other than an "
+            f"undecided Emirates NBA Cup bracket: {inexplicable}. ADR-013's premise is that "
+            "absent team identities mean 'not yet decided'; if that is no longer true, "
+            "'pending' is silently absorbing a different failure and the ADR says to revert "
+            "to refusing rather than to widen this set"
+        )
+        assert observed, (
+            f"the live {FIXTURE_CURRENT_SEASON} schedule reports no pending games at all. The "
+            "Cup knockout bracket is published undecided until December; an empty set means "
+            "the source changed what it publishes, not that the season is fully scheduled"
+        )
+        assert {labels[1] for labels in observed.values()} <= {"Quarterfinal", "Semifinal"}, (
+            f"a pending game carries an unexpected sub-label: {sorted(observed.values())}"
+        )
+
+    def test_a_pending_game_still_carries_no_team_identity_at_all(
+        self, nba: NbaStatsClient
+    ) -> None:
+        """FAILS IF: the source starts naming a team it gives no id for.
+
+        The pending/failure distinction rests on the identity block being
+        withheld *entirely* — id zero and every naming field null. If the
+        source began populating, say, ``teamTricode`` beside a zero id, the
+        parser would correctly reclassify those games as failures and refuse
+        the season. This asserts on the raw payload rather than on the parse
+        so the diagnosis is available before the refusal is explained.
+        """
+        payload = nba.schedule_league(season=FIXTURE_CURRENT_SEASON, max_age=NO_CACHE)
+        named_without_id = [
+            (game["gameId"], side, {k: v for k, v in game[side].items() if k != "teamId"})
+            for entry in payload["leagueSchedule"]["gameDates"]
+            for game in entry.get("games") or ()
+            if str(game.get("gameId", "")).startswith("002")
+            for side in ("homeTeam", "awayTeam")
+            if game[side].get("teamId") == 0
+            and any(
+                game[side].get(field) not in (None, "")
+                for field in ("teamName", "teamCity", "teamTricode", "teamSlug")
+            )
+        ]
+
+        assert not named_without_id, (
+            "a game with teamId 0 now carries a populated naming field: "
+            f"{named_without_id[:3]}. The source is naming a team it gave no id for, which "
+            "is a resolution failure rather than an undecided bracket"
+        )
 
 
 class TestTheCohortWindowStillReconcilesAcrossSources:

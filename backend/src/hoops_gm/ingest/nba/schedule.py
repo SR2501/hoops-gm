@@ -11,12 +11,14 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
 from hoops_gm.calendar.scoring_periods import require_current_scoring_period_projection
+from hoops_gm.db.lineage import PendingScheduleGame
 from hoops_gm.db.models.enums import SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
@@ -27,6 +29,32 @@ from hoops_gm.ingest.nba.models import NbaGameRecord
 SOURCE = "nba_stats"
 ENDPOINT = "ScheduleLeagueV2"
 EASTERN = ZoneInfo("America/New_York")
+
+#: Every field in a ``ScheduleLeagueV2`` team block that names a franchise.
+#: Observed on the live 2026-27 payload (2026-08-20): a team block carries
+#: ``teamId``, ``teamName``, ``teamCity``, ``teamTricode``, ``teamSlug``,
+#: ``wins``, ``losses``, ``score`` and ``seed``. Only the naming fields are
+#: listed — ``wins``/``losses``/``score``/``seed`` are zero for *every*
+#: not-yet-played game, so requiring them absent would classify the whole
+#: future schedule as contradictory.
+_TEAM_IDENTITY_FIELDS: tuple[str, ...] = ("teamName", "teamCity", "teamTricode", "teamSlug")
+
+
+class _TeamState(Enum):
+    """How much the source told us about one side of a game."""
+
+    RESOLVED = "resolved"
+    #: Identity withheld entirely — id zero and every naming field empty.
+    PENDING = "pending"
+    #: Id zero but a naming field populated: assigned, and unresolvable.
+    CONTRADICTORY = "contradictory"
+
+
+@dataclass(frozen=True)
+class _TeamSide:
+    team_id: int
+    tricode: str
+    state: _TeamState
 
 
 @dataclass(frozen=True)
@@ -42,18 +70,35 @@ class ScheduleGameRecord:
 
 @dataclass(frozen=True)
 class ScheduleParseResult:
-    """Resolved games plus explicitly reported games whose teams are TBD.
+    """Resolved games, source-declared pending games, and resolution failures.
 
     ``season`` is carried on the result rather than inferred from ``games`` so
     that an empty or wholly unresolved parse is still self-describing: the
     importer has to be able to say *which* season it refused to register a
     refresh for, and a season derived from zero records cannot say that.
+
+    **``pending_games`` and ``unresolved_game_ids`` are different things and
+    the difference is the whole of ADR-013.** A pending game is one the source
+    published with an explicitly absent identity block; it does not block
+    registration. An unresolved game is one the source claims to have assigned
+    — it named a team without giving an id — and it still refuses, because
+    that is indistinguishable from the parser silently losing a team, which is
+    the 1,225-of-1,230 defect the completeness contract was written for.
+
+    Every counted regular-season game lands in exactly one of the three, so
+    ``source_game_count == len(games) + len(pending_games) +
+    len(unresolved_game_ids)`` holds by construction.
     """
 
     season: str
     games: tuple[ScheduleGameRecord, ...]
     unresolved_game_ids: tuple[str, ...]
     source_game_count: int
+    pending_games: tuple[PendingScheduleGame, ...] = ()
+
+    @property
+    def pending_game_ids(self) -> tuple[str, ...]:
+        return tuple(game.nba_game_id for game in self.pending_games)
 
 
 @dataclass(frozen=True)
@@ -241,6 +286,14 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
     suffix but is an Eastern wall-clock value, so it is parsed as a wall clock
     and independently reconciled to the UTC sibling.  This prevents the
     schedule adapter from repeating the project's prior mislabeled-time bug.
+
+    The reconciliation runs for pending games too, on the same terms. Their
+    published tip-off is a provisional Eastern midnight, and verified against
+    the live 2026-27 payload on 2026-08-20 the two fields agree exactly
+    (``2026-12-04T00:00:00Z`` Eastern against ``2026-12-04T05:00:00Z`` UTC).
+    Exempting them would be the one place in this parser where a time claim
+    went unchecked, and pending games are precisely the entries the source is
+    most likely to reshape.
     """
 
     league_schedule = payload.get("leagueSchedule")
@@ -253,6 +306,7 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
         raise _contract("leagueSchedule.gameDates is not a list")
 
     records: list[ScheduleGameRecord] = []
+    pending: list[PendingScheduleGame] = []
     unresolved: list[str] = []
     source_count = 0
     for game_date in game_dates:
@@ -270,9 +324,10 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
             source_count += 1
             home = _team(raw_game, "homeTeam", game_id)
             away = _team(raw_game, "awayTeam", game_id)
-            if home[0] == 0 or away[0] == 0:
+            if home.state is _TeamState.CONTRADICTORY or away.state is _TeamState.CONTRADICTORY:
                 unresolved.append(game_id)
                 continue
+
             utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
             eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
             if eastern_tipoff.astimezone(UTC) != utc_tipoff:
@@ -281,6 +336,19 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                     f"{eastern_tipoff.isoformat()} != {utc_tipoff.isoformat()}"
                 )
             game_day = eastern_tipoff.date()
+
+            if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
+                pending.append(
+                    PendingScheduleGame(
+                        nba_game_id=game_id,
+                        game_date=game_day,
+                        game_label=_optional_text(raw_game, "gameLabel"),
+                        game_sub_label=_optional_text(raw_game, "gameSubLabel"),
+                        game_subtype=_optional_text(raw_game, "gameSubtype"),
+                    )
+                )
+                continue
+
             records.append(
                 ScheduleGameRecord(
                     game=NbaGameRecord(
@@ -288,24 +356,28 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                         season=season,
                         season_type="regular",
                         game_date=game_day,
-                        home_team_id=home[0],
-                        away_team_id=away[0],
+                        home_team_id=home.team_id,
+                        away_team_id=away.team_id,
                         tipoff_utc=utc_tipoff,
                     ),
-                    home_nba_team_id=home[0],
-                    away_nba_team_id=away[0],
-                    home_tricode=home[1],
-                    away_tricode=away[1],
+                    home_nba_team_id=home.team_id,
+                    away_nba_team_id=away.team_id,
+                    home_tricode=home.tricode,
+                    away_tricode=away.tricode,
                 )
             )
 
-    if len({record.game.nba_game_id for record in records}) != len(records):
+    seen = [record.game.nba_game_id for record in records]
+    seen.extend(game.nba_game_id for game in pending)
+    seen.extend(unresolved)
+    if len(set(seen)) != len(seen):
         raise _contract("duplicate gameId in schedule")
     return ScheduleParseResult(
         season=season,
         games=tuple(records),
         unresolved_game_ids=tuple(unresolved),
         source_game_count=source_count,
+        pending_games=tuple(pending),
     )
 
 
@@ -412,7 +484,25 @@ def _rest_days_by_team_game(
     return rest_by_team_game
 
 
-def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> tuple[int, str]:
+def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:
+    """Classify one side of a game as resolved, source-declared pending, or contradictory.
+
+    The three-way split is ADR-013's, and the middle branch is deliberately
+    narrow. **Pending requires the source to have withheld the identity
+    entirely**: ``teamId`` zero *and* every one of ``teamName``, ``teamCity``,
+    ``teamTricode`` and ``teamSlug`` absent, null or empty. That is exactly
+    what the live 2026-27 payload publishes for the six Emirates NBA Cup
+    knockout fixtures, verified 2026-08-20.
+
+    A zero ``teamId`` beside *any* populated identity field is
+    ``CONTRADICTORY``: the source has named a team it gave no id for, which is
+    "claims to have assigned but we cannot resolve" and must still refuse. It
+    is also the branch that keeps the refusal reachable — without it the
+    parser could only resolve, zero out, or raise, and
+    ``unresolved_game_ids`` would be a guard that reads correctly and can
+    never fire.
+    """
+
     value = raw_game.get(key)
     if not isinstance(value, Mapping):
         raise _contract(f"{game_id} missing {key} object")
@@ -421,10 +511,19 @@ def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> tuple[int, 
     if not isinstance(team_id, int) or isinstance(team_id, bool) or team_id < 0:
         raise _contract(f"{game_id} has invalid {key}.teamId")
     if team_id == 0:
-        return 0, ""
+        named = sorted(field for field in _TEAM_IDENTITY_FIELDS if not _is_absent(value.get(field)))
+        if named:
+            return _TeamSide(0, "", _TeamState.CONTRADICTORY)
+        return _TeamSide(0, "", _TeamState.PENDING)
     if not isinstance(tricode, str) or len(tricode) != 3 or not tricode.isupper():
         raise _contract(f"{game_id} has invalid {key}.teamTricode")
-    return team_id, tricode
+    return _TeamSide(team_id, tricode, _TeamState.RESOLVED)
+
+
+def _is_absent(value: object) -> bool:
+    """True when the source withheld a field rather than populating it."""
+
+    return value is None or value == ""
 
 
 def _parse_utc(raw_game: Mapping[str, object], key: str, game_id: str) -> datetime:
@@ -454,6 +553,20 @@ def _required_text(raw: Mapping[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise _contract(f"missing or invalid {key}")
     return value
+
+
+def _optional_text(raw: Mapping[str, object], key: str) -> str:
+    """A label the source may legitimately leave blank, normalised to ``""``.
+
+    Deliberately lenient where :func:`_required_text` is strict: these are
+    descriptive labels, not identifiers, and refusing a whole season's import
+    because the NBA left ``gameSubLabel`` off one Cup fixture would be the
+    wrong trade. The live smoke, not the parser, is what asserts the labels
+    still explain the pending set.
+    """
+
+    value = raw.get(key)
+    return value if isinstance(value, str) else ""
 
 
 def _contract(message: str) -> SourceContractError:

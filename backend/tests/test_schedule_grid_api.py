@@ -72,9 +72,7 @@ from hoops_gm.dev.seed_schedule_grid import (
     SeedResult,
     load_fixture,
     main,
-    reconcile_dropped_games,
     redacted_url,
-    resolved_schedule_payload,
     seed_schedule_grid,
     weekly_periods,
 )
@@ -121,10 +119,7 @@ def _import_teams_and_schedule(session: Session) -> None:
     import_teams(session, parse_teams(load_fixture(DEFAULT_FIXTURES_DIR, TEAMS_FIXTURE)))
     import_schedule(
         session,
-        parse_schedule(
-            resolved_schedule_payload(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE)),
-            season=SEASON,
-        ),
+        parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON),
     )
 
 
@@ -218,7 +213,7 @@ def test_current_grid_serves_a_real_seeded_season(app: FastAPI, client: TestClie
     assert body["league_id"] == seeded.league_id
     assert body["season"] == SEASON
     assert body["lineage"]["schedule"]["version"] == seeded.schedule_version
-    assert body["lineage"]["schedule"]["source_game_count"] == seeded.resolved_game_count
+    assert body["lineage"]["schedule"]["source_game_count"] == seeded.source_game_count
     assert body["lineage"]["schedule"]["resolved_game_count"] == seeded.resolved_game_count
     assert body["lineage"]["schedule"]["persisted_team_row_count"] == 2 * seeded.resolved_game_count
     assert body["lineage"]["schedule"]["unresolved_game_ids"] == []
@@ -1202,16 +1197,45 @@ def test_seed_cli_leaves_no_schema_behind_when_it_refuses(tmp_path: Path) -> Non
     assert RefreshRun.__tablename__ not in tables
 
 
-def test_seed_reconciliation_refuses_a_filter_that_leaves_unresolved_games(
-    tmp_path: Path,
+def test_seed_imports_the_pending_cup_games_rather_than_filtering_them_out(
+    app: FastAPI, client: TestClient
 ) -> None:
-    """The second arm: filtered, but something unassigned survived."""
+    """ADR-013 retired the seed's filter, and the demo now exercises pending.
 
-    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
-    del tmp_path
+    Three functions used to stand between the recorded payload and
+    ``import_schedule``: a filter that dropped the two undrawn Cup games, and
+    a reconciliation pair that made the filter's over-removal loud. All three
+    existed only to get past a refusal that no longer exists, and the
+    reconciliation checked ``unresolved_game_ids`` — which now correctly
+    empties, so the seed would have refused itself.
 
-    with pytest.raises(DemoSeedRefused, match="still reports unresolved games"):
-        reconcile_dropped_games(recorded, recorded)
+    The consequence is worth stating as an assertion rather than a comment:
+    the demo database is no longer a season with the awkward cases removed. It
+    holds two pending games, so a screen that must distinguish "no games this
+    week" from "not scheduled yet" can be driven locally.
+    """
+
+    seeded = _seed(app)
+
+    assert seeded.source_game_count == 12
+    assert seeded.resolved_game_count == 10
+    assert seeded.pending_game_ids == ("0022601201", "0022601202")
+
+    body = client.get(GRID_URL.format(league_id=seeded.league_id)).json()
+    schedule = body["lineage"]["schedule"]
+    assert schedule["source_game_count"] == 12
+    assert schedule["resolved_game_count"] == 10
+    assert schedule["persisted_team_row_count"] == 20
+    assert schedule["unresolved_game_ids"] == []
+    assert schedule["pending_game_ids"] == ["0022601201", "0022601202"]
+    assert [game["game_date"] for game in schedule["pending_games"]] == [
+        "2026-12-04",
+        "2026-12-04",
+    ]
+    # No team appears anywhere in the pending records, because the source
+    # withheld it. A consumer can say which period is provisional and must not
+    # say which team's count will rise.
+    assert all("team" not in key for game in schedule["pending_games"] for key in game)
 
 
 def test_seed_cli_reports_an_operator_error_legibly_rather_than_a_traceback(
@@ -1318,47 +1342,16 @@ def test_seed_refuses_a_span_too_short_to_have_a_playoff_tail(first: date, last:
         weekly_periods(first, last)
 
 
-def test_seed_reconciliation_refuses_a_filter_that_drops_a_resolved_game() -> None:
-    """The check that makes over-removal loud instead of silent.
-
-    The TBD filter runs upstream of `parse_schedule`, so a dropped game vanishes
-    from both sides of `import_schedule`'s completeness comparison at once. If
-    the NBA redrew the Cup and the fixture were re-recorded with six unassigned
-    games, a filter bug could silently import a season six games short and still
-    register `unresolved_game_ids: []`.
-    """
-
-    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
-    payload = resolved_schedule_payload(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE))
-    payload["leagueSchedule"]["gameDates"][0]["games"].pop()
-    over_filtered = parse_schedule(payload, season=SEASON)
-
-    with pytest.raises(DemoSeedRefused, match="changed the resolved cohort"):
-        reconcile_dropped_games(recorded, over_filtered)
-
-
-def test_seed_reconciliation_reports_exactly_the_recorded_unresolved_games() -> None:
-    recorded = parse_schedule(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE), season=SEASON)
-    filtered = parse_schedule(
-        resolved_schedule_payload(load_fixture(DEFAULT_FIXTURES_DIR, SCHEDULE_FIXTURE)),
-        season=SEASON,
-    )
-
-    assert reconcile_dropped_games(recorded, filtered) == ("0022601201", "0022601202")
-    assert recorded.source_game_count == 12
-    assert filtered.source_game_count == 10
-
-
-def test_seed_result_reports_the_as_recorded_source_count_beside_the_imported_one(
+def test_seed_result_reports_the_source_count_beside_the_imported_one(
     app: FastAPI, client: TestClient
 ) -> None:
-    """The registered block describes the filtered document; this states so."""
+    """Two populations, named so they cannot be mistaken for each other."""
 
     seeded = _seed(app)
 
     assert seeded.resolved_game_count == 10
-    assert seeded.as_recorded_source_game_count == 12
-    assert seeded.dropped_game_ids == ("0022601201", "0022601202")
+    assert seeded.source_game_count == 12
+    assert seeded.pending_game_ids == ("0022601201", "0022601202")
 
 
 def test_seed_refuses_a_database_holding_a_league_it_did_not_create(
