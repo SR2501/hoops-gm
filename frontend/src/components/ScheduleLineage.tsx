@@ -83,7 +83,7 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
   const age = describeRefreshAge(schedule.refreshed_at, now)
   const pastCadence = age.days !== null && age.days >= REFRESH_CADENCE_DAYS
   const pendingIds = schedule.pending_game_ids
-  const pendingGames = schedule.pending_games ?? []
+  const pendingGames = schedule.pending_games
 
   return (
     <details className="lineage" data-testid="schedule-lineage">
@@ -119,7 +119,7 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
           <dt>Games</dt>
           <dd data-testid="schedule-game-counts">
             {schedule.source_game_count} from source · {schedule.resolved_game_count} resolved ·{' '}
-            {pendingIds === undefined ? 'pending not reported' : `${pendingIds.length} pending`} ·{' '}
+            {pendingIds.length} pending ·{' '}
             {schedule.persisted_team_row_count} team rows persisted · {countedTeamGames} counted in
             this grid
           </dd>
@@ -127,16 +127,21 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
         <div className="facts__row">
           <dt>Pending games</dt>
           <dd data-testid="schedule-pending-games">
-            {pendingIds === undefined ? (
-              'not reported — this response carried no pending-games block, so it cannot say whether the season is fully scheduled'
-            ) : pendingIds.length === 0 ? (
+            {pendingIds.length === 0 ? (
               'none — every game the source published has teams assigned'
             ) : (
               <ul className="lineage__list">
                 {pendingGames.map((game) => (
                   <li key={game.nba_game_id}>
                     <code>{game.nba_game_id}</code> ·{' '}
-                    {game.game_date ?? 'date not yet set'} · {describePendingGame(game)}
+                    {/*
+                      The reason code rather than a phrase. This is the evidence
+                      row, and a reader checking whether a wait-class cause has
+                      been rendered as an investigate-class one needs the
+                      producer's own word for it, not this screen's paraphrase.
+                    */}
+                    {game.game_date ?? `no date (${game.date_absence_reason})`} ·{' '}
+                    {describePendingGame(game)}
                   </li>
                 ))}
               </ul>

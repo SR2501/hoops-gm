@@ -24,6 +24,7 @@
  * them in a UI would ship an unbacktested model in CSS.
  */
 
+import { FAULT_ABSENCE_REASONS } from '../api/types'
 import type {
   ScheduleGrid,
   ScheduleGridPeriod,
@@ -100,17 +101,6 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
  * reading them.
  */
 export interface PendingGamesSummary {
-  /**
-   * Whether the response carried the ADR-013 block at all.
-   *
-   * `false` is **not** "nothing is pending". It is "this response cannot say",
-   * and the UI must render it as a third thing rather than as a clean bill of
-   * health. A backend predating ADR-013 refused unfinished seasons outright,
-   * so its silence did once imply completeness — but that is an inference about
-   * a backend version the client cannot see, and encoding it here would put a
-   * guess where a fact belongs.
-   */
-  present: boolean
   /** Size of `pending_game_ids` — the set the completeness invariant counts. */
   declaredCount: number
   /** Pending games successfully placed in one of the periods on screen. */
@@ -124,122 +114,80 @@ export interface PendingGamesSummary {
    */
   outsidePeriods: SchedulePendingGame[]
   /**
-   * Detail entries the source published **without a usable date**.
+   * Pending games with no date, where the source has **not committed** to one.
    *
-   * `game_date: null`. What that does *not* mean is worth stating first,
-   * because an earlier version of this comment got it wrong and the screen
-   * repeated the error to a reader. It does not mean "the source has not
-   * decided when". `_pending_game_date` in the producer wraps **both** the
-   * `gameDateTimeUTC` and `gameDateTimeEst` parses in one
-   * `except SourceContractError: return None`, so `null` covers three
-   * situations and only the third is the source declining to commit:
+   * `date_absence_reason` of `not_offered` (both time fields absent) or
+   * `irreconcilable` (both parsed and disagree — the source contradicting
+   * itself). The producer leaves the import at exit 0 for these, because they
+   * are the source's state rather than a fault on our side.
    *
-   * 1. `gameDateTimeUTC` could not be read — *we* failed to read a date the
-   *    source did give.
-   * 2. `gameDateTimeEst` could not be read — likewise.
-   * 3. The two are irreconcilable — the source's own fields disagree.
-   *
-   * The producer's own summary is honest about this: *"or `None` if it is not
-   * trustworthy"*. The slippage to "the source has not told us when" happens in
-   * its next paragraph and I inherited and amplified it. **The direction of the
-   * error is what makes it matter**: told the source has not decided, a reader
-   * waits; told we could not read it, a reader investigates. Attributing a
-   * parse failure to the source errs toward false comfort, which is the
-   * `0`-versus-`·` collapse this file exists to refuse, pointed the other way.
-   *
-   * So nothing here attributes a cause. The rendered clause says *no usable
-   * date came with it*, which is true under all three. If the producer ever
-   * narrows its `except` so `null` means only case 3, this can say more.
-   *
-   * Kept apart from `unreadableDate` because the two prescribe different
-   * actions and print different things — `unreadableDate` prints the offending
-   * value, which is evidence, where there is no value to print here. Note the
-   * split is narrower than "three-way" suggests: the old bucket could never
-   * hold a `null`, because the validator rejected nulls, so this is a rename
-   * plus one new state for one new contract value.
-   *
-   * **The obligation not to drop these is real, and it is not in ADR-013.** An
-   * earlier version of this comment quoted *"a consumer must then treat the
-   * game as belonging to no known period rather than dropping it"* as ADR text.
-   * It is not: it is the `PendingScheduleGameLineage` docstring in
-   * `backend/src/hoops_gm/api/routes/schedule_grid.py` on the unmerged
-   * `sr2501-real-schedule-import`. ADR-013's actual consumer clause is
-   * *"Consumers displaying schedule counts must show the pending set, not
-   * merely omit it"*, which supports the same conclusion from an address that
-   * exists. Citing an unmerged branch as an accepted decision is the
-   * coding-against-something-in-no-branch pattern moved into the citation
-   * layer, and it is worse there, because a reader who checks and finds nothing
-   * may conclude the constraint was invented.
-   *
-   * That clause cuts two ways and only one is about columns. A game with no
-   * date belongs to no week, so it cannot be attributed to one — but the
-   * **season** figure must still count it. Different denominators, and a
-   * per-week view being honestly incomplete does not license the season view to
-   * be wrong.
-   *
-   * **It is a drift signal, not the present state.** Against the live source
-   * all six pending games currently carry reconcilable dates and the live smoke
-   * asserts exactly that, so this bucket should be empty on every real response
-   * today. Nothing here should be shaped around it being common — over-building
-   * for a state that will not arrive is as wrong as rejecting it, and equally
-   * available.
+   * **Operator action: wait.** A date will arrive when the bracket is drawn or
+   * the source stops contradicting itself.
    */
-  undatedBySource: SchedulePendingGame[]
+  awaitingSource: SchedulePendingGame[]
   /**
-   * Detail entries whose `game_date` is present but not a readable ISO day.
+   * Pending games with no date, where **something on our side went wrong**.
    *
-   * A **defect**, not a fact — and the reason first written here was measured
-   * and found false. It claimed `'12/04/2026' <= '2026-12-13'` compares false
-   * and would drop a game out of its column without a word. It compares *true*;
-   * and a slash-formatted date fails `start_date <= game_date` against every
-   * period, so unguarded it lands in `outsidePeriods` and the notice prints it.
-   * Neither half of that justification survived being run.
+   * `unreadable` — a value was published and we could not parse it, or the
+   * schema moved. `implausible` — both fields parsed, agreed, and named a date
+   * nowhere near the season: the NBA uses a `1900-01-01` epoch as a live
+   * placeholder, and a placeholder pair reconciles perfectly, so **agreement is
+   * not validity**. The producer classes both as faults and exits non-zero.
    *
-   * The guard is still right, for the failure that is actually plausible. The
-   * drift to expect is `date` → `datetime` on the Pydantic field, giving
-   * `2026-12-04T00:00:00Z`. Measured, that buckets *correctly* everywhere
-   * except a period whose `end_date` is the game's own day, where
-   * `'2026-12-04T00:00:00Z' <= '2026-12-04'` is false — so the game silently
-   * falls out of the one column it belongs in and is then reported as *"falls
-   * outside every scoring period this grid shows"*, which is a statement about
-   * the fantasy calendar made about a data defect.
+   * **Operator action: investigate.** Kept apart from `awaitingSource` for the
+   * one reason ADR-013 names as the error that matters — *"rendering an
+   * investigate-class cause as a wait-class one"*. Told to wait, an operator
+   * waits through a defect.
    *
-   * So the value of this guard is that it prevents a **mis-attributed
-   * explanation**, not that it prevents silence. That is why the id/record
-   * states went and this one stayed: those are forbidden by an invariant the
-   * client now checks at the boundary (`isPendingBlock`), and a boundary that
-   * can be closed should be closed rather than narrated. The wire date format
-   * is not ours to close.
+   * This is the third time this screen has drawn the same distinction and the
+   * first time the contract could support it. `0` versus `·` separates a real
+   * count from our gap at cell level; `TBD` separates the source's undecided
+   * from our gap at column level; this separates the source's undecided from
+   * our failure at the reason level. An earlier version of this file collapsed
+   * all four causes into one bucket and rendered them as *"none came with it"*,
+   * which is false for three of them and false toward comfort.
+   */
+  dateFaulted: SchedulePendingGame[]
+  /**
+   * Pending games whose `game_date` is present but not a readable ISO day.
    *
-   * **And this bucket does not catch every mis-attribution, which the split's
-   * framing can obscure.** `ISO_DAY` accepts any well-formed day, so a
-   * degenerate *sentinel* — `0001-01-01`, which the producer's own docstring
-   * names as what the source emits for an undecided tip-off, or `1900-01-01` —
-   * passes it, matches no period, and lands in `outsidePeriods`, where it is
-   * described as falling outside the fantasy calendar. That is the exact
-   * mis-attribution named above, arriving through the one door this guard does
-   * not cover.
+   * A **client-side** guard, and distinct from `dateFaulted`, which is the
+   * *producer* telling us it could not derive a date. This one fires when the
+   * producer thinks it did.
    *
-   * It is deliberately not coded around. The client cannot distinguish a
-   * sentinel from a genuine out-of-calendar date without inventing a rule —
-   * "before 1901", "more than a season before the first period" — and inventing
-   * rules about what a date means is what this screen refuses to do everywhere
-   * else. Two things limit the damage: the `outsidePeriods` clause prints the
-   * date, so `on 0001-01-01` discloses itself to anyone reading it, and the
-   * producer nulls the sentinel today. The second is a one-commit-old behaviour
-   * on another branch, so this is a real dependency rather than a theoretical
-   * one. **These three buckets partition what the client can tell apart, not
-   * what the states are.**
+   * The reason first written here was measured and found false: it claimed
+   * `'12/04/2026' <= '2026-12-13'` compares false and would drop a game
+   * silently. It compares *true*, and a slash date fails `start_date <=
+   * game_date` against every period, so unguarded it lands in `outsidePeriods`
+   * and the notice prints it. The drift that is actually plausible is `date` →
+   * `datetime` on the Pydantic field: `'2026-12-04T00:00:00Z'` buckets
+   * correctly everywhere except a period whose `end_date` is the game's own
+   * day, where it falls out of the one column it belongs in and is then
+   * described as *"falls outside every scoring period this grid shows"* — a
+   * statement about the fantasy calendar made about a data defect. **The guard
+   * prevents a mis-attributed explanation, not silence.**
+   *
+   * **It does not catch every mis-attribution.** `ISO_DAY` accepts any
+   * well-formed day, so a degenerate sentinel that survived as a real date
+   * would pass it and land in `outsidePeriods` with the calendar sentence. The
+   * merged producer closes that door — it classifies year-0001 and 1900 pairs
+   * as `implausible` or `irreconcilable` and returns no date at all — so it is
+   * unreachable *through this seam* and remains real *in general*: the next
+   * producer will not have that classifier, and the client still cannot tell a
+   * sentinel from a genuine out-of-calendar date without inventing a rule about
+   * what a date means, which is what this screen refuses to do everywhere else.
+   * **These buckets partition what the client can tell apart, not what the
+   * states are.**
    */
   unreadableDate: SchedulePendingGame[]
 }
 
 export const EMPTY_PENDING: PendingGamesSummary = {
-  present: false,
   declaredCount: 0,
   placedCount: 0,
   outsidePeriods: [],
-  undatedBySource: [],
+  awaitingSource: [],
+  dateFaulted: [],
   unreadableDate: [],
 }
 
@@ -258,12 +206,12 @@ export const EMPTY_PENDING: PendingGamesSummary = {
  * The count comes from `pending_game_ids` and the placement from
  * `pending_games`, matching which field each question is stated over: the
  * completeness invariant is written in terms of the ids, and only the records
- * carry a date. The backend guarantees the two name the same games, so no
- * reconciliation happens here.
+ * carry a date. The backend guarantees the two name the same games and
+ * `isPendingBlock` checks it, so no reconciliation happens here.
  *
  * A date matching more than one period is assigned to the first, so the
- * per-period buckets and the leftovers always sum to the games that had a
- * readable date. Overlapping periods would be a calendar defect upstream.
+ * per-period buckets and the leftovers always sum to the declared total.
+ * Overlapping periods would be a calendar defect upstream.
  */
 export function readPendingGames(
   schedule: ScheduleGrid['lineage']['schedule'],
@@ -273,22 +221,24 @@ export function readPendingGames(
   const games = schedule.pending_games
   const periodPending: SchedulePendingGame[][] = periods.map(() => [])
 
-  if (ids === undefined || games === undefined) {
-    return { summary: { ...EMPTY_PENDING, present: false }, periodPending }
-  }
-
   const outsidePeriods: SchedulePendingGame[] = []
-  const undatedBySource: SchedulePendingGame[] = []
+  const awaitingSource: SchedulePendingGame[] = []
+  const dateFaulted: SchedulePendingGame[] = []
   const unreadableDate: SchedulePendingGame[] = []
   let placedCount = 0
 
   for (const game of games) {
-    // Checked before the format guard, because the two mean opposite things.
-    // `null` is the source stating it has not decided when; anything else that
-    // fails `ISO_DAY` is something having gone wrong on the way here. Folding
-    // the first into the second would report a published fact as a fault.
+    // Sorted by what it tells an operator to do, before anything about format.
+    // The producer has already decided it could derive no date; all this does
+    // is keep its reason from being flattened into one message. ADR-013 names
+    // rendering an investigate-class cause as a wait-class one as the error
+    // that matters, and it is the direction that comforts.
     if (game.game_date === null) {
-      undatedBySource.push(game)
+      if ((FAULT_ABSENCE_REASONS as readonly string[]).includes(game.date_absence_reason)) {
+        dateFaulted.push(game)
+      } else {
+        awaitingSource.push(game)
+      }
       continue
     }
 
@@ -311,25 +261,26 @@ export function readPendingGames(
 
   return {
     summary: {
-      present: true,
       declaredCount: ids.length,
       placedCount,
       outsidePeriods,
-      undatedBySource,
+      awaitingSource,
+      dateFaulted,
       unreadableDate,
     },
     periodPending,
   }
 }
 
+
 /**
  * Pending games the response declared but the grid could not put in a column.
  *
- * Equal to `outsidePeriods.length + undatedBySource.length +
- * unreadableDate.length` — **three** terms since the nullable-date contract
- * landed, where this comment previously named two and one of them by a field
- * name that no longer exists. It is a cross-check rather than an independent
- * quantity, which is what the model test uses it for: computed from
+ * Equal to `outsidePeriods.length + awaitingSource.length +
+ * dateFaulted.length + unreadableDate.length` — **four** terms since the
+ * absence-reason contract landed, where this comment has twice named a set of
+ * fields that had moved under it. It is a cross-check rather than an
+ * independent quantity, which is what the model test uses it for: computed from
  * `declaredCount` (the invariant's own term) minus what was placed, so if that
  * equality ever stops holding the test says so instead of the screen quietly
  * under-reporting.

@@ -21,6 +21,8 @@ function grid(overrides: Partial<ScheduleGrid> = {}): ScheduleGrid {
         resolved_game_count: 2,
         persisted_team_row_count: 4,
         unresolved_game_ids: [],
+        pending_game_ids: [],
+        pending_games: [],
       },
       scoring_period_projection: {
         refresh_id: 2,
@@ -176,6 +178,7 @@ describe('readPendingGames', () => {
       game_label: 'Emirates NBA Cup',
       game_sub_label: 'Quarterfinal',
       game_subtype: 'in-season-knockout',
+      date_absence_reason: '',
       ...overrides,
     }
   }
@@ -290,31 +293,49 @@ describe('readPendingGames', () => {
     expect(unplacedPendingCount(model.pending)).toBe(1)
   })
 
-  it('distinguishes a response with no pending games from one that cannot say', () => {
-    // The whole point. `present: false` must never be read as "nothing is
-    // pending" — one response asserts the season is fully scheduled and the
-    // other asserts nothing at all.
-    const declaredNone = buildScheduleGridModel(withPending([]))
-    expect(declaredNone.pending.present).toBe(true)
-    expect(declaredNone.pending.declaredCount).toBe(0)
+  it('reads an empty pending block as a season that is fully scheduled', () => {
+    // There used to be a companion assertion here that an *absent* block reads
+    // as "this response cannot say". That state is gone: the backend lane
+    // merged, `pending_game_ids` and `pending_games` are required, and
+    // `isPendingBlock` refuses a response without them — so the model can
+    // assume the block rather than narrate its absence. The refusal is pinned
+    // in `SchedulePage.test.tsx` ("refuses a pending block that is present but
+    // not the contract"), which is where a boundary belongs.
+    const model = buildScheduleGridModel(withPending([]))
 
-    const silent = buildScheduleGridModel(grid())
-    expect(silent.pending.present).toBe(false)
-    expect(silent.pending.declaredCount).toBe(0)
-    expect(silent.periodPending).toEqual([[], []])
+    expect(model.pending.declaredCount).toBe(0)
+    expect(model.periodPending).toEqual([[], []])
+    expect(unplacedPendingCount(model.pending)).toBe(0)
   })
 
-  it('is only satisfied when both halves of the block arrived', () => {
-    const base = grid()
-    const halfBlock: ScheduleGrid = {
-      ...base,
-      lineage: {
-        ...base.lineage,
-        schedule: { ...base.lineage.schedule, pending_game_ids: ['0022601201'] },
-      },
-    }
+  it('sorts an absent date by what it tells an operator to do, not by its shape', () => {
+    // The error ADR-013 names as the one that matters: rendering an
+    // investigate-class cause as a wait-class one. `not_offered` and
+    // `irreconcilable` are the source's state — wait. `unreadable` and
+    // `implausible` are ours — investigate; the producer exits non-zero on
+    // exactly those two, so this mirrors its own classification rather than
+    // inventing one.
+    const model = buildScheduleGridModel(
+      withPending([
+        pending({ game_date: null, date_absence_reason: 'not_offered' }, 'wait-a'),
+        pending({ game_date: null, date_absence_reason: 'irreconcilable' }, 'wait-b'),
+        pending({ game_date: null, date_absence_reason: 'unreadable' }, 'look-a'),
+        pending({ game_date: null, date_absence_reason: 'implausible' }, 'look-b'),
+      ]),
+    )
 
-    expect(buildScheduleGridModel(halfBlock).pending.present).toBe(false)
+    expect(model.pending.awaitingSource.map((game) => game.nba_game_id)).toEqual([
+      'wait-a',
+      'wait-b',
+    ])
+    expect(model.pending.dateFaulted.map((game) => game.nba_game_id)).toEqual([
+      'look-a',
+      'look-b',
+    ])
+    // None of them reaches a column, and all four are still counted.
+    expect(model.pending.declaredCount).toBe(4)
+    expect(model.pending.placedCount).toBe(0)
+    expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
   })
 
   it('separates a date the source has not set from one this screen cannot read', () => {
@@ -327,12 +348,12 @@ describe('readPendingGames', () => {
     // collapse `0` versus `·` refuses at cell level.
     const model = buildScheduleGridModel(
       withPending([
-        pending({ game_date: null }, 'no-date'),
+        pending({ game_date: null, date_absence_reason: 'not_offered' }, 'no-date'),
         pending({ game_date: '12/04/2026' }, 'unreadable'),
       ]),
     )
 
-    expect(model.pending.undatedBySource.map((game) => game.nba_game_id)).toEqual(['no-date'])
+    expect(model.pending.awaitingSource.map((game) => game.nba_game_id)).toEqual(['no-date'])
     expect(model.pending.unreadableDate.map((game) => game.nba_game_id)).toEqual(['unreadable'])
     expect(model.pending.outsidePeriods).toEqual([])
     expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
@@ -352,7 +373,7 @@ describe('readPendingGames', () => {
         pending({ game_date: '2026-10-21' }, 'placed'),
         pending({ game_date: '2026-09-30' }, 'outside'),
         pending({ game_date: 'nonsense' }, 'unreadable'),
-        pending({ game_date: null }, 'no-date'),
+        pending({ game_date: null, date_absence_reason: 'not_offered' }, 'no-date'),
       ]),
     )
     const { pending: summary } = model
@@ -363,7 +384,7 @@ describe('readPendingGames', () => {
       summary.placedCount +
         summary.outsidePeriods.length +
         summary.unreadableDate.length +
-        summary.undatedBySource.length,
+        summary.awaitingSource.length,
     ).toBe(summary.declaredCount)
   })
 })

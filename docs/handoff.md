@@ -11973,3 +11973,125 @@ tested it for truth, not for usefulness.
 **Next:** unchanged. #49 merges, then position, then this — rebase, re-capture and compare
 against committed backend code at whatever head #49 lands as, drop the wire optionality and
 the "cannot say" notice with it, re-run the gate and all 24 mutations, undraft.
+
+---
+
+## 2026-08-21 — frontend — The absence reason contract, and a test that refused for the wrong reason
+
+**Changed:** Rebased onto merged `main` (`28bd480`) and absorbed #49's landed contract.
+`date_absence_reason` is consumed, the wire optionality is gone, the fixture is re-captured
+against merged code, and the copy that told a reader the source withheld a date is replaced
+with copy that says which of two things to *do*.
+
+**The coordinator's claim was right and understated.** They thought *"no usable date — none
+came with it"* was false under `implausible`. I read `_pending_game_date` rather than take
+it on trust, and it is false under **three of the four** absence causes. Only `not_offered`
+means nothing came:
+
+| reason | what happened | operator |
+|---|---|---|
+| `not_offered` | both time fields absent | **wait** |
+| `irreconcilable` | both parsed and disagree — the source contradicting itself | **wait** |
+| `unreadable` | a value was published and we could not parse it | **investigate** |
+| `implausible` | both parsed, agreed, and named a 1900 placeholder | **investigate** |
+
+So the model now sorts an absent date by **what it tells an operator to do**, not by its
+shape: `awaitingSource` against `dateFaulted`, mirroring the producer's own
+`_FAULT_ABSENCE_REASONS` rather than inventing a classification. ADR-013 names rendering an
+investigate-class cause as a wait-class one as the error that matters, and my previous copy
+made exactly that error in the direction that comforts — told nothing came, a reader
+concludes the source is silent and waits through a defect.
+
+That is the third time this screen has drawn the same line and the first time the contract
+could carry it: `0` versus `·` at cell level, `TBD` versus `·` at column level, and now the
+source's undecided versus our failure at the reason level. The reason code is printed beside
+each id in both the notice and the lineage, so the classification is checkable rather than
+trusted — a reader can see `implausible` and disbelieve me.
+
+**The ADR contradicts itself and that is `architect`'s.** ADR-013 states the closed set
+twice: line 176 says *"Three are possible"* with
+`{"", not_offered, unreadable, irreconcilable}`, and line 222 has five including
+`implausible`. The first is present-tense and not scoped as historical, and it is the one a
+reader hits first. A consumer building a four-value validator from it would reject a
+well-formed response from the current producer — which is exactly the failure a closed set
+exists to prevent. Not mine to fix; reported.
+
+**The sentinel limitation is now unreachable through this seam and stays documented.** #49
+drove every shape and no sentinel reaches a consumer as a well-formed date: year-0001 and
+1900 pairs classify as `implausible`, `irreconcilable` or `unreadable` and carry no date at
+all. The comment says so and keeps the general form, because the next producer will not have
+that classifier and the client still cannot tell a sentinel from a genuine out-of-calendar
+date without inventing a rule about what a date means. **These buckets partition what the
+client can tell apart, not what the states are.**
+
+**The scope audit the coordinator asked for found two things, and the second is the better
+one.**
+
+*Where else is this true?* — the model tests bypass the validator, so nothing stopped them
+building payloads the new cross-check refuses: `game_date: null` beside
+`date_absence_reason: ''` is the two halves of one fact disagreeing. The behaviour they
+asserted was right; the payload could not arrive. Fixed, and it is a standing hazard of
+testing a model below its boundary.
+
+*What was already protecting this line, and is it still?* — **a test that refused for a
+different reason than it claimed.** `'accepts a null game_date but still refuses one that is
+simply absent'` built its rejecting payload without `game_date` *and* without
+`date_absence_reason`, so the response was refused for the missing reason. The assertion
+passed, the test read as isolating the date, and the mutation that widens the date check to
+admit `undefined` went **uncaught** — the harness said `NOT CAUGHT` and that is the only
+way I found it. The two payloads now differ in exactly the absent key.
+
+**Fixture re-captured against merged `28bd480`, capture-and-compare first.** Exactly one key
+added — `date_absence_reason`, `""` on both games — with no other key added or removed and
+no value changed on any shared key, across teams, periods, all 630 counts and the version.
+The API grew a field, so replace was right here; on any route where nothing moved it would
+have destroyed the baseline.
+
+**Wire optionality dropped**, and with it the "this response cannot say" notice, the
+`present` flag and the branch that produced them. That tolerance existed because this screen
+shipped ahead of an unmerged backend; the backlog entry tracking it warned it would become a
+permanent feature describing a transitional condition if nobody deleted it. The deletion has
+its own test, because deleting a tolerance is the part that can silently not happen.
+
+**Rebase discipline held and the recount fired as expected.** Heading sets were recorded
+*before* starting: 175 handoff headings and 112 backlog slugs predicted, 175 and 112
+observed, no entry eaten or doubled. The backlog produced two status header lines, as it
+always does, and **neither was right** — `main` carried 39/71/111, this branch carried
+40/69/110, and the truth is 40/71/112, because each was counted before the other's items
+existed. That is the clearest case yet for recounting rather than reconciling.
+
+**Code gate:** ESLint, `tsc --noEmit`, build clean. **118 tests across 8 files** (from 116).
+**26 of 26 mutations caught**, four new: an absent block tolerated again, an investigate-class
+cause sorted as wait-class, the date/reason cross-check dropped, and the reason set opened.
+
+**The harness pre-flight earned itself immediately.** The contract change rotted one anchor,
+and it was named in one second instead of surfacing twenty minutes into a run as a `SKIP`
+that reads like a `caught`.
+
+**Could not verify:**
+
+*Everything in the previous entries stands and is not repeated.*
+
+*None of this has been reviewed.* Four rounds on the previous head each found something
+real, and this is a larger change than any of them.
+
+*`unreadable` and `implausible` cannot be produced by the live source today*, so the
+investigate-class copy is exercised only by hand-built payloads and by proxy mutations of a
+captured 200. The live smoke asserts `unreadable` never occurs, which means the branch most
+likely to matter in an emergency is the least evidenced — and it is the branch whose whole
+purpose is to be right when something has gone wrong.
+
+*I classified `irreconcilable` as wait-class on the producer's exit-code behaviour*
+(`_FAULT_ABSENCE_REASONS` excludes it, so the import stays exit 0). ADR-013's prose gives
+the wait/investigate meaning for `not_offered` and `unreadable` and does not say which side
+`irreconcilable` falls on. The source contradicting itself is arguably worth a look even if
+it does not block an import, so this is an inference from an exit code rather than a stated
+rule, and it is the one classification here I would most like disputed.
+
+*The three-way copy has not been read by anyone but me.* "Needs looking at rather than
+waiting out" is my phrasing for a distinction the ADR states abstractly, and copy is what
+three of the last four rounds' findings were about.
+
+**Next:** exact-head reviews on the pushed SHA, then undraft. A final docs-only rebase will
+be needed after #48 and #45 merge, since those overlap only on `handoff.md` and
+`backlog.md`.

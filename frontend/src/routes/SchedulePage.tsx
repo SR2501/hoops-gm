@@ -182,24 +182,20 @@ function ScheduleGridView({
  * is the source not having decided yet. They are three different claims about
  * three different parties, and the whole difficulty of this unit is that the
  * first two are cell-level and the third cannot be.
+ *
+ * **And one distinction below that, in the clauses.** A pending game with no
+ * date is not one situation. `awaitingSource` means the source has not
+ * committed to a date and an operator should **wait**; `dateFaulted` means a
+ * value was published and we could not use it, and an operator should
+ * **investigate**. ADR-013 names rendering the second as the first as the error
+ * that matters, and an earlier version of this screen made exactly that error
+ * — it said *"none came with it"*, which is false for three of the four
+ * absence causes, and false in the direction that tells a reader to relax. The
+ * reason code is printed alongside each id so the claim is checkable rather
+ * than trusted.
  */
 function PendingNotice({ model }: { model: ScheduleGridModel }) {
   const { pending, periods, periodPending } = model
-
-  // Absent is its own state and is *not* read as "nothing is pending". A
-  // response that cannot say whether the season is finished is different from
-  // one that says it is, and the difference matters most to exactly the reader
-  // who would otherwise take a 0 for a bye.
-  if (!pending.present) {
-    return (
-      <p className="state grid__pending-note" data-testid="grid-pending-unknown">
-        <strong>Whether this season is fully scheduled is unknown.</strong> This response carried no
-        pending-games block, so it cannot say whether the source has published games with their
-        teams still undecided. Any count here may be understated by an amount this screen cannot
-        measure.
-      </p>
-    )
-  }
 
   if (pending.declaredCount === 0) {
     return null
@@ -242,15 +238,20 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
             .map((game) => `${game.nba_game_id} on ${String(game.game_date)}`)
             .join(', ')}. `
         : ''}
-      {pending.undatedBySource.length > 0
-        ? `${subject(pending.undatedBySource.length)} ${
-            pending.undatedBySource.length === 1 ? 'has' : 'have'
-          } no usable date — none came with ${
-            pending.undatedBySource.length === 1 ? 'it' : 'them'
-          }, so ${
-            pending.undatedBySource.length === 1 ? 'it falls' : 'they fall'
-          } in no column here: ${pending.undatedBySource
-            .map((game) => game.nba_game_id)
+      {pending.awaitingSource.length > 0
+        ? `${subject(pending.awaitingSource.length)} ${
+            pending.awaitingSource.length === 1 ? 'has' : 'have'
+          } no date the source has committed to, so ${
+            pending.awaitingSource.length === 1 ? 'it falls' : 'they fall'
+          } in no column here: ${pending.awaitingSource
+            .map((game) => `${game.nba_game_id} (${game.date_absence_reason})`)
+            .join(', ')}. `
+        : ''}
+      {pending.dateFaulted.length > 0
+        ? `${subject(pending.dateFaulted.length)} ${
+            pending.dateFaulted.length === 1 ? 'carries' : 'carry'
+          } no date because a published value could not be used, which needs looking at rather than waiting out: ${pending.dateFaulted
+            .map((game) => `${game.nba_game_id} (${game.date_absence_reason})`)
             .join(', ')}. `
         : ''}
       {pending.unreadableDate.length > 0

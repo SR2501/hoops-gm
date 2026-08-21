@@ -5,7 +5,7 @@
     "schedule": {
       "refresh_id": 1,
       "version": "9bcac1c60490b41a",
-      "refreshed_at": "2026-08-21T02:46:47.610403Z",
+      "refreshed_at": "2026-08-21T08:03:14.040795Z",
       "source_game_count": 12,
       "resolved_game_count": 10,
       "persisted_team_row_count": 20,
@@ -20,14 +20,16 @@
           "game_date": "2026-12-04",
           "game_label": "Emirates NBA Cup",
           "game_sub_label": "",
-          "game_subtype": ""
+          "game_subtype": "",
+          "date_absence_reason": ""
         },
         {
           "nba_game_id": "0022601202",
           "game_date": "2026-12-04",
           "game_label": "Emirates NBA Cup",
           "game_sub_label": "",
-          "game_subtype": ""
+          "game_subtype": "",
+          "date_absence_reason": ""
         }
       ]
     },

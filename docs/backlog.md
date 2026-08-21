@@ -530,12 +530,11 @@ and `pending_games`, which is the `data-engineer` lane implementing ADR-013 and
 had no backlog slug when this was written. `architect` is creating one; this
 item's dependency list should gain it.
 
-The wire types are **optional** on the client (`pending_game_ids?`,
-`pending_games?`) and the absence is rendered as its own statement. That is a
-tolerance for a branch that had not landed, not a product feature, and it
-should be removed — types made required, the "cannot say" notice deleted —
-once the backend lane is on `main`. `frontend` owns the change; the trigger is
-that lane merging. Tracked here so it does not become permanent by silence.
+The wire types were **optional** on the client (`pending_game_ids?`,
+`pending_games?`) while the backend lane was unmerged, and the absence was
+rendered as its own statement. That lane merged as `28bd480`, so the tolerance
+is gone: both fields are required, the "cannot say" notice is deleted, and the
+boundary refuses a response without the block. **Closed.**
 
 Three further follow-ups, each with a trigger, recorded here because prose
 nothing prompts anyone to revisit is how a screen keeps asserting something it
@@ -557,6 +556,15 @@ once checked:
   right on load and leaves a refresh that takes the pending set from empty to
   non-empty silent. The fix is a region that is empty at mount and live
   thereafter, if the cost is ever judged worth it.
+- **`irreconcilable` is classified as wait-class on an inference.** The screen
+  splits absence causes into wait (`not_offered`, `irreconcilable`) and
+  investigate (`unreadable`, `implausible`), mirroring the producer's
+  `_FAULT_ABSENCE_REASONS`, which excludes `irreconcilable` so the import stays
+  exit 0. ADR-013's prose gives the wait/investigate meaning for `not_offered`
+  and `unreadable` and says nothing about which side `irreconcilable` falls on.
+  The source contradicting itself is arguably worth a look even when it does
+  not block an import. `architect` owns the call; the trigger is anyone
+  disputing it, and I would rather they did.
 - **`.grid-scroll`'s `18rem` budget is now short by a block.** The constant was
   written for four things above the grid; the pending notice is a fifth and is
   present in every shipping state. Measured at a 720px viewport with scroll at

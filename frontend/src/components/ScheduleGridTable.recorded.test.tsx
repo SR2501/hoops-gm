@@ -104,7 +104,7 @@ describe('the recorded schedule grid response', () => {
     const { schedule } = grid.lineage
 
     expect(schedule.pending_game_ids).toEqual(['0022601201', '0022601202'])
-    expect(schedule.resolved_game_count + (schedule.pending_game_ids?.length ?? 0)).toBe(
+    expect(schedule.resolved_game_count + schedule.pending_game_ids.length).toBe(
       schedule.source_game_count,
     )
     expect(schedule.persisted_team_row_count).toBe(2 * schedule.resolved_game_count)
@@ -118,7 +118,7 @@ describe('the recorded schedule grid response', () => {
     // production carries `Quarterfinal` and `in-season-knockout`. It is still
     // worth pinning, because it is a shape the running service does emit and
     // one no payload written from the TypeScript interface would have produced.
-    const pending = grid.lineage.schedule.pending_games ?? []
+    const pending = grid.lineage.schedule.pending_games
 
     expect(pending).toHaveLength(2)
     expect(pending.map((game) => game.game_date)).toEqual(['2026-12-04', '2026-12-04'])
