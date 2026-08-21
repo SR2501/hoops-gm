@@ -12,49 +12,77 @@ weights, blends made/attempt volume for ratio categories, and rejects terminal l
 at process exit and "our number" cannot be shown beside a source's.
 
 `BlendProfile` welds two things with different lifetimes into one identity, both inside
-`_profile_content_sha256`. The **recipe** — sources, per-category weights, manual overrides, target
-scoring profile — is owner-authored and should survive a refresh. The **binding** — the exact
+`_profile_content_sha256`. The **recipe** — sources, per-category weights, target scoring profile —
+is owner-authored and should survive a refresh. The **binding** — the exact
 `ReleasedProjectionImport`, including `import_id` and `projection_values_sha256` — is correctly
-killed by any refresh, because `_assert_import_is_current` refuses a superseded import. Persisting
-the profile whole writes that weld into a migration: the owner imports a fresh Basketball Monster
-CSV on draft morning and his weights become *unusable*, not stale.
+killed by any refresh: review drove a newer import in and both `blend_projections` and
+`blend_active_projections` raised `StaleProjectionInputError` while `current_blend_profile` still
+returned the profile. Active pointer intact, computation impossible, no automatic re-derivation.
+Persisting the profile whole writes that weld into a migration, and the owner's weights become
+*unusable*, not stale, the morning he imports a fresh CSV.
+
+This supersedes `plan.md:517`'s `blend_profiles` sketch and defers its `blended_projections`.
 
 ## Decision
 
 **Persist the recipe. Keep the binding transient and recompute the blend on read.**
 
-1. **Shape.** Immutable versioned recipe rows plus their per-category weights, activated by a
-   nullable-sentinel column — `UniqueConstraint(league_id, name, version)`,
-   `CheckConstraint(version >= 1)`, bare `UniqueConstraint(active_league_id)`, exactly as
-   `LeagueScoringProfile` does. Not a partial index: `test_portability.py`'s dialect-branch
-   pattern matches `sqlite_where=`/`postgresql_where=` and would reject one. **That guard walks
-   `src/hoops_gm` only, so the migration is uncovered** — the constraint has to be honoured there
-   deliberately.
+1. **Shape.** Immutable versioned rows plus their per-category weights, activated by a
+   nullable-sentinel column: `UniqueConstraint(league_id, name, version)`,
+   `CheckConstraint(version >= 1)`, `CheckConstraint(active_league_id IS NULL OR active_league_id =
+   league_id)`, and `UniqueConstraint(active_league_id, name)`. **That last one is deliberately not
+   `LeagueScoringProfile`'s bare single-column unique**, which permits one active row per *league*;
+   `BlendCatalog.active` is keyed on `(league_id, name)` and two differently-named recipes may be
+   active at once, so copying that constraint would silently narrow existing behaviour. Not a
+   partial index: `test_portability.py`'s dialect-branch pattern matches
+   `sqlite_where=`/`postgresql_where=`. **That guard walks `src/hoops_gm` only, so the migration is
+   uncovered** and must honour it deliberately.
 
-2. **Production only.** No games-played, expected-games, availability, seasonal-total, or
-   rate-times-count column, asserted by a schema test. `source_games_played_assumptions` stays
-   unreferenced. The fusion seam remains `expected-games` (ADR-002).
+2. **Re-run the definition-time validators on hydration.** `_validate_source_selection`,
+   `_normalize_category_weights` and the `weight_basis` layer-purity raise each have exactly one
+   call site, inside `define_blend_profile`; neither `blend_projections` nor
+   `_assert_profile_current` re-runs them. Today an in-memory identity check is what guarantees
+   every profile reaching the blend was validated. **A table replaces that check, so hydration must
+   re-validate or the guarantee is gone.** This is the largest structural consequence of persisting
+   anything here. Add `CheckConstraint(weight_basis = 'user_configured')` too: `portable_enum` is
+   VARCHAR, `WeightBasis` already carries `learned_accuracy` and `mock_calibrated`, and without the
+   constraint widening is an `UPDATE`, not a migration.
 
-3. **Enumerate the keys**, per ADR-014 — a guarantee is only as wide as the set someone enumerated:
+3. **Reference the scoring profile by `(league_id, name)` plus a category-content fingerprint**, and
+   re-resolve to whatever is active at read time. Storing `scoring_profile_id` would reproduce the
+   failure this ADR exists to prevent: `derive_scoring_profile` mints a new version for a
+   byte-identical re-ingest against a new snapshot row, activation repoints, and the recipe dies on
+   a settings refresh that changed no scoring rule. Refuse only when category content actually
+   moved.
+
+4. **Production only.** No games-played, expected-games, availability, seasonal-total,
+   rate-times-count, **or cohort/player-filter column** — the last because filtering the pool by
+   durability moves every downstream z-score through its denominator without any prohibited column
+   existing. Asserted by schema test. The fusion seam remains `expected-games` (ADR-002).
+
+5. **No manual overrides in this unit.** They are the only recipe component carrying a
+   decision-bearing number, and the only one whose key nothing pins: `players.id` is a surrogate,
+   `normalized_name` is documented non-unique *because* collisions must stay resolvable, so a
+   name-based remedy is blindest on exactly the population that generates the risk. A persisted
+   override is also indistinguishable from a durability-shaded rate, which `expected-games` would
+   then multiply by `p(play)` — availability counted twice, by the owner's own hand. Deferred to
+   `blend-override-persistence` with an identity remedy that is not the name.
+
+6. **Enumerate the keys**, per ADR-014 — a guarantee is only as wide as the set someone enumerated:
 
    | Key | What pins it |
    |---|---|
    | `league_id` | nothing; the recipe is CASCADE-scoped to the league |
-   | `scoring_profile_id` | co-stored `scoring_profile_sha256` |
+   | scoring profile | `(league_id, name)` + category-content fingerprint, re-resolved per clause 3 |
    | source | the `ExternalSource` enum value — **never `projection_sources.id`**, a re-seedable surrogate |
    | `version` | surviving rows, so `name:vN:sha12` is a label and **never an FK target** |
-   | `player_id` on an override | **nothing** — see below |
 
-   `players.id` is a surrogate with no natural key and `normalized_name` is deliberately non-unique.
-   Source rows are digested *by* `player_id`, so a crosswalk remap is caught there — an override is
-   not, and would silently follow the integer to a different player. **Store `full_name` and
-   `normalized_name` as observed at authoring and refuse the override on mismatch.**
-
-4. **No stored blend output yet.** It flips when the first durable artifact takes a foreign key to a
-   blend result.
-
-5. **Widening `weight_basis` past `user_configured` must require a migration**, so learned weights
-   cannot arrive as a data edit.
+7. **No stored blend output.** `test_portability.py`'s `not_yet` set holds `blend_profiles` and
+   `blended_projections` on adjacent lines; **remove only the first.** The second is this clause's
+   sole enforcement, and deleting both is the natural edit. It flips when a migration adds a column
+   holding a value computed downstream of a blend — a greppable schema event, which the earlier
+   "first foreign key to a blend result" could not be, since clause 7 forbids the table such a key
+   would point at.
 
 ## Consequences
 
@@ -62,22 +90,24 @@ The screen gets per-game rate against per-game rate, durably. It does not get pa
 published seasonal total: that needs `expected-games`, and reconstructing it by multiplying a rate
 by the source's assumption is a two-line ADR-002 violation that looks like a feature.
 
-A moved import makes the read refuse rather than block, retryable per ADR-014. **Past numbers are
-not reproducible once an import is superseded** — acceptable only while nothing stores one, which is
-what clause 4's trigger watches.
+A moved import makes the read refuse rather than block, typed and retryable per ADR-014.
+Recompute-on-read mints the release in the request that consumes it, so `projection_values_sha256`
+becomes a within-request check and **the cross-time in-place-edit detection the model card
+advertises is given up** — an editor of a projection row is caught at the next read, not across it.
+Past numbers stay unreproducible once an import is superseded, which clause 7's trigger watches.
 
 ## Rejected
 
-**Persisting `BlendProfile` whole** — welds both lifetimes into a migration; the draft-morning
-failure above.
+**Persisting `BlendProfile` whole** — welds both lifetimes into a migration.
 **An opaque JSON blob in an existing lineage table** — the layer-purity test cannot inspect what it
 cannot read.
-**Materialising blended rows now** — a cache of a deterministic function, and a stored per-game row
-is one multiplication from looking like a valuation.
-**Config-file recipes** — real user state, belonging with the lineage it is derived from.
+**Materialising blended rows now** — a cache of a deterministic function, one multiplication from
+looking like a valuation.
+**Config-file recipes** — real user state, belonging with its lineage.
 
 ## What would flip this
 
-Measured recompute latency too slow for the draft board, which would justify materialisation early —
-**that claim must name the cohort size and the measured time**, so a reviewer can re-run it.
-Otherwise clause 4's trigger, which is an event rather than a judgement.
+Measured recompute latency too slow for the draft board, justifying materialisation early — **that
+claim must name the cohort size and the measured time**, so a reviewer can re-run it. Nothing in the
+repository records either today. Otherwise clause 7's trigger, which is an event rather than a
+judgement.

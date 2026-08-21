@@ -1035,6 +1035,49 @@ From the blind mock captures, identify systematic tendencies worth flagging live
 
 Once adherence data shows systematic tendencies, surface them live in the overlay - for example that the current bid is well over list on a position the owner has consistently overpaid for across prior mocks. Requires enough captures to distinguish tendency from noise. Read-only advisory, not a block.
 
+### `blend-override-persistence` - Persisting manual projection overrides safely
+
+- [ ] **pending**
+- **Depends on:** `blend-recipe-persistence`, `player-identity`
+
+Split out of `blend-recipe-persistence` by ADR-015 clause 5, because overrides
+are the only recipe component that carries a decision-bearing number and the
+only one whose key nothing pins. A `ManualProjectionOverride` names a
+`player_id`; `players.id` is a surrogate with no natural key and
+`normalized_name` is documented as deliberately non-unique *because* collisions
+must stay resolvable — so storing the observed name and refusing on mismatch is
+blindest on exactly the population that generates the risk. The identity remedy
+must therefore not be the name: use `birth_date`, or the `player_external_ids`
+row identity observed at authoring.
+
+Two further hazards that only appear once overrides are durable, both of which
+this item must close before it is done:
+
+- **A persisted override is indistinguishable from a durability-shaded rate.**
+  "His true per-game scoring is 24.1" and "I'll shade him to 22 because he'll
+  only play 55 games" are both `points_per_game`, and `expected-games` would
+  then multiply the second by our own `p(play)` — availability counted twice,
+  R41's mechanism with the owner's own hand as the aggregator, after which no
+  query separates "he is good" from "he is durable" for that player. The remedy
+  is definitional and belongs in the model card: an override replaces a per-game
+  rate **at normal health and role**, and no schema test can detect one that
+  does not.
+- **A bare ratio can reach the output on the hydration path.** On the read path
+  `blend_projections` takes `values` verbatim and the only re-check is
+  `_validate_shooting_values`, which iterates `fg`/`fg3`/`ft` and ignores field
+  names it does not recognise. The check that an override supplies exactly the
+  category's `production_fields` lives in `_validate_manual_overrides`, which is
+  definition-path only. A ratio category on assists or turnovers is expressible,
+  so a persisted single bare ratio would flow untouched into the blended output
+  — the naive-percentage bug arriving through the one door nobody was watching.
+
+Refusal must be a **read refusal**, typed and retryable per ADR-014. Dropping
+the override and blending anyway fails unsafe: the screen would show an
+uncorrected number the owner believes is corrected.
+
+Gate: **Code gate and Model gate** — the model card's Inputs section currently
+describes overrides as transient values, and that claim changes here.
+
 ### `blend-recipe-persistence` - Persisting the blend recipe so the owner's weights survive a restart
 
 - [ ] **pending**
@@ -1043,22 +1086,29 @@ Once adherence data shows systematic tendencies, surface them live in the overla
 ADR-015. `projection-blending` is complete but not durable: `BlendCatalog` is a
 caller-owned in-memory value, so owner-authored per-category weights die at
 process exit and there is no persistent "our number" to put beside a source's.
-Persist the **recipe** — selected sources, per-category weights, manual
-overrides, target scoring profile — and keep the **binding** to specific
-`ReleasedProjectionImport` records transient, recomputing the blend on read.
-Persisting `BlendProfile` whole would weld both lifetimes into a migration, and
-the failure that produces is a fresh Basketball Monster CSV on draft morning
-making the owner's weights unusable rather than stale.
+Persist the **recipe** — selected sources, per-category weights, target scoring
+profile — and keep the **binding** to specific `ReleasedProjectionImport`
+records transient, recomputing the blend on read. Persisting `BlendProfile`
+whole would weld both lifetimes into a migration, and the failure that produces
+is a fresh Basketball Monster CSV on draft morning making the owner's weights
+unusable rather than stale. Supersedes `plan.md:517`'s `blend_profiles`; its
+`blended_projections` stays deferred.
 
-Gate: **Code gate**, argued rather than assigned. This stores where
-owner-authored weights live and changes no arithmetic; blending version 1 fits
-no parameters and its model card reports no learned-accuracy or calibration
-claim, so there is no held-out experiment for the Model gate to require and
-demanding one would produce a ceremonial backtest of a deterministic
-transformation. The Adapter gate does not apply — no external source is called.
-**The Model gate attaches the moment `weight_basis` widens past
-`user_configured`**, which is why the schema must make that widening a
-migration rather than a data edit.
+Gate: **Code gate and Model gate.** The Model gate is satisfied by a revision of
+`docs/models/projection-blending.md` and an explicit inputs-versioning
+statement — **not** by a backtest or a calibration table. `gates.md` names
+`blending` in the Model gate's applies-to list, and no gate may be waived by the
+agent whose work it applies to, so the earlier Code-gate-only argument was wrong
+even though its premises were right: version 1 does fit no parameters and there
+is no held-out experiment to run, which is why the backtest and calibration
+bullets are inapplicable rather than skipped. The bullets that do bite are
+"version the output — every stored number records the model version and inputs
+that produced it", which the recipe *is* the inputs half of, and the model
+card's own "not durable across process restart" failure mode, which this item
+retires. The Adapter gate does not apply — no external source is called. The
+*fitted-model* half of the Model gate attaches the moment `weight_basis` widens
+past `user_configured`, which is why criterion 9 makes that widening a
+migration.
 
 Acceptance criteria, each falsifiable:
 
@@ -1068,28 +1118,54 @@ Acceptance criteria, each falsifiable:
    readable, and the blend against the new import succeeds without the owner
    re-authoring weights. This is the criterion that fails if anyone persists the
    binding.
-3. No table holds a blended per-game value. Asserted directly, so materialising
-   output later is a deliberate schema change rather than a drift.
-4. A schema test asserts the recipe tables carry no games-played,
-   expected-games, availability or seasonal-total column, and no column derived
-   by multiplying a rate by a count (ADR-002).
-5. At most one active recipe per `(league_id, name)` is enforced **by the
-   database**, demonstrated by a failing insert, on both SQLite and PostgreSQL.
-   Use the `LeagueScoringProfile` nullable-sentinel pattern: a partial index
-   needs `sqlite_where=`/`postgresql_where=`, which `test_portability.py`'s
-   dialect-branch pattern matches. That guard walks `src/hoops_gm` only, so it
-   will **not** catch the same keyword in the migration — honour it there
-   deliberately.
-6. A manual override whose stored `normalized_name` no longer matches its
-   `player_id` is **refused**, not applied. `players.id` is a surrogate with no
-   natural key and source rows are digested by it, so a crosswalk remap is
-   caught for a source row and invisible in an override.
-7. The recipe stores each source as its `ExternalSource` enum value, not
+3. Re-ingesting **byte-identical league settings** leaves the recipe active and
+   blendable. `derive_scoring_profile` mints a new profile version for a new
+   snapshot row even when content is unchanged, and activation repoints, so a
+   recipe storing `scoring_profile_id` dies here. Store `(league_id, name)` plus
+   a category-content fingerprint and re-resolve at read.
+4. A `BlendProfile` hydrated from the tables and passed straight to
+   `blend_projections` is **re-validated**, not trusted.
+   `_validate_source_selection`, `_normalize_category_weights` and the
+   `weight_basis` layer-purity raise each have exactly one call site today —
+   inside `define_blend_profile` — and the in-memory registry identity check is
+   what currently guarantees they ran. A table replaces that check. Driven by
+   constructing a profile that would fail each validator and asserting the read
+   path refuses it.
+5. `blended_projections` is **still** in `test_portability.py`'s `not_yet` set
+   after this lands, and no table holds a blended per-game value. `not_yet`
+   holds `blend_profiles` and `blended_projections` on adjacent lines; only the
+   first may be removed, and the second is the assertion that no output is
+   stored.
+6. A schema test asserts the recipe tables carry no games-played,
+   expected-games, availability or seasonal-total column, no column derived by
+   multiplying a rate by a count, and **no cohort or player-filter column** —
+   the last because filtering the pool by durability moves every downstream
+   z-score through its denominator (ADR-002).
+7. At most one active recipe per `(league_id, name)` is enforced **by the
+   database**, demonstrated by a failing insert, on both SQLite and PostgreSQL —
+   *and* two differently-named recipes can be active in one league at once,
+   demonstrated by a succeeding insert. `BlendCatalog.active` is keyed on
+   `(league_id, name)`, so `LeagueScoringProfile`'s bare
+   `UniqueConstraint(active_league_id)` is the **wrong** constraint here and
+   would silently narrow existing behaviour; use
+   `UniqueConstraint(active_league_id, name)` plus the companion
+   `CheckConstraint(active_league_id IS NULL OR active_league_id = league_id)`.
+   A partial index needs `sqlite_where=`/`postgresql_where=`, which
+   `test_portability.py`'s dialect-branch pattern matches — that guard walks
+   `src/hoops_gm` only, so it will **not** catch the same keyword in the
+   migration.
+8. The recipe stores each source as its `ExternalSource` enum value, not
    `projection_sources.id`; a re-seed that changes that row's id leaves the
    recipe resolvable.
-8. Redefining an identical recipe after deactivation reproduces the same
-   `content_sha256` while producing a new `version`, pinning that version is
-   history-dependent and the digest is not.
+9. `weight_basis` is constrained to `user_configured` **by the database**, so
+   widening it is a migration rather than an `UPDATE`. `portable_enum` is
+   VARCHAR on both dialects and `WeightBasis` already carries
+   `learned_accuracy`, `market_calibrated` and `mock_calibrated`.
+10. Redefining an identical recipe after deactivation reproduces the same
+    `content_sha256` while producing a new `version`, pinning that version is
+    history-dependent and the digest is not.
+
+Manual overrides are **out of scope** — see `blend-override-persistence`.
 
 Each new guard needs a mutation that reproduces the failure it guards against,
 asserted green before mutating and asserted to have actually applied. `quant`
