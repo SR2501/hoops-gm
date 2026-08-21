@@ -169,11 +169,12 @@ That is this ADR's fault before it is the consumer's, and it is fixed here.
 refused.
 
 **`null` means no trustworthy date could be derived, and the response says which cause.**
-Three are possible: the source offered no date at all, the source offered one that could not
-be read, or the two time fields could not be reconciled. **Only the first is the source
-saying "not yet decided."** The producer therefore emits a sibling field:
+Four are possible: the source offered no date at all; it offered one that could not be read;
+the two time fields could not be reconciled; or they agreed on a value the source cannot have
+meant, such as an epoch placeholder. **Only the first is the source saying "not yet
+decided."** The producer therefore emits a sibling field:
 
-    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable}
+    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable, implausible}
 
 a closed, validated set, **cross-checked against `game_date`** so that a reason without an
 absence, or an absence without a reason, is refused — the two halves of one fact cannot
@@ -187,11 +188,29 @@ persists, but **record the cause**. It is this repository's own "capture reason 
 just the outcome" — the rule it already applies to a DNP — applied to a parse result.
 
 **The consumer obligation follows from the reason, and the error direction is why it
-matters.** `not_offered` means *wait*: the bracket is undrawn and a date will arrive.
-`unreadable` means *investigate*: we failed to read something the source did send, or the
-schema moved. Rendering the second as the first tells an operator to wait through a defect.
-The live smoke asserts `unreadable` never occurs against the real source, because that value
-is a fault or a schema change rather than an undecided bracket.
+matters.** Rendering a fault as an undecided bracket tells an operator to wait through a
+defect, so each reason is assigned to the action it calls for:
+
+| reason | meaning | operator |
+|---|---|---|
+| `not_offered` | the source offered no date at all | **wait** |
+| `unreadable` | a value was published and we could not parse it | **investigate** |
+| `irreconcilable` | both fields parsed and disagree — the source contradicting itself | **investigate** |
+| `implausible` | both agreed on a value the source cannot have meant | **investigate** |
+
+`irreconcilable` sits on the fault side by decision rather than by derivation, and the
+reasoning is recorded because it was not obvious. It can arise two ways: a source expressing
+"undecided" through inconsistent sentinels, which is benign, or a genuine contradiction about
+a game whose date *is* decided, which is not — and **a consumer cannot tell those apart**. The
+cost is asymmetric: reporting a fault as a wait is the false comfort this whole section exists
+to prevent, while reporting a benign sentinel as a fault costs one look. The usual objection
+to that trade is alarm fatigue, and it does not apply here on the evidence: against the live
+2026-27 feed **all six pending games carry real dates and `date_absence_reason: ""`** — only
+their teams are undecided — so every fault reason currently fires zero times. If that ever
+stops being true, revisit this row rather than letting operators learn to ignore it.
+
+The live smoke asserts `unreadable` and `implausible` never occur against the real source,
+because both are a fault or a schema change rather than an undecided bracket.
 
 **Consequences for any consumer:**
 
@@ -214,16 +233,26 @@ not express.
 
 ### 2026-08-21 — the set is five, and the sentinel no longer reaches a consumer
 
-Written by the implementing lane at `architect`'s request, because PR #49 is what makes the
-section above untrue. Status unchanged; this records what the accepted decision produced.
+Written by the implementing lane at `architect`'s request, because PR #49 widened the set
+this ADR publishes. Status unchanged; this records what the accepted decision produced.
 
-The set is **five**, not four:
+**The section above has been corrected in place to the five-value set, rather than left to be
+contradicted here.** An ADR states the contract a consumer is entitled to build against, so it
+asserts the present and is corrected; a handoff entry records the past and is appended to. A
+reader entering at the earlier block would otherwise have built a validator that rejects a
+well-formed response — which is the failure a closed set exists to prevent. The historical fact
+that the set was published as four is preserved by this dated block existing at all.
 
-    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable, implausible}
+The narrower statement of that defect, which is the defensible one: the earlier block was not
+internally inconsistent — `""` is not an absence cause, so *"three causes"* beside a four-value
+set was correct arithmetic. **It simply omitted `implausible`.**
 
 `implausible` is a fault, not an absence: the value **parsed, reconciled, and was still not a
-date the source can have meant** — it falls outside a loose July-to-July window around the
-season the payload itself names. It exists because **agreement is not validity**. This source
+date the source can have meant** — it falls outside a **two-sided eleven-year window** centred
+on the season the payload itself names. The window is deliberately loose, and an earlier
+July-to-July form was widened at `architect`'s request: its only job is to catch an epoch
+placeholder, and the ones this source emits miss by 126 and 2,025 years, while a tight window
+would also refuse a rescheduled game or an adjacent feed and kill the import. It exists because **agreement is not validity**. This source
 uses `1900-01-01` as a live epoch placeholder for a time-only field on every resolved game in
 the recorded fixture; the same convention in the *date* fields reconciles exactly, because
 1900's Eastern offset genuinely is −05:00. Without the window it was stored as a decided date
@@ -236,9 +265,13 @@ know.
 rather than about the source's restraint, and the 1900 convention is *already observed* in a
 sibling field, so nothing but the window stops it appearing in this one.
 
-**Exit codes, because the difference is waiting versus paging someone.** The operator command
-exits `0` for `not_offered` and `irreconcilable` — the source declining to commit is the case
-this whole ADR exists to tolerate — and **`5` for `unreadable` and `implausible`**. Exit 5 is
+**Exit codes answer a different question from the operator table above, and conflating them is
+how `irreconcilable` was first classified wrongly.** An exit code answers *should this import
+fail*; the reason table answers *should a human look*. They are not the same question and one
+signal cannot serve both. The operator command exits `0` for `not_offered` **and**
+`irreconcilable` — tolerating an undated pending game is the case this whole ADR exists for, and
+it stays true of `irreconcilable` even though that reason now means *investigate*, because a
+game nothing persists must never fail the season's import — and **`5` for `unreadable` and `implausible`**. Exit 5 is
 **not a refusal**: rows are written and the cohort is registered. It says a successful import
 contains something a human should look at, so a schema change on the read path is not reported
 solely by a nightly smoke that is allowed to fail and does not run in CI.

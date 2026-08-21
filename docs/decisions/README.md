@@ -30,6 +30,7 @@ New to the project? [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains each decisio
 | [010](ADR-010-local-bridge-pairing.md) | One-time local pairing for the browser bridge | **Accepted** | A displayed, single-use local code provisions the userscript bearer secret without putting it in source control |
 | [011](ADR-011-strength-of-schedule-sequencing.md) | Strength of schedule is a living projection dependency, not schedule intelligence | **Accepted** | SOS and every projection set form a versioned recursive loop with at least weekly refreshes and cascaded downstream outputs |
 | [012](ADR-012-per-week-game-distribution.md) | Per-week game distribution is a living schedule dependency across decisions | **Accepted** | Weekly game volume is re-ingested and cascaded into projections, SOS, valuations, draft, trades, lineups, streaming, and weekly planning |
+| [013](ADR-013-forward-schedule-completeness.md) | Forward-schedule completeness: source-declared pending is not a resolution failure | **Accepted** | A game the source publishes without teams is recorded as pending, not refused and not dropped; a pending game's `game_date` is nullable and names its cause |
 | [014](ADR-014-read-endpoints-detect-not-lock.md) | Read endpoints detect a moved cohort; they do not lock to prevent one | *Proposed* | A read must not hold a lock that can block a writer; bracket the read between two canonical releases and refuse instead |
 
 ## Accepted
@@ -39,6 +40,8 @@ ADR-001 through ADR-007 were accepted by the project owner on **2026-08-17**, af
 They record the decisions reached in the planning conversation of the same day and are now settled — but not immutable. Each states the condition that would flip it, and an accepted ADR can still be amended when reality disagrees with it. If one of those conditions is met, say so rather than working around the decision.
 
 ADR-009 was accepted by the project owner on **2026-08-17**.
+
+ADR-013 was accepted by the project owner on **2026-08-20**, after the importer was found to refuse the entire real season over six NBA Cup games the source publishes with no teams assigned.
 
 ADR-008 was accepted by the project owner on **2026-08-18**, who explicitly
 praised it as written.
