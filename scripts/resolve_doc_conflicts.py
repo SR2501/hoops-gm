@@ -67,32 +67,45 @@ CONFLICT_END = ">>>>>>> "
 _HEADER_COUNT = re.compile(r"\*\*\d+ done - \d+ blocked - \d+ pending - \d+ total\*\*")
 _RECOUNT_NOTE = "Recomputed from the status markers in this finished file"
 
-# Binary by extension, skipped without comment. Reporting a PDF as "not
-# scanned" on every run is how the report gets deleted — a guard that cries
-# wolf is the one the next person loosens, and this repository commits binary
-# fixtures. The report exists for a *text* file the scan could not decode,
-# which is the case that scanned clean and was claimed as covered.
-BINARY_SUFFIXES = frozenset(
-    {
-        ".pdf",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".ico",
-        ".woff",
-        ".woff2",
-        ".zip",
-        ".gz",
-        ".db",
-        ".sqlite",
-        ".sqlite3",
-        ".xlsx",
-        ".docx",
-        ".pptx",
-        ".parquet",
-    }
-)
+
+def _is_only_count_lines(block: str) -> bool:
+    """True when a conflict block holds nothing but count lines and blanks.
+
+    The predicate that licenses deleting both sides of a block: not "contains
+    the thing I can regenerate" but "contains *nothing else*". A note-only
+    conflict deliberately returns False — the recount parenthetical is
+    accumulated incident history, several paragraphs of it, and merging that
+    by hand is the correct outcome rather than a cost.
+    """
+    for line in block.split("\n"):
+        if (
+            line.startswith(CONFLICT_BEGIN)
+            or line.startswith(CONFLICT_END)
+            or line.startswith(CONFLICT_BASE)
+            or line == CONFLICT_SEPARATOR
+        ):
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _HEADER_COUNT.fullmatch(stripped):
+            continue
+        return False
+    return True
+
+
+# Binary content is skipped without comment. Reporting a committed PDF as "not
+# scanned" on every run is how the report gets deleted — a guard that cries wolf
+# is the one the next person loosens. Decided by a NUL byte in the first 8 KiB
+# rather than by a suffix list: review pointed out that a hardcoded set is an
+# allowlist by omission, and `.webp`, `.ttf`, `.mp4`, `.wasm` and `.so` were all
+# plausible here and all absent from mine. A sniff has nothing to maintain and
+# cannot go stale when someone commits a new format.
+def _looks_binary(path: pathlib.Path) -> bool:
+    try:
+        return b"\x00" in path.read_bytes()[:8192]
+    except OSError:
+        return False
 
 
 def is_conflict_marker(line: str) -> bool:
@@ -173,42 +186,56 @@ def resolve_backlog(path: pathlib.Path) -> None:
     had_conflict = CONFLICT_BEGIN in text
     slugs_before = set(re.findall(r"^### `([^`]+)`", text, re.M))
 
-    # Collapse a conflicted block **only when it is the header count region**,
-    # which is the one region this function knows how to resolve.
+    # Refuse diff3/zdiff3 here, by name, before the slug comparison. Otherwise
+    # a heading present only in the `|||||||` base section — meaning both lanes
+    # deleted it, so removing it is the *correct* resolution — is counted in
+    # `slugs_before` and reported as a loss. The refusal was right and the
+    # reason was false, which sends the operator to diff a slug set against
+    # main for an item that is legitimately gone.
+    if CONFLICT_BASE in text:
+        sys.exit(
+            f"{path}: this file was conflicted with diff3/zdiff3 markers "
+            "(`|||||||`). This script resolves the two-sided form only. Note "
+            "that a heading appearing solely in the base section means both "
+            "sides deleted it, which is not a loss — resolve by hand."
+        )
+
+    # Collapse a conflicted block **only when its entire content is the count
+    # line** — nothing else. Three iterations of one defect got us here, and
+    # the distinction that ends it is a reviewer's:
     #
-    # Two earlier forms were both wrong, and the second is the instructive one.
-    # The original replaced every conflict block, both sides, with a
-    # placeholder — so when two lanes added items in the same region it
-    # silently deleted all of them and exited zero. On 2026-08-21 that removed
-    # three entries a lane had merged minutes earlier, and every check we had
-    # agreed the result was fine: a recount of the finished file is *internally
-    # consistent after a deletion*, because a dropped item takes its heading
-    # and its marker with it.
+    #   "This block contains the thing I know how to regenerate" is not the
+    #   same predicate as "this block contains nothing else", and only the
+    #   second one licenses deleting it.
     #
-    # The fix for that exempted any block containing `### `. Review found it
-    # **narrowed the defect rather than removing it**: a conflict inside an
-    # item's *body* — its `- **Depends on:**` edges, its description — carries
-    # no heading and no status marker, so it was still collapsed, the slug
-    # guard below still saw no change, the 1:1 check still balanced, and the
-    # script still printed "Safe to stage". That is worse than the original in
-    # one specific way: deleting a dependency edge makes a blocked item look
-    # **ready**, and `AGENTS.md` defines readiness as every dependency done.
+    # v1 collapsed every block, both sides, and silently deleted three items a
+    # lane had merged minutes earlier. v2 exempted blocks containing `### `,
+    # which still ate an item's `**Depends on:**` edges — worse, because
+    # `AGENTS.md` defines a task as ready when every dependency is done, so a
+    # deleted edge makes a blocked item look **ready**. v3 anchored to blocks
+    # *containing* a count line, which still ate the intro sentence: in the
+    # real file that sentence is line 3 and the count is line 5, so one
+    # ordinary hunk covers both.
     #
-    # So: anchor to the count region and refuse on everything else. A resolver
-    # that only knows how to resolve one region should say so on the others
-    # rather than treating "I have no rule for this" as "delete both sides".
+    # Each iteration narrowed which blocks may collapse and never changed how
+    # much of the block is deleted — still all of it, both sides. So the
+    # predicate is now about the whole content, and everything else refuses.
+    # A refusal is strictly better than a silent deletion: the operator keeps
+    # both sides' prose and merges the accumulated incident notes by hand,
+    # which is what those notes are for.
     def _collapse(match: re.Match[str]) -> str:
         block = match.group(0)
-        if _HEADER_COUNT.search(block) or _RECOUNT_NOTE in block:
+        if _is_only_count_lines(block):
             return "__NOTE__\n"
-        excerpt = "\n".join(block.strip().split("\n")[:6])
+        excerpt = "\n".join(block.strip().split("\n")[:8])
         sys.exit(
-            f"{path}: a conflict block outside the header count region. This "
-            "script only knows how to resolve the count block; collapsing "
-            "anything else deletes both sides. Resolve by hand and keep both "
-            "sides' content — note that a body conflict can delete a "
-            "'**Depends on:**' edge without changing any heading, marker or "
-            f"total, so no other check here can see it.\n\n{excerpt}"
+            f"{path}: this conflict block holds more than the header count "
+            "line, and this script only knows how to regenerate that. "
+            "Collapsing it would delete both sides of everything else. "
+            "Resolve by hand, keep both sides' content, then re-run.\n\n"
+            "Note that a body conflict can delete a '**Depends on:**' edge "
+            "without changing any heading, marker or total, so no other check "
+            f"here can see it.\n\n{excerpt}"
         )
 
     text = re.sub(r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", _collapse, text, flags=re.DOTALL)
@@ -317,7 +344,7 @@ def surviving_markers() -> tuple[list[str], list[str]]:
     for path in REPO_ROOT.rglob("*"):
         if not path.is_file() or SKIP_DIRS & set(path.parts):
             continue
-        if path.suffix.lower() in BINARY_SUFFIXES:
+        if _looks_binary(path):
             continue
         try:
             text = path.read_text(encoding="utf-8")

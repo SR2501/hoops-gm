@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
-import subprocess
-import sys
 
 import pytest
 
@@ -88,23 +86,144 @@ def test_real_git_markers_are_all_recognised(tmp_path):
 def test_help_writes_nothing(tmp_path):
     """Pins the defect where `--help` performed a full resolution.
 
-    A program that ignores its arguments does its real work when asked to
-    describe itself, and `--help` is the first thing an operator types.
+    Run **in-process against a patched `REPO_ROOT`**, not as a subprocess with
+    `cwd=tmp_path`. Review found the subprocess form inert: `REPO_ROOT` is
+    derived from the *script's* location, not the working directory, so the
+    child operated on the real repository regardless. The test asserted a
+    scratch file was unchanged — a file the subprocess would never touch — and
+    it passed while a mutation rewrote this repository's own backlog. A test
+    that cannot fail is worse than no test, and one that mutates the tree under
+    test is worse again.
     """
     docs = tmp_path / "docs"
     docs.mkdir()
     backlog = docs / "backlog.md"
     backlog.write_text(_backlog(ITEM_A + "\n" + ITEM_B), encoding="utf-8")
-    before = backlog.read_bytes()
+    handoff = docs / "handoff.md"
+    handoff.write_text("## 2026-08-21\n\nentry\n", encoding="utf-8")
+    before = (backlog.read_bytes(), handoff.read_bytes())
 
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--help"],
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
+    module = _load(tmp_path)
+    assert module.main(["--help"]) == 0
+    assert (backlog.read_bytes(), handoff.read_bytes()) == before
+
+    assert module.main(["--dry-run"]) == 2
+    assert (backlog.read_bytes(), handoff.read_bytes()) == before
+
+
+def test_two_surviving_headers_are_refused(tmp_path):
+    """Covers the `written == 2` path, which no test reached.
+
+    A stash-style label (`<<<<<<< Updated upstream`) means the collapse regex —
+    which is anchored on `HEAD` — never matches, so both sides' headers
+    survive. This assertion is the only thing that catches it.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        "<<<<<<< Updated upstream\n**1 done - 0 blocked - 1 pending - 2 total**\n"
+        "=======\n**0 done - 0 blocked - 2 pending - 2 total**\n"
+        ">>>>>>> Stashed changes\n\n" + ITEM_A + "\n" + ITEM_B
     )
-    assert result.returncode == 0
-    assert backlog.read_bytes() == before
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    assert "found 2" in str(excinfo.value)
+    assert backlog.read_text(encoding="utf-8") == original
+
+
+def test_note_only_conflict_is_refused_rather_than_given_a_second_header(tmp_path):
+    """The recount note is accumulated incident history — merge it by hand.
+
+    Pins the F2b regression: when the collapsed block held the note but *not*
+    the header, the note-carries-the-header replacement injected a second one
+    and the `written != 1` assertion then refused with a message claiming
+    "both sides' headers survived" — which was false, because this function had
+    created the second one line earlier. Now the block simply does not qualify
+    for collapse, so no header is injected and the refusal says the true thing.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n" + HEADER + "\n\n"
+        "<<<<<<< HEAD\n(Recomputed from the status markers in this finished file, ours.)\n"
+        "=======\n(Recomputed from the status markers in this finished file, theirs.)\n"
+        ">>>>>>> other\n\n" + ITEM_A + "\n" + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    message = str(excinfo.value)
+    assert "more than the header count line" in message
+    assert "found 2" not in message, "refused for the wrong reason"
+    assert backlog.read_text(encoding="utf-8") == original
+
+
+def test_intro_prose_sharing_a_hunk_with_the_header_is_refused(tmp_path):
+    """The real file's layout: intro sentence line 3, count line 5.
+
+    One ordinary hunk covers both. The previous predicate — "block contains a
+    count line" — collapsed it and deleted the sentence, both sides, exit 0.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    original = (
+        "# Build backlog\n\n"
+        "<<<<<<< HEAD\nGenerated from the planning session on 2026-08-17.\n\n"
+        + HEADER
+        + "\n=======\nGenerated from the planning session, revised.\n\n"
+        "**0 done - 0 blocked - 2 pending - 2 total**\n>>>>>>> other\n\n" + ITEM_A + "\n" + ITEM_B
+    )
+    backlog.write_text(original, encoding="utf-8")
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    assert "more than the header count line" in str(excinfo.value)
+    assert backlog.read_text(encoding="utf-8") == original
+    assert "Generated from the planning session" in backlog.read_text(encoding="utf-8")
+
+
+def test_diff3_base_section_refuses_by_name(tmp_path):
+    """A heading only in the base means both sides deleted it — not a loss.
+
+    Refusing is right; the previous message blamed the slug guard and sent the
+    operator to diff a slug set against main for an item legitimately gone.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    backlog = docs / "backlog.md"
+    backlog.write_text(
+        _backlog(
+            ITEM_A
+            + "\n<<<<<<< HEAD\n"
+            + ITEM_B
+            + "||||||| base\n### `gamma` - Gamma\n\n- [ ] **pending**\n"
+            + "=======\n"
+            + ITEM_B
+            + ">>>>>>> other\n"
+        ),
+        encoding="utf-8",
+    )
+    module = _load(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
+
+    message = str(excinfo.value)
+    assert "diff3" in message
+    assert "would drop" not in message, "blamed the slug guard for a diff3 file"
 
 
 def test_body_conflict_is_refused_rather_than_collapsed(tmp_path):
@@ -132,7 +251,7 @@ def test_body_conflict_is_refused_rather_than_collapsed(tmp_path):
     with pytest.raises(SystemExit) as excinfo:
         module.resolve_backlog(backlog)
 
-    assert "outside the header count region" in str(excinfo.value)
+    assert "more than the header count line" in str(excinfo.value)
     assert backlog.read_text(encoding="utf-8") == conflicted, "file was rewritten"
 
 
@@ -161,12 +280,15 @@ def test_header_count_conflict_is_still_resolved(tmp_path):
     assert "`alpha`" in text and "`beta`" in text
 
 
-def test_slug_guard_is_independent_of_the_anchor(tmp_path):
+def test_slug_guard_is_independent_of_the_anchor(tmp_path, monkeypatch):
     """The two layers must fail *separately*, which is the argument for both.
 
-    Verified by mutation rather than by reading: the anchor is replaced with an
-    unconditional collapse — the exact pre-fix behaviour — and the slug guard
-    must still refuse and must name what would be lost.
+    Verified by mutation rather than by reading: the collapse predicate is
+    replaced with one that accepts everything — the exact pre-fix behaviour —
+    and the slug guard must still refuse and must name what would be lost.
+
+    Scoped with `monkeypatch` rather than by assigning `module.re.sub`, which
+    patched the *stdlib* `re` module process-wide for the duration.
     """
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -179,20 +301,10 @@ def test_slug_guard_is_independent_of_the_anchor(tmp_path):
     )
     backlog.write_text(conflicted, encoding="utf-8")
     module = _load(tmp_path)
+    monkeypatch.setattr(module, "_is_only_count_lines", lambda _block: True)
 
-    original = module.re.sub
-
-    def _always_collapse(pattern, repl, string, **kwargs):
-        if "<<<<<<< HEAD" in str(pattern):
-            return original(pattern, lambda _m: "__NOTE__\n", string, **kwargs)
-        return original(pattern, repl, string, **kwargs)
-
-    module.re.sub = _always_collapse
-    try:
-        with pytest.raises(SystemExit) as excinfo:
-            module.resolve_backlog(backlog)
-    finally:
-        module.re.sub = original
+    with pytest.raises(SystemExit) as excinfo:
+        module.resolve_backlog(backlog)
 
     message = str(excinfo.value)
     assert "would drop" in message
