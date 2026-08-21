@@ -127,19 +127,30 @@ export interface PendingGamesSummary {
    * Detail entries whose `game_date` is not a readable ISO day.
    *
    * Kept, where the two id/record reconciliation states this once carried were
-   * dropped, and the line between them is worth stating. `pending_game_ids` and
-   * `pending_games` disagreeing is forbidden by an explicit backend invariant —
-   * the ids are *derived* from the records and any stored block where they
-   * differ is refused — so UI for it could never render, which is the same
-   * error as a caution that fires only when nothing is wrong.
+   * dropped, and the line between them is worth stating — the more so because
+   * the reason first written here was **measured and found false**. It claimed
+   * `'12/04/2026' <= '2026-12-13'` compares false and would drop a game out of
+   * its column without a word. It compares *true*; and a slash-formatted date
+   * fails `start_date <= game_date` against every period, so unguarded it lands
+   * in `outsidePeriods` and the notice prints it, id and all. Neither half of
+   * that justification survived being run.
    *
-   * An unreadable date is forbidden by nothing: it is merely improbable,
-   * because Pydantic's default encoder happens to serialize `date` as
-   * `YYYY-MM-DD`. No invariant is stated over the wire format, and the failure
-   * it prevents is silent rather than loud — `'12/04/2026' <= '2026-12-13'`
-   * compares false and would drop a game out of its column without a word. A
-   * guard against a silent wrong answer earns its place; a note about an
-   * impossible one does not.
+   * The guard is still right, for the failure that is actually plausible. The
+   * drift to expect is not a slash date but `date` → `datetime` on the Pydantic
+   * field, giving `2026-12-04T00:00:00Z`. Measured, that buckets *correctly*
+   * everywhere except a period whose `end_date` is the game's own day, where
+   * `'2026-12-04T00:00:00Z' <= '2026-12-04'` is false — so the game silently
+   * falls out of the one column it belongs in and is then reported as *"falls
+   * outside every scoring period this grid shows"*, which is a statement about
+   * the fantasy calendar made about a data defect.
+   *
+   * So the value of this guard is that it prevents a **mis-attributed
+   * explanation**, not that it prevents silence. That is the same argument
+   * `PendingGamesSummary` makes for keeping its other fields apart, and it is
+   * why the id/record states went and this one stayed: those are forbidden by
+   * an invariant the client now checks at the boundary (`isPendingBlock`), and
+   * a boundary that can be closed should be closed rather than narrated. The
+   * wire date format is not ours to close.
    */
   undated: SchedulePendingGame[]
 }
@@ -219,7 +230,16 @@ export function readPendingGames(
   }
 }
 
-/** Pending games the response declared but the grid could not put in a column. */
+/**
+ * Pending games the response declared but the grid could not put in a column.
+ *
+ * Equal to `outsidePeriods.length + undated.length` now that `isPendingBlock`
+ * refuses any block whose ids and records disagree, so it is a cross-check
+ * rather than an independent quantity — which is what the model test uses it
+ * for. It is deliberately computed from `declaredCount` (the invariant's term)
+ * minus what was placed, so if that equality ever stops holding the test says
+ * so instead of the screen quietly under-reporting.
+ */
 export function unplacedPendingCount(summary: PendingGamesSummary): number {
   return summary.declaredCount - summary.placedCount
 }

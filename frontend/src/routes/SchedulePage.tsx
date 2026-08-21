@@ -21,7 +21,6 @@ import { ScheduleGridTable } from '../components/ScheduleGridTable'
 import { ScheduleLineage } from '../components/ScheduleLineage'
 import {
   buildScheduleGridModel,
-  unplacedPendingCount,
   type ScheduleGridModel,
 } from '../components/scheduleGridModel'
 
@@ -50,6 +49,35 @@ export function SchedulePage() {
           Scheduled games per team, per fantasy scoring period. Raw counts — no availability, no
           opponent quality, no judgement about whether a week is light or heavy. See{' '}
           <code>docs/decisions/ADR-012-per-week-game-distribution.md</code>.
+        </p>
+        {/*
+          Unconditional, and deliberately prose rather than a banner.
+
+          ADR-013 names two sources of forward incompleteness and the contract
+          carries only one. Pending games are published-without-teams and are
+          marked per column below. Make-up games for teams eliminated early in
+          the NBA Cup are not published at all — they are absent from
+          `source_game_count`, so they are neither resolved nor pending, and no
+          field exists for this screen to mark them with. ADR-013's own Context
+          puts it at 80 games per team today becoming 82 later.
+
+          Without this sentence the marking implies its own converse: that an
+          unmarked column is settled. It is not, and the failure is on a clock —
+          when the bracket is drawn the pending set empties, the notice below
+          stops rendering, and the screen would go silent while the season is
+          still short roughly two games per team. That is also the moment
+          ADR-012's living-refresh amendment matters most, so a count reading as
+          final there is the worst version of this.
+
+          In the lede rather than a notice because it is always true and never
+          an event; a permanent banner on the healthy path is what
+          `ScheduleLineage` argues against.
+        */}
+        <p className="page__lede page__lede--caveat">
+          A count here is what the source has <em>published</em>, which is not the whole season.
+          Teams eliminated early from the Emirates NBA Cup are later given make-up games that the
+          NBA has not released yet, and those are not in this data at all — so every count below is
+          a floor, including in columns carrying no mark.
         </p>
       </header>
 
@@ -160,6 +188,16 @@ function ScheduleGridView({
  * appear at all once the pending set is empty — a caution that fires when
  * nothing is wrong devalues the one beside it that means something.
  *
+ * **Why it is not a live region.** It carries no `role="status"`, unlike the
+ * stale banner beside it. It is present at first paint and describes the data
+ * rather than announcing a change, so the polite queue is the wrong place for
+ * it: assistive technology would read it on load in nondeterministic order
+ * against three other regions, and `aria-atomic` defaults to true, so a refresh
+ * altering one word re-reads the whole paragraph. `grid-integrity` above still
+ * carries `role="status"` and on this reasoning should not — it is left alone
+ * here because changing an already-reviewed surface as a side effect of an
+ * unrelated diff is how surfaces drift.
+ *
  * **The three states this screen now keeps apart.** A `0` is a real count of
  * zero scheduled games. A `·` is data the backend did not send. A `TBD` column
  * is the source not having decided yet. They are three different claims about
@@ -175,7 +213,7 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
   // who would otherwise take a 0 for a bye.
   if (!pending.present) {
     return (
-      <p className="state grid__pending-note" role="status" data-testid="grid-pending-unknown">
+      <p className="state grid__pending-note" data-testid="grid-pending-unknown">
         <strong>Whether this season is fully scheduled is unknown.</strong> This response carried no
         pending-games block, so it cannot say whether the source has published games with their
         teams still undecided. Any count here may be understated by an amount this screen cannot
@@ -191,19 +229,10 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
   const marked = periods
     .map((period, index) => ({ period, count: (periodPending[index] ?? []).length }))
     .filter((entry) => entry.count > 0)
-  // Placed + outside + undated accounts for every game `pending_games`
-  // described, so a shortfall against `pending_game_ids` — the term the
-  // completeness invariant is written over — is a fourth thing none of the
-  // clauses below explains. It cannot arise from this backend, which derives
-  // the ids from the records, but the arithmetic on screen has to close either
-  // way: a reader who adds the marked columns and gets less than the declared
-  // total is owed the difference rather than left to find it.
-  const unexplained =
-    unplacedPendingCount(pending) - pending.outsidePeriods.length - pending.undated.length
   const games = pending.declaredCount === 1 ? '1 game' : `${String(pending.declaredCount)} games`
 
   return (
-    <p className="state grid__pending-note" role="status" data-testid="grid-pending">
+    <p className="state grid__pending-note" data-testid="grid-pending">
       <strong>This season is not fully scheduled.</strong> The source has published {games} without
       deciding which teams play in {pending.declaredCount === 1 ? 'it' : 'them'}, so this grid
       cannot say which teams are affected — that is what pending means, and no team column below
@@ -233,11 +262,15 @@ function PendingNotice({ model }: { model: ScheduleGridModel }) {
             .map((game) => `${game.nba_game_id} (${game.game_date})`)
             .join(', ')}. `
         : ''}
-      {unexplained > 0
-        ? `A further ${String(
-            unexplained,
-          )} were counted in the pending total but not described, so this screen cannot say when they fall. `
-        : ''}
+      {/*
+        No residual clause for "declared but not described". `isPendingBlock`
+        now refuses any response whose `pending_game_ids` and `pending_games`
+        do not name the same games in the same order, so the shortfall this
+        used to narrate cannot reach the render — and the sentence it printed
+        was user-facing prose that no test drove, because nothing could
+        construct the state to drive it. Closing the hole at the boundary is
+        what allows the state to be deleted rather than described.
+      */}
       Ids, dates and labels are in the lineage panel above.
     </p>
   )

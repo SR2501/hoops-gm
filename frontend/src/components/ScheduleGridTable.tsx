@@ -85,9 +85,17 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
                   className={periodClass('grid__period', period.is_playoff, pending.length > 0)}
                   data-testid={`period-header-${String(period.period_number)}`}
                   data-pending={pending.length > 0 ? 'true' : 'false'}
+                  // The pending sentence goes in the accessible name below and
+                  // *not* here. The visually-hidden span is the name; `title`
+                  // becomes the description, and screen readers with
+                  // description reporting on announce both — so appending
+                  // ninety characters to each would have this column read twice
+                  // at triple length on every focus change. Sighted readers get
+                  // the badge, the key below the lede, and the notice naming
+                  // the periods, which is where a sentence belongs anyway.
                   title={`Period ${String(period.period_number)}: ${formatPeriodRange(period)}${
                     period.is_playoff ? ' (fantasy playoff period)' : ''
-                  }${pendingNote === null ? '' : `. ${pendingNote}`}`}
+                  }`}
                 >
                   <span className="grid__period-number" aria-hidden="true">
                     {period.period_number}
@@ -211,7 +219,28 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
               testId="league-mean-season"
               label="Season mean games per team"
               setNoun="with a complete row"
-              pendingGames={model.pending.declaredCount}
+              // Zero on purpose, and not because nothing is pending.
+              //
+              // This was `model.pending.declaredCount` and said two wrong
+              // things. The lesser one: `describePendingPeriod` is a
+              // *period-scoped* sentence, and the season column is not a
+              // period, so it read "this period contains…" on an aggregate
+              // over twenty-one of them.
+              //
+              // The substantive one: `declaredCount` includes pending games
+              // dated outside every scoring period the grid shows. Those have
+              // fixed dates that no column can ever hold, so they cannot enter
+              // any period count and therefore cannot enter this total either
+              // — while the notice above says in as many words that no column
+              // can carry them. The screen contradicted itself, and the
+              // sibling season `TotalCell` on the row above disagreed with
+              // this cell about whether the season was pending at all.
+              //
+              // The season-scoped claim is not dropped; it is stated once, in
+              // `PendingNotice`, where it can be qualified precisely. A weaker
+              // paraphrase in a tooltip on one of two adjacent aggregates was
+              // never adding anything the notice does not say better.
+              pendingGames={0}
             />
           </tr>
         </tfoot>

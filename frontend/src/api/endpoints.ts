@@ -115,21 +115,37 @@ function isStringArray(value: unknown): value is string[] {
  * one and a generic contract error. `readPendingGames` reports the absence as
  * its own state rather than reading it as "nothing is pending".
  *
- * Present-but-malformed is *not* allowed, for the same reason a negative game
- * count is not: a `pending_games` entry without a readable `game_date` cannot
- * be placed on the calendar, and a partially-parsed pending set would under-
- * report the very incompleteness it exists to declare. Same split as
- * `isScheduleGridCount` — tolerate a gap you can describe, reject a value that
- * cannot be true.
+ * Everything else is rejected, including the two things a reader would never
+ * see go wrong. `pending_game_ids` and `pending_games` must name the same games
+ * in the same order — which the backend guarantees, deriving the first from the
+ * second, and which this checks anyway because *the client currently relies on
+ * an invariant that exists in no branch*. Without it a block the backend cannot
+ * emit is accepted and the screen contradicts itself: ids longer than records
+ * produces a pending total larger than the list beneath it, and records longer
+ * than ids badges a column `TBD` while the lineage states "none — every game
+ * the source published has teams assigned". Neither is loud. Closing the hole
+ * at the boundary is what lets the states behind it be deleted rather than
+ * narrated.
+ *
+ * The label fields are deliberately **not** in that category. A `null`
+ * `game_label` is a gap this screen can describe — `describePendingGame`
+ * already renders "no label given" — and refusing the response over it would
+ * cost every count on the page for a missing piece of prose. That is the split
+ * this file draws everywhere: tolerate a gap you can describe, reject a value
+ * that cannot be true.
  */
+function isNullableString(value: unknown): boolean {
+  return typeof value === 'string' || value === null
+}
+
 function isSchedulePendingGame(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.nba_game_id === 'string' &&
     typeof value.game_date === 'string' &&
-    typeof value.game_label === 'string' &&
-    typeof value.game_sub_label === 'string' &&
-    typeof value.game_subtype === 'string'
+    isNullableString(value.game_label) &&
+    isNullableString(value.game_sub_label) &&
+    isNullableString(value.game_subtype)
   )
 }
 
@@ -139,7 +155,11 @@ function isPendingBlock(value: Record<string, unknown>): boolean {
   if (ids === undefined && games === undefined) {
     return true
   }
-  return isStringArray(ids) && Array.isArray(games) && games.every(isSchedulePendingGame)
+  if (!isStringArray(ids) || !Array.isArray(games) || !games.every(isSchedulePendingGame)) {
+    return false
+  }
+  const named = (games as { nba_game_id: string }[]).map((game) => game.nba_game_id)
+  return named.length === ids.length && named.every((id, index) => id === ids[index])
 }
 
 function isScheduleRefreshLineage(value: unknown): boolean {

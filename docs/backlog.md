@@ -527,8 +527,15 @@ any count in this column may rise*.
 
 This also depends on the backend emitting `lineage.schedule.pending_game_ids`
 and `pending_games`, which is the `data-engineer` lane implementing ADR-013 and
-had no backlog slug when this was written. If that lane adds one, this item's
-dependency list should gain it.
+had no backlog slug when this was written. `architect` is creating one; this
+item's dependency list should gain it.
+
+The wire types are **optional** on the client (`pending_game_ids?`,
+`pending_games?`) and the absence is rendered as its own statement. That is a
+tolerance for a branch that had not landed, not a product feature, and it
+should be removed — types made required, the "cannot say" notice deleted —
+once the backend lane is on `main`. `frontend` owns the change; the trigger is
+that lane merging. Tracked here so it does not become permanent by silence.
 
 **Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
 every naming field null, so no team can be named and none is. A per-cell "this
@@ -548,6 +555,7 @@ being explicable as an undetermined bracket and a bare count shows nothing to
 check that against.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
+
 - [x] **done**
 - **Depends on:** `schedule-grid-early`
 

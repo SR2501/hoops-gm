@@ -63,11 +63,11 @@ export interface SchedulePendingGame {
   /** ISO day. The only field that can locate a pending game in the grid. */
   game_date: string
   /** e.g. "Emirates NBA Cup". */
-  game_label: string
+  game_label: string | null
   /** e.g. "Quarterfinal". */
-  game_sub_label: string
-  /** e.g. `in-season-knockout`. */
-  game_subtype: string
+  game_sub_label: string | null
+  /** e.g. "in-season-knockout". */
+  game_subtype: string | null
 }
 
 /**

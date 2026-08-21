@@ -11340,8 +11340,10 @@ is a limit on recorded fixtures I had not stated before and it belongs beside th
 about them being blind to a change of meaning under an unchanged shape.
 
 **Measured: the schedule content version is blind to the pending set — and the ADR is
-wrong, not the code.** `architect` confirmed this is a false claim in an *Accepted* ADR
-and is amending ADR-013 and filing the persistence question as a follow-up. `schedule_content_version` is computed over persisted `team_schedule`
+wrong, not the code.** `architect` reproduced this independently, two ways, and has taken
+the ADR-013 amendment and the persistence follow-up as their own actions. This entry
+originally stated those as already done; they were not, and recording someone else's
+intention as a completed action is the same defect class as everything else here. `schedule_content_version` is computed over persisted `team_schedule`
 rows (`importers.py:801`), and a pending game has none. The old demo seed (10 source / 10
 resolved) and the new one (12 source / 10 resolved / **2 pending**) both produce
 `9bcac1c60490b41a` — I hold both responses and diffed them field by field. ADR-013 says
@@ -11389,9 +11391,21 @@ rests on a cascade no test in this repository resolves.
 *I confirmed visual distinctness by computed style, not by eye.* `getComputedStyle`
 reports three different colours, a dashed versus solid versus hatched treatment, and the
 column rule present on all 33 elements of a pending column. It cannot tell me the result
-is legible at a glance under a pick clock, or that `--pending` `#7aa7f0` has adequate
-contrast on `--bg-sunken` — I did not measure a contrast ratio. Nobody has looked at this
-screen with the intent of using it.
+is legible at a glance under a pick clock. Nobody has looked at this screen with the
+intent of using it.
+
+I did then measure the contrast, having first written that I had not. `--pending`
+`#7aa7f0` is **7.15–7.98:1** against all three background tokens, comfortably past AA for
+text and for non-text UI. **The more useful number is the one I was not looking for:
+every pair of semantic hues in this palette sits within 1.05–1.3:1 of the others.**
+`--pending` against `--accent` is 1.05:1 and against `--warn` is 1.30:1, so to a reader
+with achromatopsia the `TBD` badge, the `PO` badge and the `·` cell are the same
+brightness. Nothing on this screen is separable by colour alone. It happens not to matter
+only because every distinction is also carried by shape or text — `TBD` versus `PO`,
+dashed versus solid, hatch versus edge, glyph versus digit — which is deliberate here and
+enforced nowhere. A future marker distinguished by hue alone would be invisible to a
+monochrome reader and no test or lint rule in this repository would notice. Worth someone
+deciding whether that becomes a stated rule rather than a habit.
 
 *The recording cannot show two of the four pending states.* No backend at this revision
 emits an empty pending block or an absent one, so "the season is fully scheduled" and
@@ -11411,3 +11425,148 @@ the pushed SHA.
 that lane lands. On landing: rebase forward (checking `git merge-base --is-ancestor` first),
 re-capture and compare the fixture against committed code, re-run the code gate and the
 mutation harness, then retarget to `main`.
+**Next:** PR #47 is open as a **draft against `main`**, not against
+`sr2501-real-schedule-import` as this entry first said. That branch was never pushed to
+origin and still held thirteen uncommitted files, so there was no base to target; pushing
+another lane's unfinished worktree to get my own PR a base was not mine to do, and holding
+the PR unopened would have forfeited review at an exact head. `architect` confirmed
+draft-on-main as the right posture and the coordinator has set the merge order: the
+schedule-import lane lands first, then this. Draft status is the guard.
+
+On that lane landing: rebase forward (checking `git merge-base --is-ancestor` first),
+re-capture and compare the fixture against committed code, remove the wire optionality and
+the "cannot say" notice with it, and re-run the code gate and the mutation harness.
+
+---
+
+## 2026-08-20 — frontend — Three independent reviews on one head, and four of my own claims failed
+
+**Changed:** `frontend`, `architect` and `code-review` all reviewed `4a1de71` — the exact
+pushed SHA, each verifying it with `git rev-parse` before starting. Eight findings acted
+on. Nothing was waved through, and the round found more than the build did.
+
+**The one that matters most: a mechanism I asserted was false, and it was load-bearing.**
+`PendingGamesSummary.undated` justified its guard by claiming `'12/04/2026' <=
+'2026-12-13'` compares **false** and would drop a game out of its column **without a
+word**. `architect` measured it. It compares **true**; and a slash-formatted date fails
+`start_date <= game_date` against every period, so unguarded it lands in `outsidePeriods`
+and the notice *prints* it, id and date and all. Both halves wrong. I had written a
+paragraph about silent failure whose own example was neither silent nor a failure of the
+kind described — in the entry immediately above, in a section arguing that this project's
+defect class is claims that read correctly and do not hold.
+
+The guard survives for the reason that actually works, which `architect` supplied and I
+then drove: the plausible drift is not a slash date but `date` → `datetime` on the Pydantic
+field. Measured, `2026-12-04T00:00:00Z` buckets **correctly** everywhere except a period
+whose `end_date` is the game's own day, where `'2026-12-04T00:00:00Z' <= '2026-12-04'` is
+false. The game falls out of the one column it belongs in and is then explained as *"falls
+outside every scoring period this grid shows"* — a statement about the fantasy calendar,
+made about a data defect. **The guard prevents a mis-attributed explanation, not silence.**
+Driven in a browser against a doctored real 200: the notice says "a date this screen could
+not read", and does not say "outside every scoring period". A test now pins that boundary.
+
+**The rule that came out of it, which is `architect`'s formulation and better than mine:**
+
+> Delete UI for a state only when an invariant **we** enforce forbids it **and** a
+> violation would surface loudly. When a state is forbidden but a violation would be
+> silent, do not write UI for it — **close the hole at the boundary instead.**
+
+I had a two-clause rule and did not notice the clauses conflicted inside my own diff.
+`isPendingBlock` validated every field of every pending record and never checked that
+`pending_game_ids` and `pending_games` name the same games — so the client accepted a block
+the backend cannot emit, while relying on that backend's invariant to justify having
+deleted the UI for it. Both reviewers found it independently, from opposite directions.
+`code-review` traced the ids-longer-than-records branch to a residual sentence no test
+drove because nothing could construct the state. `frontend` drove the reverse in a browser
+and got the worse outcome: a column badged **TBD**, no notice explaining it, and the
+lineage panel positively asserting *"none — every game the source published has teams
+assigned"* — the only place on this screen the copy ever claims completeness — above a
+counts row reading `8 from source · 7 resolved · 0 pending`, the ADR-013 invariant visibly
+failing to add up and printed without comment. The check is now at the boundary,
+`unexplained` is deleted, and both directions are refused and driven.
+
+**`code-review` found the screen contradicting itself in one render.** The season `MeanCell`
+was handed `model.pending.declaredCount`, which includes pending games dated outside every
+scoring period. Those have fixed dates no column can hold, so they can never enter any
+period count and therefore never the season total — while the notice above says in as many
+words that no column can carry them. The season mean said this column may rise anyway, in a
+sentence beginning "This period contains…" on a column that is an aggregate over twenty-one
+periods, with the sibling season *total* on the row above silently disagreeing about
+whether the season was pending at all. The season-scoped claim now lives once, in the
+notice, where it can be qualified. Two tests, one of them the contradiction case.
+
+**Both reviewers independently found the same honesty gap, and it is on a clock.** ADR-013
+names *two* sources of forward incompleteness and the contract carries one: teams eliminated
+early from the NBA Cup receive make-up games that are not published at all, so 80 games per
+team today becomes 82 later. Those are absent from `source_game_count` — neither resolved
+nor pending — so no field exists to mark them with, and marking only the pending columns
+implies its own converse, that an unmarked column is settled. **It fails worst in
+December**, when the bracket resolves, the pending set empties, the notice stops rendering
+and the screen would go silent while every team is still short about two games — the exact
+moment ADR-012's living-refresh amendment matters most. There is now an unconditional
+sentence in the lede saying a count is a floor, in prose rather than a banner, because it
+is always true and never an event.
+
+**Three smaller ones, all real.** `ScheduleLineage` said a response with no pending block
+*"predates the pending-games contract"* — asserting a backend version the client cannot
+see, which the `present` docstring three files away explicitly forbids; a current backend
+dropping the field through a serialization bug produces the identical wire shape. The
+header carried the pending sentence in both the visually-hidden accessible name and the
+`title`, which becomes the description, so screen readers with description reporting on
+announced the column twice at triple length on every focus change. And the wire validator
+hard-rejected a `null` prose label — costing the entire schedule page, all 1,200 resolved
+games, for a missing piece of prose — while `describePendingGame` carried a `'no label
+given'` fallback its own validator made unreachable. That last one was my stated rule
+applied against me: a missing label is a gap this screen can describe.
+
+**Live regions.** Both new notices dropped `role="status"`. They are present at first paint
+and describe data rather than announcing a change, so the polite queue read them on load in
+nondeterministic order against three other regions, and `aria-atomic` defaults true, so a
+refresh altering one word re-read the whole 417-character paragraph. `grid-integrity` is on
+the same footing and was left alone: changing an already-reviewed surface as a side effect
+of an unrelated diff is how surfaces drift. Flagged for whoever owns that one.
+
+**Code gate at the reviewed head plus fixes:** ESLint clean, `tsc --noEmit` clean, build
+clean, **109 tests across 8 files** (from 102, from 77). **Fourteen mutations, all
+fourteen caught** — five new ones covering the boundary equality check, the null-label
+tolerance, the season aggregate, the header announcement and the make-up-games caveat.
+
+**The harness caught my own mutation being weak**, which is the check working on itself.
+My first attempt at the caveat mutation reworded the opening clause without touching the
+claim, and the test correctly stayed green. That is a bad mutation, not a weak test — but I
+would have recorded "14 of 14" and moved on if the run had not said `NOT CAUGHT`. Replaced
+with one that inverts the claim.
+
+**Could not verify:**
+
+*Everything in the previous entry stands unless corrected above, and is not repeated.*
+
+*The three reviewers all read a tree with uncommitted edits in it.* I disclosed this to the
+coordinator while they ran and they ruled it acceptable, but it is worth stating plainly:
+`frontend` reported that `ScheduleGridTable.tsx`, `SchedulePage.test.tsx` and
+`docs/handoff.md` changed under it at 22:24, mid-review, and it re-verified its findings 3
+and 4 by diff rather than by running them. No source file differed for `architect` or
+`code-review`, whose runs completed earlier, but I cannot prove that from here.
+
+*None of the eight fixes has been reviewed.* The round was on `4a1de71`; this head is not
+that. That is the honest cost of the exact-head standard and I am not going to describe it
+as covered.
+
+*`architect` read the backend it verified my citations against from checkpoint commit
+`396174a8`, which is on no branch at all.* Independently confirmed what I had also found —
+`pending_game_ids` is a derived property, `_pending_games` raises on disagreement, both API
+fields are required, pending `game_date` uses `eastern_tipoff.date()` — and every one of
+those can still change before that lane lands.
+
+*One rule now has two implementations in two languages.* The backend buckets resolved games
+with `game_date.between(start_date, end_date)`; `readPendingGames` does the same
+inclusively in TypeScript. `architect` verified they agree today, including that both
+derive from the same ET convention — which, given this project's history with `gameEt`, was
+the thing worth checking. Nothing tests them against each other, and the trigger for that
+becoming a defect is the second consumer, not this one.
+
+*Still nobody has used this screen to make a decision.* Contrast is measured and passes;
+legibility under a pick clock is not measured and cannot be by any method used here.
+
+**Next:** re-run the three reviews at the new head before this leaves draft. Merge order is
+set: the schedule-import lane lands first, then #47.

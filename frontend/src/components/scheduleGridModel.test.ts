@@ -244,15 +244,39 @@ describe('readPendingGames', () => {
   })
 
   it('refuses to place a date it cannot read, instead of comparing it anyway', () => {
-    // `'12/04/2026' <= '2026-10-25'` is a perfectly well-formed string
-    // comparison that answers a question about neither date. Left unguarded it
-    // would put the game in a column, or in none, with equal confidence and no
-    // mention — which is the silent version of this whole defect class.
+    // The reason first written here was measured and found false. It claimed
+    // `'12/04/2026' <= '2026-12-13'` compares false and would drop a game
+    // silently; it compares **true**, and a slash date simply fails
+    // `start_date <= game_date` against every period, so unguarded it lands in
+    // `outsidePeriods` and the notice prints it. Loud, not silent.
+    //
+    // The drift worth guarding is `date` → `datetime` on the Pydantic field.
+    // That buckets correctly everywhere *except* a period whose `end_date` is
+    // the game's own day — see the next test — where it falls out of the one
+    // column it belongs in and is then explained as "falls outside every
+    // scoring period this grid shows", which is a claim about the fantasy
+    // calendar made about a data defect. A mis-attributed explanation is the
+    // failure this prevents.
     const model = buildScheduleGridModel(withPending([pending({ game_date: '12/04/2026' })]))
 
     expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
     expect(model.pending.undated.map((game) => game.nba_game_id)).toEqual(['0022601201'])
     expect(model.pending.outsidePeriods).toEqual([])
+  })
+
+  it('catches a datetime where a date was promised, at the boundary that would hide it', () => {
+    // `'2026-10-25T00:00:00Z' <= '2026-10-25'` is false, so without the guard
+    // this game falls out of period 1 — the period it is in — and every other
+    // period too, and would then be reported as outside the calendar entirely.
+    // Measured: with `end_date` later than the game day it buckets correctly,
+    // which is what makes this drift so easy to miss.
+    const model = buildScheduleGridModel(
+      withPending([pending({ game_date: '2026-10-25T00:00:00Z' })]),
+    )
+
+    expect(model.pending.undated.map((game) => game.nba_game_id)).toEqual(['0022601201'])
+    expect(model.pending.outsidePeriods).toEqual([])
+    expect(model.periodPending.every((bucket) => bucket.length === 0)).toBe(true)
   })
 
   it('counts the ids the invariant is written over, not the records', () => {

@@ -65,7 +65,7 @@ interface ScheduleLineageProps {
  */
 function describePendingGame(game: SchedulePendingGame): string {
   const context = [game.game_label, game.game_sub_label, game.game_subtype].filter(
-    (part) => part !== '',
+    (part) => part !== null && part !== '',
   )
   return context.length === 0 ? 'no label given' : context.join(' — ')
 }
@@ -120,7 +120,7 @@ export function ScheduleLineage({ lineage, now, countedTeamGames }: ScheduleLine
           <dt>Pending games</dt>
           <dd data-testid="schedule-pending-games">
             {pendingIds === undefined ? (
-              'not reported — this response predates the pending-games contract, so it cannot say whether the season is fully scheduled'
+              'not reported — this response carried no pending-games block, so it cannot say whether the season is fully scheduled'
             ) : pendingIds.length === 0 ? (
               'none — every game the source published has teams assigned'
             ) : (
