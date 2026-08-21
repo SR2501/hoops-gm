@@ -13,6 +13,7 @@ from hoops_gm.api.routes import (
     health,
     lineage,
     meta,
+    projections,
     schedule_grid,
     userscript,
 )
@@ -29,5 +30,6 @@ api_v1_router.include_router(bridge.router)
 api_v1_router.include_router(lineage.router)
 api_v1_router.include_router(deadline_calendar.router)
 api_v1_router.include_router(schedule_grid.router)
+api_v1_router.include_router(projections.router)
 
 __all__ = ["api_v1_router", "ops_router"]
