@@ -54,11 +54,14 @@
  * fail there. Read it before trusting a green run to mean more than it says.
  *
  * "Proven" is doing exact work there: proven that *a derivable input* produces
- * these reasons and this response, **not** that it is byte-identical to the lost
- * original — a different payload reaching the same response would be
+ * these reasons, these period windows, these team labels, all 630 count rows and
+ * the lineage counters — **not** that it is byte-identical to the lost original,
+ * and not the whole response either: `season`, `league_id`, `refresh_id`,
+ * `refreshed_at` and the content-version fingerprint are inputs or need a
+ * database. A different payload reaching the same response would be
  * indistinguishable, and identity is not what the fixtures need. The generator's
- * docstring states the same limit and marks `faults` as the less-anchored of the
- * two, since only `absent` was ever checked against a surviving original.
+ * docstring carries the full per-key audit of what is derived and what is not;
+ * read it before trusting a green run to mean more than it says.
  */
 
 import { describe, expect, it } from 'vitest'

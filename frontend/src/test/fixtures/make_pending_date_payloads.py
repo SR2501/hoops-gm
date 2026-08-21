@@ -55,32 +55,33 @@ next person does not have to rediscover where the floor is:
 ``counts``            **derived** — all 630 rows, from the payload.
 ``lineage.schedule``  **partly derived** — ``source_game_count``,
                       ``resolved_game_count`` and every ``pending_games`` field.
+                      ``unresolved_game_ids`` and ``persisted_team_row_count``
+                      are covered transitively by producer invariants.
                       ``refresh_id``, ``refreshed_at`` and the content-version
                       fingerprint need a database and are **out of reach here**.
+``periods``           **derived** — all 21 windows including ``is_playoff``, via
+                      the producer's own ``weekly_periods``, which is a pure
+                      function of the first and last game dates. This one was
+                      read out of the recording for three rounds, and it is the
+                      other operand of the computation hole four was about:
+                      ``readPendingGames`` needs a pending date *and* a period
+                      window, and only the date was pinned. The counts could not
+                      object, because 610 of 630 rows are zero and only two
+                      periods hold a resolved game, so the December boundary
+                      that decides this feature sat in free space.
+``teams``             **derived** for ``nba_team_id``, ``abbreviation`` and
+                      ``name``, from ``nba_static_teams.json``. ``team_id`` is a
+                      database key and is **out of reach here**.
 ``season``            **legitimately an input.** It names which season to parse.
-``periods``           **an input, and this is the floor.** Scoring periods come
-                      from SQL over ``ScoringPeriod`` rows, not from the
-                      ``ScheduleLeagueV2`` payload, so this file has nothing to
-                      derive them from — widening the comparison would mean
-                      comparing the recording against itself. Shift every
-                      boundary by three days and re-derive, and 6 of 630 rows
-                      move while this stays green. ``periods`` decides where the
-                      *columns* are exactly as ``game_date`` decides where a
-                      *game* is; only the second half is closed here. The backend
-                      tests over ``ScoringPeriod`` are what cover it.
-``teams``             **an input**, one step weaker: ``by_nba_id`` is built from
-                      the recording's rows, so a changed id mapping is
-                      reproduced rather than caught. ``nba_team_id``,
-                      ``abbreviation`` and ``name`` *are* derivable from
-                      ``nba_static_teams.json``; ``team_id`` is a database key
-                      and is not. Filed on the `data-engineer` backlog item.
 ``league_id``         an input.
 ===================== ===========================================================
 
-That table is the point of this section: **the method has a floor, and it is the
-inputs the comparison is computed with.** Below it, narration replaces closure —
-which is why the two rows above say what covers them elsewhere rather than
-pretending this file could.
+Two of those rows said *"an input, and this is the floor"* one commit ago, on my
+own reasoning that scoring periods come only from SQL. A reviewer went and found
+``weekly_periods`` and drove the closure. **The floor was one function lower than
+I claimed**, and asserting where a method stops is exactly as falsifiable as
+asserting anything else — so the honest form of this table is a list of what has
+been *tried*, not a list of what is possible.
 
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
@@ -221,14 +222,15 @@ def derived_counts(payload: dict, periods: list[dict], teams: list[dict], season
     *was* produced by the SQL. But if these ever disagree, this file is the more
     likely one to be wrong.
 
-    **And the boundaries the scan uses come from the artifact under test.**
-    ``periods`` is read out of the recording, so both sides of the comparison
-    share their most load-bearing input: this answers *are the games where the
-    recording says, given the recording's columns*, never *are the columns
-    right*. Shift every boundary three days and re-derive the counts and 6 of
-    630 rows move, while this stays green. That is not closeable here — scoring
-    periods are not in the ``ScheduleLeagueV2`` payload — so it is stated rather
-    than fixed, and the backend's ``ScoringPeriod`` tests are what cover it.
+    **The boundaries the scan uses are passed in, and are checked separately.**
+    ``periods`` comes from the recording here, so on its own this would answer
+    *are the games where the recording says, given the recording's columns*
+    rather than *are the columns right*. That was true for three rounds and a
+    reviewer drove it: shift every boundary three days and 6 of 630 rows move
+    while everything stayed green. ``verify`` now derives the windows from
+    ``weekly_periods`` and compares them before calling this, so the columns are
+    pinned by the producer rather than assumed. Keep it that way -- this
+    function is only sound because its caller checks its inputs.
     """
     sys.path.insert(0, str(REPO / "backend/src"))
     from hoops_gm.ingest.nba.schedule import parse_schedule
@@ -295,6 +297,8 @@ def verify() -> int:
     blessed by the check written to prevent hand-edits.
     """
     sys.path.insert(0, str(REPO / "backend/src"))
+    from hoops_gm.dev.seed_schedule_grid import weekly_periods
+    from hoops_gm.ingest.nba.parsers import parse_teams
     from hoops_gm.ingest.nba.schedule import parse_schedule
 
     if set(RECORDED) != set(VARIANTS):
@@ -363,6 +367,60 @@ def verify() -> int:
             )
             continue
 
+        # `periods` and `teams` were both read out of the artifact under test,
+        # so a recording that lied about its own columns was used to check
+        # itself. `periods` is the other operand of the computation hole four
+        # was about: `readPendingGames` needs a pending date *and* a period
+        # window to choose the TBD column, and only the first was pinned. Move
+        # period 6's boundary past 2026-12-04 and the marker lands on a
+        # different column with every other check still green -- and the counts
+        # comparison cannot object, because 610 of 630 rows are zero and only
+        # two periods hold a resolved game, so the December boundary sits in
+        # free space.
+        parsed = parse_schedule(payload, season=fixture["season"])
+        game_days = sorted(record.game.game_date for record in parsed.games)
+        derived_periods = [
+            {
+                "period_number": number,
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+                "is_playoff": is_playoff,
+            }
+            for number, start, end, is_playoff in weekly_periods(game_days[0], game_days[-1])
+        ]
+        if derived_periods != periods:
+            failures += 1
+            differing_rows = [
+                (rec, der) for rec, der in zip(periods, derived_periods, strict=False) if rec != der
+            ]
+            head = differing_rows[0] if differing_rows else (periods[0], derived_periods[0])
+            print(
+                f"FAIL {variant:7} {len(differing_rows) or 'all'} period row(s) differ; "
+                f"first recorded {head[0]} derived {head[1]}."
+            )
+        else:
+            print(f"ok  {variant:7} all {len(periods)} period windows reproduced")
+
+        derived_teams = {
+            team.nba_team_id: (team.abbreviation, team.full_name)
+            for team in parse_teams(json.loads(TEAMS.read_text(encoding="utf-8")))
+        }
+        team_mismatches = [
+            team
+            for team in fixture["teams"]
+            if derived_teams.get(team["nba_team_id"]) != (team["abbreviation"], team["name"])
+        ]
+        if team_mismatches:
+            failures += 1
+            head = team_mismatches[0]
+            print(
+                f"FAIL {variant:7} {len(team_mismatches)} team row(s) differ; first is "
+                f"{head['nba_team_id']}: recorded {(head['abbreviation'], head['name'])}, "
+                f"derived {derived_teams.get(head['nba_team_id'])}."
+            )
+        else:
+            print(f"ok  {variant:7} all {len(fixture['teams'])} team labels reproduced")
+
         derived = derived_counts(payload, periods, fixture["teams"], fixture["season"])
         mismatches = [
             row
@@ -404,8 +462,8 @@ def verify() -> int:
         )
     else:
         print(
-            "\nEvery recorded pending record, count row and lineage counter is "
-            "reproduced by the in-tree producer."
+            "\nEvery recorded pending record, period window, team label, count row "
+            "and lineage counter is reproduced by the in-tree producer."
         )
     return 1 if failures else 0
 

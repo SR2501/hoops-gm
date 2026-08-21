@@ -12668,3 +12668,72 @@ paragraph would have believed `game_date` was unchecked, which is now backwards.
 - **Anything a browser sees**, at this head or the last three. Eight rounds
   without a real screen reader.
 - `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.
+
+## 2026-08-21 - frontend - I asserted a floor and a reviewer found it one function lower
+
+**Unit:** `schedule-grid-pending-periods`. All three reviewers found the fifth
+hole. Two called it unclosable; the third went and closed it.
+
+### The claim I got wrong, and it is the same shape as everything else here
+
+Last entry I wrote that `periods` was **the floor** — that scoring periods come
+from SQL over `ScoringPeriod` rows, are not in the `ScheduleLeagueV2` payload,
+and so this file has nothing to derive them from. I narrated it instead of
+closing it, and framed that as the method's limit: *"the inputs a comparison is
+computed with can never be its subject."*
+
+`code-review` found `weekly_periods(first_game, last_game)` in
+`seed_schedule_grid.py` — a **pure function** of the first and last game dates,
+both of which `--verify` already had. They drove the closure before reporting it:
+21 of 21 windows including `is_playoff`, exact on all three variants.
+
+**Asserting where a method stops is exactly as falsifiable as any other
+assertion, and I did not test it.** I reasoned from "it comes from SQL" to "it
+cannot be derived" without looking for a function, which is the armchair move
+this project keeps catching. The floor was one import lower than I claimed.
+
+### What was actually at stake
+
+`readPendingGames` needs two operands to choose the TBD column: the pending
+game's `game_date` and the period window. Hole four was the first; this was the
+second, and I closed one and declared the other out of reach.
+
+`code-review` measured why the counts could not object: **610 of 630 rows are
+zero, and only two of 21 periods hold a resolved game.** The December boundary
+that decides this feature's entire output sits in the empty region, where
+boundaries move freely. Driven: move period 6's end past `2026-12-04` and both
+pending games change column with everything green.
+
+Now derived and compared. That case fails with `2 period row(s) differ`,
+`is_playoff` flipped fails with `1 period row(s) differ`, and a hand-edited team
+abbreviation fails with `1 team row(s) differ` — three cases that were exit 0.
+
+`teams` closed the same way for `nba_team_id`, `abbreviation` and `name` from
+`nba_static_teams.json`. `team_id` is a database key and stays out of reach,
+which is a limit I have now checked rather than assumed.
+
+### The audit table, rewritten in the honest form
+
+It said "an input, and this is the floor" for two rows. It now lists what has
+been **tried** rather than what is possible, and says so — because the previous
+version's confidence is what stopped me looking for `weekly_periods`.
+
+`derived_counts`' docstring changed with it: it no longer says the boundary
+problem is unclosable, it says the caller now pins the windows before calling,
+and that this function is only sound because its inputs are checked.
+
+### Could not verify
+
+- **Whether `weekly_periods` is what the API actually uses.** It is the *seed's*
+  function, and the response's periods come from SQL over rows the seed wrote.
+  It reproduces all 21 windows on all three recordings today, which is evidence
+  of agreement rather than of shared implementation. If the API's period
+  generation ever diverges from the seed's, this check follows the seed.
+- **That there is no sixth.** I have said a version of "this is the last one"
+  three times and been wrong three times. The per-key audit is now exhaustive
+  over the response's six top-level keys, which is the most structured claim I
+  can make, and it is checkable in minutes.
+- **The mutation harness, still outside the repository.** 33 of 33 and 6 of 6
+  remain unverifiable by any reviewer.
+- **Anything a browser sees**, across the last five heads.
+- `architect`'s ADR-013-landed-without-a-handoff-entry item remains theirs.

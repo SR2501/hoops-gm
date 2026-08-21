@@ -608,11 +608,11 @@ once checked:
   solved problem. `data-engineer` owns it; the trigger is the next touch of the
   schedule-ingestion lane, not "any change to `_pending_game_date`", which only
   someone already thinking about this file would notice. `architect` holds only
-  the ruling that it moves. Two things to fold in when it moves: `teams[]` is
-  read out of the artifact under test while `nba_team_id`, `abbreviation` and
-  `name` are all derivable from `nba_static_teams.json` (only `team_id`, a
-  database key, is not); and `unresolved_game_ids` and
-  `persisted_team_row_count` are both derivable and uncompared.
+  the ruling that it moves. One thing to fold in when it moves: `team_id` and
+  the lineage fingerprint fields are the only response values `--verify` cannot
+  derive, because both need a database. Everything else — pending records,
+  period windows, team labels, all 630 count rows, the lineage counters — is
+  derived from the producer and compared.
 
 **Period-scoped, never cell-scoped.**
 A pending game carries `teamId: 0` with
