@@ -23,6 +23,8 @@ from hoops_gm.db.base import Base
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
     SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    PendingScheduleGame,
+    ScheduleCompleteness,
     check_cohort,
     content_fingerprint,
     current_refresh,
@@ -498,6 +500,263 @@ def test_schedule_completeness_rejects_logically_inconsistent_metadata(
 
     with pytest.raises(ValueError, match=expected):
         schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
+
+
+def _pending_block(**overrides: Any) -> dict[str, Any]:
+    """A completeness block whose pending set is exactly what the importer writes.
+
+    Built from the real producer's serialisation rather than by hand: a test
+    that invents a block shape no producer emits proves the reader accepts a
+    shape nothing will ever hand it, which is the defect this repository has
+    been caught by more than once.
+    """
+
+    block = ScheduleCompleteness(
+        season="2026-27",
+        season_type=SeasonType.REGULAR,
+        source_game_count=6,
+        resolved_game_count=5,
+        unresolved_game_ids=(),
+        persisted_team_row_count=10,
+        pending_games=(
+            PendingScheduleGame(
+                nba_game_id="0022601201",
+                game_date=date(2026, 12, 4),
+                game_label="Emirates NBA Cup",
+                game_sub_label="Quarterfinal",
+                game_subtype="in-season-knockout",
+            ),
+        ),
+    ).as_summary()
+    block.update(overrides)
+    return block
+
+
+def test_the_pending_block_the_importer_writes_round_trips() -> None:
+    """The baseline every mutation below is a single edit away from."""
+    completeness = schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: _pending_block()})
+
+    assert completeness is not None
+    assert completeness.pending_game_ids == ("0022601201",)
+    assert completeness.pending_games[0].game_sub_label == "Quarterfinal"
+    assert completeness.source_game_count == completeness.resolved_game_count + 1
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda b: b.pop("pending_games"), "pending_game_ids without pending_games"),
+        (lambda b: b.pop("pending_game_ids"), "pending_games without pending_game_ids"),
+        (lambda b: b.__setitem__("pending_game_ids", "0022601201"), "not a list of strings"),
+        (lambda b: b.__setitem__("pending_game_ids", [1201]), "not a list of strings"),
+        (lambda b: b.__setitem__("pending_games", {"nba_game_id": "x"}), "is not a list"),
+        (lambda b: b["pending_games"].append("0022601202"), "contains a non-object"),
+        (lambda b: b["pending_games"][0].pop("game_sub_label"), "missing 'game_sub_label'"),
+        (lambda b: b["pending_games"][0].pop("nba_game_id"), "missing 'nba_game_id'"),
+        (
+            lambda b: b["pending_games"][0].__setitem__("game_label", 7),
+            "non-string label",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("nba_game_id", 22601201),
+            "non-string id or date",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("game_date", "the fourth of December"),
+            "unparseable date",
+        ),
+        (
+            lambda b: b["pending_game_ids"].__setitem__(0, "0022601299"),
+            "name different games",
+        ),
+        (
+            lambda b: (
+                b["pending_game_ids"].append("0022601201"),
+                b["pending_games"].append(dict(b["pending_games"][0])),
+                b.__setitem__("source_game_count", 7),
+            ),
+            "contains duplicates",
+        ),
+        (
+            lambda b: b.__setitem__("unresolved_game_ids", ["0022601201"]),
+            "same game as pending and unresolved",
+        ),
+        (
+            lambda b: (
+                b.__setitem__("resolved_game_count", 0)
+                or b.__setitem__("persisted_team_row_count", 0)
+                or b.__setitem__("source_game_count", 1)
+            ),
+            "none resolved",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", "because"),
+            "unknown date_absence_reason",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", "not_offered"),
+            "game_date present but date_absence_reason 'not_offered'",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("date_absence_reason", 7),
+            "non-string date_absence_reason",
+        ),
+        (
+            lambda b: b["pending_games"][0].__setitem__("game_date", None),
+            "game_date absent but date_absence_reason ''",
+        ),
+        (lambda b: b.__setitem__("source_game_count", 7), "5 resolved and 1 pending"),
+    ],
+    ids=[
+        "ids-without-records",
+        "records-without-ids",
+        "ids-not-a-list",
+        "ids-not-strings",
+        "records-not-a-list",
+        "record-not-an-object",
+        "record-missing-label",
+        "record-missing-id",
+        "record-non-string-label",
+        "record-non-string-id",
+        "record-unparseable-date",
+        "ids-and-records-disagree",
+        "duplicate-pending-id",
+        "pending-also-unresolved",
+        "everything-pending-nothing-resolved",
+        "unknown-absence-reason",
+        "reason-without-an-absence",
+        "non-string-absence-reason",
+        "absence-without-a-reason",
+        "count-ignores-pending",
+    ],
+)
+def test_every_new_pending_guard_reproduces_the_failure_it_guards_against(
+    mutate: Any, expected: str
+) -> None:
+    """Code gate: a new guard needs a mutation that reproduces its failure.
+
+    Each case takes the producer's own block and makes exactly one edit, so
+    every branch added by ADR-013 is driven by an input of the class it was
+    written for rather than merely executed. The two that would otherwise be
+    easy to get wrong are the last two: ``pending-also-unresolved`` is the
+    case a reviewer proved unreachable when its guard sat *below* the blanket
+    unresolved refusal, and it now fails with the specific message naming the
+    double-classified game rather than the general one; ``count-ignores-pending``
+    is the completeness invariant itself, which is the whole of ADR-013.
+    """
+    block = _pending_block()
+    mutate(block)
+
+    with pytest.raises(ValueError, match=expected):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
+
+
+def test_a_block_declaring_every_game_pending_is_refused() -> None:
+    """The hole ADR-013's new arithmetic opened, closed and reproduced.
+
+    Before ADR-013, `source == resolved` refused any block with zero resolved
+    games. After it, `source == resolved + pending` is satisfied by declaring
+    *every* game pending — so a block claiming N source games, 0 resolved and
+    0 persisted rows validated, and `verify_refresh` then fingerprinted an
+    empty cohort against itself and answered "current".
+
+    `_require_complete_schedule_source` refuses an empty parse, so no producer
+    can write this; a stored block claiming it was written by something else,
+    which is precisely what the read path exists to reject.
+    """
+    forged = _pending_block(
+        source_game_count=1,
+        resolved_game_count=0,
+        persisted_team_row_count=0,
+    )
+
+    with pytest.raises(ValueError, match="none resolved"):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: forged})
+
+
+def test_a_pending_game_with_no_known_date_round_trips_as_null() -> None:
+    """A pending date the source did not give is recorded as absent, not guessed.
+
+    The parser degrades an unreconcilable pending date to ``None`` rather than
+    killing the season; this is the storage half of that, so the absence
+    survives the round trip instead of becoming a plausible-looking date.
+    """
+    block = ScheduleCompleteness(
+        season="2026-27",
+        season_type=SeasonType.REGULAR,
+        source_game_count=6,
+        resolved_game_count=5,
+        unresolved_game_ids=(),
+        persisted_team_row_count=10,
+        pending_games=(
+            PendingScheduleGame(
+                nba_game_id="0022601201",
+                game_date=None,
+                game_label="Emirates NBA Cup",
+                game_sub_label="Quarterfinal",
+                game_subtype="in-season-knockout",
+                date_absence_reason="not_offered",
+            ),
+        ),
+    ).as_summary()
+
+    serialised = block["pending_games"]
+    assert isinstance(serialised, list)
+    assert serialised[0]["game_date"] is None
+    assert serialised[0]["date_absence_reason"] == "not_offered"
+    completeness = schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: block})
+    assert completeness is not None
+    assert completeness.pending_games[0].game_date is None
+    assert completeness.pending_games[0].date_absence_reason == "not_offered"
+
+
+def test_the_pending_overlap_guard_is_reachable_and_outranks_the_general_refusal() -> None:
+    """The dead-guard fix, asserted as an ordering rather than as an existence.
+
+    Both guards reject a block naming a game as pending *and* unresolved. The
+    general one is strictly stronger, so with the specific one placed after it
+    the specific one could never fire — correct code made unreachable, which
+    is exactly the shape `docs/governance/gates.md` names. Asserting the
+    *message* is what pins the order; asserting only that it raises would pass
+    either way, which is how the defect survived in the first place.
+    """
+    overlapping = _pending_block(unresolved_game_ids=["0022601201"])
+    unrelated = _pending_block(unresolved_game_ids=["0022600999"])
+
+    with pytest.raises(ValueError, match="same game as pending and unresolved"):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: overlapping})
+
+    with pytest.raises(ValueError, match="unresolved game id"):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: unrelated})
+
+
+def test_a_block_written_before_adr_013_reads_as_zero_pending_and_stays_checked() -> None:
+    """The compatibility branch, and the thing that actually holds the line.
+
+    A pre-ADR-013 block carries neither pending key. Reading it as zero
+    pending is exact rather than charitable, because its own contract required
+    ``source == resolved``. What stops that branch laundering an inconsistent
+    block is not the reasoning but the arithmetic below it: strip both keys
+    from a block that genuinely had a pending game and the count invariant
+    still refuses it.
+    """
+    legacy = {
+        "season": "2026-27",
+        "season_type": "regular",
+        "source_game_count": 5,
+        "resolved_game_count": 5,
+        "unresolved_game_ids": [],
+        "persisted_team_row_count": 10,
+    }
+    completeness = schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: legacy})
+    assert completeness is not None
+    assert completeness.pending_games == ()
+
+    stripped = _pending_block()
+    del stripped["pending_game_ids"]
+    del stripped["pending_games"]
+    with pytest.raises(ValueError, match="5 resolved and 0 pending"):
+        schedule_completeness({SCHEDULE_COMPLETENESS_SUMMARY_KEY: stripped})
 
 
 def test_effective_current_version_refuses_a_block_scoped_to_another_season(

@@ -14,6 +14,14 @@ and calendar functions the real pipeline uses — a seed that took a shortcut
 around ``import_schedule`` would prove the endpoint works against data the
 producer would never have written.
 
+The recorded payload is imported **unmodified**, including the two Emirates
+NBA Cup games it publishes with no teams assigned. Those are recorded as
+pending under ADR-013 rather than filtered out, so the demo database exercises
+the pending path — a screen that must distinguish "no games this week" from
+"not scheduled yet" can be driven locally instead of mocked. Until ADR-013 this
+module carried a filter and a reconciliation function whose only purpose was to
+get past a refusal that no longer exists; both were retired with it.
+
 Run it::
 
     cd backend
@@ -84,11 +92,7 @@ from hoops_gm.ingest.league_settings import (
     parse_official_league_settings,
 )
 from hoops_gm.ingest.nba.parsers import parse_teams
-from hoops_gm.ingest.nba.schedule import (
-    ScheduleParseResult,
-    parse_schedule,
-    scheduled_game_counts,
-)
+from hoops_gm.ingest.nba.schedule import parse_schedule, scheduled_game_counts
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -126,18 +130,19 @@ SEEDED_AT = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 class SeedResult:
     """What the seed put in the database, for the caller to assert against.
 
-    ``as_recorded_source_game_count`` and ``dropped_game_ids`` describe the
-    **recorded** payload, and are reported separately on purpose. The registered
-    completeness block necessarily describes the filtered document, so without
-    these two fields nothing anywhere states that the source actually reported
-    more games than were imported.
+    ``pending_game_ids`` names the games the recorded payload publishes with
+    no teams assigned. They are imported as pending rather than filtered out
+    (ADR-013), so the demo database exercises the pending path instead of
+    hiding it: ``source_game_count`` exceeds ``resolved_game_count`` here by
+    exactly these games, which is what a consumer will see against the real
+    2026-27 season too.
     """
 
     league_id: int
     season: str
     schedule_version: str
-    as_recorded_source_game_count: int
-    dropped_game_ids: tuple[str, ...]
+    source_game_count: int
+    pending_game_ids: tuple[str, ...]
     resolved_game_count: int
     team_count: int
     period_count: int
@@ -157,75 +162,6 @@ def load_fixture(fixtures_dir: Path, name: str) -> Any:
             "checkout, or pass --fixtures-dir."
         )
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def resolved_schedule_payload(payload: Any) -> Any:
-    """The recorded payload with the still-unassigned Cup games dropped.
-
-    The fixture deliberately contains two Emirates NBA Cup games whose teams
-    the NBA has not drawn yet, and ``import_schedule`` refuses a cohort that
-    does not account for every game the source reported. Dropping them here
-    mirrors ``tests/test_schedule.py``; editing the fixture instead would
-    destroy the upstream-drift evidence the Adapter gate keeps it for.
-
-    **This filter runs upstream of ``parse_schedule``, which makes it invisible
-    to the completeness contract.** ``source_game_count`` is only incremented
-    for games still present in the payload, so anything dropped here vanishes
-    from *both* sides of the comparison at once and ``import_schedule`` ends up
-    checking a doctored document against itself. Under-removal stays loud;
-    over-removal would be silent. :func:`reconcile_dropped_games` is what makes
-    it loud again, and every caller here must go through it.
-    """
-
-    for game_date in payload["leagueSchedule"]["gameDates"]:
-        game_date["games"] = [
-            game
-            for game in game_date["games"]
-            if game["homeTeam"]["teamId"] != 0 and game["awayTeam"]["teamId"] != 0
-        ]
-    return payload
-
-
-def reconcile_dropped_games(
-    recorded: ScheduleParseResult, filtered: ScheduleParseResult
-) -> tuple[str, ...]:
-    """Prove the filter removed the unresolved games and nothing else.
-
-    Refuses unless the filtered cohort holds exactly the recorded cohort's
-    resolved games, the count difference is exactly the recorded unresolved
-    games, and the filtered document has no unresolved games left. Without this
-    the seed could quietly drop a real game — six, if the NBA redraws the Cup —
-    and still register a cohort claiming to be complete.
-    """
-
-    recorded_ids = {record.game.nba_game_id for record in recorded.games}
-    filtered_ids = {record.game.nba_game_id for record in filtered.games}
-    dropped = tuple(sorted(recorded.unresolved_game_ids))
-    if filtered_ids != recorded_ids:
-        raise DemoSeedRefused(
-            "the TBD filter changed the resolved cohort: "
-            f"dropped {sorted(recorded_ids - filtered_ids)}, "
-            f"added {sorted(filtered_ids - recorded_ids)}"
-        )
-    if filtered.unresolved_game_ids:
-        raise DemoSeedRefused(
-            f"filtered payload still reports unresolved games {list(filtered.unresolved_game_ids)}"
-        )
-    if recorded.source_game_count - filtered.source_game_count != len(dropped):
-        # Unreachable against today's parser, and kept deliberately rather than
-        # presented as a live guard: `parse_schedule` maintains
-        # `source_game_count == len(games) + len(unresolved_game_ids)` exactly,
-        # so once the two checks above pass this arithmetic follows. It is the
-        # only check that would still hold if that invariant were relaxed — the
-        # two above compare resolved sets, and neither would notice a counter
-        # that stopped agreeing with them.
-        raise DemoSeedRefused(
-            f"recorded source reported {recorded.source_game_count} game(s) and the filtered "
-            f"document {filtered.source_game_count}, a difference of "
-            f"{recorded.source_game_count - filtered.source_game_count}, but only "
-            f"{len(dropped)} game(s) were unresolved"
-        )
-    return dropped
 
 
 def require_safe_demo_target(session: Session, *, cohort_game_ids: set[str]) -> None:
@@ -427,12 +363,7 @@ def seed_schedule_grid(
     cites the activated calendar.
     """
 
-    recorded = parse_schedule(load_fixture(fixtures_dir, SCHEDULE_FIXTURE), season=SEASON)
-    parsed = parse_schedule(
-        resolved_schedule_payload(load_fixture(fixtures_dir, SCHEDULE_FIXTURE)),
-        season=SEASON,
-    )
-    dropped = reconcile_dropped_games(recorded, parsed)
+    parsed = parse_schedule(load_fixture(fixtures_dir, SCHEDULE_FIXTURE), season=SEASON)
     require_safe_demo_target(
         session,
         cohort_game_ids={record.game.nba_game_id for record in parsed.games},
@@ -471,8 +402,8 @@ def seed_schedule_grid(
         league_id=league.id,
         season=SEASON,
         schedule_version=projection.lineage.schedule_version,
-        as_recorded_source_game_count=recorded.source_game_count,
-        dropped_game_ids=dropped,
+        source_game_count=parsed.source_game_count,
+        pending_game_ids=parsed.pending_game_ids,
         resolved_game_count=len(parsed.games),
         team_count=len({row.team_id for row in counts}),
         period_count=len(periods),
@@ -596,15 +527,15 @@ def main(argv: list[str] | None = None) -> int:
                 "season": result.season,
                 "schedule_version": result.schedule_version,
                 # Three counts of two different populations, named so they
-                # cannot be mistaken for each other. The API's
-                # `lineage.schedule.source_game_count` reports the *imported*
-                # number, not the recorded one — they differ by exactly the
-                # dropped games, and a reader debugging a discrepancy will reach
-                # for whichever number is printed on their terminal.
-                "games_recorded_in_fixture": result.as_recorded_source_game_count,
-                "games_dropped_unresolved": list(result.dropped_game_ids),
+                # cannot be mistaken for each other. `source_game_count` is
+                # what the recorded payload published; `pending_game_ids` are
+                # the games in it with no teams assigned, which have no
+                # `team_schedule` rows and are not counted in the grid. The
+                # API's `lineage.schedule` block reports exactly these numbers.
+                "games_recorded_in_fixture": result.source_game_count,
+                "games_pending_no_teams_assigned": list(result.pending_game_ids),
                 "games_imported_into_cohort": result.resolved_game_count,
-                "api_lineage_schedule_source_game_count": result.resolved_game_count,
+                "api_lineage_schedule_source_game_count": result.source_game_count,
                 "team_count": result.team_count,
                 "period_count": result.period_count,
                 "scheduled_team_games": result.scheduled_team_games,

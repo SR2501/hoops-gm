@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**39 done - 1 blocked - 69 pending - 109 total**
+**39 done - 1 blocked - 71 pending - 111 total**
 
 (Counted from the status markers themselves at this head, not carried forward from
-either lane: 109 `###` headings and 109 markers, 1:1, no duplicates. Neither
+either lane: 111 `###` headings and 111 markers, 1:1, no duplicates. Neither
 pre-merge header was a usable input, because each was computed before the other
 lane's items landed. An earlier header claimed 37 done / 63 pending against an
 actual 36 / 64, and that drift predates all three lanes.)
@@ -350,7 +350,7 @@ deliberately not implemented here — see `schedule-grid-reference-distribution`
 - [x] **done**
 - **Depends on:** `nba-stats-ingest`
 
-Season schedule ingestion, fantasy week definitions, and per-week scheduled game counts per team. Foundation for schedule density and the availability model.
+Season schedule ingestion, fantasy week definitions, and per-week scheduled game counts per team. Foundation for schedule density and the availability model. Extended 2026-08-20 under ADR-013 with the pending/failure distinction and an operator command (`python -m hoops_gm.ingest.schedule_import 2026-27`), which is what makes the real 2026-27 season loadable: 1,206 source entries, 1,200 resolved across 30 teams at 80 games each, six Emirates NBA Cup knockout fixtures recorded as pending. Pending means the source published an explicitly absent identity block — `teamId: 0` with every naming field null; a zero id beside *any* populated naming field is a resolution failure and still refuses the cohort. Two gaps it exposed are filed as `schedule-pending-persistence` and `schedule-cohort-fingerprint-list`.
 
 ### `scoring-period-projection` - Deriving `ScoringPeriod` from the active deadline calendar
 
@@ -839,6 +839,17 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
 
+### `schedule-cohort-fingerprint-list` - Restoring what the injury cohort manifest watches
+
+- [ ] **pending**
+- **Depends on:** `injury-report-backfill`
+
+`DEFAULT_SOURCE_FINGERPRINT_PATHS` in `ingest/injury_report/cohort_evidence.py` omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which the generator directly calls (`parse_schedule`, for the `schedule_league_v2` reconciliation view — the cohort's only genuinely independent witness). Found 2026-08-20 when one change touched that file and `db/lineage.py` together: the alarm fired on the file outside the derivation and stayed **silent** on the file inside it, which is a false green, not merely a coarse one.
+
+**The removal half is already done; only the addition is left, and only it needs a regeneration.** The untrue `db/lineage.py` entry was deleted from the manifest's `source_fingerprints` rather than refreshed, because deleting narrows an over-claim while refreshing would assert the cohort was derived with bytes it was not. The constant itself still lists `db/lineage.py` and was deliberately left alone: editing `cohort_evidence.py` stales that file's own digest, and it *is* in the derivation, so the same false-claim problem simply moves one file over. Both edits therefore belong to the regeneration, together: drop `db/lineage.py` from the constant, add `ingest/nba/schedule.py`, regenerate against the cohort database.
+
+**Consequence to carry until then, stated because it is easy to miss:** with the entry deleted, edits to `db/lineage.py` are **no longer watched at all** by the cohort provenance alarm. That is the correct trade — the alarm was watching a file outside the derivation and missing one inside it, so it was giving a false green on the file that matters — but it means the watch set is now four files, not five, and a lane touching `db/lineage.py` will get no signal rather than a misleading one. Nothing is lost that was true; something misleading was removed.
+
 ### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
 
 - [ ] **pending**
@@ -924,6 +935,13 @@ measure identifies the periods it claims to, a model card in `docs/models/`, and
 an explicit statement of what the reference set cannot see. Until then the grid
 shows the raw row, which is itself the team's distribution laid out in order —
 the missing piece is the quantified comparison, not the evidence.
+
+### `schedule-pending-persistence` - Making the pending set verifiable
+
+- [ ] **pending**
+- **Depends on:** `schedule-ingest`
+
+`schedule_content_version` fingerprints persisted `team_schedule` rows, and a pending game has none, so the registered version does not cover the pending set: two cohorts differing only in which games are pending share a version. Measured rather than reasoned to — the demo seed's 10-source cohort and its 12-source, 2-pending successor both fingerprint to `9bcac1c60490b41a`, and `test_the_schedule_version_does_not_change_when_only_the_pending_set_changes` pins it. Consequently `verify_refresh` detects a forged *resolved* cohort but not a forged pending list, and a consumer must not cache the pending set keyed on the schedule version alone. Closing it means persisting pending games as first-class rows — schema, migration, and a fingerprint spanning both populations. The gap is narrow and self-closing per game as the Cup bracket is drawn, which is why it was filed rather than added to the ADR-013 unit.
 
 ### `schedule-ui` - Building the schedule tracker UI
 

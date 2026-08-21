@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from hoops_gm.calendar import (
 from hoops_gm.db.lineage import (
     NBA_SCHEDULE_ARTIFACT_KEY,
     SCHEDULE_COMPLETENESS_SUMMARY_KEY,
+    PendingScheduleGame,
     check_cohort,
     current_refresh,
     lock_refresh_scope,
@@ -60,10 +62,17 @@ from hoops_gm.ingest.nba import (
     playoff_scheduled_game_counts,
     scheduled_game_counts,
 )
+from hoops_gm.ingest.nba.schedule import _plausible_season_date
 
 pytestmark = pytest.mark.adapter_contract
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 EASTERN = ZoneInfo("America/New_York")
+
+#: The whole-object slice. ``nba_scheduleleaguev2_2026_27.json`` is
+#: field-trimmed and its team blocks carry four keys, so it cannot show what
+#: the source publishes for an undecided team; this one can, and holds all six
+#: of the 2026-27 season's pending games.
+PENDING_FIXTURE = "nba_scheduleleaguev2_2026_27_pending_knockout.json"
 
 
 def load(name: str) -> Any:
@@ -71,13 +80,14 @@ def load(name: str) -> Any:
 
 
 def resolved_schedule_payload() -> Any:
-    """The recorded payload with the TBD Cup games dropped.
+    """The recorded payload with the not-yet-drawn Cup games dropped.
 
-    The recorded fixture deliberately contains games whose teams the NBA has
-    not assigned yet, and ``import_schedule`` refuses to register a cohort
-    that does not account for every game the source reported. A fully resolved
-    slate is therefore built here rather than by editing the fixture, which
-    would destroy the very drift evidence the Adapter gate keeps it for.
+    Kept, post-ADR-013, for the tests that need a cohort with *no* pending
+    games — the invariants about resolved counts and persisted rows are
+    clearer stated against one. It is no longer a workaround: the unfiltered
+    payload imports perfectly well now, and
+    ``test_schedule_import_records_source_declared_pending_games_without_refusing``
+    is what proves it.
     """
 
     payload = load("nba_scheduleleaguev2_2026_27.json")
@@ -110,7 +120,8 @@ def test_schedule_fixture_resolves_games_and_reconciles_the_two_time_fields() ->
 
     assert result.source_game_count == 12
     assert len(result.games) == 10
-    assert result.unresolved_game_ids == ("0022601201", "0022601202")
+    assert result.pending_game_ids == ("0022601201", "0022601202")
+    assert result.unresolved_game_ids == ()
     assert result.games[0].game.game_date == date(2026, 10, 20)
     assert result.games[0].game.tipoff_utc is not None
     assert result.games[0].game.tipoff_utc.hour == 19
@@ -300,6 +311,8 @@ def test_schedule_refresh_summary_records_auditable_source_completeness(session:
         "source_game_count": 10,
         "resolved_game_count": 10,
         "unresolved_game_ids": [],
+        "pending_game_ids": [],
+        "pending_games": [],
         "persisted_team_row_count": 20,
     }
     completeness = schedule_completeness(run.summary)
@@ -309,18 +322,588 @@ def test_schedule_refresh_summary_records_auditable_source_completeness(session:
     assert run.version == schedule_content_version(session, season="2026-27")
 
 
-def test_schedule_import_refuses_a_cohort_with_unresolved_games(session: Any) -> None:
-    """A slate the source itself could not fully resolve is not a season.
+def test_schedule_import_records_source_declared_pending_games_without_refusing(
+    session: Any,
+) -> None:
+    """ADR-013: a game the source has not drawn yet is recorded, not refused.
 
-    The recorded payload reports two NBA Cup games whose teams are still TBD.
-    Persisting the other ten and registering them as the current cohort would
-    hand every downstream expected-games number a denominator that is short by
-    two games and carries no marker saying so.
+    Driven against the unfiltered recorded payload — the same twelve games the
+    pre-ADR-013 importer refused outright. The registered block must account
+    for all twelve, persist rows for only the ten that resolved, and name the
+    two it did not so that no consumer has to infer them from a subtraction.
     """
     result = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
     import_schedule_teams(session, result)
 
-    with pytest.raises(SourceContractError, match="unresolved teams"):
+    import_schedule(session, result)
+    run = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+
+    assert run is not None
+    block = run.summary[SCHEDULE_COMPLETENESS_SUMMARY_KEY]
+    assert block == {
+        "season": "2026-27",
+        "season_type": "regular",
+        "source_game_count": 12,
+        "resolved_game_count": 10,
+        "persisted_team_row_count": 20,
+        "unresolved_game_ids": [],
+        "pending_game_ids": ["0022601201", "0022601202"],
+        "pending_games": [
+            {
+                "nba_game_id": "0022601201",
+                "game_date": "2026-12-04",
+                "game_label": "Emirates NBA Cup",
+                "game_sub_label": "",
+                "game_subtype": "",
+                "date_absence_reason": "",
+            },
+            {
+                "nba_game_id": "0022601202",
+                "game_date": "2026-12-04",
+                "game_label": "Emirates NBA Cup",
+                "game_sub_label": "",
+                "game_subtype": "",
+                "date_absence_reason": "",
+            },
+        ],
+    }
+
+    completeness = schedule_completeness(run.summary)
+    assert completeness is not None
+    assert completeness.source_game_count == completeness.resolved_game_count + len(
+        completeness.pending_game_ids
+    )
+    # The pending games are recorded, and deliberately have no schedule rows:
+    # a game with no teams cannot have a team_schedule row without inventing
+    # the attribution the source withheld.
+    persisted = _persisted_schedule_rows(session, "2026-27")
+    assert {row[0] for row in persisted}.isdisjoint(completeness.pending_game_ids)
+    assert len(persisted) == 20
+
+
+def test_schedule_parser_reads_every_pending_game_in_the_real_season() -> None:
+    """The whole-object fixture, which is the one that can show a null team block.
+
+    ``nba_scheduleleaguev2_2026_27.json`` is field-trimmed and cannot: its team
+    blocks were reduced to four keys, so it says nothing about ``teamSlug`` or
+    the labels. This fixture keeps the source's own objects, and holds all six
+    of the 2026-27 season's pending games.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+
+    assert result.source_game_count == 24
+    assert len(result.games) == 18
+    assert result.unresolved_game_ids == ()
+    assert result.pending_game_ids == (
+        "0022601201",
+        "0022601202",
+        "0022601203",
+        "0022601204",
+        "0022601229",
+        "0022601230",
+    )
+    assert result.source_game_count == len(result.games) + len(result.pending_games)
+    labels = [
+        (game.game_date, game.game_label, game.game_sub_label) for game in result.pending_games
+    ]
+    assert labels == [
+        (date(2026, 12, 4), "Emirates NBA Cup", "Quarterfinal"),
+        (date(2026, 12, 4), "Emirates NBA Cup", "Quarterfinal"),
+        (date(2026, 12, 5), "Emirates NBA Cup", "Quarterfinal"),
+        (date(2026, 12, 5), "Emirates NBA Cup", "Quarterfinal"),
+        (date(2026, 12, 8), "Emirates NBA Cup", "Semifinal"),
+        (date(2026, 12, 8), "Emirates NBA Cup", "Semifinal"),
+    ]
+    assert {game.game_subtype for game in result.pending_games} == {"in-season-knockout"}
+
+
+def test_a_degenerate_pending_date_does_not_cost_the_whole_season() -> None:
+    """Reproduces the defect a reviewer found: one bad date returned no season.
+
+    Under the strict reconciliation this raised out of `parse_schedule`, so a
+    single unreconcilable timestamp on a single undrawn Cup fixture returned
+    **nothing** — not 1,200 games with one flagged, not even a `--dry-run`
+    view. That is ADR-013's explicitly rejected outcome arriving through a
+    different field, and the source argues it is reachable: every pending game
+    carries `seriesText: "Date subject to change"`, and these same objects
+    already use a degenerate year-0001 sentinel for `gameTimeEst`.
+
+    Three shapes, because the mutation must reproduce the failure rather than
+    a neighbour of it: a date that disagrees with its UTC sibling, one that is
+    unparseable, and one that is absent entirely.
+    """
+    for mutation in ("disagree", "unparseable", "absent"):
+        payload = load(PENDING_FIXTURE)
+        hits = 0
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] != "0022601229":
+                    continue
+                hits += 1
+                if mutation == "disagree":
+                    game["gameDateTimeEst"] = "2026-12-08T00:30:00Z"
+                elif mutation == "unparseable":
+                    game["gameDateTimeEst"] = "the eighth of December"
+                else:
+                    del game["gameDateTimeEst"]
+        assert hits == 1, mutation
+
+        result = parse_schedule(payload, season="2026-27")
+
+        assert len(result.games) == 18, f"{mutation} cost resolved games"
+        assert len(result.pending_games) == 6, f"{mutation} cost a pending game"
+        assert result.unresolved_game_ids == ()
+        degraded = {
+            game.nba_game_id: game.date_absence_reason
+            for game in result.pending_games
+            if game.game_date is None
+        }
+        expected_reason = {
+            "disagree": "irreconcilable",
+            "unparseable": "unreadable",
+            # Deleting only the Eastern field leaves the UTC one carrying a
+            # date, so the source HAS committed and we cannot read it in the
+            # shape this parser needs. That is a fault, not an undecided
+            # bracket -- the correction a reviewer forced, and this
+            # expectation is the one that was wrong before it.
+            "absent": "unreadable",
+        }[mutation]
+        assert degraded == {"0022601229": expected_reason}, mutation
+        # Every other pending game keeps its date; the leniency is per game,
+        # not a blanket loss of the field.
+        assert all(
+            game.game_date is not None and game.date_absence_reason == ""
+            for game in result.pending_games
+            if game.nba_game_id != "0022601229"
+        )
+
+
+def test_the_four_causes_of_a_missing_pending_date_are_not_conflated() -> None:
+    """``None`` alone said "not yet decided" where that is false three times in four.
+
+    One ``except`` covered both time parses, so a null date meant any of: the
+    source declined to give a date, the source gave one we could not read, or
+    the source's two fields contradict each other. **Only the first is "not
+    yet decided."** The conflation ran in the comforting direction — told the
+    source has not decided, an operator waits; told the date could not be
+    read, an operator investigates — and it sat inside the very field added so
+    a published fact would not be reported as a fault.
+
+    Two of these cases are here because a reviewer proved the first attempt
+    wrong, and both are worth naming:
+
+    ``half_published`` — the source gives the date in one field and withholds
+    the sibling. The first fix returned ``not_offered`` if *either* field was
+    empty, so the canonical example of "the source declined to give a date"
+    was a payload in which the source gives the date. That is the same
+    conflation one level down, in the same comforting direction.
+
+    ``implausible`` — both fields agree on a date in 1900. **Agreement is not
+    validity.** The NBA uses a ``1900-01-01`` epoch as a live placeholder for
+    ``gameTimeEst`` on every resolved game in this very fixture, and a
+    placeholder pair in the *date* fields reconciles exactly, because 1900's
+    Eastern offset really is -05:00. It would have been recorded as a decided
+    date in 1900 with no reason at all — strictly worse than ``None``, which
+    at least says we do not know.
+    """
+
+    def _clear_both(game: dict[str, Any]) -> None:
+        game["gameDateTimeEst"] = ""
+        game["gameDateTimeUTC"] = ""
+
+    def _epoch_placeholder(game: dict[str, Any]) -> None:
+        game["gameDateTimeEst"] = "1900-01-01T00:00:00Z"
+        game["gameDateTimeUTC"] = "1900-01-01T05:00:00Z"
+
+    causes: dict[str, Callable[[dict[str, Any]], None]] = {
+        "not_offered": _clear_both,
+        "unreadable": lambda g: g.__setitem__("gameDateTimeEst", "not a timestamp"),
+        "irreconcilable": lambda g: g.__setitem__("gameDateTimeEst", "2026-12-08T00:30:00Z"),
+        "implausible": _epoch_placeholder,
+    }
+    # Named separately because it is the case that must NOT be `not_offered`.
+    half_published: dict[str, Callable[[dict[str, Any]], None]] = {
+        "unreadable": lambda g: g.__setitem__("gameDateTimeUTC", ""),
+    }
+
+    for expected, mutate in {**causes, **half_published}.items():
+        payload = load(PENDING_FIXTURE)
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] == "0022601229":
+                    mutate(game)
+
+        result = parse_schedule(payload, season="2026-27")
+
+        by_id = {game.nba_game_id: game for game in result.pending_games}
+        assert by_id["0022601229"].date_absence_reason == expected
+        assert by_id["0022601229"].game_date is None
+        # A game that kept its date carries no reason: the two halves of the
+        # same fact must never disagree.
+        assert by_id["0022601201"].date_absence_reason == ""
+        assert by_id["0022601201"].game_date is not None
+
+
+def test_a_date_published_in_one_field_only_is_a_fault_not_an_undecided_bracket() -> None:
+    """The reviewer's N2, driven per field rather than per cause.
+
+    Both directions, because the first fix looped the two keys and returned
+    on the first empty one — so whichever field happened to be checked first
+    decided the answer. A source that publishes the date in either field has
+    committed to a date; failing to read it is our problem to investigate, not
+    a bracket to wait for.
+    """
+    for withheld, kept in (
+        ("gameDateTimeUTC", "gameDateTimeEst"),
+        ("gameDateTimeEst", "gameDateTimeUTC"),
+    ):
+        payload = load(PENDING_FIXTURE)
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] == "0022601229":
+                    assert game[kept], "the kept field must actually carry a date"
+                    del game[withheld]
+
+        result = parse_schedule(payload, season="2026-27")
+
+        by_id = {game.nba_game_id: game for game in result.pending_games}
+        assert by_id["0022601229"].date_absence_reason == "unreadable", (
+            f"withholding {withheld} while {kept} carries a date is the source having "
+            "committed, so it must not read as not_offered"
+        )
+
+
+def test_a_reconciling_epoch_placeholder_is_not_a_decided_date() -> None:
+    """Agreement is not validity, and this source really does use epoch placeholders.
+
+    Driven from the fixture's own evidence rather than an invented shape: the
+    resolved games in it carry ``gameTimeEst: 1900-01-01T...`` today. The same
+    convention applied to the date fields produces a pair that reconciles
+    perfectly and would otherwise be recorded as a real, decided date.
+    """
+    payload = load(PENDING_FIXTURE)
+    resolved_placeholders = {
+        game["gameTimeEst"][:10]
+        for entry in payload["leagueSchedule"]["gameDates"]
+        for game in entry["games"]
+        if game["homeTeam"]["teamId"] != 0
+    }
+    assert resolved_placeholders == {"1900-01-01"}, (
+        "this test's premise is that the source uses a 1900 epoch placeholder; "
+        f"it now uses {resolved_placeholders}"
+    )
+
+    for entry in payload["leagueSchedule"]["gameDates"]:
+        for game in entry["games"]:
+            if game["gameId"] == "0022601229":
+                game["gameDateTimeEst"] = "1900-01-01T00:00:00Z"
+                game["gameDateTimeUTC"] = "1900-01-01T05:00:00Z"
+
+    result = parse_schedule(payload, season="2026-27")
+    by_id = {game.nba_game_id: game for game in result.pending_games}
+
+    assert by_id["0022601229"].game_date is None
+    assert by_id["0022601229"].date_absence_reason == "implausible"
+    assert len(result.games) == 18, "the season must survive a placeholder date"
+
+
+def test_an_out_of_range_timestamp_does_not_escape_as_an_overflow() -> None:
+    """The lenient path caught only `SourceContractError`, and that was not enough.
+
+    `datetime.astimezone` raises `OverflowError` — not a `SourceContractError`
+    — when a conversion falls outside `datetime.min`/`max`. So a pending game
+    with a year-0001 value one non-UTC offset from the boundary propagated an
+    `OverflowError` straight out of `parse_schedule` and cost the whole
+    season, which is precisely the outcome this function exists to prevent,
+    arriving through the exception type rather than the field.
+
+    Not hypothetical: **year-0001 is the sentinel this source already emits**
+    for undecided times, on all six pending games in the recorded fixture.
+    """
+    boundary_shapes = (
+        ("gameDateTimeUTC", "0001-01-01T00:00:00+05:00"),
+        ("gameDateTimeEst", "9999-12-31T23:59:59"),
+    )
+    for field, value in boundary_shapes:
+        payload = load(PENDING_FIXTURE)
+        for game_date in payload["leagueSchedule"]["gameDates"]:
+            for game in game_date["games"]:
+                if game["gameId"] == "0022601229":
+                    game[field] = value
+
+        result = parse_schedule(payload, season="2026-27")
+
+        by_id = {game.nba_game_id: game for game in result.pending_games}
+        assert len(result.games) == 18, f"{field}={value} cost the season"
+        assert by_id["0022601229"].game_date is None
+        assert by_id["0022601229"].date_absence_reason == "unreadable"
+
+
+def test_a_pending_record_cannot_be_built_with_an_absence_and_no_reason() -> None:
+    """The producer must not be able to construct what the reader refuses.
+
+    `_pending_games` enforces "date absent iff reason present" on read-back.
+    Without the same check on construction the producer type is strictly wider
+    than the reader accepts, so `as_summary()` could serialise a block that
+    can never be read again — a row that is written successfully and then
+    turns the schedule-grid read path into a hard error.
+    """
+    with pytest.raises(ValueError, match="game_date absent"):
+        PendingScheduleGame(
+            nba_game_id="0022601201",
+            game_date=None,
+            game_label="Emirates NBA Cup",
+            game_sub_label="Quarterfinal",
+            game_subtype="in-season-knockout",
+        )
+    with pytest.raises(ValueError, match="game_date present"):
+        PendingScheduleGame(
+            nba_game_id="0022601201",
+            game_date=date(2026, 12, 4),
+            game_label="Emirates NBA Cup",
+            game_sub_label="Quarterfinal",
+            game_subtype="in-season-knockout",
+            date_absence_reason="not_offered",
+        )
+
+
+def test_an_out_of_range_timestamp_on_a_RESOLVED_game_refuses_rather_than_crashing() -> None:
+    """The third instance of the same one-sidedness, and the one that reached the exit code.
+
+    `_pending_game_date` absorbed `OverflowError`; the resolved branch did
+    not, and `main()` catches only `SourceUnavailable`, `SourceContractError`
+    and `SQLAlchemyError`. So a resolved game whose timestamps sit within one
+    non-UTC offset of `datetime.min`/`max` aborted with an uncaught traceback
+    and exit 1, where every other malformed timestamp exits 2 with "refused,
+    nothing written".
+
+    **Exit codes are the machine-readable channel of this command**, so an
+    out-of-range value must not be the one shape that bypasses it. Asserted as
+    a `SourceContractError` rather than "does not crash", because the point is
+    that it joins the documented refusal class.
+    """
+    shapes = (
+        ("gameDateTimeUTC", "0001-01-01T00:00:00+23:59"),
+        ("gameDateTimeEst", "9999-12-31T23:59:59.999999"),
+        ("gameDateTimeUTC", "9999-12-31T23:59:59Z"),
+    )
+    for field, value in shapes:
+        payload = load(PENDING_FIXTURE)
+        for entry in payload["leagueSchedule"]["gameDates"]:
+            for game in entry["games"]:
+                if game["gameId"] == "0022600001":
+                    game[field] = value
+
+        with pytest.raises(SourceContractError):
+            parse_schedule(payload, season="2026-27")
+
+
+@pytest.mark.parametrize(
+    "season",
+    ["0005-06", "0003-04", "0001-02", "9999-00", "not-a-season", "", "-27", "abcd-27"],
+)
+def test_an_unrepresentable_season_year_stays_lenient_instead_of_crashing(season: str) -> None:
+    """The leniency guard must cover the arithmetic it guards, not just the parse.
+
+    `_plausible_season_date` catches `ValueError` so that an unexpected season
+    shape is *lenient* — an odd season string must never decide whether a real
+    schedule imports. But the window construction was placed outside that
+    `try`, and `date()` raises `ValueError` for a year outside 1..9999. So a
+    season leading with a year <= 5, or >= 9994 at the upper end, crashed out
+    of `parse_schedule` uncaught and exited 1 — the same
+    crash-instead-of-a-typed-refusal class the `OverflowError` translation in
+    this very commit exists to remove, reintroduced by putting new arithmetic
+    outside an existing guard.
+
+    Unreachable from this source, which publishes four-digit modern seasons.
+    Asserted anyway because the guard's purpose is leniency, and a lenient
+    guard that raises is worse than no guard.
+    """
+    assert _plausible_season_date(date(2026, 12, 4), season) is True
+
+
+def test_a_representable_but_distant_season_still_refuses() -> None:
+    """The other side of that guard, and the reason it is not simply "return True".
+
+    `9993-94` builds a perfectly valid window — it is only the *unrepresentable*
+    ones that go lenient. A first draft of the test above included it and
+    asserted leniency; the green-before-mutating step caught that, which is the
+    second time tonight that rule has failed a check of mine rather than the
+    code's.
+    """
+    assert _plausible_season_date(date(2026, 12, 4), "9993-94") is False
+    assert _plausible_season_date(date(9993, 12, 4), "9993-94") is True
+
+
+def test_the_plausibility_bound_clears_the_real_season_by_years_not_by_days() -> None:
+    """A refusal window the real data clears by one day is a trap that has not sprung.
+
+    This guard refuses a *resolved* game, which means a false positive costs
+    the whole season — the exact failure this unit exists to remove, pointed
+    at a field everything persists rather than one nothing does. So the margin
+    is the property worth asserting, not the pass.
+
+    The bound catches what it is for by centuries: the placeholders this
+    source emits are 0001-01-01 and 1900-01-01.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+    dates = sorted(record.game.game_date for record in result.games)
+    lower, upper = date(2021, 1, 1), date(2032, 1, 1)
+
+    assert _plausible_season_date(dates[0], "2026-27")
+    assert _plausible_season_date(dates[-1], "2026-27")
+    assert (dates[0] - lower).days > 5 * 365, "the earliest real game is close to the floor"
+    assert (upper - dates[-1]).days > 4 * 365, "the latest real game is close to the ceiling"
+
+    # What it must still catch, and by how much.
+    assert not _plausible_season_date(date(1900, 1, 1), "2026-27")
+    assert not _plausible_season_date(date(1, 1, 1), "2026-27")
+    assert not _plausible_season_date(date(9999, 12, 31), "2026-27")
+
+    # What it must NOT catch: a schedule that legitimately runs long, a game
+    # moved well outside its own season, and an adjacent season's feed. Each
+    # of these is a real thing this source can publish; none is a placeholder.
+    for tolerated in (date(2026, 7, 1), date(2027, 12, 31), date(2028, 6, 30)):
+        assert _plausible_season_date(tolerated, "2026-27"), tolerated
+
+
+def test_a_reconciling_epoch_placeholder_on_a_RESOLVED_game_refuses_the_season() -> None:
+    """The half of the placeholder trap I fixed on the lenient path and not the strict one.
+
+    A resolved game's date is **persisted**, joins ``player_participation``,
+    and is the denominator of every expected-games number, so a placeholder
+    that reconciles is far worse here than on the pending side — and the
+    EST/UTC reconciliation cannot see it, because a placeholder *pair* agrees
+    exactly. Verified before the fix: the parser returned a resolved game with
+    ``game_date = 1900-01-01`` and imported it.
+
+    Refused rather than degraded, because on this side a wrong date is
+    indistinguishable from a real one downstream.
+    """
+    payload = load(PENDING_FIXTURE)
+    for entry in payload["leagueSchedule"]["gameDates"]:
+        for game in entry["games"]:
+            if game["gameId"] == "0022600001":
+                game["gameDateTimeEst"] = "1900-01-01T00:00:00Z"
+                game["gameDateTimeUTC"] = "1900-01-01T05:00:00Z"
+
+    with pytest.raises(SourceContractError, match="not in season 2026-27"):
+        parse_schedule(payload, season="2026-27")
+
+
+def test_every_real_game_in_the_fixture_is_inside_its_own_season_window() -> None:
+    """The plausibility bound must not be able to refuse a legitimate game.
+
+    Driven over the whole recorded cohort rather than a sampled date, because
+    a bound that is wrong at an edge is wrong exactly where the season starts
+    and ends — 2026-10-20 and 2027-04-11 here.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+
+    assert len(result.games) == 18
+    assert all(_plausible_season_date(record.game.game_date, "2026-27") for record in result.games)
+    assert all(game.date_absence_reason == "" for game in result.pending_games)
+
+
+def test_a_degenerate_date_on_a_RESOLVED_game_still_kills_the_import() -> None:
+    """The other half of the asymmetry, which is what makes it a judgement and not a hole.
+
+    A resolved game's date is persisted, joins `player_participation`, and is
+    the denominator of every expected-games number. Leniency there would be
+    the mislabelled-field bug this project already ate once. Asserted so that
+    anyone widening the pending leniency has to walk past this.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022600001":
+                game["gameDateTimeEst"] = "2026-10-20T00:30:00Z"
+
+    with pytest.raises(SourceContractError, match="inconsistent EST/UTC"):
+        parse_schedule(payload, season="2026-27")
+
+
+@pytest.mark.parametrize("field", ["teamName", "teamCity", "teamTricode", "teamSlug"])
+def test_every_identity_field_alone_makes_a_zero_id_game_a_failure(field: str) -> None:
+    """Each of the four naming fields must be load-bearing, not just the tricode.
+
+    A reviewer narrowed `_TEAM_IDENTITY_FIELDS` to `("teamTricode",)` and 224
+    tests stayed green — so three quarters of the guard was unexercised, and
+    `teamSlug` is the field the whole-object fixture was added to make
+    visible. Parametrised so removing any one field from the guard fails here.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                assert game["homeTeam"][field] is None
+                game["homeTeam"][field] = "Lakers" if field != "teamTricode" else "LAL"
+
+    result = parse_schedule(payload, season="2026-27")
+
+    assert result.unresolved_game_ids == ("0022601229",), (
+        f"a zero teamId beside a populated {field} must be a resolution failure"
+    )
+    assert "0022601229" not in result.pending_game_ids
+
+
+def test_a_zero_team_id_beside_a_named_team_is_a_failure_not_a_pending_game() -> None:
+    """Mutation check for the guard ADR-013 keeps: reproduce the failure it guards.
+
+    The distinction pending rests on is that the source withheld the identity
+    *entirely*. If it names a team without giving an id, it has claimed an
+    assignment we cannot resolve — indistinguishable from the parser losing a
+    team, which is the 1,225-of-1,230 defect the completeness contract exists
+    for. Constructed here by taking a real pending game and populating one
+    naming field, which is precisely the payload shape that would otherwise
+    slip through as "not yet decided".
+
+    This mutation is also what keeps ``unresolved_game_ids`` reachable at all.
+    Without this branch the parser could only resolve, zero out, or raise, and
+    the importer's unresolved refusal would be a guard that reads correctly
+    and can never fire.
+    """
+    payload = load(PENDING_FIXTURE)
+    mutated = 0
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                assert game["homeTeam"]["teamId"] == 0
+                assert game["homeTeam"]["teamTricode"] is None
+                game["homeTeam"]["teamTricode"] = "LAL"
+                mutated += 1
+    assert mutated == 1, "the mutation must land on exactly the game it claims to mutate"
+
+    result = parse_schedule(payload, season="2026-27")
+
+    assert result.unresolved_game_ids == ("0022601229",)
+    assert "0022601229" not in result.pending_game_ids
+    assert len(result.pending_games) == 5
+    assert result.source_game_count == 24
+
+
+def test_import_refuses_the_mutated_cohort_the_parser_flagged(session: Any) -> None:
+    """The second half of the mutation check: the refusal actually fires.
+
+    A parser that classifies correctly and an importer that ignores the
+    classification would be the same false comfort. Driven end to end rather
+    than by constructing a ``ScheduleParseResult`` by hand, because a
+    hand-built result is a shape no parser produces.
+    """
+    payload = load(PENDING_FIXTURE)
+    for game_date in payload["leagueSchedule"]["gameDates"]:
+        for game in game_date["games"]:
+            if game["gameId"] == "0022601229":
+                game["homeTeam"]["teamTricode"] = "LAL"
+    result = parse_schedule(payload, season="2026-27")
+    import_schedule_teams(session, result)
+
+    with pytest.raises(SourceContractError, match="named but did not identify"):
         import_schedule(session, result)
 
     assert session.scalars(select(TeamScheduleEntry)).all() == []
@@ -335,13 +918,82 @@ def test_schedule_import_refuses_a_cohort_with_unresolved_games(session: Any) ->
     )
 
 
+def test_schedule_import_refuses_a_source_count_that_ignores_pending_games(
+    session: Any,
+) -> None:
+    """The completeness invariant is ``resolved + pending``, and it is enforced.
+
+    Mutation of the arithmetic rather than of the payload: a source count that
+    exceeds resolved plus pending means games went missing between the source
+    and the parse, which is the original defect regardless of how many are
+    pending.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+    import_schedule_teams(session, result)
+
+    with pytest.raises(SourceContractError, match="18 resolved and 6 are pending"):
+        import_schedule(session, replace(result, source_game_count=25))
+
+    assert session.scalars(select(TeamScheduleEntry)).all() == []
+
+
+def test_the_schedule_version_does_not_change_when_only_the_pending_set_changes(
+    session: Any,
+) -> None:
+    """A property worth pinning precisely because it is surprising.
+
+    ``schedule_content_version`` fingerprints persisted ``team_schedule``
+    rows, and a pending game has none — it has no teams, so there is nothing
+    to persist. Two cohorts differing only in which games are pending
+    therefore share a version, which means a consumer must not cache the
+    pending set keyed on the version alone.
+
+    Driven both ways round rather than asserted: import the filtered cohort,
+    record the version, then import the recorded payload whose only
+    difference is two pending games, and require the version to be unchanged
+    while the completeness block is not.
+    """
+    filtered = parse_schedule(resolved_schedule_payload(), season="2026-27")
+    import_schedule_teams(session, filtered)
+    import_schedule(session, filtered)
+    before = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+    assert before is not None
+    before_block = schedule_completeness(before.summary)
+    assert before_block is not None
+    assert before_block.pending_game_ids == ()
+    before_version = before.version
+
+    with_pending = parse_schedule(load("nba_scheduleleaguev2_2026_27.json"), season="2026-27")
+    import_schedule(session, with_pending)
+    after = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season="2026-27",
+    )
+
+    assert after is not None
+    assert after.version == before_version, (
+        "the schedule version moved when only the pending set changed; if this now holds, "
+        "the caching caveat in _register_schedule_refresh is stale and should be removed"
+    )
+    after_block = schedule_completeness(after.summary)
+    assert after_block is not None
+    assert after_block.pending_game_ids == ("0022601201", "0022601202")
+
+
 def test_schedule_import_refuses_a_source_count_that_disagrees_with_resolved_games(
     session: Any,
 ) -> None:
     result = parse_schedule(resolved_schedule_payload(), season="2026-27")
     import_schedule_teams(session, result)
 
-    with pytest.raises(SourceContractError, match=r"source reported 11.*but 10 resolved"):
+    with pytest.raises(SourceContractError, match=r"source reported 11.*10 resolved and 0 are"):
         import_schedule(session, replace(result, source_game_count=11))
 
     assert session.scalars(select(TeamScheduleEntry)).all() == []

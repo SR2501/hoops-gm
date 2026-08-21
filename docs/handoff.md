@@ -9451,3 +9451,660 @@ tomorrow's nightly live-smoke run is the **first execution anywhere** of four al
 in #39; a red one is information, and someone must read it and append the outcome including
 "all green". Injury-status conversion remains paused at `3285e647`; runtime activation
 remains vetoed pending refreshed Model-gate evidence.
+
+---
+
+## 2026-08-20 — data-engineer — The real 2026-27 season is loadable by one command
+
+**Changed:** Implemented ADR-013's pending/failure distinction in
+`ingest/nba/schedule.py`, `db/lineage.py` and `ingest/importers.py`; added
+`hoops_gm.ingest.schedule_import`, the first operator command that fetches
+`ScheduleLeagueV2` and imports a forward season; plumbed pending into the
+schedule-grid lineage block; retired the demo seed's TBD filter. 16 files.
+
+**Now true:** The real 2026-27 NBA season loads into a real database with one
+command, verified end to end rather than asserted:
+
+```
+python -m hoops_gm.ingest.schedule_import 2026-27
+  -> 30 nba_teams, 1200 nba_games, 2400 team_schedule rows, 80 per team for all 30
+     source 1206 = resolved 1200 + pending 6, version e80a3aecca0e86eb, cohort "current"
+  re-run -> same version, one refresh row (converges, does not advance "current")
+```
+
+The six pending games are `0022601201`-`04` (2026-12-04/05) and
+`0022601229`/`30` (2026-12-08), recorded with dates and labels.
+
+**The distinction is determinable from the payload, not guessed.** I was asked
+to report rather than guess if it were not. A pending team block is
+`{"teamId": 0, "teamName": null, "teamCity": null, "teamTricode": null,
+"teamSlug": null}` — id zero *and* every naming field null — beside
+`gameStatusText: "TBD"`, `gameSubtype: "in-season-knockout"` and
+`gameSubLabel: "Quarterfinal"`/`"Semifinal"`. Pending requires all of it. A zero
+id beside *any* populated naming field is the source naming a team it gave no
+id for, which is a resolution failure and still refuses.
+
+**That third branch is not decoration; it is what keeps the refusal reachable.**
+Without it today's parser could only resolve, zero out, or raise, and
+`unresolved_game_ids` would be a guard that reads correctly and can never fire —
+R50 exactly, in code I was about to ship. The mutation check drives it both
+ways: set `teamTricode: "LAL"` on a real zero-id Cup game, confirm the parser
+moves it pending -> unresolved, then confirm `import_schedule` actually refuses
+and writes nothing. A classifier that classifies correctly beside an importer
+that ignores the classification would have been the same false comfort.
+
+**Only `wins`/`losses`/`score`/`seed` are excluded from the identity check**,
+and that mattered: they are zero for *every* not-yet-played game, so a naive
+"all fields empty" rule would have classified the entire future schedule as
+contradictory.
+
+**Contract shape, final field names.** I reported `game_id`/`label`/`sub_label`
+to the coordinator and shipped `nba_game_id`/`game_label`/`game_sub_label`,
+plus `game_date` and a fifth field `game_subtype` I had not mentioned. The
+frontend lane caught it by reading the source rather than the relay. No harm
+done, and the lesson is not "report more carefully" but that a contract
+reported one way and shipped another is the same shape as a docstring that
+outruns its implementation. The authoritative shape now lives in
+`docs/adapters/nba-schedule.md`, which is checkable against the Pydantic model.
+
+**A pending game carries no team, and consumers must not invent one.** The
+coordinator had briefed the frontend that DAL and LAL "have an unscheduled
+game". The source explicitly withheld that attribution; the honest statement is
+period-scoped — *this week contains N games whose teams are not yet decided, so
+any count in it may rise* — applied to every team in the column. This is stated
+on `PendingScheduleGameLineage` where a consumer meets it, not only in prose.
+
+**Two cross-boundary changes, both approved, both declared.**
+`api/routes/schedule_grid.py` is purely additive: two fields plumbed from a
+block I produce. `dev/seed_schedule_grid.py` is not, and was forced —
+`resolved_schedule_payload`/`reconcile_dropped_games` existed only to work
+around the refusal ADR-013 removes, and reconciled against an
+`unresolved_game_ids` my change correctly empties, so the seed would have
+refused itself. Retiring a workaround, not deleting a guard. The consequence is
+strictly good: the demo goes 12 source / 10 resolved / **2 pending**, so the
+local demo database now exercises the pending path instead of hiding it, and
+the frontend lane can drive its new state locally rather than mocking it. Grid
+counts and `scheduled_team_games` are unchanged, because the filter only ever
+removed games that never resolved.
+
+**The operator command has no `--database-url`.** I was asked to guard the leak;
+I removed the flag instead and read `Settings` like `ingest/backfill.py` does.
+Both prior defects were leaks *of that flag* — a verbatim print, then libpq's
+`password` query argument slipping past `hide_password=True`, which masks
+`URL.password` and nothing else. Guarding it failed twice; there is now nothing
+in `argv` to print, and a test asserts the parser exposes exactly
+`{-h, --help, --max-age-hours, --dry-run}`.
+
+**The schedule version does not cover the pending set.** `schedule_content_version`
+fingerprints persisted `team_schedule` rows and a pending game has none, so two
+cohorts differing only in which games are pending share a version — the demo
+seed's 10-source cohort and its 12-source, 2-pending successor both fingerprint
+to `9bcac1c60490b41a`. So **a consumer must not cache the pending set keyed on
+the schedule version alone**, and `verify_refresh` cannot detect a forged
+pending list, though it still detects a forged resolved cohort. Pinned by
+`test_the_schedule_version_does_not_change_when_only_the_pending_set_changes`,
+documented on `_register_schedule_refresh` and on the API model, and filed as
+`schedule-pending-persistence` because closing it is schema and migration.
+
+**`persisted_team_row_count == 2 * resolved_game_count` when make-up games
+arrive:** nothing special happens. A later refresh has different counts and a
+different fingerprint, correctly, because rows changed. A changing count is not
+drift; it is the season being published. What a reader should *not* conclude is
+that a stable count means a stable season — 80 games per team today becomes 82
+once eliminated Cup teams get their make-ups, and `quant` must not fit anything
+to an 80-game team season.
+
+**Fixtures, and a gap in the old one.** Captured my own live payload
+(2,474,177 bytes, 173 dates) and reconciled it against the committed
+`nba_scheduleleaguev2_2026_27.json`: all 12 games present, **every retained
+field byte-identical**, including both pending team blocks. But that fixture is
+*field-trimmed* — six keys per game, four per team block — so its pending games
+carry `gameSubLabel: null` and no `gameSubtype` at all. An offline test against
+it alone therefore proves nothing about the labels ADR-013's flip condition
+turns on. `nba_scheduleleaguev2_2026_27_pending_knockout.json` (81,749 bytes,
+whole unmodified objects, all six pending games plus 18 resolved) is what
+covers them, and the manifest says so for both files.
+
+**The live smoke asserts the pending set is structurally explicable**, not
+merely small: every pending game must carry an Emirates NBA Cup label and the
+`in-season-knockout` subtype, sub-labels confined to Quarterfinal/Semifinal, and
+an *empty* pending set fails too, because the bracket is published undecided
+until December. A count-only assertion would stay green through exactly the
+scenario that invalidates the ADR. Ran green against the live source tonight.
+
+**The cohort manifest's fingerprint list watches the wrong file, and I found it
+the hard way.** `DEFAULT_SOURCE_FINGERPRINT_PATHS` includes
+`backend/src/hoops_gm/db/lineage.py`, which the generator never imports a symbol
+from, and omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which it directly
+calls for the `schedule_league_v2` reconciliation view. My change touched both:
+the alarm fired on the file outside the derivation and stayed silent on the file
+inside it. I updated the stale `db/lineage.py` digest and **did not** add the
+missing path, because recording today's bytes for a newly-watched file would
+claim the cohort was derived with code it was not. Filed as
+`schedule-cohort-fingerprint-list`.
+
+Note what I could *not* borrow: the precedent for updating that digest
+(commit `a6ec4ca`) justified itself by proving the change AST-identical. Mine is
+not — it changes executable logic. What I verified instead is narrower and I am
+stating it as such: `cohort_evidence.py` imports no symbol from `db/lineage.py`,
+none of the changed symbols (`ScheduleCompleteness`, `schedule_completeness`,
+`_pending_games`) is on any path it calls, and the one changed file it *does*
+call into produces an identical result over the committed 2025-26 cohort-window
+fixture (6 source / 6 resolved / 0 pending, the four in-window ids unchanged and
+still a subset of the manifest's 173).
+
+**Could not verify:**
+
+- **A full regeneration of the cohort manifest.** It needs a fully backfilled
+  cohort database and the injury-report captures, both gitignored. So the
+  digest I recorded is justified by the call-graph argument above, not by
+  reproduction. This is the weakest claim in the unit.
+- **That the 1,200 resolved games are correct against any independent view.**
+  The cross-source reconciliation that does that needs `LeagueGameFinder` and
+  `PlayerGameLogs` rows, which a forward schedule has none of. There is no
+  second witness to a season that has not been played.
+- **PostgreSQL.** No Docker locally; native Postgres is CI-only. Every claim
+  above is SQLite. The completeness block is JSON in both, but I have not run
+  this code against Postgres and am not claiming to have.
+- **Anything about make-up games.** I assert only that a later refresh will
+  differ; I have not seen the source publish one, and the shape it arrives in
+  is unobserved.
+- **Whether `_optional_text`'s leniency is right.** It normalises a missing
+  label to `""` rather than refusing, on the grounds that a blank
+  `gameSubLabel` should not cost a whole season's import. If the source ever
+  drops labels wholesale, the live smoke goes red and the offline suite does
+  not — which is the intended split, but it is a judgement, not a measurement.
+
+**Next:** PR open against `main`. Two follow-ups filed
+(`schedule-pending-persistence`, `schedule-cohort-fingerprint-list`). The
+frontend lane is stacked on this branch and has the confirmed field names.
+
+---
+
+## 2026-08-20 — data-engineer — Four review rounds, two defects I created, one better answer than mine
+
+**Changed:** Closed findings from four independent reviews of the ADR-013 unit
+(`data-engineer`, `backend`, `architect`, `code-review`) at `1716044`, then
+rebased onto `a632b65`.
+
+**The finding that mattered most would have cost the deliverable.** `parse_schedule`
+applied the strict EST/UTC reconciliation to pending games, so **one degenerate
+timestamp on one undrawn Cup fixture returned no season at all** — not 1,200 games
+with one flagged, not even a `--dry-run` view. That is ADR-013's explicitly rejected
+outcome arriving through a different field, and the reviewer showed the source argues
+it is reachable: all six pending games carry `seriesText: "Date subject to change"`,
+and the same objects already use a **year-0001 sentinel** for `gameTimeEst` where a
+resolved game uses 1900. I had written a docstring justifying the strict check as
+"the one unchecked time claim in the parser". There was no claim there to check: on a
+pending game `gameDateTimeUTC` is the source's own arithmetic on `gameDateTimeEst`, so
+the check compared a derivation against the thing it was derived from. That is the
+`gameEt` lesson — check against something *independent* — failed in the direction of
+looking rigorous.
+
+A pending date now degrades to `None`. A **resolved** game's date stays strict,
+because that one is persisted and joins `player_participation`, and both halves of
+the asymmetry are tests. The drift signal did not disappear; it moved to the live
+smoke, which asserts every pending game still has a reconcilable date.
+
+**A guard I wrote that could never fire, two files from where I wrote about that
+hazard.** The pending-and-unresolved overlap check sat below the blanket unresolved
+refusal, which is strictly stronger. Three reviewers found it independently. R50, in
+the same PR whose handoff describes catching R50 in the parser — I recognised the
+shape when reasoning about someone else's code and not in my own. Reordered above,
+and the test asserts the **message**, because asserting only that it raises passes
+either way, which is exactly how it survived.
+
+**ADR-013's new arithmetic opened a hole I did not see.** Once
+`source == resolved + pending`, a block declaring *every* game pending validates with
+zero resolved games and zero persisted rows — and `verify_refresh` then fingerprints
+an empty cohort against itself and answers "current". Refused now.
+
+**The architect's answer on the fingerprint is better than mine and I took it.** I
+refreshed the `db/lineage.py` digest after proving the file is not in the cohort's
+derivation. The old digest was true-about-the-past; the new one is false. Refreshing
+swapped a true-but-irrelevant record for a false-and-irrelevant one to silence an
+alarm — ADR-006's "regenerating a fixture to silence a contract test" one level up.
+**Deleting the entry narrows an over-claim instead**, needs no regeneration, and the
+alarm iterates the manifest's own dict rather than the constant. I reasoned correctly
+all the way to "adding a path would be a false claim" and stopped one step short of
+"so is refreshing the one already there".
+
+One correction to the architect's version: I left `DEFAULT_SOURCE_FINGERPRINT_PATHS`
+alone. Editing `cohort_evidence.py` stales *its* digest, and that file **is** in the
+derivation, so the same false-claim problem moves one file over. Both edits belong to
+the regeneration. `schedule-cohort-fingerprint-list` is rewritten to say so.
+
+**Mutation checks, now to the standard `main` adopted tonight — green, mutate, red,
+restore, each red attributed:**
+
+```
+_TEAM_IDENTITY_FIELDS narrowed to ("teamTricode",)
+   green -> 3 of 4 parametrised cases red -> green
+resolved_game_count == 0 guard removed
+   green -> red -> green
+pending date made strict again
+   green -> red -> green
+overlap guard moved back below the general refusal
+   green -> red -> green
+```
+
+The identity-field one is the point of the new bullet: a reviewer narrowed that
+constant and **224 tests stayed green**, so three quarters of the guard was
+unexercised, and `teamSlug` — the field the whole-object fixture was added to make
+visible — was tested nowhere.
+
+**And the bullet caught me while I was using it.** My first pending-date mutation
+reported green. The replacement string never matched, because I wrote `` `n `` inside
+a single-quoted PowerShell string. A mutation that does not apply looks exactly like a
+guard that works. Every mutation above now asserts its target is present before
+mutating and asserts the pre-mutation green.
+
+**Two assertions that could not fail**, both found by review: `"team" not in key`
+against a model with no team field, and a refusal test checking the two tables written
+*last* while ignoring `nba_teams`, which is written first and is where a leak would
+show.
+
+**Could not verify:** everything in the previous entry stands. Added here: the four
+reviews were at `1716044` and this head is `bb68fff` rebased onto `a632b65`, so the
+re-review is on new code — the clock restarted, correctly. I have not re-run the live
+smoke since adding the pending-set cardinality ceiling and the date probe; the
+cardinality ceiling of six is derived from the bracket's shape (4 quarterfinals + 2
+semifinals), not from an observation of a season where it was exceeded. And
+PostgreSQL remains CI-only.
+
+**Next:** re-review on the new head, then merge. Three PRs are queued behind this one.
+
+---
+
+## 2026-08-21 — data-engineer — Fifth round: `None` was telling the operator to wait when it should have said investigate
+
+**Changed:** Closed the fifth review round on the ADR-013 unit — three
+doc/code contradictions, an operator-facing signal that had not been rebuilt,
+and a contract defect the frontend lane found by reading my source.
+
+**The defect: one `except` gave `null` three causes and only one of them meant
+"not yet decided".** `_pending_game_date` wrapped both the UTC and the Eastern
+parse in a single `except SourceContractError: return None`, so a null date
+meant any of: the source declined to give a date, the source gave one this
+parser could not read, or the source's two fields contradict each other. My
+function summary said "or `None` if it is not trustworthy" — honest — and the
+paragraph under it read as though null meant the source had not said when. A
+consumer inherited that and was about to put it on a screen.
+
+**The direction is why it is a defect and not a wording nit.** Told the source
+has not decided, an operator *waits*. Told the date could not be read, an
+operator *investigates*. So the contract erred toward comfort about a
+data-reading failure — inside the very field added so a published fact would
+not be reported as a fault.
+
+**The distinction is cleanly available in the payload**, which is what made a
+third option better than the two on offer. Absent-or-empty is distinguishable
+from present-but-malformed *before any parse is attempted*. So rather than
+conflating the causes, or narrowing the `except` and putting a season-killing
+refusal back on a field nothing persists, the **cause is recorded**:
+`date_absence_reason` ∈ `{"", not_offered, unreadable, irreconcilable}`, closed
+set, validated, and cross-checked against `game_date` so a reason without an
+absence or an absence without a reason is refused. `unreadable` is the one the
+live smoke now asserts never occurs, because it is our failure or a schema
+change rather than an undecided bracket.
+
+This is the repo's own "capture reason codes, not just the outcome" applied to
+a parse result rather than a DNP.
+
+**Three doc/code contradictions, all mine, all in the class gates cannot
+catch.** `parse_schedule`'s docstring still said the reconciliation "runs for
+pending games too, on the same terms" — forty lines above a helper whose
+docstring says the opposite at length. The adapter doc repeated it, showed
+`game_date` as a string in the published consumer contract with no mention of
+nullability, and its fails-closed list re-conflated `_require_known_teams` with
+`unresolved_game_ids` a hundred lines after a table that separates them. The
+one document a downstream lane actually reads was the one that had it wrong.
+
+**The loudness finding, which I had half-fixed and did not realise was half.**
+Before this unit, an upstream change to pending time fields produced exit 2, a
+named game, and nothing written. After it: exit 0, a successful import, and
+silence — the `null` landing in a lineage row nobody looks at. I had framed
+this as "the signal moved to the live smoke". What actually happened is that
+the *loud half* — the operator at a terminal running a real import — was not
+rebuilt. Now `pending_game_ids_without_a_date`, `pending_game_date_absence`
+and a stderr line that says which response each cause calls for.
+
+**A stale "could not verify" of mine, caught by a reviewer.** My previous entry
+said the live smoke had not been re-run since the cardinality ceiling and date
+probe were added. It had — 4 probes green at `bf4c2b0`, run after the push. The
+sentence was written before the run and not corrected after it. A "could not
+verify" list is worth exactly as much as its freshness, and a stale one is
+worse than none because it reads as current.
+
+**A concurrency hazard worth recording.** A reviewer's mutation and my edits
+collided in this shared worktree: its narrowed `_TEAM_IDENTITY_FIELDS` was left
+in the tree, and separately one of its writes landed mid-run and produced a
+`JSONDecodeError` in an unrelated suite that looked like a real failure. The
+narrowing was caught by the very test written for it. The reviewer hit the
+mirror image — its mutation was clobbered by my write and briefly reported a
+false green — and moved to an isolated detached worktree. **A reviewer and an
+author sharing a worktree can each silently destroy the other's evidence**, and
+both directions produce a green that means nothing.
+
+**Verified end to end on the final code**, not inherited from the earlier run:
+30 teams, 1,200 `nba_games`, 2,400 `team_schedule` rows at 80 per team,
+`source 1206 = resolved 1200 + pending 6`, no undated pending games, exit 0.
+Ruff, format, strict mypy over 138 files, and the full offline suite green.
+
+**Could not verify:** PostgreSQL, still CI-only, still not claimed. The live
+smoke has **not** been re-run since adding the `unreadable` assertion and the
+zero-pending drawn-bracket branch in this round — that is true as of writing
+and I will say so again only if it stays true. The `<= 6` ceiling remains
+derived from the bracket's shape rather than observed to be exceeded. And the
+`date_absence_reason` states are exhaustive over *this parser's* failure
+modes, not over what the source might do — a value it invents lands in
+`unreadable` by construction, which is the safe direction but is not the same
+as having seen it.
+
+**Next:** re-review this head. Three lanes are queued behind.
+
+---
+
+## 2026-08-21 — data-engineer — Round six found behaviour, not prose; then I swept the prose
+
+**Changed:** Closed round six. Two reviewers, four findings between them that a
+user or operator would have seen, plus one prose contradiction. Then applied
+`gates.md`'s new state-it-once rule to my own diff, which needed it.
+
+**The question the coordinator asked — is this round finding defects or
+manufacturing prose to fix — has a clear answer for round six: defects.**
+
+**A fourth cause nobody had thought of, and it was the worst one.** The
+partition assumed an unusable date fails *something*. The NBA's own
+convention defeats that: it uses a `1900-01-01` epoch placeholder for
+`gameTimeEst` on **every resolved game in the committed fixture**. The same
+convention in the *date* fields reconciles perfectly — 1900's Eastern offset
+genuinely is -05:00 — and would have been recorded as a **decided date in
+1900 with no reason at all**. Strictly worse than `None`, which at least says
+we do not know. Now `implausible`, bounded by a loose July-to-July window
+around the season the payload names.
+
+The sharpest part is why the year-0001 sentinel *did* get caught: only because
+`America/New_York` ran on -04:56 local mean time before 1883, so the
+conversion fails by four minutes. **The guard that appeared to catch a
+sentinel was catching a pre-1883 timezone artefact**, and one year over the
+same trick reconciles cleanly. I had cited year-0001 as evidence the
+classifier handled sentinels; it handled that one by accident.
+
+**`OverflowError` walked straight past the lenient path.** `astimezone` raises
+it — not `SourceContractError` — for a conversion outside `datetime.min`/`max`,
+so a year-0001 value one non-UTC offset from the boundary propagated out of
+`parse_schedule` and cost the whole season. **The exact outcome the function
+exists to prevent, arriving through the exception type instead of the field.**
+And reachable through the sentinel the source already emits.
+
+**The conflation I removed, reproduced one level down, in the same comforting
+direction.** The frontend's finding was "one `except` spanning both parses". My
+fix replaced it with **one pre-check spanning both fields** — returning
+`not_offered` if *either* was empty. So a payload giving the date in one field
+and withholding the other was reported as "the source has not committed to a
+date". The canonical example of *the source declined to give a date* was a
+payload in which the source gives it. My own test asserted that semantics and
+passed.
+
+That is the third time tonight I have fixed an instance and left the class,
+and it is the same shape each time: I recognised the pattern when reasoning
+about someone else's code and not about the code I had just written.
+
+**Two invariants that were one-sided.** The reader enforced "date absent iff
+reason present"; the producer did not, so `PendingScheduleGame` could
+construct a record that serialises into a block **no reader will ever
+accept** — written successfully, then a hard error on the schedule-grid read
+path. Now enforced in `__post_init__`. And a comment claiming no producer
+could write such a block was false: an intermediate commit *on this branch*
+wrote exactly it. The bound is real (nothing merged, developer databases only)
+and is now stated as a bound rather than as impossibility.
+
+**Then the prose, because the projections lane's number applies to me.** Six
+rounds, and the four-cause mechanism was stated in five places: the
+classifier, the lineage dataclass, the API model, the adapter doc and the ADR.
+Each restatement was written *beside* the previous one to show working — right
+for this file, wrong for a docstring, which has no reader who wants the
+history. Swept: **ADR-013 owns what a consumer must do, the adapter doc owns
+what the source did, the classifier owns why the boundaries are where they
+are**, and the other two reference rather than repeat.
+
+**My read on when to stop, since it was asked for directly.** Round six
+returned an `OverflowError` that killed the season, a misclassification that
+told an operator to wait through a fault, and a sentinel recorded as a real
+date. Those are behavioural. **Round seven should be scoped to behaviour
+only** — the round-six fixes added a new reason, a new exit code, an exception
+class and a construction invariant, and new guards deserve a round — but if it
+returns corrected restatements, that is the signal and I will merge on it
+rather than run an eighth.
+
+**Verified on this head:** ruff, format, strict mypy over 138 files, full
+offline suite, live smoke (4 probes), and a real import — 30 teams, 1,200
+`nba_games`, 2,400 `team_schedule` rows at 80 per team, `1206 = 1200 + 6`, no
+undated pending games, exit 0.
+
+**Could not verify:** PostgreSQL on this head — CI-only, not claimed. The
+`implausible` window is derived from the season label, not from an observation
+of the source emitting an out-of-season date; I have seen the placeholder
+convention in the sibling field, not in the date fields. And the four causes
+remain exhaustive over *this parser's* outcomes rather than over the source's
+states — which is exactly what round six proved was not the same thing.
+
+---
+
+## 2026-08-21 — data-engineer — The placeholder trap, and the fix that reintroduced the hazard
+
+**Changed:** Closed the resolved-side half of the epoch-placeholder defect,
+loosened the plausibility bound after the coordinator argued the asymmetry runs
+the other way there, and amended ADR-013 in this PR because this PR is what
+made it untrue.
+
+**The defect I found while answering someone else's question.** #47 asked
+whether a year-0001 sentinel still reaches a client as a well-formed date. I
+drove every sentinel shape through the parser rather than reasoning about it,
+and the seventh row — the resolved case, which I only ran because the question
+mentioned it — came back:
+
+```
+RESOLVED game, 1900 pair, correctly converted -> parsed, game_date = 1900-01-01, IMPORTED
+```
+
+**I had applied the plausibility bound to the lenient path and not the strict
+one**, two hours after writing a handoff entry about recognising the class in
+someone else's code and not my own. The strict side is the one that matters: a
+resolved game's date is persisted, joins `player_participation`, and is the
+denominator of every expected-games number. A 1900 row would not have looked
+wrong anywhere — it would have been absorbed as real signal by the availability
+model, which is `AGENTS.md`'s named worst case.
+
+**What makes it invisible is the thing that was supposed to catch it.** The
+EST/UTC reconciliation cannot see a placeholder pair, because *a placeholder
+pair is internally consistent*. 1900's Eastern offset genuinely is -05:00.
+Cross-field reconciliation validates encoding and never meaning — the `gameEt`
+lesson arriving from the opposite direction.
+
+**Latent, not active — checked rather than assumed.** The real season currently
+loaded:
+
+```
+nba_games            1200
+game_date range      2026-10-20 .. 2027-04-11
+null game_date       0
+outside the bound    0
+```
+
+Nothing already imported is poisoned. The fix prevents a future poisoning and
+repairs nothing, and a reader of "would have poisoned the availability model"
+deserves that stated rather than left to wonder.
+
+**Then the fix reintroduced this unit's own hazard, and the coordinator caught
+it.** This PR exists because a refusal on a field *nothing* persists was
+killing the season. I had just added a refusal on a field *everything*
+persists, with a two-year window — and that window would fire during an
+October import when a fixture moves.
+
+The consequence asymmetry runs the opposite way on the resolved side, and it
+runs hard. **The bound's only job is to catch an epoch placeholder**, and the
+placeholders this source emits miss by 125 and 2,025 years. So the loosest
+bound that does the job is the safest one: an eleven-year window centred on the
+season. A tight window catches the same two values and *also* refuses a
+rescheduled game, a long season, or an adjacent feed. **It buys nothing and
+costs the season.** The burden was on the tight bound and it could not carry it.
+
+The live smoke now asserts the real season clears that bound **by years**, not
+that it clears it — a refusal window the real data passes by one day is a trap
+that has not sprung yet.
+
+**ADR-013 amended in this PR**, at `architect`'s request and with status
+untouched. `9dc708e` emitted a fifth `date_absence_reason` while the Accepted
+ADR asserted a closed four-member set — and the ADR is the authority a consumer
+was told to cite *instead of* a producer docstring, so merging without this
+would have made the right behaviour return a wrong answer. It records the
+five-member set, that **two** codes now mean investigate and both carry the
+live-smoke assertion, that exit 5 is not a refusal, and it corrects the ADR's
+claim that the sentinel ambiguity is "not a producer gap". It was one; it is
+closed here; it remains true of any date value from any other source.
+
+**Answer to #47, for the record:** no sentinel reaches a client as a
+well-formed date from this producer. Every shape yields `null` with a cause,
+and the resolved side refuses. #47's limitation is unreachable *through this
+seam* and true in general, which is why it should say so precisely rather than
+be deleted — the next producer will not have this classifier.
+
+**Could not verify:** PostgreSQL, CI-only, still not claimed on any head. That
+the eleven-year window is right rather than merely loose enough — it is
+argued from the two placeholder values this source is observed to emit, not
+from a survey of what it might emit. And the injury-cohort path derives dates
+through a *different* adapter that nothing here touches; whether the same bound
+belongs there is a real question with the same `player_participation`
+consequence, and `architect` is filing it rather than letting it into this PR.
+
+**Next:** round seven re-run on this head, because the resolved-side guard and
+the loosened bound both postdate the one it is running against.
+
+---
+
+## 2026-08-21 — data-engineer — Round seven: behaviour-only, one finding, same one-sidedness a third time
+
+**Changed:** Scoped round seven to behaviour and told the reviewer to report no
+prose at all. It returned four areas behaviourally clean and one real finding.
+
+**Four clean, and the evidence is better than mine was.** The reviewer swept
+16 shapes across the `not_offered`/`unreadable` split, **32,357 adversarial
+timestamp pairs** through `_pending_game_date` with zero escapes, every day
+from 2026-06-25 to 2028-07-23 against the plausibility window including the DST
+spring-forward gap and both fall-back folds, and — the part I had not done —
+**exit 5 on the real writing path** rather than only in dry-run, confirming the
+database afterwards is byte-identical to a clean run. Nothing is rolled back.
+
+**The finding: `OverflowError` still escaped the resolved branch.** I fixed it
+on the lenient path and not the strict one. Again. `main()` catches
+`SourceUnavailable`, `SourceContractError` and `SQLAlchemyError`, so a resolved
+game whose timestamps sit within one non-UTC offset of `datetime.min`/`max`
+aborted with an **uncaught traceback and exit 1**, where every other malformed
+timestamp exits 2 with "refused, nothing written".
+
+That matters because **exit codes are this command's machine-readable
+channel** — the thing I added exit 5 to make trustworthy. An out-of-range value
+was the one shape that bypassed it. Reproduced through `main()` rather than the
+parser:
+
+| resolved-game payload | before | after |
+|---|---|---|
+| `gameDateTimeUTC = 0001-01-01T00:00:00+23:59` | uncaught `OverflowError`, rc=1 | rc=2 |
+| `gameDateTimeUTC = 9999-12-31T23:59:59Z` | uncaught `OverflowError`, rc=1 | rc=2 |
+| `gameDateTimeUTC = 0001-01-01T00:00:00Z` (control) | rc=2 | rc=2 |
+
+The control is the point: the same class of garbage that stays inside
+`datetime`'s range already exited 2 cleanly, and only the out-of-range shapes
+escaped. An earlier draft of this table wrote both states in one column with an
+arrow, which read correctly and was ambiguous about which value was which —
+**the night's dominant defect class arriving in a report instead of in code**,
+in the one file nobody rewrites. Caught in review of the report itself.
+
+**Three instances of one class in one lane, and the count is the finding.**
+The plausibility bound on the lenient path and not the strict one. The
+producer/reader invariant enforced on read and not on construction. Now
+`OverflowError` absorbed on one branch and not its sibling. Each time I wrote
+the guard correctly and applied it to one of the two places it belonged, and
+each time a reviewer found the other. **The class is not "I forget the
+resolved path" — it is that a fix written while reasoning about one branch does
+not automatically get asked "where else is this true?", and nothing in my
+process asks it.** That question is cheap and I did not have it.
+
+**On the round's character, which is what I was asked to watch.** Round seven
+was behaviour-only by construction and returned one behavioural defect plus
+four substantiated clean areas. That is not a round manufacturing its own
+findings. But it is also the **third** consecutive round whose finding is the
+same class, which argues the remaining risk is concentrated rather than broad —
+and a further round asking the same questions would be the shape the
+projections lane warned about. My read: this is the last round that pays for
+itself unless the re-run on the new head returns something of a different kind.
+
+**Could not verify:** PostgreSQL, still CI-only. The reviewer verified exit 5
+on the real writing path against SQLite; I have not seen it on Postgres. And
+the `OverflowError` translation is asserted for three shapes, not for the
+32,357 the reviewer swept — that sweep ran against the *pending* path, and I
+did not repeat it against the resolved one.
+
+---
+
+## 2026-08-21 — data-engineer — Final round: the new guard bypassed its own leniency guard
+
+**Changed:** Closed the eighth and final review round. One finding, of a
+different kind from the previous three, plus a corrected test of my own that
+the green-before-mutating rule caught.
+
+**The finding: I put new arithmetic outside an existing guard.**
+`_plausible_season_date` catches `ValueError` so that an unexpected season
+string is *lenient* — an odd season must never decide whether a real schedule
+imports. I placed the two `date()` window constructions **outside** that
+`try`, and `date()` raises `ValueError` for a year outside 1..9999. So a season
+leading with a year <= 5 crashed out of `parse_schedule` uncaught and exited 1.
+
+| season string | before | after |
+|---|---|---|
+| `0005-06` | uncaught `ValueError`, rc=1 | lenient, import proceeds |
+| `0003-04` | uncaught `ValueError`, rc=1 | lenient, import proceeds |
+| `0006-07` | rc=2 (control) | rc=2 |
+
+**That is the same crash-instead-of-a-typed-refusal class that the
+`OverflowError` translation in the very same commit exists to remove** —
+reintroduced two functions away, by the commit that removed it. Unreachable
+from this source, which publishes four-digit modern seasons, and fixed anyway:
+a lenient guard that raises is worse than no guard.
+
+**A different kind from the previous three, and that is why I took the round.**
+The last three findings were scope-of-application — a correct guard applied to
+one of the two places it belonged. This one is the inverse: **new code placed
+outside an existing guard's protection**, so the guard silently stopped
+covering the thing it was written to cover. Related but not the same, and the
+distinction matters because the habit that catches it is different: the first
+asks *where else is this true?*, this one asks *what was already protecting
+this line, and is it still?*
+
+**The mutation rule failed a check of mine for the second time tonight.** My
+first version of the new test asserted `9993-94` goes lenient. It does not —
+that season builds a perfectly valid window, and 2026 is legitimately outside
+it. Green-before-mutating caught it before the mutation ran, so the test that
+would have encoded a false claim never got the chance. Both times tonight that
+rule has caught **my check** rather than the code's, which is a use of it I did
+not anticipate when I read the bullet.
+
+**What the round substantiated, which is the other half of its value.** Both
+window boundaries driven through the CLI end to end; five season strings;
+every schedule fixture parsed against *its own* `seasonYear` rather than
+2026-27, including the 2025-26 cohort window — 84 raw timestamp values, none
+refused; all three placeholders still caught after the loosening; and a
+**43-mutation differential against the previous commit** proving the
+`reconciles` refactor preserved semantics exactly, with only the four intended
+differences.
+
+**Could not verify:** PostgreSQL, CI-only, on any head. And the differential
+above was run by the reviewer against `9dc708e`, not by me — I re-ran the three
+CLI reproductions and the mutation, not the 43-case sweep.
+
+**Next:** merge. This is the last round I will ask for. Eight rounds, and the
+findings have gone from season-killers to an unreachable season string; the
+remaining risk is concentrated in one function that this round characterised
+exhaustively, and a ninth would ask the same questions of the same code.

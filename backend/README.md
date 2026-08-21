@@ -187,29 +187,33 @@ A relative SQLite path is anchored to the **repo root**, not the working
 directory (`Settings._resolve_relative_sqlite_path`), so the file above lands
 at `../schedule_grid_demo.db`. `*.db` is gitignored.
 
-Nothing here reaches the network. The two unassigned Emirates NBA Cup games in
-the recorded payload are dropped **in memory**, exactly as
-`tests/test_schedule.py` does — the fixture itself is never edited, because
-those games are the upstream-drift evidence the Adapter gate keeps it for.
+Nothing here reaches the network. The recorded payload is imported
+**unmodified**, including the two Emirates NBA Cup games it publishes with no
+teams assigned: under ADR-013 those are recorded as *pending* rather than
+refused. Until ADR-013 the seed carried a filter and a reconciliation pair
+whose only purpose was to get past a refusal that no longer exists; both were
+retired with it.
 
 **Read the served lineage accordingly.** The response says
-`source_game_count: 10, unresolved_game_ids: []`. That describes the *filtered*
-document, not the recorded source, which reports **12** games and names
-`0022601201` and `0022601202` as unresolved. **The seed's console output and
-the API response therefore count different populations**, which is why the seed
-names them apart — `games_recorded_in_fixture: 12`,
-`games_dropped_unresolved: [...]`, `games_imported_into_cohort: 10` — and
-prints `api_lineage_schedule_source_game_count` explicitly so nobody has to
-guess which of the two the screen is showing. They differ by exactly the
-dropped games.
+`source_game_count: 12`, `resolved_game_count: 10`,
+`pending_game_ids: ["0022601201", "0022601202"]`, `unresolved_game_ids: []`.
+Twelve is what the source published; ten is what has `team_schedule` rows.
+The seed's console output names the same two populations —
+`games_recorded_in_fixture: 12`, `games_pending_no_teams_assigned: [...]`,
+`games_imported_into_cohort: 10` — so nobody has to guess which of the two a
+screen is showing.
 
-The filter runs upstream of `parse_schedule`, so anything it drops disappears
-from both sides of `import_schedule`'s completeness comparison at once and the
-contract cannot see it — which is why the seed re-parses the payload as
-recorded, refuses unless the delta is exactly the unresolved games, and reports
-both numbers. `docs/adapters/nba-schedule.md` designates this state as one the
-real 2026-27 pipeline must **not** register; the demo league exists so that
-refusal stays intact for the real one.
+The demo database therefore **exercises the pending path rather than hiding
+it**, which is the point: a screen that must distinguish "no games this week"
+from "not scheduled yet" can be driven locally instead of mocked. Note that a
+pending game carries no team, by definition — the honest statement is
+period-scoped ("this week holds games whose teams are not yet decided"), never
+per-team.
+
+The demo's two pending games are also the reason its `game_sub_label` and
+`game_subtype` are empty strings: that fixture is field-trimmed and predates
+those fields mattering. `nba_scheduleleaguev2_2026_27_pending_knockout.json`
+keeps whole objects and is what covers label handling offline.
 
 For the same reason the seed refuses to run against a database holding any
 league it did not create, or any 2026-27 game outside the fixture cohort:

@@ -11,12 +11,14 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from enum import Enum
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, and_, func, select, true
 from sqlalchemy.orm import Session
 
 from hoops_gm.calendar.scoring_periods import require_current_scoring_period_projection
+from hoops_gm.db.lineage import PendingScheduleGame
 from hoops_gm.db.models.enums import SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.league import League, ScoringPeriod
@@ -27,6 +29,32 @@ from hoops_gm.ingest.nba.models import NbaGameRecord
 SOURCE = "nba_stats"
 ENDPOINT = "ScheduleLeagueV2"
 EASTERN = ZoneInfo("America/New_York")
+
+#: Every field in a ``ScheduleLeagueV2`` team block that names a franchise.
+#: Observed on the live 2026-27 payload (2026-08-20): a team block carries
+#: ``teamId``, ``teamName``, ``teamCity``, ``teamTricode``, ``teamSlug``,
+#: ``wins``, ``losses``, ``score`` and ``seed``. Only the naming fields are
+#: listed — ``wins``/``losses``/``score``/``seed`` are zero for *every*
+#: not-yet-played game, so requiring them absent would classify the whole
+#: future schedule as contradictory.
+_TEAM_IDENTITY_FIELDS: tuple[str, ...] = ("teamName", "teamCity", "teamTricode", "teamSlug")
+
+
+class _TeamState(Enum):
+    """How much the source told us about one side of a game."""
+
+    RESOLVED = "resolved"
+    #: Identity withheld entirely — id zero and every naming field empty.
+    PENDING = "pending"
+    #: Id zero but a naming field populated: assigned, and unresolvable.
+    CONTRADICTORY = "contradictory"
+
+
+@dataclass(frozen=True)
+class _TeamSide:
+    team_id: int
+    tricode: str
+    state: _TeamState
 
 
 @dataclass(frozen=True)
@@ -42,18 +70,35 @@ class ScheduleGameRecord:
 
 @dataclass(frozen=True)
 class ScheduleParseResult:
-    """Resolved games plus explicitly reported games whose teams are TBD.
+    """Resolved games, source-declared pending games, and resolution failures.
 
     ``season`` is carried on the result rather than inferred from ``games`` so
     that an empty or wholly unresolved parse is still self-describing: the
     importer has to be able to say *which* season it refused to register a
     refresh for, and a season derived from zero records cannot say that.
+
+    **``pending_games`` and ``unresolved_game_ids`` are different things and
+    the difference is the whole of ADR-013.** A pending game is one the source
+    published with an explicitly absent identity block; it does not block
+    registration. An unresolved game is one the source claims to have assigned
+    — it named a team without giving an id — and it still refuses, because
+    that is indistinguishable from the parser silently losing a team, which is
+    the 1,225-of-1,230 defect the completeness contract was written for.
+
+    Every counted regular-season game lands in exactly one of the three, so
+    ``source_game_count == len(games) + len(pending_games) +
+    len(unresolved_game_ids)`` holds by construction.
     """
 
     season: str
     games: tuple[ScheduleGameRecord, ...]
     unresolved_game_ids: tuple[str, ...]
     source_game_count: int
+    pending_games: tuple[PendingScheduleGame, ...] = ()
+
+    @property
+    def pending_game_ids(self) -> tuple[str, ...]:
+        return tuple(game.nba_game_id for game in self.pending_games)
 
 
 @dataclass(frozen=True)
@@ -241,6 +286,14 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
     suffix but is an Eastern wall-clock value, so it is parsed as a wall clock
     and independently reconciled to the UTC sibling.  This prevents the
     schedule adapter from repeating the project's prior mislabeled-time bug.
+
+    **Pending games are reconciled but do not refuse on failure.** The same
+    two fields are read, and an unusable result degrades the pending game's
+    date to ``None`` with a recorded cause instead of raising — see
+    :func:`_pending_game_date` for why the asymmetry is drawn there and not
+    somewhere else. Classification therefore happens *before* the strict
+    reconciliation below, which is what keeps one bad timestamp on one undrawn
+    Cup fixture from costing the other 1,200 games.
     """
 
     league_schedule = payload.get("leagueSchedule")
@@ -253,6 +306,7 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
         raise _contract("leagueSchedule.gameDates is not a list")
 
     records: list[ScheduleGameRecord] = []
+    pending: list[PendingScheduleGame] = []
     unresolved: list[str] = []
     source_count = 0
     for game_date in game_dates:
@@ -270,17 +324,66 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
             source_count += 1
             home = _team(raw_game, "homeTeam", game_id)
             away = _team(raw_game, "awayTeam", game_id)
-            if home[0] == 0 or away[0] == 0:
+            if home.state is _TeamState.CONTRADICTORY or away.state is _TeamState.CONTRADICTORY:
                 unresolved.append(game_id)
                 continue
-            utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
-            eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
-            if eastern_tipoff.astimezone(UTC) != utc_tipoff:
+
+            if home.state is _TeamState.PENDING or away.state is _TeamState.PENDING:
+                game_date_value, absence_reason = _pending_game_date(raw_game, game_id, season)
+                pending.append(
+                    PendingScheduleGame(
+                        nba_game_id=game_id,
+                        game_date=game_date_value,
+                        game_label=_optional_text(raw_game, "gameLabel"),
+                        game_sub_label=_optional_text(raw_game, "gameSubLabel"),
+                        game_subtype=_optional_text(raw_game, "gameSubtype"),
+                        date_absence_reason=absence_reason,
+                    )
+                )
+                continue
+
+            try:
+                utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
+                eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
+                reconciles = eastern_tipoff.astimezone(UTC) == utc_tipoff
+            except OverflowError as exc:
+                # `astimezone` raises this, not SourceContractError, for a
+                # conversion outside datetime.min/max. Untranslated it escaped
+                # `main()`'s handlers entirely and exited 1 with a traceback,
+                # where every other malformed timestamp on a resolved game
+                # exits 2 with "refused, nothing written". The exit code is the
+                # machine-readable channel, so an out-of-range value must not
+                # be the one shape that bypasses it.
+                #
+                # The lenient path already absorbed this; this is the same
+                # one-sidedness that put the plausibility bound on one branch
+                # and not the other, found by a reviewer at the third time of
+                # asking.
+                raise _contract(
+                    f"{game_id} has a tipoff outside the representable date range "
+                    f"({type(exc).__name__}: {exc})"
+                ) from exc
+            if not reconciles:
                 raise _contract(
                     f"{game_id} has inconsistent EST/UTC tipoff fields: "
                     f"{eastern_tipoff.isoformat()} != {utc_tipoff.isoformat()}"
                 )
             game_day = eastern_tipoff.date()
+            if not _plausible_season_date(game_day, season):
+                # The same epoch-placeholder trap as the pending path, and far
+                # worse here: a resolved game's date is persisted, joins
+                # `player_participation`, and is the denominator of every
+                # expected-games number. The EST/UTC reconciliation above
+                # cannot catch it, because a placeholder *pair* agrees exactly
+                # -- 1900's Eastern offset really is -05:00. Refused rather
+                # than degraded, because on this side a wrong date is
+                # indistinguishable from a real one downstream.
+                raise _contract(
+                    f"{game_id} resolves to {game_day.isoformat()}, which is not in season "
+                    f"{season}; its EST and UTC fields agree, so this is a plausible-looking "
+                    "epoch placeholder rather than a parse error"
+                )
+
             records.append(
                 ScheduleGameRecord(
                     game=NbaGameRecord(
@@ -288,24 +391,28 @@ def parse_schedule(payload: Mapping[str, object], *, season: str) -> SchedulePar
                         season=season,
                         season_type="regular",
                         game_date=game_day,
-                        home_team_id=home[0],
-                        away_team_id=away[0],
+                        home_team_id=home.team_id,
+                        away_team_id=away.team_id,
                         tipoff_utc=utc_tipoff,
                     ),
-                    home_nba_team_id=home[0],
-                    away_nba_team_id=away[0],
-                    home_tricode=home[1],
-                    away_tricode=away[1],
+                    home_nba_team_id=home.team_id,
+                    away_nba_team_id=away.team_id,
+                    home_tricode=home.tricode,
+                    away_tricode=away.tricode,
                 )
             )
 
-    if len({record.game.nba_game_id for record in records}) != len(records):
+    seen = [record.game.nba_game_id for record in records]
+    seen.extend(game.nba_game_id for game in pending)
+    seen.extend(unresolved)
+    if len(set(seen)) != len(seen):
         raise _contract("duplicate gameId in schedule")
     return ScheduleParseResult(
         season=season,
         games=tuple(records),
         unresolved_game_ids=tuple(unresolved),
         source_game_count=source_count,
+        pending_games=tuple(pending),
     )
 
 
@@ -412,7 +519,179 @@ def _rest_days_by_team_game(
     return rest_by_team_game
 
 
-def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> tuple[int, str]:
+def _pending_game_date(
+    raw_game: Mapping[str, object], game_id: str, season: str
+) -> tuple[date | None, str]:
+    """The Eastern date of a pending game, and why it is absent when it is.
+
+    **Deliberately lenient where the resolved path is strict.** The rule is
+    *strictness proportional to the consequence of being wrong*, and the
+    consequence is set by whether the value is persisted and joined. A resolved
+    game's date becomes ``team_schedule`` rows, joins ``player_participation``,
+    and is the denominator of every expected-games number, so a bad one must
+    stop everything. A pending game's date is persisted nowhere: it exists only
+    to tell a consumer *which scoring period is provisional*, and a missing one
+    costs a screen affordance.
+
+    Applying the strict reconciliation here meant one degenerate timestamp on
+    one undrawn Cup fixture returned **no season at all** — not 1,200 games
+    with one flagged, not even a ``--dry-run`` view. That is ADR-013's
+    explicitly rejected outcome arriving through a different field, and the
+    source argues it is reachable: all six pending games carry
+    ``seriesText: "Date subject to change"``, and the same objects already use
+    a degenerate year-0001 sentinel for ``gameTimeEst`` where a resolved game
+    uses 1900.
+
+    **Not** because the two time fields are non-independent. They are — a
+    game's ``gameDateTimeUTC`` is an exact offset conversion of its
+    ``gameDateTimeEst`` — but that is true of every game in the payload,
+    resolved and pending alike, so it cannot ground an asymmetry between them.
+    An earlier version of this docstring gave that as the reason; if it held it
+    would equally justify deleting the resolved-side check. The resolved check
+    stays because it costs nothing and would catch a schema change, which is a
+    legitimate reason to keep a guard the current source cannot trip.
+
+    **The reason is returned, not just the absence, because the three causes
+    are not the same news and only one of them is "not yet decided".** A bare
+    ``None`` conflated *the source declined to give a date* with *we could not
+    read the date it gave*, and the conflation ran in the comforting
+    direction: told the source has not decided, an operator waits; told the
+    date could not be read, an operator investigates. Reporting the cause is
+    cheaper and more honest than either conflating them or moving the refusal
+    boundary back onto a field nothing persists:
+
+    ``""``
+        A date was published, reconciled, and falls inside the season.
+    ``not_offered``
+        **Both** time fields are absent or empty. This is the only cause that
+        means "the source has not committed to a date." It requires both,
+        because a payload giving the date in one field and not the other is
+        the source *having* committed — a reviewer caught an earlier version
+        reporting exactly that as ``not_offered``, which is the same
+        wait-versus-investigate conflation this function exists to remove,
+        reproduced one level down.
+    ``unreadable``
+        A value was published and we could not parse it, or it carried a
+        timezone where an Eastern wall clock is expected, or one field was
+        given and its sibling withheld. **This is our failure or a schema
+        change, not an undecided bracket**, and the live smoke asserts it
+        never occurs.
+    ``irreconcilable``
+        Both fields parsed and disagree — the source contradicting itself.
+    ``implausible``
+        Both fields parsed and agree, and the date is nowhere near the season
+        it claims to belong to. This exists because **agreement is not
+        validity**: the NBA uses a ``1900-01-01`` epoch as a live placeholder
+        for a time-only field on every resolved game in the payload, and a
+        placeholder pair in the *date* fields would reconcile perfectly —
+        1900's Eastern offset really is -05:00 — and be recorded as a decided
+        date in 1900. That is strictly worse than ``None``, which at least
+        says we do not know. The year-0001 sentinel only fails reconciliation
+        by accident, because ``America/New_York`` was on a -04:56 local mean
+        time before 1883; one year over, the same trick reconciles.
+    """
+
+    values: list[str] = []
+    for key in ("gameDateTimeUTC", "gameDateTimeEst"):
+        value = raw_game.get(key)
+        if value is not None and value != "":
+            values.append(key)
+    if not values:
+        return None, "not_offered"
+    if len(values) == 1:
+        # One field given, its sibling withheld. The source *has* committed to
+        # a date; we cannot read it in the shape this parser requires, which
+        # is a schema change on our read path rather than an undecided
+        # bracket.
+        return None, "unreadable"
+    try:
+        utc_tipoff = _parse_utc(raw_game, "gameDateTimeUTC", game_id)
+        eastern_tipoff = _parse_eastern_wall_clock(raw_game, "gameDateTimeEst", game_id)
+    except (SourceContractError, OverflowError):
+        # OverflowError, not just the contract error: `astimezone` raises it
+        # for a datetime whose conversion falls outside `datetime.min`/`max`,
+        # and this function's whole purpose is that no pending-game timestamp
+        # can cost the season. A year-0001 value one non-UTC offset from the
+        # boundary does exactly that, and year-0001 is the sentinel this
+        # source is already observed to emit for undecided times.
+        return None, "unreadable"
+    try:
+        reconciles = eastern_tipoff.astimezone(UTC) == utc_tipoff
+    except OverflowError:
+        return None, "unreadable"
+    if not reconciles:
+        return None, "irreconcilable"
+    game_day = eastern_tipoff.date()
+    if not _plausible_season_date(game_day, season):
+        return None, "implausible"
+    return game_day, ""
+
+
+def _plausible_season_date(game_day: date, season: str) -> bool:
+    """Is this date within centuries of the season it claims to belong to?
+
+    **This check has exactly one job: catch an epoch placeholder that
+    reconciles.** It is not a calendar validator, and it must not become one.
+
+    The bound is deliberately enormous — an eleven-year window centred on the
+    season — because the consequence asymmetry runs the opposite way here from
+    everywhere else in this parser. On the pending side a false positive costs
+    a screen affordance. On the **resolved** side it refuses the import, and
+    this whole unit exists because a refusal on a field nothing persists was
+    killing the season. A tight window would fire during an October import
+    when a fixture moves, and it would buy nothing: the placeholders this
+    source is observed to emit are ``0001-01-01`` and ``1900-01-01``, which
+    miss by 125 and 2,025 years respectively. Anything between "the same
+    decade" and "the same millennium" catches both, so take the loosest.
+
+    Two-sided rather than a floor, because a far-future sentinel (``9999``) is
+    the same trick in the other direction and costs nothing to exclude.
+
+    ``season`` is ``NNNN-NN`` and is validated against the payload's own
+    ``seasonYear`` before any game is read, so the leading year is trustworthy
+    here.
+    """
+
+    try:
+        start_year = int(season.split("-", 1)[0])
+        lower = date(start_year - 5, 1, 1)
+        upper = date(start_year + 6, 1, 1)
+    except ValueError:
+        # Both the parse AND the two window constructions, deliberately.
+        # `date()` raises ValueError for a year outside 1..9999, so a season
+        # whose leading year is <= 5 or >= 9994 made this guard -- whose whole
+        # purpose is to be *lenient* about an unexpected season shape -- crash
+        # out of `parse_schedule` with an uncaught ValueError and exit 1. That
+        # is the same crash-instead-of-a-typed-refusal class the OverflowError
+        # translation above exists to remove, reintroduced by putting new
+        # arithmetic outside an existing guard rather than inside it.
+        #
+        # Unreachable from this source, which publishes four-digit modern
+        # seasons. Kept because the leniency is the point: an unexpected
+        # season shape must not decide whether a real schedule imports.
+        return True
+    return lower <= game_day < upper
+
+
+def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:
+    """Classify one side of a game as resolved, source-declared pending, or contradictory.
+
+    The three-way split is ADR-013's, and the middle branch is deliberately
+    narrow. **Pending requires the source to have withheld the identity
+    entirely**: ``teamId`` zero *and* every one of ``teamName``, ``teamCity``,
+    ``teamTricode`` and ``teamSlug`` absent, null or empty. That is exactly
+    what the live 2026-27 payload publishes for the six Emirates NBA Cup
+    knockout fixtures, verified 2026-08-20.
+
+    A zero ``teamId`` beside *any* populated identity field is
+    ``CONTRADICTORY``: the source has named a team it gave no id for, which is
+    "claims to have assigned but we cannot resolve" and must still refuse. It
+    is also the branch that keeps the refusal reachable — without it the
+    parser could only resolve, zero out, or raise, and
+    ``unresolved_game_ids`` would be a guard that reads correctly and can
+    never fire.
+    """
+
     value = raw_game.get(key)
     if not isinstance(value, Mapping):
         raise _contract(f"{game_id} missing {key} object")
@@ -421,10 +700,19 @@ def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> tuple[int, 
     if not isinstance(team_id, int) or isinstance(team_id, bool) or team_id < 0:
         raise _contract(f"{game_id} has invalid {key}.teamId")
     if team_id == 0:
-        return 0, ""
+        named = sorted(field for field in _TEAM_IDENTITY_FIELDS if not _is_absent(value.get(field)))
+        if named:
+            return _TeamSide(0, "", _TeamState.CONTRADICTORY)
+        return _TeamSide(0, "", _TeamState.PENDING)
     if not isinstance(tricode, str) or len(tricode) != 3 or not tricode.isupper():
         raise _contract(f"{game_id} has invalid {key}.teamTricode")
-    return team_id, tricode
+    return _TeamSide(team_id, tricode, _TeamState.RESOLVED)
+
+
+def _is_absent(value: object) -> bool:
+    """True when the source withheld a field rather than populating it."""
+
+    return value is None or value == ""
 
 
 def _parse_utc(raw_game: Mapping[str, object], key: str, game_id: str) -> datetime:
@@ -454,6 +742,20 @@ def _required_text(raw: Mapping[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise _contract(f"missing or invalid {key}")
     return value
+
+
+def _optional_text(raw: Mapping[str, object], key: str) -> str:
+    """A label the source may legitimately leave blank, normalised to ``""``.
+
+    Deliberately lenient where :func:`_required_text` is strict: these are
+    descriptive labels, not identifiers, and refusing a whole season's import
+    because the NBA left ``gameSubLabel`` off one Cup fixture would be the
+    wrong trade. The live smoke, not the parser, is what asserts the labels
+    still explain the pending set.
+    """
+
+    value = raw.get(key)
+    return value if isinstance(value, str) else ""
 
 
 def _contract(message: str) -> SourceContractError:

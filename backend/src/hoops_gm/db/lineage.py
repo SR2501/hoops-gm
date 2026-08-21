@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from sqlalchemy import select, update
@@ -48,6 +48,13 @@ SCHEDULE_CONTEXT_SOURCE_KEY = "schedule-context-observations"
 #: verifiable against ``team_schedule``; rows without it are legacy or manual
 #: registrations and are compared by version string alone.
 SCHEDULE_COMPLETENESS_SUMMARY_KEY = "schedule_completeness"
+
+#: Why a pending game carries no date. Closed on purpose: an unrecognised
+#: value is a finding, not a variation, because a consumer keys behaviour on
+#: these — ``not_offered`` means wait, ``unreadable`` means investigate.
+_DATE_ABSENCE_REASONS: frozenset[str] = frozenset(
+    {"not_offered", "unreadable", "irreconcilable", "implausible"}
+)
 
 #: Identifies the serialisation below. Bumping it deliberately invalidates
 #: every previously registered schedule version, because a fingerprint is only
@@ -86,19 +93,92 @@ def content_fingerprint(parts: Iterable[str]) -> str:
 
 
 @dataclass(frozen=True)
+class PendingScheduleGame:
+    """A game the source published with its team identities explicitly absent.
+
+    Not a parse failure. ``ScheduleLeagueV2`` publishes the Emirates NBA Cup
+    knockout fixtures before group play decides who plays in them, with
+    ``teamId`` zero and every one of ``teamName``, ``teamCity``,
+    ``teamTricode`` and ``teamSlug`` null. That is the source stating the
+    bracket is undetermined, not the source failing to tell us something
+    (ADR-013).
+
+    Defined here rather than beside the parser because it is part of what a
+    refresh row *records*, and ``db`` may not import ``ingest``. The labels
+    are carried because ADR-013's "what would flip this" turns on them:
+    pending only means "not yet decided" while the pending set stays
+    structurally explicable, and neither a consumer nor the live smoke can
+    check that against a bare list of game ids.
+
+    **It carries no team, by definition.** A consumer may say the scoring
+    period containing ``game_date`` is provisional; it may not attribute the
+    game to a team, because that is the one thing the source withheld.
+
+    ``game_date`` is ``None`` when the source's own time fields do not
+    reconcile or are absent — "we do not know when", stated rather than
+    guessed. A consumer must then treat the game as belonging to no known
+    period rather than dropping it, because the game is still published.
+
+    ``date_absence_reason`` says *why*. The four causes, what each one means
+    for a consumer, and why they must not be collapsed are stated once in
+    ADR-013's nullable-date contract; the classifier's own reasoning for
+    drawing them where it does lives in
+    :func:`hoops_gm.ingest.nba.schedule._pending_game_date`. The invariant
+    this dataclass enforces, and the only one worth repeating here, is that
+    ``game_date is None`` **iff** ``date_absence_reason`` is non-empty — the
+    two halves of one fact, which must never disagree on the wire or in
+    memory.
+    """
+
+    nba_game_id: str
+    game_date: date | None
+    game_label: str
+    game_sub_label: str
+    game_subtype: str
+    date_absence_reason: str = ""
+
+    def __post_init__(self) -> None:
+        # The producer must not be able to construct what the reader refuses.
+        # `_pending_games` enforces this iff on read-back; without it here the
+        # producer type is strictly wider than the reader accepts, and
+        # `as_summary()` could serialise a block that can never be read again.
+        if (self.game_date is None) != bool(self.date_absence_reason):
+            raise ValueError(
+                f"{self.nba_game_id}: game_date "
+                f"{'absent' if self.game_date is None else 'present'} with "
+                f"date_absence_reason {self.date_absence_reason!r}"
+            )
+
+
+@dataclass(frozen=True)
 class ScheduleCompleteness:
     """What the schedule source reported and what was actually persisted.
 
     Recorded on the refresh row so "why is this the current schedule cohort"
     is answerable from the database alone: the exact scope, the source's own
-    game count, how many of those resolved to real teams, which game IDs did
-    not, and how many ``team_schedule`` rows exist for exactly that scope.
+    game count, how many of those resolved to real teams, which game IDs the
+    source has not yet assigned teams to, which did not resolve, and how many
+    ``team_schedule`` rows exist for exactly that scope.
 
     Field names are the unambiguous ones on purpose.
     ``persisted_team_row_count`` counts *rows* (two per game), not games, and
     the two are easy to confuse in a hurry when the only thing distinguishing
     a correct season from a half-imported one is whether a number is 1,230 or
     2,460.
+
+    **``pending_game_ids`` and ``unresolved_game_ids`` are not synonyms.**
+    Under ADR-013 a pending game is one the source published with its team
+    identities explicitly absent — an undrawn Emirates NBA Cup bracket — and
+    it is recorded rather than refused. An unresolved game is a resolution
+    *failure* and is still refused, so this list is empty on every registered
+    refresh. The invariant is
+    ``source_game_count == resolved_game_count + len(pending_game_ids)``.
+
+    ``pending_games`` carries the same set with the date and labels a consumer
+    needs to say *which* period is provisional, and to check ADR-013's
+    flip condition that the pending set stays structurally explicable. It is
+    cross-checked against ``pending_game_ids`` rather than derived from it at
+    read time, so the two cannot silently disagree.
     """
 
     season: str
@@ -107,6 +187,11 @@ class ScheduleCompleteness:
     resolved_game_count: int
     unresolved_game_ids: tuple[str, ...]
     persisted_team_row_count: int
+    pending_games: tuple[PendingScheduleGame, ...] = ()
+
+    @property
+    def pending_game_ids(self) -> tuple[str, ...]:
+        return tuple(game.nba_game_id for game in self.pending_games)
 
     def as_summary(self) -> dict[str, object]:
         return {
@@ -115,8 +200,123 @@ class ScheduleCompleteness:
             "source_game_count": self.source_game_count,
             "resolved_game_count": self.resolved_game_count,
             "unresolved_game_ids": list(self.unresolved_game_ids),
+            "pending_game_ids": list(self.pending_game_ids),
+            "pending_games": [
+                {
+                    "nba_game_id": game.nba_game_id,
+                    "game_date": game.game_date.isoformat() if game.game_date is not None else None,
+                    "game_label": game.game_label,
+                    "game_sub_label": game.game_sub_label,
+                    "game_subtype": game.game_subtype,
+                    "date_absence_reason": game.date_absence_reason,
+                }
+                for game in self.pending_games
+            ],
             "persisted_team_row_count": self.persisted_team_row_count,
         }
+
+
+def _pending_games(raw: Mapping[str, object]) -> tuple[PendingScheduleGame, ...]:
+    """Read the pending block, treating its absence as "no pending games".
+
+    A completeness block written before ADR-013 has no pending keys, and that
+    is not missing information: the contract it was written under required
+    ``source_game_count == resolved_game_count``, so its pending set was
+    necessarily empty. Reading it as ``()`` recovers exactly what it claimed.
+    A block that *does* carry the keys is held to them, in both directions —
+    the ids and the records must name the same games in the same order, so a
+    reader can use either without checking which one is stale.
+    """
+
+    key = SCHEDULE_COMPLETENESS_SUMMARY_KEY
+    has_ids = "pending_game_ids" in raw
+    has_records = "pending_games" in raw
+    if not has_ids and not has_records:
+        return ()
+    if not has_ids or not has_records:
+        present, missing = (
+            ("pending_game_ids", "pending_games")
+            if has_ids
+            else ("pending_games", "pending_game_ids")
+        )
+        raise ValueError(f"{key} records {present} without {missing}")
+
+    ids = raw["pending_game_ids"]
+    records = raw["pending_games"]
+    if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+        raise ValueError(f"{key}.pending_game_ids is not a list of strings")
+    if not isinstance(records, list):
+        raise ValueError(f"{key}.pending_games is not a list")
+
+    parsed: list[PendingScheduleGame] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError(f"{key}.pending_games contains a non-object")
+        try:
+            nba_game_id = record["nba_game_id"]
+            game_date = record["game_date"]
+            labels = tuple(
+                record[field] for field in ("game_label", "game_sub_label", "game_subtype")
+            )
+        except KeyError as exc:
+            raise ValueError(f"{key}.pending_games entry is missing {exc.args[0]!r}") from exc
+        if not isinstance(nba_game_id, str) or not isinstance(game_date, str | None):
+            raise ValueError(f"{key}.pending_games entry has a non-string id or date")
+        if not all(isinstance(label, str) for label in labels):
+            raise ValueError(f"{key}.pending_games entry has a non-string label")
+        # Absent key reads as "". The strict cross-check below then holds: an
+        # absent date with no reason is refused.
+        #
+        # **This is not "no producer could write it", which would be false.**
+        # An intermediate commit on this branch emitted `game_date: null` with
+        # no reason key at all, so a database seeded from that commit holds a
+        # block this reader refuses — and `schedule_completeness` raising is
+        # not degradable, it makes the schedule-grid read path a hard error.
+        # The bound is that no such commit was ever merged, so this can only
+        # affect a developer's own throwaway database, and the remedy is to
+        # re-import. Stated rather than asserted away, because the next reader
+        # deserves the real bound instead of a claim of impossibility.
+        absence_reason = record.get("date_absence_reason", "")
+        if not isinstance(absence_reason, str):
+            raise ValueError(f"{key}.pending_games entry has a non-string date_absence_reason")
+        if absence_reason and absence_reason not in _DATE_ABSENCE_REASONS:
+            raise ValueError(
+                f"{key}.pending_games entry has an unknown date_absence_reason "
+                f"{absence_reason!r}; expected one of {sorted(_DATE_ABSENCE_REASONS)}"
+            )
+        if (parsed_date_is_absent := game_date is None) != bool(absence_reason):
+            # A reason without an absence, or an absence without a reason,
+            # means the two halves of the same fact disagree — and a consumer
+            # reading only one of them would be told something the other
+            # denies.
+            raise ValueError(
+                f"{key}.pending_games entry has game_date "
+                f"{'absent' if parsed_date_is_absent else 'present'} but "
+                f"date_absence_reason {absence_reason!r}"
+            )
+        try:
+            parsed_date = date.fromisoformat(game_date) if game_date is not None else None
+        except ValueError as exc:
+            raise ValueError(f"{key}.pending_games entry has an unparseable date") from exc
+        parsed.append(
+            PendingScheduleGame(
+                nba_game_id=nba_game_id,
+                game_date=parsed_date,
+                game_label=str(labels[0]),
+                game_sub_label=str(labels[1]),
+                game_subtype=str(labels[2]),
+                date_absence_reason=absence_reason,
+            )
+        )
+
+    if [game.nba_game_id for game in parsed] != list(ids):
+        raise ValueError(
+            f"{key}.pending_game_ids and .pending_games name different games: "
+            f"{list(ids)} != {[game.nba_game_id for game in parsed]}"
+        )
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{key}.pending_game_ids contains duplicates")
+    return tuple(parsed)
 
 
 def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness | None:
@@ -151,6 +351,7 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a non-string scope")
     if not isinstance(unresolved, list) or not all(isinstance(item, str) for item in unresolved):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY}.unresolved_game_ids is not a list")
+    pending = _pending_games(raw)
     counts = (source_game_count, resolved_game_count, persisted_team_row_count)
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in counts):
         raise ValueError(f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} has a non-integer count")
@@ -161,15 +362,41 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports an impossible all-zero refresh; "
             "a registered schedule refresh must contain at least one source game"
         )
+    if resolved_game_count == 0:
+        # Not subsumed by the all-zero check above, and this is exactly what
+        # ADR-013 loosened by accident: once `source == resolved + pending`,
+        # a block declaring *every* game pending satisfies the arithmetic with
+        # zero resolved games and zero persisted rows, and `verify_refresh`
+        # then fingerprints an empty cohort against itself and answers
+        # "current". `_require_complete_schedule_source` refuses an empty
+        # parse, so no producer can write this; a stored block claiming it was
+        # written by something else.
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports {source_game_count} source game(s) of "
+            "which none resolved; a registered schedule refresh always persists at least one "
+            "resolved game, so this block was not written by the importer"
+        )
+    # Ordered before the blanket unresolved refusal deliberately. Both describe
+    # a block that must not exist, but this one names *which* game is
+    # double-classified, and the general refusal below is strictly stronger —
+    # placed after it, this could never fire. A reviewer proved exactly that by
+    # tracing the branch, which is the shape `gates.md` names: correct code
+    # made unreachable by the guard above it.
+    if overlap := sorted({game.nba_game_id for game in pending} & set(unresolved)):
+        raise ValueError(
+            f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records the same game as pending and "
+            f"unresolved: {overlap}"
+        )
     if unresolved:
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} records {len(unresolved)} unresolved game id(s); "
-            "a refresh is only registered once the source cohort is fully resolved"
+            "a refresh is only registered once every game the source claims to have assigned "
+            "resolves; a game the source has not assigned yet belongs in pending_game_ids"
         )
-    if source_game_count != resolved_game_count:
+    if source_game_count != resolved_game_count + len(pending):
         raise ValueError(
             f"{SCHEDULE_COMPLETENESS_SUMMARY_KEY} reports {source_game_count} source game(s) but "
-            f"{resolved_game_count} resolved"
+            f"{resolved_game_count} resolved and {len(pending)} pending"
         )
     if persisted_team_row_count != 2 * resolved_game_count:
         raise ValueError(
@@ -184,6 +411,7 @@ def schedule_completeness(summary: Mapping[str, object]) -> ScheduleCompleteness
         resolved_game_count=int(resolved_game_count),
         unresolved_game_ids=tuple(str(item) for item in unresolved),
         persisted_team_row_count=int(persisted_team_row_count),
+        pending_games=pending,
     )
 
 

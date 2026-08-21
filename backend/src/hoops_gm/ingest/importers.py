@@ -574,32 +574,46 @@ def _persist_schedule_cohort(
 
 
 def _require_complete_schedule_source(parsed: ScheduleParseResult) -> None:
-    """Refuse a source cohort that does not account for every game it reported."""
+    """Refuse a source cohort that does not account for every game it reported.
+
+    Accounting for a game means classifying it, not resolving it. Under
+    ADR-013 a game the source published with its team identities explicitly
+    absent is *pending* and is recorded rather than refused; only a game the
+    source claims to have assigned, and which does not resolve, still refuses.
+    """
 
     season = parsed.season
     if parsed.unresolved_game_ids:
         shown = ", ".join(parsed.unresolved_game_ids[:5])
         raise _schedule_contract(
-            f"season {season} reports {len(parsed.unresolved_game_ids)} game(s) with unresolved "
-            f"teams ({shown}); a schedule cohort is only registered once every reported game "
-            "has both teams assigned"
+            f"season {season} reports {len(parsed.unresolved_game_ids)} game(s) whose teams the "
+            f"source named but did not identify ({shown}); a schedule cohort is only registered "
+            "once every game the source claims to have assigned resolves. This is not the "
+            "not-yet-drawn case, which is recorded as pending"
         )
     if not parsed.games:
         raise _schedule_contract(
             f"season {season} parsed to zero regular-season games; refusing to register an "
             "empty schedule cohort"
         )
-    if parsed.source_game_count != len(parsed.games):
+    pending_ids = parsed.pending_game_ids
+    resolved_ids = [record.game.nba_game_id for record in parsed.games]
+    if parsed.source_game_count != len(parsed.games) + len(pending_ids):
         raise _schedule_contract(
             f"season {season} source reported {parsed.source_game_count} regular-season games "
-            f"but {len(parsed.games)} resolved"
+            f"but {len(parsed.games)} resolved and {len(pending_ids)} are pending"
+        )
+    if set(pending_ids) & set(resolved_ids):
+        raise _schedule_contract(
+            f"season {season} parse result reports the same game as both resolved and pending: "
+            f"{sorted(set(pending_ids) & set(resolved_ids))}"
         )
     wrong_season = sorted(
         {record.game.season for record in parsed.games if record.game.season != season}
     )
     if wrong_season:
         raise _schedule_contract(f"season {season} parse result contains games for {wrong_season}")
-    game_ids = [record.game.nba_game_id for record in parsed.games]
+    game_ids = resolved_ids + list(pending_ids)
     if len(set(game_ids)) != len(game_ids):
         raise _schedule_contract(f"season {season} parse result contains duplicate game IDs")
 
@@ -773,6 +787,31 @@ def _register_schedule_refresh(
     applied one level up to the registry ``schedule-context`` consumers
     (``quant``) key their ``schedule_version`` stamps against. See
     ``hoops_gm.db.lineage``.
+
+    **The version does not cover the pending set, and cannot.** It is computed
+    from persisted ``team_schedule`` rows, and a pending game has none — it
+    has no teams, so there is nothing to persist. Two refreshes differing only
+    in which games are pending therefore share a version. Verified rather than
+    reasoned to: the demo seed's 10-source cohort and its 12-source, 2-pending
+    successor both fingerprint to ``9bcac1c60490b41a``.
+
+    Two consequences. A consumer must not cache the pending set keyed on the
+    schedule version alone — read it from the completeness block of the
+    refresh it is holding. And ``verify_refresh`` cannot detect a forged
+    pending list, because there is no persisted artifact to recompute it from;
+    it remains able to detect a forged *resolved* cohort, which is the case
+    the completeness contract was written for. The hole closes for each game
+    as the bracket is drawn, because that is precisely when rows appear.
+
+    **A third face of the same root cause, worth knowing here:**
+    ``record_refresh`` is idempotent on ``(type, key, version, season)`` and
+    overwrites ``summary`` in place on a hit. Because the version does not
+    move with the pending set, two imports differing only in which games are
+    pending collide on one row and the later summary replaces the earlier.
+    That is the right outcome — the newer observation of the source wins —
+    but it means the *history* of the pending set is not kept anywhere, and a
+    consumer holding an older block cannot tell it has been superseded by
+    comparing versions. Only ``refreshed_at`` moves.
     """
 
     completeness = ScheduleCompleteness(
@@ -782,6 +821,7 @@ def _register_schedule_refresh(
         resolved_game_count=len(parsed.games),
         unresolved_game_ids=parsed.unresolved_game_ids,
         persisted_team_row_count=persisted_team_row_count,
+        pending_games=parsed.pending_games,
     )
     version = schedule_content_version(
         session,

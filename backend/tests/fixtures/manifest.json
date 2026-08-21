@@ -276,7 +276,34 @@
       "gameDates": 3,
       "games": 12
     },
-    "note": "Recorded slice preserves resolved games, two unresolved NBA Cup games, and October/March time-zone transitions. Source has 1,206 regular-season entries: 1,200 resolved games plus six TBD games.",
+    "note": "Recorded slice preserves resolved games, two source-declared pending NBA Cup games, and October/March time-zone transitions. Source has 1,206 regular-season entries: 1,200 resolved games plus six pending. Field-trimmed as well as date-trimmed -- each game object retains only gameId, gameDateTimeEst, gameDateTimeUTC, gameLabel, homeTeam and awayTeam, and each team block only teamId/teamName/teamCity/teamTricode (no teamSlug). Re-verified against a fresh live capture on 2026-08-20T21:35Z: all 12 games still present and every retained field byte-identical, including both pending team blocks. See nba_scheduleleaguev2_2026_27_pending_knockout.json for a whole-object slice.",
+    "original_row_counts": {
+      "gameDates": 173,
+      "games": 1271
+    },
+    "params": {
+      "league_id": "00",
+      "season": "2026-27"
+    },
+    "source": "nba_stats",
+    "trimmed": true
+  },
+  "nba_scheduleleaguev2_2026_27_pending_knockout.json": {
+    "byte_size": 81749,
+    "captured_at": "2026-08-20T22:00:05.050000+00:00",
+    "endpoint": "ScheduleLeagueV2",
+    "kept_dates": [
+      "10/20/2026",
+      "12/04/2026",
+      "12/05/2026",
+      "12/08/2026",
+      "04/11/2027"
+    ],
+    "kept_rows_per_result_set": {
+      "gameDates": 5,
+      "games": 24
+    },
+    "note": "Whole, unmodified game objects -- unlike nba_scheduleleaguev2_2026_27.json above, which is field-trimmed and therefore cannot show what the source actually publishes for a team whose identity is undecided. Kept for ADR-013: every one of the six pending games in the 2026-27 season is here (0022601201-04 quarterfinals on 12/04 and 12/05, 0022601229-30 semifinals on 12/08), alongside 18 resolved games from opening night and the final regular-season date. A pending team block reads {teamId: 0, teamName: null, teamCity: null, teamTricode: null, teamSlug: null} with gameStatusText 'TBD', gameLabel 'Emirates NBA Cup', gameSubLabel 'Quarterfinal'/'Semifinal', gameSubtype 'in-season-knockout' and seriesText 'Date subject to change'. That every naming field is null, and not merely the id zero, is what makes the pending/failure distinction determinable from the payload rather than inferred. Whole-season aggregate at capture time: 1,206 source entries = 1,200 resolved + 6 pending, 30 teams at exactly 80 games each, 2026-10-20 to 2027-04-11.",
     "original_row_counts": {
       "gameDates": 173,
       "games": 1271
