@@ -11397,10 +11397,15 @@ intent of using it.
 I did then measure the contrast, having first written that I had not. `--pending`
 `#7aa7f0` is **7.15–7.98:1** against all three background tokens, comfortably past AA for
 text and for non-text UI. **The more useful number is the one I was not looking for:
-every pair of semantic hues in this palette sits within 1.05–1.3:1 of the others.**
-`--pending` against `--accent` is 1.05:1 and against `--warn` is 1.30:1, so to a reader
-with achromatopsia the `TBD` badge, the `PO` badge and the `·` cell are the same
-brightness. Nothing on this screen is separable by colour alone. It happens not to matter
+`--pending` sits within 1.05–1.30:1 of every other semantic hue** — 1.05:1 against
+`--accent`, 1.06:1 against `--ok`, 1.24:1 against `--error`, 1.30:1 against `--warn` — so
+to a reader with achromatopsia the `TBD` badge, the `PO` badge and the `·` cell are the
+same brightness. (That range is the `--pending` *row*. I first wrote it as a claim about
+every pair in the palette, one paragraph after admitting I had claimed a contrast figure
+without measuring it; `architect` measured all ten pairs and the true range is
+**1.01–1.62:1**, `accent`/`ok` to `warn`/`error`. The conclusion survives and strengthens,
+since 1.62 is still far below the 3:1 non-text minimum, but generalising a measured row to
+an unmeasured table is the same move in a smaller costume.) Nothing on this screen is separable by colour alone. It happens not to matter
 only because every distinction is also carried by shape or text — `TBD` versus `PO`,
 dashed versus solid, hatch versus edge, glyph versus digit — which is deliberate here and
 enforced nowhere. A future marker distinguished by hue alone would be invisible to a
@@ -11570,3 +11575,111 @@ legibility under a pick clock is not measured and cannot be by any method used h
 
 **Next:** re-run the three reviews at the new head before this leaves draft. Merge order is
 set: the schedule-import lane lands first, then #47.
+
+---
+
+## 2026-08-20 — frontend — Re-review at the fixed head: clean on the fixes, three new findings, and I over-generalised a measurement one paragraph after admitting I had not taken one
+
+**Changed:** All three reviewers re-ran on `c2ede24`. `code-review` returned clean. `frontend`
+and `architect` each found things the first pass could not, because they were properties of
+the fixes rather than of what they replaced. Five more changes, and the caveat this branch
+added last round turned out to be in the wrong place and, in one word, wrong.
+
+**"Floor" was the wrong word, and `architect` caught it against their own ADR text.** The
+amendment in PR #50 requires every consumer to state unconditionally that counts are a
+floor, so the sentence I added was the contract being met rather than a screen inventing
+policy — and the contract was wrong. Games are added and never removed *in aggregate*, so a
+season total can only rise; a count in a **cell** is a different quantity, and a re-ingest
+moving a fixture from one week to the next takes the first week down. ADR-012's
+living-refresh amendment exists because re-ingest changes shape. "Every count here is a
+floor" is therefore true of the Total column and false of the twenty-one beside it, erring
+toward **false comfort at exactly the granularity a manager plans a week on**. The screen
+now says *"no count here is final"* and names both directions. `architect` is fixing the
+ADR; the screen did not wait for that to stop asserting something false.
+
+**The caveat had no CSS rule, which `frontend` turned into the answer to a question I had
+asked them.** I asked whether it read as boilerplate. `page__lede--caveat` was a dead
+modifier — grep found it in one JSX file and nowhere in `styles.css` — so it rendered as
+`.page__lede`: identical muted grey, identical size, directly under a paragraph ending in
+`docs/decisions/ADR-012-per-week-game-distribution.md`. Two indistinguishable grey
+paragraphs, the first of which trains a reader that grey prose up there is provenance, and
+the operative clause was the last eight words of the second. **So yes, and structurally
+rather than as a matter of taste.**
+
+It is now in the table's `<caption>`, which fixes three things at once and is `frontend`'s
+suggestion rather than mine. It is where the eye already is when reading a number. It
+renders **if and only if the table does** — the previous placement in `<header>` put *"every
+count below is a floor"* above *"Could not load the schedule grid"*, with no counts below,
+which they drove and I had not. And it costs no block above a grid already carrying a
+lineage panel, a notice and a key.
+
+**A measurement I can now report because the placement changed.** `frontend` declined to
+assert the table was below the fold without a browser, which was right. Measured in one:
+caption top 411px, first cell 527px, viewport 720px — the grid is above the fold at this
+size, and the caption move removed 303 characters of prose above it. Their broader point
+stands and I am not claiming otherwise: the key and the table are consulted continuously
+and come last, the caveat and the notice are read once and come first, which is inverted
+by frequency of need.
+
+**`architect` found a fresh over-generalisation in the previous entry, in the paragraph
+where I had just corrected a different one.** I wrote that *"every pair of semantic hues in
+this palette sits within 1.05–1.3:1 of the others."* Those two figures are exact and they
+are the `--pending` **row**. Across all ten pairs the range is **1.01–1.62:1**. The
+conclusion is unaffected and in fact stronger, but that is a measured row generalised to an
+unmeasured table, written immediately after *"I did then measure the contrast, having first
+written that I had not."* Corrected above, with all ten pairs computed rather than narrowed
+by assertion.
+
+**Duplicate ids passed the boundary check**, since positional equality admits repeats, and
+they reach `lineage__list` as duplicate React keys — which React documents as unsupported
+rather than cosmetic. `frontend` drove it and got the warning. One clause, and it is the
+position I had just adopted: a boundary that can be closed should be closed. Closed.
+
+**`role="status"` was recorded as a pure win and is a trade.** `architect` noted
+`AsyncBoundary` has a Refresh button, so a refresh taking the pending set from empty to
+non-empty now appears with no announcement. My justification covered load and not that
+path. It is still better than the reviewed head, which re-read 420 characters on any word
+change, and the stale banner already announces "Refreshing" — but the comment now names the
+cost instead of claiming there is none. `grid-integrity` keeping its `role="status"` was
+"flagged for whoever owns that one", and `architect` pointed out that `frontend` owns all of
+`frontend/`, so it was flagged to itself in a comment. It is now a backlog line, with the
+refresh-announcement gap and the caveat's December expiry beside it — three follow-ups, each
+with an owner and a trigger.
+
+**What the re-reviews confirmed rather than found.** `code-review` re-derived the corrected
+`undated` claims by running them, and independently confirmed the loop test cannot silently
+stop testing: `mockFetch` installs a fresh `vi.fn` per iteration, `findByRole` throws on
+multiple matches so a leak would fail rather than mask, and a wrongly-accepted response
+would time out rather than pass. `architect` verified the boundary check against the
+**producer** — now pushed as PR #49 — and confirmed my same-length-same-order equality is
+*exactly* as strict as the backend's, not stricter, so nothing will false-reject when it
+lands. That is the check I could not run and the reason it was worth someone else running.
+
+**Code gate:** ESLint, `tsc --noEmit`, `npm run build` clean. **110 tests across 8 files**
+(from 109, 102, 77). **16 of 16 mutations caught**, two new: the caption reverting to the
+floor claim, and duplicate ids being admitted.
+
+**Could not verify:**
+
+*The stacking premise in the entry above has expired.* `sr2501-real-schedule-import` is now
+pushed as PR #49 — open, non-draft, one commit ahead of `main`. The stated reason for
+draft-on-main ("never pushed to origin, thirteen uncommitted files") was true when written
+and is not true now. Draft is still right, for a different reason: the coordinator has set
+the order, #49 merges first, and merging a screen that renders "this response cannot say"
+on every load would ship something no reviewer or user can see working.
+
+*The reviewers read a moving tree, again, and this time it did not compile.* `architect`
+reported that two files changed under it at 23:05, mid-review, carrying a stray `*/` that
+closed a doc comment early and broke `tsc`. Its findings are against the committed head and
+the gates it ran were before that edit, but I have now done this to reviewers twice in one
+night, and disclosing it afterwards is a weaker remedy than not doing it.
+
+*None of these five fixes has been reviewed either.* Same as last round. The caption
+rewrite in particular is new copy that no reviewer has read, and copy is what three of
+tonight's findings were about.
+
+*I still have not measured whether any of this is legible under a pick clock.* The fold
+measurement is one viewport on one machine. Nobody has used this screen to make a decision.
+
+**Next:** #49 merges, then rebase, remove the wire optionality and the "cannot say" notice
+with it, re-capture and compare the fixture against committed backend code, and undraft.

@@ -115,17 +115,20 @@ function isStringArray(value: unknown): value is string[] {
  * one and a generic contract error. `readPendingGames` reports the absence as
  * its own state rather than reading it as "nothing is pending".
  *
- * Everything else is rejected, including the two things a reader would never
+ * Everything else is rejected, including the three things a reader would never
  * see go wrong. `pending_game_ids` and `pending_games` must name the same games
- * in the same order — which the backend guarantees, deriving the first from the
- * second, and which this checks anyway because *the client currently relies on
- * an invariant that exists in no branch*. Without it a block the backend cannot
- * emit is accepted and the screen contradicts itself: ids longer than records
- * produces a pending total larger than the list beneath it, and records longer
- * than ids badges a column `TBD` while the lineage states "none — every game
- * the source published has teams assigned". Neither is loud. Closing the hole
- * at the boundary is what lets the states behind it be deleted rather than
- * narrated.
+ * in the same order, and the ids must be unique — all of which the backend
+ * guarantees, deriving the first from the second, and all of which this checks
+ * anyway because *the client currently relies on an invariant that exists in no
+ * branch*. Without the ordering check a block the backend cannot emit is
+ * accepted and the screen contradicts itself: ids longer than records produces
+ * a pending total larger than the list beneath it, and records longer than ids
+ * badges a column `TBD` while the lineage states "none — every game the source
+ * published has teams assigned". Without the uniqueness check, duplicate ids
+ * reach `lineage__list` as duplicate React keys, which React documents as
+ * unsupported behaviour rather than merely cosmetic. None of the three is loud.
+ * Closing the hole at the boundary is what lets the states behind it be deleted
+ * rather than narrated.
  *
  * The label fields are deliberately **not** in that category. A `null`
  * `game_label` is a gap this screen can describe — `describePendingGame`
@@ -159,7 +162,11 @@ function isPendingBlock(value: Record<string, unknown>): boolean {
     return false
   }
   const named = (games as { nba_game_id: string }[]).map((game) => game.nba_game_id)
-  return named.length === ids.length && named.every((id, index) => id === ids[index])
+  return (
+    named.length === ids.length &&
+    named.every((id, index) => id === ids[index]) &&
+    new Set(ids).size === ids.length
+  )
 }
 
 function isScheduleRefreshLineage(value: unknown): boolean {

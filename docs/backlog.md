@@ -537,6 +537,27 @@ should be removed — types made required, the "cannot say" notice deleted —
 once the backend lane is on `main`. `frontend` owns the change; the trigger is
 that lane merging. Tracked here so it does not become permanent by silence.
 
+Three further follow-ups, each with a trigger, recorded here because prose
+nothing prompts anyone to revisit is how a screen keeps asserting something it
+once checked:
+
+- **The caption's make-up-game clause expires.** It says those games have not
+  been released. When the NBA releases them it becomes false, and no
+  client-side condition can detect that — nothing in the payload distinguishes
+  80 games published because the bracket is open from 82 published. `frontend`
+  owns it; the trigger is the Emirates NBA Cup knockout resolving in December.
+  The re-ingest clause beside it does not expire.
+- **`grid-integrity` still carries `role="status"`.** The two ADR-013 notices
+  dropped theirs, because a region present at first paint that describes data
+  rather than announcing a change belongs in no polite queue. The same argument
+  applies to `grid-integrity` and it was left alone only to avoid changing an
+  already-reviewed surface inside an unrelated diff. `frontend` owns both, so
+  this is a note to itself and belongs in a tracker rather than a comment.
+- **Neither ADR-013 notice announces on refresh.** Dropping `role="status"` is
+  right on load and leaves a refresh that takes the pending set from empty to
+  non-empty silent. The fix is a region that is empty at mount and live
+  thereafter, if the cost is ever judged worth it.
+
 **Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
 every naming field null, so no team can be named and none is. A per-cell "this
 team has an unscheduled game" badge would invent the one attribution the source

@@ -759,6 +759,13 @@ describe('a season the source has not finished scheduling', () => {
       withBlock([], [record]),
       withBlock(['0022601201', '0022601202'], [record]),
       withBlock(['a-different-id'], [record]),
+      // Duplicates pass a positional equality check but reach `lineage__list`
+      // as duplicate React keys, which React documents as unsupported rather
+      // than cosmetic. Same class as the states above, so closed the same way.
+      withBlock(
+        ['0022601201', '0022601201'],
+        [record, { ...record, game_sub_label: 'Semifinal' }],
+      ),
     ]) {
       mockFetch({ [GRID_PATH]: { body }, '/health': { body: HEALTH } })
       const { unmount } = renderWithRouter(<App />, { route: '/schedule' })
@@ -793,24 +800,50 @@ describe('a season the source has not finished scheduling', () => {
     expect(screen.getByTestId('grid-pending')).toHaveTextContent('not fully scheduled')
   })
 
-  it('says counts are a floor, whether or not anything is pending', async () => {
+  it('says no count is final, in both directions, whether or not anything is pending', async () => {
     // ADR-013 names two sources of forward incompleteness and the contract
     // carries one. Make-up games for teams eliminated early are not published
     // at all, so no column can be marked for them — and without this the
     // marking implies its own converse, that an unmarked column is settled.
     // It must survive the pending set emptying, which is exactly when the
     // notice stops rendering and the screen would otherwise fall silent.
+    //
+    // Both directions, because "floor" is true of a season total and false of
+    // a cell: a re-ingest moving a fixture to the next week takes the first
+    // week's count down. Erring toward false comfort at the granularity a
+    // manager plans a week on is the wrong way to be wrong.
     mockFetch({ [GRID_PATH]: { body: scheduleGrid() }, '/health': { body: HEALTH } })
 
     renderWithRouter(<App />, { route: '/schedule' })
 
-    await screen.findByTestId('schedule-grid')
+    const grid = await screen.findByTestId('schedule-grid')
     expect(screen.queryByTestId('grid-pending')).toBeNull()
 
-    const caveat = screen.getByText(/every count below is a floor/i)
-    expect(caveat).toBeVisible()
-    expect(caveat).toHaveTextContent('make-up games')
-    expect(caveat).toHaveTextContent('including in columns carrying no mark')
+    // In the caption, so it sits where the eye already is when reading a
+    // number, and so it cannot outlive the numbers it qualifies.
+    expect(within(grid).getByText(/No count here is final/i)).toBeVisible()
+    expect(grid).toHaveTextContent('Make-up games')
+    expect(grid).toHaveTextContent('can fall as well as rise')
+    expect(grid).toHaveTextContent('in columns carrying no mark as much as in marked ones')
+    // The claim it must not make.
+    expect(grid.textContent).not.toMatch(/is a floor/i)
+  })
+
+  it('does not claim anything about counts when there are no counts on screen', async () => {
+    // The caveat lived in the page header and rendered above "Could not load
+    // the schedule grid", asserting that every count below was a floor with no
+    // counts below. In the caption it exists only when the table does.
+    mockFetch({
+      [GRID_PATH]: refusal(503, 'schedule_grid_incomplete', 'no cohort'),
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />, { route: '/schedule' })
+
+    await screen.findByRole('alert')
+    expect(screen.queryByTestId('schedule-grid')).toBeNull()
+    expect(screen.queryByText(/No count here is final/i)).toBeNull()
+    expect(screen.queryByText(/Make-up games/i)).toBeNull()
   })
 
   it('does not put the pending sentence in both the name and the description', async () => {

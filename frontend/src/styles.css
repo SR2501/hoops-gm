@@ -425,6 +425,16 @@ a:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+/* The one clause in the caption that changes how a number should be read, as
+   against the two that say what the numbers are. Muted grey throughout would
+   make it the tail of a sentence a reader has already classified as provenance
+   — which is exactly what happened when this text lived in a second lede
+   paragraph under one ending in a file path. */
+.grid__caption-caveat {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .grid th,
 .grid td {
   border-bottom: 1px solid var(--border);

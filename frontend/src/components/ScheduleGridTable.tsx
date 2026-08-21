@@ -25,6 +25,48 @@
  * teams are not decided, so any count in it may rise* — and that is what the
  * header says.
  *
+ * **The caption carries the other incompleteness, the one nothing can mark.**
+ * ADR-013 names two: games published without teams, which are marked per column
+ * here, and make-up games for teams eliminated early in the NBA Cup, which are
+ * not published at all — absent from `source_game_count`, so neither resolved
+ * nor pending, and carrying no field this screen could mark them with. Without
+ * saying so, marking one implies its converse: that an unmarked column is
+ * settled. It is not, and it fails worst at the moment it looks fixed — bracket
+ * drawn, pending set empty, every marker gone, and every team still about two
+ * games short.
+ *
+ * It lives in the `<caption>` rather than in the page lede for three reasons,
+ * two of which were found by driving it. It is where a reader's eye already is
+ * when they are reading a number, rather than in a second muted paragraph under
+ * one ending in a governance citation. It renders if and only if the table
+ * does, so it cannot appear above "could not load the schedule grid" claiming
+ * something about counts that are not on screen. And it costs no block above a
+ * grid that already carries a lineage panel, a notice and a key.
+ *
+ * **The make-up clause will go stale and no client-side condition can detect
+ * it.** When the NBA publishes those games the sentence becomes false, and
+ * nothing in the payload distinguishes "80 published because the bracket is
+ * open" from "82 published". An earlier draft of this comment claimed the
+ * statement was "always true and never an event" — the mirror of the fault it
+ * was written to fix, since the notice's failure is going silent on a clock and
+ * this one's is continuing to speak on the same clock. The expiry is tracked in
+ * `docs/backlog.md` under `schedule-grid-pending-periods` with an owner and a
+ * trigger, because prose nothing prompts anyone to revisit is how a screen ends
+ * up asserting something it once checked. The re-ingest clause beside it does
+ * not expire.
+ *
+ * **"Floor" would have been the wrong word, and it is the word the ADR uses.**
+ * Games are added and never removed *in aggregate*, so a season total can only
+ * rise — but a count in a **cell** is a different quantity, and a re-ingest that
+ * moves a fixture from one week to the next takes the first week's count down.
+ * ADR-012's living-refresh amendment exists because re-ingest changes shape.
+ * "Every count here is a floor" is therefore true of the Total column and false
+ * of the twenty-one columns beside it, erring toward false comfort at exactly
+ * the granularity a manager plans a week on. The caption says "no count here is
+ * final" and names both directions. `architect` caught this against their own
+ * ADR text before it was accepted; the screen is not waiting for that wording
+ * to be corrected before telling the truth.
+ *
  * `GridCell` does receive `inPendingPeriod`, because a column rule has to be
  * drawn by the cells (`<col>` borders are ignored under `border-collapse:
  * separate`, which this table needs for its sticky edges). It is a fact about
@@ -68,7 +110,11 @@ export function ScheduleGridTable({ model, season }: ScheduleGridTableProps) {
       <table className="grid" data-testid="schedule-grid">
         <caption className="grid__caption">
           Scheduled games per team, per {season} fantasy scoring period. Counts only — no
-          availability, no opponent quality.
+          availability, no opponent quality.{' '}
+          <strong className="grid__caption-caveat">No count here is final.</strong> Make-up games
+          for teams eliminated early from the Emirates NBA Cup have not been released and will
+          raise season totals, and a re-ingest can move a fixture between weeks, so a weekly count
+          can fall as well as rise — in columns carrying no mark as much as in marked ones.
         </caption>
         <thead>
           <tr>

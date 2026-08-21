@@ -50,35 +50,6 @@ export function SchedulePage() {
           opponent quality, no judgement about whether a week is light or heavy. See{' '}
           <code>docs/decisions/ADR-012-per-week-game-distribution.md</code>.
         </p>
-        {/*
-          Unconditional, and deliberately prose rather than a banner.
-
-          ADR-013 names two sources of forward incompleteness and the contract
-          carries only one. Pending games are published-without-teams and are
-          marked per column below. Make-up games for teams eliminated early in
-          the NBA Cup are not published at all — they are absent from
-          `source_game_count`, so they are neither resolved nor pending, and no
-          field exists for this screen to mark them with. ADR-013's own Context
-          puts it at 80 games per team today becoming 82 later.
-
-          Without this sentence the marking implies its own converse: that an
-          unmarked column is settled. It is not, and the failure is on a clock —
-          when the bracket is drawn the pending set empties, the notice below
-          stops rendering, and the screen would go silent while the season is
-          still short roughly two games per team. That is also the moment
-          ADR-012's living-refresh amendment matters most, so a count reading as
-          final there is the worst version of this.
-
-          In the lede rather than a notice because it is always true and never
-          an event; a permanent banner on the healthy path is what
-          `ScheduleLineage` argues against.
-        */}
-        <p className="page__lede page__lede--caveat">
-          A count here is what the source has <em>published</em>, which is not the whole season.
-          Teams eliminated early from the Emirates NBA Cup are later given make-up games that the
-          NBA has not released yet, and those are not in this data at all — so every count below is
-          a floor, including in columns carrying no mark.
-        </p>
       </header>
 
       <AsyncBoundary
@@ -188,15 +159,23 @@ function ScheduleGridView({
  * appear at all once the pending set is empty — a caution that fires when
  * nothing is wrong devalues the one beside it that means something.
  *
- * **Why it is not a live region.** It carries no `role="status"`, unlike the
- * stale banner beside it. It is present at first paint and describes the data
- * rather than announcing a change, so the polite queue is the wrong place for
- * it: assistive technology would read it on load in nondeterministic order
- * against three other regions, and `aria-atomic` defaults to true, so a refresh
- * altering one word re-reads the whole paragraph. `grid-integrity` above still
- * carries `role="status"` and on this reasoning should not — it is left alone
- * here because changing an already-reviewed surface as a side effect of an
- * unrelated diff is how surfaces drift.
+ * **Why it is not a live region, and what that costs.** It carries no
+ * `role="status"`, unlike the stale banner beside it. It is present at first
+ * paint and describes the data rather than announcing a change, so the polite
+ * queue is the wrong place for it on load: assistive technology would read it
+ * against three other regions in nondeterministic order, and `aria-atomic`
+ * defaults to true, so a refresh altering one word re-reads all 420 characters.
+ *
+ * That reasoning covers load and **does not cover refresh**. `AsyncBoundary`
+ * has a Refresh button, and a refresh that takes the pending set from empty to
+ * non-empty now makes this notice appear with no announcement. The old
+ * behaviour was worse on the same path — it re-read the whole paragraph on any
+ * word change — and the stale banner already announces "Refreshing", so a
+ * screen-reader user knows to re-read. But it is a trade rather than a pure
+ * win, and the clean fix if anyone wants it is a region that is empty at mount
+ * and live thereafter. `grid-integrity` above still carries `role="status"` and
+ * on this reasoning should not; that is `frontend`'s own debt, so it is in
+ * `docs/backlog.md` rather than flagged to nobody in a comment.
  *
  * **The three states this screen now keeps apart.** A `0` is a real count of
  * zero scheduled games. A `·` is data the backend did not send. A `TBD` column
