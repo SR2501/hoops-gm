@@ -675,6 +675,14 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
             "placeholder for time-only fields, and a placeholder pair in the date fields "
             "reconciles exactly"
         )
+        resolved_dates = sorted(record.game.game_date for record in result.games)
+        assert resolved_dates, "no resolved games to measure the plausibility margin against"
+        assert date(2022, 1, 1) < resolved_dates[0] and resolved_dates[-1] < date(2031, 1, 1), (
+            f"the real season now runs {resolved_dates[0]}..{resolved_dates[-1]}, which is "
+            "close to the resolved-side plausibility bound. That bound REFUSES the import, so "
+            "a real schedule approaching it is a season-killer waiting to fire. Widen the "
+            "bound before the season moves, not after"
+        )
         assert not undated, (
             f"pending games {undated} no longer carry a date whose EST and UTC fields "
             "reconcile. The parser degraded them rather than refusing the season, so nothing "

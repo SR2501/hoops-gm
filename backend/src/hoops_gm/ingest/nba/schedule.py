@@ -609,14 +609,26 @@ def _pending_game_date(
 
 
 def _plausible_season_date(game_day: date, season: str) -> bool:
-    """Is this date anywhere near the season it claims to belong to?
+    """Is this date within centuries of the season it claims to belong to?
 
-    A deliberately loose bound — July to July around a season that runs
-    October to June — because its job is to catch an epoch placeholder, not to
-    police the calendar. The NBA's own schedule shifts by weeks; a sentinel
-    misses by a century.
+    **This check has exactly one job: catch an epoch placeholder that
+    reconciles.** It is not a calendar validator, and it must not become one.
 
-    ``season`` is ``NNNN-NN``, already validated against the payload's
+    The bound is deliberately enormous — an eleven-year window centred on the
+    season — because the consequence asymmetry runs the opposite way here from
+    everywhere else in this parser. On the pending side a false positive costs
+    a screen affordance. On the **resolved** side it refuses the import, and
+    this whole unit exists because a refusal on a field nothing persists was
+    killing the season. A tight window would fire during an October import
+    when a fixture moves, and it would buy nothing: the placeholders this
+    source is observed to emit are ``0001-01-01`` and ``1900-01-01``, which
+    miss by 125 and 2,025 years respectively. Anything between "the same
+    decade" and "the same millennium" catches both, so take the loosest.
+
+    Two-sided rather than a floor, because a far-future sentinel (``9999``) is
+    the same trick in the other direction and costs nothing to exclude.
+
+    ``season`` is ``NNNN-NN`` and is validated against the payload's own
     ``seasonYear`` before any game is read, so the leading year is trustworthy
     here.
     """
@@ -625,7 +637,7 @@ def _plausible_season_date(game_day: date, season: str) -> bool:
         start_year = int(season.split("-", 1)[0])
     except ValueError:  # pragma: no cover - season shape is validated upstream
         return True
-    return date(start_year, 7, 1) <= game_day < date(start_year + 2, 7, 1)
+    return date(start_year - 5, 1, 1) <= game_day < date(start_year + 6, 1, 1)
 
 
 def _team(raw_game: Mapping[str, object], key: str, game_id: str) -> _TeamSide:

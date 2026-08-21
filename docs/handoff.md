@@ -9889,3 +9889,95 @@ of the source emitting an out-of-season date; I have seen the placeholder
 convention in the sibling field, not in the date fields. And the four causes
 remain exhaustive over *this parser's* outcomes rather than over the source's
 states — which is exactly what round six proved was not the same thing.
+
+---
+
+## 2026-08-21 — data-engineer — The placeholder trap, and the fix that reintroduced the hazard
+
+**Changed:** Closed the resolved-side half of the epoch-placeholder defect,
+loosened the plausibility bound after the coordinator argued the asymmetry runs
+the other way there, and amended ADR-013 in this PR because this PR is what
+made it untrue.
+
+**The defect I found while answering someone else's question.** #47 asked
+whether a year-0001 sentinel still reaches a client as a well-formed date. I
+drove every sentinel shape through the parser rather than reasoning about it,
+and the seventh row — the resolved case, which I only ran because the question
+mentioned it — came back:
+
+```
+RESOLVED game, 1900 pair, correctly converted -> parsed, game_date = 1900-01-01, IMPORTED
+```
+
+**I had applied the plausibility bound to the lenient path and not the strict
+one**, two hours after writing a handoff entry about recognising the class in
+someone else's code and not my own. The strict side is the one that matters: a
+resolved game's date is persisted, joins `player_participation`, and is the
+denominator of every expected-games number. A 1900 row would not have looked
+wrong anywhere — it would have been absorbed as real signal by the availability
+model, which is `AGENTS.md`'s named worst case.
+
+**What makes it invisible is the thing that was supposed to catch it.** The
+EST/UTC reconciliation cannot see a placeholder pair, because *a placeholder
+pair is internally consistent*. 1900's Eastern offset genuinely is -05:00.
+Cross-field reconciliation validates encoding and never meaning — the `gameEt`
+lesson arriving from the opposite direction.
+
+**Latent, not active — checked rather than assumed.** The real season currently
+loaded:
+
+```
+nba_games            1200
+game_date range      2026-10-20 .. 2027-04-11
+null game_date       0
+outside the bound    0
+```
+
+Nothing already imported is poisoned. The fix prevents a future poisoning and
+repairs nothing, and a reader of "would have poisoned the availability model"
+deserves that stated rather than left to wonder.
+
+**Then the fix reintroduced this unit's own hazard, and the coordinator caught
+it.** This PR exists because a refusal on a field *nothing* persists was
+killing the season. I had just added a refusal on a field *everything*
+persists, with a two-year window — and that window would fire during an
+October import when a fixture moves.
+
+The consequence asymmetry runs the opposite way on the resolved side, and it
+runs hard. **The bound's only job is to catch an epoch placeholder**, and the
+placeholders this source emits miss by 125 and 2,025 years. So the loosest
+bound that does the job is the safest one: an eleven-year window centred on the
+season. A tight window catches the same two values and *also* refuses a
+rescheduled game, a long season, or an adjacent feed. **It buys nothing and
+costs the season.** The burden was on the tight bound and it could not carry it.
+
+The live smoke now asserts the real season clears that bound **by years**, not
+that it clears it — a refusal window the real data passes by one day is a trap
+that has not sprung yet.
+
+**ADR-013 amended in this PR**, at `architect`'s request and with status
+untouched. `9dc708e` emitted a fifth `date_absence_reason` while the Accepted
+ADR asserted a closed four-member set — and the ADR is the authority a consumer
+was told to cite *instead of* a producer docstring, so merging without this
+would have made the right behaviour return a wrong answer. It records the
+five-member set, that **two** codes now mean investigate and both carry the
+live-smoke assertion, that exit 5 is not a refusal, and it corrects the ADR's
+claim that the sentinel ambiguity is "not a producer gap". It was one; it is
+closed here; it remains true of any date value from any other source.
+
+**Answer to #47, for the record:** no sentinel reaches a client as a
+well-formed date from this producer. Every shape yields `null` with a cause,
+and the resolved side refuses. #47's limitation is unreachable *through this
+seam* and true in general, which is why it should say so precisely rather than
+be deleted — the next producer will not have this classifier.
+
+**Could not verify:** PostgreSQL, CI-only, still not claimed on any head. That
+the eleven-year window is right rather than merely loose enough — it is
+argued from the two placeholder values this source is observed to emit, not
+from a survey of what it might emit. And the injury-cohort path derives dates
+through a *different* adapter that nothing here touches; whether the same bound
+belongs there is a real question with the same `player_participation`
+consequence, and `architect` is filing it rather than letting it into this PR.
+
+**Next:** round seven re-run on this head, because the resolved-side guard and
+the loosened bound both postdate the one it is running against.

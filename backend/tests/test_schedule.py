@@ -672,6 +672,38 @@ def test_a_pending_record_cannot_be_built_with_an_absence_and_no_reason() -> Non
         )
 
 
+def test_the_plausibility_bound_clears_the_real_season_by_years_not_by_days() -> None:
+    """A refusal window the real data clears by one day is a trap that has not sprung.
+
+    This guard refuses a *resolved* game, which means a false positive costs
+    the whole season — the exact failure this unit exists to remove, pointed
+    at a field everything persists rather than one nothing does. So the margin
+    is the property worth asserting, not the pass.
+
+    The bound catches what it is for by centuries: the placeholders this
+    source emits are 0001-01-01 and 1900-01-01.
+    """
+    result = parse_schedule(load(PENDING_FIXTURE), season="2026-27")
+    dates = sorted(record.game.game_date for record in result.games)
+    lower, upper = date(2021, 1, 1), date(2032, 1, 1)
+
+    assert _plausible_season_date(dates[0], "2026-27")
+    assert _plausible_season_date(dates[-1], "2026-27")
+    assert (dates[0] - lower).days > 5 * 365, "the earliest real game is close to the floor"
+    assert (upper - dates[-1]).days > 4 * 365, "the latest real game is close to the ceiling"
+
+    # What it must still catch, and by how much.
+    assert not _plausible_season_date(date(1900, 1, 1), "2026-27")
+    assert not _plausible_season_date(date(1, 1, 1), "2026-27")
+    assert not _plausible_season_date(date(9999, 12, 31), "2026-27")
+
+    # What it must NOT catch: a schedule that legitimately runs long, a game
+    # moved well outside its own season, and an adjacent season's feed. Each
+    # of these is a real thing this source can publish; none is a placeholder.
+    for tolerated in (date(2026, 7, 1), date(2027, 12, 31), date(2028, 6, 30)):
+        assert _plausible_season_date(tolerated, "2026-27"), tolerated
+
+
 def test_a_reconciling_epoch_placeholder_on_a_RESOLVED_game_refuses_the_season() -> None:
     """The half of the placeholder trap I fixed on the lenient path and not the strict one.
 
