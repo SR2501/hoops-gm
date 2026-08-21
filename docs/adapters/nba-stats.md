@@ -282,7 +282,7 @@ one-line vocabulary edit plus a deliberate re-read of what changed — **not** a
 `try/except` added under time pressure. Anyone tempted by the latter should
 change it here, with a reviewer, rather than at the call site.
 
-
+#### Three things the endpoint does that no code path shows
 
 Recorded here because they cost a session to find and a future lane would
 otherwise re-derive them from scratch.
@@ -341,7 +341,7 @@ position must know which season it describes, and checked against nothing. That
 is the `gameEt` shape. The payload echoes the season the server actually
 served, so it is now corroborated against that.
 
-#### One writer, three readers — and the writer is not one of them
+#### One writer, two readers — and the writer is not one of them
 
 `players.primary_position` is **written** by `backfill.build_crosswalk` (via
 `import_player_positions`) and **read** by:
@@ -350,13 +350,21 @@ served, so it is now corroborated against that.
 2. `api/routes/projections.py` — which selects the column and serves it as
    `ProjectionPlayer.primary_position` on the projections release response.
 
-That count has now been wrong twice in opposite directions, which is worth
-recording as its own caution. It first said "two readers" and named
-`build_crosswalk` as one of them; `build_crosswalk` never reads the column, it
+**This count has now been wrong three times, in three different directions, and
+the third time was in this paragraph.** It said "two readers" and named
+`build_crosswalk` as one of them, which it is not — it writes the column and
 feeds the resolver from the in-memory `NbaPlayerPositionRecord` list that
-`parse_player_index` returned and writes the column as a side effect. The
-correction then said "exactly one reader" — and missed the API route, which
-landed in a different lane between the claim and the correction.
+`parse_player_index` returned. Corrected to "exactly one reader", which was true
+when written and false by the time it landed, because the API route merged in
+another lane in between. Corrected again to "three readers", whose own heading
+excluded the writer while the count silently included it — a header that does
+not re-derive from the two items directly beneath it, in the paragraph whose
+entire subject is that defect.
+
+The number is small and the mechanism is not: **a reader count is invalidated by
+other lanes merging, so it is not a fact established once.** Re-derive it from
+`git grep` at the head you publish it from, the way a backlog header is
+recomputed, and check the count against the list under it.
 
 Two consequences follow, and the second is user-facing:
 
@@ -371,12 +379,11 @@ Two consequences follow, and the second is user-facing:
   `build_player_targets` silently becoming position-aware: a behaviour change
   that no diff shows, in a field a consumer can already see.
 
-The matcher trade-off applies to both reader paths, with the same weights: a
-vendor calling a borderline big `C` where the NBA lists `F`, with no team to
-offset it, drops a correct match under the accept floor. Pinned by
-`TestProjectionTargetsAreNowPositionAware`. Anyone re-tuning
-`_DISAGREEMENT_PENALTY["position"]` moves the matcher paths; the API field is
-unaffected by the weights and reflects whatever was persisted.
+The matcher trade-off applies to `build_player_targets`, with the same weights
+as the crosswalk: a vendor calling a borderline big `C` where the NBA lists `F`,
+with no team to offset it, drops a correct match under the accept floor. Pinned
+by `TestProjectionTargetsAreNowPositionAware`. The API field is unaffected by
+the weights and reflects whatever was persisted.
 
 **The API serves the coarse NBA vocabulary** — `G/F/C` plus hybrids — because
 `import_player_positions` is the only writer and `PLAYER_INDEX_POSITIONS` bounds

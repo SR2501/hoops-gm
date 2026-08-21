@@ -11168,3 +11168,76 @@ verification, which is precisely what `gates.md` says to re-derive at the moment
 - **The `byte_size` basis inconsistency in `tests/fixtures/manifest.json`** — 20 entries carry
   CRLF-derived sizes and 4 carry LF-derived ones with `byte_size_basis`. Pre-existing, not this
   lane's, but it means `byte_size` is not comparable across entries and nothing says so.
+
+## 2026-08-21 — data-engineer — The reader count was wrong three times, the third in the paragraph about that defect
+
+**Unit:** final review round on the position lane. `data-engineer` and `code-review` at
+`db5078d`, after two earlier rounds at `1f8bf85` and `6804f85`. Three findings, and the
+first is the most instructive thing this lane produced.
+
+**A count that was wrong three times, in three different directions.** How many code paths
+read `players.primary_position`:
+
+1. *"Two readers"* — named `build_crosswalk` as one. It is not a reader; it **writes** the
+   column and feeds the resolver from the in-memory records `parse_player_index` returned.
+   So the headline crosswalk evidence this lane published is a property of the parse path
+   and is unchanged whether a single row is persisted or not.
+2. *"Exactly one reader"* — **true when written, false when it landed.** PR #45 merged an
+   API route in another lane in between, and `api/routes/projections.py` now serves the
+   column as a user-facing response field.
+3. *"Three readers"* — under a heading reading *"and the writer is not one of them"*, above
+   a list of **two**. The number silently counted the writer that its own sentence excluded.
+   A header that does not re-derive from the two items directly beneath it, **in the
+   paragraph whose entire subject is that defect.**
+
+It is two. Re-derived by `git grep` at the head that publishes it:
+`projections/importer.py:545` and `api/routes/projections.py:627`, against one writer at
+`importers.py:353`. The mechanism is worth more than the number: **a reader count is
+invalidated by other lanes merging, so it is not a fact you establish once** — and during a
+multi-lane wave that applies to every claim of the form "nothing else uses this", which is
+the class most likely to be checked properly and then quietly falsified by a merge in a lane
+you are not reading.
+
+**The user-facing consequence, which is why the count mattered.** That API field has
+returned `null` for every player for the column's entire existence, because nothing wrote
+it. It starts returning `"G"` and `"F-C"` on the first `build_crosswalk` run — **a
+user-visible behaviour change that no diff shows**, on the one column a consumer is most
+likely to mistake for lineup eligibility. Recorded in the adapter doc and R7, including that
+the API serves the coarse NBA vocabulary and must not be read as a Fantrax slot.
+
+**A branch the entire suite could not see.** `_require_declared_season` has two routes to
+"absence": the `parameters` block disappearing, and the block surviving with `Season` blank
+or missing. Only the first was tested. The reviewer deleted the `declared and` sub-condition
+and ran the **whole suite** — green, except a fingerprint test that fires on any byte change
+to the file and therefore proves nothing about behaviour. The second route is the more
+likely upstream drift, since a payload keeping its envelope and losing one field is more
+probable than one losing the envelope. Now driven three ways, plus a still-disagrees case so
+that withholding has not been widened into blanket acceptance; the previously invisible
+mutation is now red.
+
+**And I orphaned a paragraph while fixing a different finding.** Inserting the blast-radius
+section consumed the heading above the three `PlayerIndex` facts, leaving *"Recorded here
+because they cost a session to find"* dangling under it with no antecedent for "they". A
+one-line structural error from an edit anchored on a heading rather than on surrounding
+prose, caught by the reviewer reading the rendered result rather than the diff.
+
+**What review added beyond that:** the vocabulary guard's blast radius is now documented —
+one new NBA hybrid label takes the **entire** crosswalk offline, name and team keys
+included, for a corroborator weighted 0.12 — together with why the soft-fail alternative was
+rejected, so the next person under time pressure edits `PLAYER_INDEX_POSITIONS` with a
+reviewer rather than adding a `try/except` at the call site.
+
+**Could not verify:**
+- **That the cohort manifest body is byte-identical to `render_cohort_evidence` of itself**
+  is checked by *me*, by hand, every round — and by **nothing in CI**. No test in
+  `backend/tests` references `render_cohort_evidence`, because reproducing it needs the
+  populated database and raw store no session in this wave has. So the strongest claim I
+  make about that artefact each time rests on a manual step that leaves no trace if skipped.
+- **The exact live crosswalk figures** (531/35/10, and the `Johnson, Jalen` /
+  `Tillman, Xavier` accept-set swap). The *direction* is pinned offline; the figures are a
+  point-in-time measurement neither reviewer reproduced against live rosters.
+- **Whether the orphan branch is reachable on PostgreSQL**, where deferred-constraint
+  behaviour differs. The unreachability argument in that test is explicitly SQLite-specific.
+- **`ingest/importers.py` is still unwatched by the cohort fingerprint** and on the
+  derivation path, changed by both this lane and #49. Third item blocked on the same missing
+  database.

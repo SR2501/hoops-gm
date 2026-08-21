@@ -559,12 +559,35 @@ class TestNbaPlayerIndexPosition:
 
         If the endpoint stops echoing its parameters, "the server did not say"
         must not be read as "the server contradicted us".
+
+        **Both routes to absence are driven**, because they are different
+        branches and only one of them was covered until review: the parameters
+        block disappearing entirely, and the block surviving with `Season`
+        blanked or dropped. The second is the more likely upstream drift — a
+        payload keeping its envelope and losing one field — and deleting the
+        `declared and` sub-condition left the *entire* suite green.
         """
+        # Route A: no parameters block at all.
         payload = load("nba_playerindex_current.json")
         del payload["parameters"]
+        assert len(parse_player_index(payload, season="2026-27")) > 500
 
-        records = parse_player_index(payload, season="2026-27")
-        assert len(records) > 500
+        # Route B: parameters present, Season blanked.
+        payload = load("nba_playerindex_current.json")
+        payload["parameters"]["Season"] = ""
+        assert len(parse_player_index(payload, season="2026-27")) > 500
+
+        # Route B': parameters present, Season key gone.
+        payload = load("nba_playerindex_current.json")
+        del payload["parameters"]["Season"]
+        assert len(parse_player_index(payload, season="2026-27")) > 500
+
+        # And a *stated* season still disagrees, so withholding has not been
+        # widened into blanket acceptance.
+        payload = load("nba_playerindex_current.json")
+        payload["parameters"]["Season"] = "1997-98"
+        with pytest.raises(SourceContractError):
+            parse_player_index(payload, season="2026-27")
 
     def test_the_name_columns_that_are_read_are_also_required(self) -> None:
         """Every column this parser reads is pinned, not just the load-bearing ones.

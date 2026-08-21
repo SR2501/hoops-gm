@@ -1906,7 +1906,7 @@ def test_source_games_played_assumption_never_becomes_a_projection_column(
 
 
 class TestProjectionTargetsAreNowPositionAware:
-    """One of three consumers of ``players.primary_position``.
+    """One of the two consumers of ``players.primary_position``.
 
     ``build_player_targets`` has always passed ``position=player.primary_position``
     into ``ResolvableRecord.build``. That column was never written by anything
@@ -1914,16 +1914,16 @@ class TestProjectionTargetsAreNowPositionAware:
     position-blind for its whole life and flips to position-aware the first
     time ``build_crosswalk`` runs.
 
-    The other two: ``api/routes/projections.py`` serves the column as a
-    response field, which likewise goes from always-``null`` to populated with
-    no diff; and ``build_crosswalk`` **writes** it but does not read it — it
+    The other reader is ``api/routes/projections.py``, which serves the column
+    as a response field and likewise goes from always-``null`` to populated
+    with no diff. ``build_crosswalk`` **writes** it and does not read it — it
     feeds the resolver from the parsed records directly, so the crosswalk
     evidence the position lane published is a property of the parse path, not
     of anything persisted.
 
     Pinned here so the reader set is a recorded fact rather than a surprise,
     and so the identity lane re-tuning ``_DISAGREEMENT_PENALTY["position"]``
-    knows which paths move with it.
+    knows this is the path that moves with it.
     """
 
     def test_targets_carry_a_position_once_players_have_one(self, session: Session) -> None:
