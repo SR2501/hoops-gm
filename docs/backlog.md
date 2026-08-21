@@ -13,15 +13,10 @@ reconciliation could have reached the answer. The position lane sharpened
 `player-position-eligibility` without closing it: the NBA-position half landed, the
 Fantrax-eligibility half did not, so that marker stays `pending`.)
 
-
-A task is ready when every dependency is done. Update the status line when you finish one.
-
-
----
-
----
-
-## Done
+The uniqueness check earns its place: resolving this rebase by taking both sides
+of a hunk left a bare duplicate `schedule-grid-ui` heading whose body had been
+replaced, and *both* status header blocks. The totals disagreed with each other
+in the same file, and only a count of unique slugs against markers found it.)
 
 ### `absence-splits` - Computing with/without absence splits
 
@@ -598,6 +593,20 @@ once checked:
   because `aria-describedby` is announced unreliably on `table`, so the trade is
   not obviously favourable and no one has tested either with a real screen
   reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
+- **The doctored-payload technique should probably not live under
+  `frontend/src/test/fixtures/`.** `make_pending_date_payloads.py` is a Python
+  script that imports `backend/src` to make *frontend* fixtures, so it belongs to
+  neither side cleanly and no rule in the tree says where it goes. It is here
+  because that is where the artifacts it explains are, and being findable beat
+  being correctly filed. `architect` owns the placement; the trigger is the
+  second time anyone needs the same trick, because a technique used twice from
+  two lanes is dev tooling and should be filed as such.
+- **Nothing pins `input -> reason` in CI.** `--verify` re-runs the producer's
+  classifier over the derived payloads, but it is a script a person runs, not a
+  test a gate runs. The clean version is a backend test that imports the two
+  payloads and asserts the four reasons, which would fail in CI the moment the
+  producer reclassifies rather than the next time somebody thinks to check.
+  `data-engineer` owns it; the trigger is any change to `_pending_game_date`.
 
 **Period-scoped, never cell-scoped.** A pending game carries `teamId: 0` with
 every naming field null, so no team can be named and none is. A per-cell "this
@@ -615,6 +624,17 @@ pending". The lineage panel gains the pending count and lists each game's id,
 date and labels, because ADR-013 reverts to refusing if the pending set stops
 being explicable as an undetermined bracket and a bare count shows nothing to
 check that against.
+
+The four non-empty `date_absence_reason` values fire zero times against the live
+source, so both recorded fixtures covering them were produced by driving the
+in-tree importer with authored source payloads. Those payloads are derived by
+`frontend/src/test/fixtures/make_pending_date_payloads.py` rather than
+remembered: `--verify` re-runs the producer's own classifier over them and
+asserts the four reasons, and both fixtures were regenerated end to end through
+it — seed, serve, capture — differing from the committed bytes in one leaf,
+`refreshed_at`. This exists because the fixtures first landed with the inputs
+uncommitted, which made *input -> reason* a claim nothing could check; one of the
+two payloads had already been overwritten by the time a reviewer said so.
 
 ### `schedule-grid-ui` - Putting the raw schedule grid on screen
 

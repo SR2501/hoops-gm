@@ -29,6 +29,23 @@
  * these prove the producer classifies *those inputs* that way, not that the NBA
  * will ever send them. And the `''` case — a date published and reconciled — is
  * the one the live cohort does cover, in the fixture beside them.
+ *
+ * **The provenance is no longer testimony.** These landed with the authored
+ * inputs uncommitted, and a reviewer pointed out the consequence: the sentences
+ * above assert *input → reason*, and nothing in the tree could check them, so
+ * the fixtures were repairable only by hand-editing the JSON — silently turning
+ * a recording into a mock. That was not hypothetical. One of the two payloads
+ * had already been overwritten by the time the finding arrived.
+ *
+ * `test/fixtures/make_pending_date_payloads.py` derives both from the committed
+ * base the demo seed imports, and `--verify` re-runs the producer's own
+ * classifier over them, asserting the four reasons named above. Both fixtures
+ * were regenerated end to end through it — seed, serve, capture — and differ
+ * from the committed bytes in exactly one leaf, `refreshed_at`. So the
+ * reconstruction of the lost payload is proven rather than remembered, and the
+ * concrete drift a frozen recording cannot see is now caught: reorder
+ * reconciliation and plausibility in the producer and a 1900 pair stops being
+ * `implausible`, which `--verify` fails on and the fixture alone would not.
  */
 
 import { describe, expect, it } from 'vitest'

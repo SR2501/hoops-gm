@@ -12214,3 +12214,116 @@ branch's findings have been about.
 **Next:** exact-head reviews, then undraft. A final docs-only rebase after #48 and #56
 merge — and **not** copying ADR text into this PR, so the four-versus-five problem cannot
 recur through a merge.
+
+## 2026-08-21 - frontend - Regenerating the inputs I had already lost, and a "cannot be done" that was not
+
+**Unit:** `schedule-grid-pending-periods`, closing three review findings and a
+rebase. Continues the entries above; this one is about *evidence* rather than
+behaviour, which is where the branch ended up.
+
+### The claim all three reviewers refused, and they were right
+
+I deleted a mutation that could not fail and asserted there was **no honest
+replacement**, because what the recorded fixtures uniquely catch is a
+producer-side rename or serialisation change and "no client-side mutation can
+simulate one". That is false. **The fixture JSON is source too**, and mutating
+it is precisely that simulation. My harness only walked `.ts`/`.tsx`, so the
+limit was scope, not possibility — the exact shape of "cannot be done" meaning
+"I did not think of it" that I had flagged when making the claim.
+
+Five fixture mutations added, all caught by the boundary: field rename, case
+change, reason removed, a date restored beside a non-empty reason, ids array
+renamed. They matter more than their count: the fixtures' docstring claims
+hand-written payloads are blind to "a renamed field, a changed serialisation, a
+value the producer stopped emitting", and until now nothing tested that
+sentence. **33 of 33 mutations caught.**
+
+### The provenance finding, which was already true rather than predicted
+
+`architect` and `frontend` both said the doctored source payloads behind the two
+new fixtures were uncommitted, so the docstring's *input -> reason* sentences
+were claims nothing could check, and the only repair path was hand-editing the
+JSON — silently converting a recording into a mock.
+
+**When I went to commit them, one was gone.** The faults payload had been
+overwritten by the second capture run hours earlier. The predicted failure had
+already happened and I had not noticed, because the fixture it produced was
+still sitting there looking like evidence.
+
+So I derived them instead of reconstructing them from memory.
+`make_pending_date_payloads.py` takes the committed base and applies the minimum
+edit reaching each reason, and `--verify` re-runs the producer's classifier over
+the result. Two mutations of the generator prove `--verify` can fail: an expected
+reason changed (reports the move, exit 1) and a base id moved (refuses rather
+than forcing a stale edit, exit 1).
+
+### The first generator was wrong, and only capture-and-compare caught it
+
+I based it on `nba_scheduleleaguev2_2026_27_pending_knockout.json` — 24 games, 6
+pending. `--verify` **passed**, because it only classifies the two doctored
+games. But the fixtures are 12/10/2: they came from the payload the *demo seed*
+imports. A generator that claimed to regenerate the fixtures would have produced
+a different response entirely, and the verifier could not see it, because it
+checked the part I had thought about.
+
+Comparing the derived payload against the one surviving original is what found
+it. After retargeting, derived == surviving original, and both fixtures
+regenerate end to end — seed, serve, capture — differing in **one leaf**,
+`refreshed_at`. The reconstruction of the lost payload is now proven rather than
+remembered.
+
+That is the fourth instance of *correct by accident* on this branch, and the
+sharpest: a verifier passing while checking the wrong artifact. **A green
+verifier says the thing it looked at is fine, not that it looked at the right
+thing.**
+
+### The ADR citation, scoped rather than asserted
+
+`code-review` found `types.ts` claiming "the classification is ADR-013's
+decision" while ADR-013 **in this tree** contradicts it. Verified, and it is
+worse than reported: at this head the ADR states the five-value set (`:222`) but
+assigns no action to any member, and the one place it touches the question does
+so through **exit codes** (`:240`, grouping `irreconcilable` with `not_offered`)
+— the exact inference the ruling overturned. The comment now says the ruling is
+not in this tree, names the line to check, and records that **this branch must
+not merge ahead of the ADR revision**. Merge-order dependency, not a text
+overlap.
+
+### The partition assertion that could not see its missing term
+
+`frontend` found `scheduleGridModel.test.ts` summing **four** terms while the new
+recorded test sums **five** — omitting `dateFaulted`, and passing, because the
+fixture it built contained no faulted game. A partition assertion blind to the
+bucket it forgot. Now five terms, each asserted non-empty, with a comment saying
+the two sums must agree on how many terms exist.
+
+### The rebase, and a resolution that produced a file disagreeing with itself
+
+Rebased onto `ccedd0f`. Resolving by taking both sides left a **bare duplicate
+`schedule-grid-ui` heading** whose body had been replaced, and **both** status
+header blocks — so the file stated two different totals, 114 and 112, on
+consecutive lines. Only counting unique slugs against markers found it. Truth is
+**115/115, 1:1, no duplicates**, recomputed from the finished file.
+
+That is the recount rule paying for itself a second time in one branch, and this
+instance is stronger than the last: the previous one was two headers each wrong,
+this one is a *structural* duplicate that a header comparison could never see.
+
+### Could not verify
+
+- **That the ADR revision will land before this branch.** The code now states the
+  dependency, which is the most I can do from here; nothing enforces it.
+- **That `--verify` is right about the *live* producer.** It runs the in-tree
+  classifier. If the deployed importer differs from this checkout, it agrees with
+  the wrong thing — and it would still print "all claims hold".
+- **That the derived faults payload is what I originally wrote.** It reproduces
+  the committed fixture to one timestamp leaf, which is stronger evidence than my
+  memory, but it is not the same claim: a different payload reaching the same
+  response would be indistinguishable.
+- **The rendered result of this round.** The changes are a comment, a test, a
+  generator and a docstring; I did not re-drive the screen in a browser at this
+  head, having been told to hold the tree still. The suite and the harness are
+  the evidence, and they are weaker than a browser for anything a browser can see
+  — which found a copy defect jsdom could not, one round ago.
+- **Whether the generator belongs where I put it.** It imports `backend/src` to
+  make frontend fixtures and fits neither side. Filed for `architect`.

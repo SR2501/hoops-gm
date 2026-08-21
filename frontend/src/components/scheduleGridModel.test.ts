@@ -381,17 +381,31 @@ describe('readPendingGames', () => {
   it('keeps every declared game accounted for somewhere', () => {
     // The arithmetic a reader does on screen: placed columns plus the stated
     // exceptions must reach the declared total, or the notice is hiding one.
-    // All four outcomes at once, so the sum is over the whole partition rather
+    // All five outcomes at once, so the sum is over the whole partition rather
     // than over whichever branches happened to be exercised.
+    //
+    // This assertion summed four terms and omitted `dateFaulted` until a
+    // reviewer compared it against the same sum in
+    // `ScheduleAbsenceReasons.recorded.test.tsx`. It passed, because the fixture
+    // it built contained no faulted game — a partition assertion that cannot see
+    // the term it is missing. The two sums must agree on how many terms the
+    // partition has; if you add a bucket, both fail.
     const model = buildScheduleGridModel(
       withPending([
         pending({ game_date: '2026-10-21' }, 'placed'),
         pending({ game_date: '2026-09-30' }, 'outside'),
         pending({ game_date: 'nonsense' }, 'unreadable'),
         pending({ game_date: null, date_absence_reason: 'not_offered' }, 'no-date'),
+        pending({ game_date: null, date_absence_reason: 'implausible' }, 'faulted'),
       ]),
     )
     const { pending: summary } = model
+
+    // Each term non-empty, so no branch can be dropped without the sum noticing.
+    expect(summary.outsidePeriods).toHaveLength(1)
+    expect(summary.unreadableDate).toHaveLength(1)
+    expect(summary.awaitingSource).toHaveLength(1)
+    expect(summary.dateFaulted).toHaveLength(1)
 
     const placedInColumns = model.periodPending.reduce((sum, bucket) => sum + bucket.length, 0)
     expect(placedInColumns).toBe(summary.placedCount)
@@ -399,7 +413,8 @@ describe('readPendingGames', () => {
       summary.placedCount +
         summary.outsidePeriods.length +
         summary.unreadableDate.length +
-        summary.awaitingSource.length,
+        summary.awaitingSource.length +
+        summary.dateFaulted.length,
     ).toBe(summary.declaredCount)
   })
 })
