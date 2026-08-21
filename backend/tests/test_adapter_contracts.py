@@ -495,6 +495,28 @@ class TestNbaPlayerIndexPosition:
         assert "500 of 578" in message
         assert "PERSON_ID" in message
 
+    def test_a_wholly_unusable_id_column_is_not_reported_as_an_empty_listing(self) -> None:
+        """The total case, which the empty-records check used to shadow.
+
+        When *every* id is unparseable, `records` is empty as well, and the
+        `if not records` branch used to win the race — reporting "no player
+        rows" for a payload that returned 578 of them. That message is the one
+        this adapter's own documentation attaches to a nonexistent season,
+        which returns 200 with an empty `rowSet`. So the total version of the
+        failure the guard was written for was routed to a different diagnosis.
+        """
+        payload = load("nba_playerindex_current.json")
+        table = payload["resultSets"][0]
+        column = table["headers"].index("PERSON_ID")
+        for row in table["rowSet"]:
+            row[column] = "not-an-int"
+
+        with pytest.raises(SourceContractError) as caught:
+            parse_player_index(payload, season="2026-27")
+        message = str(caught.value)
+        assert "578 of 578" in message
+        assert "no player rows" not in message
+
     def test_a_malformed_season_is_refused_at_the_parse_boundary(self) -> None:
         """SQLite would take it; PostgreSQL would not — so it is caught here.
 

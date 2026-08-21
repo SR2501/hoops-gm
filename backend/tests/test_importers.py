@@ -271,12 +271,23 @@ class TestPlayerPositionImport:
         **The state is unreachable under FK enforcement**, and that is stated
         rather than worked around: `player_external_ids.player_id` is a CASCADE
         foreign key, deleting a player removes its links, and SQLite refuses an
-        insert pointing at a missing row while `PRAGMA foreign_keys` cannot be
-        turned off inside an open transaction. An orphan therefore requires a
-        bulk load, a restored backup or a migration that ran with enforcement
-        off. So this drives the branch by making the lookup answer `None` —
+        insert pointing at a missing row. An orphan therefore requires a bulk
+        load, a restored backup or a migration that ran with enforcement off.
+        So this drives the branch by making the lookup answer `None` —
         exercising *our* response to a corrupt crosswalk, not a corruption this
         test can honestly manufacture.
+
+        **Two obvious ways to build it for real, both of which fail, and one of
+        them misleadingly.** Recorded because someone will re-derive them:
+
+        * ``PRAGMA foreign_keys=OFF`` then insert an orphan row. The pragma is
+          a **no-op inside an open transaction**, which this session always has,
+          so the insert hits the foreign key and raises `IntegrityError`. That
+          reads like a correct test catching a real constraint, so it is easy to
+          accept as evidence of something it is not.
+        * Delete the player the link points at. The delete cascades the link
+          away, so there is no orphan left to find — and `session.get` would
+          answer from the identity map regardless.
 
         What is being pinned is the exception *class*. Counting the orphan as
         `skipped` would hide a broken database inside a number that also means
@@ -291,13 +302,25 @@ class TestPlayerPositionImport:
 
         monkeypatch.setattr(crosswalked, "get", lambda *args, **kwargs: None, raising=True)
 
-        with pytest.raises(RuntimeError, match="referential integrity") as caught:
+        # Caught as `Exception`, not `RuntimeError`, and the class asserted
+        # positively. Catching RuntimeError would make the isinstance check
+        # below dead code — SourceContractError is not a RuntimeError, so a
+        # regression to it would propagate past `pytest.raises` and the
+        # assertion would never run. That is the same shape as the attribution
+        # column deleted in this branch for being unable to answer twice, and
+        # review caught it here too.
+        with pytest.raises(Exception) as caught:
             import_player_positions(
                 crosswalked, [real], observed_at=datetime(2026, 8, 20, tzinfo=UTC)
             )
+
+        assert type(caught.value) is RuntimeError, (
+            f"expected RuntimeError, got {type(caught.value).__name__}"
+        )
         assert not isinstance(caught.value, SourceContractError), (
             "a broken local crosswalk must not be reported as upstream drift"
         )
+        assert "referential integrity" in str(caught.value)
         assert str(real.nba_player_id) in str(caught.value)
 
     def test_position_provenance_is_written_as_a_complete_set_or_not_at_all(

@@ -252,6 +252,32 @@ of identity mismatch**, for the same reason `evidence.py` already lowered the
 The penalty is the identity lane's to re-tune; this lane recorded the effect
 and pinned it in a test rather than changing a matcher it does not own.
 
+#### Three things the endpoint does that no code path shows
+
+Recorded here because they cost a session to find and a future lane would
+otherwise re-derive them from scratch.
+
+**A nonexistent season returns zero rows, not an error.**
+`PlayerIndex(season="2030-31")` answers `200` with an empty `rowSet`. So a wrong
+season is caught only by the "no player rows" guard — a check about *player*
+rows, which is a different question — and a *near*-valid season, one that exists
+but is not the one you meant, would sail through with a full payload. That is
+why `season` is cross-checked against the payload's own `parameters.Season`
+echo rather than trusted.
+
+**`PlayerPosition` is a documented parameter that the server rejects.**
+`nba_api`'s signature advertises `player_position_abbreviation_nullable`, and
+sending any value gets `{"PlayerPosition": ["Invalid parameters"]}`. Do not
+build filtering on it; filter client-side on the parsed records.
+
+**That rejection surfaces as a library bug, not a rejected parameter.**
+`nba_api` raises `KeyError: 'resultSet'` from inside its own constructor, before
+`get_dict()` is ever reached, because it indexes a result-set key on an error
+envelope. Same "does not fail cleanly" behaviour documented above for a
+nonexistent game id — a rejected *parameter* and a broken *library* look
+identical from the call site, and only the client's wrapper turning it into a
+`SourceContractError` naming the endpoint makes it diagnosable.
+
 #### Guards, and what each can and cannot see
 
 | Guard | Fires when | Blind to |
@@ -285,35 +311,46 @@ position must know which season it describes, and checked against nothing. That
 is the `gameEt` shape. The payload echoes the season the server actually
 served, so it is now corroborated against that.
 
-#### One writer, one reader — and they are not the same path
+#### One writer, three readers — and the writer is not one of them
 
 `players.primary_position` is **written** by `backfill.build_crosswalk` (via
-`import_player_positions`) and **read** by exactly one consumer:
-`projections.importer.build_player_targets`, the projection-CSV matcher.
+`import_player_positions`) and **read** by:
 
-That distinction was wrong here until review caught it, and it matters:
+1. `projections.importer.build_player_targets` — the projection-CSV matcher.
+2. `api/routes/projections.py` — which selects the column and serves it as
+   `ProjectionPlayer.primary_position` on the projections release response.
 
-* `build_crosswalk` never reads the column. It feeds the resolver from the
-  in-memory `NbaPlayerPositionRecord` list that `parse_player_index` returned,
-  then writes the column as a side effect.
-* So **the crosswalk evidence measured above is produced entirely by the parse
+That count has now been wrong twice in opposite directions, which is worth
+recording as its own caution. It first said "two readers" and named
+`build_crosswalk` as one of them; `build_crosswalk` never reads the column, it
+feeds the resolver from the in-memory `NbaPlayerPositionRecord` list that
+`parse_player_index` returned and writes the column as a side effect. The
+correction then said "exactly one reader" — and missed the API route, which
+landed in a different lane between the claim and the correction.
+
+Two consequences follow, and the second is user-facing:
+
+* **The crosswalk evidence measured above is produced entirely by the parse
   path** and is unchanged whether `import_player_positions` persists a single
-  row or not.
-* `build_player_targets` has **always** passed `position=player.primary_position`
-  into `ResolvableRecord.build`. Because nothing ever wrote the column, that
-  path was silently position-blind for its entire life, and it flips to
-  position-aware the first time the crosswalk runs — which is a behaviour
-  change with no diff.
+  row or not. No test exercises the persisted column feeding a crosswalk,
+  because no code path does.
+* **The projections API response field changes value with no diff.**
+  `primary_position` has returned `null` for every player for the column's
+  entire existence, because nothing wrote it. It starts returning `"G"`,
+  `"F-C"` and so on the first time `build_crosswalk` runs. Same provenance as
+  `build_player_targets` silently becoming position-aware: a behaviour change
+  that no diff shows, in a field a consumer can already see.
 
-The same trade-off applies to both paths, with the same weights: a vendor
-calling a borderline big `C` where the NBA lists `F`, with no team to offset it,
-drops a correct match under the accept floor. Pinned by
+The matcher trade-off applies to both reader paths, with the same weights: a
+vendor calling a borderline big `C` where the NBA lists `F`, with no team to
+offset it, drops a correct match under the accept floor. Pinned by
 `TestProjectionTargetsAreNowPositionAware`. Anyone re-tuning
-`_DISAGREEMENT_PENALTY["position"]` moves both, though only one of them is
-reading the persisted value.
+`_DISAGREEMENT_PENALTY["position"]` moves the matcher paths; the API field is
+unaffected by the weights and reflects whatever was persisted.
 
-**No test exercises the persisted column feeding a crosswalk**, because no code
-path does.
+**The API serves the coarse NBA vocabulary** — `G/F/C` plus hybrids — because
+`import_player_positions` is the only writer and `PLAYER_INDEX_POSITIONS` bounds
+what it can emit. A consumer must not read it as a Fantrax lineup slot.
 
 
 

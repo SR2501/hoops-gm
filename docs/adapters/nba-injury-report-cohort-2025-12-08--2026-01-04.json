@@ -266,7 +266,7 @@
       "backend/src/hoops_gm/ingest/backfill.py": "d98c4398ea3f4749333ff588d4f585d4938822f392960766c596fde30618457e",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "a05ffeb36b5e68fed7024c310606a5a9038b4e86a23fb5f75b56c55891658db4",
       "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "4c93e41605f779dd54e663436101b739ded141e40a3bf3855bbcd9f3b77d21ee",
-      "backend/src/hoops_gm/ingest/nba/parsers.py": "dbd715d9b1376467a2acfd22c292fb5460086348baf019b8971e576ce9de8460"
+      "backend/src/hoops_gm/ingest/nba/parsers.py": "721e0238a8d63e8cbfd8c2f058c243d4bbf2aef166015fd137657e0602c1bb49"
     }
   },
   "participation_join": {

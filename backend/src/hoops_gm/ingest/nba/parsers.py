@@ -478,10 +478,14 @@ def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRe
             )
         )
 
-    if not records:
-        raise SourceContractError("no player rows", source=SOURCE, endpoint=endpoint)
-
     if unusable:
+        # Checked **before** the empty-records case on purpose. If every row's
+        # id is unparseable, `records` is empty too, and "no player rows" is
+        # the message this adapter's own documentation attaches to a different
+        # cause entirely — a nonexistent season, which returns 200 with an
+        # empty rowSet. Reporting an id-column type change as an empty listing
+        # would send the reader to the wrong question, so the more specific
+        # diagnosis wins. Found by review; the ordering was the other way.
         raise SourceContractError(
             f"{unusable} of {len(table.rows)} PlayerIndex rows carry a PERSON_ID that is "
             "not an integer. A row without a usable person id cannot be attributed to a "
@@ -491,6 +495,9 @@ def parse_player_index(payload: Any, *, season: str) -> list[NbaPlayerPositionRe
             source=SOURCE,
             endpoint=endpoint,
         )
+
+    if not records:
+        raise SourceContractError("no player rows", source=SOURCE, endpoint=endpoint)
 
     if unexpected:
         # Deliberately fatal, including for a value that is merely new. If the
