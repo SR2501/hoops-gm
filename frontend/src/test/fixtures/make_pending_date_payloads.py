@@ -23,21 +23,29 @@ docstrings *checkable* rather than asserted:
 
     python make_pending_date_payloads.py --verify
 
-re-derives both payloads, asserts the derived pending set matches each fixture's
-``pending_game_ids``, and re-runs the importer's date classifier over them
-against the reasons **read out of the fixtures themselves**. If the producer
-reorders reconciliation and plausibility, a 1900 pair stops being
-``implausible`` — the frozen fixture would not notice, and this does. If
-somebody hand-edits a reason in the JSON, that fails here too, which is the
-conversion-into-a-mock this whole file exists to prevent.
+re-derives all three payloads, asserts each derived pending set matches its
+fixture's ``pending_game_ids``, re-runs the importer's date classifier against
+the reasons **read out of the fixtures themselves**, and recomputes all 630
+per-period per-team count rows from the derived payload to compare against the
+recorded ones. If the producer reorders reconciliation and plausibility, a 1900
+pair stops being ``implausible`` — the frozen fixture would not notice, and this
+does. If somebody hand-edits a reason in the JSON, that fails here too, which is
+the conversion-into-a-mock this whole file exists to prevent.
+
+The counts comparison is there because two earlier versions of this check were
+**green while pointed at the wrong artifact**. It pinned only the pending block,
+so a resolved game was free to move between scoring periods — a within-DST shift
+that reconciles cleanly, which is exactly what a re-capture would produce — while
+this printed success. Two of twelve games were checked and the success line was
+read as covering the response.
 
 It does **not** claim to reproduce the lost payload byte for byte. A different
 input reaching the same response would be indistinguishable, and identity is not
 what the fixtures need: they need *some derivable input* producing those reasons
-and that response. The two variants are also not equally anchored — ``absent``
-was checked against a surviving original, ``faults`` never could be, because its
-original was already gone. Both regenerate the committed response to a single
-``refreshed_at`` leaf.
+and that response. The two doctored variants are also not equally anchored —
+``absent`` was checked against a surviving original, ``faults`` never could be,
+because its original was already gone. Both regenerate the committed response to
+a single ``refreshed_at`` leaf.
 
 The reasons, and the minimum edit that reaches each
 ---------------------------------------------------
@@ -86,6 +94,10 @@ TEAMS = FIXTURES / "nba_static_teams.json"
 # game id -> (gameDateTimeEst, gameDateTimeUTC), applied to the pending games in
 # document order. Anything not named here keeps the base fixture's values.
 VARIANTS: dict[str, dict[str, tuple[str, str]]] = {
+    # No edits: the committed base, captured as `schedule-grid-current`. It is a
+    # variant so the verifier covers it; ``--out`` writes it too, which makes the
+    # undoctored payload seedable by the same recipe as the other two.
+    "current": {},
     # Both faults, in one payload, so a single capture carries both.
     "faults": {
         # implausible: epoch placeholder pair, internally consistent (-05:00).
@@ -110,6 +122,11 @@ VARIANTS: dict[str, dict[str, tuple[str, str]]] = {
 #: -- the precise conversion-of-recording-into-mock this file exists to prevent,
 #: inside the check written to prevent it.
 RECORDED = {
+    # Undoctored: the base as committed, which every other comparison is
+    # anchored on. Included so `--verify` pins the payload the other two are
+    # edits *of*, and so the loop below covers every recording in this
+    # directory rather than only the ones with edits.
+    "current": pathlib.Path(__file__).parent / "schedule-grid-current.recorded.json",
     "faults": pathlib.Path(__file__).parent / "schedule-grid-date-faults.recorded.json",
     "absent": pathlib.Path(__file__).parent / "schedule-grid-date-absent.recorded.json",
 }
@@ -122,6 +139,37 @@ def recorded_expectations(variant: str) -> tuple[list[str], dict[str, str]]:
         game["nba_game_id"]: game["date_absence_reason"] for game in schedule["pending_games"]
     }
     return list(schedule["pending_game_ids"]), reasons
+
+
+def recorded_counts(variant: str) -> tuple[dict, list[dict], list[dict]]:
+    fixture = json.loads(RECORDED[variant].read_text(encoding="utf-8"))
+    return fixture, fixture["periods"], fixture["counts"]
+
+
+def derived_counts(payload: dict, periods: list[dict], teams: list[dict], season: str) -> dict:
+    """Per-period per-team game counts implied by the derived payload.
+
+    Recomputed with the producer's own parser rather than by re-reading dates
+    out of the raw JSON, so a change to how the producer resolves a date shows
+    up here instead of being reproduced by a second implementation of it.
+    """
+    sys.path.insert(0, str(REPO / "backend/src"))
+    from hoops_gm.ingest.nba.schedule import parse_schedule
+
+    by_nba_id = {team["nba_team_id"]: team["team_id"] for team in teams}
+    counts: dict[tuple[int, int], int] = {}
+    for record in parse_schedule(payload, season=season).games:
+        day = record.game.game_date.isoformat()
+        period = next(
+            (p for p in periods if p["start_date"] <= day <= p["end_date"]),
+            None,
+        )
+        if period is None:
+            continue
+        for nba_team_id in (record.home_nba_team_id, record.away_nba_team_id):
+            key = (period["period_number"], by_nba_id[nba_team_id])
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def pending_games(payload: dict) -> list[dict]:
@@ -172,6 +220,15 @@ def verify() -> int:
     sys.path.insert(0, str(REPO / "backend/src"))
     from hoops_gm.ingest.nba.schedule import _pending_game_date
 
+    if set(RECORDED) != set(VARIANTS):
+        raise SystemExit(
+            f"every recording must have a variant and vice versa; "
+            f"recordings-only {sorted(set(RECORDED) - set(VARIANTS))}, "
+            f"variants-only {sorted(set(VARIANTS) - set(RECORDED))}. "
+            "A recording with no variant is skipped silently, which is the "
+            "defect this function keeps being caught by."
+        )
+
     failures = 0
     for variant in VARIANTS:
         recorded_ids, expected = recorded_expectations(variant)
@@ -195,6 +252,31 @@ def verify() -> int:
                 failures += 1
             print(f"{status} {variant:7} {game['gameId']}  recorded {want:14} got {reason!r}")
 
+        # The resolved ten twelfths. Pinning only the pending block left a
+        # resolved game free to move between scoring periods -- a within-DST
+        # shift that reconciles cleanly -- while this printed success, which is
+        # the third time this function has been green about an artifact it was
+        # not looking at. The counts are what the screen renders, so they are
+        # what gets compared.
+        fixture, periods, counts = recorded_counts(variant)
+        derived = derived_counts(payload, periods, fixture["teams"], fixture["season"])
+        mismatches = [
+            row
+            for row in counts
+            if derived.get((row["period_number"], row["team_id"]), 0) != row["games"]
+        ]
+        if mismatches:
+            failures += 1
+            head = mismatches[0]
+            print(
+                f"FAIL {variant:7} {len(mismatches)} of {len(counts)} count rows differ from "
+                f"the fixture; first is period {head['period_number']} team {head['team_id']}: "
+                f"recorded {head['games']}, derived "
+                f"{derived.get((head['period_number'], head['team_id']), 0)}."
+            )
+        else:
+            print(f"ok  {variant:7} all {len(counts)} recorded count rows reproduced")
+
     if failures:
         print(
             f"\n{failures} check(s) failed. Either the producer's classification moved, "
@@ -202,7 +284,7 @@ def verify() -> int:
             "hand-edited, in which case it has stopped being a recording."
         )
     else:
-        print("\nEvery recorded reason is reproduced by the in-tree producer.")
+        print("\nEvery recorded reason and count row is reproduced by the in-tree producer.")
     return 1 if failures else 0
 
 

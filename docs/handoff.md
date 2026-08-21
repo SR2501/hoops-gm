@@ -12411,3 +12411,86 @@ I edited the tree while `architect` was mid-review, again, after being told to
 hold it still. They disclosed it in their own report rather than me. Twice
 disclosed by reviewers is not a lapse, it is a habit, and the fix is not
 intention — it is not starting work while a review is outstanding.
+
+## 2026-08-21 - frontend - The verifier was green about a third artifact it was not looking at
+
+**Unit:** `schedule-grid-pending-periods`, closing the last review round on
+`b366eeb`. `code-review` returned no new findings; `architect` returned three.
+
+### The same defect, a third time, found the same way
+
+`--verify` had been green while pointed at the wrong base, then green while
+reading a hardcoded dict instead of the recordings. Both were fixed. `architect`
+then moved a **resolved** game one week in the base — a within-DST shift that
+reconciles cleanly, which is exactly what a re-capture would produce — and got
+**exit 0**, while the game crossed from scoring period 1 into period 2 and would
+have changed the captured counts.
+
+The check pinned 2 of 12 games. The fixture is a whole response: 21 periods, 630
+count rows. And the docstring beside it said the fixtures "were regenerated end
+to end, differing in one leaf" — a sentence a reader would take a green
+`--verify` to stand for.
+
+**I fixed the instance twice and never asked what else the check could be
+pointed at.** The third instance was found by the same person applying the same
+move, which is the argument for the move rather than for me.
+
+`--verify` now recomputes all 630 per-period per-team count rows from the derived
+payload — using the producer's own `parse_schedule`, not a second implementation
+of its date logic — and compares them against the recording. `architect`'s exact
+case now reports 4 differing rows and exits 1.
+
+### `code-review` found the loop was driven by the wrong collection
+
+`verify()` iterated `VARIANTS` and indexed `RECORDED` from it, so a recording
+with no variant was skipped **silently, with a green exit**. Not hypothetical in
+form: `schedule-grid-current.recorded.json` sat in that directory, outside the
+verifier's scope, with nothing saying so.
+
+Closed both ways they suggested: the pairing is asserted, and `current` is now a
+third variant with an empty edit set — which additionally pins the undoctored
+base every other comparison is anchored on. All three recordings now have all
+630 count rows checked.
+
+### A mutation that could not fail, twice, while testing this
+
+Driving the silent-skip case, a PowerShell `-replace` failed to match. The run
+went green and looked exactly like a caught mutation. **That is the skipped-
+mutation failure this project wrote down tonight, happening to me while I wrote
+the check for it** — and it only surfaced because the result seemed too clean.
+The driver now asserts the edit changed the file before drawing any conclusion.
+
+Then two candidate mutations were discarded for being unobservable by
+construction: removing the pairing assertion, and removing the count comparison.
+With nothing currently violating either guard, removing it changes no output.
+**A mutation has to create the condition the guard exists to catch**, not merely
+delete the guard. Both replaced with data mutations, both caught.
+
+### `architect`'s third finding, and it is the same clause a third time
+
+The comment said the ADR "now assigns all five". The table assigns **four** —
+`''` is a date that resolved, not an absence cause — and the same sentence said
+so, contradicting itself within one clause.
+
+This exact clause has now been wrong about this exact document three times:
+understating the assignment to nothing, then overstating it by one, **each time
+in the direction I needed**. Nothing depended on it, which is why it survived; it
+is corrected to "every absence cause… four rows".
+
+### Could not verify
+
+- **Whether a fourth thing `--verify` is not looking at exists.** Three were
+  found by three different probes, none by me. The pattern says assume a fourth
+  until someone drives it; the honest statement is that the check now covers
+  reasons, pending sets and every count row, and I do not know what that leaves.
+- **The mutation harness, still outside the repository.** 33 of 33 remains a
+  number no reviewer can check, and it is the same shape as the finding above.
+  Oldest unclosed limitation here.
+- **Anything a browser sees, at this head.** The round changed a Python
+  generator, a comment and two docstrings.
+- **`architect`'s finding 2 is theirs, not mine:** the ADR-013 revision landed on
+  `main` touching one file, with no handoff entry and no backlog line. Recorded
+  so it does not go quiet.
+- **`schedule_content_version` is identical across all three grid fixtures**
+  despite materially different pending sets. Round-one fingerprint defect, still
+  open.

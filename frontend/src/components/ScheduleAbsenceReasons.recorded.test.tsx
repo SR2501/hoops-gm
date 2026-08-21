@@ -39,13 +39,14 @@
  *
  * `test/fixtures/make_pending_date_payloads.py` derives both from the committed
  * base the demo seed imports, and `--verify` re-runs the producer's own
- * classifier over them, asserting the four reasons named above. Both fixtures
- * were regenerated end to end through it — seed, serve, capture — and differ
- * from the committed bytes in exactly one leaf, `refreshed_at`. So the
- * reconstruction of the lost payload is proven rather than remembered, and the
- * concrete drift a frozen recording cannot see is now caught: reorder
- * reconciliation and plausibility in the producer and a 1900 pair stops being
- * `implausible`, which `--verify` fails on and the fixture alone would not.
+ * classifier over them, asserting the four reasons named above **and all 630
+ * recorded count rows**. Both fixtures were regenerated end to end through it —
+ * seed, serve, capture — and differ from the committed bytes in exactly one
+ * leaf, `refreshed_at`. So the reconstruction of the lost payload is proven
+ * rather than remembered, and the concrete drift a frozen recording cannot see
+ * is now caught: reorder reconciliation and plausibility in the producer and a
+ * 1900 pair stops being `implausible`, which `--verify` fails on and the fixture
+ * alone would not.
  */
 
 import { describe, expect, it } from 'vitest'
