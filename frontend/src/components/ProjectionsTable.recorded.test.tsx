@@ -132,7 +132,70 @@ describe('the recorded projections response', () => {
     // NBA box score carries a `Z` and is Eastern time. Asserting the shape of
     // the designator is all a client can honestly do; the screen shows the raw
     // string beside the derived one so a reader can check the claim.
+    //
+    // Deliberately **not** pinned to a literal: `imported_at` is a wall clock
+    // and changes on every capture, so a literal here would be flaky by
+    // construction rather than informative.
     expect(payload.lineage.projection_import.imported_at).toMatch(/(Z|[+-]\d{2}:\d{2})$/)
+  })
+
+  it('pins the two digests, so a re-capture of a different cohort fails here', () => {
+    // `imported_at` moves on every run; these do not. Pinning them literally is
+    // what makes "the seed's writes did not change" a checkable statement from
+    // the consumer side rather than something taken on the producer's word —
+    // and it is what turns an unnoticed re-capture into a red test that forces
+    // this file's docstring to be revisited alongside the new fixture. Same
+    // discipline as the schedule grid pinning `schedule.version`.
+    //
+    // `content_sha256` is the generated CSV bytes; `projection_values_sha256`
+    // is the stored normalised rates, and is the one that moves when a row is
+    // edited in place while the other looks untouched.
+    const { projection_import: imported } = payload.lineage
+
+    expect(imported.content_sha256).toBe(
+      '5970c8f285d606a489943e7d47479e261087bd336e17edf4dd3cb711ddf2356c',
+    )
+    expect(imported.projection_values_sha256).toBe(
+      '25a89365aff066ec1bb01ebcedb8a39d74283820c6175546ba7ba42c5dbf6d27',
+    )
+  })
+
+  it('pins the assumptions and labels the producer digests do not cover', () => {
+    // **The gap in "the digests are unchanged, so the cohort is unchanged".**
+    // `ReleasedProjectionImport` deliberately never selects
+    // `source_games_played_assumptions`, and the player labels are read outside
+    // any lineage scope — both stated as exemptions on
+    // `CurrentProjectionsResponse`, and the first is the open
+    // `release-digests-assumptions` item. So two matching digests are entirely
+    // consistent with this array having changed, which is exactly the defect
+    // that once served an *empty* assumptions array for a byte-identical
+    // re-import while reporting a clean lineage.
+    //
+    // The producer cannot pin these yet. The consumer can, so it does: this is
+    // coverage the endpoint's own guarantee does not provide, asserted on the
+    // values a reader would actually see.
+    const claims = payload.source_games_played_assumptions
+
+    expect(claims).toHaveLength(60)
+    expect(claims.every((claim) => claim.assumed_games_played !== null)).toBe(true)
+
+    const games = claims.map((claim) => claim.assumed_games_played ?? 0)
+    expect(Math.min(...games)).toBe(59)
+    expect(Math.max(...games)).toBe(79)
+    expect(claims.slice(0, 3)).toEqual([
+      { player_id: 1, assumed_games_played: 65, assumed_games_played_raw: '65' },
+      { player_id: 2, assumed_games_played: 73, assumed_games_played_raw: '73' },
+      { player_id: 3, assumed_games_played: 59, assumed_games_played_raw: '59' },
+    ])
+
+    // Labels are outside the digest too, and this is the column a reader is
+    // most likely to mistake for lineup eligibility.
+    expect(payload.players[0]).toEqual({
+      player_id: 1,
+      full_name: 'Precious Achiuwa',
+      team_abbreviation: 'SAC',
+      primary_position: 'F',
+    })
   })
 
   it('joins into a model with nothing to report', () => {

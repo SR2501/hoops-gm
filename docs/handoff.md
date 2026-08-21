@@ -14240,3 +14240,54 @@ because the person who hits it next will be reading one of those two and not thi
 - **That the ordering holds if the CLI's own review changes its seed.** `sr2501-projections-import-cli`
   is in its sixth round with a blocking `data-engineer` finding against the seed. If the seed's
   interface moves, my README's command moves with it, and I will not learn that from CI.
+
+## 2026-08-21 - frontend - Two matching digests are not "the cohort is unchanged"
+
+**Unit:** follow-up on `projections-ui` at `0f6430d`. `backend` reported that their seed
+remediation (`ee139a1` -> `ffa0662`) did not change what it writes, and that my recorded fixture
+therefore needs no re-capture. They gave evidence rather than reassurance: the write-affecting
+diff is one literal replaced by a constant holding the same literal, and both digests reproduce.
+
+**Verified from my committed file rather than accepted.** `content_sha256`
+`5970c8f2...` and `projection_values_sha256` `25a89365...` both match the values they quoted.
+Their conclusion is right and the fixture stands.
+
+**But the evidence does not reach as far as the claim, and the gap is a documented one.**
+`ReleasedProjectionImport` deliberately never selects `source_games_played_assumptions`, and the
+player labels are read outside any lineage scope - both stated as exemptions on
+`CurrentProjectionsResponse`, the first being the open `release-digests-assumptions` item. So
+**two matching digests are entirely consistent with the assumptions array or the labels having
+changed.** That is not hypothetical: the defect that opened `release-digests-assumptions` was a
+byte-identical re-import serving an *empty* assumptions array beside a clean lineage.
+
+So "the digests match, therefore the cohort is unchanged" is true of the rates and silently
+weaker for the two parts of the payload nobody digests. Same shape as the guarantees this
+project keeps finding: correct about what it covers, and read as covering more.
+
+**What I did about it, since the producer cannot pin these yet and the consumer can.** The
+recorded test now pins:
+- both digests as literals, so an unnoticed re-capture of a different cohort turns red and forces
+  this file's docstring to be revisited alongside the new fixture - the same discipline the
+  schedule grid uses on `schedule.version`, and the gap I had left: **nothing on my side would
+  previously have noticed a changed cohort**;
+- the assumptions array's length, its all-stated property, its 59-79 range and its first three
+  rows;
+- the first player's full label tuple.
+
+`imported_at` is deliberately **not** pinned to a literal - it is a wall clock and moves on every
+capture, so a literal would be flaky by construction. `backend` raised that as a thing to check
+and it was already correct, asserted by shape only.
+
+193 tests, lint and typecheck clean.
+
+**Could not verify:**
+- **An 8-byte difference between my captured payload (54159) and theirs (54167)** on runs whose
+  digests are identical. Non-digested fields are the obvious candidate and `imported_at`'s
+  microsecond string can vary in length, but I did not diff the two payloads - I do not have
+  theirs - so I am recording an unexplained discrepancy rather than an explanation. It does not
+  affect the pinned values.
+- **That my new assumption pins are the right *values*** rather than merely the current ones.
+  They are what the seed produced; nobody has checked them against anything external, and the
+  numbers are invented by construction.
+- **Whether the label digest matters.** I pinned one player's labels, not all sixty. A change to
+  a different player's team or position would pass.
