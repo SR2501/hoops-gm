@@ -132,7 +132,7 @@ defect — a seed writing a position with no provenance, a shape no real produce
 So, alongside the gate matching your work: **state what each check can and cannot observe
 at the point you write it**, and **re-derive any number or mechanism appearing in prose, at
 the moment you write it, from the code beside it.** The failure modes and their evidence are
-recorded as R49–R56 in `risks.md` — deliberately in one place, because a lesson restated in
+recorded as R49–R57 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
 
 ### Two questions no gate asks, because no gate looks at scope of application
