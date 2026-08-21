@@ -238,6 +238,8 @@ end on evidence, because each round genuinely produces some. It ends only on jud
 eight found a defect in a guard round seven had added; a ninth would have examined round
 eight's. Stop there, and say that is why.
 
+**And the two shapes are not exclusive within one series, which is why the stop call belongs outside it.** A nine-round unit was mostly the *converging* kind — wrong artifact, wrong field, wrong operand, wrong cardinality, wrong key set, each round a strictly smaller and more structural class in the **original** work. But two of its rounds were the thrashing kind: a one-directional key comparison fixed in one commit and reintroduced one function later, and a claim that went over-stated, then over-corrected, then right. **A series can converge and thrash at the same time, and the author cannot reliably tell which is dominant from inside it.** Have someone outside the series make the stop call.
+
 Two corollaries, both earned the same night:
 
 - **Do not push a prose improvement onto a head the coordinator is about to merge.** One lane
