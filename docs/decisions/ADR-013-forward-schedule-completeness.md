@@ -169,11 +169,12 @@ That is this ADR's fault before it is the consumer's, and it is fixed here.
 refused.
 
 **`null` means no trustworthy date could be derived, and the response says which cause.**
-Three are possible: the source offered no date at all, the source offered one that could not
-be read, or the two time fields could not be reconciled. **Only the first is the source
-saying "not yet decided."** The producer therefore emits a sibling field:
+Four are possible: the source offered no date at all; it offered one that could not be read;
+the two time fields could not be reconciled; or they agreed on a value the source cannot have
+meant, such as an epoch placeholder. **Only the first is the source saying "not yet
+decided."** The producer therefore emits a sibling field:
 
-    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable}
+    date_absence_reason ∈ {"", not_offered, unreadable, irreconcilable, implausible}
 
 a closed, validated set, **cross-checked against `game_date`** so that a reason without an
 absence, or an absence without a reason, is refused — the two halves of one fact cannot
@@ -187,11 +188,29 @@ persists, but **record the cause**. It is this repository's own "capture reason 
 just the outcome" — the rule it already applies to a DNP — applied to a parse result.
 
 **The consumer obligation follows from the reason, and the error direction is why it
-matters.** `not_offered` means *wait*: the bracket is undrawn and a date will arrive.
-`unreadable` means *investigate*: we failed to read something the source did send, or the
-schema moved. Rendering the second as the first tells an operator to wait through a defect.
-The live smoke asserts `unreadable` never occurs against the real source, because that value
-is a fault or a schema change rather than an undecided bracket.
+matters.** Rendering a fault as an undecided bracket tells an operator to wait through a
+defect, so each reason is assigned to the action it calls for:
+
+| reason | meaning | operator |
+|---|---|---|
+| `not_offered` | the source offered no date at all | **wait** |
+| `unreadable` | a value was published and we could not parse it | **investigate** |
+| `irreconcilable` | both fields parsed and disagree — the source contradicting itself | **investigate** |
+| `implausible` | both agreed on a value the source cannot have meant | **investigate** |
+
+`irreconcilable` sits on the fault side by decision rather than by derivation, and the
+reasoning is recorded because it was not obvious. It can arise two ways: a source expressing
+"undecided" through inconsistent sentinels, which is benign, or a genuine contradiction about
+a game whose date *is* decided, which is not — and **a consumer cannot tell those apart**. The
+cost is asymmetric: reporting a fault as a wait is the false comfort this whole section exists
+to prevent, while reporting a benign sentinel as a fault costs one look. The usual objection
+to that trade is alarm fatigue, and it does not apply here on the evidence: against the live
+2026-27 feed **all six pending games carry real dates and `date_absence_reason: ""`** — only
+their teams are undecided — so every fault reason currently fires zero times. If that ever
+stops being true, revisit this row rather than letting operators learn to ignore it.
+
+The live smoke asserts `unreadable` and `implausible` never occur against the real source,
+because both are a fault or a schema change rather than an undecided bracket.
 
 **Consequences for any consumer:**
 
