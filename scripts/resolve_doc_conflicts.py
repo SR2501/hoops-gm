@@ -43,7 +43,32 @@ import pathlib
 import re
 import sys
 
-MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
+# Git writes a conflict separator as *exactly* seven equals signs on their own
+# line, while the open/close markers are seven characters followed by a space and
+# a ref. Matching `=======` as a *prefix* therefore fires on any line that merely
+# starts with seven equals signs — an RST table border, or a markdown setext H1
+# underline. That is not hypothetical: it refused a tree with zero real markers,
+# and worse, a border on the *ours* side of a genuine conflict flipped the parser
+# to "theirs" early and wrote the real separator into the file. So the separator
+# is matched by equality and the others require their trailing space.
+#
+# `|||||||` is included because `merge.conflictStyle = diff3` emits a base
+# section; nothing here resolves diff3, but the detector must refuse a tree that
+# contains one rather than pass it silently.
+CONFLICT_BEGIN = "<<<<<<< "
+CONFLICT_SEPARATOR = "======="
+CONFLICT_BASE = "||||||| "
+CONFLICT_END = ">>>>>>> "
+
+
+def is_conflict_marker(line: str) -> bool:
+    """Whether a line is a git conflict marker, not something that resembles one."""
+    return (
+        line.startswith(CONFLICT_BEGIN)
+        or line.startswith(CONFLICT_BASE)
+        or line.startswith(CONFLICT_END)
+        or line == CONFLICT_SEPARATOR
+    )
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKIP_DIRS = {
     ".git",
@@ -64,13 +89,16 @@ def resolve_append_only(path: pathlib.Path) -> None:
     theirs: list[str] = []
     mode = "normal"
     for line in path.read_text(encoding="utf-8").split("\n"):
-        if line.startswith("<<<<<<<"):
+        if line.startswith(CONFLICT_BEGIN):
             mode = "ours"
             continue
-        if line.startswith("=======") and mode == "ours":
+        if line.startswith(CONFLICT_BASE) and mode in {"ours", "base"}:
+            mode = "base"
+            continue
+        if line == CONFLICT_SEPARATOR and mode in {"ours", "base"}:
             mode = "theirs"
             continue
-        if line.startswith(">>>>>>>") and mode == "theirs":
+        if line.startswith(CONFLICT_END) and mode == "theirs":
             out.extend(ours)
             out.extend(theirs)
             ours, theirs = [], []
@@ -78,6 +106,8 @@ def resolve_append_only(path: pathlib.Path) -> None:
             continue
         if mode == "ours":
             ours.append(line)
+        elif mode == "base":
+            continue
         elif mode == "theirs":
             theirs.append(line)
         else:
@@ -92,7 +122,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
     if not path.is_file():
         return
     text = path.read_text(encoding="utf-8")
-    had_conflict = "<<<<<<<" in text
+    had_conflict = CONFLICT_BEGIN in text
     text = re.sub(r"<<<<<<< HEAD\n.*?>>>>>>> [^\n]*\n", "__NOTE__\n", text, flags=re.DOTALL)
     lines = text.split("\n")
     headings = [line for line in lines if line.startswith("### ")]
@@ -149,7 +179,7 @@ def surviving_markers() -> list[str]:
         except (UnicodeDecodeError, OSError):
             continue
         for number, line in enumerate(text.split("\n"), 1):
-            if line.startswith(MARKERS):
+            if is_conflict_marker(line):
                 found.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line[:40]}")
     return found
 
