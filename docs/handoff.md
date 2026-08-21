@@ -13295,3 +13295,140 @@ by reviewers with a numstat, and this file will now show a clean 0-deletion appe
 
 No cohort was regenerated, no live source was called, no fit was run, no number was emitted,
 and no owner-only decision was made.
+
+## 2026-08-21 — quant — Round two: I got the same citation wrong twice, in the paragraph about getting it wrong
+
+**Unit:** second exact-head `data-engineer` and `code-review` passes, on the delta
+`8f87fe8..6a4d209`. Both reviewed a tree that did not move. Five findings actioned in
+`a8bd422`. Both reviewers independently signalled the stopping rule — every finding is in
+prose *this review series caused* — so this is the last round on this unit.
+
+**First, a correction to the entry above, which is append-only and stands as written.** It
+says the partition-agnostic disclosure requirement exists because publishing counts by a
+declared partition writes a `quant` split into *"an ingest artifact against ADR-006"*. **ADR-006
+is the wrong ADR.** It is "External adapters isolated behind contract tests", and its subject
+is adapter-versus-upstream isolation — fixtures, contract tests, throttling. It says nothing
+about a downstream consumer's parameter entering an ingest artifact. The principle is
+**ADR-008**, whose decision is that layers are ordered
+`observations → projections → availability → valuation` with information flowing one way. A
+split boundary is an availability-layer parameter; the cohort manifest is an
+observations-layer artifact.
+
+**The mechanism is worth more than the correction.** That citation arrived in a `data-engineer`
+review, I adopted the rationale, and I never re-derived the reference. It is the identical
+defect to the PR #30 `source_fingerprint_method` mis-citation from round one — **and I
+committed it in the same change that recorded that one.** `gates.md` says to re-derive any
+number or mechanism appearing in prose at the moment of writing; I applied that to figures I
+computed and not to a citation I was handed. **A borrowed justification is exactly as
+unverified as a borrowed number, and it does not feel like one**, because it arrives already
+argued and attributed to someone with more context.
+
+### The rule I wrote to close a leak forbade and permitted the same object
+
+My round-one invariant was *"outcome-valued counts stay whole-cohort; only the denominator gets
+the finer breakdown."* `code-review` showed it **mis-sorts its own first two applications**: a
+direct-outcome count is itself defined by a predicate on the outcome value, so requirement 1 —
+per-status direct counts by date — is an outcome-valued count broken down by status and date.
+The rule permits and forbids it simultaneously. I had also listed `explicit_unknown` as one of
+three "pure absence predicates"; it is defined by `ParticipationOutcome.UNKNOWN`, an outcome
+*value*, and it is not a `continue` branch in the generator at all. The real third branch is
+`without_nba_anchor`. **I mis-sorted my own example three paragraphs after stating the rule.**
+
+`data-engineer` then showed the rule fails structurally, against the *committed* manifest
+rather than hypothetically:
+
+- the two existing whole-cohort marginals already yield the exact global play rate
+  `292/1918 = 0.15224` and bound the non-`out` rate at `≤ 0.712` — real inference from fields
+  the rule calls safe, so it constrains coarseness rather than informativeness;
+- **it is stated per-manifest, and git makes cross-manifest differencing free.** The manifest
+  path has 12+ committed revisions and the planned operation is *widening the same window*, so
+  cohort B ⊃ cohort A with both committed, and `M_B[outcome] − M_A[outcome]` is the added
+  dates' outcome marginal while the new by-date denominators give their status composition.
+  **The widening this unit recommends is the thing that opens the attack**, and my rule is
+  satisfied at every step of it;
+- "whole-cohort" is a label, not a size guarantee — coarseness depends on `N`.
+
+Replaced, not patched, because a rule reached by enumerating attacks is stale the next time a
+field is added: **the pre-unblind disclosure surface adds no outcome-keyed field at any
+granularity in any manifest version**, beyond the one whole-cohort marginal already present.
+That is a closed set rather than a granularity heuristic, it needs nobody to reason about
+differencing, and `data-engineer` owns a contract test pinning the outcome-keyed field set to
+a frozen allow-list.
+
+### The binding rule justified itself with a fact about today
+
+Both reviewers, independently, accepted that "binds on merge" was **sound rather than
+self-serving** — the guarantee a pre-registration sells is that outcomes could not have
+influenced the protocol, immutability is only a proxy for it, and every recorded change was
+reviewer-driven and *tightened* the protocol. `code-review` verified the direction: an author
+gaming this relaxes a threshold or moves a boundary, and the delta table records the opposite.
+
+But both then found the same hole: **merge timing is not controlled.** Widening is an
+unscheduled owner decision with no ordering against this branch, so a PR held open across the
+collection window would still "bind on merge" while no longer being prospective — and §1
+already says the property is gone once the cohort exists. Now: binds at **the earlier of merge
+and the first row of the fitting cohort being collected**, which is falsifiable from `scope`
+and the merge timestamp.
+
+`data-engineer` also pointed out that **the delta table lives inside the document it audits and
+can be amended by the same edit it records.** It is now explicitly a convenience beneath
+`git log` on the pushed branch. And it was incomplete — four changes were missing, including
+v1's held-out `doubtful` count of 4, which I added during the review window from the unblinded
+v1 artifact. That is admissible only because it is a *denominator*, a count of rows rather than
+an outcome value, and it is now listed and labelled rather than quietly absent. **A completeness
+claim that is not complete is the failure mode this unit exists to catch.**
+
+### The question only I could answer, and the answer was the unfavourable one
+
+`data-engineer` asked whether my new split rule merely reproduces v1's realized boundaries —
+and noted it could not check, because v1's date list lives in a local-only artifact and the
+committed fixture is trimmed to six boundary games.
+
+Computed from `injury_status_conversion_v1_rows.json`: v1 has 25 distinct game dates, its
+**12th is `2025-12-21`** and its **18th is `2025-12-28`**. So `floor(0.50 · 25) = 12` and
+`floor(0.25 · 25) = 6` recover v1's split **exactly** — development `12-08..12-21`, selection
+`12-22..12-28`, holdout `12-29..01-04`.
+
+**So §4 is inherited, not discovered**, and now carries the same note §5 does. It is the split
+under which I have already seen v1's answers, expressed as a general rule. I kept the rule
+anyway: 50/25/25 chronological is conventional, and picking different proportions *because*
+these are contaminated is a worse reason than keeping them and disclosing it. On the corrected
+cohort's 26 dates the same rule gives 13/6/7, so the boundary moves by one date.
+
+Related: the ~4.5× multiplier inherits v1's 32% **row** share while §4 specifies a **date**
+rule, and v1 shows they differ — 7 of 25 dates is 28% but 32% of rows, because holdout dates
+were denser. Recorded; once a widened cohort exists the multiplier derives from the rule.
+
+### What the reviewers verified, including a correction to one of their own
+
+`data-engineer` confirmed the handoff append is a **strict byte prefix** — `new_bytes` starts
+with `old_bytes`, 782,387 bytes preserved verbatim, no differing line at any index — which is
+a stronger property than my own line-list comparison could express, since comparing lines
+normalises the missing terminator I was asking them to accept. `code-review` corrected its own
+round-one claim that `3285e647` was reachable from no ref: it is the tip of local branch
+`sr2501-injury-status-conversion`, contained in no remote, so it is not gc-able — which
+*strengthens* the contamination finding rather than weakening it. Both re-derived the ≤1,932
+bound, the 26/2 exclusion split, v1's held-out `doubtful` of 4, all five relocated citations,
+and the backlog at 114/40/1/73 with no marker changed.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when this was written. Local gates green: 1,271 tests, Ruff
+  lint and format, strict mypy over 140 files, tree clean afterwards.
+- **That the closed-set rule is itself sufficient.** It is stronger than what it replaced and
+  it is enforceable, but it was reached by the same process — reasoning, not attack — and
+  neither reviewer nor I ran an attack against a real widened manifest, because none exists.
+  I believe it holds because the gate consumes only denominators; I have not proved that the
+  gate's consumers will stay that way.
+- **That no other borrowed citation in this unit is wrong.** I found this one because a
+  reviewer checked it. I have not re-derived every reference I adopted from a review, and the
+  defect class is specifically that a handed-over justification does not feel unverified.
+- **Whether v1's split rule was itself chosen to fit v1's data.** I established that my rule
+  reproduces v1's boundaries; I did not establish how v1's boundaries were chosen, and v1's
+  own freeze states them as literal dates with no derivation.
+- **Any v1-derived figure, by anyone without this clone**, including the date computation
+  above. `3285e647` was never pushed.
+- **The lower bound on cohort overlap.** Not computable until the cohort database exists.
+
+No cohort was regenerated, no live source was called, no fit was run, no number a decision
+rests on was emitted, and no owner-only decision was made.
