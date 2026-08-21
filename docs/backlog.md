@@ -593,7 +593,29 @@ once checked:
   because `aria-describedby` is announced unreliably on `table`, so the trade is
   not obviously favourable and no one has tested either with a real screen
   reader. `frontend` owns it; the trigger is anyone testing this screen with AT.
-- **The doctored-payload derivation should move under `backend/`, and one action
+- **The mutation harness should be committed, and the reason overturns the rule
+  that kept it out.** Governance said *commit a tool whose failure mode is loud;
+  describe a tool whose failure mode is silent* — and a mutation harness fails
+  silently, since a broken one reports success. That conclusion is wrong here.
+  **Loud/silent governs safety; it does not govern evidence.** *33 of 33 caught*
+  was cited in every one of this unit's nine review rounds and **no reviewer
+  could ever check it**, because the thing producing it was outside the
+  repository. Stating the limitation each round is what made it invisible rather
+  than what excused it. The rule now reads: **if a tool's output is cited as
+  evidence, it belongs in the repository regardless of failure direction, because
+  the citation is what is being audited.** Deliberately not done in this PR — the
+  unit stopped at `architect`'s ruling, and adding a tool at round ten is how
+  round eleven happens. It carries a preflight that treats a rotted anchor as a
+  failure, and 33 mutations plus a separate driver for the `--verify` holes; both
+  live in session state today. `frontend` owns it; the trigger is the next unit
+  that would cite a mutation count in a review.
+- **`ScheduleGridTable.recorded.test.tsx` still asserts `counts` completeness by
+  length**, `teams.length * periods.length`, which is the proxy that let a real
+  count row be replaced by a duplicate zero row and render as `·`. `--verify`
+  now catches that case by comparing the key set, so the tree is not blind to
+  it; this assertion is a second check sharing the retired proxy. Not changed
+  here because it was not driven end to end, and quietly editing an assertion is
+  how this file got into trouble. `frontend` owns it.
   closes two problems.** `make_pending_date_payloads.py` is a Python script under
   `frontend/src/test/fixtures/` that imports `backend/src` to make *frontend*
   fixtures, so it belongs to neither side. The cost is measurable rather than
