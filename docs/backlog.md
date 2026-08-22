@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 84 pending - 130 total**
+**46 done - 1 blocked - 83 pending - 130 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
+two headers: 130 `###` headings, 130 unique item slugs and 130 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -212,7 +212,7 @@ asserting every database the seed paths produce reports a revision.
 
 ### `draft-append-error-classification` - Distinguishing permanent from retryable storage failures on draft append
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-format-abstraction`
 
 The draft-event append path wraps its insert in a blanket `except` that maps **every** storage
@@ -224,6 +224,18 @@ only for connection and serialisation failures. Found on 2026-08-21 by a tripwir
 1,373 tests passed and none of them entered the handler, so a code review, a mutation matrix
 and a green PostgreSQL run all cleared it simultaneously — see the *prove a test reaches the
 code at all* bullet in the Code gate, which this item is the reason for.
+
+**Landed 2026-08-21 in PR #64, and it diverges from the remedy above in two ways worth
+recording, because "done" should not be read as "done exactly as written".** `_violated_constraint`
+reads psycopg's `diag.constraint_name` on PostgreSQL as prescribed, but **falls back to message
+text on SQLite**, which exposes no structured constraint name at all — it names the constraint
+for `CHECK`, names the columns instead for `UNIQUE`, and names nothing for `FOREIGN KEY`. Where
+the dialect will not say, the handler returns `None` and the caller treats it as **permanent**,
+the safe direction. And the one integrity violation deliberately kept *retryable* is
+`uq_draft_events_draft_sequence`: the sequence is computed as `max + 1` in Python, so a duplicate
+means a concurrent writer won the race and re-reading then re-appending genuinely does succeed.
+Driven, not assumed — 48 barrier-synchronised attempts on PostgreSQL 16.9 produced 13 wins and 35
+retryable refusals with no duplicates and a contiguous sequence.
 
 ### `draft-format-abstraction` - Abstracting snake and auction draft formats
 
@@ -1415,10 +1427,35 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending**
+- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen and the bridge feed are outstanding*
 - **Depends on:** `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
+
+**What landed, and why this stays open.** The persistence and API half is done:
+`drafts`, `draft_participants` and `draft_events` (migration `0017`), where an
+ordered, append-only event log is the only stored fact and every board, roster,
+spend figure and turn is re-derived from it on each read. The format is
+snapshotted onto the draft from `draft-format-abstraction` at creation and never
+re-read from the league, so a later league edit cannot move a recorded price;
+the league's current format is published alongside as `league_format_drift`
+rather than silently reconciled. `GET /api/v1/drafts`, `GET /api/v1/drafts/{id}`,
+`GET /api/v1/drafts/{id}/events` and the two `POST`s are loopback-only, and there
+is deliberately no `PUT`, `PATCH` or `DELETE` anywhere on the surface -
+corrections are recorded as `void` events, which is what makes `last_sequence` a
+complete version token and lets a read take no lock (ADR-014). A mock auction and
+a mock snake draft are recorded end to end by `hoops_gm.dev.seed_draft`.
+
+Three things this does **not** do, each of which is why the marker is still
+`pending` rather than `done`. There is no screen - that is the stacked
+`frontend` lane, and this item's own description asks for a board and a roster
+construction view. Nothing feeds the log automatically: every event arrives
+because a person posted it, so "fed by the bridge and official API" is
+unstarted. And the log stores only what happened - no price estimate, no
+inflation, no recommendation, no `p(play)` - which is correct scope here but
+means the item's downstream readers (`auction-budget-manager`,
+`auction-inflation`, `draft-recommender`, `live-draft-availability`) are
+unblocked on their *input*, not served by it.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 

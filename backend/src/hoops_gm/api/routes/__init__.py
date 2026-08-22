@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from hoops_gm.api.routes import (
     bridge,
     deadline_calendar,
+    drafts,
     health,
     lineage,
     meta,
@@ -31,5 +32,6 @@ api_v1_router.include_router(lineage.router)
 api_v1_router.include_router(deadline_calendar.router)
 api_v1_router.include_router(schedule_grid.router)
 api_v1_router.include_router(projections.router)
+api_v1_router.include_router(drafts.router)
 
 __all__ = ["api_v1_router", "ops_router"]

@@ -14958,3 +14958,664 @@ would need the Model gate.
   reason; marking my own commissioning items `done` is not a call I should make unreviewed.
 - **The ownership row is recorded, not derived.** I did not re-examine whether `backend` is the right
   owner; `architect` ruled and I wrote it down.
+
+## 2026-08-21 - backend - A guard nobody could break is a guard nobody tested
+
+**Changed:** `draft-tracker`'s persistence and API half. Three tables in migration `0017` -
+`drafts`, `draft_participants`, `draft_events` - plus `hoops_gm/draft/state.py` (pure derivation),
+`hoops_gm/draft/service.py` (the only writer), `hoops_gm/api/routes/drafts.py` (five endpoints),
+`hoops_gm/dev/seed_draft.py`, and two test modules. `docs/backlog.md` gained a "what landed, what
+did not" note on the item; the marker stays `pending`, see below.
+
+**The shape, in one paragraph.** The ordered append-only event log is the only stored fact. There is
+no stored current state anywhere: board, rosters, spend, the open lot and whose turn it is are
+re-derived by `derive_state()` on every single read. That is deliberate and it is the decision the
+rest follows from - a stored summary is a second thing that can be wrong, with nothing available to
+say which of the two is lying. Corrections are `void` events; there is no update path and no delete
+path, and consequently the surface offers no `PUT`, `PATCH` or `DELETE` at all. Because everything
+at or below a sequence is immutable, `last_sequence` is a complete version token, so **no read or
+write takes a lock** (ADR-014) and a stale writer is refused with `draft_sequence_conflict` (409)
+rather than blocked. Validation is one rule, not two: `_append()` builds the candidate event, calls
+`derive_state(existing + [candidate])`, and inserts only if that succeeded - so the writer and the
+reader cannot drift, and a refused append leaves no row and no hole in the sequence.
+
+**This is a local write to our own Postgres. It is not the automation write path.** Nothing here
+sends anything to Fantrax; there is no Fantrax client, no action executor, no outbound call of any
+kind in this diff. So it needs no `safety` sign-off, and I am stating that here rather than leaving
+the next reader to work it out from the absence of evidence.
+
+**Scope held.** No valuation, no auction price estimate, no inflation, no recommendation, no
+`p(play)`. The log stores what happened. `remaining_budget` is published because it is arithmetic
+over recorded facts and a recorder needs it to type the next bid; `max_bid` is deliberately absent
+because that is a decision, and it belongs to `auction-budget-manager`.
+
+**Now true:**
+
+- A mock auction and a mock snake draft record end to end. Driven, not argued: `python -m
+  hoops_gm.dev.seed_draft` produces both, and I then drove all five endpoints against a real uvicorn
+  process over HTTP - the nomination/bid/sale cycle, `draft_sequence_conflict` on a replayed append,
+  `draft_pick_out_of_turn`, `draft_player_already_taken`, `draft_no_open_lot`, and 405 on
+  `PUT`/`PATCH`/`DELETE`.
+- Code gate on SQLite: ruff, ruff format, mypy strict and 1370 tests green, plus `alembic upgrade
+  head` from empty and `downgrade base`, plus `test_models_and_migrations_agree`.
+- The format is snapshotted from `draft-format-abstraction` onto the draft row at creation and the
+  league is never consulted again for a recorded draft. The league's current format is published as
+  `league_format_drift` instead of being reconciled, so a screen can say "these prices were paid in
+  a 4-team $200 league and the league row now reads 12-team $300" rather than showing one and
+  labelling it the other.
+
+**What the mutation harness found, which review did not.** Fifteen guards, each broken on purpose,
+each demanding a named test go red - assert target text present, assert green, mutate, assert the
+file changed on disk, assert red, revert, assert green. Three results were not what reading the code
+predicted:
+
+1. **`test_the_surface_publishes_no_decision_numbers` did not catch a `max_bid` field.** It walked a
+   populated auction response looking for forbidden keys. An auction publishes `next_pick: null`, so
+   `NextPickOut` never appeared in the body and a decision number added to that model was invisible.
+   A guard that only sees the fields some fixture happened to populate is a guard over the fixture.
+   It now walks the OpenAPI component schemas transitively from the draft paths, which name every
+   field of every response model whether or not any test populates it, and asserts
+   `"NextPickOut" in seen` first so an empty walk cannot read as success.
+2. **`test_the_draft_surface_offers_no_way_to_edit_or_delete` was vacuous.** It scanned
+   `client.app.routes` for `APIRoute`s and found **zero** draft routes, because this FastAPI keeps
+   an included router as a single lazy `_IncludedRouter` entry. Every "no mutating method" assertion
+   below that passed over an empty set. The presence assertion caught it - the same difference-of-
+   two-absences failure two other lanes hit today, in the verification tool rather than the code. It
+   now reads the OpenAPI document, which is also the artefact the frontend lane will generate a
+   client from.
+
+   Two things generalise out of this and both are repository facts, not observations about my
+   module. **Any test in this repository that scans `app.routes` is probably vacuous** - the routes
+   are not there to be found, and a scan reports a clean pass. And the broader rule the day has now
+   produced four instances of: *a check that iterates must first assert it found something to
+   iterate over.* Zero routes, zero swatches, zero cells and zero games are each indistinguishable
+   from the property holding perfectly. "Assert the presence you expect, not the absence of what you
+   fear" is the same rule stated for a single value; this is the collection form of it.
+3. **`extra="forbid"` was missing on the request models.** The mutation that exposed it was a bid
+   carrying a `player_label`. Pydantic's default silently drops the field, so the recorder is told
+   the bid was accepted *and* believes the player was captured, and only one of those is true. For a
+   tool whose entire job is recording what happened, silently discarding part of what someone
+   recorded is the worst available behaviour. Now a 422.
+
+**A normalisation fact I got wrong by reading and right by running.** The within-draft duplicate key
+is `normalize_key`, which strips digits and generational suffixes: `"Player 1"` and `"Player 2"` both
+key to `"player"`, and `"Gary Payton II"` keys to `"gary payton"`. My own test fixtures collided on
+it. The refusal message used to say "record a label that distinguishes them", which is advice that
+does not work - typing `"Jalen Johnson 2"` is refused identically. An ordinary word does survive
+(`"Jalen Johnson (ATL)"` keys distinctly), so the message now asks for a team abbreviation and says
+why a digit will not do. Anyone recording a mock would have hit this in the first ten minutes.
+
+**Environment hazard, and it has already caused a published false verification.** There is **no
+virtualenv** on this machine. `hoops_gm` resolves to a stale namespace package at
+`AppData\Roaming\Python\Python314\site-packages\hoops_gm` containing only `schedule_context`, and
+`_editable_impl_hoops_gm_backend.pth` points at `sr2501-congenial-umbrella\backend\src` - **a
+worktree that no longer exists**. Every Python invocation needs `$env:PYTHONPATH="$PWD\src"` from
+`backend/`.
+
+The dangerous part is the *shape* of the failure, and I had it slightly wrong until I drove it.
+**`import hoops_gm` succeeds.** It resolves to the stale namespace package, so any check of the form
+"can I import the package" passes. What fails is `hoops_gm.app`, one level down, at
+`conftest.py:20`, and pytest exits **4** - a collection error, not a test failure. So the honest
+check is not `import hoops_gm` but:
+
+    python -c "from hoops_gm.app import create_app; import hoops_gm; print(hoops_gm.__file__)"
+
+which must print a path inside your own worktree. A bare `import hoops_gm` prints `None` and looks
+survivable.
+
+This is not a footnote. The coordinator's mutation harness ran pytest by subprocess without
+`PYTHONPATH`, every run exited 4, the harness scored any non-zero exit as "mutation caught", and two
+full matrices of green results were published that were entirely `ModuleNotFoundError`. Review
+caught it by getting the opposite answer on one mutation.
+
+**My own harness had the same latent bug, and I only know it did not fire because I went back and
+checked.** It asserted green-before, which catches a *persistently* broken environment - but
+`caught = not run(...)` still treated any non-zero exit as a catch, so a mutation that broke
+**collection** rather than an **assertion** would have scored as caught. Four of my fifteen
+mutations insert code rather than swapping an expression, which is exactly the shape that can raise
+at import time. Rebuilt to discriminate exit codes instead of truthiness:
+
+| pytest rc | meaning | scored as |
+| --- | --- | --- |
+| 0 | passed | not caught |
+| **1** | **a test failed** | **the only thing that counts as caught** |
+| 2 / 3 / 4 / 5 | interrupted, internal error, collection error, nothing collected | harness failure, reported as such |
+
+Re-run: all fifteen caught at `rc == 1`, including all four code-inserting ones. So the earlier
+result was right, but it was right by luck of the environment rather than by construction, and I
+could not have said which before re-running. I then confirmed the discrimination is real rather than
+decorative by clearing `PYTHONPATH` and running the harness again: every entry reported
+`[NOT GREEN rc=4]` and none reported a catch. That is the falsification, not the argument.
+
+Two harnesses in one day, both scoring `rc != 0` as success. **A mutation harness that treats
+pytest's exit code as a boolean is measuring whether pytest ran, not whether the guard works.**
+
+**Backlog:** recounted from the finished file after merging `origin/main` - 122 headings, 122 unique
+slugs, 122 markers, 1:1, giving 45 done / 1 blocked / 76 pending / 122 total, which matches the
+existing header. Separately `Compare-Object`d the slug set against `origin/main`: **identical**,
+nothing dropped, nothing added. That diff is the check that mattered - before merging it showed four
+items on main and absent from my branch (`adr-index-consistency-test`, `blend-override-persistence`,
+`blend-recipe-persistence`, `participation-ledger-population`). They were additions I had not yet
+merged rather than deletions I had caused, but a recount of my own file was internally consistent at
+118 and could not have told me that. I did not run `scripts/resolve_doc_conflicts.py` at all.
+
+**`draft-tracker` stays `pending`, and I want to be argued with about it if that is wrong.** I was
+asked to mark it done if it genuinely is. It is not. Its own description asks for a board and a
+roster construction view - that is the stacked `frontend` lane - and says "fed by the bridge and
+official API", and nothing feeds this log automatically; every event arrives because a person posted
+it. I used the marker form `player-position-eligibility` already established at
+`docs/backlog.md:223`, so the item reads as half-landed rather than untouched, and the header count
+is unaffected because no marker changed.
+
+**Could not verify:**
+
+- **Nothing was run against PostgreSQL. (Driven only that it is unavailable; the cross-dialect claim
+  itself is reasoned.)** No Postgres service and no Docker on this machine - checked, not assumed.
+  So the ADR-001 half of the Code gate is unmet by observation. What I can say is narrower: the new
+  models use only `Numeric(10, 2)`, `UTCDateTime`, `portable_enum` and ANSI `CHECK` expressions with
+  no dialect-specific functions, `test_portability.py` passes, and
+  `test_every_enum_column_has_its_own_check_listing_every_member` passes. The specific thing I would
+  drive first on Postgres is the `IntegrityError` path in `_append`: Postgres aborts the whole
+  transaction on a constraint violation where SQLite does not, and although the code does call
+  `session.rollback()` - which is the Postgres-correct thing - I have only ever seen it take the
+  SQLite path.
+
+  > **CORRECTION, same day, twice over. Do not read the paragraph above as true.**
+  >
+  > **The unavailability claim was wrong.** I wrote "checked, not assumed" and I had checked the
+  > wrong things - no `docker`, no local service on 5432. Review found PostgreSQL 16.9 already
+  > running on this machine at `postgresql+psycopg://qimember@127.0.0.1:55432/<db>`, another lane's
+  > dev rig, in about ten minutes of treating "unavailable" as a claim rather than a fact. Roughly
+  > twenty entries in this file assert the same unavailability and not one of them checked. **A
+  > negative that would be expensive to be wrong about deserves the search a positive would get.**
+  >
+  > **The gate half is closed, and how it closed is the useful part.** CI's dedicated
+  > `Backend — the same suite against Postgres (ADR-001)` job succeeded on the exact head `5ec3d0f`
+  > in run **32547872673** (push; the `pull_request` run 32547874571 agrees). Confirmed by listing
+  > that run's jobs and finding the ADR-001 job **present and successful** - a green "CI" conclusion
+  > alone would not have shown whether that job ran at all. The suite has since also been driven
+  > locally on Postgres 16.9, dialect read from the live engine rather than the URL passed in.
+  >
+  > **And the specific worry named above did not materialise.** `session.rollback()` handles the
+  > Postgres transaction abort correctly on both dialects. The real defect on that seam was a
+  > different one: `_append` published every `IntegrityError` as a retryable sequence conflict, so a
+  > permanent row rejection was documented to clients as transient. See the later entries.
+- **Concurrent appends were never actually raced. (Reasoned.)** The sequence is computed as
+  `max + 1` in Python and made safe by a unique constraint on `(draft_id, sequence)`, so two
+  simultaneous writers should produce one success and one `draft_sequence_conflict`. I proved the
+  conflict path by replaying a stale `expected_last_sequence`, which exercises the *check*, not the
+  race. Cheap to disprove: two threads, one draft, no `expected_last_sequence`.
+- **`draft_pick_out_of_turn` may be too strict for real recording. (Reasoned, and I would like this
+  challenged.)** An ordered draft refuses a pick from the wrong seat. That is right for a draft the
+  tool is watching and possibly wrong for a person catching up after missing two picks, who then
+  cannot record either of them until they reconstruct the order. I chose refusal because a board
+  with picks attributed to the wrong seats is worse than a board with a gap, and because the void
+  path makes a mis-entry recoverable. If the owner hits this in a live mock, the fix is a recorded
+  `skipped` event, not relaxing the check.
+- **There is no SSE endpoint, and that is a decision rather than an omission. (Reasoned.)** An SSE
+  generator holds a database session open for the life of the connection, which is the worst
+  available failure mode for the one hour of the year this must not break. Polling `GET
+  /drafts/{id}` is cheap because the whole state derives from one indexed query. I have not measured
+  the derivation cost at a full 12-team roster-16 auction - about 200 selections and perhaps 600
+  events - so "cheap" is an argument from the query plan, not a timing.
+- **Append-only is enforced by construction and by the absence of a route, not by the database.**
+  A raw `UPDATE` against `draft_events` succeeds. There is a `sqlite_only` test that *proves* it
+  does, precisely so this narrow claim cannot quietly be read as a broad one. A trigger would need
+  dialect-specific SQL, which `test_portability.py` forbids.
+- **The `player_id` crosswalk is not exercised.** Every event recorded in anger so far carries a
+  `player_label` and a null `player_id`, so `unresolved_player_count` is currently just the
+  selection count. The two-players-one-name escape hatch is tested with synthetic ids, never against
+  a real crosswalk resolution.
+- **I rendered both edits through GitHub's own markdown renderer** (`gh api /markdown`) and read the
+  backlog entry back as text rather than trusting the diff, after a different lane's error today was
+  caught only by a rendered read. What I did *not* do is read the surrounding 14,000-line handoff
+  file rendered, so a structural problem I introduced above or below my own entry would be invisible
+  to me.
+
+
+## 2026-08-21 - backend - Postgres was available all along, and derivation does not validate storage
+
+Review blocked PR #64 on one finding and raised two more. All three are fixed
+here, a fourth surfaced while driving the first, and one standing repository
+excuse is retired.
+
+### PostgreSQL is available on this machine. It always was.
+
+```
+postgresql+psycopg://qimember@127.0.0.1:55432/<db>
+```
+
+Trust auth, no password, running now. It is another lane's dev rig. `conftest.py`
+already honours `TEST_DATABASE_URL`, so pointing the whole suite at it is one
+environment variable:
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+psycopg://qimember@127.0.0.1:55432/hoops_gm_backend_lane"
+python -m pytest
+```
+
+**This file contains roughly twenty separate entries asserting the opposite** -
+"no Postgres locally", "Docker unavailable", "PostgreSQL is CI-only" - mine
+included. Every one of them deferred a verification that did not need
+deferring. None of them checked; they inherited the claim from an earlier entry
+that also had not checked. That is unexamined inheritance operating on an
+*environment fact* rather than on a docstring, and it cost this project a whole
+class of deferred verification for no reason. It was found by ten minutes of
+looking, by someone who treated "unavailable" as a claim.
+
+Observed from the live connection, not from the argument I passed:
+`PostgreSQL 16.9`, `dialect=postgresql`.
+
+### `DATABASE_URL`, not `HOOPS_GM_DATABASE_URL`
+
+`Settings` declares **no `env_prefix`** (`core/config.py:36-43`). The prefixed
+name is silently ignored and settings fall back to the default
+`sqlite:///./hoops_gm.db` at the repo root.
+
+I had used the prefixed name to "verify migrations from empty" in the previous
+entry. Alembic dutifully migrated a stale SQLite file instead, and the giveaway
+was in the output all along: it printed `Running upgrade 0013 -> 0014`, not
+`-> 0001`. **A migration run that does not begin at `-> 0001` is not a
+migration run from empty**, whatever database you believed you pointed it at.
+Driven correctly here, on a freshly created Postgres database:
+
+```
+INFO  Running upgrade  -> 0001, core schema: identity, stats, league, schedule
+...
+OBSERVED dialect: postgresql | tables: 36
+OBSERVED draft tables: ['draft_events', 'draft_participants', 'drafts']
+PRESENT: both constraints the discrimination fix rests on
+DOWNGRADE_RC=0
+```
+
+Constraint names in the database carry the metadata naming convention, so the
+CHECK is `ck_draft_events_player_id_requires_label`, not
+`player_id_requires_label` as declared. An assertion on the declared name fails
+against a schema that is entirely correct.
+
+### Finding 1 - a permanent error published as a transient one
+
+`_append` caught `IntegrityError` and published **every** one of them as
+`draft_sequence_conflict`, which is in `_RETRYABLE`, which is a 409 documented
+to clients as transient with "re-read and append again". Two reachable inputs
+pass derivation and fail at INSERT: a `player_id` naming no player (FK), and a
+sale carrying `player_id` with no `player_label` while a lot is open - legal to
+derive, because `_apply_sale` takes the label from the lot, and refused by
+`ck_draft_events_player_id_requires_label`.
+
+A conforming client retries either of those forever, while the person recording
+a live auction is told someone else beat them to the sequence. The diagnosis
+worth keeping: **`derive_state` validates the log's semantics; it does not
+validate the row's storage constraints.** Two unrelated failure domains, one
+blanket `except` speaking for both.
+
+Fixed by discriminating on the constraint name - psycopg reports it directly,
+SQLite only names CHECK constraints in message text and never names foreign
+keys. Only `uq_draft_events_draft_sequence` is retryable; everything else is
+`draft_row_rejected`, a 422 naming the constraint. **An unrecognised failure is
+classified permanent**, which is the safe direction: a permanent error is
+visible and re-postable, a spurious transient one is an invisible retry loop.
+
+### Finding 4, which the fix for Finding 1 uncovered
+
+The failure path called `session.rollback()`. That undoes **the caller's
+uncommitted work too**. My first test for Finding 1 failed with
+`draft_participants_incomplete ... got []` - the refused append had destroyed
+the draft and all four seats, because the test created them in the same
+transaction. `seed_draft` and any mock recorded in one go do exactly that.
+
+Invisible through the API, where each request has its own session and the draft
+was committed by an earlier one. Only reachable when the refused append shares a
+transaction with the thing being recorded.
+
+Replaced with `session.begin_nested()` - a SAVEPOINT, which discards exactly the
+refused row on both dialects and leaves the outer transaction usable. That is
+also the correct answer to the Postgres-aborts-the-transaction concern I raised
+in the previous entry, and a better one than the rollback I had defended.
+
+### Findings 2 and 3 - refusals that cannot be followed, and a claim that was too broad
+
+`draft_lot_already_open` advised "record the sale, or void the nomination at
+sequence N". Once a bid follows the nomination, voiding it is refused, because
+the bid replays against a lot that no longer exists. The message now names the
+tail and says to void back from it, and the test drives the advice to
+acceptance rather than asserting the wording.
+
+**Corrections are tail-first. That is an unnoticed consequence, not a trade I
+weighed.** The previous entry said "corrections are void events" without
+qualification. Voiding the most recent event always works; voiding an older one
+replays everything after it against preconditions that may have changed.
+Survivable for the first real use - an auction recorded as standalone sales
+replays cleanly with budgets and holdings correct - and now stated in
+`state.py`'s module docstring so the unqualified claim cannot be read off the
+code. When a replay refuses, `record_void` re-raises naming the later sequence
+and why, because otherwise the refusal describes an event the recorder never
+posted and reads as a bug.
+
+### The tripwire, and why all of this was invisible
+
+I could not tell by reading whether the green Postgres CI run *exercised*
+`_append`'s `IntegrityError` handler or merely failed to contradict it. So I
+wrote a marker file into the handler, proved the probe fires by driving a
+genuine constraint violation through it, then ran the full suite:
+
+```
+1373 passed
+TRIPWIRE ABSENT: no test in the suite reaches the IntegrityError handler
+```
+
+**Zero tests reached it.** Every `draft_sequence_conflict` in the suite came
+from the optimistic check in Python, which never touches the database. That is
+how a blanket `except` survived review, a mutation matrix, and a green Postgres
+run simultaneously. A suite passing on Postgres is not the same as a path being
+reached on Postgres, and the difference is not visible from the outside.
+
+There is now a test that forces a real duplicate key through the handler by
+making `_append` misread the log - exactly what a losing writer in a real race
+does.
+
+### Mutation results are dialect-specific, which I did not expect
+
+Five mutations, exit-code discriminated, only `rc == 1` counted:
+
+| mutation | SQLite | Postgres |
+|---|---|---|
+| blanket `except` restored | caught | caught |
+| savepoint -> transaction-wide rollback | caught | caught |
+| advice always says "void the nomination" | caught | caught |
+| void replay refusal unannotated | caught | caught |
+| **discrimination cannot see psycopg's name** | **survived** | **caught** |
+
+The last row is correct rather than a gap: that branch is unreachable on
+SQLite. But it means **a mutation matrix run on one dialect cannot vouch for
+code that branches on dialect**, and the surviving entry is the only thing that
+tells you so. Run on SQLite alone it looks like a hole; run on Postgres alone
+the SQLite text-parsing fallback goes unexercised.
+
+### Could not verify
+
+- **A genuine concurrent race from two processes** - *reasoned*, not driven.
+  Review drove one on real Postgres 16.9 (`attempts=48 wins=13 refusals=35
+  crashes=0`) which is far better evidence than I had, but that was against the
+  code *before* this change. The savepoint narrows what a failed append undoes
+  and cannot widen it, so the race outcome should be unchanged - argued, not
+  observed.
+- **Whether `_violated_constraint` handles a dialect that is neither** -
+  *reasoned*. MySQL or MSSQL would fall through to `None` and be classified
+  permanent. Safe, but untested, and ADR-001 does not put us there.
+- **Postgres text-parsing fallback** - *reasoned*. On Postgres the psycopg
+  `diag` path always answers first, so the SQLite regexes never run there. If
+  psycopg ever stops populating `diag.constraint_name`, every refusal silently
+  becomes permanent, including real races. The mutation in the table above is
+  exactly that scenario and it is caught, so the failure would be loud in CI
+  rather than in a draft.
+- **The `player_id` crosswalk** - *driven negatively only*. Every recorded event
+  in every test is label-only or uses a deliberately absent id. No test records
+  an event against a `players` row that exists.
+- **Whether the tail-first limit bites the owner** - *reasoned*. It does not for
+  standalone auction sales. It will the first time he voids an old nomination
+  mid-lot, and the message now tells him what to do instead.
+
+### For the next lane
+
+- **`app.routes` is vacuous in this repository.** This FastAPI keeps an included
+  router as one lazy `_IncludedRouter`; `len(app.routes) == 6`, two with
+  `path=None`, and a naive scan finds **zero** draft routes while every
+  assertion about them passes. Use `app.openapi()["paths"]`, or
+  `r.original_router.routes`. Independently reproduced by review.
+- **A check that iterates must first assert it found something to iterate
+  over.** Five instances in one day, all in the verification tool rather than
+  the code. Zero routes, zero swatches, zero cells, zero games and zero
+  statements are each indistinguishable from the property holding perfectly.
+- **Report the state you observed, never the parameter you passed.** Review's
+  own harness branched on `dialect == "postgres"`, was passed `pg`, and ran
+  against SQLite while printing plausible Postgres results. It caught itself
+  only because it printed the dialect from the live engine. Every dialect claim
+  in this entry was obtained that way.
+- **Only `rc == 1` means a mutation was caught.** `rc == 4` is a collection
+  error - usually a missing `PYTHONPATH` - and a harness reading the exit code
+  as a boolean scores it as a pass. This produced two published, entirely
+  fictitious green matrices elsewhere today.
+
+---
+
+## 2026-08-21 — backend — a refusal that named the wrong event, and a guard that asserted the wrong absence
+
+**PR #64, `draft-tracker`.** Two message-correctness defects found by independent
+review at `5ec3d0f`. Both were messages asserting something untrue about the log.
+No stored number was affected and the OpenAPI document is **byte-identical** to
+`5ec3d0f` — verified by serialising `create_app().openapi()` at both revisions
+and comparing hashes, not by reading the diff.
+
+### What was wrong
+
+**`record_void` dressed up the void's own hygiene refusals as replay refusals.**
+The guard was `blamed != supersedes_sequence`. The four hygiene rules — voiding a
+void, voiding an already-voided target, naming a missing target, self-reference —
+blame *the sequence the new void would occupy*, which is neither the target nor a
+pre-existing event. So all four passed the guard and were re-wrapped as "sequence
+N, which comes after it, no longer holds once it is gone", naming an event that
+did not exist. Now the re-wrap requires `supersedes_sequence < blamed <= tail`,
+where `tail` is the log's highest sequence read *before* the append. A positive
+range check rather than a denylist of the four codes, because a denylist goes
+stale the moment a fifth hygiene rule is added — the absence failure mode again.
+
+**`draft_lot_already_open` advised voiding the event you were already voiding.**
+`_apply_nomination` computed `tail = event.sequence - 1`: raw arithmetic over
+sequence numbers that ignores which events survive. During a void replay the
+preceding sequence is frequently the voided one, so the advice read "void back
+from sequence 2 to 1" while you were voiding sequence 2. Derivation now threads
+`previous_live_sequence` — set at the end of each surviving iteration of the loop
+that already skips voids — so the remedy names the last event that actually
+exists. In the reported case that collapses to "void the nomination at sequence
+1", which is true and can be followed.
+
+### The thing worth carrying
+
+**My guard for the second fix was vacuous, and the mutation check is the only
+reason I know.** I asserted `"void the nomination at sequence 2" not in detail`
+and `"to sequence 2 first" not in detail` — the absence of the circular advice.
+The old code phrases its circularity as `"void back from sequence 2 to 1"`, which
+neither pattern matches, so the test passed against the unfixed code. Reverting
+the fix produced **GREEN**, not a failure.
+
+The repair was to assert the presence of the right answer — `"or void the
+nomination at sequence 1." in detail` — after driving both revisions and reading
+what each actually emits. This is the same defect class the repository logged
+five times today, and it is the second time it appeared in a *remediation* rather
+than in original work. The tripwire question that catches it: **which of my new
+branches are green but never entered, and which of my new assertions would still
+hold if I removed the code they are about?**
+
+### Verified by observation
+
+| Check | Result |
+|---|---|
+| Full suite, SQLite | green |
+| Full suite, PostgreSQL 16.9 | green; dialect read from the live engine, not the env var |
+| Mutations, SQLite | 3/3 caught at `rc == 1`, green before and after revert |
+| Mutations, PostgreSQL | 3/3 caught at `rc == 1`, green before and after revert |
+| ruff, ruff format, mypy strict (153 files) | clean |
+| OpenAPI vs `5ec3d0f` | byte-identical; no published code or shape changed |
+| Advice followed to acceptance | every refusal's named remedy driven to a 201 in the test, not asserted as text |
+
+### Could not verify
+
+- **A concurrent race against the current head.** *Reasoned.* Review drove 48
+  attempts on Postgres against the code before the savepoint change and 112 more
+  after; neither ran against these two commits. Nothing here touches the append
+  or the unique constraint — `_last_sequence` is one extra read before the try —
+  so I argue it is unaffected. I did not drive it.
+- **`_last_sequence` under a concurrent append.** *Reasoned.* It can read a tail
+  that another writer has already advanced, which would make the re-wrap's range
+  check slightly conservative — a replay refusal published unwrapped. That
+  degrades a message, never a stored value, and the unique constraint still
+  refuses the append itself.
+- **A third dialect.** *Reasoned.* `_violated_constraint` falls through to
+  `None` and classifies permanent, which is the safe direction. Untested.
+
+### Not asked for and not done
+
+The frontend lane asked whether `DraftLogError.sequence` could reach the HTTP
+body so the screen can highlight the knock-on row rather than parse prose. It is
+a good ask and I did not do it: `ErrorResponse` is the app-wide envelope — *"the
+stable error envelope, every non-2xx response uses this shape"* — referenced by
+25 route sites, and `sequence` means nothing for a schedule or bridge error.
+Adding an optional field breaks no client, so the objection is modelling rather
+than risk, but a shared cross-module contract is not this lane's to change
+quietly inside a blocked PR that a reviewer is about to re-run. Escalated to the
+coordinator to route; it is a clean, small follow-up unit.
+
+---
+
+## 2026-08-21 — backend — Three corrections, and the third guard was vacuous like the first two
+
+**PR #64, `draft-tracker`, rebased onto `642bdb6`.** Two message-correctness defects fixed, one
+Low tightened, and the backlog item `main` opened about this code closed. Docs and code only;
+no schema, no migration, and **the OpenAPI document is unchanged**.
+
+### The rebase
+
+`docs/handoff.md` conflicted twice, both append-vs-append; resolved by keeping both sides.
+`docs/backlog.md` did not conflict. Verified against **baselines captured before the rebase
+started**, per the gate note added the same day that a check you can only run when nothing went
+wrong is not a check: all 208 `##` headings from `main` and all 3 unique to this branch are
+present afterwards, and the slug set is unchanged in both directions.
+
+Two things about that verification are worth copying. My first "no markers survive" assertion
+**fired correctly and for the wrong reason** — `docs/handoff.md` legitimately contains
+`` `<<<<<<< HEAD` `` inside backticks at line 10732, in an earlier lane's entry describing this
+exact failure. Anchoring the check at line start distinguishes git's markers from quoted prose.
+And the check runs against **the commit**, not the working tree, because that same entry records
+a lane that resolved correctly and then staged a marker anyway.
+
+**One number in the brief was wrong and the file was right.** I was told `main` stood at 128
+items (45/1/82). `main` is at **129** (45/1/83) and its own header agrees with its own contents.
+Recounting from the file rather than accepting the figure is the only reason that surfaced.
+
+### The three fixes
+
+**The void re-wrap fired for the four hygiene refusals.** Those blame the sequence the *new*
+void would occupy — `tail + 1`, which does not exist — so the message claimed a later event "no
+longer holds once it is gone" about an event that was never there. Now gated on
+`supersedes_sequence < blamed <= tail`. A **positive range check rather than a denylist of the
+four codes**, because a denylist goes stale the moment a fifth hygiene rule is added.
+
+**`draft_lot_already_open` advised voiding the event you were voiding.** `_apply_nomination`
+computed its remedy from `event.sequence - 1` — arithmetic over raw sequence numbers that
+ignores which events survive — so during a void replay it named the voided event. Derivation now
+threads the last *surviving* sequence through the loop that already skips voids.
+
+**The Low: the replayed refusal's own advice stood as a second instruction.** It describes the
+*hypothetical* replayed log, so following it costs a wasted round trip before the outer
+instruction redirects correctly. It is now quoted, leaving exactly one imperative outside
+quotation marks. Scope enumerated rather than fixed at the point of complaint: two sites embed
+inner text, and the other (`service.py:166`) carries only descriptions — *"must be a positive
+integer, got X"* — never a competing instruction. That one needs nothing.
+
+### The thing this entry exists for
+
+**All three of my guards for these fixes were vacuous on first writing, and the mutation matrix
+is the only thing that said so.** Not one, three.
+
+The first two asserted the *absence* of the wrong advice; the unfixed code phrases its
+circularity differently, so both passed against the bug. The third — written *after* I had
+recorded that exact lesson, in the same file, hours earlier — asserted that the phrase
+`"Record the"` did not appear outside quotation marks, **in the one test whose inner message is
+descriptive and never contained those words at all**. Reverting the quoting fix produced GREEN.
+The guard belonged on the sibling case, whose inner message genuinely is an instruction.
+
+So the rule that keeps paying: **an absence assertion must be placed where the thing you fear
+actually occurs, and you have to observe that it occurs before you assert it does not.** I fixed
+it by printing both messages verbatim and reading them, which took two minutes and should have
+come first all three times.
+
+**And a correction is the most dangerous place to write a guard**, because it arrives with the
+confidence of having just been right about something. That is now a Code gate note; this is an
+instance of it produced by the lane that reported the finding it came from.
+
+**The harness caught itself once more, on the same run.** One of the seven mutants left mismatched
+f-string delimiters, so `service.py` no longer parsed; pytest exited **4** on the conftest
+`ImportError` and no test ran at all. It was reported `NOT CAUGHT (rc=4)` only because this
+harness scores `rc == 1` and nothing else — the same harness bug the coordinator published two
+fictitious matrices from, arriving here by a different route. A mutant that does not compile is
+not a surviving mutant *or* a killed one; it is a run that never happened. The harness now calls
+`compile()` on the mutated file and refuses rather than scoring it, and the mutant was rewritten
+to be valid Python, after which it is caught at `rc == 1`.
+
+The general form, which is not about mutation testing: **a tool that classifies outcomes by a
+single bit — passed / didn't pass — cannot distinguish "the thing under test failed" from "the
+test never ran".** Those need different responses and only one of them is evidence.
+
+### Verified by observation
+
+| Check | Result |
+|---|---|
+| Full suite, SQLite, rebased head | green |
+| Full suite, PostgreSQL 16.9, rebased head | green; dialect read from the live engine, not the URL |
+| Mutations, both dialects | **7/7 caught at `rc == 1`**, green before and after each revert |
+| — including both arms of the remedy ternary | separately mutated, because coverage reports a ternary covered if *either* arm runs |
+| — including the pass-through gate | removing it is caught |
+| ruff, ruff format, mypy strict | clean |
+| OpenAPI vs pre-rebase head | byte-identical; the stacked `frontend` client is unaffected |
+| Backlog | recounted from the finished file **and** slug set diffed against `origin/main`; both sides presence-asserted |
+
+**The ADR-001 half of the Code gate was closed by CI on the exact head, and it is worth saying
+that rather than "green".** I could not run PostgreSQL locally when this PR opened; I can now
+(see the entry above), and the suite passes on 16.9 here. But the gate-bearing evidence is CI's:
+run **32558240048** on `push`, head `6c0c75a8193f64f2bd65b2d3402ca2aabde90008`, job **`Backend —
+the same suite against Postgres (ADR-001)` → success**, one of nine jobs, eight successful and
+one (`Adapter gate — live smoke`) skipped by design. The predecessor head `ce4c603` was run
+**32553749570**.
+
+Three things about how that was read. The head SHA comes from the run itself, not from the
+checks table, which showed the coordinator a false pass earlier the same day. The **job was
+enumerated by name**, because a green overall conclusion does not tell you whether a particular
+job ran — a run with that job absent also concludes green. And the enumeration **asserts it found
+jobs before drawing any conclusion from them**: an empty job list would otherwise satisfy "no
+failing job" perfectly.
+
+### Branches green but unentered — driven by probe, not by suite
+
+This is a **different and weaker claim than covered**, and it is stated separately because the
+distinction is the one that let a permanent-error-as-transient bug through a code review, a
+mutation matrix and a green PostgreSQL run at the same time.
+
+Six refusal branches in `draft/state.py` and `service.py:399` are **not entered by the test
+suite on either dialect**. Independent review drove all seven with a purpose-built probe and
+each behaves correctly. Nobody should read the suite as evidence about them. `service.py`'s
+re-wrap pass-through, by contrast, *is* now entered by the suite, and for a structural reason
+rather than a coincidence of the current strings: the hygiene refusals blame `tail + 1`, so
+`blamed <= tail` fails and they fall through.
+
+### Could not verify
+
+- **A concurrent race against this exact head.** *Reasoned.* Review drove 48 attempts before the
+  savepoint change and 112 after, neither against these commits. Nothing here touches the append
+  or the unique constraint — the three changes are a read before the `try`, a loop variable and
+  message text — so I argue it is unaffected. I did not drive it.
+- **`_last_sequence` under a concurrent append.** *Reasoned.* It can read a tail another writer
+  has already advanced, which makes the range check *conservative*: a replay refusal published
+  unwrapped. That degrades a message, never a stored value.
+- **A third SQL dialect.** *Reasoned.* `_violated_constraint` falls through to `None` and
+  classifies permanent, the safe direction. Untested.
+- **The rendered read of this entry.** *Driven* for the table only. I have not read the
+  surrounding 15,000-line file rendered, so a structural problem above or below my own entry
+  would still be invisible to me.
+
+### Two judgement calls a reviewer should overturn if they disagree
+
+**I marked `draft-append-error-classification` done, and it is not done exactly as written.** The
+item prescribes reading the dialect's own error attributes "not the message text" and returning
+permanent for all integrity violations. The implementation does the first on PostgreSQL but
+falls back to message text on SQLite, which exposes no structured constraint name; and it keeps
+`uq_draft_events_draft_sequence` *retryable*, because the sequence is `max + 1` in Python and a
+duplicate genuinely is a concurrent writer. Both divergences are recorded in the backlog entry
+itself, so the marker cannot be read as more than it is. One line to revert.
+
+**`DraftLogError.sequence` still does not reach the HTTP body**, so the screen can say which
+entry broke but cannot highlight it. `ErrorResponse` is the app-wide envelope — *"every non-2xx
+response uses this shape"* — referenced at 25 route sites, and `sequence` is meaningless for a
+schedule or bridge error. Additive, so the objection is modelling rather than risk, but a shared
+cross-module contract is not one lane's to change quietly inside a blocked PR. Filed for the
+coordinator to route. The `frontend` lane confirmed it is not blocked by this.

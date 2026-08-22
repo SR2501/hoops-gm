@@ -207,6 +207,80 @@ class DraftType(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
+class DraftStatus(enum.StrEnum):
+    """Where a recorded draft is in its own life.
+
+    Derived from the event log rather than stored, so there is only ever one
+    fact to keep consistent. ``SETUP`` means participants exist and nothing has
+    been selected; ``IN_PROGRESS`` means at least one live selection;
+    ``CLOSED`` means a ``closed`` event is live.
+
+    There is deliberately no ``COMPLETE``-by-fullness value. A mock auction
+    routinely ends with slots unfilled because people leave, so "every slot is
+    taken" is not the same claim as "this draft is over" and merging them would
+    make the second unrecoverable. Fullness is published separately as
+    ``slots_filled``/``total_roster_slots``.
+    """
+
+    SETUP = "setup"
+    IN_PROGRESS = "in_progress"
+    CLOSED = "closed"
+
+
+class DraftEventType(enum.StrEnum):
+    """One entry in a draft's append-only log.
+
+    The log is the source of truth and current state is derived from it. These
+    six values are what a person recording a draft — snake or auction — can
+    actually observe. Nothing here is a recommendation, a valuation or a price
+    estimate: a ``sale`` amount is the price a human watched clear, not a price
+    anything computed.
+
+    ``VOID`` is why the log can stay append-only while still being correctable.
+    A mistyped pick is not deleted and not edited; a ``void`` naming its
+    sequence is appended, and derivation skips the superseded event. What
+    happened *and* what we later believed about it both stay readable.
+    """
+
+    #: An ordered-draft (snake/linear) selection.
+    PICK = "pick"
+    #: An auction lot opened. Carries the nominated player.
+    NOMINATION = "nomination"
+    #: An auction bid on the open lot. The lot names the player, so a bid does
+    #: not repeat it — a bid that could name a different player than its lot is
+    #: a disagreement waiting to be recorded.
+    BID = "bid"
+    #: An auction lot cleared: this participant paid this amount.
+    SALE = "sale"
+    #: Supersedes an earlier event of this draft by its sequence number.
+    VOID = "void"
+    #: The recorder declaring the draft over.
+    CLOSED = "closed"
+
+
+class DraftToolUsage(enum.StrEnum):
+    """Whether this project's own numbers drove the bidding in a draft.
+
+    Required at creation with **no default**, because R38's circularity risk is
+    asymmetric: defaulting to ``BLIND`` would silently launder contaminated
+    evidence into the clean control group, and a default of ``INSTRUMENTED``
+    would throw away the only market data that can never be accused of echoing
+    us. Neither error is recoverable after the fact — the information exists
+    only while the draft is being recorded (``docs/mocks/README.md``).
+
+    This unit stores the value and never reads it. Weighting a contaminated
+    corpus differently is ``aav-empirical``'s and ``opponent-calibration``'s,
+    behind the Model gate.
+    """
+
+    #: The tool was not used, did not exist, or was deliberately not consulted.
+    BLIND = "blind"
+    #: Consulted for some decisions.
+    PARTIAL = "partial"
+    #: Our own values drove bidding.
+    INSTRUMENTED = "instrumented"
+
+
 class CategoryKind(enum.StrEnum):
     """Counting versus ratio.
 

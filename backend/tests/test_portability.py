@@ -153,7 +153,7 @@ def test_phase_one_entity_groups_are_present(group: str, expected: set[str]) -> 
 
 
 def test_later_phase_entity_groups_are_absent() -> None:
-    """Projections, valuation, draft and bridge belong to other agents.
+    """Projections, valuation, draft decisions and automation belong elsewhere.
 
     ``player_participation`` was on this list until Phase 2 and has been
     removed deliberately, because the boundary it was drawing turned out to be
@@ -174,6 +174,18 @@ def test_later_phase_entity_groups_are_absent() -> None:
 
     ``injury_reports`` stays absent: the NBA injury report is a Phase 4 source
     and nothing ingests it yet.
+
+    ``drafts`` has now been removed for a reason of the same shape as
+    ``player_participation``'s. The plan groups Draft together, but the group
+    holds two different kinds of thing: **what happened in a draft room** — who
+    was picked, who was nominated, what a lot cleared for — which is an
+    observation somebody records, and **what should happen next** — a
+    recommendation, a dollar estimate, an inflation-adjusted price — which is a
+    number a decision rests on and is `quant`'s behind the Model gate.
+    ``draft-tracker`` builds only the first. ``draft_picks`` stays absent
+    because it is the *derived* board, and this unit derives the board from the
+    log on read rather than storing it; a stored board beside the log would be
+    a second thing that can be wrong with nothing to say which.
     """
     not_yet = {
         "injury_reports",
@@ -187,12 +199,52 @@ def test_later_phase_entity_groups_are_absent() -> None:
         "expected_games",
         "valuations",
         "risk_adjusted_valuations",
-        "drafts",
         "draft_picks",
+        "draft_recommendations",
+        "auction_price_estimates",
         "automation_actions",
     }
 
     assert not_yet & set(Base.metadata.tables) == set()
+
+
+def test_the_recorded_draft_log_is_present() -> None:
+    """``draft-tracker`` owns the recorded half of Draft. See the note above."""
+    assert {"drafts", "draft_participants", "draft_events"} <= set(Base.metadata.tables)
+
+    events = Base.metadata.tables["draft_events"]
+    columns = set(events.columns.keys())
+    assert "sequence" in columns, (
+        "the log's ordering must be an assigned integer, because a recorder's "
+        "clock is a claim and sorting on a claim is not an ordering"
+    )
+    assert "player_label" in columns, (
+        "the raw name the recorder saw has to survive independently of whether "
+        "the crosswalk resolved it, or an unresolvable pick is lost rather than "
+        "recorded honestly"
+    )
+    assert "supersedes_sequence" in columns, (
+        "corrections are appended as voids pointing backwards; without this the "
+        "only way to fix a mistake is an update, and the log stops being a log"
+    )
+
+    # The numbers this unit must not hold. Each is `quant`'s behind the Model
+    # gate, and each would be a decision number wearing a recorded fact's
+    # clothes if it appeared on the event that recorded what happened.
+    for forbidden in ("projected_value", "recommended_bid", "inflation_factor", "p_play"):
+        assert forbidden not in columns, forbidden
+
+    drafts = Base.metadata.tables["drafts"]
+    draft_columns = set(drafts.columns.keys())
+    assert {"draft_type", "team_count", "roster_size", "auction_budget"} <= draft_columns, (
+        "the format is snapshotted onto the draft, because deriving it from the "
+        "league on read lets a later league edit rewrite what configuration an "
+        "old mock was recorded under (R39)"
+    )
+    assert "tool_usage" in draft_columns, (
+        "whether this tool was on the recorder's screen decides whether a mock "
+        "is evidence about human behaviour or about our own advice (R38)"
+    )
 
 
 def test_the_observed_participation_ledger_is_present() -> None:
