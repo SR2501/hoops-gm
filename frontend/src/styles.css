@@ -265,6 +265,31 @@ a:focus-visible {
   font-size: 0.85rem;
 }
 
+/**
+ * On the draft board only, the stale banner is pinned.
+ *
+ * The recorder is sticky, so a full 156-slot board can have someone typing a
+ * sale fifteen screens down while the "showing data from 12:19:28" warning sits
+ * at the very top, off screen. Driven by blocking `fetch` and scrolling: the
+ * board went on showing current-looking budgets and a 169-entry log with nothing
+ * beside the controls to say the reads had stopped. Recording into a stale board
+ * under an auction clock is the specific harm.
+ *
+ * Scoped to `.page--draft` rather than changed on `.stale-banner` itself,
+ * because the projections and schedule screens share that component and are
+ * short enough that their banner never leaves the viewport. This is not their
+ * lane's problem to inherit.
+ *
+ * The background must be opaque here: the shared rule is a 12% tint that is
+ * legible over the page but not over log rows scrolling underneath it.
+ */
+.page--draft .stale-banner {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
+}
+
 .stale-banner > span {
   min-width: 0;
 }

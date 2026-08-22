@@ -21,7 +21,7 @@
  * the one this screen must treat differently from the rest.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,7 +30,7 @@ import auctionState from '../test/fixtures/draft-auction-state.recorded.json'
 import refusals from '../test/fixtures/draft-refusals.recorded.json'
 import snakeEvents from '../test/fixtures/draft-snake-events.recorded.json'
 import snakeState from '../test/fixtures/draft-snake-state.recorded.json'
-import { DraftPage } from './DraftPage'
+import { DraftPage, POLL_INTERVAL_MS, STALE_AFTER_MS } from './DraftPage'
 
 interface Refusal {
   status: number
@@ -500,5 +500,133 @@ describe('the no-decision-numbers rule', () => {
       new RegExp(`\\b${term.replace(/[().]/g, '\\$&')}`, 'i').test(rendered),
     )
     expect(found).toEqual([])
+  })
+})
+
+/**
+ * The board when reads stop coming back — and what I found trying to test it.
+ *
+ * `frontend.md` lists "loading, empty, error and stale-data states handled" as a
+ * done criterion. This screen appeared to pass it: blocking `fetch` in a real
+ * browser for twelve seconds produced a banner reading "Showing data from
+ * 12:19:28 AM", so the state renders. Before this block, no test in this file
+ * entered it — the string `stale` appeared once, in a comment about a sequence
+ * conflict.
+ *
+ * So I wrote the tests below, and then did the thing that matters: **deleted
+ * `staleAfterMs` from DraftPage to watch them fail.** All 23 still passed.
+ *
+ * The reason is worth more than the test. `AsyncBoundary` renders the banner on
+ * `isStale || refreshFailed || refreshPending`. This screen polls every two
+ * seconds, so data can only age if a read fails (`refreshFailed`) or is in
+ * flight (`refreshPending`) — both of which raise the banner on their own.
+ * `isStale` never decides anything here, and **`staleAfterMs` on this screen is
+ * unreachable configuration**. The browser observation that "the stale state
+ * works" was true about the banner and wrong about the mechanism.
+ *
+ * It is left wired deliberately, as a backstop for the day polling learns to
+ * pause (a hidden tab, a paused board), which would age `fetchedAt` with no
+ * request outstanding. It is documented here rather than deleted because a
+ * future reader deserves to know it is currently inert, and rather than claimed
+ * as covered because it is not.
+ *
+ * What these tests do cover is the state a recorder actually hits mid-auction:
+ * the backend stops answering, the board must say so, and must not blank the
+ * prices that did arrive. Proven to fire — with reads that succeed instead of
+ * failing, the banner is absent and both fail on the missing banner.
+ */
+describe('the board when reads stop coming back', () => {
+  it('says the board is stale, and keeps showing the last good board', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let call = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL) => {
+          const url =
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+          call += 1
+          // The first pass of reads succeeds, everything after it fails outright
+          // -- the shape a recorder hits when the backend goes away mid-auction.
+          if (call > 2) return Promise.reject(new TypeError('Failed to fetch'))
+          return Promise.resolve(
+            new Response(JSON.stringify(url.includes('/events') ? auctionEvents : auctionState), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        }),
+      )
+
+      renderBoard()
+      await screen.findByTestId('log-list')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STALE_AFTER_MS + POLL_INTERVAL_MS * 2)
+      })
+
+      // Reaches the state: the banner is present and names a time.
+      const banner = await screen.findByText(/showing data from/i)
+      expect(banner).toBeInTheDocument()
+
+      // And the board underneath is still the last good one, not blanked. A
+      // recorder mid-auction needs the prices that did arrive.
+      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(18)
+      expect(screen.getByTestId('recorder-submit')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reaches the failure detail, with the backend transport wording', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let call = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL) => {
+          const url =
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+          call += 1
+          if (call > 2) return Promise.reject(new TypeError('Failed to fetch'))
+          return Promise.resolve(
+            new Response(JSON.stringify(url.includes('/events') ? auctionEvents : auctionState), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        }),
+      )
+
+      renderBoard()
+      await screen.findByTestId('log-list')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STALE_AFTER_MS + POLL_INTERVAL_MS * 2)
+      })
+
+      const refresh = await screen.findByRole('button', { name: /refresh/i })
+      await act(async () => {
+        refresh.click()
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('async-stale-failure')).toBeInTheDocument()
+      })
+      // The recorder must be told nothing was written, not merely that a read
+      // failed -- a poll failing and an append failing look identical otherwise.
+      expect(screen.getByTestId('async-stale-failure').textContent).toMatch(/nothing was recorded/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the stale threshold clear of the poll interval, for when it is live', () => {
+    // Inert today (see the block comment), so this pins intent rather than
+    // behaviour: if polling ever pauses and `isStale` starts deciding, a window
+    // shorter than the poll would mark a healthy board stale between two good
+    // reads. Two intervals of headroom.
+    expect(STALE_AFTER_MS).toBeGreaterThan(POLL_INTERVAL_MS * 2)
   })
 })
