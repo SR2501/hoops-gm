@@ -266,7 +266,7 @@ a:focus-visible {
 }
 
 /**
- * On the draft board only, the stale banner is pinned.
+ * On the draft board only, the stale banner is pinned and out of the layout.
  *
  * The recorder is sticky, so a full 156-slot board can have someone typing a
  * sale fifteen screens down while the "showing data from 12:19:28" warning sits
@@ -274,6 +274,19 @@ a:focus-visible {
  * board went on showing current-looking budgets and a 169-entry log with nothing
  * beside the controls to say the reads had stopped. Recording into a stale board
  * under an auction clock is the specific harm.
+ *
+ * That earlier fix used `position: sticky`, which keeps the banner on screen but
+ * **leaves it in the layout flow**. Measured on an idle board: every appearance
+ * pushed the whole page down 80px and every disappearance pulled it back, so
+ * every click target on a recording screen moved twice per poll. A recorder
+ * clicking during the ~40ms window hits whatever slid into that position. Fixed
+ * separately from the banner's timing on purpose — correct timing alone would
+ * have hidden this and left the hazard for the one case where the banner is
+ * genuinely needed, which is exactly when the reader is most likely clicking.
+ *
+ * Pinned to the bottom rather than the top because the top is where the sticky
+ * recorder is: a fixed banner up there would cover the controls instead of
+ * displacing them, trading a moving target for a hidden one.
  *
  * Scoped to `.page--draft` rather than changed on `.stale-banner` itself,
  * because the projections and schedule screens share that component and are
@@ -284,10 +297,16 @@ a:focus-visible {
  * legible over the page but not over log rows scrolling underneath it.
  */
 .page--draft .stale-banner {
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  position: fixed;
+  inset-block-start: auto;
+  inset-block-end: var(--space-3);
+  inset-inline-end: var(--space-3);
+  inset-inline-start: auto;
+  z-index: 50;
+  max-width: min(34rem, calc(100vw - 2 * var(--space-3)));
+  margin: 0;
   background: color-mix(in srgb, var(--warn) 12%, var(--bg));
+  box-shadow: 0 6px 24px rgb(0 0 0 / 45%);
 }
 
 .stale-banner > span {
