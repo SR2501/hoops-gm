@@ -15119,6 +15119,27 @@ is unaffected because no marker changed.
   transaction on a constraint violation where SQLite does not, and although the code does call
   `session.rollback()` - which is the Postgres-correct thing - I have only ever seen it take the
   SQLite path.
+
+  > **CORRECTION, same day, twice over. Do not read the paragraph above as true.**
+  >
+  > **The unavailability claim was wrong.** I wrote "checked, not assumed" and I had checked the
+  > wrong things - no `docker`, no local service on 5432. Review found PostgreSQL 16.9 already
+  > running on this machine at `postgresql+psycopg://qimember@127.0.0.1:55432/<db>`, another lane's
+  > dev rig, in about ten minutes of treating "unavailable" as a claim rather than a fact. Roughly
+  > twenty entries in this file assert the same unavailability and not one of them checked. **A
+  > negative that would be expensive to be wrong about deserves the search a positive would get.**
+  >
+  > **The gate half is closed, and how it closed is the useful part.** CI's dedicated
+  > `Backend — the same suite against Postgres (ADR-001)` job succeeded on the exact head `5ec3d0f`
+  > in run **32547872673** (push; the `pull_request` run 32547874571 agrees). Confirmed by listing
+  > that run's jobs and finding the ADR-001 job **present and successful** - a green "CI" conclusion
+  > alone would not have shown whether that job ran at all. The suite has since also been driven
+  > locally on Postgres 16.9, dialect read from the live engine rather than the URL passed in.
+  >
+  > **And the specific worry named above did not materialise.** `session.rollback()` handles the
+  > Postgres transaction abort correctly on both dialects. The real defect on that seam was a
+  > different one: `_append` published every `IntegrityError` as a retryable sequence conflict, so a
+  > permanent row rejection was documented to clients as transient. See the later entries.
 - **Concurrent appends were never actually raced. (Reasoned.)** The sequence is computed as
   `max + 1` in Python and made safe by a unique constraint on `(draft_id, sequence)`, so two
   simultaneous writers should produce one success and one `draft_sequence_conflict`. I proved the
@@ -15355,3 +15376,92 @@ the SQLite text-parsing fallback goes unexercised.
   error - usually a missing `PYTHONPATH` - and a harness reading the exit code
   as a boolean scores it as a pass. This produced two published, entirely
   fictitious green matrices elsewhere today.
+
+---
+
+## 2026-08-21 — backend — a refusal that named the wrong event, and a guard that asserted the wrong absence
+
+**PR #64, `draft-tracker`.** Two message-correctness defects found by independent
+review at `5ec3d0f`. Both were messages asserting something untrue about the log.
+No stored number was affected and the OpenAPI document is **byte-identical** to
+`5ec3d0f` — verified by serialising `create_app().openapi()` at both revisions
+and comparing hashes, not by reading the diff.
+
+### What was wrong
+
+**`record_void` dressed up the void's own hygiene refusals as replay refusals.**
+The guard was `blamed != supersedes_sequence`. The four hygiene rules — voiding a
+void, voiding an already-voided target, naming a missing target, self-reference —
+blame *the sequence the new void would occupy*, which is neither the target nor a
+pre-existing event. So all four passed the guard and were re-wrapped as "sequence
+N, which comes after it, no longer holds once it is gone", naming an event that
+did not exist. Now the re-wrap requires `supersedes_sequence < blamed <= tail`,
+where `tail` is the log's highest sequence read *before* the append. A positive
+range check rather than a denylist of the four codes, because a denylist goes
+stale the moment a fifth hygiene rule is added — the absence failure mode again.
+
+**`draft_lot_already_open` advised voiding the event you were already voiding.**
+`_apply_nomination` computed `tail = event.sequence - 1`: raw arithmetic over
+sequence numbers that ignores which events survive. During a void replay the
+preceding sequence is frequently the voided one, so the advice read "void back
+from sequence 2 to 1" while you were voiding sequence 2. Derivation now threads
+`previous_live_sequence` — set at the end of each surviving iteration of the loop
+that already skips voids — so the remedy names the last event that actually
+exists. In the reported case that collapses to "void the nomination at sequence
+1", which is true and can be followed.
+
+### The thing worth carrying
+
+**My guard for the second fix was vacuous, and the mutation check is the only
+reason I know.** I asserted `"void the nomination at sequence 2" not in detail`
+and `"to sequence 2 first" not in detail` — the absence of the circular advice.
+The old code phrases its circularity as `"void back from sequence 2 to 1"`, which
+neither pattern matches, so the test passed against the unfixed code. Reverting
+the fix produced **GREEN**, not a failure.
+
+The repair was to assert the presence of the right answer — `"or void the
+nomination at sequence 1." in detail` — after driving both revisions and reading
+what each actually emits. This is the same defect class the repository logged
+five times today, and it is the second time it appeared in a *remediation* rather
+than in original work. The tripwire question that catches it: **which of my new
+branches are green but never entered, and which of my new assertions would still
+hold if I removed the code they are about?**
+
+### Verified by observation
+
+| Check | Result |
+|---|---|
+| Full suite, SQLite | green |
+| Full suite, PostgreSQL 16.9 | green; dialect read from the live engine, not the env var |
+| Mutations, SQLite | 3/3 caught at `rc == 1`, green before and after revert |
+| Mutations, PostgreSQL | 3/3 caught at `rc == 1`, green before and after revert |
+| ruff, ruff format, mypy strict (153 files) | clean |
+| OpenAPI vs `5ec3d0f` | byte-identical; no published code or shape changed |
+| Advice followed to acceptance | every refusal's named remedy driven to a 201 in the test, not asserted as text |
+
+### Could not verify
+
+- **A concurrent race against the current head.** *Reasoned.* Review drove 48
+  attempts on Postgres against the code before the savepoint change and 112 more
+  after; neither ran against these two commits. Nothing here touches the append
+  or the unique constraint — `_last_sequence` is one extra read before the try —
+  so I argue it is unaffected. I did not drive it.
+- **`_last_sequence` under a concurrent append.** *Reasoned.* It can read a tail
+  that another writer has already advanced, which would make the re-wrap's range
+  check slightly conservative — a replay refusal published unwrapped. That
+  degrades a message, never a stored value, and the unique constraint still
+  refuses the append itself.
+- **A third dialect.** *Reasoned.* `_violated_constraint` falls through to
+  `None` and classifies permanent, which is the safe direction. Untested.
+
+### Not asked for and not done
+
+The frontend lane asked whether `DraftLogError.sequence` could reach the HTTP
+body so the screen can highlight the knock-on row rather than parse prose. It is
+a good ask and I did not do it: `ErrorResponse` is the app-wide envelope — *"the
+stable error envelope, every non-2xx response uses this shape"* — referenced by
+25 route sites, and `sequence` means nothing for a schedule or bridge error.
+Adding an optional field breaks no client, so the objection is modelling rather
+than risk, but a shared cross-module contract is not this lane's to change
+quietly inside a blocked PR that a reviewer is about to re-run. Escalated to the
+coordinator to route; it is a clean, small follow-up unit.

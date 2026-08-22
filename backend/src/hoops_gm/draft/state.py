@@ -28,8 +28,11 @@ shifted — and derivation refuses rather than producing a state that is not
 true. Review found this; it was an unnoticed consequence of "corrections are
 voids" and not a trade anybody weighed. It is survivable for the first real
 use, an auction recorded as standalone sales, where voiding any old sale
-replays cleanly with budgets and holdings correct. It is stated here so the
-unqualified claim cannot be read off this module.
+replays cleanly with budgets and holdings correct. Measured on a 27-event
+auction, 4 events voided cleanly and only 2 of those were the tail, so "tail
+only" overstates the limit: what actually decides it is whether anything after
+the target depends on it. It is stated here so the unqualified claim cannot be
+read off this module.
 
 **What is not here.** No dollar value, no inflation, no max bid, no
 recommendation, no ``p(play)``. The only arithmetic is addition of amounts a
@@ -391,22 +394,23 @@ def _apply_nomination(
     participants: Mapping[int, RecordedParticipant],
     board: _Board,
     open_lot: OpenLot | None,
+    previous_live_sequence: int | None = None,
 ) -> OpenLot:
     if open_lot is not None:
-        # The advice has to name an action that will actually be accepted.
-        # Voiding the nomination only replays cleanly when nothing follows it:
-        # a bid or a label-less sale in between derives against an open lot,
-        # and removing the lot leaves those events unsatisfiable. See the
-        # "corrections are tail-first" note in this module's docstring.
-        tail = event.sequence - 1
-        if open_lot.nomination_sequence == tail:
+        # The advice has to name an action that will actually be accepted, and
+        # it has to be true of the log as it stands. ``event.sequence - 1`` is
+        # not that: during a void replay the preceding sequence may itself be
+        # the event being voided, so the arithmetic advises voiding the very
+        # thing the caller is already voiding, and claims a voided event still
+        # depends on the lot. Count from the last event that actually survives.
+        tail = previous_live_sequence
+        if tail is None or open_lot.nomination_sequence >= tail:
             remedy = f"or void the nomination at sequence {open_lot.nomination_sequence}"
         else:
             remedy = (
                 f"or void back from sequence {tail} to "
                 f"{open_lot.nomination_sequence}, most recent first -- voiding the "
-                f"nomination while sequences "
-                f"{open_lot.nomination_sequence + 1}-{tail} still depend on the "
+                f"nomination while the events between them still depend on the "
                 f"open lot will be refused"
             )
         raise DraftLogError(
@@ -617,6 +621,7 @@ def derive_state(
     open_lot: OpenLot | None = None
     closed_at: int | None = None
     live_event_count = 0
+    previous_live_sequence: int | None = None
 
     for event in ordered:
         if event.event_type is DraftEventType.VOID or event.sequence in voided:
@@ -647,7 +652,12 @@ def derive_state(
                 )
             if event.event_type is DraftEventType.NOMINATION:
                 open_lot = _apply_nomination(
-                    event, fmt=fmt, participants=by_id, board=board, open_lot=open_lot
+                    event,
+                    fmt=fmt,
+                    participants=by_id,
+                    board=board,
+                    open_lot=open_lot,
+                    previous_live_sequence=previous_live_sequence,
                 )
             elif event.event_type is DraftEventType.BID:
                 open_lot = _apply_bid(
@@ -656,6 +666,7 @@ def derive_state(
             else:
                 _apply_sale(event, fmt=fmt, participants=by_id, board=board, open_lot=open_lot)
                 open_lot = None
+        previous_live_sequence = event.sequence
 
     budget = fmt.auction_budget if isinstance(fmt, AuctionDraftFormat) else None
     is_auction = budget is not None

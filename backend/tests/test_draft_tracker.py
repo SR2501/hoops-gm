@@ -870,7 +870,10 @@ def test_a_void_refused_by_replay_says_it_was_the_replay(session: Session) -> No
         service.record_void(session, draft, supersedes_sequence=1)
 
     assert "Voiding sequence 1 was refused because sequence 2" in caught.value.detail
-    assert "Void back from the most recent event instead." in caught.value.detail
+    assert "To void sequence 1, void sequence 2 first." in caught.value.detail
+    # Drive it: the named remedy must actually be accepted.
+    service.record_void(session, draft, supersedes_sequence=2)
+    service.record_void(session, draft, supersedes_sequence=1)
     assert caught.value.sequence == 2
 
 
@@ -1012,3 +1015,109 @@ def test_a_real_unique_violation_is_reported_as_the_retryable_conflict(
         session, draft, participant_id=seats[3], amount=Decimal("9.00"), player_label="Teodor Fane"
     )
     assert recovered.last_sequence == 3
+
+
+def test_void_hygiene_refusals_are_not_dressed_up_as_replay_refusals(
+    session: Session,
+) -> None:
+    """The four hygiene rules blame the sequence the *new* void would occupy.
+
+    That sequence does not exist yet, so a message saying it "comes after" the
+    target and "no longer holds once it is gone" asserts something untrue about
+    the log. Only a refusal naming a pre-existing later event is a replay
+    refusal.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_sale(
+        session, draft, participant_id=seats[1], amount=Decimal("5.00"), player_label="A One"
+    )
+    service.record_void(session, draft, supersedes_sequence=1)
+
+    for target in (2, 1, 99, 3):
+        with pytest.raises(DraftLogError) as refusal:
+            service.record_void(session, draft, supersedes_sequence=target)
+        assert "no longer holds once it is gone" not in refusal.value.detail, (
+            f"void of {target} was dressed up as a replay refusal: {refusal.value.detail}"
+        )
+
+
+def test_a_real_replay_refusal_is_still_named_as_one(session: Session) -> None:
+    """The presence half. Without this the test above passes on a dead branch."""
+    draft = _draft(session, _league(session, team_count=2))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="A One")
+    service.record_sale(session, draft, participant_id=seats[1], amount=Decimal("5.00"))
+    service.record_nomination(session, draft, participant_id=seats[2], player_label="B Two")
+
+    with pytest.raises(DraftLogError) as refusal:
+        service.record_void(session, draft, supersedes_sequence=1)
+    assert "no longer holds once it is gone" in refusal.value.detail
+    assert refusal.value.sequence == 2
+    assert "To void sequence 1, void back from sequence 3 to sequence 2 first." in (
+        refusal.value.detail
+    )
+    # Drive the remedy it names.
+    service.record_void(session, draft, supersedes_sequence=3)
+    service.record_void(session, draft, supersedes_sequence=2)
+    service.record_void(session, draft, supersedes_sequence=1)
+
+
+def test_the_lot_already_open_advice_can_be_followed_to_acceptance(session: Session) -> None:
+    """Follow the refusal's own instruction verbatim and reach an accepted state.
+
+    Asserting the wording only proves the sentence exists. This drives it.
+    """
+    draft = _draft(session, _league(session, team_count=2))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="A One")
+    service.record_sale(session, draft, participant_id=seats[1], amount=Decimal("5.00"))
+    service.record_nomination(session, draft, participant_id=seats[2], player_label="B Two")
+
+    with pytest.raises(DraftLogError) as refusal:
+        service.record_void(session, draft, supersedes_sequence=2)
+    detail = refusal.value.detail
+    assert "still on the block" in detail
+    # Presence, not absence: the remedy must name the surviving nomination.
+    # Naming sequence 2 -- the event being voided -- is the circularity.
+    assert "or void the nomination at sequence 1." in detail, detail
+
+    # Follow it: clear the tail, then the target.
+    service.record_void(session, draft, supersedes_sequence=3)
+    service.record_void(session, draft, supersedes_sequence=2)
+    state = service.load_state(session, draft)
+    assert state.open_lot is not None
+    assert state.open_lot.player_label == "A One"
+
+
+def test_the_lot_already_open_advice_is_followable_on_the_void_replay_path(
+    session: Session,
+) -> None:
+    """The same advice, reached during a replay rather than a fresh append.
+
+    Here the refusal is produced while re-deriving a log that already has a
+    void in it, so the sequence immediately before the nomination may itself be
+    voided. Naming it would advise voiding something already gone.
+    """
+    draft = _draft(session, _league(session, team_count=2))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="A One")
+    service.record_sale(session, draft, participant_id=seats[1], amount=Decimal("5.00"))
+    service.record_nomination(session, draft, participant_id=seats[2], player_label="B Two")
+    service.record_sale(session, draft, participant_id=seats[2], amount=Decimal("7.00"))
+    service.record_void(session, draft, supersedes_sequence=4)
+
+    with pytest.raises(DraftLogError) as refusal:
+        service.record_void(session, draft, supersedes_sequence=2)
+    detail = refusal.value.detail
+    assert "still on the block" in detail
+    # Presence: the only surviving nomination is sequence 1, and the advice
+    # must name it. Sequence 2 is the target and 4 is already voided; naming
+    # either is advice that cannot be followed.
+    assert "or void the nomination at sequence 1." in detail, detail
+
+    service.record_void(session, draft, supersedes_sequence=3)
+    service.record_void(session, draft, supersedes_sequence=2)
+    state = service.load_state(session, draft)
+    assert state.open_lot is not None
+    assert state.open_lot.player_label == "A One"

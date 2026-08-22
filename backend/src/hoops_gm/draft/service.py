@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -244,6 +244,19 @@ def load_events(session: Session, draft: Draft) -> list[DraftEvent]:
             select(DraftEvent).where(DraftEvent.draft_id == draft.id).order_by(DraftEvent.sequence)
         ).all()
     )
+
+
+def _last_sequence(session: Session, draft: Draft) -> int:
+    """The highest sequence in the log, or 0 when it is empty.
+
+    Read separately from ``load_events`` because ``record_void`` needs to know
+    which sequences already existed *before* its own append, in order to tell a
+    replay refusal apart from one about the void itself.
+    """
+    highest = session.scalar(
+        select(func.max(DraftEvent.sequence)).where(DraftEvent.draft_id == draft.id)
+    )
+    return int(highest) if highest is not None else 0
 
 
 def _as_recorded(rows: Sequence[DraftEvent]) -> list[RecordedEvent]:
@@ -527,7 +540,14 @@ def record_void(
     refuses rather than deriving something untrue. When that happens the
     refusal is about the *replayed* event, not the void that was posted, so it
     is re-raised here saying so.
+
+    Only a refusal blaming an event that **already existed and sits after the
+    target** is a replay refusal. The void's own hygiene rules -- voiding a
+    void, voiding the same target twice, naming a target that is not there,
+    naming itself -- blame the sequence the new void would occupy, which is not
+    a pre-existing later event and must pass through untouched.
     """
+    tail = _last_sequence(session, draft)
     try:
         return _append(
             session,
@@ -540,13 +560,23 @@ def record_void(
         )
     except DraftLogError as error:
         blamed = error.sequence
-        if blamed is None or blamed == supersedes_sequence or error.code == "draft_row_rejected":
+        is_replay_refusal = (
+            blamed is not None
+            and error.code != "draft_row_rejected"
+            and supersedes_sequence < blamed <= tail
+        )
+        if not is_replay_refusal:
             raise
+        remedy = (
+            f"void sequence {blamed} first"
+            if blamed == tail
+            else f"void back from sequence {tail} to sequence {blamed} first"
+        )
         raise DraftLogError(
             error.code,
             f"Voiding sequence {supersedes_sequence} was refused because sequence "
             f"{blamed}, which comes after it, no longer holds once it is gone: "
-            f"{error.detail} Void back from the most recent event instead.",
+            f"{error.detail} To void sequence {supersedes_sequence}, {remedy}.",
             sequence=blamed,
         ) from error
 
