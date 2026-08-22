@@ -2,11 +2,16 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**46 done - 1 blocked - 87 pending - 134 total**
+**47 done - 1 blocked - 86 pending - 134 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 134 `###` headings, 134 unique item slugs and 134 markers, 1:1, no
-duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
+two headers. **The count above is no longer restated anywhere in this file**, and
+that is deliberate: a second copy of it is what a rebase updates one of - and the
+prose copy is the one nothing guards. It is checked on every push by
+`scripts/backlog_graph.py`, which counts the items it actually parses and fails if
+the header disagrees with them, so the header and the graph cannot drift apart.
+Uniqueness and the 1:1 heading-to-marker correspondence are enforced by the same
+tool rather than asserted here. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
 reconciliation could have reached the answer. The position lane sharpened
@@ -108,7 +113,12 @@ FastAPI app in backend/ with pydantic settings/config, structured logging, /heal
 
 ### `backlog-dependency-graph` - Computing this file's dependency graph in CI
 
-- [ ] **pending**
+- [x] **done** - Built 2026-08-21 as `scripts/backlog_graph.py` and merged in #65, running on
+  every push. **The critical path is twelve deep, not the ten this item estimates**; the ten
+  deepest chains all terminate at the same lane, which is the finding the item was filed to
+  get and which hand-tracing got wrong by two levels. It also now checks this file's own
+  headline count against the items it parses, after a rebase updated one copy of that number
+  and not the other.
 - **Depends on:** `ci-pipeline`
 
 Parse every `###` item heading and every `- **Depends on:**` line in this file, resolve

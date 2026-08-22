@@ -16666,3 +16666,203 @@ displacement, 0 banners, 0 mutations" is indistinguishable from a dead probe.
   against a slow network, which is the case it exists for.
 - **Whether any of this holds in a windowed browser.** All measurements are
   headless Edge over CDP.
+## 2026-08-21 - `backend` lane - The header nothing checked, and a status marker that could be two things
+
+**Unit:** a follow-up to #65, prompted by the coordinator asking one question - *does your parser
+match the status word or the token?* - which is the shape that had produced five counting bugs in two
+units that day. The answer was clean. The five minutes spent proving it were not.
+
+**Driven, not read.** A `pending` item whose note says "blocked on nothing, really; not blocked, not
+done either" parses as `pending`; a `done` item whose note says "was pending, and blocked before
+that" parses as `done`. `STATUS_RE` is anchored at line start and reads the bolded token between the
+checkbox and the note, so prose after the marker cannot move it. Pinned by
+`test_a_status_word_inside_a_note_is_not_a_status`, which is the question asked rather than the
+answer asserted.
+
+**But the same probe found a real gap.** Two status markers on one item - `- [ ] **pending**` followed
+by `- [x] **done**` - parsed as `pending` with **zero defects**. The parser returned the first and
+passed silently over the second. That is precisely the silent loss a duplicate `Depends on:` line was
+already a fatal defect for; I had guarded one and not the other in the same function, for the same
+reason. **A conflict resolution that keeps both sides produces exactly this shape**, and I had
+resolved a conflict in this very file two hours earlier.
+
+**And the file itself was carrying a stale count that I had just put there.** `docs/backlog.md` line 8
+still said "129 `###` headings, 129 unique item slugs and 129 markers" while the header five lines up
+said 130 - because my rebase updated one copy of the number and not the other. **That is the exact
+failure documented twelve lines further down the same file**, committed by me, in the rebase, while
+being told about counting bugs. The prose warns about it in the past tense and was an instance of it
+in the present.
+
+**The fix was to delete the second copy, not to synchronise it.** The parenthetical no longer restates
+the count; it says the count is checked by the tool. This is the same move as `run_metrics.py`'s
+`count` accumulator earlier in the day: **two sources of truth for one fact, only one of them
+watched.** `AGENTS.md` already says not to restate the backlog count anywhere, and this file was
+restating it three lines below itself.
+
+**So the tool now checks the header it sits under.** `_check_header` compares the file's headline
+count against the items actually parsed, and fails on a disagreement, on a missing header, and on two
+headers. **It is the cleanest failing guard in the tool by my own fail/print rule**: the cheapest edit
+that turns it green is correcting the number, which is the correct action. Every falsifying
+alternative - deleting an item, flipping a status - is strictly more work and obviously wrong, so
+this guard cannot train anyone to corrupt what it reads. `missing-header` exists because a header
+check that finds no header and says nothing would report the count correct by never having read one.
+
+**It caught its first real defect within a minute of existing.** Flipping `backlog-dependency-graph`
+to `done` under the coordinator's ruling made the header stale; the tool named both wrong fields and
+the line. I did not have to remember.
+
+**A measurement error in my own verification, worth more than the fix.** Reading the exit code as
+`python scripts\backlog_graph.py 2>&1 | Select-Object -First 10; echo $LASTEXITCODE` reports **0 on a
+run that truly exits 1** - `Select-Object -First` closes the pipeline early. I nearly recorded "defect
+found, rc=0" as a bug in the tool. **The tool was right and my instrument was wrong**, which is the
+same relationship as the seven empty-set successes: the verification, not the code. Exit codes here
+are now read unpiped.
+
+Seven mutations across the new guards, green before, bytes-changed asserted, `rc == 1` only, green
+after revert: **7/7 caught**, including one that makes the defect report the claimed number instead of
+the observed one.
+
+**Also in this entry, under the coordinator's ruling:** `backlog-dependency-graph` is `done` - built,
+reviewed, merged in #65, running on `main`, verified against the real file. **`per-run-metric-delta`
+stays `pending`**, because its delta path has still never executed; an item whose deliverable has not
+run once is not done however green its checks are. That ruling quotes my own handoff sentence back at
+me, which is the correct use of this file.
+
+**Could not verify:**
+- **Unit 2 remains unverified**, unchanged. The second `main` build after #65 is the first run that
+  can print a delta. **Reasoned, not driven**, and I am the one who should read it.
+- **The header format is now load-bearing.** `HEADER_RE` requires exactly
+  `**N done - N blocked - N pending - N total**`. A legitimate reformat of that line fails CI with
+  `missing-header` rather than passing. I judge that the right direction - a header check that cannot
+  find the header must not report success - but it is a judgement, and the failure message names the
+  expected form so it is actionable rather than mysterious.
+- **The status vocabulary is hard-coded.** If a fourth status is ever introduced, the header check
+  compares only `done`/`blocked`/`pending` and the total, so items in a new status would count toward
+  the total and toward nothing else. `unknown-status` fires first, so it cannot pass silently - but I
+  have not driven that combination.
+- **I did not re-examine the seven items merged from #67 beyond their edges**, unchanged from the
+  previous entry. Two of them describe this PR's units and I have now read one of those two closely
+  enough to mark it done; the other five are still only known to be well-formed.
+
+## 2026-08-22 - `backend` lane - Unit 2's delta path finally ran, and it ran a build earlier than I predicted
+
+**Unit 2 is no longer unverified.** Previous entries said the delta path would first execute on the
+second `main` build after #65. **That was wrong, and wrong in the safe direction** - it ran on the very
+next *pull request*, because a PR branch can read the default branch's cache. Run `32560274061`:
+
+```
+Cache hit for restore-key: run-metrics-backend-c3f86bb...
+Cache restored from key:   run-metrics-backend-c3f86bb...
+```
+
+Both jobs restored, both printed a table. What I had been calling a prediction about `restore-keys`
+prefix semantics is now **driven**: the exact key missed, the prefix hit, and the baseline came back.
+
+**The precondition I checked before the outcome.** The merge build's save step really wrote something -
+`Cache saved with key: run-metrics-frontend-c3f86bb...`, and `gh cache list` shows both entries at
+6.58 KiB and 31.25 KiB. Without that, "cache-miss confirmed" would have been indistinguishable from
+"the feature is broken and quiet".
+
+**The first real numbers:**
+
+| | previous | current | delta |
+|---|---|---|---|
+| backend `suite.test_time_ms` | 348,122.0 | 206,746.0 | -141,376.0 (-40.6%) |
+| backend `suite.tests` | 1,431 | 1,443 | +12 |
+| frontend `suite.test_time_ms` | 6,520.6 | 6,005.1 | -515.5 (-7.9%) |
+| frontend `suite.tests` | 194 | 194 | +0 |
+
+**The two count fields agree with each other**, which is the structural fix earning itself: `+12` on
+the headline and `12 test(s) not in the baseline, 0 in the baseline and not here` are derived from one
+enumeration and **cannot disagree**. Twelve is exactly the number of tests this PR adds.
+
+**A claim I nearly made and had to withdraw.** I was about to record frontend's
+`0 not in the baseline, 0 in the baseline and not here` as proof that relativising vitest's absolute
+`testResults[].name` works. **It is not proof.** GitHub's workspace root is
+`/home/runner/work/hoops-gm/hoops-gm` on both runs - verified in both logs - so **absolute paths would
+have matched too.** What this run shows is that the stored names *are* relative
+(`src/routes/SchedulePage.test.tsx::...`); it does **not** discriminate between the two
+implementations, because the environment that would break the unrelativised one never varies here. The
+relativisation still earns its place for local-versus-CI and for a runner whose root differs, but
+**that is reasoned, not driven, and this run did not change that.**
+
+**The -40.6% is almost certainly not a speedup, and the tool is right not to say so.** The biggest
+movers are all ~1,500-3,200ms collapsing to a ~200-280ms floor, which is the shape of session-scoped
+fixture and database warm-up being charged to whichever test happens to touch it first. **The set of
+tests that pays that cost differs between runs**, so the per-test table's top rows are attribution
+noise rather than signal. Two consequences worth stating:
+
+- **This is the strongest possible argument for print-don't-judge.** A threshold on suite total would
+  have fired on a **40% improvement** here, on the first run it ever had a baseline. Any direction of
+  threshold is wrong on this data.
+- **The motivating case is still not demonstrated.** The bug that commissioned this unit was a
+  *monotone climb across five runs*. One baseline cannot show a trend, and the per-test view is noisy
+  at the top. The unit makes a number visible against its predecessor, which is what it claims; it does
+  not yet show a sequence.
+
+**Could not verify:**
+- **Whether the per-test top-movers table is worth its width.** On its first real run its top fifteen
+  rows are dominated by fixture-attribution artefacts. I have one observation and will not redesign on
+  one observation, but if the next few runs look the same, the honest change is to rank by absolute
+  delta only above some duration floor, or to drop the per-test table and keep the totals.
+- **Whether suite-total is the right denominator** remains argued rather than measured, unchanged.
+- **Relativisation of vitest paths is untested by any environment that varies the root** - see above.
+  It is the one part of Unit 2 that still rests on reading the schema rather than on driven output.
+
+
+## 2026-08-22 - `backend` lane - A delta with no stated referent, and a rebase git could not finish
+
+**Changed:** `scripts/run_metrics.py` records the run that produced each metrics file and the report
+names both runs it compared. Plus the third and fourth stale-header catches by the guard added
+yesterday, both from other lanes' merges.
+
+**The gap, raised by the coordinator and confirmed rather than assumed.** The report printed
+`previous | current | delta` and **never said what `previous` was.** The artifact carried `schema` and
+`label` and no identity at all, so the question was not "does it print the source" but "does the
+source exist anywhere" - and it did not. A delta is a claim about two runs; without naming them the
+table cannot distinguish *the commit before this one* from *a fortnight-old cache the restore-key
+prefix happened to match*. **The base you compare against is an input to the result.** It now reads
+``Current run `bbbbbbb` against baseline `aaaaaaa` ``, driven with two synthetic junit files and two
+different `GITHUB_SHA` values rather than asserted from the schema.
+
+**`SCHEMA` deliberately not bumped.** Every baseline now in the cache predates this field. Bumping
+would make `read_metrics` reject them, discarding a perfectly readable baseline and **silently
+dropping the first delta after merge** - the unit's whole purpose - to gain nothing. A missing source
+reads `unknown`, which is the honest answer. Reporting this run's own sha for a file that never
+carried one would be the parameter-for-state swap in the module whose docstring forbids it. Pinned by
+a test that builds a source-less payload and asserts both that it still loads and that it does not
+borrow the current sha.
+
+**Two more stale headers caught, neither of them mine.** #64 flipped an item to `done`; #66 landed
+with `main` at 133 items. Both times the guard named the fields and the line and both times an
+independent token recount agreed with it. **Three catches in a day, and the last two were counts moved
+by other lanes' merges arriving through a rebase** - the case I could not have suspected, since the
+conflict markers were nowhere near line 5.
+
+**A coordinator figure was stale for the fourth time**, and this one is worth recording because it was
+wrong in a new way: I was told `main` read 130 items, 47/1/82. `main` actually read **133 items,
+46/1/86**. Not a transcription slip - the *shape* differed, because `#66` had landed between the
+message being composed and my reading it. The finished file is 133, 47/1/85: main's 46 plus the single
+flip my own commit makes. **The delta between my result and main is exactly what my commit does**,
+which is the check that makes the number believable rather than merely recomputed.
+
+**The rebase git would not finish.** After resolving both files, `git rebase --continue` reported
+*"You must edit all merge conflicts"* while `git status` in the same second reported *"all conflicts
+fixed: run git rebase --continue"* and `git ls-files -u` returned **zero** unmerged entries. **Two of
+git's own commands disagreed about the state of git's own index** - the plumbing said clean, the
+porcelain said clean, and the operation refused. Triggered by an earlier `git stash push` that failed
+with `could not write index` while a conflict was in progress. Resolved by `git commit -C <sha>` then
+`git rebase --quit` then `git cherry-pick` the remaining commit, which reaches the identical tree by
+operations that do not consult the wedged state. **Do not stash during a conflicted rebase.**
+
+**Could not verify:**
+- **Whether the provenance line survives contact with a real cache miss on a branch.** Driven locally
+  with two shas and unit-tested for the `None`-baseline path, but the first CI run after this merge
+  will still compare against a source-less baseline and print `unknown`. **That is the expected
+  output, not a defect**, and I am recording it in advance so nobody reads it as one.
+- **Whether `GITHUB_SHA` is the right identity.** It is the merge commit for a `pull_request` event
+  and the branch head for `push`, so the same code can be reported under two ids depending on trigger.
+  It is honest either way - it names the run - but it is not a stable key for tracking one commit
+  across events, and I have not driven the difference.
+- **The rebase failure is diagnosed, not understood.** I have a reliable recovery and a plausible
+  cause; I did not reproduce it deliberately.
