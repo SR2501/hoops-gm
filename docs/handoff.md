@@ -15930,3 +15930,55 @@ two-affordance design still matches the API.
   something and prints the count, but nothing forces a *new* fixture to be added
   to it. **Reasoned.** A fixture added without a case here would be unchecked and
   silent - the same class, one level up.
+
+## 2026-08-21 - frontend - Weighting the instruction that works
+
+The replay refusal carries two instructions. The backend embeds the inner
+refusal's advice verbatim, so voiding an older event produces, in one sentence:
+
+> Voiding sequence 6 was refused because sequence 7, which comes after it, no
+> longer holds once it is gone: Ilario Bexley is still on the block. **Record the
+> sale, or void the nomination at sequence 5.** To void sequence 6, void back
+> from sequence 170 to sequence 7 first.
+
+The bolded clause describes the hypothetical replayed log, not the actual one.
+Following it returns another well-formed refusal. The last clause is the one that
+works. Both were driven against a live backend at `ce4c603`, not read.
+
+The screen now renders the final clause in a `<strong>`, and changes nothing else
+about the text. `splitRefusalRemedy` splits on `/To void sequence \d+,[^.]*\.\s*$/`
+with `slice`, so `lead + remedy === detail` byte for byte - the recorder still
+reads the server's sentence, in the server's words, in the server's order. If the
+backend reworded the remedy tomorrow the regex would miss and the whole sentence
+would render as lead, which is the failure I want: no emphasis rather than
+emphasis on the wrong half.
+
+Measured in a browser rather than asserted: lead resolves to weight 400, remedy to
+650, and 650 renders 29px wider than 400 over that same 457px string at 15px in
+`ui-sans-serif`. I checked the width because `font-weight: 650` on a family with
+no 650 face rounds silently, and a computed style of "650" would have reported
+success either way. That is the same shape as every empty-set defect on this
+board: the declared value is not the observed one.
+
+The coverage guard in `DraftPage.recorded.test.tsx` was itself an instance. It
+lived in a trailing `it` inside the refusal block, so a refusal driven by a block
+*below* it counted as undriven - it reported a shortfall that was not real, which
+is the benign direction of the same bug. It is now a file-scoped `afterAll`
+comparing the driven set against the fixture keys. Proven by deleting one
+registration: it fails naming `void-replay-two-instructions`.
+
+### Could not verify
+
+- **Whether a recorder under an auction clock reads the bolded clause first.**
+  Reasoned. Weight and terminal position are the two things I can control and both
+  favour it, but the competing clause is bolder in content - it names a player and
+  gives two verbs. I have made the working remedy visually dominant, not
+  cognitively dominant, and I cannot test the second without a person.
+- **Whether the split regex survives a backend rewording.** Driven for the failure
+  mode (no match falls back to whole-sentence lead, covered by the non-matching
+  refusals in the fixture), reasoned for the likelihood.
+- **Whether `--check` catches a schema change rather than a text change.** Reasoned.
+  It compares state payloads on top-level keys only.
+- **Whether one entry among 170 can be found under time pressure.** Reasoned. The
+  log is unvirtualised and I found seq 6 by `scrollIntoView`, which the owner does
+  not have.

@@ -1468,3 +1468,20 @@ a:focus-visible {
   font-size: 0.75rem;
   color: var(--text-muted);
 }
+
+/**
+ * The remedy that actually works, inside a refusal that carries two.
+ *
+ * A replay refusal embeds the inner refusal's advice, which describes a
+ * hypothetical log, ahead of the outer remedy, which describes the real one.
+ * Both are shown -- dropping the first would be paraphrasing the backend -- but
+ * the one that succeeds is weighted so it wins a two-second read under a clock.
+ *
+ * Weight and colour only. No `opacity`, for the reason pinned in
+ * DraftLog.styles.test.ts: a parent opacity dims the reason along with the
+ * thing, and a child cannot escape it.
+ */
+.log__remedy {
+  color: var(--text);
+  font-weight: 650;
+}

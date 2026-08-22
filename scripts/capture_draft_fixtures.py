@@ -119,6 +119,16 @@ def capture_refusals(tmp: Path) -> dict[str, dict[str, Any]]:
             c, AUCTION_DRAFT, {"event_type": "void", "supersedes_sequence": voids[0]}
         )
 
+    # A void whose *replay* refuses. The message carries two instructions: the
+    # inner refusal's advice, which describes the hypothetical replayed log
+    # rather than the actual one, and the outer remedy, which is the one that
+    # works. The screen has to make the second dominant without hiding the
+    # first, so it needs this exact shape recorded.
+    with _client(tmp, "void-replay-two-instructions") as c:
+        out["void-replay-two-instructions"] = _refusal(
+            c, AUCTION_DRAFT, {"event_type": "void", "supersedes_sequence": 6}
+        )
+
     # The one refusal the screen must treat as retryable rather than fatal.
     with _client(tmp, "sequence-conflict") as c:
         state = c.get(f"/api/v1/drafts/{AUCTION_DRAFT}").json()
@@ -171,8 +181,8 @@ def capture_refusals(tmp: Path) -> dict[str, dict[str, Any]]:
             {"event_type": "sale", "participant_id": 999, "amount": "5.00"},
         )
 
-    if len(out) != 6:
-        raise AssertionError(f"captured {len(out)} refusals, expected 6")
+    if len(out) != 7:
+        raise AssertionError(f"captured {len(out)} refusals, expected 7")
     return out
 
 

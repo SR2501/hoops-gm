@@ -310,3 +310,31 @@ export function describeEvent(row: LogRow): string {
       return `Unrecognised entry of kind ${String(event.event_type)}`
   }
 }
+
+/**
+ * Split a refusal into its lead and the remedy that actually works.
+ *
+ * A void whose replay refuses carries **two** instructions:
+ *
+ *   "...Ilario Bexley is still on the block. Record the sale, or void the
+ *    nomination at sequence 5. To void sequence 6, void back from sequence 15
+ *    to sequence 7 first."
+ *
+ * The first describes the *hypothetical replayed* log rather than the actual
+ * one. Following it produces another well-formed refusal that redirects
+ * correctly -- a wasted round trip rather than a dead end, but a wasted round
+ * trip under an auction clock. The second is explicit, names this sequence,
+ * comes last, and is the one that succeeds; the backend lane drove it to
+ * completion, refusal to 201.
+ *
+ * This does not paraphrase, reorder or drop anything: `lead + remedy` is the
+ * original string byte for byte, asserted in the tests. The screen renders both
+ * and only weights them differently, because choosing which of two competing
+ * instructions to follow is exactly the judgement a screen can carry and a
+ * message cannot.
+ */
+export function splitRefusalRemedy(detail: string): { lead: string; remedy: string | null } {
+  const match = /To void sequence \d+,[^.]*\.\s*$/.exec(detail)
+  if (match === null) return { lead: detail, remedy: null }
+  return { lead: detail.slice(0, match.index), remedy: detail.slice(match.index) }
+}

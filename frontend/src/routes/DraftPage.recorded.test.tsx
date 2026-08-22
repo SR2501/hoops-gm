@@ -24,12 +24,13 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import auctionEvents from '../test/fixtures/draft-auction-events.recorded.json'
 import auctionState from '../test/fixtures/draft-auction-state.recorded.json'
 import refusals from '../test/fixtures/draft-refusals.recorded.json'
 import snakeEvents from '../test/fixtures/draft-snake-events.recorded.json'
 import snakeState from '../test/fixtures/draft-snake-state.recorded.json'
+import { splitRefusalRemedy } from '../components/draftBoardModel'
 import { DraftPage, POLL_INTERVAL_MS, STALE_AFTER_MS } from './DraftPage'
 
 interface Refusal {
@@ -38,6 +39,9 @@ interface Refusal {
 }
 
 const REFUSALS = refusals as unknown as Record<string, Refusal>
+
+/** Every refusal actually driven, across every block in this file. */
+const reached = new Set<string>()
 
 /**
  * A fetch stub that distinguishes reads from writes.
@@ -284,9 +288,11 @@ describe('recording', () => {
 })
 
 describe('every recorded refusal, reached', () => {
-  // The count is asserted at the end of the block. Without it, a fixture entry
-  // that stopped being driven would leave this suite green and shrunken.
-  const reached = new Set<string>()
+  // Registered into the file-scoped `reached` set and checked in `afterAll`,
+  // not in a trailing `it`. A trailing `it` runs when *this block* ends, so a
+  // refusal driven by a later block counted as undriven -- which is how the
+  // check reported a shortfall that was not real. `afterAll` at file scope
+  // cannot be outrun by a describe added below it.
 
   it('leads a refused non-tail void with the backend’s own wording, not this build’s copy for the code', async () => {
     const refusal = REFUSALS['void-non-tail']!
@@ -430,12 +436,18 @@ describe('every recorded refusal, reached', () => {
   })
 
   it('drove every refusal the fixture holds', () => {
-    // Runs last, in file order. This is the assertion that makes the block
-    // above mean something: it reports the states observed, not the fixtures
-    // available, and the two must match.
-    expect(Object.keys(REFUSALS)).toHaveLength(6)
-    expect([...reached].sort()).toEqual(Object.keys(REFUSALS).sort())
+    // A count is asserted, but the *set* comparison is what carries it: the
+    // number alone would be satisfied by driving one refusal seven times.
+    // Checked in `afterAll` below so a block added after this one still counts.
+    expect(Object.keys(REFUSALS).length).toBeGreaterThan(0)
   })
+})
+
+afterAll(() => {
+  // Reports the states observed against the fixtures available, at the point
+  // where every block has run. A fixture that stopped being driven -- or one
+  // added without a case -- fails here rather than shrinking the suite quietly.
+  expect([...reached].sort()).toEqual(Object.keys(REFUSALS).sort())
 })
 
 describe('an error code this build has never seen', () => {
@@ -642,3 +654,45 @@ describe('the board when reads stop coming back', () => {
     expect(STALE_AFTER_MS).toBeGreaterThan(POLL_INTERVAL_MS * 2)
   })
 })
+
+describe('a refusal that carries two competing instructions', () => {
+  const refusal = REFUSALS['void-replay-two-instructions']!
+
+  it('splits off the remedy that works without changing a character', () => {
+    const { lead, remedy } = splitRefusalRemedy(refusal.body.detail)
+    // The property the whole approach rests on: this is emphasis, not editing.
+    expect(lead + (remedy ?? '')).toBe(refusal.body.detail)
+    if (remedy === null) throw new Error('the recorded refusal carries no remedy to weight')
+    expect(remedy).toMatch(/^To void sequence \d+,/)
+    // The advice about the hypothetical replayed log stays on screen, in the
+    // lead. Dropping it would be paraphrasing the backend.
+    expect(lead).toContain('Record the sale, or void the nomination at sequence 5.')
+  })
+
+  it('leaves a single-instruction refusal untouched', () => {
+    const single = REFUSALS['void-a-void']!.body.detail
+    const { lead, remedy } = splitRefusalRemedy(single)
+    expect(remedy).toBeNull()
+    expect(lead).toBe(single)
+  })
+
+  it('renders the whole sentence, with the working remedy weighted', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('log-tryvoid-6'))
+
+    const headline = await screen.findByTestId('log-failure-6')
+    // Verbatim and whole, still.
+    expect(headline).toHaveTextContent(refusal.body.detail)
+
+    // And the emphasised part is the outer remedy, not the inner advice.
+    const remedy = screen.getByTestId('log-remedy-6')
+    expect(remedy.textContent).toMatch(/^To void sequence 6,/)
+    expect(remedy.textContent).not.toContain('Record the sale')
+    expect(remedy.tagName).toBe('STRONG')
+    reached.add('void-replay-two-instructions')
+  })
+})
+
+

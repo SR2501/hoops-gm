@@ -39,7 +39,12 @@ import { useState } from 'react'
 import { appendDraftEvent } from '../api/draftEndpoints'
 import { describeDraftError, isRetryableDraftError } from '../api/draftErrors'
 import type { DraftState } from '../api/draftTypes'
-import { describeEvent, type DraftBoardModel, type LogRow } from './draftBoardModel'
+import {
+  describeEvent,
+  splitRefusalRemedy,
+  type DraftBoardModel,
+  type LogRow,
+} from './draftBoardModel'
 
 interface DraftLogProps {
   model: DraftBoardModel
@@ -159,6 +164,14 @@ function LogEntry({ row, isPending, anyPending, failure, onVoid }: LogEntryProps
   const supporting = codeDescribesThisAction ? (failure?.message ?? null) : null
   const showsSupporting = supporting !== null && supporting !== headline
 
+  // Weight the instruction that works, without removing the one that does not.
+  // Only ever applied to the backend's own sentence: this build's copy carries
+  // no competing remedy to disambiguate.
+  const { lead: headlineLead, remedy: headlineRemedy } =
+    headline !== null && !codeDescribesThisAction
+      ? splitRefusalRemedy(headline)
+      : { lead: headline ?? '', remedy: null }
+
   return (
     <li
       className={isVoided ? 'log__entry log__entry--voided' : 'log__entry'}
@@ -213,8 +226,27 @@ function LogEntry({ row, isPending, anyPending, failure, onVoid }: LogEntryProps
           {/* The backend's sentence, verbatim, as the thing read first. It names
               the later entry that stopped this correction and what to do
               instead; paraphrasing it would lose the sequence number, which is
-              the only actionable part. */}
-          <p data-testid={`log-failure-${String(event.sequence)}`}>{headline}</p>
+              the only actionable part.
+
+              Where the sentence carries two competing instructions, the one
+              that works is weighted rather than extracted -- see
+              `splitRefusalRemedy`. Nothing is dropped: the two spans
+              concatenate to the original string. */}
+          <p data-testid={`log-failure-${String(event.sequence)}`}>
+            {headlineRemedy === null ? (
+              headline
+            ) : (
+              <>
+                {headlineLead}
+                <strong
+                  className="log__remedy"
+                  data-testid={`log-remedy-${String(event.sequence)}`}
+                >
+                  {headlineRemedy}
+                </strong>
+              </>
+            )}
+          </p>
           {showsSupporting ? (
             <p className="state__detail" data-testid={`log-failure-backend-${String(event.sequence)}`}>
               {supporting}
