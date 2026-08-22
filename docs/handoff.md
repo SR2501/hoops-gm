@@ -17357,3 +17357,140 @@ spotted became visible at all.
 - **Whether refusing duplicate player rows is the behaviour an operator wants.** It is the behaviour
   that avoids inventing market evidence, which is why I chose it, but no operator has hand-transcribed
   a real table through this path yet. **Reasoned.**
+
+
+---
+
+## 2026-08-22 - `data-engineer` / `aav-source`: rebasing onto `3a25ff4`, and the collision that only existed once two branches met
+
+**Changed:** nothing in the market layer's behaviour. One rename with four edited
+lines - `alembic/versions/0017_auction_value_market_layer.py` becomes `0018_...`,
+`revision` `0017` -> `0018`, `down_revision` `0016` -> `0017` - plus two corrected
+sentences in this file. The rebase itself moved five commits onto `3a25ff4`.
+
+**Why there was anything to change at all.** The previous entry recorded, as a
+driven observation, that `origin/main` had a single alembic head and that `0017`
+sat on `0016` with no collision. That was true. It was measured against `642bdb6`,
+and by the time this branch rebased, `main` had taken five merges, one of them
+`draft-tracker`, which added its own `0017_draft_tracker.py` **also on `0016`**.
+Alembic reports `Revision 0017 is present more than once`; `tests/test_migrations.py`
+turns that warning into 20 failures, which is what the rebase surfaced.
+
+**The generalisable part is not "renumber your migration".** It is that
+**a verified absence is a statement about a base, not about the tree.** The check
+that went looking for exactly this collision ran, was correct, and found nothing -
+because at that moment there was nothing. A positive claim ("this table exists",
+"this constraint fires") survives a rebase; a negative one ("nothing else claims
+this number") expires the instant anything merges, and nothing in the file that
+records it says so. So the old sentence is annotated rather than deleted, and the
+annotation names the base it was true of. **The two claims are not the same shape
+and should not be written in the same voice.**
+
+Worth saying plainly because it cuts against how this branch was scheduled: being
+held to last so the gate ran once was correct and saved four full gate runs, but
+**the longer a branch holds, the more of its driven negatives have quietly become
+reasoned ones.** The cost of holding is not zero; it is paid in the expiry of
+exactly this class of claim. No single-branch gate can see it, on any branch, ever -
+the defect exists only in the union of two branches.
+
+**And it was diagnosed rather than recognised.** I have a register entry about
+merge collisions and a mutation harness full of named classes, which is precisely
+the position the backlog-graph lane warned about: a good catalogue supplies a ready
+explanation faster than it supplies a way to reject one. The 20 failures were read
+from alembic's own message naming the duplicate revision, and the two competing
+`0017`s were then read out of the files, before anything was renamed. The register
+entry would have given the right answer this time; it was not what produced it.
+
+**A tooling note attached to that.** The first attempt to read the revision ids
+used a PowerShell `[regex]::Match` and printed nothing for every file - an empty
+result that looks exactly like "no revision line found", which would have been a
+false negative about the very thing under investigation. Read with a plain
+`Select-String` instead. **An extraction that returns nothing is a failed
+measurement until you have shown the pattern matches something.**
+
+**Verification after the rebase, all of it re-run rather than carried over.**
+Every measurement in the previous entry was taken against `642bdb6` and none of it
+was reused.
+
+- SQLite full suite **1622 passed, 0 failed**. PostgreSQL 16.9 full suite
+  **1616 passed, 6 skipped, 0 failed**. The six skips are not mine: the two auction
+  files were re-run alone on PostgreSQL with `-rs` and report **109 passed, zero
+  skip lines**.
+- `ruff check`, `ruff format --check` (187 files), `mypy src tests` (167 source
+  files) all clean.
+- Alembic four ways on **both** dialects from empty: 18 steps, first line
+  `Running upgrade  -> 0001` (a run not beginning there is not a run from empty),
+  last line `Running upgrade 0017 -> 0018`, `alembic check` clean, `downgrade base`
+  clean, re-upgrade clean, `alembic heads` reporting exactly one head.
+- Marker gates: `adapter_contract` 393 passed, `model_backtest` 18 passed,
+  `live_smoke` 28 passed / 4 skipped.
+- Mutation harness re-run **in full, not the subset touched by the rebase** -
+  13 mutations, **13 caught, 0 survived, 0 harness failures**, baseline 109 passed.
+  Re-running only what changed is what let two mutations survive the previous round.
+- `scripts/backlog_graph.py` exit 0. Header recounted from the finished file to
+  **48 done / 1 blocked / 86 pending / 135 total**, 135 headings, 135 unique slugs,
+  135 markers, no checkbox/status contradiction. Slug diff against `origin/main`:
+  134 there, 135 here, **one added** (`hashtag-projection-profile-verification`),
+  **zero dropped**. The two headers reconcile exactly - `aav-source` moves
+  pending -> done and one pending item is added, so done 47 -> 48, pending
+  86 -> 86, total 134 -> 135.
+
+**Three checks that failed on me first, which is the part worth reading.**
+
+1. **My backlog recount reported 46/1/82 against a header saying 48/1/86, and the
+   file was right.** My marker regex anchored `\*\*done\*\*` to end-of-line and six
+   entries carry trailing content, so it silently dropped six items and produced a
+   plausible, wrong, self-consistent count. It was caught because the script asserts
+   `markers == headings` before reporting anything. **A recount that does not
+   cross-check its own extraction against an independently parsed population is a
+   number with no way to be wrong out loud.** Rewritten to associate each marker
+   with its heading, so an unparsed marker raises instead of shrinking a total.
+2. **My restore after the secret-scan tripwire corrupted the fixture.** Appending an
+   AWS-shaped key gave exit 1 naming
+   `backend/tests/fixtures/auction_values/fantraxhq_auction_values.csv:12`, which is
+   the scope proof the bare `No secrets found in 386 tracked files` cannot give. But
+   my hand-rolled trailing-newline restore left the file **not** byte-identical -
+   caught only by comparing the SHA-256 and re-running `git status`, not by assuming
+   the restore worked. Restored from git instead. **The tripwire proved scope and
+   then nearly committed a mangled fixture; the assertion that saved it was on the
+   restore, not on the injection.**
+3. **The stale background suite reported shell exit 0 while the run inside it
+   exited 1.** A PostgreSQL suite launched before the migration fix was known
+   completed with a "completed successfully" notification and `20 failed, 1596
+   passed` in its output. The notification describes the shell, not the suite. It was
+   discarded and re-run rather than read. Related: `pytest` against a test file that
+   does not exist gives **rc 4**, and rc 4 is a usage error, not a clean run - I hit
+   it naming a `test_auction_value_independence.py` that has never existed, because
+   the independence tests live in `test_auction_value_import.py`.
+
+**Header tripwire, and it was built to defeat the failure mode the coordinator
+named.** `48 done` -> `12 done` is length-identical, so a character-count assertion
+would score an applied mutation as unapplied. The check compares the strings before
+and after. `backlog_graph.py` then failed by name -
+`[header-disagrees-with-items] line 5: ... done: claims 12, file has 48` - and the
+file was restored and re-compared as strings, with the tool re-run clean at exit 0.
+Note that this check only became real at `b49c6e6`; any earlier report of the header
+"passing" describes a run that never read line 5.
+
+**Not done, and deliberately so:** the working tree was left untouched while the
+mutation harness ran, because that harness edits source files in place and a
+concurrent suite would have been reading a mutated tree. The PostgreSQL suite and
+the harness were serialised for that reason rather than overlapped.
+
+**Could not verify:**
+
+- **That no third branch is carrying a `0018`.** `origin/main` was re-read at
+  `3a25ff4` immediately before pushing and holds one head, and the merge base was
+  asserted equal to it. But the same reasoning that produced this entry applies to
+  this sentence: it is true of `3a25ff4` and expires on the next merge. **Driven
+  against `3a25ff4`, reasoned about anything after it.**
+- **That the six PostgreSQL skips are harmless.** I established they are not mine by
+  re-running my files alone with `-rs` and observing zero skip lines. I did not read
+  the six reasons. **Driven that they are not mine, reasoned that they are fine.**
+- **That the mutation set is complete.** 13 mutations all die. The set is still one I
+  and the reviewer chose. **Driven for the 13, reasoned for the coverage.**
+- **That no real published export has ever been imported.** Unchanged and still the
+  one that matters: the structure is driven, the practical claim about real data is
+  **reasoned**, and it gets settled the first time the owner pastes real data in.
+- **That no other prose in the tree quotes a conflict marker.** Still not swept.
+  Carried forward a third time. **Reasoned.**
