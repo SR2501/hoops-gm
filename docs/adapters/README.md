@@ -16,6 +16,8 @@ is down or returns garbage.
 | NBA `ScheduleLeagueV2` via `nba_api` | [nba-schedule.md](nba-schedule.md) | Working, verified live |
 | NBA official injury report PDF | [nba-injury-report.md](nba-injury-report.md) | Working, verified live |
 | Fantrax private `/fxpa/req` via `fantraxapi` | [fantrax-private.md](fantrax-private.md) | **Unverified** — no credentials yet |
+| Basketball Monster projection CSV | [basketball-monster-projections.md](basketball-monster-projections.md) | Working, manual download (no network) |
+| Published auction values (seed AAV) | [published-auction-values.md](published-auction-values.md) | Working, manual download (no network) |
 | `cdn.nba.com` live feeds | — | **Blocked** from this network (R26); Phase 6 |
 
 ## The two halves of the gate do different jobs

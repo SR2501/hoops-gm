@@ -17058,3 +17058,460 @@ diff should also be reworded; I left it because it records what a lane did, but 
 for the technique could take the narrative as the rule. And I did not check whether the other
 `origin/main` slug diffs recorded in this file produced wrong answers at the time - several were
 run right after a rebase, where the wrong base and the right one coincide.
+
+## 2026-08-22 - data-engineer - Seeding the market's auction values, and the branch that could not be entered
+
+`aav-source`. Published AAV imported as **market evidence, not a valuation input** (ADR-008,
+plan.md:305) - four new market-layer tables, a parser, a source registry, a circularity guard, a CLI
+and a manual-download adapter page. Derives no number; the Model gate does not apply and I kept it
+that way.
+
+**The finding that decided the unit's value.** Basketball Monster's auction values are a
+deterministic z-score transform of the BBM projections **we already import**. Seeding from BBM would
+have benchmarked us against our own primary projection input with a dollar sign on it - every match
+fake agreement, every divergence measuring the gap between two valuation formulas rather than a
+difference of opinion about a player. It was also the most tempting source, because we have paid for
+it and verified its export. It is registered anyway, specifically so the guard has something real to
+refuse rather than a branch that is green because nothing enters it.
+
+**Circularity is a refusal, not a warning** (`hoops_gm.market.independence`). A source whose
+projection lineage intersects our own imported projection sources is refused as *independent
+evidence* - not refused import, not refused display. The message says "THIS IS THE GUARD WORKING, NOT
+A DATA ERROR", because a refusal whose reason is unclear is the one that gets loosened. It keys on
+sources with **at least one import**, not on registration: a source we registered and never imported
+cannot have contaminated anything.
+
+**Shared method is a different failure from copying.** Hashtag, BBM, RotoWire and FantraxHQ all run
+the same z-score -> value-above-replacement -> budget-distribution arithmetic over *independently
+generated* projections. Their correlation is therefore strong evidence they do the same maths and
+weak evidence they agree about players. `derivation_method` and `auction_value_source_inputs` are two
+separate fields for this reason.
+
+**I falsified an inference I had been handed.** The FantraxHQ budget was described to me as inferred
+as $200 from the price of a single named player [cell redacted 2026-08-22 — see the addendum below].
+Its published pool is 194 rows, exactly 156 non-zero, summing to **$2,655** -
+10.6% above a 12x$200 pool of $2,400, against rounding noise of sqrt(156)*0.289 ~ 3.6, so roughly
+70 sigma. The budget is recorded `UNESTABLISHED`, not inferred. Team and slot counts survive as
+inferences and are flagged inferred. The test re-derives the verdict from the transcribed counts
+rather than restating the sentence, so it is checkable rather than quoted.
+
+**`basis_category_count` was added mid-build** after realising `ScoringType` cannot express category
+*count*: 8-cat and 9-cat are both `h2h_categories`, are produced by different arithmetic, and are not
+comparable. Live, not hypothetical - FantraxHQ is 8-cat and the owner's league is 9-cat. This is the
+"two incomparable numbers made to look comparable" defect in the place it would actually have bitten.
+
+**Green-but-unentered, driven rather than assumed.** Branch coverage put the CLI at **0% - 124
+statements no test had ever entered**. Writing 18 tests that drive `main` end-to-end surfaced a real
+defect: `main` built a `Database` and never disposed it, leaking the engine and raising
+`PytestUnraisableExceptionWarning` on GC. The projections CLI disposes in a `finally`; mine did not.
+All nine new modules are now at **100% statement and branch coverage**, with two `# pragma: no cover`
+exclusions that are argued in comments rather than asserted.
+
+**The same defect class in a new shape, and the reason it mattered.** `importer.py` had a branch for
+"the resolver accepted the match but the player has no NBA crosswalk row", which skipped the row
+silently. No test could enter it, and the reason was structural rather than an oversight:
+`build_player_targets` *derives* its targets from `player_external_ids` where source = NBA, so a
+player without an NBA link is never a resolution target at all. The branch was unreachable **and
+silent** - a divergence between those two queries would have dropped a priced player out of every
+count while every count still added up. Replaced with a `raise` naming the invariant. Unreachable and
+loud is fine; unreachable and silent is the combination that hides.
+
+**A convenient argument of my own, caught by re-reading.** I first wrote the adapter page claiming
+"no live smoke, deliberately - a probe would mean crawling a publisher". Then I noticed BBM is *also*
+manual-download and *does* have one, opt-in via an env var path. My reasoning had been rhetorically
+convenient: nothing can be polled, but the **shape of the table the operator copies out** drifts, and
+a contract test pinned to a months-old fixture cannot see that. There is now an opt-in smoke, and I
+drove it rather than shipping it skipping - it passes on a real export and goes red on a renamed
+value column, on a header-only file, and on a negative dollar figure, at **three different
+assertions**. Driving the negative case showed the parser rejects it fatally first, so a further
+non-negative assertion could never be reached; I deleted it rather than ship an assertion no input
+can enter.
+
+**Hashtag projections cannot be imported at all today.** `import_projection_csv` refuses an unverified
+profile and only Basketball Monster is verified, so the guard's Hashtag arm - the case everyone
+including me described as "it fires the day we import Hashtag projections" - **cannot be driven
+through the production path**, because that path refuses Hashtag one step earlier. Pinned as an
+executable test asserting the refusal rather than left as a comment. The guard itself is proved
+end-to-end against a real BBM projection import through the real CSV path.
+
+**Deliberate departure from the projections precedent.** That importer pins exact headers and refuses
+an unverified profile. Copying it here would refuse every source, and would be a misplaced check
+rather than a strict one: **no NBA auction-value publisher offers a machine-readable export**, so the
+header spelling in the CSV describes our clipboard, not the source's contract. `header_contract_verified`
+is `False` everywhere and honestly so; the import gate sits on **basis and derivation** instead.
+
+**Fixture-deletion check, driven.** Deleting each of the four fixtures in turn takes the suite red; so
+does emptying one, and so does truncating one to its header. `REQUIRED_FIXTURES` is asserted non-empty
+and each file asserted present and non-empty before any test reads one.
+
+**Cross-dialect, and not deferred.** Migration 0018 (numbered 0017 when written; renumbered
+during the rebase onto `3a25ff4`, see the rebase entry below) driven from empty on **both** SQLite and
+PostgreSQL 16.9 - first line `Running upgrade  -> 0001`, 17 steps, per the rule that a run not
+beginning at `-> 0001` is not a run from empty. `alembic check` clean and `downgrade base` clean on
+both. All 6 CHECK-constraint violations driven and refused on both dialects. Full suite green on
+both. The basis-pairing CHECK is written as an explicit two-armed disjunction because SQLite and
+PostgreSQL disagree about comparing boolean expressions - found by driving it, not by reading.
+
+**A small one worth recording.** `pytest -q` printed no summary line for three runs and I nearly
+reported "exit code 0". `addopts` already contains `-q`, so my extra flag made it `-qq`, which
+suppresses the count. **Report the state you observed** - and an exit code is not a count.
+
+**Backlog:** recounted from the finished file, 45/76 -> **46 done, 1 blocked, 75 pending, 122 total**;
+122 headings, 122 unique slugs, 122 markers. Separately diffed the slug set against `origin/main`:
+122 both sides, zero added, zero dropped, with the diff asserting `origin/main` parsed non-empty
+**before** comparing, because a diff against zero slugs reports "nothing dropped" for the same reason
+any empty set answers anything. `scripts/resolve_doc_conflicts.py` was not run on this file.
+
+**Could not verify:**
+- **Whether a FantraxHQ 2026-27 edition exists.** Only the 2025-26 page was ever fetched, and the
+  $2,655 arithmetic is transcribed from it. **Reasoned, not driven** - I did not re-fetch, and if the
+  2026-27 table has a different row count the falsification needs redoing. It would not change the
+  ruling (the budget stays unestablished either way) but it would change the evidence.
+- **Hashtag's own published methodology was read, not executed.** The claim that its values are
+  z-score -> VAR -> budget-distribution over its own projections is from its documentation and the
+  configurability of its UI. **Reasoned.** I could not confirm it by reproducing a value, and I did
+  not try, because reproducing it would be deriving a number and that is outside this gate.
+- **Yahoo's window, league-size mix and drafts-per-average are recorded `unestablished`.** That is a
+  driven negative in the weak sense that I looked and the page does not state them; it is **reasoned**
+  as to whether they are documented anywhere else. Recorded as unestablished rather than blank
+  precisely so the difference survives.
+- **No auction value has been imported from a real publisher export.** Every fixture is synthetic or
+  transcribed, and labelled as such in its `.metadata.json` (`what_is_verified` / `what_is_synthetic`
+  / `what_could_not_be_established` as three separate fields). The live smoke exists to catch the
+  first real download drifting, and **has never run against a real AAV export** - only against a
+  fixture, to prove it can fire. **Driven that it fires; reasoned that it will fire on the right
+  thing.**
+- **`AuctionValueImport.notes` is declared and never set by the importer.** Observed, not fixed. It is
+  a column with no writer, which is the shape of a field that will later be assumed populated.
+- **`_MAX_PLAUSIBLE_DOLLARS = 1000` is a mis-mapped-column guard, not a budget claim,** and nothing
+  enforces that reading beyond its name and a comment. **Reasoned.**
+- **Whether the two `# pragma: no cover` exclusions are genuinely unreachable.** Both are argued from
+  reading the query that builds the targets, and one of them I converted to a `raise` for exactly that
+  reason. **Reasoned, not driven** - I could not construct an input that enters either.
+
+### Addendum, same unit - the rebase, the crosswalk ruling, and two false sentences about my own code
+
+**Rebase onto `642bdb6`.** Conflicts in `docs/backlog.md` (header) and `docs/handoff.md` (both sides
+appended entries). Kept both sides in date order. Recounted from the resolved file rather than
+reconciling: **46 done / 1 blocked / 83 pending / 130 total**, 130 headings, 130 unique slugs, 130
+markers. Slug diff against `origin/main`: 129 there, 130 here, one added, **zero dropped** - the
+added slug is the new item below. `origin/main`'s header asserts a single alembic head and `0017`
+sits on `0016` with no collision; both driven **against `642bdb6`, and both since expired** - a later
+merge added its own `0017`, which is the collision this very check went looking for and did not find
+because it did not exist yet.
+
+**A number relayed in a message was wrong, and the file was right.** The coordinator relayed `main`
+as "128 items, 45/1/82". Recounting `origin/main:docs/backlog.md` directly gives **45/1/83/129**, and
+that file's own header agrees with itself. Nobody was careless - the number was restated in a place
+that cannot recount itself. Same failure the header has documented for rebases, arriving through
+chat instead. **Driven** (both sides recounted from their own files).
+
+**My conflict-marker scan matched prose about conflict markers.** Resolving `handoff.md` I searched
+for `<<<<<<< HEAD` with a plain substring match and it hit **line 10732** - an earlier handoff entry
+*quoting* a marker inside a sentence - not the conflict at 14578. The resolution I built on it left
+the real marker in place, and the only reason I noticed is that a final assertion re-scanned the
+merged text. Fixed by anchoring to line starts (`^<<<<<<< `, `^=======$`, `^>>>>>>> `) and asserting
+**exactly one of each**. `9f0561f` on `main` fixed the same class in `resolve_doc_conflicts.py` by
+matching the separator by equality rather than prefix; I hit the mirror image of it by hand an hour
+later. **The general form: a scanner for syntax must exclude prose that discusses that syntax, and a
+repository whose docs quote their own machinery is exactly where this bites.** Driven.
+
+**Two sentences I wrote about my own code were false, and both took ninety seconds to disprove.**
+Writing the crosswalk decision I asserted that unresolved names "land in `unmatched_count` with the
+verbatim text preserved, so the gap shows up as data." Checking `importer.py:346-348`: unmatched rows
+`continue` and are **never written**, so the database keeps a count and nothing else. Then I named
+the report flag `--unresolved-report`; it is `--report-dir`, and the report is gitignored and written
+only when at least one row is unresolved. Neither error was a typo - both were plausible sentences
+about a module I had written that same day, and both were *reassuring* in the direction that made the
+decision look cheaper. After the second I stopped re-reading and wrote a check instead: extract every
+`--flag` and every `Model.attr` the adapter page asserts, assert both sets parse non-empty, and
+compare against the parser and the module. Clean now. **The durable finding is that authorship is not
+evidence** - I was the least reliable available source on this code precisely because I remembered
+writing it, and the fix was mechanical rather than more care. Driven.
+
+**Crosswalk ruling recorded as a decision.** Yahoo and FantraxHQ do **not** enter `ExternalSource`
+and no `PlayerExternalId` rows are written for them, because a market publisher's id is not an
+identity anchor - putting them there is the `projection_sources` mistake one layer down. Written into
+`docs/adapters/published-auction-values.md` with the reasoning and with what the decision costs, so
+the next lane finds an argument rather than an absence. Previously a default; now a decision.
+
+**New backlog item: `hashtag-projection-profile-verification`**, `data-engineer`-owned, depends on
+`csv-importer`, and added to `aav-blending`'s dependencies. `import_projection_csv` refuses unverified
+profiles and only Basketball Monster is verified, so Hashtag projections cannot be imported today at
+all. Nobody had scoped the step that makes Hashtag usable as a primary source.
+
+#### Could not verify - addendum
+
+- **That `129` was `origin/main`'s true count at the moment I branched**, as opposed to now. I
+  recounted `origin/main` as it stands. **Reasoned.**
+- **That no *other* doc in the tree quotes a conflict marker in prose.** I fixed my own scanner; I did
+  not scan the repository for the pattern. **Reasoned.**
+- **That the flag/attribute checker covers the adapter page's claims generally.** It checks 1 flag and
+  1 `Model.attr` - every such reference the page actually makes, asserted non-empty before comparing,
+  but a page making claims in prose without backticks would slip past it entirely. **Driven for what
+  it covers, reasoned for its coverage.**
+- **Whether the unresolved-report gap matters in practice.** No import of a real full export has been
+  run, so I do not know how many priced players a real file fails to resolve. **Reasoned.**
+
+
+---
+
+### 2026-08-22 - `data-engineer` - `aav-source` remediation: ten review findings, and three defects the remediation itself produced
+
+An independent review of #69 returned four blockers, four required items and two notes. All ten are
+fixed and **each is pinned by a mutation that dies**, not by a test that passes. The three findings
+worth carrying forward are all in the second category: things the *remediation* did wrong.
+
+#### The blockers, and what each actually was
+
+**A - the live-smoke probe printed source rows**, reversing the policy stated sixty lines above it in
+the same file. Three assertions interpolated parser issue messages, which embed the player name and
+the raw cell. Rewritten to report counts and row numbers only. The mechanism matters: **pytest's
+assertion rewriting renders the operands of a bare `assert`**, so `assert parsed.rows, "clean
+message"` still dumps a full row repr. `if cond: raise AssertionError(...)` does not, which is why the
+sibling Basketball Monster probe is written that way and why mirroring it meant copying its *form*,
+not just its intent. Drove all three branches against synthetic exports and **scanned the captured
+output mechanically for leaked tokens** rather than reading it. Zero.
+
+The uncomfortable part is the shape: I built that probe *after* correcting myself for having no live
+smoke at all. **The remediation carried the defect.**
+
+**B and C - a count invariant that no fixture could falsify, and a counter at the wrong grain.**
+`matched + needs_review + unmatched == row_count` is false whenever a price is unreadable, and no
+fixture contained one, so the assertion could not fail. Separately `rejected_row_numbers` is
+row-grained while values are value-grained, so a two-value-column row with one bad price was both
+written and counted rejected. Added `rows_yielding_values` and `fully_rejected_row_numbers`, two
+fixtures, and an in-importer partition assertion.
+
+**D, with G and I - the guard failed open.** A source with no lineage rows was cleared as admissible,
+because the overlap test examined an empty set and found no overlap. Two live routes: `manual` was
+reported as independent market evidence with the CLI exiting 0, and **deleting the lineage rows flipped
+a live circular refusal into a clearance**. The rule is now *refuse unless lineage is established and
+disjoint* - three verdicts rather than two. `derivation_method` is now actually read, an `INFERRED`
+basis now surfaces as a caveat instead of being byte-identical to a stated one, and an identity
+comparison against a string column became equality.
+
+Fixing it **broke six tests that were relying on the fail-open**. That is the correct consequence and
+I record it because a fix that broke nothing would have been the warning sign.
+
+**E, F, H, J** - duplicate player rows now refuse by name and line number rather than surfacing as an
+undiagnostic integrity error; the Basketball Monster claim is narrowed to source-level reachability
+because no such profile exists; the redistribution problem in the fixtures is dealt with below; and
+the CRLF rationale in the checksum now has a test, so its mutation dies.
+
+#### Three defects the remediation produced, which are the transferable part
+
+**1. A fixture built on a documented missing-value token exercises nothing.** The C mutation
+*survived* my first fix. The fixture used `n/a` as its unreadable price - but `n/a` is in
+`_MISSING_TOKENS`, meaning *the source published no price*, a legitimate absence that raises **no issue
+at all**. I had built a fixture for unreadable prices containing no unreadable price. Found it by
+measuring the parse rather than by reasoning about the fixture; rebuilt it around a percentage figure,
+and the mutation then died. **The general form: a token that means "absent" and a token that means
+"malformed" are different inputs, and a test named for the second can be built entirely from the
+first.** Driven.
+
+**2. My own tripwire fired on my own explanatory prose.** The redistribution fix required removing a
+verbatim published cell from four source files, five assertions and this file. I added a scan to keep
+it out - and it went red immediately, on the paragraph I had just written *explaining* the leak, which
+quoted the cell in order to explain it. I fixed the prose rather than exempting the scan. This is the
+second instance in two days of **a scanner for syntax matching prose that discusses that syntax**, and
+the first where the prose was written by the person who wrote the scanner, in the same edit. Driven.
+
+**3. Two `edit` calls silently absorbed two following test bodies.** Both used a `def` line as the
+anchor and omitted it from the replacement, so the following tests became statements inside mine. The
+symptom was an unrelated-looking attribute error on a fixture object. **I did not then re-read the
+file - I ran an AST scan** for module-level bare expressions, lowercase module-level assignments and
+duplicate test names, which is a check that does not depend on my attention. 59 top-level tests, no
+duplicates, no orphaned bodies. Driven.
+
+#### The fixtures, and a deliberate deviation from append-only
+
+`docs/handoff.md` is append-only by precedent and I **broke that deliberately**, redacting a published
+cell in place rather than appending a correction. Appending would have left the leaked value in the
+file, which is the thing being fixed; a correction that preserves the defect is not a correction. I am
+naming it here rather than doing it quietly, because a silent edit to an append-only file is exactly
+the kind of thing that later reads as corruption.
+
+All three fixtures were **regenerated on a stated arithmetic ramp** rather than edited, and the
+metadata now states *the generation rule* instead of asserting synthetic-ness. That converts the
+redistribution promise from a claim into something a reader can check against the file in about ten
+seconds - which the previous metadata could not do, and which is how the coincidence the reviewer
+spotted became visible at all.
+
+#### Could not verify
+
+- **That the live probe leaks nothing against a real export.** I drove all three branches against
+  synthetic exports and mechanically scanned the output; I have never run it against a real one,
+  because I do not have one. The assertions no longer interpolate parser detail, which is structural,
+  but the claim "nothing leaks in practice" is **reasoned**. The scan itself is **driven**.
+- **That the mutation set is complete.** 18 mutations re-run and all now die, but the set is one I and
+  the reviewer chose. A mutation neither of us thought of is not covered by either. **Driven for the
+  18, reasoned for the coverage.**
+- **That no other prose in the tree quotes a conflict marker.** Still not swept - carried forward
+  unchanged from the previous entry, and now two instances old rather than one. **Reasoned.**
+- **That no other fixture in the repository contains a non-redistributable published value.** I
+  regenerated the three that are mine. I did not audit the others. **Reasoned.**
+- **That `basketball_monster` having no profile is the only case where the guard's reachability claim
+  outruns the database.** I checked that one because the reviewer named it. I did not enumerate the
+  other profiles against persisted rows. **Reasoned.**
+- **Whether refusing duplicate player rows is the behaviour an operator wants.** It is the behaviour
+  that avoids inventing market evidence, which is why I chose it, but no operator has hand-transcribed
+  a real table through this path yet. **Reasoned.**
+
+
+---
+
+## 2026-08-22 - `data-engineer` / `aav-source`: rebasing onto `3a25ff4`, and the collision that only existed once two branches met
+
+**Changed:** nothing in the market layer's behaviour. One rename with four edited
+lines - `alembic/versions/0017_auction_value_market_layer.py` becomes `0018_...`,
+`revision` `0017` -> `0018`, `down_revision` `0016` -> `0017` - plus two corrected
+sentences in this file. The rebase itself moved five commits onto `3a25ff4`.
+
+**Why there was anything to change at all.** The previous entry recorded, as a
+driven observation, that `origin/main` had a single alembic head and that `0017`
+sat on `0016` with no collision. That was true. It was measured against `642bdb6`,
+and by the time this branch rebased, `main` had taken five merges, one of them
+`draft-tracker`, which added its own `0017_draft_tracker.py` **also on `0016`**.
+Alembic reports `Revision 0017 is present more than once`; `tests/test_migrations.py`
+turns that warning into 20 failures, which is what the rebase surfaced.
+
+**The generalisable part is not "renumber your migration".** It is that
+**a verified absence is a statement about a base, not about the tree.** The check
+that went looking for exactly this collision ran, was correct, and found nothing -
+because at that moment there was nothing. A positive claim ("this table exists",
+"this constraint fires") survives a rebase; a negative one ("nothing else claims
+this number") expires the instant anything merges, and nothing in the file that
+records it says so. So the old sentence is annotated rather than deleted, and the
+annotation names the base it was true of. **The two claims are not the same shape
+and should not be written in the same voice.**
+
+Worth saying plainly because it cuts against how this branch was scheduled: being
+held to last so the gate ran once was correct and saved four full gate runs, but
+**the longer a branch holds, the more of its driven negatives have quietly become
+reasoned ones.** The cost of holding is not zero; it is paid in the expiry of
+exactly this class of claim. No single-branch gate can see it, on any branch, ever -
+the defect exists only in the union of two branches.
+
+**And it was diagnosed rather than recognised.** I have a register entry about
+merge collisions and a mutation harness full of named classes, which is precisely
+the position the backlog-graph lane warned about: a good catalogue supplies a ready
+explanation faster than it supplies a way to reject one. The 20 failures were read
+from alembic's own message naming the duplicate revision, and the two competing
+`0017`s were then read out of the files, before anything was renamed. The register
+entry would have given the right answer this time; it was not what produced it.
+
+**A tooling note attached to that.** The first attempt to read the revision ids
+used a PowerShell `[regex]::Match` and printed nothing for every file - an empty
+result that looks exactly like "no revision line found", which would have been a
+false negative about the very thing under investigation. Read with a plain
+`Select-String` instead. **An extraction that returns nothing is a failed
+measurement until you have shown the pattern matches something.**
+
+**Verification after the rebase, all of it re-run rather than carried over.**
+Every measurement in the previous entry was taken against `642bdb6` and none of it
+was reused.
+
+- SQLite full suite **1622 passed, 0 failed**. PostgreSQL 16.9 full suite
+  **1616 passed, 6 skipped, 0 failed**. The six skips are not mine: the two auction
+  files were re-run alone on PostgreSQL with `-rs` and report **109 passed, zero
+  skip lines**.
+- `ruff check`, `ruff format --check` (187 files), `mypy src tests` (167 source
+  files) all clean.
+- Alembic four ways on **both** dialects from empty: 18 steps, first line
+  `Running upgrade  -> 0001` (a run not beginning there is not a run from empty),
+  last line `Running upgrade 0017 -> 0018`, `alembic check` clean, `downgrade base`
+  clean, re-upgrade clean, `alembic heads` reporting exactly one head.
+- Marker gates: `adapter_contract` 393 passed, `model_backtest` 18 passed,
+  `live_smoke` 28 passed / 4 skipped.
+- Mutation harness re-run **in full, not the subset touched by the rebase** -
+  13 mutations, **13 caught, 0 survived, 0 harness failures**, baseline 109 passed.
+  Re-running only what changed is what let two mutations survive the previous round.
+- `scripts/backlog_graph.py` exit 0. Header recounted from the finished file to
+  **48 done / 1 blocked / 86 pending / 135 total**, 135 headings, 135 unique slugs,
+  135 markers, no checkbox/status contradiction. Slug diff against **the merge base**,
+  re-run naming the sha rather than the `origin/main` ref - this file's own header block
+  now instructs the merge base, and the two were the same commit here, which is exactly
+  the case where the wrong version of that check agrees with the right one:
+  134 there, 135 here, **one added** (`hashtag-projection-profile-verification`),
+  **zero dropped**. The two headers reconcile exactly - `aav-source` moves
+  pending -> done and one pending item is added, so done 47 -> 48, pending
+  86 -> 86, total 134 -> 135.
+
+**Four checks that failed on me first, which is the part worth reading.**
+
+1. **My backlog recount reported 46/1/82 against a header saying 48/1/86, and the
+   file was right.** My marker regex anchored `\*\*done\*\*` to end-of-line and six
+   entries carry trailing content, so it silently dropped six items and produced a
+   plausible, wrong, self-consistent count. It was caught because the script asserts
+   `markers == headings` before reporting anything. **A recount that does not
+   cross-check its own extraction against an independently parsed population is a
+   number with no way to be wrong out loud.** Rewritten to associate each marker
+   with its heading, so an unparsed marker raises instead of shrinking a total.
+2. **My restore after the secret-scan tripwire corrupted the fixture.** Appending an
+   AWS-shaped key gave exit 1 naming
+   `backend/tests/fixtures/auction_values/fantraxhq_auction_values.csv:12`, which is
+   the scope proof the bare `No secrets found in 386 tracked files` cannot give. But
+   my hand-rolled trailing-newline restore left the file **not** byte-identical -
+   caught only by comparing the SHA-256 and re-running `git status`, not by assuming
+   the restore worked. Restored from git instead. **The tripwire proved scope and
+   then nearly committed a mangled fixture; the assertion that saved it was on the
+   restore, not on the injection.**
+3. **The stale background suite reported shell exit 0 while the run inside it
+   exited 1.** A PostgreSQL suite launched before the migration fix was known
+   completed with a "completed successfully" notification and `20 failed, 1596
+   passed` in its output. The notification describes the shell, not the suite. It was
+   discarded and re-run rather than read. Related: `pytest` against a test file that
+   does not exist gives **rc 4**, and rc 4 is a usage error, not a clean run - I hit
+   it naming a `test_auction_value_independence.py` that has never existed, because
+   the independence tests live in `test_auction_value_import.py`.
+
+4. **My handoff-append check printed a number that tested nothing, while the guard
+   behind it was sound.** The append was verified by `after.startswith(before)` - a real
+   test of purity - but the line I *printed* was a newline count reading
+   `lines before: 17359 -> after: 2`. Inside a PowerShell single-quoted here-string the
+   Python source received a literal backslash-n, so `.count()` counted escape sequences in
+   the prose rather than newlines. **I caught it only because `2` was absurd.** Had it
+   printed a plausible number I would have quoted it, and the sound assertion underneath
+   would have gone on being sound while the sentence everyone reads was false. Replaced
+   with `git diff --numstat`, an independent instrument measuring the same property:
+   **137 insertions, 0 deletions**.
+
+   The rule this instantiates: **a sound guard with an unsound report is worse than an
+   unsound guard**, because the guard runs once and the report is what gets read, quoted
+   and believed - nobody re-derives the assertion from the output. **Report the quantity
+   your assertion actually tested.** It arrived the same evening as the length-identical
+   `48` -> `12` header mutation, which is the same defect from the other side: there the
+   guard compared strings and the *evidence printed* was a character count.
+
+**Header tripwire, and it was built to defeat the failure mode the coordinator
+named.** `48 done` -> `12 done` is length-identical, so a character-count assertion
+would score an applied mutation as unapplied. The check compares the strings before
+and after. `backlog_graph.py` then failed by name -
+`[header-disagrees-with-items] line 5: ... done: claims 12, file has 48` - and the
+file was restored and re-compared as strings, with the tool re-run clean at exit 0.
+Note that this check only became real at `b49c6e6`; any earlier report of the header
+"passing" describes a run that never read line 5.
+
+**Not done, and deliberately so:** the working tree was left untouched while the
+mutation harness ran, because that harness edits source files in place and a
+concurrent suite would have been reading a mutated tree. The PostgreSQL suite and
+the harness were serialised for that reason rather than overlapped.
+
+**Could not verify:**
+
+- **That no third branch is carrying a `0018`.** `origin/main` was re-read at
+  `3a25ff4` immediately before pushing and holds one head, and the merge base was
+  asserted equal to it. But the same reasoning that produced this entry applies to
+  this sentence: it is true of `3a25ff4` and expires on the next merge. **Driven
+  against `3a25ff4`, reasoned about anything after it.**
+- **That the six PostgreSQL skips are harmless.** I established they are not mine by
+  re-running my files alone with `-rs` and observing zero skip lines. I did not read
+  the six reasons. **Driven that they are not mine, reasoned that they are fine.**
+- **That the mutation set is complete.** 13 mutations all die. The set is still one I
+  and the reviewer chose. **Driven for the 13, reasoned for the coverage.**
+- **That no real published export has ever been imported.** Unchanged and still the
+  one that matters: the structure is driven, the practical claim about real data is
+  **reasoned**, and it gets settled the first time the owner pastes real data in.
+- **That no other prose in the tree quotes a conflict marker.** Still not swept.
+  Carried forward a third time. **Reasoned.**

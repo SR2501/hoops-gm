@@ -36,6 +36,11 @@ from typing import ClassVar
 import pytest
 
 from hoops_gm.identity import IdentityResolver, ResolvableRecord
+from hoops_gm.ingest.auction_values import (
+    AuctionValueProfileError,
+    parse_auction_value_csv,
+    profile_for,
+)
 from hoops_gm.ingest.errors import SourceRejected
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient, parse_league_info
 from hoops_gm.ingest.injury_report import (
@@ -92,6 +97,8 @@ from zoneinfo import ZoneInfo  # noqa: E402
 NO_CACHE = timedelta(0)
 _EASTERN = ZoneInfo("America/New_York")
 _BBM_PRIVATE_CSV_ENV = "HOOPS_GM_BBM_PROJECTION_CSV"
+_AAV_CSV_ENV = "HOOPS_GM_AAV_CSV"
+_AAV_PROFILE_ENV = "HOOPS_GM_AAV_PROFILE"
 
 #: The representative historical injury cohort's window. Mirrors the committed
 #: manifest's scope, so a live drift in the window's game slate turns this red
@@ -201,6 +208,94 @@ class TestBasketballMonsterProjectionExportIsAlive:
             raise AssertionError(
                 "private BBM CSV contains unexpected row failures under the verified contract"
             )
+
+
+# ==========================================================================
+# Published auction values (seed AAV)
+# ==========================================================================
+
+
+class TestPublishedAuctionValueExportIsAlive:
+    """The only live check a manual-download AAV source can honestly have.
+
+    No publisher offers a machine-readable export, so there is nothing to crawl
+    and nothing this suite could poll — and crawling one is the ToS exposure the
+    manual-download boundary exists to avoid. What *can* drift is the shape of
+    the table the operator copies out: a renamed column, a dropped dollar sign,
+    a new "Total" row. That drift is invisible to the contract test, which will
+    keep passing against a fixture recorded months ago.
+
+    So this probe runs against a **freshly downloaded** file, opt-in, and its
+    real job is to fail loudly the first time a re-download no longer parses.
+    """
+
+    def test_a_freshly_downloaded_export_still_parses_under_its_profile(self) -> None:
+        """FAILS IF: a re-downloaded AAV table changed shape since the fixture.
+
+        Asserts the presence of parsed values, not the absence of errors. An
+        empty file, a header-only file and a file whose every row was rejected
+        all produce "no fatal issues" if you only look for issues.
+
+        **Failures report counts and row numbers only.** Parser issue messages
+        embed the player name and the raw cell, so interpolating one would print
+        rows of a non-redistributable table into the log — and this probe is
+        schedule-gated on a real export existing, so it would do that precisely
+        when there was something real to print. Header labels are reported,
+        because a renamed column is the drift being detected and a header is not
+        row content. `raise AssertionError` rather than `assert` throughout, for
+        the same reason the BBM probe above does it: pytest's assertion
+        rewriting renders the operands of a bare `assert`, which would dump
+        `PublishedValueRow` reprs even from an assertion whose own message is
+        clean.
+        """
+        configured = os.getenv(_AAV_CSV_ENV)
+        profile_id = os.getenv(_AAV_PROFILE_ENV)
+        if not configured or not profile_id:
+            pytest.skip(f"set {_AAV_CSV_ENV} and {_AAV_PROFILE_ENV} to run the AAV smoke")
+
+        profile = profile_for(profile_id)
+        try:
+            csv_text = Path(configured).read_bytes().decode("utf-8-sig")
+        except OSError:
+            raise AssertionError(f"{_AAV_CSV_ENV} must identify a readable CSV") from None
+        except UnicodeDecodeError:
+            raise AssertionError(f"the export at {_AAV_CSV_ENV} is no longer UTF-8") from None
+
+        try:
+            parsed = parse_auction_value_csv(csv_text, profile)
+        except AuctionValueProfileError as error:
+            raise AssertionError(
+                f"{profile.display_name} export no longer maps under profile "
+                f"{profile.profile_id!r}: {error}"
+            ) from None
+
+        total_rows = parsed.total_rows
+        value_count = len(parsed.rows)
+        issue_count = len(parsed.issues)
+        fatal_rows = sorted({issue.row_number for issue in parsed.fatal_issues})
+
+        if total_rows <= 0:
+            raise AssertionError(
+                f"{profile.display_name} export produced no data rows at all; a header-only "
+                "file parses without error and imports nothing"
+            )
+        if value_count == 0:
+            raise AssertionError(
+                f"{profile.display_name} export parsed {total_rows} rows and yielded no "
+                f"values ({issue_count} issues raised). Messages are suppressed here; "
+                f"re-run the parser locally to see them."
+            )
+        if fatal_rows:
+            raise AssertionError(
+                f"{profile.display_name} export drifted: {len(fatal_rows)} rows rejected "
+                f"fatally at row numbers {fatal_rows}. Messages are suppressed here; "
+                f"re-run the parser locally to see them."
+            )
+        # No negative-value backstop here on purpose. Driving a negative price
+        # through this probe showed the parser already rejects it as a fatal
+        # issue, so a further `value_dollars >= 0` assertion below could never
+        # be reached — it would read as a second line of defence and be an
+        # assertion no input can enter.
 
 
 # ==========================================================================
