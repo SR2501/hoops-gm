@@ -17144,7 +17144,8 @@ is `False` everywhere and honestly so; the import gate sits on **basis and deriv
 does emptying one, and so does truncating one to its header. `REQUIRED_FIXTURES` is asserted non-empty
 and each file asserted present and non-empty before any test reads one.
 
-**Cross-dialect, and not deferred.** Migration 0017 driven from empty on **both** SQLite and
+**Cross-dialect, and not deferred.** Migration 0018 (numbered 0017 when written; renumbered
+during the rebase onto `3a25ff4`, see the rebase entry below) driven from empty on **both** SQLite and
 PostgreSQL 16.9 - first line `Running upgrade  -> 0001`, 17 steps, per the rule that a run not
 beginning at `-> 0001` is not a run from empty. `alembic check` clean and `downgrade base` clean on
 both. All 6 CHECK-constraint violations driven and refused on both dialects. Full suite green on
@@ -17195,7 +17196,9 @@ appended entries). Kept both sides in date order. Recounted from the resolved fi
 reconciling: **46 done / 1 blocked / 83 pending / 130 total**, 130 headings, 130 unique slugs, 130
 markers. Slug diff against `origin/main`: 129 there, 130 here, one added, **zero dropped** - the
 added slug is the new item below. `origin/main`'s header asserts a single alembic head and `0017`
-sits on `0016` with no collision; both driven.
+sits on `0016` with no collision; both driven **against `642bdb6`, and both since expired** - a later
+merge added its own `0017`, which is the collision this very check went looking for and did not find
+because it did not exist yet.
 
 **A number relayed in a message was wrong, and the file was right.** The coordinator relayed `main`
 as "128 items, 45/1/82". Recounting `origin/main:docs/backlog.md` directly gives **45/1/83/129**, and
