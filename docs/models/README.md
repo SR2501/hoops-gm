@@ -64,11 +64,22 @@ A model that says 70% and is right 70% of the time is more useful for a lineup d
 - `availability.md` — per-game `p(play)`
 - `injury-status-conversion.md` — report status → actual play rate
 - `shutdown-risk.md` — late-season shutdown probability
-- `baseline-production.md` — in-house per-game production model
+- `baseline-production.md` — in-house per-game production model. **Deferred:**
+  [`projection-strategy.md`](projection-strategy.md) recommends not building this
+  before draft day and measures why
 - [`projection-blending.md`](projection-blending.md) — deterministic,
   user-configured per-game source blending; no learned source-quality claim
 - `contingent-value.md` — usage redistribution on absence
 - `auction-inflation.md` — live price movement during an auction
+
+## Strategy documents
+
+Not model cards and not claiming the Model gate; they fit nothing and produce no
+number a decision rests on. They record measurements that decide whether and how
+a model should be built.
+
+- [`projection-strategy.md`](projection-strategy.md) — where fantasy-relevant
+  variance actually lives, and the recommendation on `baseline-model`
 
 ## Frozen pre-registrations
 

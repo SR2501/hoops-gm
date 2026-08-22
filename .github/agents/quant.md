@@ -48,7 +48,7 @@ Own every number a decision rests on. This is the intellectual core of the proje
 
 **Do not trust stated DNP reasons.** "Rest" is routinely laundered as a minor ailment. Lean on observed patterns over official explanations.
 
-**Auction inflation is the largest single edge in the tool.** As money leaves the board, every remaining price moves. Humans eyeball it badly under a bid clock. Get it right and validate it against the mock corpus.
+**Auction inflation is the largest in-draft edge in the tool.** As money leaves the board, every remaining price moves. Humans eyeball it badly under a bid clock. Get it right and validate it against the mock corpus.
 
 ## Model gate — required for every model
 

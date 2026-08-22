@@ -110,7 +110,22 @@ Mock outcomes are permanently ineligible.
 - trades, coaching or rotation changes after a source cutoff;
 - undisclosed injuries, rest plans, personal matters, or front-office intent;
 - whether a manual override is substantively correct;
-- source copying or correlated errors between publishers;
+- source copying or correlated errors between publishers — and **the correlation
+  should be expected to be high, not merely possible.** Measured on ten seasons
+  of NBA game logs, a naive Marcel-style baseline already reaches r² 0.71–0.89
+  year over year on the volume per-36 categories (PTS, REB, AST, BLK, FG3M;
+  0.50 on steals and 0.66 on turnovers, the weakest of the seven — the full
+  range is 0.50–0.89), and a naive baseline agrees with a commercial projection
+  set at r² 0.726–0.947 per game. So the spread between sophisticated public
+  systems is small because **consensus rates are largely reproducible from
+  public box scores** — and for this contract's purposes it does not matter
+  whether that is because the information is exhausted or because the sources
+  are themselves naive. Every source in this contract reads the same box scores.
+  **Blending N sources that share inputs and are mutually reproducible buys far
+  less error reduction than N independent opinions would**, and the weights
+  cannot detect the difference. See
+  [`projection-strategy.md`](projection-strategy.md) and
+  [`consensus-reproducibility.md`](consensus-reproducibility.md);
 - future availability or games played;
 - whether a per-game blend improves valuation or fantasy outcomes.
 
