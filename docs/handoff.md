@@ -16866,3 +16866,195 @@ operations that do not consult the wedged state. **Do not stash during a conflic
   across events, and I have not driven the difference.
 - **The rebase failure is diagnosed, not understood.** I have a reliable recovery and a plausible
   cause; I did not reproduce it deliberately.
+## 2026-08-22 - architect - A definition can assert an enforcement that does not exist
+
+**Unit:** correcting a false enforcement claim about surface parity, found by the draft-board lane
+and relayed to me. Docs-only: `docs/plan.md`, `.github/agents/frontend.md`,
+`.github/agents/bridge.md`, `docs/backlog.md`, `docs/governance/gates.md`. Prose only - no counts
+moved, no rule changed, no ownership changed.
+
+**The claim was in three places at three different strengths, and the strongest was the false one.**
+`plan.md` said parity "is enforced as a test, not a convention"; `frontend.md` said "this is
+enforced by test"; `bridge.md`'s done criteria said "surface parity tests pass". Eleven lines below
+its own false sentence, `frontend.md`'s done criteria said "surface parity tests pass **where
+applicable**" - correctly hedged, and defeated by the unhedged one above it, which is R49 exactly.
+`ownership.md` was already right: it states the rule and claims no enforcement.
+
+**The remedy I was handed was a false choice, and checking it is the finding.** I was told either
+the test gets written or the claim gets amended. **The test cannot be written.**
+`surface-parity-tests` is filed and pending behind `dashboard-evidence-views`,
+`overlay-draft-panel` and `overlay-auction-panel`, all pending - so there is no second surface to
+compare against and the test is not unwritten but **unwritable**. Only the amendment was available.
+All three sites now name the backlog item and say plainly that parity is a convention until it
+closes; `frontend.md` says "you are the enforcement", which is the true statement.
+
+**Why this matters beyond one sentence:** yesterday's unit landed *use the repository's mechanism,
+not prose describing it*, after every lane was launched without the `agent` parameter that loads
+these definitions. This is that rule's own limit. **A definition is not self-verifying** - the
+mechanism I told everyone to use was itself asserting an enforcement that did not exist. Landed as
+the second sentence of that limb in `gates.md`, with the checkable part stated: **an enforcement
+claim is checkable in one grep, so grep it before relying on it.**
+
+**Swept for others rather than fixing only the reported one.** `git grep -iE "is tested|are
+tested|test asserts|guaranteed by|checked by (a )?test|there is a test|a test (exists|enforces|
+prevents)"` across `.github/agents` and `AGENTS.md` returns nothing, and the only surviving
+"enforce" in `plan.md` is line 617, which is a future-tense item description and correct.
+
+**Backlog:** 130 headings, 130 unique slugs, 130 markers, 45 done / 1 blocked / 84 pending - split
+summed back to the heading count, matched on the marker token rather than the word. Unchanged by
+this unit, which edits prose inside one existing item. Slug-diffed against `origin/main` anyway:
+zero dropped, zero added.
+
+**Could not verify:**
+- **Driven, not reasoned, after I flagged it as reasoned.** My first draft of this entry said the
+  "no second surface exists" inference rested on reading status markers. That is the weaker of the
+  two claims `gates.md` now distinguishes, so I drove it: `userscript/` exists and is **capture-only
+  and read-only** — `src/capture.js` and `src/userscript.js` hook `fetch`/`XHR` against `/fxpa/req`
+  and pair a bridge secret, and a grep for `recommend|draft|pick|panel|overlay` across
+  `userscript/src` returns two comments and no UI. `frontend/src/routes/` holds four real pages. So
+  there is exactly one decision surface, the test genuinely cannot be written, and the amendment is
+  not too generous. **What remains unverified is narrower**: I did not read every line of the two
+  userscript sources, so "no decision UI" rests on a grep over five identifiers plus the README's
+  own description, not on reading them end to end.
+- **I changed two files I do not own.** `frontend.md` and `bridge.md` belong to those lanes.
+  I judged a false enforcement claim on a `frontend` <-> `bridge` seam to be arbitration, which is
+  in `architect`'s scope, and I changed only the tense and added a pointer - not the rule, not the
+  requirement, not the ownership. If either lane disagrees, revert those two hunks; the `plan.md`
+  and `gates.md` ones stand alone.
+- **The previous unit's could-not-verify still holds: nine of fifteen ADRs unread here.** I read
+  `frontend.md`, `bridge.md` and `ownership.md` in full for this one, and `plan.md` only around the
+  parity section.
+
+### Rebase onto 9e5fe0f, and three things the verification found
+
+- **`scripts/backlog_graph.py` does not check the header, and I was told it did.** The signal to
+  rebase said it "now also checks the header against the file" and had "caught two real stale
+  headers in two hours", offered as grounds to trust its pass. I injected three defects into a
+  copy before trusting it: a duplicate slug **fails, naming both line numbers**; a dangling
+  `Depends on:` **fails, naming the line**; a header saying `132 total` over a 133-item file
+  **passes, exit 0**. The script never parses the header - `grep -n 'total\|header'` finds only a
+  `Counter` over statuses. The recompute is real but lives in `scripts/resolve_doc_conflicts.py`,
+  which only runs **when a conflict occurs**, so the two catches were rebase resolutions rather
+  than CI. **A header edited on a branch that merges cleanly is checked by nothing** - which is
+  the shape `gates.md` already names, inverted: a check that runs only when something went wrong
+  misses every case where nothing did. Not fixed here; #71 is prose-only and this is a code change
+  in `backlog-dependency-graph`'s area. Filed as a message to the coordinator, not as an item,
+  because the item is another lane's.
+- **Sixth instance of the word-for-token class, mine, inside the check for it.** My recount used
+  `^- \[[ x]\] \*\*(done|pending|blocked)\*\*\s*$` and returned **128 against 133 headings**,
+  because five items carry dated prose after the marker. The producer's own `STATUS_RE` at
+  `backlog_graph.py:69` omits the anchor and is right. **I reimplemented a parser the producer
+  exposes, and got it wrong, in the unit that landed "ask the producer".** Caught only by summing
+  the split back to the heading count; relaxed, it gives 46/86/1 = 133, matching the header.
+- **R59's own mutation-harness instance, committed by me, four hours after writing it.** I ran the
+  suite with `PYTHONPATH` set to `<root>\src` rather than `backend\src`; pytest exited **4** on a
+  conftest `ModuleNotFoundError` having run zero tests. That is the exact failure R59 records - a
+  non-zero exit that a harness would score as a pass. It was visible only because I read the exit
+  code's *meaning* rather than its truthiness. Correct run: **1,496 tests, 0 failures, 0 errors,
+  396s**, from `--junit-xml` rather than the terminal summary, which I could not capture reliably.
+
+### Could not verify, this rebase
+
+- **Whether the two "stale headers" the coordinator reported were caught by the resolver or by a
+  person.** I established `backlog_graph.py` cannot have caught them; I did not establish what did.
+- **Whether any other lane is relying on the header check that does not exist.** The claim was
+  broadcast to me; I do not know who else received it.
+### Rebase onto b49c6e6, and an append I was asked to write and did not
+
+- **The false guarantee I was asked to correct is not in the repository.** The instruction was to
+  append a correction because `docs/handoff.md` on `main` carried *"`backlog_graph.py`'s header
+  check passed on both branches - no stale header inherited through either rebase"*, merged via
+  #68/#70 and false when written. **It is not there.** `git grep -i "header check" -- docs/`
+  returns three lines, all from #72's own lane where the check does exist; `git log --all -S "no
+  stale header" -- docs/` and the same for `"header check passed"` return **no commit on any
+  branch, ever**. The nearest real sentence is a lane's own token recount at `handoff.md:16419-25`
+  reporting *its own parse* agrees with the header, correctly attributed and true. **I did not
+  write the append**, because an append correcting a sentence nobody wrote would put a false claim
+  into the file whose purpose is to prevent them - and it would be uncheckable in the direction
+  that matters, since a reader could only confirm the absence by repeating this search.
+- **Third alarm this unit that did not survive checking, and the shape is now stable.** R58's
+  malformed row, a `main` count of 130/47/1/82 that matched no tree, and this. Each was specific,
+  each was internally coherent, each named a locator - and **specificity is what made them worth
+  checking rather than what made them true.** The cost of checking is two minutes; the cost of
+  acting is a committed correction to nothing.
+- **A character-count assertion cannot see a same-length substitution.** Proving #72's newly-merged
+  header check works on my own tree, I mutated `47 done` to `12 done` - identical length, so the
+  char-count guard reported no change. Had that been my only assertion I would have printed
+  `MUTATION DID NOT APPLY` and concluded the merged check was untestable here. Caught because the
+  guard also compared the strings. **Assert the edit, not a statistic of the edit** - the check
+  itself is fine and fails correctly: `[header-disagrees-with-items] line 5 ... claims 12, file has
+  47`, rc=1, against rc=0 on the control.
+
+### Could not verify, this rebase
+
+- **What the coordinator was looking at when they reported the merged false guarantee.** I
+  established it is in no branch's history; I did not establish what they read instead.
+- **Whether the `r²` citation copies are actually wrong or merely narrower.** `backlog.md:1237`
+  and `projection-blending.md:119` carry the flat `0.726-0.947` while
+  `consensus-reproducibility.md:219` records games agreement at `0.284-0.504`. I landed the
+  *remedy* (grep the numeral after a correction) without adjudicating those three files, which
+  belong to `quant`.
+
+## 2026-08-22 - architect - The wrong-base slug diff was still instructing lanes in `backlog.md`; the append I was asked for still does not exist
+
+Follow-up on #71 while it held for the merge window. Two edits to `docs/backlog.md`'s header
+block, one refusal restated with better evidence, and one instrument failure of my own that is
+the day's own class.
+
+**The correction I landed one commit ago had not reached the instruction that propagates it.**
+`gates.md` now says a correction is incomplete until you grep for the copies that merely cite the
+claim, because they are invisible from inside the document that argues it. I wrote that sentence
+and then left `backlog.md`'s header block telling every lane to **compare the slug set against
+`origin/main`** - the exact practice that reports another lane's merges as your own deletions once
+your base has moved, and the one the ceiling lane lost seven items to. The rule now names the
+merge base, and says why the wrong version survives review: run right after a rebase the two are
+the same commit, so it agrees with the correct check precisely while it cannot mislead anyone.
+Grepped `docs/`, `.github/` and `scripts/` afterwards for other live copies - none. The remaining
+`origin/main` mentions are append-only `handoff.md` records of what lanes actually did, correct as
+history and not instructions.
+
+**CI checks the header. Nothing fixes it.** Recorded in the same block, because the block already
+said the header is checked and a reader would reasonably assume the tool that checks also repairs.
+`scripts/backlog_graph.py` gained `_check_header` at `b49c6e6` and not before; the repair is
+`scripts/resolve_doc_conflicts.py:382`, which recomputes unconditionally - the `if had_conflict:`
+branch closes at 380 - but only ever runs when a human invokes it during a conflict. So a header
+wrong on a branch that merged cleanly was repaired by nothing and, until `b49c6e6`, caught by
+nothing either. Both halves are worth knowing and only one of them is now closed.
+
+**The `handoff.md` false guarantee I was asked to correct does not exist, and I have now looked
+everywhere it could be.** The sentence - `backlog_graph.py`'s header check *"passed on both
+branches - no stale header inherited through either rebase"* - returns nothing from
+`git log --all -S` over `docs/`, nothing from a `git grep` across 200 commits on all branches,
+nothing from the bodies of #68, #70, #72 and #73, and nothing from any review or comment on
+#64 through #73. The only occurrence in the repository is **my own quotation of it in the entry
+above this one.** The nearest real text is line 16836, a lane's own recount of two stale headers
+it caught, correctly attributed to the resolver. I am not writing a correction to a sentence
+nobody wrote: that would put into this file exactly the class it exists to prevent, and it would
+be the first false claim here traceable to an instruction to be careful.
+
+**Third alarm this unit that did not survive checking**, after the malformed `R58` row and the
+`130`-item count that was arithmetically consistent with no tree. The through-line is worth one
+sentence: **each was specific enough to be worth checking, and specificity is what made it worth
+checking rather than what made it true.**
+
+**And my own, in the act of gating the above.** I ran the full backend gate redirecting output to
+`..\.git\gate-*.txt`. **In a worktree `.git` is a file, not a directory**, so every redirect
+failed, four commands ran to completion and wrote their results nowhere, and the shell returned
+`1`. Roughly twenty minutes of compute discarded and, had the shell returned `0`, I would have had
+a run I could not read and no reason to notice. The remedy is the one already in the register in
+its other form - **assert the artefact exists rather than the command's silence** - so the rerun
+prints each file and its byte count, and captures `$LASTEXITCODE` per step rather than once at the
+end. Same shape as the day's seven empty-set successes: the failure was in the instrument, and the
+instrument was the only thing reporting. **And in the rerun I typed `mypy src` where `ci.yml:65`
+runs bare `mypy`**, which is config-driven: 106 files against CI's 161. Green both ways, so nothing
+would have contradicted me, and I would have reported a gate that checked fifty-five files fewer
+than the gate. Where the pipeline defines the invocation, run the pipeline's, not one that looks
+equivalent.
+
+**Could not verify:** what the coordinator was reading when they described the merged guarantee -
+I have established it is in no file, branch, PR body or PR comment, which is not the same as
+establishing what they saw. Whether `backlog.md:35`'s historical account of the `origin/main`
+diff should also be reworded; I left it because it records what a lane did, but a reader skimming
+for the technique could take the narrative as the rule. And I did not check whether the other
+`origin/main` slug diffs recorded in this file produced wrong answers at the time - several were
+run right after a rebase, where the wrong base and the right one coincide.

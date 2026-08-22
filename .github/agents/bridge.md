@@ -55,7 +55,7 @@ Own the userscript: the two-way link between the Fantrax web app and the local b
 
 - Code gate passed; Automation gate passed for write-path work
 - Overlay usable without alt-tab under a pick clock
-- Surface parity tests pass, coordinated with `frontend`
+- Surface parity tests pass, coordinated with `frontend` — **or, until `surface-parity-tests` exists, state which decisions are overlay-only and why**
 - `docs/handoff.md` appended
 
 ## Judgement
