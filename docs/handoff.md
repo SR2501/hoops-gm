@@ -14911,3 +14911,50 @@ could not.
   not edit `ownership.md`.
 - **I did not re-run the frontend gate for this change.** No frontend file or command changed since
   the previous entry, where it was driven green. **Reasoned**, and cheaply falsifiable by CI.
+
+## 2026-08-21 - `backend` lane - Rebasing onto #67, and a header that was two different wrong numbers
+
+**Unit:** rebasing PR #65 onto `642bdb6`, resolving `docs/backlog.md` and `docs/handoff.md` by hand,
+and adding the arbitrated `scripts/` ownership row.
+
+**The conflict was not an append.** #67 filed `backlog-dependency-graph` and `per-run-metric-delta` -
+**the two units this PR builds** - so the resolution needed a duplicate-slug check rather than a
+concatenation. There is none: 130 headings, 130 unique slugs. The backlog prose conflict was a real
+disagreement, not a whitespace one: `main` said the sibling to `adr-index-consistency-test` "is now
+filed as `backlog-dependency-graph`; filing it is not building it", which stopped being true in this
+PR. Kept both sides and marked it built.
+
+**The header was two different wrong numbers and neither side was right.** Git offered `129` from
+`main` and `123` from my branch. Both are honest records of a file that no longer exists. Taking
+either would have been the counting failure the header's own prose is about, and there is no
+resolution that is a choice between them - the finished file has to be recounted. It is **130**:
+45 done, 1 blocked, 84 pending, split summing to the total, 130 headings, 130 unique slugs, 130
+status markers, 1:1. Agreed by token-matched grep and independently by `backlog_graph.py`'s own parse,
+which also confirms no dangling edge among the seven items merged from `main`.
+
+**A number in the instruction I was given was wrong, and only recounting caught it.** I was told
+`main` was at **128**. It is at **129** - 45/1/83 - and #67 added **seven** slugs, not six. Nothing
+turned on it, because the rule is to recount from the finished file rather than carry a number
+forward, and this is the third time today that rule has paid for itself. It is the same shape as the
+one I hit yesterday inside my own recount: a number that travels is a number that goes stale.
+
+**`scripts/` now has a row**, `backend`-owned, Code gate only, no model math and no product surface.
+**This is `architect`'s arbitration, recorded by me - not a lane assigning itself ownership of the
+directory it just wrote into.** I raised the hole and deliberately did not close it myself. The row
+names the boundary that matters: a script producing a decision-bearing number would be `quant`'s and
+would need the Model gate.
+
+**Could not verify:**
+- **Unit 2 remains unverified in CI**, unchanged and unchangeable by this entry: `main` has never
+  saved a baseline, so every run has taken the cache-miss path. It first executes on the second `main`
+  build after merge, and that run is to be read rather than assumed. **Reasoned, not driven.**
+- **The prose resolution is a judgement.** I kept both sides and marked the item built, which I
+  believe is what both authors would want. I did not confirm that with the governance lane. Cheaply
+  falsifiable by reading the paragraph.
+- **The seven merged items are unexamined beyond their edges.** `backlog_graph.py` confirms every
+  `Depends on:` token in them resolves and adds no cycle. It cannot confirm any of them says
+  something true, and two of them describe this PR's own units - **whether what I built matches what
+  they specify is a reading, and I have not done it.** Their statuses are left `pending` for that
+  reason; marking my own commissioning items `done` is not a call I should make unreviewed.
+- **The ownership row is recorded, not derived.** I did not re-examine whether `backend` is the right
+  owner; `architect` ruled and I wrote it down.
