@@ -17587,3 +17587,37 @@ script rather than to the code. Without it the recount would have reported `head
 The diffstat check earned itself again: `docs/handoff.md` shows **200 insertions, 0 deletions**,
 which is proof #73's entry survived, and `docs/backlog.md` shows exactly **4** deletions - one
 header line, two prose lines, one status marker - matching intent line for line.
+
+### A seventh instance, and this one is mine twice over
+
+After pushing the commit above I read `gh pr view 72` and got `mergeable: UNKNOWN` with
+`headRefOid` still naming the **previous** head. I had a ready-made explanation - the recompute
+lag documented earlier in this file, which I had hit before and warned others about - so I waited
+and read it again. Same answer. I waited four more minutes and read it a third time.
+
+The field was not stale. **PR #72 had been merged**, at the previous head, while the commit was in
+flight; a closed PR reports `mergeable: null` and keeps the head it was merged at. Every reading
+was current and correct. What was wrong was my diagnosis, and it was wrong in the most durable
+way available: *I already had a name for this symptom*, so the third identical reading felt like
+confirmation of the lag rather than evidence against it.
+
+The fix was to ask a different question - `git ls-remote` said my push had landed, and
+`gh api /pulls/72 --jq .state` said `closed`. One field I had not looked at settled in one call
+what three readings of the field I had chosen could not.
+
+Two rules, both already in this file, both violated by me here:
+
+- **A repeated reading of one instrument is not a second method.** I read the same field three
+  times and counted it as increasing confidence. It was the same measurement three times.
+- **Where the producer is available, ask it.** `state` was one jq expression away for twelve
+  minutes.
+
+And a third that is new: **a known failure mode is a hypothesis, not a diagnosis.** Having
+previously been bitten by the lag made me faster to reach for it and slower to test it. The
+register entries we write to catch a class also supply a ready explanation for symptoms that
+merely resemble it - which is the grep-decay finding wearing different clothes: **the documented
+class contaminates the diagnosis of the next thing that looks like it.**
+
+Consequence: this entry did not make #72 and lands as a follow-up. That is the correct outcome and
+the cheap one - it is documentation - but had it been a code fix I believed was in the merge, I
+would have reported it green on `main` and been wrong.
