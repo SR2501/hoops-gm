@@ -19,6 +19,18 @@ validate: :mod:`hoops_gm.draft.service` appends a candidate event, re-derives,
 and refuses if derivation refuses. One rule instead of a validator per event
 type that has to be kept in step with the reader.
 
+**Corrections are tail-first, and that is a limit rather than a design.** A
+correction is a ``void`` event, so nothing is ever deleted or edited. Voiding
+the most recent event always works. Voiding an *older* one replays everything
+after it against preconditions that may no longer hold — a bid or a label-less
+sale whose open lot has just disappeared, a snake pick whose turn order has
+shifted — and derivation refuses rather than producing a state that is not
+true. Review found this; it was an unnoticed consequence of "corrections are
+voids" and not a trade anybody weighed. It is survivable for the first real
+use, an auction recorded as standalone sales, where voiding any old sale
+replays cleanly with budgets and holdings correct. It is stated here so the
+unqualified claim cannot be read off this module.
+
 **What is not here.** No dollar value, no inflation, no max bid, no
 recommendation, no ``p(play)``. The only arithmetic is addition of amounts a
 human watched clear, subtraction from a stated budget, and counting slots.
@@ -381,10 +393,25 @@ def _apply_nomination(
     open_lot: OpenLot | None,
 ) -> OpenLot:
     if open_lot is not None:
+        # The advice has to name an action that will actually be accepted.
+        # Voiding the nomination only replays cleanly when nothing follows it:
+        # a bid or a label-less sale in between derives against an open lot,
+        # and removing the lot leaves those events unsatisfiable. See the
+        # "corrections are tail-first" note in this module's docstring.
+        tail = event.sequence - 1
+        if open_lot.nomination_sequence == tail:
+            remedy = f"or void the nomination at sequence {open_lot.nomination_sequence}"
+        else:
+            remedy = (
+                f"or void back from sequence {tail} to "
+                f"{open_lot.nomination_sequence}, most recent first -- voiding the "
+                f"nomination while sequences "
+                f"{open_lot.nomination_sequence + 1}-{tail} still depend on the "
+                f"open lot will be refused"
+            )
         raise DraftLogError(
             "draft_lot_already_open",
-            f"{open_lot.player_label} is still on the block. Record the sale, "
-            f"or void the nomination at sequence {open_lot.nomination_sequence}.",
+            f"{open_lot.player_label} is still on the block. Record the sale, {remedy}.",
             sequence=event.sequence,
         )
     participant = _require_participant(participants, event.participant_id, event.sequence)

@@ -740,3 +740,275 @@ def test_the_duplicate_key_drops_digits_and_suffixes(session: Session) -> None:
         player_label="Jalen Johnson (ATL)",
     )
     assert state.selections_made == 2
+
+
+def test_a_permanent_row_rejection_is_not_published_as_a_retryable_conflict(
+    session: Session,
+) -> None:
+    """The classification bug review found, driven on whichever dialect is running.
+
+    ``derive_state`` validates the log's semantics; it does not validate the
+    row's storage constraints. A ``player_id`` naming no player is a permanent
+    input error. Published as ``draft_sequence_conflict`` it becomes a 409 that
+    a conforming client retries forever, while telling the person recording a
+    live auction that someone beat them to the sequence.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+
+    # Presence first: an ordinary sale is accepted, so a refusal below is the
+    # constraint refusing and not the fixture being broken.
+    accepted = service.record_sale(
+        session, draft, participant_id=seats[1], amount=Decimal("5.00"), player_label="Dov Kestrel"
+    )
+    assert accepted.last_sequence == 1
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_sale(
+            session,
+            draft,
+            participant_id=seats[2],
+            amount=Decimal("6.00"),
+            player_label="Ilario Bexley",
+            player_id=987654321,
+        )
+
+    assert caught.value.code == "draft_row_rejected"
+    assert caught.value.code not in {"draft_sequence_conflict"}
+    assert "the same way" in caught.value.detail
+
+    # The session survives the failed append on both dialects: Postgres aborts
+    # the transaction where SQLite does not, and the rollback is what makes the
+    # log readable afterwards rather than the dialect being forgiving.
+    state = service.load_state(session, draft)
+    assert state.last_sequence == 1
+
+
+def test_the_retryable_conflict_is_still_reported_as_retryable(session: Session) -> None:
+    """The other half. Discriminating must not silence the real race.
+
+    Without this, a fix that classified *everything* permanent would pass the
+    test above and quietly break the concurrency contract ADR-014 rests on.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_sale(
+        session, draft, participant_id=seats[1], amount=Decimal("5.00"), player_label="Dov Kestrel"
+    )
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_sale(
+            session,
+            draft,
+            participant_id=seats[2],
+            amount=Decimal("6.00"),
+            player_label="Ilario Bexley",
+            expected_last_sequence=99,
+        )
+    assert caught.value.code == "draft_sequence_conflict"
+
+
+def test_the_lot_already_open_refusal_names_an_action_that_is_accepted(
+    session: Session,
+) -> None:
+    """A refusal must advise something the surface will then accept.
+
+    Same class as the duplicate-key message: advice naming an action that is
+    itself refused is worse than no advice, because it costs the recorder a
+    round trip mid-auction to discover it does not work.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="Dov Kestrel")
+    service.record_bid(session, draft, participant_id=seats[2], amount=Decimal("4.00"))
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_nomination(
+            session, draft, participant_id=seats[3], player_label="Ilario Bexley"
+        )
+    assert caught.value.code == "draft_lot_already_open"
+    # The nomination is no longer the tail, so the advice must not say to void
+    # it outright -- doing so is refused, which is the whole finding.
+    assert "void back from sequence 2" in caught.value.detail
+
+    # Drive the advice: voiding the tail first, then the nomination, works.
+    service.record_void(session, draft, supersedes_sequence=2)
+    service.record_void(session, draft, supersedes_sequence=1)
+    reopened = service.record_nomination(
+        session, draft, participant_id=seats[3], player_label="Ilario Bexley"
+    )
+    assert reopened.open_lot is not None
+    assert reopened.open_lot.player_label == "Ilario Bexley"
+
+
+def test_voiding_the_tail_is_advised_directly_when_it_is_the_tail(session: Session) -> None:
+    """The other branch of the same message, so neither arm goes unexercised."""
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="Dov Kestrel")
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_nomination(
+            session, draft, participant_id=seats[2], player_label="Ilario Bexley"
+        )
+    assert "void the nomination at sequence 1" in caught.value.detail
+
+
+def test_a_void_refused_by_replay_says_it_was_the_replay(session: Session) -> None:
+    """Corrections are tail-first; the refusal must not read as a bug.
+
+    Voiding an old event replays the ones after it. When one of those no longer
+    holds, the refusal is about *that* event, and without this it surfaces as a
+    message describing a sequence the recorder never posted.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="Dov Kestrel")
+    service.record_bid(session, draft, participant_id=seats[2], amount=Decimal("4.00"))
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_void(session, draft, supersedes_sequence=1)
+
+    assert "Voiding sequence 1 was refused because sequence 2" in caught.value.detail
+    assert "Void back from the most recent event instead." in caught.value.detail
+    assert caught.value.sequence == 2
+
+
+def test_voiding_the_most_recent_event_is_always_accepted(session: Session) -> None:
+    """The tail-first limit is a limit, not a prohibition -- assert the presence."""
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_nomination(session, draft, participant_id=seats[1], player_label="Dov Kestrel")
+    state = service.record_bid(session, draft, participant_id=seats[2], amount=Decimal("4.00"))
+    assert state.last_sequence == 2
+
+    after = service.record_void(session, draft, supersedes_sequence=2)
+    assert after.open_lot is not None
+    assert after.open_lot.player_label == "Dov Kestrel"
+
+
+def test_a_refused_append_does_not_discard_the_callers_uncommitted_work(
+    session: Session,
+) -> None:
+    """The savepoint, driven.
+
+    A plain ``session.rollback()`` in the failure path undoes everything the
+    caller has not committed -- including the draft and its seats when a script
+    opens a draft and records into it in one transaction. That is a data-loss
+    bug that only shows up when the refused append shares a transaction with
+    the thing being recorded, which is exactly what ``seed_draft`` and any mock
+    recorded in one go will do.
+    """
+    league = _league(session)
+    draft = _draft(session, league)
+    seats = _seat_ids(draft)
+    draft_id = draft.id
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_sale(
+            session,
+            draft,
+            participant_id=seats[1],
+            amount=Decimal("6.00"),
+            player_label="Ilario Bexley",
+            player_id=987654321,
+        )
+    assert caught.value.code == "draft_row_rejected"
+
+    # Assert the presence of what should have survived, not the absence of an
+    # error: the draft, all four seats, and the ability to record afterwards.
+    survived = session.get(Draft, draft_id)
+    assert survived is not None
+    assert len(survived.participants) == 4
+
+    state = service.record_sale(
+        session, draft, participant_id=seats[1], amount=Decimal("6.00"), player_label="Dov Kestrel"
+    )
+    assert state.last_sequence == 1
+    assert len(service.load_events(session, draft)) == 1
+
+
+def test_a_legal_derivation_that_the_row_check_refuses_is_also_permanent(
+    session: Session,
+) -> None:
+    """The second reachable input review named, and the sharper of the two.
+
+    A sale carrying ``player_id`` with no ``player_label`` is legal to derive
+    while a lot is open -- ``_apply_sale`` takes the label from the lot -- but
+    the stored row trips ``player_id_requires_label``. Derivation accepting
+    something storage refuses is precisely the seam a blanket ``except`` hides.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    opened = service.record_nomination(
+        session, draft, participant_id=seats[1], player_label="Dov Kestrel"
+    )
+    assert opened.open_lot is not None
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_sale(
+            session, draft, participant_id=seats[2], amount=Decimal("9.00"), player_id=4242
+        )
+
+    assert caught.value.code == "draft_row_rejected"
+    # The lot is untouched: the refusal cost the log nothing.
+    still = service.load_state(session, draft)
+    assert still.open_lot is not None
+    assert still.open_lot.player_label == "Dov Kestrel"
+    assert still.last_sequence == 1
+
+
+def test_a_real_unique_violation_is_reported_as_the_retryable_conflict(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one storage failure that IS transient, driven through the handler.
+
+    Every other test that produces ``draft_sequence_conflict`` reaches the
+    optimistic check in Python and never touches the database. A tripwire in
+    the ``IntegrityError`` handler confirmed that no test in the suite reached
+    it at all, which is how a blanket ``except`` survived review -- and why the
+    Postgres branch of :func:`_violated_constraint` was unexercised while
+    looking covered.
+
+    Forcing ``_append`` to misread the log reproduces exactly what a losing
+    writer in a real race does: computes a sequence that has since been taken,
+    and hands the constraint a duplicate.
+    """
+    draft = _draft(session, _league(session))
+    seats = _seat_ids(draft)
+    service.record_sale(
+        session, draft, participant_id=seats[1], amount=Decimal("5.00"), player_label="Dov Kestrel"
+    )
+    service.record_sale(
+        session,
+        draft,
+        participant_id=seats[2],
+        amount=Decimal("7.00"),
+        player_label="Marek Sandoval",
+    )
+    stale = service.load_events(session, draft)[:1]
+    assert len(stale) == 1, "presence: the stale view must contain the first event"
+
+    monkeypatch.setattr(service, "load_events", lambda _session, _draft: stale)
+
+    with pytest.raises(DraftLogError) as caught:
+        service.record_sale(
+            session,
+            draft,
+            participant_id=seats[3],
+            amount=Decimal("9.00"),
+            player_label="Teodor Fane",
+        )
+
+    assert caught.value.code == "draft_sequence_conflict"
+    assert "append again" in caught.value.detail
+
+    monkeypatch.undo()
+    # The log is intact and still appendable: the savepoint discarded the
+    # refused row and nothing else, on whichever dialect this ran on.
+    assert len(service.load_events(session, draft)) == 2
+    recovered = service.record_sale(
+        session, draft, participant_id=seats[3], amount=Decimal("9.00"), player_label="Teodor Fane"
+    )
+    assert recovered.last_sequence == 3

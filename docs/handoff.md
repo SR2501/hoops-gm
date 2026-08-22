@@ -15150,3 +15150,208 @@ is unaffected because no marker changed.
   caught only by a rendered read. What I did *not* do is read the surrounding 14,000-line handoff
   file rendered, so a structural problem I introduced above or below my own entry would be invisible
   to me.
+
+
+## 2026-08-21 - backend - Postgres was available all along, and derivation does not validate storage
+
+Review blocked PR #64 on one finding and raised two more. All three are fixed
+here, a fourth surfaced while driving the first, and one standing repository
+excuse is retired.
+
+### PostgreSQL is available on this machine. It always was.
+
+```
+postgresql+psycopg://qimember@127.0.0.1:55432/<db>
+```
+
+Trust auth, no password, running now. It is another lane's dev rig. `conftest.py`
+already honours `TEST_DATABASE_URL`, so pointing the whole suite at it is one
+environment variable:
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql+psycopg://qimember@127.0.0.1:55432/hoops_gm_backend_lane"
+python -m pytest
+```
+
+**This file contains roughly twenty separate entries asserting the opposite** -
+"no Postgres locally", "Docker unavailable", "PostgreSQL is CI-only" - mine
+included. Every one of them deferred a verification that did not need
+deferring. None of them checked; they inherited the claim from an earlier entry
+that also had not checked. That is unexamined inheritance operating on an
+*environment fact* rather than on a docstring, and it cost this project a whole
+class of deferred verification for no reason. It was found by ten minutes of
+looking, by someone who treated "unavailable" as a claim.
+
+Observed from the live connection, not from the argument I passed:
+`PostgreSQL 16.9`, `dialect=postgresql`.
+
+### `DATABASE_URL`, not `HOOPS_GM_DATABASE_URL`
+
+`Settings` declares **no `env_prefix`** (`core/config.py:36-43`). The prefixed
+name is silently ignored and settings fall back to the default
+`sqlite:///./hoops_gm.db` at the repo root.
+
+I had used the prefixed name to "verify migrations from empty" in the previous
+entry. Alembic dutifully migrated a stale SQLite file instead, and the giveaway
+was in the output all along: it printed `Running upgrade 0013 -> 0014`, not
+`-> 0001`. **A migration run that does not begin at `-> 0001` is not a
+migration run from empty**, whatever database you believed you pointed it at.
+Driven correctly here, on a freshly created Postgres database:
+
+```
+INFO  Running upgrade  -> 0001, core schema: identity, stats, league, schedule
+...
+OBSERVED dialect: postgresql | tables: 36
+OBSERVED draft tables: ['draft_events', 'draft_participants', 'drafts']
+PRESENT: both constraints the discrimination fix rests on
+DOWNGRADE_RC=0
+```
+
+Constraint names in the database carry the metadata naming convention, so the
+CHECK is `ck_draft_events_player_id_requires_label`, not
+`player_id_requires_label` as declared. An assertion on the declared name fails
+against a schema that is entirely correct.
+
+### Finding 1 - a permanent error published as a transient one
+
+`_append` caught `IntegrityError` and published **every** one of them as
+`draft_sequence_conflict`, which is in `_RETRYABLE`, which is a 409 documented
+to clients as transient with "re-read and append again". Two reachable inputs
+pass derivation and fail at INSERT: a `player_id` naming no player (FK), and a
+sale carrying `player_id` with no `player_label` while a lot is open - legal to
+derive, because `_apply_sale` takes the label from the lot, and refused by
+`ck_draft_events_player_id_requires_label`.
+
+A conforming client retries either of those forever, while the person recording
+a live auction is told someone else beat them to the sequence. The diagnosis
+worth keeping: **`derive_state` validates the log's semantics; it does not
+validate the row's storage constraints.** Two unrelated failure domains, one
+blanket `except` speaking for both.
+
+Fixed by discriminating on the constraint name - psycopg reports it directly,
+SQLite only names CHECK constraints in message text and never names foreign
+keys. Only `uq_draft_events_draft_sequence` is retryable; everything else is
+`draft_row_rejected`, a 422 naming the constraint. **An unrecognised failure is
+classified permanent**, which is the safe direction: a permanent error is
+visible and re-postable, a spurious transient one is an invisible retry loop.
+
+### Finding 4, which the fix for Finding 1 uncovered
+
+The failure path called `session.rollback()`. That undoes **the caller's
+uncommitted work too**. My first test for Finding 1 failed with
+`draft_participants_incomplete ... got []` - the refused append had destroyed
+the draft and all four seats, because the test created them in the same
+transaction. `seed_draft` and any mock recorded in one go do exactly that.
+
+Invisible through the API, where each request has its own session and the draft
+was committed by an earlier one. Only reachable when the refused append shares a
+transaction with the thing being recorded.
+
+Replaced with `session.begin_nested()` - a SAVEPOINT, which discards exactly the
+refused row on both dialects and leaves the outer transaction usable. That is
+also the correct answer to the Postgres-aborts-the-transaction concern I raised
+in the previous entry, and a better one than the rollback I had defended.
+
+### Findings 2 and 3 - refusals that cannot be followed, and a claim that was too broad
+
+`draft_lot_already_open` advised "record the sale, or void the nomination at
+sequence N". Once a bid follows the nomination, voiding it is refused, because
+the bid replays against a lot that no longer exists. The message now names the
+tail and says to void back from it, and the test drives the advice to
+acceptance rather than asserting the wording.
+
+**Corrections are tail-first. That is an unnoticed consequence, not a trade I
+weighed.** The previous entry said "corrections are void events" without
+qualification. Voiding the most recent event always works; voiding an older one
+replays everything after it against preconditions that may have changed.
+Survivable for the first real use - an auction recorded as standalone sales
+replays cleanly with budgets and holdings correct - and now stated in
+`state.py`'s module docstring so the unqualified claim cannot be read off the
+code. When a replay refuses, `record_void` re-raises naming the later sequence
+and why, because otherwise the refusal describes an event the recorder never
+posted and reads as a bug.
+
+### The tripwire, and why all of this was invisible
+
+I could not tell by reading whether the green Postgres CI run *exercised*
+`_append`'s `IntegrityError` handler or merely failed to contradict it. So I
+wrote a marker file into the handler, proved the probe fires by driving a
+genuine constraint violation through it, then ran the full suite:
+
+```
+1373 passed
+TRIPWIRE ABSENT: no test in the suite reaches the IntegrityError handler
+```
+
+**Zero tests reached it.** Every `draft_sequence_conflict` in the suite came
+from the optimistic check in Python, which never touches the database. That is
+how a blanket `except` survived review, a mutation matrix, and a green Postgres
+run simultaneously. A suite passing on Postgres is not the same as a path being
+reached on Postgres, and the difference is not visible from the outside.
+
+There is now a test that forces a real duplicate key through the handler by
+making `_append` misread the log - exactly what a losing writer in a real race
+does.
+
+### Mutation results are dialect-specific, which I did not expect
+
+Five mutations, exit-code discriminated, only `rc == 1` counted:
+
+| mutation | SQLite | Postgres |
+|---|---|---|
+| blanket `except` restored | caught | caught |
+| savepoint -> transaction-wide rollback | caught | caught |
+| advice always says "void the nomination" | caught | caught |
+| void replay refusal unannotated | caught | caught |
+| **discrimination cannot see psycopg's name** | **survived** | **caught** |
+
+The last row is correct rather than a gap: that branch is unreachable on
+SQLite. But it means **a mutation matrix run on one dialect cannot vouch for
+code that branches on dialect**, and the surviving entry is the only thing that
+tells you so. Run on SQLite alone it looks like a hole; run on Postgres alone
+the SQLite text-parsing fallback goes unexercised.
+
+### Could not verify
+
+- **A genuine concurrent race from two processes** - *reasoned*, not driven.
+  Review drove one on real Postgres 16.9 (`attempts=48 wins=13 refusals=35
+  crashes=0`) which is far better evidence than I had, but that was against the
+  code *before* this change. The savepoint narrows what a failed append undoes
+  and cannot widen it, so the race outcome should be unchanged - argued, not
+  observed.
+- **Whether `_violated_constraint` handles a dialect that is neither** -
+  *reasoned*. MySQL or MSSQL would fall through to `None` and be classified
+  permanent. Safe, but untested, and ADR-001 does not put us there.
+- **Postgres text-parsing fallback** - *reasoned*. On Postgres the psycopg
+  `diag` path always answers first, so the SQLite regexes never run there. If
+  psycopg ever stops populating `diag.constraint_name`, every refusal silently
+  becomes permanent, including real races. The mutation in the table above is
+  exactly that scenario and it is caught, so the failure would be loud in CI
+  rather than in a draft.
+- **The `player_id` crosswalk** - *driven negatively only*. Every recorded event
+  in every test is label-only or uses a deliberately absent id. No test records
+  an event against a `players` row that exists.
+- **Whether the tail-first limit bites the owner** - *reasoned*. It does not for
+  standalone auction sales. It will the first time he voids an old nomination
+  mid-lot, and the message now tells him what to do instead.
+
+### For the next lane
+
+- **`app.routes` is vacuous in this repository.** This FastAPI keeps an included
+  router as one lazy `_IncludedRouter`; `len(app.routes) == 6`, two with
+  `path=None`, and a naive scan finds **zero** draft routes while every
+  assertion about them passes. Use `app.openapi()["paths"]`, or
+  `r.original_router.routes`. Independently reproduced by review.
+- **A check that iterates must first assert it found something to iterate
+  over.** Five instances in one day, all in the verification tool rather than
+  the code. Zero routes, zero swatches, zero cells, zero games and zero
+  statements are each indistinguishable from the property holding perfectly.
+- **Report the state you observed, never the parameter you passed.** Review's
+  own harness branched on `dialect == "postgres"`, was passed `pg`, and ran
+  against SQLite while printing plausible Postgres results. It caught itself
+  only because it printed the dialect from the live engine. Every dialect claim
+  in this entry was obtained that way.
+- **Only `rc == 1` means a mutation was caught.** `rc == 4` is a collection
+  error - usually a missing `PYTHONPATH` - and a harness reading the exit code
+  as a boolean scores it as a pass. This produced two published, entirely
+  fictitious green matrices elsewhere today.

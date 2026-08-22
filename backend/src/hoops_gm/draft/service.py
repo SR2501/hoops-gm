@@ -26,6 +26,7 @@ behind ``safety`` sign-off, not here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -271,6 +272,50 @@ def load_state(session: Session, draft: Draft) -> DraftStateView:
     )
 
 
+#: The one storage failure that is genuinely transient. A second writer took
+#: the sequence between the read in :func:`_append` and its flush; re-reading
+#: and appending again will succeed. Every *other* constraint on
+#: ``draft_events`` describes a row that will be rejected identically no matter
+#: how many times it is sent, so publishing it as retryable would invite a
+#: conforming client to loop forever -- and would tell the person recording a
+#: live auction that someone else beat them to the sequence when nothing of the
+#: kind happened, which is the wrong diagnosis at the worst possible moment.
+_RETRYABLE_CONSTRAINT = "uq_draft_events_draft_sequence"
+
+
+def _violated_constraint(error: IntegrityError) -> str | None:
+    """Name the constraint an ``IntegrityError`` came from, across dialects.
+
+    ``derive_state`` validates the log's *semantics*; it does not validate the
+    row's *storage* constraints. Those are two unrelated failure domains and
+    only one of them is worth retrying, so this handler has to tell them apart
+    rather than letting a single ``except`` speak for both.
+
+    psycopg reports the name directly. SQLite only produces message text, and
+    only for some constraint kinds: ``CHECK`` names the constraint, ``UNIQUE``
+    names the columns instead, and ``FOREIGN KEY`` names nothing at all.
+    Returns ``None`` when the dialect will not say, which the caller treats as
+    permanent -- the safe direction, because an unrecognised failure reported
+    as permanent is visible and re-postable, whereas one reported as transient
+    is an invisible retry loop.
+    """
+    diagnostic = getattr(getattr(error, "orig", None), "diag", None)
+    named = getattr(diagnostic, "constraint_name", None)
+    if isinstance(named, str) and named:
+        return named
+
+    message = str(getattr(error, "orig", error))
+    check = re.search(r"CHECK constraint failed: (\w+)", message)
+    if check is not None:
+        return check.group(1)
+    if "UNIQUE constraint failed:" in message:
+        columns = message.split("UNIQUE constraint failed:", 1)[1]
+        touched = {part.strip() for part in columns.split(",")}
+        if touched == {"draft_events.draft_id", "draft_events.sequence"}:
+            return _RETRYABLE_CONSTRAINT
+    return None
+
+
 def _append(
     session: Session,
     draft: Draft,
@@ -313,30 +358,46 @@ def _append(
         events=[*existing, candidate],
     )
 
-    session.add(
-        DraftEvent(
-            draft_id=draft.id,
-            sequence=candidate.sequence,
-            event_type=candidate.event_type,
-            participant_id=candidate.participant_id,
-            player_id=candidate.player_id,
-            player_label=candidate.player_label,
-            amount=candidate.amount,
-            supersedes_sequence=candidate.supersedes_sequence,
-            occurred_at=candidate.occurred_at,
-            note=candidate.note,
-        )
+    row = DraftEvent(
+        draft_id=draft.id,
+        sequence=candidate.sequence,
+        event_type=candidate.event_type,
+        participant_id=candidate.participant_id,
+        player_id=candidate.player_id,
+        player_label=candidate.player_label,
+        amount=candidate.amount,
+        supersedes_sequence=candidate.supersedes_sequence,
+        occurred_at=candidate.occurred_at,
+        note=candidate.note,
     )
     try:
-        session.flush()
+        # A SAVEPOINT, not a plain flush. Postgres aborts the whole transaction
+        # on a failed statement where SQLite carries on, so *something* has to
+        # undo the bad INSERT before the caller can keep using this session --
+        # but ``session.rollback()`` undoes the caller's uncommitted work too,
+        # and a script that opens a draft and records into it in one
+        # transaction would lose the draft itself. Rolling back to a savepoint
+        # discards exactly the refused row and nothing else, on both dialects.
+        with session.begin_nested():
+            session.add(row)
     except IntegrityError as error:
-        # Another writer took this sequence between the read above and here.
-        # Detected rather than prevented: a lock would have blocked the person
-        # recording the draft, which ADR-014 rules out for exactly this case.
-        session.rollback()
+        constraint = _violated_constraint(error)
+        if row in session:
+            session.expunge(row)
+        if constraint == _RETRYABLE_CONSTRAINT:
+            # Another writer took this sequence between the read above and here.
+            # Detected rather than prevented: a lock would have blocked the person
+            # recording the draft, which ADR-014 rules out for exactly this case.
+            raise DraftLogError(
+                "draft_sequence_conflict",
+                "Another append reached this draft first. Re-read the draft and append again.",
+            ) from error
+        named = f" ({constraint})" if constraint else ""
         raise DraftLogError(
-            "draft_sequence_conflict",
-            "Another append reached this draft first. Re-read the draft and append again.",
+            "draft_row_rejected",
+            f"The database refused this event{named}. Retrying it unchanged will fail "
+            f"the same way. Check that any player_id names a player that exists and "
+            f"that the event carries the fields its type requires.",
         ) from error
     return state
 
@@ -457,16 +518,37 @@ def record_void(
     note: str | None = None,
     expected_last_sequence: int | None = None,
 ) -> DraftStateView:
-    """Supersede an earlier event. Nothing is deleted and nothing is edited."""
-    return _append(
-        session,
-        draft,
-        event_type=DraftEventType.VOID,
-        supersedes_sequence=supersedes_sequence,
-        occurred_at=occurred_at,
-        note=note,
-        expected_last_sequence=expected_last_sequence,
-    )
+    """Supersede an earlier event. Nothing is deleted and nothing is edited.
+
+    **Corrections are tail-first.** Voiding the most recent event always works.
+    Voiding an *older* one replays every event after it under preconditions
+    that may no longer hold -- a bid whose lot is gone, a label-less sale whose
+    lot is gone, a snake pick whose turn order has shifted -- and the log
+    refuses rather than deriving something untrue. When that happens the
+    refusal is about the *replayed* event, not the void that was posted, so it
+    is re-raised here saying so.
+    """
+    try:
+        return _append(
+            session,
+            draft,
+            event_type=DraftEventType.VOID,
+            supersedes_sequence=supersedes_sequence,
+            occurred_at=occurred_at,
+            note=note,
+            expected_last_sequence=expected_last_sequence,
+        )
+    except DraftLogError as error:
+        blamed = error.sequence
+        if blamed is None or blamed == supersedes_sequence or error.code == "draft_row_rejected":
+            raise
+        raise DraftLogError(
+            error.code,
+            f"Voiding sequence {supersedes_sequence} was refused because sequence "
+            f"{blamed}, which comes after it, no longer holds once it is gone: "
+            f"{error.detail} Void back from the most recent event instead.",
+            sequence=blamed,
+        ) from error
 
 
 def record_close(
