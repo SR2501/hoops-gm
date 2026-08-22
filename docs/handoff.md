@@ -15534,6 +15534,19 @@ come first all three times.
 confidence of having just been right about something. That is now a Code gate note; this is an
 instance of it produced by the lane that reported the finding it came from.
 
+**The harness caught itself once more, on the same run.** One of the seven mutants left mismatched
+f-string delimiters, so `service.py` no longer parsed; pytest exited **4** on the conftest
+`ImportError` and no test ran at all. It was reported `NOT CAUGHT (rc=4)` only because this
+harness scores `rc == 1` and nothing else — the same harness bug the coordinator published two
+fictitious matrices from, arriving here by a different route. A mutant that does not compile is
+not a surviving mutant *or* a killed one; it is a run that never happened. The harness now calls
+`compile()` on the mutated file and refuses rather than scoring it, and the mutant was rewritten
+to be valid Python, after which it is caught at `rc == 1`.
+
+The general form, which is not about mutation testing: **a tool that classifies outcomes by a
+single bit — passed / didn't pass — cannot distinguish "the thing under test failed" from "the
+test never ran".** Those need different responses and only one of them is evidence.
+
 ### Verified by observation
 
 | Check | Result |
@@ -15546,6 +15559,21 @@ instance of it produced by the lane that reported the finding it came from.
 | ruff, ruff format, mypy strict | clean |
 | OpenAPI vs pre-rebase head | byte-identical; the stacked `frontend` client is unaffected |
 | Backlog | recounted from the finished file **and** slug set diffed against `origin/main`; both sides presence-asserted |
+
+**The ADR-001 half of the Code gate was closed by CI on the exact head, and it is worth saying
+that rather than "green".** I could not run PostgreSQL locally when this PR opened; I can now
+(see the entry above), and the suite passes on 16.9 here. But the gate-bearing evidence is CI's:
+run **32558240048** on `push`, head `6c0c75a8193f64f2bd65b2d3402ca2aabde90008`, job **`Backend —
+the same suite against Postgres (ADR-001)` → success**, one of nine jobs, eight successful and
+one (`Adapter gate — live smoke`) skipped by design. The predecessor head `ce4c603` was run
+**32553749570**.
+
+Three things about how that was read. The head SHA comes from the run itself, not from the
+checks table, which showed the coordinator a false pass earlier the same day. The **job was
+enumerated by name**, because a green overall conclusion does not tell you whether a particular
+job ran — a run with that job absent also concludes green. And the enumeration **asserts it found
+jobs before drawing any conclusion from them**: an empty job list would otherwise satisfy "no
+failing job" perfectly.
 
 ### Branches green but unentered — driven by probe, not by suite
 
