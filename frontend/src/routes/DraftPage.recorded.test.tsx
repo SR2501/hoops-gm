@@ -550,9 +550,19 @@ describe('the no-decision-numbers rule', () => {
       'sleeper',
       'bust',
     ]
-    const found = forbidden.filter((term) =>
-      new RegExp(`\\b${term.replace(/[().]/g, '\\$&')}`, 'i').test(rendered),
-    )
+    // Escape every regex metacharacter, not the three that happen to appear in
+    // this list today. An unescaped one does not throw — it quietly compiles to
+    // a pattern that matches something else, so the term stops being checked and
+    // the assertion still passes. That is the failure this whole test exists to
+    // prevent, one level up, in the test itself.
+    const escape = (term: string) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+    // So prove the matcher can still find each term before trusting it to find
+    // none of them: every pattern must match its own term.
+    const blind = forbidden.filter((term) => !new RegExp(`\\b${escape(term)}`, 'i').test(term))
+    expect(blind).toEqual([])
+
+    const found = forbidden.filter((term) => new RegExp(`\\b${escape(term)}`, 'i').test(rendered))
     expect(found).toEqual([])
   })
 })

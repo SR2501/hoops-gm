@@ -16202,3 +16202,43 @@ HEAD` exits 1 - because an empty diff and a broken diff look the same.
   in headless and the owner will not be.
 - **The exception state on a snake draft.** I drove it on the auction log only;
   the snake board's tail is a pick, so it shows the ordinary two-affordance case.
+
+## 2026-08-22 - frontend - The escaping in my forbidden-terms guard was itself incomplete
+
+CodeQL flagged `js/incomplete-sanitization` on the no-decision-numbers test.
+Reported as a security alert, and in this file it is not one - nothing untrusted
+reaches that regex, the term list is nineteen literals in the same file. But the
+finding is right and the consequence is the one that matters here.
+
+The guard built the pattern with `term.replace(/[().]/g, '\\$&')` - escaping the
+three metacharacters that happen to appear in today's list. Add a term
+containing `$`, `+`, `*` or `[` and the pattern does not throw. **It compiles to
+something that matches something else**, so that term silently stops being
+checked and `expect(found).toEqual([])` still passes. The guard against
+rendering a decision number would report clean while no longer looking for one of
+them.
+
+That is tonight's defect class inside the mechanism built to prevent a different
+one, which is now the second time a guard of mine has been blind in the exact
+direction it existed to cover.
+
+Fixed the character class to the full set, and then added the part that makes it
+a guard rather than an intention: **every pattern must match its own term**
+before the list is trusted to match none of them. Proved it by neutering
+`escape()` to the identity function - it fails naming `p(play)`, which is the
+standard of "delete a member and confirm it names the missing one" met rather
+than asserted.
+
+Worth noting how it surfaced. CodeQL had been green on this branch all night and
+went red on a commit that changed three lines of copy. It was the **retarget**:
+changing #66's base from the backend lane's branch to `main` widened "code
+changed by this pull request" to every line I had written. So a check can be
+green because of what it is comparing against rather than because the code is
+clean - the same shape as diffing a moved base against `origin/main`, which
+misled me four hours ago in the other direction.
+
+### Could not verify
+
+- **Whether any other repository guard builds a regex from a list this way.** I
+  fixed mine. I did not grep the other lanes' tests, and the pattern is a common
+  one.
