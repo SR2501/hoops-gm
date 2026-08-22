@@ -14803,14 +14803,18 @@ total**, which matches the header unchanged. Separately diffed the slug set agai
 changed an edge and header prose, not the item set, and only the diff can say that.
 
 **Could not verify:**
-- **The GitHub Actions cache behaviour is reasoned, not driven.** That a `restore-keys` prefix match
-  returns main's most recent cache, and that a cache saved on the default branch is readable from
-  branches, are documented semantics I could not exercise locally. If the reasoning is wrong the
-  failure is benign - every run prints "No baseline available" - but it is benign in the way that looks
-  identical to working, so the first main-branch run should be read rather than assumed.
-- **No CI run has executed any of this.** The two command sequences were driven locally with CI's exact
-  relative paths and working directories, which is why I trust the argument wiring; the runner
-  environment, `$GITHUB_STEP_SUMMARY`, and the cache actions were not.
+- **CI has now run both units, and this is the sharper version of the caveat.** Both jobs pass on the
+  PR; `collect` succeeded on the runner, which *proves* it parsed at least one test case, because
+  parsing none is its one non-zero exit; and `Stage`/`Save the new baseline` correctly **skipped** on a
+  non-default branch. What remains undriven is the half that needs a baseline to exist: `main` has
+  never saved one, so every run so far took the cache-miss path and printed "No baseline available".
+  **The delta-printing path - the entire point of the unit - has not executed in CI.** It will first
+  run on the second `main` build after merge, and that run is the one to actually read.
+- **The GitHub Actions cache behaviour is therefore still reasoned, not driven.** That a `restore-keys`
+  prefix match returns main's most recent cache, and that a default-branch cache is readable from
+  branches, are documented semantics; the restore step has only ever missed. If the reasoning is wrong
+  the failure is benign - every run prints "No baseline available" - but it is benign in the way that
+  looks identical to working, which is why it needs reading rather than assuming.
 - **The dangling edge resolution is a judgement, driven only as far as "both candidates are `done`".**
   I confirmed readiness is unchanged either way. I did not confirm intent with whoever wrote the line.
 - **Unit 1 cannot see prose contradicting an edge**, as above. Reasoned, and I believe it is not
