@@ -14893,10 +14893,11 @@ test on the first pass, which is the second time this week the type-check found 
 could not.
 
 **Could not verify:**
-- **The delta path still has not executed in CI, and that is unchanged by this entry.** `main` has
-  never saved a baseline, so every run so far took the cache-miss path. It first runs on the second
-  `main` build after merge. **Reasoned, not driven** - and it is benign in the way that looks
-  identical to working, so it needs reading rather than assuming.
+- **Unit 2 is unverified in CI, and will remain unverified until the second `main` build after
+  merge.** Every visible signal is green - both jobs pass, `collect` succeeded on the runner, the save
+  steps correctly skipped - and the thing the unit exists to do has not run once. `main` has never
+  saved a baseline, so every run so far took the cache-miss path. **Reasoned, not driven**, and benign
+  in the way that looks identical to working. That run is to be *read*, not assumed.
 - **GitHub Actions `restore-keys` prefix semantics remain reasoned.** The restore step has only ever
   missed. Unchanged from the previous entry.
 - **The structural fix is verified by mutation, not by proof.** I can show four mutations of the

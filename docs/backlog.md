@@ -1891,8 +1891,10 @@ rather than one it inherited without noticing. Keep it printed, never asserted -
 a headroom column that fails a build is the threshold this tooling exists to
 avoid.
 
-Cross-boundary: the config change is `frontend`-owned, the script read is not
-covered by any row in `docs/governance/ownership.md`.
+`frontend` owns it — it is their config and they will be in that file. The
+script half is cross-boundary: no row in `docs/governance/ownership.md` covers
+`scripts/`, so whoever picks this up should expect to agree that with
+`architect` rather than infer it.
 
 ### `waiver-clear-monitor` - Monitoring waiver clears and free agent availability
 
