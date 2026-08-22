@@ -27,8 +27,10 @@ from 2026-08-21: ``schedule-cohort-fingerprint-list`` depending on
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
@@ -70,8 +72,22 @@ def item(
     return "\n".join(lines)
 
 
-def backlog(*items: str, header: str = "# Build backlog\n\nSome preamble.\n\n") -> str:
-    return header + "\n".join(items)
+#: The parser requires the file's own headline count to describe the file. The
+#: builder therefore computes one, so every fixture is a *valid* backlog unless a
+#: test deliberately breaks it. Counted here independently of the parser: if the
+#: two ever disagree the fixture produces a defect and its test fails, which is
+#: the direction that failure should point.
+def backlog(*items: str, header: str | None = None) -> str:
+    body = "\n".join(items)
+    if header is None:
+        found = re.findall(r"^- \[[ x]\] \*\*([a-z]+)\*\*", body, flags=re.MULTILINE)
+        tally = Counter(found)
+        header = (
+            "# Build backlog\n\nSome preamble.\n\n"
+            f"**{tally['done']} done - {tally['blocked']} blocked - "
+            f"{tally['pending']} pending - {len(found)} total**\n\n"
+        )
+    return header + body
 
 
 def kinds(defects: Sequence[object]) -> list[str]:
@@ -260,6 +276,162 @@ def test_a_done_item_resting_on_an_unfinished_one_is_caught(graph: ModuleType) -
     found = check(graph, text)
 
     assert kinds(found) == ["done-rests-on-unfinished"]
+
+
+def test_the_ready_list_is_caveated_when_a_status_is_contradicted(graph: ModuleType) -> None:
+    """The Ready list used the first of two markers, which is a guess."""
+    text = backlog(item("a").replace("- [ ] **pending**", "- [ ] **pending**\n- [x] **done**"))
+    items, defects = graph.parse_backlog(text)
+    report = graph.render_report(
+        items, defects + graph.find_defects(items), graph.analyse(items), Path("b.md")
+    )
+
+    head = report.split("### Blocked")[0]
+    assert "Computed on contradicted statuses" in head
+    assert "only because the wrong marker came first" in head
+
+
+def test_a_duplicate_status_marker_is_caught(graph: ModuleType) -> None:
+    """The state a conflict resolution that keeps both sides leaves behind.
+
+    The parser used to return the first marker and pass silently over the
+    second, which is the same silent loss a duplicate `Depends on:` line was
+    already failed for. Two markers on one item make its status unanswerable.
+    """
+    text = backlog(item("a").replace("- [ ] **pending**", "- [ ] **pending**\n- [x] **done**"))
+    found = check(graph, text)
+
+    assert "duplicate-status-marker" in kinds(found)
+    matching = [d for d in found if d.kind == "duplicate-status-marker"]  # type: ignore[attr-defined]
+    assert "**pending**" in matching[0].message  # type: ignore[attr-defined]
+    assert "**done**" in matching[0].message, (  # type: ignore[attr-defined]
+        "the defect must name both markers; naming one leaves the reader guessing"
+    )
+
+
+def test_a_status_word_inside_a_note_is_not_a_status(graph: ModuleType) -> None:
+    """Match the marker token, never the word.
+
+    Five counting bugs across two units on 2026-08-21 were this one shape: a
+    recount matching `blocked` anywhere in the marker line counted a `pending`
+    item whose note merely mentions being blocked. The status here is decided
+    by the bolded token between the checkbox and the note, so the note cannot
+    move it.
+    """
+    text = backlog(
+        item("a").replace(
+            "- [ ] **pending**",
+            "- [ ] **pending** - not blocked, not done, and no longer blocked either",
+        ),
+        item("b", "done").replace(
+            "- [x] **done**", "- [x] **done** - was pending, and blocked before that"
+        ),
+    )
+    items, defects = graph.parse_backlog(text)
+
+    assert [(i.slug, i.status) for i in items] == [("a", "pending"), ("b", "done")]
+    assert kinds(defects) == []
+
+
+# --- the file's own headline count -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("claimed", "expected"),
+    [
+        ("**2 done - 0 blocked - 1 pending - 3 total**", "done: claims 2, file has 1"),
+        ("**1 done - 1 blocked - 1 pending - 3 total**", "blocked: claims 1, file has 0"),
+        ("**1 done - 0 blocked - 9 pending - 3 total**", "pending: claims 9, file has 2"),
+        ("**1 done - 0 blocked - 2 pending - 9 total**", "total: claims 9, file has 3"),
+    ],
+)
+def test_a_header_that_miscounts_any_field_is_caught(
+    graph: ModuleType, claimed: str, expected: str
+) -> None:
+    """Every field, because a check that only reads the total misses three."""
+    text = backlog(
+        item("a"),
+        item("b"),
+        item("c", "done"),
+        header=f"# Build backlog\n\n{claimed}\n\n",
+    )
+    found = check(graph, text)
+
+    assert "header-disagrees-with-items" in kinds(found)
+    matching = [d for d in found if d.kind == "header-disagrees-with-items"]  # type: ignore[attr-defined]
+    assert expected in matching[0].message, (  # type: ignore[attr-defined]
+        f"the defect must report the state observed; got {matching[0].message!r}"  # type: ignore[attr-defined]
+    )
+
+
+def test_a_correct_header_is_not_a_defect(graph: ModuleType) -> None:
+    text = backlog(
+        item("a"),
+        item("b", "blocked"),
+        item("c", "done"),
+        header="# Build backlog\n\n**1 done - 1 blocked - 1 pending - 3 total**\n\n",
+    )
+
+    assert kinds(check(graph, text)) == []
+
+
+def test_a_missing_header_is_caught(graph: ModuleType) -> None:
+    """The empty-set guard on this check.
+
+    A header check that finds no header and says nothing would report the count
+    correct by never having read one, which is the failure shape this whole job
+    exists to refuse.
+    """
+    text = backlog(item("a"), header="# Build backlog\n\nNo count anywhere.\n\n")
+
+    assert "missing-header" in kinds(check(graph, text))
+
+
+def test_two_headers_are_caught(graph: ModuleType) -> None:
+    """Reconciling one header against another has never reached the answer."""
+    text = backlog(
+        item("a"),
+        header=(
+            "# Build backlog\n\n**0 done - 0 blocked - 1 pending - 1 total**\n\n"
+            "**0 done - 0 blocked - 2 pending - 2 total**\n\n"
+        ),
+    )
+    found = check(graph, text)
+
+    assert "duplicate-header" in kinds(found)
+
+
+def test_changing_the_real_headers_count_is_noticed(graph: ModuleType) -> None:
+    """Independence check: mutate the real file's header and require a defect.
+
+    `test_the_real_backlog_is_clean` would keep passing if the header check
+    never located a header at all.
+    """
+    text = REAL_BACKLOG.read_text(encoding="utf-8")
+    items, _ = graph.parse_backlog(text)
+    real = f"- {len(items)} total**"
+    assert real in text, "the real backlog's header is no longer in the expected form"
+
+    bumped = text.replace(real, f"- {len(items) + 1} total**", 1)
+    found = check(graph, bumped)
+
+    assert "header-disagrees-with-items" in kinds(found)
+
+
+def test_the_header_check_counts_markers_not_words(graph: ModuleType) -> None:
+    """The header must be checked against parsed items, not against prose.
+
+    A `pending` item whose note mentions being blocked must not shift the
+    blocked count. This is the same defect as the status test above, one layer
+    up, and it is the one that actually reached a committed header.
+    """
+    text = backlog(
+        item("a").replace("- [ ] **pending**", "- [ ] **pending** - blocked on nothing"),
+        item("b", "done"),
+        header="# Build backlog\n\n**1 done - 0 blocked - 1 pending - 2 total**\n\n",
+    )
+
+    assert kinds(check(graph, text)) == []
 
 
 def test_a_done_item_resting_on_a_blocked_one_is_caught(graph: ModuleType) -> None:

@@ -25,8 +25,9 @@ other**, and in a single day that produced three separate failures:
 
 A check fails only where the file asserts something that *cannot be true* and
 exactly one edit makes it true: an edge naming an item that does not exist, a
-cycle, a self-edge, a duplicated slug, an item with no status, a heading the
-parser cannot read, or a `done` item resting on one that is not done.
+cycle, a self-edge, a duplicated slug, an item with no status or with two, a
+heading the parser cannot read, a `done` item resting on one that is not done,
+or a headline count that does not describe the file it heads.
 
 Everything about the *shape* of the remaining work — path lengths, the ready
 set, what a given item unblocks — is printed and never fails. The reason is not
@@ -72,6 +73,12 @@ DEPENDS_PREFIX = "- **Depends on:**"
 #: prose around them (``player-position-eligibility`` explains why half of it
 #: depends on nothing) without the prose being read as an edge.
 TOKEN_RE = re.compile(r"`([^`]+)`")
+#: ``**45 done - 1 blocked - 84 pending - 130 total**``, the file's own headline
+#: count. It is a claim about the file, in the file, and nothing checked it until
+#: this parser did — which is why it has been wrong repeatedly.
+HEADER_RE = re.compile(
+    r"^\*\*(\d+) done - (\d+) blocked - (\d+) pending - (\d+) total\*\*$"
+)
 
 DONE = "done"
 KNOWN_STATUSES = frozenset({DONE, "pending", "blocked"})
@@ -155,16 +162,26 @@ def parse_backlog(text: str) -> tuple[list[Item], list[Defect]]:
             )
         )
 
+    _check_header(lines, items, defects)
     return items, defects
 
 
 def _parse_status(
     body: Sequence[str], slug: str, line: int, defects: list[Defect]
 ) -> str:
-    for candidate in body:
-        match = STATUS_RE.match(candidate)
-        if not match:
-            continue
+    found = [match for match in map(STATUS_RE.match, body) if match]
+    if len(found) > 1:
+        defects.append(
+            Defect(
+                "duplicate-status-marker",
+                f"`{slug}` has {len(found)} status markers "
+                f"({', '.join('**' + m.group(2) + '**' for m in found)}); which one "
+                "is authoritative is unanswerable. A conflict resolution that keeps "
+                "both sides produces exactly this",
+                line,
+            )
+        )
+    for match in found[:1]:
         checkbox, status = match.group(1), match.group(2)
         if status not in KNOWN_STATUSES:
             defects.append(
@@ -208,6 +225,75 @@ def _parse_depends(
     if not found:
         return ()
     return tuple(TOKEN_RE.findall(found[0]))
+
+
+def _check_header(lines: Sequence[str], items: Sequence[Item], defects: list[Defect]) -> None:
+    """Compare the file's own headline count against the items actually parsed.
+
+    This is the one failing check whose cheapest green-making edit is
+    unambiguously the correct one: correct the number. Every other repair —
+    deleting an item, flipping a status — is more work and obviously wrong, so
+    the guard cannot train anyone to falsify the data it reads.
+
+    It exists because the count has been wrong repeatedly and in both
+    directions, and because every method used to recount it by hand has been
+    wrong at least once: a regex requiring the marker line to end after the
+    status word undercounts the items carrying a dated note, and one matching
+    the bare word ``blocked`` anywhere in that line overcounts the items that
+    merely mention it. A rebase updating one copy of the number and not the
+    other is the same failure again. The counts here are the parser's own, so
+    they cannot drift from the graph the rest of this job reports on.
+    """
+    if not items:
+        return
+
+    found = [(index + 1, match) for index, line in enumerate(lines) if (match := HEADER_RE.match(line))]
+    if not found:
+        defects.append(
+            Defect(
+                "missing-header",
+                "no headline count found. Expected a line of exactly the form "
+                "'**N done - N blocked - N pending - N total**'. Either it was "
+                "removed or its format changed, and a header check that finds no "
+                "header must not report the count correct",
+            )
+        )
+        return
+    if len(found) > 1:
+        defects.append(
+            Defect(
+                "duplicate-header",
+                f"{len(found)} headline counts found, at lines "
+                f"{', '.join(str(line) for line, _ in found)}. Two headers is the "
+                "state a bad conflict resolution leaves behind, and reconciling "
+                "one against the other has never once reached the right answer",
+                found[0][0],
+            )
+        )
+
+    counts = Counter(item.status for item in items)
+    line_number, match = found[0]
+    claimed = {
+        DONE: int(match.group(1)),
+        "blocked": int(match.group(2)),
+        "pending": int(match.group(3)),
+    }
+    observed = {status: counts[status] for status in claimed}
+    wrong = [f"{s}: claims {claimed[s]}, file has {observed[s]}" for s in sorted(claimed) if claimed[s] != observed[s]]
+    if int(match.group(4)) != len(items):
+        wrong.append(f"total: claims {match.group(4)}, file has {len(items)}")
+
+    if wrong:
+        defects.append(
+            Defect(
+                "header-disagrees-with-items",
+                "the headline count does not describe this file - "
+                + "; ".join(wrong)
+                + ". Recount from the finished file and correct the header; never "
+                "reconcile it against another copy of the number",
+                line_number,
+            )
+        )
 
 
 def find_defects(items: Sequence[Item]) -> list[Defect]:
@@ -448,7 +534,9 @@ def render_report(
     else:
         out.append(
             "None of the kind this job can see: every dependency resolves to an item in "
-            "the file, no cycles, no status contradicting its own checkbox. That is a "
+            "the file, no cycles, no status contradicting its own checkbox or duplicated "
+            "beside another, and the headline count describes the items actually parsed. "
+            "That is a "
             "narrow claim. It is **not** a statement that the backlog is accurate - an "
             "item whose prose says it is blocked while its `Depends on:` line names only "
             "finished work is well-formed, and passes here silently."
@@ -458,6 +546,7 @@ def render_report(
     out.append(f"### Ready - every dependency done ({len(analysis.ready)})")
     out.append("")
     unresolved = [d for d in defects if d.kind == "dangling-dependency"]
+    contradicted = [d for d in defects if d.kind == "duplicate-status-marker"]
     if unresolved:
         out.append(
             f"**Computed on an unsound graph.** {len(unresolved)} dependency token(s) "
@@ -465,6 +554,15 @@ def render_report(
             "nothing is an edge that constrains nothing. Any item carrying one has had "
             "a real constraint silently dropped, so it may appear here **only because "
             "the file is broken**. Fix the dangling edge, then read this list."
+        )
+        out.append("")
+    if contradicted:
+        out.append(
+            f"**Computed on contradicted statuses.** {len(contradicted)} item(s) above "
+            "carry more than one status marker. This list used the first of each, "
+            "which is a guess rather than a fact, so an item may appear or fail to "
+            "appear here **only because the wrong marker came first**. Delete the "
+            "untrue marker, then read this list."
         )
         out.append("")
     out.append(

@@ -16666,3 +16666,80 @@ displacement, 0 banners, 0 mutations" is indistinguishable from a dead probe.
   against a slow network, which is the case it exists for.
 - **Whether any of this holds in a windowed browser.** All measurements are
   headless Edge over CDP.
+## 2026-08-21 - `backend` lane - The header nothing checked, and a status marker that could be two things
+
+**Unit:** a follow-up to #65, prompted by the coordinator asking one question - *does your parser
+match the status word or the token?* - which is the shape that had produced five counting bugs in two
+units that day. The answer was clean. The five minutes spent proving it were not.
+
+**Driven, not read.** A `pending` item whose note says "blocked on nothing, really; not blocked, not
+done either" parses as `pending`; a `done` item whose note says "was pending, and blocked before
+that" parses as `done`. `STATUS_RE` is anchored at line start and reads the bolded token between the
+checkbox and the note, so prose after the marker cannot move it. Pinned by
+`test_a_status_word_inside_a_note_is_not_a_status`, which is the question asked rather than the
+answer asserted.
+
+**But the same probe found a real gap.** Two status markers on one item - `- [ ] **pending**` followed
+by `- [x] **done**` - parsed as `pending` with **zero defects**. The parser returned the first and
+passed silently over the second. That is precisely the silent loss a duplicate `Depends on:` line was
+already a fatal defect for; I had guarded one and not the other in the same function, for the same
+reason. **A conflict resolution that keeps both sides produces exactly this shape**, and I had
+resolved a conflict in this very file two hours earlier.
+
+**And the file itself was carrying a stale count that I had just put there.** `docs/backlog.md` line 8
+still said "129 `###` headings, 129 unique item slugs and 129 markers" while the header five lines up
+said 130 - because my rebase updated one copy of the number and not the other. **That is the exact
+failure documented twelve lines further down the same file**, committed by me, in the rebase, while
+being told about counting bugs. The prose warns about it in the past tense and was an instance of it
+in the present.
+
+**The fix was to delete the second copy, not to synchronise it.** The parenthetical no longer restates
+the count; it says the count is checked by the tool. This is the same move as `run_metrics.py`'s
+`count` accumulator earlier in the day: **two sources of truth for one fact, only one of them
+watched.** `AGENTS.md` already says not to restate the backlog count anywhere, and this file was
+restating it three lines below itself.
+
+**So the tool now checks the header it sits under.** `_check_header` compares the file's headline
+count against the items actually parsed, and fails on a disagreement, on a missing header, and on two
+headers. **It is the cleanest failing guard in the tool by my own fail/print rule**: the cheapest edit
+that turns it green is correcting the number, which is the correct action. Every falsifying
+alternative - deleting an item, flipping a status - is strictly more work and obviously wrong, so
+this guard cannot train anyone to corrupt what it reads. `missing-header` exists because a header
+check that finds no header and says nothing would report the count correct by never having read one.
+
+**It caught its first real defect within a minute of existing.** Flipping `backlog-dependency-graph`
+to `done` under the coordinator's ruling made the header stale; the tool named both wrong fields and
+the line. I did not have to remember.
+
+**A measurement error in my own verification, worth more than the fix.** Reading the exit code as
+`python scripts\backlog_graph.py 2>&1 | Select-Object -First 10; echo $LASTEXITCODE` reports **0 on a
+run that truly exits 1** - `Select-Object -First` closes the pipeline early. I nearly recorded "defect
+found, rc=0" as a bug in the tool. **The tool was right and my instrument was wrong**, which is the
+same relationship as the seven empty-set successes: the verification, not the code. Exit codes here
+are now read unpiped.
+
+Seven mutations across the new guards, green before, bytes-changed asserted, `rc == 1` only, green
+after revert: **7/7 caught**, including one that makes the defect report the claimed number instead of
+the observed one.
+
+**Also in this entry, under the coordinator's ruling:** `backlog-dependency-graph` is `done` - built,
+reviewed, merged in #65, running on `main`, verified against the real file. **`per-run-metric-delta`
+stays `pending`**, because its delta path has still never executed; an item whose deliverable has not
+run once is not done however green its checks are. That ruling quotes my own handoff sentence back at
+me, which is the correct use of this file.
+
+**Could not verify:**
+- **Unit 2 remains unverified**, unchanged. The second `main` build after #65 is the first run that
+  can print a delta. **Reasoned, not driven**, and I am the one who should read it.
+- **The header format is now load-bearing.** `HEADER_RE` requires exactly
+  `**N done - N blocked - N pending - N total**`. A legitimate reformat of that line fails CI with
+  `missing-header` rather than passing. I judge that the right direction - a header check that cannot
+  find the header must not report success - but it is a judgement, and the failure message names the
+  expected form so it is actionable rather than mysterious.
+- **The status vocabulary is hard-coded.** If a fourth status is ever introduced, the header check
+  compares only `done`/`blocked`/`pending` and the total, so items in a new status would count toward
+  the total and toward nothing else. `unknown-status` fires first, so it cannot pass silently - but I
+  have not driven that combination.
+- **I did not re-examine the seven items merged from #67 beyond their edges**, unchanged from the
+  previous entry. Two of them describe this PR's units and I have now read one of those two closely
+  enough to mark it done; the other five are still only known to be well-formed.
