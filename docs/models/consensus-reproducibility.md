@@ -321,6 +321,40 @@ cannot see him.
 
 ---
 
+---
+
+## What this measurement cost the anti-circularity argument
+
+`projection-strategy.md` argues that our availability model cannot be circular
+with a commercial one, and the argument is structural rather than aspirational:
+`source_games_played_assumptions` is a table the blending service *never
+queries*, so the one quantity we contest is the one whose answer our model never
+sees.
+
+**This measurement read that column.** Offline, for evaluation, and no code
+changed — but the guarantee did.
+
+Before: *no one on our side can fit to their games number, because nothing on our
+side can read it.* After: *no one on our side should fit to their games number.*
+Nothing in the repository weakened, no gate moved, and the protection went from
+**structural to behavioural** because a human now knows the shape of that
+distribution.
+
+Two consequences, and the second is a staffing constraint rather than a note:
+
+- **Read it to score ourselves, never to fit ourselves.** Including informally,
+  by an author who simply remembers the number while tuning a prior.
+- **Whoever builds the availability model should not be whoever read that
+  column.** That is me. I can state the aggregate honestly and still not be the
+  right person to choose a shrinkage target afterwards, because I cannot
+  demonstrate that I have forgotten it and no reviewer can check.
+
+This is offered as a real cost of having run the experiment, not a
+disclaimer. The experiment was still worth running — but the cost should be
+paid deliberately rather than discovered later.
+
+---
+
 ## What this measurement cannot see
 
 - **Whether either side is right.** There are no outcomes here. Every figure is

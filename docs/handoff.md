@@ -16449,10 +16449,14 @@ useless: a season-totals file contains nearly every small integer, so that scan 
   **nothing rescues the games question**, where I can show only that the two sides differ and that one
   is coarse. **Reasoned.**
 - **Whether anything leaked before I noticed the mode class.** The values sat in a pushed commit and
-  a PR branch for some hours before removal. They are gone from the working tree and from the tip of
-  both branches, but **they remain in this branch's git history** until it is squashed or rewritten,
-  and I have not rewritten published history. **Driven** that the tip is clean; **driven** that the
-  history is not; the decision on whether that matters is the owner's, not mine.
+  a PR branch for some hours before removal, and the coordinator had already reprinted them in a
+  second artefact - so a filter that was *proven to fire*, with a 505/505 scope assertion, passed two
+  integers past two readers. **Ruled by the owner: do not rewrite history.** Removing them from both
+  branch tips is the fix. The reasoning, recorded because a ruling that lives only in a chat is not a
+  ruling: two integers with no player, price, name or row attached are a property of a distribution,
+  not a row of a redistributable table, and rewriting published history across five open branches to
+  remove them costs more than it protects. State: **tip clean (driven), history still contains them
+  (driven), deliberately not rewritten (decision, owner's, with reasons above).**
 - **Whether the games tiering is the vendor's modelling choice or an artefact of this export view.**
   One file cannot distinguish them, and I did not obtain a second. **Reasoned.**
 - **19 further joinable rows**, 13 at rotation minutes, recoverable by a first-initial-plus-surname
