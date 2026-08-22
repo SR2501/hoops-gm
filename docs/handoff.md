@@ -16994,3 +16994,67 @@ zero dropped, zero added.
   `consensus-reproducibility.md:219` records games agreement at `0.284-0.504`. I landed the
   *remedy* (grep the numeral after a correction) without adjudicating those three files, which
   belong to `quant`.
+
+## 2026-08-22 - architect - The wrong-base slug diff was still instructing lanes in `backlog.md`; the append I was asked for still does not exist
+
+Follow-up on #71 while it held for the merge window. Two edits to `docs/backlog.md`'s header
+block, one refusal restated with better evidence, and one instrument failure of my own that is
+the day's own class.
+
+**The correction I landed one commit ago had not reached the instruction that propagates it.**
+`gates.md` now says a correction is incomplete until you grep for the copies that merely cite the
+claim, because they are invisible from inside the document that argues it. I wrote that sentence
+and then left `backlog.md`'s header block telling every lane to **compare the slug set against
+`origin/main`** - the exact practice that reports another lane's merges as your own deletions once
+your base has moved, and the one the ceiling lane lost seven items to. The rule now names the
+merge base, and says why the wrong version survives review: run right after a rebase the two are
+the same commit, so it agrees with the correct check precisely while it cannot mislead anyone.
+Grepped `docs/`, `.github/` and `scripts/` afterwards for other live copies - none. The remaining
+`origin/main` mentions are append-only `handoff.md` records of what lanes actually did, correct as
+history and not instructions.
+
+**CI checks the header. Nothing fixes it.** Recorded in the same block, because the block already
+said the header is checked and a reader would reasonably assume the tool that checks also repairs.
+`scripts/backlog_graph.py` gained `_check_header` at `b49c6e6` and not before; the repair is
+`scripts/resolve_doc_conflicts.py:382`, which recomputes unconditionally - the `if had_conflict:`
+branch closes at 380 - but only ever runs when a human invokes it during a conflict. So a header
+wrong on a branch that merged cleanly was repaired by nothing and, until `b49c6e6`, caught by
+nothing either. Both halves are worth knowing and only one of them is now closed.
+
+**The `handoff.md` false guarantee I was asked to correct does not exist, and I have now looked
+everywhere it could be.** The sentence - `backlog_graph.py`'s header check *"passed on both
+branches - no stale header inherited through either rebase"* - returns nothing from
+`git log --all -S` over `docs/`, nothing from a `git grep` across 200 commits on all branches,
+nothing from the bodies of #68, #70, #72 and #73, and nothing from any review or comment on
+#64 through #73. The only occurrence in the repository is **my own quotation of it in the entry
+above this one.** The nearest real text is line 16836, a lane's own recount of two stale headers
+it caught, correctly attributed to the resolver. I am not writing a correction to a sentence
+nobody wrote: that would put into this file exactly the class it exists to prevent, and it would
+be the first false claim here traceable to an instruction to be careful.
+
+**Third alarm this unit that did not survive checking**, after the malformed `R58` row and the
+`130`-item count that was arithmetically consistent with no tree. The through-line is worth one
+sentence: **each was specific enough to be worth checking, and specificity is what made it worth
+checking rather than what made it true.**
+
+**And my own, in the act of gating the above.** I ran the full backend gate redirecting output to
+`..\.git\gate-*.txt`. **In a worktree `.git` is a file, not a directory**, so every redirect
+failed, four commands ran to completion and wrote their results nowhere, and the shell returned
+`1`. Roughly twenty minutes of compute discarded and, had the shell returned `0`, I would have had
+a run I could not read and no reason to notice. The remedy is the one already in the register in
+its other form - **assert the artefact exists rather than the command's silence** - so the rerun
+prints each file and its byte count, and captures `$LASTEXITCODE` per step rather than once at the
+end. Same shape as the day's seven empty-set successes: the failure was in the instrument, and the
+instrument was the only thing reporting. **And in the rerun I typed `mypy src` where `ci.yml:65`
+runs bare `mypy`**, which is config-driven: 106 files against CI's 161. Green both ways, so nothing
+would have contradicted me, and I would have reported a gate that checked fifty-five files fewer
+than the gate. Where the pipeline defines the invocation, run the pipeline's, not one that looks
+equivalent.
+
+**Could not verify:** what the coordinator was reading when they described the merged guarantee -
+I have established it is in no file, branch, PR body or PR comment, which is not the same as
+establishing what they saw. Whether `backlog.md:35`'s historical account of the `origin/main`
+diff should also be reworded; I left it because it records what a lane did, but a reader skimming
+for the technique could take the narrative as the rule. And I did not check whether the other
+`origin/main` slug diffs recorded in this file produced wrong answers at the time - several were
+run right after a rebase, where the wrong base and the right one coincide.

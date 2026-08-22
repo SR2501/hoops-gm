@@ -10,6 +10,12 @@ that is deliberate: a second copy of it is what a rebase updates one of - and th
 prose copy is the one nothing guards. It is checked on every push by
 `scripts/backlog_graph.py`, which counts the items it actually parses and fails if
 the header disagrees with them, so the header and the graph cannot drift apart.
+That check landed at `b49c6e6`; before it, the header was checked by nothing, and
+any report of it passing describes a run that never read line 5. **CI checks the
+header. Nothing fixes it.** The repair is `scripts/resolve_doc_conflicts.py:382`,
+which recomputes unconditionally — but only when a human invokes it, which is
+during a conflict, so a header wrong on a branch that merges cleanly was repaired
+by nothing and, until `b49c6e6`, caught by nothing either.
 Uniqueness and the 1:1 heading-to-marker correspondence are enforced by the same
 tool rather than asserted here. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
@@ -29,10 +35,14 @@ a file that had lost three entries and disagreed with itself about how many it
 held. Found by diffing this file's slug set against `origin/main`'s, which is the
 only check that catches a *dropped* item — a recount of the finished file agrees
 with itself perfectly after a deletion. **Recount the total, and separately
-compare the slug set against `main`; the first cannot see what the second is
-for.** The blend-recipe lane rebased onto `fc23239` under that rule and the pair
+compare the slug set against your own merge base; the first cannot see what the
+second is for.** Against `origin/main` rather than the merge base it reports
+another lane's merges as your deletions the moment your base has moved — and it
+agrees exactly with the correct check when run right after a rebase, because the
+two are the same commit at that instant, which is why it survives. The blend-recipe
+lane rebased onto `fc23239` under that rule and the pair
 behaved exactly as described: the recount moved 118 -> 120 and could not have
-seen a loss, while the slug diff against `origin/main` independently confirmed
+seen a loss, while the slug diff independently confirmed
 zero of main's 118 entries were dropped and exactly two were added. The script
 was not run on this file.
 
