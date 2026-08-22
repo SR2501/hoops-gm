@@ -16866,3 +16866,75 @@ operations that do not consult the wedged state. **Do not stash during a conflic
   across events, and I have not driven the difference.
 - **The rebase failure is diagnosed, not understood.** I have a reliable recovery and a plausible
   cause; I did not reproduce it deliberately.
+---
+
+## 2026-08-22 - backend lane - rebase six, a second delta in the opposite direction
+
+Rebased #72 onto `001129d` (#73). Sixth rebase; the header guard caught a moved count for the
+third time, and this entry records two things the rebase produced that the previous five did not.
+
+### A threshold would have fired again, in the other direction
+
+The first real delta was **-40.6%** and I argued a threshold would have fired on an improvement.
+This run's is **+16.9%** (`suite.test_time_ms` 202,458 -> 236,665) with `suite.tests` **+17**, and
+the seventeen new tests are #73's - **no production code changed at all**. So the same guard would
+now have fired on *adding tests*, which is the thing a growing project does most.
+
+Two observations, opposite signs, neither a regression. That is stronger than the argument I made
+for print-don't-judge, because the two failures a threshold would have produced are not the same
+failure: one fires on an improvement, the other on legitimate growth, and **no single direction of
+threshold avoids both**. The commissioning bug remains undemonstrated - it was a monotone climb
+across five runs and I still have only two points - so nobody should read this as proof the tool
+would have caught 3,177 -> 4,298.
+
+The `+17` headline and *"17 test(s) not in the baseline, 0 in the baseline and not here"* come from
+one enumeration, so they cannot disagree.
+
+### The per-test table, second observation
+
+Top movers again dominated by attribution noise: one test **-66.7%**, another **+281.5%**, neither
+touched by any commit in the diff. That is the second consecutive run where the table's content is
+warm-up attribution rather than signal. I pre-committed to adding a duration floor or removing the
+table if the next few looked the same; this is the second of those few, trending toward the change.
+I am not making it inside a merge queue.
+
+### Could not verify
+
+- **The baseline still names itself `unknown`.** The provenance line prints
+  `Current run `36d3a16` against baseline `unknown``, because the cached baseline was written by
+  #65's build, before the `source` field existed. That is the designed read - a missing `source`
+  must never be filled in with this run's sha - and it self-heals on the first `main` build after
+  this merges. But it means the coordinator's request to *print which baseline key was hit* is only
+  half met: the report names **what the baseline says about itself**, not **which cache key the
+  workflow restored**. Those are different facts and only the first is in the artefact. The restore
+  step knows the second (`cache-matched-key`) and does not pass it. Named, not fixed.
+- **`36d3a16` is the merge commit, not my head `6addbd5`** - the `pull_request`-event behaviour
+  already recorded, observed again rather than assumed.
+
+### The conflict resolution removed another lane's prose, deliberately
+
+#73's lane had adopted the recount discipline and written its own parenthetical - which
+re-embedded four counts (`134 headings, 134 unique item slugs and 134 markers`). Those are exactly
+the second copy that a rebase updates one of, and **the tool guards the header line only**, so the
+prose copy is unguarded by construction. I kept the guarded version and noted that uniqueness and
+the 1:1 correspondence are enforced by the tool rather than asserted in prose. Deleting another
+lane's writing in a conflict deserves saying out loud, so: I did, and this is why.
+
+`main`'s own header was correct at 46/1/87/134. My branch's only backlog change is the ordered
+flip, so the resolved file must be 47/1/86/134 - which is what two independent recounts returned,
+and the slug diff against my merge base is **0 added, 0 removed**.
+
+### A sixth instance of the anchoring bug, caught by the abort rather than by care
+
+My independent recount regex was `^### \`[a-z0-9-]+\`\s*$`. Headings carry a ` - Title` suffix, so
+it matched **zero** of 134. This is the same end-of-line anchoring mistake I made earlier tonight
+and the sixth instance of a-word-where-a-token-was-meant in two units.
+
+What caught it was not care. It was the line `if ($slugs.Count -eq 0) { "ABORT" }` - *a check that
+iterates must first assert it found something to iterate over* - applied to my own verification
+script rather than to the code. Without it the recount would have reported `headings = 0` beside
+`markers = 134` and I would have gone looking for a parser bug in a file that was fine.
+
+The diffstat check earned itself again: `docs/handoff.md` shows **200 insertions, 0 deletions**,
+which is proof #73's entry survived, and `docs/backlog.md` shows exactly **4** deletions - one
+header line, two prose lines, one status marker - matching intent line for line.
