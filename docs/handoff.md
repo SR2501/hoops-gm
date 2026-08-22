@@ -17515,3 +17515,238 @@ the harness were serialised for that reason rather than overlapped.
   **reasoned**, and it gets settled the first time the owner pastes real data in.
 - **That no other prose in the tree quotes a conflict marker.** Still not swept.
   Carried forward a third time. **Reasoned.**
+---
+
+## 2026-08-22 - backend lane - rebase six, a second delta in the opposite direction
+
+Rebased #72 onto `001129d` (#73). Sixth rebase; the header guard caught a moved count for the
+third time, and this entry records two things the rebase produced that the previous five did not.
+
+### A threshold would have fired again, in the other direction
+
+The first real delta was **-40.6%** and I argued a threshold would have fired on an improvement.
+This run's is **+16.9%** (`suite.test_time_ms` 202,458 -> 236,665) with `suite.tests` **+17**, and
+the seventeen new tests are #73's - **no production code changed at all**. So the same guard would
+now have fired on *adding tests*, which is the thing a growing project does most.
+
+Two observations, opposite signs, neither a regression. That is stronger than the argument I made
+for print-don't-judge, because the two failures a threshold would have produced are not the same
+failure: one fires on an improvement, the other on legitimate growth, and **no single direction of
+threshold avoids both**. The commissioning bug remains undemonstrated - it was a monotone climb
+across five runs and I still have only two points - so nobody should read this as proof the tool
+would have caught 3,177 -> 4,298.
+
+The `+17` headline and *"17 test(s) not in the baseline, 0 in the baseline and not here"* come from
+one enumeration, so they cannot disagree.
+
+### The per-test table, second observation
+
+Top movers again dominated by attribution noise: one test **-66.7%**, another **+281.5%**, neither
+touched by any commit in the diff. That is the second consecutive run where the table's content is
+warm-up attribution rather than signal. I pre-committed to adding a duration floor or removing the
+table if the next few looked the same; this is the second of those few, trending toward the change.
+I am not making it inside a merge queue.
+
+### Could not verify
+
+- **The baseline still names itself `unknown`.** The provenance line prints
+  `Current run `36d3a16` against baseline `unknown``, because the cached baseline was written by
+  #65's build, before the `source` field existed. That is the designed read - a missing `source`
+  must never be filled in with this run's sha - and it self-heals on the first `main` build after
+  this merges. But it means the coordinator's request to *print which baseline key was hit* is only
+  half met: the report names **what the baseline says about itself**, not **which cache key the
+  workflow restored**. Those are different facts and only the first is in the artefact. The restore
+  step knows the second (`cache-matched-key`) and does not pass it. Named, not fixed.
+- **`36d3a16` is the merge commit, not my head `6addbd5`** - the `pull_request`-event behaviour
+  already recorded, observed again rather than assumed.
+
+### The conflict resolution removed another lane's prose, deliberately
+
+#73's lane had adopted the recount discipline and written its own parenthetical - which
+re-embedded four counts (`134 headings, 134 unique item slugs and 134 markers`). Those are exactly
+the second copy that a rebase updates one of, and **the tool guards the header line only**, so the
+prose copy is unguarded by construction. I kept the guarded version and noted that uniqueness and
+the 1:1 correspondence are enforced by the tool rather than asserted in prose. Deleting another
+lane's writing in a conflict deserves saying out loud, so: I did, and this is why.
+
+`main`'s own header was correct at 46/1/87/134. My branch's only backlog change is the ordered
+flip, so the resolved file must be 47/1/86/134 - which is what two independent recounts returned,
+and the slug diff against my merge base is **0 added, 0 removed**.
+
+### A sixth instance of the anchoring bug, caught by the abort rather than by care
+
+My independent recount regex was `^### \`[a-z0-9-]+\`\s*$`. Headings carry a ` - Title` suffix, so
+it matched **zero** of 134. This is the same end-of-line anchoring mistake I made earlier tonight
+and the sixth instance of a-word-where-a-token-was-meant in two units.
+
+What caught it was not care. It was the line `if ($slugs.Count -eq 0) { "ABORT" }` - *a check that
+iterates must first assert it found something to iterate over* - applied to my own verification
+script rather than to the code. Without it the recount would have reported `headings = 0` beside
+`markers = 134` and I would have gone looking for a parser bug in a file that was fine.
+
+The diffstat check earned itself again: `docs/handoff.md` shows **200 insertions, 0 deletions**,
+which is proof #73's entry survived, and `docs/backlog.md` shows exactly **4** deletions - one
+header line, two prose lines, one status marker - matching intent line for line.
+
+### A seventh instance, and this one is mine twice over
+
+After pushing the commit above I read `gh pr view 72` and got `mergeable: UNKNOWN` with
+`headRefOid` still naming the **previous** head. I had a ready-made explanation - the recompute
+lag documented earlier in this file, which I had hit before and warned others about - so I waited
+and read it again. Same answer. I waited four more minutes and read it a third time.
+
+The field was not stale. **PR #72 had been merged**, at the previous head, while the commit was in
+flight; a closed PR reports `mergeable: null` and keeps the head it was merged at. Every reading
+was current and correct. What was wrong was my diagnosis, and it was wrong in the most durable
+way available: *I already had a name for this symptom*, so the third identical reading felt like
+confirmation of the lag rather than evidence against it.
+
+The fix was to ask a different question - `git ls-remote` said my push had landed, and
+`gh api /pulls/72 --jq .state` said `closed`. One field I had not looked at settled in one call
+what three readings of the field I had chosen could not.
+
+Two rules, both already in this file, both violated by me here:
+
+- **A repeated reading of one instrument is not a second method.** I read the same field three
+  times and counted it as increasing confidence. It was the same measurement three times.
+- **Where the producer is available, ask it.** `state` was one jq expression away for twelve
+  minutes.
+
+And a third that is new: **a known failure mode is a hypothesis, not a diagnosis.** Having
+previously been bitten by the lag made me faster to reach for it and slower to test it. The
+register entries we write to catch a class also supply a ready explanation for symptoms that
+merely resemble it - which is the grep-decay finding wearing different clothes: **the documented
+class contaminates the diagnosis of the next thing that looks like it.**
+
+Consequence: this entry did not make #72 and lands as a follow-up. That is the correct outcome and
+the cheap one - it is documentation - but had it been a code fix I believed was in the merge, I
+would have reported it green on `main` and been wrong.
+
+### The rebase where the guard had nothing to say
+
+Rebase five, onto `e05f09b` (#70), was docs-only and moved no counts. The header check ran and
+**found nothing** - and that is worth recording, because a guard that fires on every rebase is
+reporting on the process rather than on the file.
+
+Across six rebases the header check caught **three** genuinely stale counts and stayed silent on
+the rest. Its credibility comes from the silence as much as the catches: if it had fired every
+time, the correct read would have been that it was measuring how often lanes rebase, not whether
+the file is self-consistent. **The true negative is half the evidence and almost nobody writes it
+down.** Four catches alone is a much weaker claim than four catches with the clean passes named.
+
+One caveat on the count, since this file is where such things get overstated later: the sixth
+rebase's fire was **mine and deliberate** - I replaced the header with a placeholder specifically
+to watch the guard trip before correcting it, which is a test of the guard, not a defect in the
+file. The three real catches were counts moved by other lanes' changes arriving through a rebase.
+
+### The mutation harness that would have cleared a tool of doing nothing
+
+The coordinator ran a mutation against `scripts/backlog_graph.py` on `main` to check it really
+guards the header, and reported that it **did not** - `header "46 done" -> "12 done"` exiting `0`.
+Two defects in the harness, both of which they caught themselves:
+
+- **The dangling-edge injection was a no-op.** They wrote `Depends on: \`slug\`` where the file
+  carries `- **Depends on:** \`slug\``. The file was never modified, so the tool was clean about a
+  defect that was never planted.
+- **`Select-Object -First` zeroed the exit code, twice, five minutes apart** - a trap they had
+  written into the register themselves.
+
+Together those produce a **confident, fully evidenced, entirely false** report that the tool
+catches nothing, supported by two clean-looking runs. **The harness was the defect, in the
+investigation of whether the harness was the defect.**
+
+Re-run properly against merged `main` - control asserted green first, only `rc == 1` counted as
+caught, revert asserted green after:
+
+```
+CONTROL   unmodified                    rc=0
+MUTATION  header 47 done -> 12 done     rc=1   caught
+REVERT    restored                      rc=0
+
+CONTROL   unmodified                    rc=0
+MUTATION  dangling edge, correct syntax rc=1   caught, named the bogus slug and both lines
+REVERT    restored                      rc=0
+```
+
+The original conclusion was also **obsolete rather than merely wrong**: `_check_header` and
+`HEADER_RE` reached `main` in `b49c6e6`, and the run predated it.
+
+### A size check cannot tell you a mutation applied
+
+The obvious fix to a no-op injection is to assert the file changed by the expected number of
+characters, and the dangling-edge case reports `+120` cleanly. **It is worthless for the mutation
+that mattered.** `47` and `12` are both two characters, so the mutated file is **byte-identical in
+length** to the original - a size assertion reports a clean apply on a file it cannot distinguish
+from unmodified.
+
+What works is reading the mutated field back and asserting it says what you meant:
+
+```
+header now: **12 done - 1 blocked - 86 pending - 134 total**
+```
+
+That is *report the state you observed, never the parameter you passed* - applied to the mutation
+rather than to the result, which is the half nobody applies it to. **The check you reach for to
+validate a harness fails in exactly the cases a harness is subtlest about**, because the subtle
+mutations are the small ones and the small ones are the ones that do not change length.
+
+### The base assertion narrows the window; it does not close it
+
+`git merge-base HEAD origin/main` equalling `git rev-parse origin/main` immediately before pushing
+is a real improvement and is now house practice. Its limit should travel with it: **a merge can
+land between the assertion and the push.** That is not hypothetical - it is what happened on rebase
+seven, where #71 merged while the push was in flight.
+
+What the assertion actually buys is converting a **silent stale push** into a **local refusal**. It
+does not make the base stable; only the freeze does that. Stating the limit alongside the practice
+matters here specifically, because the failure it half-solves is one where a green result looks
+exactly as green when it is about a base nobody will merge.
+
+### A verified absence is a statement about a base, not about the tree
+
+The general case of the base-is-an-input family, found by the auction lane and recorded here
+because this is where the rest of that family lives.
+
+**A positive claim survives a rebase. A negative one expires the moment anything merges, and
+nothing in the record marks the transition.** "This table exists", "this constraint fires",
+"this dependency resolves" stay true as the base moves. "*Nothing else* claims this migration
+number", "*no other* item has this slug", "there are *no* references to `app.routes`" are true only
+of the tree that was in front of you.
+
+The auction lane had recorded, as a properly **driven** observation, that `origin/main` carried a
+single alembic head with no collision. It was true. It was true **of `642bdb6`**. Five merges later
+both `main` and their branch carried an `0017` and twenty tests broke. **The check that went looking
+for exactly that collision ran, was correct, and found nothing - because at that moment there was
+nothing to find.**
+
+Verified here rather than taken on report: `origin/main` at `3a25ff4` carries
+`alembic/versions/0017_draft_tracker.py`, which arrived through a merge. Any branch that checked
+for an `0017` collision before that landed got a clean answer that was accurate and is now false.
+
+This is the missing general case of the four arrivals already recorded above - the CodeQL retarget,
+the `restore-keys` prefix, the false-deletion slug diff, and a green run against a superseded base.
+Those are four instances of *the base you compare against is an input to the result*. This says
+**which** results decay: **the negative ones, silently, and only the negative ones.**
+
+Two consequences worth carrying:
+
+- **Re-derive negatives at the moment of use; positives can be cited.** A recorded absence needs
+  its base named beside it or it should not be quoted at all. The governance lane had already
+  half-anticipated this by writing *"the `app.routes` grep covered merged `main` at `9f0561f`
+  only"* - the right instinct, and the reason that entry aged better than it had to.
+- **Serialising a queue has a cost nobody was pricing.** The longer a branch is held before merging,
+  the more of its verified negatives have quietly expired. That is an argument against long holds
+  which sits directly against the freeze protocol that made tonight's merges safe, and both are
+  true at once.
+
+It also explains why the register's own decay is asymmetric. **Documenting a defect class creates
+permanent matches for the grep that detects it** - a positive that survives forever - **while the
+absence that grep was run to establish expires on the next merge.** The noise is durable and the
+signal is not, which is the same shape from the other end.
+
+---
+
+*Appended after telling the coordinator this branch was finished. Flagging that rather than
+quietly reopening it: they asked for this entry here specifically, because the family it completes
+already lives in this file, and #69 merges ahead of #74 regardless so nothing is displaced. The
+full gate ran again.*
