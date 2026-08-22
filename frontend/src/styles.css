@@ -1002,6 +1002,18 @@ a:focus-visible {
   }
 }
 
+/**
+ * The right column: seats above, log below. Both live inside `draft__panels` so
+ * the sticky recorder stays pinned for the whole scroll rather than only for as
+ * long as the seats last.
+ */
+.draft__stream {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
 /* -- recorder ------------------------------------------------------------ */
 
 .recorder {

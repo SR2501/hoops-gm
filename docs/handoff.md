@@ -15720,12 +15720,50 @@ above", separated by a rule. Driven: exactly **1** caveat on the 12-seat board,
 and recording that sale collapses the two into one figure with the caveat count
 going to **0**.
 
+### The full board hid the one panel that has to be reachable
+
+Everything above was verified on a board with **7 of 156 slots filled**, because
+that is what `seed_draft` ships. Filling it to **156 of 156, 169 log entries**
+changed the answer.
+
+The page runs to **11,037px - 15.3 screens** at a 720px viewport. The recorder
+is `position: sticky`, but the log was a *sibling* of the two-column
+`draft__panels`, so the recorder's containing block ended where the seats did.
+Probed at 500px intervals, the **Record button was off screen for 11 of those
+15.3 screens** - roughly 70% of the page. Under an auction clock, the priority-1
+surface was unreachable from most of the screen, and every earlier check had
+been run on a page short enough that it never came up.
+
+Fixed by putting the seats and the log in one right-hand column inside
+`draft__panels`. Re-probed: **on screen at all 23 probe positions**, and
+`elementFromPoint` at the button's centre returns the button itself at
+`scrollY 9000`, so it is hit-testable rather than merely laid out. Guarded by a
+structural test - jsdom cannot reproduce the measurement, but it can assert the
+containment that caused it, and I proved the guard fires by reverting the JSX
+and watching that one test fail.
+
+**The lesson is about the fixture, not the layout.** A seed that fills 4% of a
+board is a fixture that cannot exercise the state the screen spends the second
+half of an auction in. Nothing was wrong with the tests; they were all run
+against the easy case, and the easy case was the only one that existed.
+
+Two smaller notes from the same pass. **`seat-card-N` is not a testid** - a
+probe of mine assumed it, found zero seats and would have reported clean
+geometry had it not asserted a non-empty result first; the real prefix is
+`seat-N`. And **lint and type-check disagreed about the same line**: ESLint's
+`no-unnecessary-type-assertion` wanted `!` removed where `Node.contains` accepts
+null, TypeScript wanted it kept for `.className`. Tests passed throughout both
+failures. Narrowing with an explicit `throw` satisfies both and gives a named
+failure instead of a null comparison.
+
 ### Could not verify
 
-- **Legibility at a full 156-slot board** - *reasoned*. The seed fills 7 of 156.
-  Roster construction is a flat list per seat and I have not seen 13 rows in one
-  card, let alone twelve of those at once. The most likely failure is vertical,
-  and it is the state the screen will actually be in by the end of the auction.
+- **Legibility at a full 156-slot board** - *driven, after this list first said
+  "reasoned"*. I filled the auction to **156 of 156 slots and 169 log entries**
+  and measured it, which found the worst defect of the night - see below. What
+  remains unverified there is subjective: the log is unvirtualised and 169 rows
+  render fine, but I have not watched anyone try to *find* a specific entry
+  among them under time pressure.
 - **`guaranteedCorrectionSequence` when the tail is a `closed` event** -
   *reasoned*. Driven for `sale`, `bid`, `nomination` and `void` tails. No seeded
   draft reaches `closed`, so I could not produce the state without hand-writing
@@ -15765,3 +15803,12 @@ going to **0**.
   exists; nothing calls it, so the only route today is a development CLI that
   invents synthetic seats. Filed as `draft-setup-screen`, and it is on the
   critical path for 18 October in a way its size does not suggest.
+- **A fixture that fills 4% of a surface cannot test the surface.** `seed_draft`
+  fills 7 of 156 slots, every check I ran passed on it, and the full board hid
+  the Record button for 70% of the page. Ask what proportion of the real thing
+  your fixture represents before trusting a pass, and fill it up if the answer
+  is small - it took one script and four minutes.
+- **Lint and type-check can disagree about the same line**, and tests pass
+  through both. `no-unnecessary-type-assertion` wanted `!` gone where
+  `Node.contains` accepts null; `tsc` wanted it for `.className`. Narrow with an
+  explicit `throw` and both are satisfied, with a named failure as a bonus.

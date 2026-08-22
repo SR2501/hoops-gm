@@ -123,6 +123,33 @@ describe('the draft board, from recorded payloads', () => {
     expect(auctionState.participants).toHaveLength(12)
   })
 
+  it('keeps the recorder and the log inside one sticky container, so recording survives a long board', async () => {
+    // Driven in a browser on a full 156-slot board: with the log as a sibling of
+    // `.draft__panels` the page ran to 11,037px and the Record button was off
+    // screen for 11 of the 15.3 screens — the one panel that has to be reachable
+    // under an auction clock, unreachable for most of the page. The fix is
+    // structural, so this guards the structure rather than the pixel measurement,
+    // which jsdom cannot reproduce.
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    const { container } = renderBoard()
+
+    await screen.findByTestId('log-list')
+
+    const panels = container.querySelector('.draft__panels')
+    const recorder = container.querySelector('.recorder')
+    const log = container.querySelector('.log')
+
+    // Narrowed by throwing rather than by `!`, so a missing element fails here
+    // with a name rather than turning the containment checks below into a
+    // comparison of two nulls that an empty page would satisfy.
+    if (panels === null) throw new Error('no .draft__panels rendered')
+    if (recorder === null) throw new Error('no .recorder rendered')
+    if (log === null) throw new Error('no .log rendered')
+
+    expect(panels.contains(recorder)).toBe(true)
+    expect(panels.contains(log)).toBe(true)
+  })
+
   it('shows the live bid and the remaining budget as two claims, on the one seat that has both', async () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents })
     renderBoard()

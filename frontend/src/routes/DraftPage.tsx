@@ -199,10 +199,18 @@ function DraftBoardView({
 
       <div className="draft__panels">
         <DraftRecorder model={model} onRecorded={onRecorded} onAttempted={onRecorded} />
-        <DraftSeats model={model} />
+        {/*
+          The seats and the log share the right column so that the recorder's
+          sticky containing block spans both. With the log as a sibling of
+          `draft__panels`, a full 156-slot board ran to 11,037px and the
+          recorder — the one panel that has to be reachable under an auction
+          clock — was off screen for 11 of the 15.3 screens.
+        */}
+        <div className="draft__stream">
+          <DraftSeats model={model} />
+          <DraftLog model={model} onRecorded={onRecorded} />
+        </div>
       </div>
-
-      <DraftLog model={model} onRecorded={onRecorded} />
     </>
   )
 }
