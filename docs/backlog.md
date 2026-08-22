@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 76 pending - 122 total**
+**45 done - 1 blocked - 83 pending - 129 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 122 `###` headings, 122 unique item slugs and 122 markers, 1:1, no
+two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -39,7 +39,18 @@ Left as found, because guessing which item another lane meant is worse than
 reporting it. Recorded because it is the same shape as the counts: **the graph
 is only as trustworthy as the last time someone resolved every edge against the
 slug set**, and until `adr-index-consistency-test` has a sibling doing that
-here, nothing does.
+here, nothing does. That sibling is now filed as `backlog-dependency-graph`;
+filing it is not building it, and this edge is its first expected finding.
+
+The governance unit of 2026-08-21 added seven items and ran the pair as
+prescribed: the recount moved 122 -> 129, and the slug diff against
+`origin/main` independently confirmed zero of main's 122 entries were dropped
+and exactly seven added. **The status split needed a third pass**, because the
+first two matched `done|pending|blocked` anywhere in the marker line and one
+`pending` item's note contains the word "blocked" - so the split summed to 130
+against 129 headings and disagreed with the total sitting beside it. Match the
+marker **token**, not the word, and check the split sums to the total: that
+addition is the only thing that caught it.
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
@@ -89,6 +100,40 @@ Invocable agent definitions in .github/agents/: architect, data-engineer, quant,
 
 FastAPI app in backend/ with pydantic settings/config, structured logging, /health endpoint. Wire pytest, ruff, mypy.
 
+### `backlog-dependency-graph` - Computing this file's dependency graph in CI
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+Parse every `###` item heading and every `- **Depends on:**` line in this file, resolve
+each dependency token against the slug set, and fail CI on any token that names no item. Print
+the longest path through the graph and the ready set (pending items whose dependencies are all
+done). Filed on 2026-08-21 because reading 122 items in file order produced three distinct
+failures in one day that a graph would have surfaced in seconds: a dangling edge
+(`schedule-cohort-fingerprint-list` → `injury-report-backfill`, which is not a slug here — the
+item is `injury-report-historical-backfill`), prose asserting an item was blocked while its
+machine-readable edge said ready, and a ten-deep critical path nobody could see. Sibling to
+`adr-index-consistency-test`, which does the equivalent job for the ADR index; until this
+exists, nothing resolves an edge here except a human who happened to trace one. Keep it a
+script, not a gate on prose: it checks the machine-readable edges only, and the prose
+disagreeing with them is a finding it should report rather than adjudicate.
+
+### `boxscore-date-plausibility-bound` - Bounding box-score game dates against an independent source
+
+- [ ] **pending**
+- **Depends on:** `nba-stats-ingest`, `participation-ledger`
+
+Assert every derived `game_date` against something the box-score payload does not supply
+itself. `gameEt` carries a `Z` suffix and is **not** UTC — it is Eastern time wearing a UTC
+marker, five hours off its sibling `gameTimeUTC` in the same object — so a timezone-aware
+parse of it is correct in form and wrong in meaning, shifting the date for every game tipping
+after 7pm Eastern, which is most of them. `player_participation` joins on that date, so the
+availability model would absorb the error as real signal. Cross-check against `gameTimeUTC`,
+the schedule endpoint's own date for the same `game_id`, and a plausibility bound (no NBA game
+tips outside a known daily window in Eastern time); fail loudly on disagreement rather than
+preferring either field. See the `AGENTS.md` house rule on self-describing fields: check the
+claim against something independent.
+
 ### `bridge-capture` - Capturing Fantrax data via the bridge
 
 - [x] **done**
@@ -122,6 +167,17 @@ corrected quota diagnosis remain in `docs/governance/OPEN-ci-billing.md`.
 
 GitHub Actions running lint, type-check and tests for both backend and frontend on push and PR.
 
+### `cli-help-no-side-effects` - Making `--help` print help rather than start a server
+
+- [ ] **pending**
+- **Depends on:** `backend-skeleton`
+
+`python -m hoops_gm --help` starts the server instead of printing usage, because the module
+entrypoint hands off to the runner before any argument parsing happens. `--help` is the one
+command a stranger runs to find out what a program does and the one command that must have no
+side effects; here it binds a port. Parse arguments first, dispatch second, and add a test
+asserting `--help` exits 0, prints usage to stdout, and binds nothing.
+
 ### `db-foundation` - Establishing the database foundation
 
 - [x] **done**
@@ -135,6 +191,33 @@ SQLAlchemy setup with Alembic migrations and session management. Implement core 
 - **Depends on:** `league-settings-ingest`, `schedule-ingest`
 
 Originally scoped to compute every future deadline from the ingested settings: per-player lineup locks at each tipoff, waiver claim cutoffs, waiver clear moments, games-cap thresholds, trade deadline, playoff roster deadlines. `league-settings-ingest` already verified that Fantrax's official `getLeagueInfo` supplies only roster limits and scoring-period boundaries — lineup lock, waivers, trade deadline, playoffs and keeper rules are absent from every source observed so far. Computing any of those from ingested settings would mean inventing them, so this unit delivered the smallest honest contract instead: `league_deadline_calendars`, one immutable, versioned row per league joining an exact `LeagueSettingsSnapshot` with an exact schedule refresh cohort, exposing season bounds and scoring-period boundaries as real timezone-aware instants while carrying lineup lock, waivers, trade deadline, playoffs and keepers forward as explicit unknowns (or their bridge-sourced values, verbatim, when the settings snapshot already has them). Fails closed on missing or mismatched lineage at both derivation and activation time — including when scoring periods themselves are unknown (no `[]` fallback), on out-of-order season/period bounds, and on duplicate period numbers; A→B→A activation cycling is supported by re-deriving over lineage that reverts to prior content. `trade_deadline.deadline_at`/`keepers.deadline_at` are validated offset-aware ISO 8601 at the ingest domain-type boundary, and the read endpoint is loopback-only (bridge-derived values, not a public dashboard fact). A `notification-engine`/`lineup-optimizer` consumer that actually needs a computed lineup-lock instant per game still has no source for one — that gap is real, not an oversight, and stays open until a bridge capture or a new official field closes it. `LeagueDeadlineCalendar` remains the authoritative source-truth calendar; `ScoringPeriod` is now its fail-closed current Eastern-date materialization with separate keyed refresh lineage — see `scoring-period-projection`.
+
+### `demo-db-alembic-stamp` - Stamping demo and seed databases with an Alembic revision
+
+- [ ] **pending**
+- **Depends on:** `db-foundation`
+
+Databases created by the demo and seed paths (`projections_demo.db` among them) are built by
+`create_all` and carry no row in `alembic_version`, so they are permanently stranded: Alembic
+cannot upgrade them because it does not know where they start, and the only remedy is to
+delete and rebuild. That is tolerable for a throwaway demo file and not tolerable the first
+time one holds something the owner wanted to keep. Stamp `head` at creation, and add a test
+asserting every database the seed paths produce reports a revision.
+
+### `draft-append-error-classification` - Distinguishing permanent from retryable storage failures on draft append
+
+- [ ] **pending**
+- **Depends on:** `draft-format-abstraction`
+
+The draft-event append path wraps its insert in a blanket `except` that maps **every** storage
+failure to a retryable error code, so a conforming client retries a permanent failure forever
+— a uniqueness or foreign-key violation is not transient and no amount of retrying resolves
+it. Discriminate on the constraint that failed (which requires the dialect's own error
+attributes, not the message text) and return permanent for integrity violations, retryable
+only for connection and serialisation failures. Found on 2026-08-21 by a tripwire, not a test:
+1,373 tests passed and none of them entered the handler, so a code review, a mutation matrix
+and a green PostgreSQL run all cleared it simultaneously — see the *prove a test reaches the
+code at all* bullet in the Code gate, which this item is the reason for.
 
 ### `draft-format-abstraction` - Abstracting snake and auction draft formats
 
@@ -180,6 +263,24 @@ Vite + React + TypeScript in frontend/. Routing, typed API client, layout shell,
 
 AGENTS.md as the single entry point (roster, rules, gates). docs/governance/ownership.md (module to owning agent matrix), gates.md (the four readiness gates), owner-decisions.md (what only the owner decides), risks.md (live risk register covering ToS exposure, upstream fragility, model risk, seasonal deadlines).
 
+### `governance-table-shape-check` - Asserting the shape of the governance register tables in CI
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`, `governance-docs`
+
+Render `docs/governance/risks.md` through a GFM renderer and assert every row in every table
+has the column count its header declares, **and** that the Owner cell of each risk row is one of
+the seven agent names in `.github/agents/` (or `owner`, or a short combination). The second
+assertion is the one with a demonstrated catch: on 2026-08-21 six rows — R49, R50, R51, R53, R54
+and R57 — had their amendment prose sitting inside the Owner cell, up to **4,827 characters** in
+R51, so the Mitigation column rendered empty and the Owner column rendered as an essay. Every
+one of those rows was structurally valid, which is why cell counting missed them and why the
+length-and-membership assertion is the part that matters. Render rather than split on `|`: two
+lanes disagreed the same night about whether R58 was malformed, both having counted cells with
+hand-written pipe splitters, and R58 legitimately carries `\|` escapes inside a code span that
+GFM handles and neither splitter did. Cheap and fast; `gh api -X POST /markdown` is sufficient
+and needs no new dependency.
+
 ### `handoff-log` - Initialising the handoff log
 
 - [x] **done**
@@ -224,6 +325,21 @@ nba_api adapter with ~1 req/s throttling, required stats.nba.com headers, retry 
 - **Depends on:** `nba-stats-ingest`, `player-identity`
 
 Historical per-player, per-game participation reconstructed from box scores and inactive lists, with normalized reason codes: played, DNP-CD, injury (with body part), rest/load management, personal, suspension, G-League, inactive. Multi-season for model training.
+
+### `per-run-metric-delta` - Printing each per-run number beside its previous value
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+Store the previous run's per-run numbers (suite duration, slow-test durations, collected test
+count, fixture sizes) and print each one next to its predecessor with the delta. **Not a
+threshold assertion**, deliberately: a threshold recreates the cry-wolf guard the moment the
+number is legitimately allowed to grow, and the whole point is that no individual value here
+is alarming. `ProjectionsTable.recorded.test.tsx` climbed 3,177 → 3,309 → 3,376 → 3,714 →
+4,298 ms toward a 5,000 ms limit, printed every run, directly above a summary a lane quoted
+four separate times — every number passing, only the sequence alarming, and nothing computed
+the difference. It should fail nothing and judge nothing; it exists so the monotone climb is
+visible without anyone holding five runs in their head.
 
 ### `player-identity` - Resolving cross-source player identity
 
@@ -1578,6 +1694,14 @@ Durability discount/premium layered over raw value. Separate total-value and per
 **The removal half is already done; only the addition is left, and only it needs a regeneration.** The untrue `db/lineage.py` entry was deleted from the manifest's `source_fingerprints` rather than refreshed, because deleting narrows an over-claim while refreshing would assert the cohort was derived with bytes it was not. The constant itself still lists `db/lineage.py` and was deliberately left alone: editing `cohort_evidence.py` stales that file's own digest, and it *is* in the derivation, so the same false-claim problem simply moves one file over. Both edits therefore belong to the regeneration, together: drop `db/lineage.py` from the constant, add `ingest/nba/schedule.py`, regenerate against the cohort database.
 
 **Consequence to carry until then, stated because it is easy to miss:** with the entry deleted, edits to `db/lineage.py` are **no longer watched at all** by the cohort provenance alarm. That is the correct trade — the alarm was watching a file outside the derivation and missing one inside it, so it was giving a false green on the file that matters — but it means the watch set is now four files, not five, and a lane touching `db/lineage.py` will get no signal rather than a misleading one. Nothing is lost that was true; something misleading was removed.
+
+**The removal does not survive a regeneration.** `build_manifest` computes `source_fingerprints` from the constant, not from the previous manifest, so the next regeneration re-adds `db/lineage.py` from `DEFAULT_SOURCE_FINGERPRINT_PATHS` and silently undoes the narrowing above. The deletion is a property of one stored manifest, not of the code that produces manifests — which is why both edits belong to the regeneration together and neither is safe to do alone.
+
+**Derivation method, recorded because a standard reconstructible only from prose describing its results is not a standard.** The watch set is the set of files the generator's own call graph reaches, computed in three steps. (1) Take a **docstring-stripped AST diff** between revisions, so a comment or docstring edit is not counted as a source change. (2) Compute the **static call-graph closure seeded from the manifest's own `operator.commands`** — start from the entrypoints the manifest declares rather than from a hand-listed root, and walk both `ast.Call` nodes and bare `ast.Name` references (a function passed as a value is reached without ever being called at the call site), resolving each through a **per-module alias table** built from that module's imports, because `from x import y as z` makes the local name unrecoverable otherwise. (3) Intersect the closure against the set of **altered** files — not the union of added and altered, which is the trap that inflates the answer.
+
+Three traps in it, all of which produced a wrong answer once. A file **added** in a revision is reached by the closure and has no previous digest, so unioning it with the altered set reports a fingerprint change that did not happen. A module imported purely for a type annotation is in the import table and not in the call graph, and including it re-creates the over-claim this item exists to remove. And the closure is only as good as the seed: seeding from a hand-written root list reproduces exactly the omission (`ingest/nba/schedule.py`) that was found by accident, which is why it seeds from `operator.commands`.
+
+**Pinned files, so the next lane does not re-derive the set:** `ingest/injury_report/cohort_evidence.py`, `ingest/injury_report/manifest.py`, `ingest/nba/schedule.py`, and the two generator modules named in `operator.commands`. That is the intended post-regeneration watch set; anything else appearing in it means the closure walked somewhere unexpected and the difference is the finding.
 
 ### `schedule-grid-contract-artefact` - Failing CI when the schedule grid response shape drifts
 

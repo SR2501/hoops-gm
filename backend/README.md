@@ -241,6 +241,16 @@ DATABASE_URL=sqlite:///./projections_demo.db python -m hoops_gm
 curl "http://127.0.0.1:8000/api/v1/leagues/1/projections/current"
 ```
 
+Three things to know before debugging a 404 from that curl, because each is an
+independently reasonable choice and they compose into one confusing symptom.
+`vite.config.ts` proxies `/api` to **`127.0.0.1:8000`**, so a backend on any other
+port is not the one the dashboard is talking to. `seed_projections` writes to a
+throwaway `projections_demo.db` and **deliberately ignores `DATABASE_URL`**, which
+is why the second command sets it explicitly. And **check the server's build
+before checking the data**: a process started before the route existed keeps
+answering `200 ok` on `/health` while 404-ing that route, so health is not evidence
+the build is current. `frontend/README.md` has the longer version.
+
 **The projection numbers it writes are invented.** Nothing derived from that
 cohort is a projection anyone should look at, and a fixture captured from the
 screen it drives proves *shape* and nothing else — not column width, not long

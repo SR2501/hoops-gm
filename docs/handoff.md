@@ -14574,3 +14574,150 @@ recomputed 116/40/1/75.
 - **`ownership.md` gained no row.** I claimed the existing scoring-profile seam (`quant` defines
   semantics, `backend` owns persistence) covers this by analogy rather than adding one. If that is
   wrong it will surface as an ownership argument when the tables are built.
+
+## 2026-08-21 - architect - Fifty-two findings, nine entries, and the register's failure mode is its own subject
+
+**Unit:** landing a day's governance findings that existed only in the coordinator's session state,
+which is what this file exists to prevent. Docs-only: `docs/governance/risks.md`,
+`docs/governance/gates.md`, `docs/backlog.md`, `backend/README.md`, this file. No code, no ADR - and
+I told the coordinator I did not think one was warranted, because nothing here changes a boundary or
+a contract.
+
+**The brief said the problem was fifty-two entries and I argued it was not.** Ten of the fifty-two
+were already merged, so the live set was forty-two; but the real diagnosis is that this register's
+rows have become essays. R7 is a single 3,900-character table cell. `risks.md` is 70 KB rendering as
+an unbroken wall. The newest material is the longest, and the failure mode it spends the most words
+on is *a true statement, written down, with no reader*. Fifty-two entries nobody reads and nine
+essays nobody reads are the same artifact. So the cut was nine entries under a hard length rule -
+mechanism, consequence, remedy, at most one instance - and where an entry could not survive that, it
+says so in the entry rather than overrunning quietly. R59 is the only one that declares an overrun.
+
+**Splitting `risks.md` into a separate process-failure file is the right structural fix and I
+deliberately did not do it.** It would touch every row in a file three lanes were editing the same
+night. Filed as a decision for a quiet queue, not done here.
+
+**Two environment facts, both driven rather than relayed, in a unit about inherited claims.**
+
+- **PostgreSQL is available** at `postgresql+psycopg://qimember@127.0.0.1:55432/<db>`, no password.
+  16.9, confirmed by a live connection returning the server version string, not by reading a config.
+  `backend/tests/conftest.py` already honours `TEST_DATABASE_URL`, and `pyproject.toml` has a
+  `sqlite_only` marker that skips when it is set. **About twenty handoff entries asserted there was
+  no PostgreSQL locally. It was never true, and none of them checked.** Filed under R56 (a claim
+  synthesised from reports rather than sourced from the thing) rather than under the no-reader class,
+  which is a disagreement I had with the coordinator and won: "nobody read a true thing" and "twenty
+  people repeated a false thing" have opposite remedies, and only one of them is about attention.
+- **The variable is `DATABASE_URL`, not `HOOPS_GM_DATABASE_URL`.** `Settings` in
+  `core/config.py` declares no `env_prefix`, so the prefixed name never binds - and
+  `extra="ignore"` in its `SettingsConfigDict` means it is not merely unused but **actively
+  swallowed**, which is the mechanism that makes the fallback to `sqlite:///./hoops_gm.db`
+  soundless. A lane "verified migrations from empty" against a stale SQLite file this way. The tell
+  is the reusable part: the output read `Running upgrade 0013 -> 0014`, not `-> 0001`. **A migration
+  run that does not begin at `-> 0001` is not a run from empty**, whatever database you believe you
+  are pointed at.
+
+**One claim I was given, ran, and had to narrow.** I was going to write that any test scanning
+`app.routes` is probably vacuous today, because FastAPI keeps an included router as one lazy
+`_IncludedRouter` and a naive scan finds zero. `git grep -n "app\.routes"` returns **zero
+occurrences repo-wide** at `9f0561f`. The trap is real and was found and fixed on the draft-tracker
+branch; the generalisation was not driven. R59 now records the trap, names `app.openapi()["paths"]`
+as the enumeration idiom, and makes no claim about tests that do not exist. I did not escalate to
+`safety`, because handing `safety` an alarm with no live instance is precisely what R56's "a
+broadcast false positive must carry its discriminator" row warns about.
+
+**Where the tripwire went, and why not into the register.** The finding of the night was a marker
+placed inside an `IntegrityError` handler, proved to fire by driving a real violation through it,
+then run against the full suite: 1,373 passed, and **no test in the suite reached the handler**. A
+blanket `except` mapping every storage failure to a *retryable* code survived a code review, a
+mutation matrix and a green PostgreSQL run simultaneously. That is a procedure, not a lesson, so it
+is a **Code gate bullet** rather than a risk row - and specifically the mutation bullets' missing
+precondition, because a mutation matrix over an unreached branch is a matrix of unreachable
+mutations. The chain now reads end to end: does a test reach it, does the mutation apply, does it go
+red, does it go red for the named reason. The defect itself is filed as
+`draft-append-error-classification`.
+
+**Backlog header:** recounted from the finished file - 129 headings, 129 unique slugs, 129 markers,
+1:1 - giving 45 done / 1 blocked / 83 pending / 129 total. **And separately** diffed the slug set
+against `origin/main`: zero of main's 122 dropped, exactly seven added. The recount alone cannot see
+a dropped item; it agrees with itself perfectly after a deletion, which is how three merged items
+were lost earlier the same day. **My first two status splits were wrong in the same way as
+everything else in this unit** - they matched `done|pending|blocked` anywhere in the marker line,
+and one `pending` item's note contains the word "blocked", so the split summed to 130 against 129
+headings. Caught only because I added the split to the total. Match the token, not the word.
+`scripts/resolve_doc_conflicts.py` was not run on this file.
+
+**One correction to this unit's own launch, landed rather than confessed.** I was given the
+`architect` label in a prompt and not the `architect` **definition** — the session was created
+without the `agent` parameter that loads `.github/agents/architect.md`. Read after the fact, it
+contradicts nothing in the kickoff, but it does two things the kickoff could not. It lists
+`docs/plan.md` and every ADR under *Before you decide anything*, with the instruction **"do not
+rely on a summary in your prompt"** — and I relied on a summary in my prompt. And its Scope line
+**"keeping the risk register honest"** retroactively settles the one question I asked the
+coordinator's permission for (repairing six rows I did not write), which is the concrete cost of
+running on the label: I spent a round asking for authority the definition already gives me. The
+finding itself is landed as the closing limb of *Naming a defect class is not a mitigation*,
+because a mechanism that existed and was walked past is a stronger instance than a lesson
+written down and forgotten — and because **nothing failed**, which is what makes it undetectable.
+
+**Could not verify:**
+- **I did not read all fifteen ADRs end to end, which the definition requires before deciding
+  anything.** I enumerated `docs/decisions/` and read ADR-015 and the parts of others that other
+  lanes' findings named; I did not read ADR-001, ADR-003, ADR-004, ADR-005, ADR-009 through
+  ADR-012 or ADR-014, nor `docs/plan.md` in full. The exposure is bounded — this unit changes no
+  boundary and no contract, and cites an ADR only where a finding already named one — but
+  "bounded" is a judgement I made from inside the gap, and the definition's instruction exists
+  precisely because that judgement is not reliable. Whoever picks up the next `architect` unit
+  should assume the ADR set is unread here.
+- **`R58` was reported to me as malformed and it is not — I checked the row rather than filing
+  the item.** A structural check on the coordinator's side parsed it to a different cell count
+  from every other row. Mine had parsed it as fine. **Both were cell counts from hand-written
+  pipe splitters, and neither is evidence**: R58 legitimately contains three `\|` escapes inside
+  a code span (`grep '@router.(post\|put\|patch\|delete)'`), which GFM documents and which a
+  naive split on `|` mis-parses in one direction and a split on `(?<!\\)\|` in the other. Settled
+  by rendering it through `gh api -X POST /markdown`: **5 `<td>` cells, and the escapes render as
+  literal pipes inside the code span.** No item filed, because filing one would create work from
+  an unverified alarm — which is the row two above it in this same register. The clause is landed
+  in R59 instead. **Then I ran the check I had just said should exist**: rendering the whole file
+  and comparing each row's `<td>` count to its header's — all 65 data rows across 5 tables are
+  correct, so there is no second malformed row. That check was itself wrong on its first run and
+  reported **every row malformed**, because `<th` matches `<thead`; it is the third counting bug
+  in this unit and the third of the same shape as the `'<table>'` grep leading R59 — a pattern
+  matching more than it names. Filed as `governance-table-shape-check`, whose load-bearing
+  assertion is not the cell count (which finds nothing today) but the Owner-cell one, which finds
+  six. This change touches no
+  file under `frontend/`, and `node_modules` is not installed in this worktree, so `npm run lint`
+  and `npm run typecheck` both fail on a missing binary rather than on anything I wrote. Installing
+  it would have produced no signal about a docs change. Written out rather than left silent, because
+  the practice this unit lands is that a twenty-first silence is indistinguishable from the twenty
+  before it. The backend gate **was** run in full: `ruff format --check` (165 files formatted),
+  `ruff check` (all passed), `mypy` (147 source files, no issues), `pytest` (1,339 passed, 31
+  deselected, 641s), all with `PYTHONPATH` set to `backend/src`, because `hoops_gm` otherwise
+  resolves to a stale namespace package and an editable `.pth` pointing at a deleted worktree.
+- **The `app.routes` grep covered merged `main` at `9f0561f` only.** I did not grep every open
+  branch, and the one instance I know about lived on an unmerged one. So "zero live instances" is a
+  statement about the merged tree, and a branch in flight could reintroduce it before this lands.
+  Driving it properly would mean grepping every open PR head, which I did not do.
+- **Six rows in `risks.md` had their amendment prose sitting inside the Owner cell** - R49, R50,
+  R51, R53, R54 and R57, the same rendering defect I found and repaired in R56. **My first note on
+  this said they were "missing an Owner cell", which was wrong**: they had five cells throughout, and
+  the check that produced the false reading counted cells rather than looking at one. The prose
+  rendered as an unreadable Owner column and the Mitigation column looked empty, which is this unit's
+  own subject arriving in the file it is about. Fixed mechanically - move everything after the
+  leading agent token from Owner into Mitigation - and re-verified: 63 rows, all five cells, twelve
+  distinct owner values all short. **No text was added, removed or reworded**, only moved between
+  cells, and the diff is line-scoped.
+- **The three sections I added to "What gates cannot catch" have nothing executable underneath
+  them,** and the last of them says so about itself. That is not a hedge - it is the finding. Three
+  lanes shipped fresh instances of classes they had personally written down hours earlier on the same
+  day, so any rule here without a mechanism should be read as a description of something that will
+  happen again. The two items that *are* mechanisms (`backlog-dependency-graph`,
+  `per-run-metric-delta`) were filed as backlog rather than written up as prose, which is the only
+  part of this unit I would defend as load-bearing.
+- **I did not re-verify the individual instances cited in the entries.** Each came from another
+  lane's report; I drove the two environment facts and the `app.routes` grep because those were the
+  ones a reader would act on directly. The rest are cited as instances that make a mechanism
+  checkable, and if one turns out to be misremembered the mechanism is still the claim.
+- **The c35 README fix was already merged.** `frontend/README.md` on `origin/main` already carries
+  the port, the throwaway `projections_demo.db` and the check-the-build-before-the-data order in
+  full. I added a four-line cross-reference to `backend/README.md` instead, on the grounds that the
+  operator starting the server is reading that file - but nobody asked for that and it may be
+  redundant.
