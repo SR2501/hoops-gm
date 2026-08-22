@@ -278,6 +278,101 @@ def test_a_clean_backlog_reports_nothing(graph: ModuleType) -> None:
     assert check(graph, text) == []
 
 
+def test_a_clean_report_states_the_limit_of_what_it_checked(graph: ModuleType) -> None:
+    """ "No defects" is the sentence most likely to be over-read.
+
+    The failure this guards is R61 in a CI job: a reader sees a green tick and
+    a bare "None", and infers the backlog is *correct* rather than merely
+    well-formed. It is not. An item whose prose says it is blocked while its
+    `Depends on:` line names only finished work passes here silently -- that is
+    exactly what happened to `availability-model`, and no parser can catch it
+    without reading English.
+
+    So the clean branch must say what it did not check, in the job's own
+    output, not only in a docstring or a pull request nobody re-reads.
+    """
+    text = backlog(item("root", "done"), item("leaf", deps=["root"]))
+    items, _ = graph.parse_backlog(text)
+    report = graph.render_report(items, [], graph.analyse(items), Path("backlog.md"))
+
+    head, _, _ = report.partition("### Ready")
+    assert "Depends on:" in head, "the clean report never names the case it cannot see"
+    assert "narrow claim" in head, "the clean report does not bound what it verified"
+    # A bare "None." is the specific regression: it reads as a clean bill of health.
+    assert "None." not in head, "the clean report still makes an unbounded negative claim"
+
+
+def test_the_ready_list_disclaims_detection_in_the_report_itself(graph: ModuleType) -> None:
+    """Printing the ready set is visibility, not detection, and must say so.
+
+    A reader who takes this list as *verified* has been handed a stronger
+    guarantee than exists.
+    """
+    text = backlog(item("root", "done"), item("leaf", deps=["root"]))
+    items, _ = graph.parse_backlog(text)
+    report = graph.render_report(items, [], graph.analyse(items), Path("backlog.md"))
+
+    _, _, ready_section = report.partition("### Ready")
+    assert "detect" in ready_section, "the ready list does not disclaim detection"
+
+
+def test_the_ready_list_is_caveated_when_an_edge_dangles(graph: ModuleType) -> None:
+    """A reviewer's finding: readiness computed on a graph declared unsound.
+
+    A dangling edge is not fatal, so analysis still runs -- and `_edges()` drops
+    the unresolvable token silently. The item whose constraint just vanished is
+    then printed under "Ready - every dependency done", with a ready set
+    identical to the clean file's.
+
+    The build is red, so it is not a false green. But `--summary` exists
+    because the summary is what actually gets read, and it asserted readiness
+    on a graph the tool called broken three lines above. Caveat rather than
+    suppress: killing the analysis would discard the ready list for every
+    correct item because one edge is wrong.
+    """
+    text = backlog(
+        item("root", "done"),
+        item("leaf", deps=["root", "does-not-exist"]),
+    )
+    items, parse_defects = graph.parse_backlog(text)
+    defects = list(parse_defects) + graph.find_defects(items)
+    assert any(d.kind == "dangling-dependency" for d in defects), "fixture built no dangling edge"
+
+    report = graph.render_report(items, defects, graph.analyse(items), Path("backlog.md"))
+    _, _, ready_section = report.partition("### Ready")
+
+    assert "unsound" in ready_section, "readiness is asserted over a graph known to be broken"
+    assert "`leaf`" in ready_section, "the caveat swallowed the list instead of qualifying it"
+
+
+def test_a_clean_file_carries_no_unsound_caveat(graph: ModuleType) -> None:
+    """The other half: a caveat on every run is a caveat nobody reads."""
+    text = backlog(item("root", "done"), item("leaf", deps=["root"]))
+    items, _ = graph.parse_backlog(text)
+    report = graph.render_report(items, [], graph.analyse(items), Path("backlog.md"))
+
+    assert "unsound" not in report
+
+
+def test_the_done_rests_on_unfinished_message_warns_against_the_erasing_fix(
+    graph: ModuleType,
+) -> None:
+    """This guard's cheapest green-making edit is deleting the evidence.
+
+    Every other failing condition here has an unambiguous repair. This one does
+    not: an operator can satisfy it by correcting a status, or by deleting the
+    edge -- and deleting the edge erases the record that the two items were
+    ever related. That is the disqualifier used to argue *against* failing on
+    long paths, so the message has to say which repair is meant.
+    """
+    text = backlog(item("dep"), item("shipped", "done", deps=["dep"]))
+    defects = check(graph, text)
+
+    matching = [d for d in defects if d.kind == "done-rests-on-unfinished"]  # type: ignore[attr-defined]
+    assert matching, "the fixture did not produce the defect under test"
+    assert "deleting the edge" in matching[0].message  # type: ignore[attr-defined]
+
+
 # --- parsing the awkward real shapes ----------------------------------------
 
 

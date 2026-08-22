@@ -174,6 +174,91 @@ def test_the_total_is_the_sum_of_test_durations(metrics: ModuleType, junit_repor
     assert collected[metrics.TOTAL_KEY].value == pytest.approx(4996.0)
 
 
+def test_the_junit_count_is_the_number_of_cases_observed(
+    metrics: ModuleType, junit_report: Path
+) -> None:
+    """The gap a reviewer found, and it is this repository's own defect class.
+
+    ``COUNT_KEY`` was asserted twice and both times against ``collect_vitest``.
+    The junit path asserted durations and the total but never the count, so the
+    single line incrementing it was the only line in either collector covered
+    by nothing. Deleting it left ``suite.tests`` reporting **0** beside 1,422
+    real durations -- exit 0, file written, build green, the headline number
+    describing an empty set while the evidence against it sat in the same file.
+
+    Asserted against the fixture's own contents rather than its ``tests="2"``
+    attribute, because that attribute is the report's claim and the count is
+    supposed to be the observation.
+    """
+    collected = by_key(metrics.collect_junit(junit_report))
+
+    assert collected[metrics.COUNT_KEY].value == 2
+
+
+def test_the_junit_count_ignores_the_suites_own_tests_attribute(
+    metrics: ModuleType, tmp_path: Path
+) -> None:
+    """The junit mirror of the vitest ``numTotalTests`` test.
+
+    ``tests="999"`` over two real cases must report two.
+    """
+    path = tmp_path / "junit.xml"
+    path.write_text(JUNIT.replace('tests="2"', 'tests="999"'), encoding="utf-8")
+
+    collected = by_key(metrics.collect_junit(path))
+
+    assert collected[metrics.COUNT_KEY].value == 2
+
+
+def test_a_junit_case_with_no_time_is_counted_but_adds_no_duration(
+    metrics: ModuleType, tmp_path: Path
+) -> None:
+    """The junit mirror of the skipped-vitest-test case.
+
+    A skipped pytest case carries no ``time`` attribute. It is a test that
+    exists, so it counts; it contributes no duration, so it must not be
+    summed and must not appear as a per-test metric with a fabricated 0.
+    """
+    path = tmp_path / "junit.xml"
+    path.write_text(
+        JUNIT.replace(
+            "</testsuite>",
+            '<testcase classname="tests.test_x" name="test_skipped" /></testsuite>',
+        ),
+        encoding="utf-8",
+    )
+
+    collected = by_key(metrics.collect_junit(path))
+
+    assert collected[metrics.COUNT_KEY].value == 3
+    assert collected[metrics.TOTAL_KEY].value == pytest.approx(4996.0)
+    assert "test.tests.test_x::test_skipped" not in collected
+
+
+def test_no_collector_reports_zero_tests_beside_real_durations(
+    metrics: ModuleType, junit_report: Path, vitest_report: Path
+) -> None:
+    """The invariant, rather than one more instance of it.
+
+    Whatever else changes, a headline count of zero standing next to per-test
+    durations is incoherent: those durations came from tests. This is the shape
+    of the bug that reached review, stated once for both collectors so a third
+    collector added later inherits the check.
+    """
+    for collected in (
+        by_key(metrics.collect_junit(junit_report)),
+        by_key(metrics.collect_vitest(vitest_report, vitest_report.parent)),
+    ):
+        per_test = [key for key in collected if key.startswith("test.")]
+        assert per_test, "the fixture yielded no per-test metrics, so this proves nothing"
+
+        count = collected[metrics.COUNT_KEY].value
+        assert count >= len(per_test), (
+            f"{count} tests reported beside {len(per_test)} durations; "
+            "the count cannot be smaller than the evidence against it"
+        )
+
+
 def test_a_skipped_test_counts_but_adds_no_duration(
     metrics: ModuleType, vitest_report: Path
 ) -> None:

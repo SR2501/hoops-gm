@@ -14828,3 +14828,85 @@ changed an edge and header prose, not the item set, and only the diff can say th
 - **Unit 2 has no history beyond one previous value.** It compares against a baseline, not a series, so
   it makes the *accumulated* climb visible but plots nothing. That was the smallest honest thing; if
   two points prove insufficient in practice, say so and it can grow.
+
+
+## 2026-08-21 - `backend` lane - PR #65 review findings: a count that reported zero beside 1,428 real observations
+
+Two findings from the coordinator's independent review of #65. Both taken. The first is the more
+interesting one, because it is today's defect class **inside the tool commissioned to prevent it**.
+
+**Finding 1 (medium): `collect_junit` reported `suite.tests` as 0 while writing 1,422 real durations.**
+The review found that `count += 1` was the only line in either collector covered by no assertion -
+delete it and all 24 tests passed. I did not take that on report: I deleted the line myself and drove
+it, and the suite did survive. Driven against the real junit the mutated collector exits **0**, writes
+the file, and prints `suite.tests` as `0` in the same table as 1,422 test durations. The zero-case
+refusal does not fire because `cases` is non-empty. `COUNT_KEY` was asserted twice and **both
+assertions ran against `collect_vitest`**.
+
+**I fixed the cause rather than the finding.** The suggested two-line assertion would have closed this
+instance; the shape that produced it was `count` being a *second accumulator* for a fact the loop
+already had, so two sources of truth could drift apart silently and only one was watched. Both
+collectors now build one `observed` list and derive count, total and per-test metrics from it in
+`_summarise`, so the headline count and the rows underneath cannot disagree - there is nothing left to
+disagree with. `observed` deliberately retains cases with no duration: **the count is of tests
+observed, the total is of durations recorded, and those are different questions.** Four new tests,
+including one asserting the class-level invariant that no collector reports zero tests beside real
+durations. Mutation-tested 4/4 caught.
+
+**Finding 2 (low): the Ready list was computed on a graph the tool had just declared unsound.** A
+dangling edge is not in `fatal`, so `_edges()` silently drops the unresolvable edge and the item whose
+constraint just vanished is printed under "Ready - every dependency done", identical to the clean file
+and with no caveat. The build is red, so it is not a false green - but `--summary` exists precisely
+because the artifact is what gets read. I took the caveat rather than promoting it to `fatal`, which
+keeps the useful output while refusing the false claim. Driven both ways against the real backlog with
+the dangling edge reintroduced.
+
+**Also added: the `done-rests-on-unfinished` message now names its own erasing fix.** The coordinator's
+honest note against my fail/print line is that this is the single failing condition whose cheapest
+green-making edits are my own disqualifier - delete the edge, or flip the dependency to `done`. It
+fires after the fact, when the cheapest repair erases the evidence. There is no mechanism for that, so
+the remedy is written into the defect message the person will actually read.
+
+**A recount caught its own checker.** Re-deriving the header, my first independent regex required the
+status line to end after `**pending**` and returned a clean-looking **119 done+blocked+pending against
+123 headings**. Four items carry prose on the status line. Had I trusted it I would have "corrected" a
+correct header downward. The header is **45 done - 1 blocked - 77 pending - 123 total**, agreed by two
+independent methods: 123 checkbox lines counted by pattern, and `backlog_graph.py`'s own parse
+reporting 123 items (1 blocked, 45 done, 77 pending). Slug set diffed against `origin/main`:
+**122 -> 123, exactly one added (`vitest-explicit-timeout`), zero removed.**
+
+**Governance, unprompted and worth someone's attention: `scripts/` has no row in
+`docs/governance/ownership.md`.** Both units live there. `.github/workflows/` is `backend` and
+`backend/src/hoops_gm/dev/` is `backend` "developer tooling", so I proceeded by analogy - but an
+analogy is not a rule, and the work I was commissioned to do is owned by nobody. Related: I was
+launched with the `backend` **label** in prose rather than the `agent` parameter that loads the
+definition. I have since read `.github/agents/backend.md` and found no contradiction with the kickoff;
+the non-goals (model math, ingestion adapters, frontend and userscript code, automation policy) are
+all untouched, which the diff confirms. One soft boundary crossed and named rather than hidden: I
+changed the *command* the `frontend` job runs. The workflow file is backend-owned; the invocation is
+frontend's.
+
+**Gates.** Full Code gate re-run from `backend/` after these edits, not the subset I remembered:
+`ruff check` clean, `ruff format --check` clean (167 files), `mypy` clean across 153 source files
+including `../scripts`, `pytest` **1431 passed**. `mypy` caught two `attr-defined` errors in a new
+test on the first pass, which is the second time this week the type-check found something the tests
+could not.
+
+**Could not verify:**
+- **The delta path still has not executed in CI, and that is unchanged by this entry.** `main` has
+  never saved a baseline, so every run so far took the cache-miss path. It first runs on the second
+  `main` build after merge. **Reasoned, not driven** - and it is benign in the way that looks
+  identical to working, so it needs reading rather than assuming.
+- **GitHub Actions `restore-keys` prefix semantics remain reasoned.** The restore step has only ever
+  missed. Unchanged from the previous entry.
+- **The structural fix is verified by mutation, not by proof.** I can show four mutations of the
+  count path are caught and that the headline is derived from the same enumeration as the rows. I
+  cannot show there is no third accumulator anywhere - I can only say I removed the one there was.
+- **`done-rests-on-unfinished` has zero violations today**, so the erasing-fix warning has never been
+  read by anyone tripping it. Its usefulness is **reasoned**. The message is tested to exist and to
+  name the fix; whether it actually deters the erasing repair is unfalsified and probably unfalsifiable
+  short of someone tripping it.
+- **The `scripts/` ownership gap is an observation, not a ruling.** `architect` owns that call. I did
+  not edit `ownership.md`.
+- **I did not re-run the frontend gate for this change.** No frontend file or command changed since
+  the previous entry, where it was driven green. **Reasoned**, and cheaply falsifiable by CI.

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 83 pending - 129 total**
+**45 done - 1 blocked - 84 pending - 130 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
@@ -1871,6 +1871,28 @@ Multi-asset trade evaluation: category deltas, punt-build impact, schedule and f
 - **Depends on:** `trade-evaluator`
 
 Scan league rosters for mutually beneficial trades from category surplus/deficit matching and differing risk tolerance between managers.
+
+### `vitest-explicit-timeout` - Setting an explicit test timeout the metrics job can read
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+`scripts/run_metrics.py` prints each test duration against its baseline but
+deliberately prints no headroom against the timeout, because `frontend/vite.config.ts`
+sets no `testTimeout` and 5,000 ms is therefore vitest's *implicit default*.
+Hard-coding that number here would be the `README.md` item-count failure with a
+millisecond value in it: a constant copied out of someone else's tool, correct
+on the day it was written and stale the day they change their default.
+
+Set an explicit `testTimeout` in `vite.config.ts`, then have `run_metrics.py`
+read it and print each duration as a fraction of the limit that actually
+applies. The value becomes a decision this repository has made and can defend,
+rather than one it inherited without noticing. Keep it printed, never asserted -
+a headroom column that fails a build is the threshold this tooling exists to
+avoid.
+
+Cross-boundary: the config change is `frontend`-owned, the script read is not
+covered by any row in `docs/governance/ownership.md`.
 
 ### `waiver-clear-monitor` - Monitoring waiver clears and free agent availability
 

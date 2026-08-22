@@ -83,56 +83,66 @@ def _relative(path: str, root: Path) -> str:
         return candidate.as_posix()
 
 
-def collect_vitest(report: Path, root: Path) -> list[Metric]:
-    payload: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
-    suites = payload.get("testResults") or []
+def _summarise(observed: Sequence[tuple[str, float | None]]) -> list[Metric]:
+    """Derive every metric from one enumeration of what was actually seen.
 
-    metrics: list[Metric] = []
-    total = 0.0
-    count = 0
-    for suite in suites:
-        relative = _relative(str(suite.get("name", "")), root)
-        for case in suite.get("assertionResults") or []:
-            name = case.get("fullName") or case.get("title") or "<unnamed>"
-            duration = case.get("duration")
-            count += 1
-            if duration is None:  # skipped and todo tests carry no duration
-                continue
-            value = float(duration)
-            total += value
-            metrics.append(Metric(f"test.{relative}::{name}", round(value, 1), "ms"))
+    ``count`` used to be a second accumulator incremented alongside the metric
+    list -- two sources of truth for one fact, and they could disagree in
+    silence. Losing that single increment left ``suite.tests`` reporting **0**
+    beside 1,422 real durations, with exit 0, a written file and a green build:
+    the headline number describing an empty set while the evidence against it
+    sat in the same file. Deriving both from one sequence removes the drift
+    rather than testing for one instance of it.
+
+    ``observed`` carries every case seen, including those with no duration
+    (skipped and todo tests), because the count is of tests observed and the
+    total is of durations recorded. Those are different questions and the
+    distinction is deliberate.
+    """
+    metrics = [
+        Metric(key, round(value, 1), "ms") for key, value in observed if value is not None
+    ]
+    total = sum(value for _, value in observed if value is not None)
 
     # Counted from the elements actually present, never read off the report's
     # own `numTotalTests` summary: report the state observed, not the one
     # claimed. A reporter whose shape changed would keep a truthful-looking
     # count while yielding no cases at all.
-    metrics.append(Metric(COUNT_KEY, float(count), "count"))
+    metrics.append(Metric(COUNT_KEY, float(len(observed)), "count"))
     metrics.append(Metric(TOTAL_KEY, round(total, 1), "ms"))
     return metrics
+
+
+def collect_vitest(report: Path, root: Path) -> list[Metric]:
+    payload: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
+    suites = payload.get("testResults") or []
+
+    observed: list[tuple[str, float | None]] = []
+    for suite in suites:
+        relative = _relative(str(suite.get("name", "")), root)
+        for case in suite.get("assertionResults") or []:
+            name = case.get("fullName") or case.get("title") or "<unnamed>"
+            duration = case.get("duration")  # None for skipped and todo tests
+            observed.append(
+                (f"test.{relative}::{name}", None if duration is None else float(duration))
+            )
+
+    return _summarise(observed)
 
 
 def collect_junit(report: Path) -> list[Metric]:
     root_element = ET.parse(report).getroot()
-    cases = root_element.iter("testcase")
 
-    metrics: list[Metric] = []
-    total = 0.0
-    count = 0
-    for case in cases:
+    observed: list[tuple[str, float | None]] = []
+    for case in root_element.iter("testcase"):
         classname = case.get("classname") or ""
         name = case.get("name") or "<unnamed>"
-        count += 1
-        raw = case.get("time")
-        if raw is None:
-            continue
-        value = float(raw) * 1000.0  # junit reports seconds
-        total += value
         label = f"{classname}::{name}" if classname else name
-        metrics.append(Metric(f"test.{label}", round(value, 1), "ms"))
+        raw = case.get("time")
+        # junit reports seconds; every other number in this file is milliseconds.
+        observed.append((f"test.{label}", None if raw is None else float(raw) * 1000.0))
 
-    metrics.append(Metric(COUNT_KEY, float(count), "count"))
-    metrics.append(Metric(TOTAL_KEY, round(total, 1), "ms"))
-    return metrics
+    return _summarise(observed)
 
 
 def write_metrics(path: Path, label: str, metrics: Sequence[Metric]) -> None:

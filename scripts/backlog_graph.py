@@ -276,7 +276,10 @@ def find_defects(items: Sequence[Item]) -> list[Defect]:
                     Defect(
                         "done-rests-on-unfinished",
                         f"`{item.slug}` is **done** but depends on `{dependency}`, "
-                        f"which is **{blocker.status}**; one of the two is wrong",
+                        f"which is **{blocker.status}**; one of the two is wrong. "
+                        "Resolve by correcting whichever status is untrue - not by "
+                        "deleting the edge, which turns this green by erasing the "
+                        "record that the work was ever related",
                         item.line,
                     )
                 )
@@ -443,11 +446,27 @@ def render_report(
         out.append("")
         out.extend(f"- {defect.render()}" for defect in defects)
     else:
-        out.append("None. Every dependency resolves to an item in the file.")
+        out.append(
+            "None of the kind this job can see: every dependency resolves to an item in "
+            "the file, no cycles, no status contradicting its own checkbox. That is a "
+            "narrow claim. It is **not** a statement that the backlog is accurate - an "
+            "item whose prose says it is blocked while its `Depends on:` line names only "
+            "finished work is well-formed, and passes here silently."
+        )
     out.append("")
 
     out.append(f"### Ready - every dependency done ({len(analysis.ready)})")
     out.append("")
+    unresolved = [d for d in defects if d.kind == "dangling-dependency"]
+    if unresolved:
+        out.append(
+            f"**Computed on an unsound graph.** {len(unresolved)} dependency token(s) "
+            "above name an item that does not exist, and an edge that resolves to "
+            "nothing is an edge that constrains nothing. Any item carrying one has had "
+            "a real constraint silently dropped, so it may appear here **only because "
+            "the file is broken**. Fix the dangling edge, then read this list."
+        )
+        out.append("")
     out.append(
         "Read this list against what you believe. It is the only place a status note "
         "that contradicts its own `Depends on:` line becomes visible, and nothing here "
