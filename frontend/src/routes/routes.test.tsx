@@ -209,6 +209,81 @@ describe('the dashboard shell', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Request req-bad-meta-route')
   })
 
+  it('navigates to the draft board from the shell', async () => {
+    // Same reason as the projections case above: `DraftPage.recorded.test.tsx`
+    // renders the page directly, so without this the board could work
+    // perfectly and still be unreachable from the nav, with nothing saying so.
+    mockFetch({
+      '/api/v1/drafts/1/events': {
+        body: { draft_id: 1, events: [], since_sequence: 0, last_sequence: 0 },
+      },
+      '/api/v1/drafts/1': {
+        body: {
+          id: 1,
+          league_id: 1,
+          name: '[demo] Auction',
+          is_mock: true,
+          tool_usage: 'assisted',
+          notes: null,
+          status: 'in_progress',
+          format: {
+            draft_type: 'auction',
+            team_count: 12,
+            roster_size: 13,
+            total_roster_slots: 156,
+            auction_budget: '200.00',
+          },
+          league_format_drift: null,
+          participants: [],
+          open_lot: null,
+          next_pick: null,
+          selections_made: 0,
+          total_roster_slots: 156,
+          last_sequence: 0,
+          live_event_count: 0,
+          voided_sequences: [],
+          unresolved_player_count: 0,
+        },
+      },
+      '/api/v1/drafts': {
+        body: {
+          drafts: [
+            {
+              id: 1,
+              league_id: 1,
+              name: '[demo] Auction',
+              is_mock: true,
+              tool_usage: 'assisted',
+              status: 'in_progress',
+              format: {
+                draft_type: 'auction',
+                team_count: 12,
+                roster_size: 13,
+                total_roster_slots: 156,
+                auction_budget: '200.00',
+              },
+              last_sequence: 0,
+              selections_made: 0,
+              created_at: '2026-08-21T19:00:00Z',
+              updated_at: '2026-08-21T19:30:00Z',
+            },
+          ],
+        },
+      },
+      '/health': { body: HEALTH },
+    })
+
+    renderWithRouter(<App />)
+    await userEvent.click(await screen.findByRole('link', { name: 'Draft' }))
+
+    // Reached the list and then the board itself, rather than merely mounting
+    // a heading: the second click only resolves if the list rendered a real
+    // draft from a real response.
+    await userEvent.click(await screen.findByRole('link', { name: '[demo] Auction' }))
+    expect(await screen.findByRole('heading', { name: '[demo] Auction' })).toBeInTheDocument()
+    expect(await screen.findByTestId('log-empty')).toBeInTheDocument()
+  })
+
   it('renders a not-found page for an unknown route', async () => {
     mockFetch({ '/health': { body: HEALTH } })
 

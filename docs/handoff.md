@@ -15619,3 +15619,626 @@ response uses this shape"* — referenced at 25 route sites, and `sequence` is m
 schedule or bridge error. Additive, so the objection is modelling rather than risk, but a shared
 cross-module contract is not one lane's to change quietly inside a blocked PR. Filed for the
 coordinator to route. The `frontend` lane confirmed it is not blocked by this.
+## 2026-08-21 - frontend - The draft board, and a marker that dimmed the reason along with the thing
+
+The screen the owner will have open on 18 October, built against `draft-tracker`
+at `5ec3d0f`. Routes `/draft` and `/draft/:draftId`. It renders **no** decision
+number - no valuation, ranking, tier, suggested price, inflation figure or
+`p(play)` - because the API publishes none and inventing one here is the only way
+they could appear.
+
+Three panels, in the priority the brief set. **Recording** is a mode switch
+(sale / bid / nomination), a seat select and a price, posting the recorder's
+current `last_sequence` so a stale tab is refused rather than silently
+interleaved. **Seats** show remaining budget, spend, and roster construction.
+**The log** shows every entry in order with its correction affordance.
+
+### What I got wrong first, and how each was caught
+
+- **`DraftEventList` does not exist; the type is `DraftEventsPage`.** Eighteen
+  tests passed against a type with no definition, because vitest transpiles
+  without type-checking. Only `tsc --noEmit` saw it. **A green vitest run is not
+  a type-check**, and running the four gate commands as a set rather than the
+  one I remembered is what found it.
+- **Sales that inherit their player from the open lot named nobody** - 4 of 18
+  entries read "the open lot sold to Trade Deadline". Fixed by resolving through
+  `participant.holdings[].event_sequence`, which is the backend's own
+  resolution rather than a second derivation in the browser. Caught in a real
+  browser; 231 passing tests had nothing to say about it.
+- **My error copy reintroduced, one layer down, the exact misreading the backend
+  lane had just fixed.** Voiding entry 5 is refused with
+  `draft_player_label_required`, and my code-keyed headline rendered *"This entry
+  has to name the player"* - describing a field the void form does not have. The
+  code describes the **later** entry's precondition, not the void that was
+  posted. Now a refused void shows the server's sentence verbatim as the
+  headline, and no supporting line at all, unless the code is
+  `draft_sequence_conflict` - the one refusal genuinely about the void posted.
+  Pinned as a regression test.
+- **I used an em-dash both as a missing-value marker and as ordinary punctuation
+  in the adjacent line**, which is the collision this file already warned about.
+  The marker is now the words "not recorded".
+
+### The correction limit is positional, not structural
+
+The brief said voiding "the last sale of a nominated lot" returns 201 and the
+first returns 422. That is not the rule. I posted a void against **all 27 seeded
+events, one fresh database per attempt**, and measured **4 of 27 accepted, 2 of
+them not the tail**. So the screen offers a guaranteed **Undo** on the highest
+sequence and a **Try to void** on everything else, rather than hiding 26
+affordances that mostly would have worked. A refused void **writes nothing** -
+also driven, by re-reading `last_sequence` after each refusal.
+
+### The badge that explained a withdrawal was the least legible thing on screen
+
+A withdrawn entry was dimmed with `opacity: 0.55` on the row. That dimmed the
+`WITHDRAWN BY #20` badge too - measured in the browser at **3.83:1 at 10.3px,
+weight 400**, below AA. It is the only marker separating "recorded" from "no
+longer in force", and it is what a recorder scans for straight after a
+correction: the most consequential distinction on the screen rendered as the
+least readable thing on it. Applying the de-emphasis as **colour on the parts
+that should recede** instead - a child cannot opt out of a parent's `opacity` -
+puts the badge at **9.33:1 at 11.25px/600** with the struck description at
+6.72:1.
+
+The first contrast figures I computed were **against black**, because the
+element's own `background-color` is `rgba(0,0,0,0)` and I used it without
+looking. They came back as confident, plausible, wrong numbers (11.23 and 8.08).
+The corrected probe walks up until it finds a painted background **and reports
+which element it came from**, so the value being compared against is visible in
+the output rather than assumed.
+
+### Proving a test reaches the state it claims
+
+Taking the backend lane's tripwire finding literally. `DraftPage.recorded.test.tsx`
+drives all six captured refusals and asserts **the number of error states reached
+equals the fixture count**, so a refusal that stopped being reachable fails
+rather than quietly not running. For the styling guard I reintroduced
+`opacity: 0.55` and re-ran: the suite exited non-zero, but with **`Tests  no
+tests`** - it had failed to *collect*, on `import.meta.url` not being a file URL
+under this transform. Exit code alone would have let me record "the guard fires"
+about a test that never ran, which is the `rc == 4` mistake in a different
+language. Fixed and re-driven: it now fails on the assertion, printing the rule
+body it observed.
+
+**Test independence, driven.** Mutated `live_event_count` 16 -> 17, a
+`remaining_budget` `"200.00"` -> `"200"`, and deleted a recorded refusal. All
+three failed, the deletion in two places. Fixtures restored and re-verified.
+
+**One real disagreement with the server, found by cross-checking rather than by
+a test I wrote to pass.** My `liveEventCount` counted a `void` entry as live and
+came out one above the server's `live_event_count`. The server excludes both the
+voided entry and the void itself. The server is right; the cross-check is now an
+assertion.
+
+### The budget caveat
+
+`remaining_budget` is budget minus **spent**, so a seat sitting on a live $150
+high bid still shows the full $200. The two are rendered as two claims - $200.00
+at 18.75px in the normal text colour over "left, of sales recorded", then
+$150.00 at 15px in amber over "live on <player> - not a sale, so not subtracted
+above", separated by a rule. Driven: exactly **1** caveat on the 12-seat board,
+and recording that sale collapses the two into one figure with the caveat count
+going to **0**.
+
+### The full board hid the one panel that has to be reachable
+
+Everything above was verified on a board with **7 of 156 slots filled**, because
+that is what `seed_draft` ships. Filling it to **156 of 156, 169 log entries**
+changed the answer.
+
+The page runs to **11,037px - 15.3 screens** at a 720px viewport. The recorder
+is `position: sticky`, but the log was a *sibling* of the two-column
+`draft__panels`, so the recorder's containing block ended where the seats did.
+Probed at 500px intervals, the **Record button was off screen for 11 of those
+15.3 screens** - roughly 70% of the page. Under an auction clock, the priority-1
+surface was unreachable from most of the screen, and every earlier check had
+been run on a page short enough that it never came up.
+
+Fixed by putting the seats and the log in one right-hand column inside
+`draft__panels`. Re-probed: **on screen at all 23 probe positions**, and
+`elementFromPoint` at the button's centre returns the button itself at
+`scrollY 9000`, so it is hit-testable rather than merely laid out. Guarded by a
+structural test - jsdom cannot reproduce the measurement, but it can assert the
+containment that caused it, and I proved the guard fires by reverting the JSX
+and watching that one test fail.
+
+**The lesson is about the fixture, not the layout.** A seed that fills 4% of a
+board is a fixture that cannot exercise the state the screen spends the second
+half of an auction in. Nothing was wrong with the tests; they were all run
+against the easy case, and the easy case was the only one that existed.
+
+Two smaller notes from the same pass. **`seat-card-N` is not a testid** - a
+probe of mine assumed it, found zero seats and would have reported clean
+geometry had it not asserted a non-empty result first; the real prefix is
+`seat-N`. And **lint and type-check disagreed about the same line**: ESLint's
+`no-unnecessary-type-assertion` wanted `!` removed where `Node.contains` accepts
+null, TypeScript wanted it kept for `.className`. Tests passed throughout both
+failures. Narrowing with an explicit `throw` satisfies both and gives a named
+failure instead of a null comparison.
+
+### Could not verify
+
+- **Legibility at a full 156-slot board** - *driven, after this list first said
+  "reasoned"*. I filled the auction to **156 of 156 slots and 169 log entries**
+  and measured it, which found the worst defect of the night - see below. What
+  remains unverified there is subjective: the log is unvirtualised and 169 rows
+  render fine, but I have not watched anyone try to *find* a specific entry
+  among them under time pressure.
+- **`guaranteedCorrectionSequence` when the tail is a `closed` event** -
+  *reasoned*. Driven for `sale`, `bid`, `nomination` and `void` tails. No seeded
+  draft reaches `closed`, so I could not produce the state without hand-writing
+  a log, which would have made the test a restatement of my own assumption.
+- **The 2s poll interval** - *reasoned, and it is a guess*. Not measured against
+  a second recorder on the same draft, and there is no SSE (deliberate, ADR-014).
+  Two people recording into one draft will see up to 2s of divergence; the
+  `last_sequence` precondition makes that safe rather than merely unlikely, but
+  "safe" and "not confusing under a clock" are different claims and I only have
+  the first.
+- **Anything past 27 events** - *driven only to 20*. The void measurement used
+  the 27 seeded events across two drafts; the deepest single log I exercised was
+  20. Log rendering is unvirtualised.
+- **That the screen never renders a decision number** - *driven for the recorded
+  payloads, reasoned in general*. Every number displayed traces to a response
+  field or to a count of rows, and I checked that by reading the render path.
+  But that is an argument about code I wrote, not a test, and the honest
+  statement is that no mechanism would stop a future lane adding one.
+- **CI** - *unverified at the time of writing*. The four frontend gate commands
+  pass locally (`lint`, `typecheck`, `test` 241 in 16 files, `build`). Local
+  green and CI green are different claims and this file has been wrong about
+  that twice today.
+
+### For the next lane
+
+- **A vitest suite that exits non-zero may not have run.** Check for `Tests  no
+  tests` before recording that anything was caught. This is the frontend spelling
+  of `rc == 4`.
+- **`getComputedStyle(el).backgroundColor` is `rgba(0,0,0,0)` far more often than
+  you expect**, and every contrast ratio computed against it is silently a ratio
+  against black. Walk to the first painted ancestor and print which one it was.
+- **A code-keyed error message describes the precondition that failed, not the
+  action the user took.** When those differ - which is precisely the case for a
+  refused void - showing your own copy for the code tells the user about a form
+  field that is not on their screen. Show the server's sentence.
+- **There is no way to create a draft from the browser.** `POST /api/v1/drafts`
+  exists; nothing calls it, so the only route today is a development CLI that
+  invents synthetic seats. Filed as `draft-setup-screen`, and it is on the
+  critical path for 18 October in a way its size does not suggest.
+- **A fixture that fills 4% of a surface cannot test the surface.** `seed_draft`
+  fills 7 of 156 slots, every check I ran passed on it, and the full board hid
+  the Record button for 70% of the page. Ask what proportion of the real thing
+  your fixture represents before trusting a pass, and fill it up if the answer
+  is small - it took one script and four minutes.
+- **Lint and type-check can disagree about the same line**, and tests pass
+  through both. `no-unnecessary-type-assertion` wanted `!` gone where
+  `Node.contains` accepts null; `tsc` wanted it for `.className`. Narrow with an
+  explicit `throw` and both are satisfied, with a named failure as a bonus.
+
+---
+
+## 2026-08-21 - frontend - The recording that could not notice it was old
+
+Second unit on the draft board (PR #66). The base moved `5ec3d0f` -> `ce4c603`
+under me carrying two message-correctness fixes, and rebasing onto it turned up
+the sharpest thing I found tonight.
+
+**Two of six recorded refusal fixtures held text the backend no longer produces,
+and the whole frontend suite stayed green.** One of them was the dead re-wrap the
+backend lane had just deleted - my fixture asserted, in a committed file, a
+sentence that asserted something untrue about the log. Nothing failed, because a
+recording cannot notice that it is old. The tests were accurate about what was
+recorded and no longer accurate about the contract, which is the non-independence
+trap in its purest form: the source of truth moved and the copy did not.
+
+It was caught only because I re-drove the API by hand after the rebase. Nothing
+in the repository would have caught it, and no amount of frontend test-writing
+would have either.
+
+So the fix is a mechanism, not a lesson: `scripts/capture_draft_fixtures.py`.
+`--write` regenerates the refusal fixtures from a freshly seeded backend, one
+database per case. `--check` re-drives all nine recorded payloads and reports
+**what it observed against what is committed**, exiting non-zero on drift. It
+refuses to report success having compared nothing. Running it against the old
+fixtures reproduces the failure exactly - 4 of 9 drifted, and it prints both
+sentences side by side. The original fixtures were captured ad hoc with no script
+kept, which is why there was nothing to re-run; that is now fixed.
+
+It is **not wired into CI**, because the Python gate runs with
+`working-directory: backend` and this needs the app importable alongside the
+frontend fixtures. That is a job-shape change and not a frontend lane's to make
+unilaterally in its own PR. Filed as `fixture-drift-gate` and raised with the
+coordinator.
+
+### The stale-state finding, which is the same shape
+
+`frontend.md` lists "loading, empty, error and stale-data states handled" as a
+done criterion, and this screen looked like it passed: blocking `fetch` in a real
+browser for twelve seconds produced a banner reading "Showing data from
+12:19:28 AM". Driven, observed, rendered.
+
+Then I deleted `staleAfterMs` from `DraftPage` to watch the new tests fail, and
+**all 23 still passed**. `AsyncBoundary` raises that banner on
+`isStale || refreshFailed || refreshPending`, and this screen polls every two
+seconds, so data can only age when a read has failed or is in flight - both of
+which raise the banner on their own. `isStale` never decides anything here.
+**`staleAfterMs` on this screen is inert configuration**, and my browser
+observation was true about the banner and wrong about the mechanism.
+
+Left wired as a backstop for the day polling learns to pause, documented as inert
+in the test file rather than claimed as covered. The two new tests do cover the
+state a recorder actually hits mid-auction, and were proven to fire by making the
+reads succeed - both then fail on the absent banner.
+
+I would not have found this by writing more tests. I found it by trying to break
+the one I had just written.
+
+### The stale warning was fifteen screens from the recorder
+
+The full 156-slot board is ~11,000px. The recorder is sticky; the stale banner
+was not, so someone could be typing a sale fifteen screens down while the warning
+that reads had stopped sat at the top, off screen. Recording into a stale board
+under an auction clock is the harm. Pinned it, scoped to `.page--draft` so the
+short read screens that share `AsyncBoundary` do not inherit a decision made for
+a page fifteen times their length. Measured: visible at all 21 scroll positions,
+11.22:1 contrast at 12.75px, no overlap with the submit button.
+
+One measured cost, stated rather than hidden: at scroll position 0 exactly, the
+banner's own height pushes the submit button 26px below the fold. 1 of 21
+positions, only while stale, and one scroll notch fixes it. I judged showing the
+warning worth 26px at the very top of a fifteen-screen page.
+
+### What the base change did to the screen
+
+Re-verified in a browser rather than trusting the suite, because the base altered
+text I render verbatim. A refused deep void now reads:
+
+> Voiding sequence 3 was refused because sequence 4, which comes after it, no
+> longer holds once it is gone: Ansel Whitcombe is on the block, not Dov Kestrel.
+> To void sequence 3, void back from sequence 170 to sequence 4 first.
+
+That is a large improvement on what it replaced, and it arrives on exactly the
+path my "try to void" affordance generates. Worth saying that the two-affordance
+design and that fix were arrived at independently, from opposite sides.
+
+Also worth saying: on a 170-entry log the instruction is correct and asks for
+something nobody will do mid-auction. I render it verbatim anyway. It makes the
+real cost of a deep correction vivid instead of hiding it behind a softer
+paraphrase, which is the right failure direction for this screen.
+
+I re-drove the void probe against `ce4c603`: **4 of 27 voidable, two of them not
+the tail** - unchanged. The positional finding survives the base move, so the
+two-affordance design still matches the API.
+
+### Could not verify
+
+- **Whether the drift check would catch a *schema* change as well as a prose
+  change.** It compares state payloads on top-level keys only, so a field that
+  changed type or meaning underneath an unchanged key would pass. **Reasoned**,
+  not driven - I did not plant one. The prose path is driven, twice.
+- **Whether `isStale` is truly unreachable on this screen, or merely unreached by
+  anything I could construct.** I argued it from the three-way condition and the
+  poll interval and could not build a case that reaches it. **Reasoned.** If
+  polling ever pauses, it becomes live and the pinned threshold matters.
+- **Whether one entry among 170 can be found under time pressure.** The log is
+  unvirtualised and the page is fifteen screens. Every correction affordance
+  works and I have driven them; whether a person can *locate* the right row while
+  an auction clock runs is untested and I do not think a test settles it.
+  **Reasoned**, and it is the thing I would watch first in the mock auction.
+- **The 2s poll interval against a second concurrent recorder.** Still a guess,
+  still unmeasured. There is one recorder by design, so this only matters if that
+  assumption breaks.
+- **Whether `--check` stays honest as fixtures grow.** It asserts it checked
+  something and prints the count, but nothing forces a *new* fixture to be added
+  to it. **Reasoned.** A fixture added without a case here would be unchecked and
+  silent - the same class, one level up.
+
+## 2026-08-21 - frontend - Weighting the instruction that works
+
+The replay refusal carries two instructions. The backend embeds the inner
+refusal's advice verbatim, so voiding an older event produces, in one sentence:
+
+> Voiding sequence 6 was refused because sequence 7, which comes after it, no
+> longer holds once it is gone: Ilario Bexley is still on the block. **Record the
+> sale, or void the nomination at sequence 5.** To void sequence 6, void back
+> from sequence 170 to sequence 7 first.
+
+The bolded clause describes the hypothetical replayed log, not the actual one.
+Following it returns another well-formed refusal. The last clause is the one that
+works. Both were driven against a live backend at `ce4c603`, not read.
+
+The screen now renders the final clause in a `<strong>`, and changes nothing else
+about the text. `splitRefusalRemedy` splits on `/To void sequence \d+,[^.]*\.\s*$/`
+with `slice`, so `lead + remedy === detail` byte for byte - the recorder still
+reads the server's sentence, in the server's words, in the server's order. If the
+backend reworded the remedy tomorrow the regex would miss and the whole sentence
+would render as lead, which is the failure I want: no emphasis rather than
+emphasis on the wrong half.
+
+Measured in a browser rather than asserted: lead resolves to weight 400, remedy to
+650, and 650 renders 29px wider than 400 over that same 457px string at 15px in
+`ui-sans-serif`. I checked the width because `font-weight: 650` on a family with
+no 650 face rounds silently, and a computed style of "650" would have reported
+success either way. That is the same shape as every empty-set defect on this
+board: the declared value is not the observed one.
+
+The coverage guard in `DraftPage.recorded.test.tsx` was itself an instance. It
+lived in a trailing `it` inside the refusal block, so a refusal driven by a block
+*below* it counted as undriven - it reported a shortfall that was not real, which
+is the benign direction of the same bug. It is now a file-scoped `afterAll`
+comparing the driven set against the fixture keys. Proven by deleting one
+registration: it fails naming `void-replay-two-instructions`.
+
+### Could not verify
+
+- **Whether a recorder under an auction clock reads the bolded clause first.**
+  Reasoned. Weight and terminal position are the two things I can control and both
+  favour it, but the competing clause is bolder in content - it names a player and
+  gives two verbs. I have made the working remedy visually dominant, not
+  cognitively dominant, and I cannot test the second without a person.
+- **Whether the split regex survives a backend rewording.** Driven for the failure
+  mode (no match falls back to whole-sentence lead, covered by the non-matching
+  refusals in the fixture), reasoned for the likelihood.
+- **Whether `--check` catches a schema change rather than a text change.** Reasoned.
+  It compares state payloads on top-level keys only.
+- **Whether one entry among 170 can be found under time pressure.** Reasoned. The
+  log is unvirtualised and I found seq 6 by `scrollIntoView`, which the owner does
+  not have.
+
+## 2026-08-22 - frontend - The drift gate fired on its first real test, and I could not re-look at the screen
+
+Rebased the draft board onto `6c0c75a`, which carries the backend's *"quote the
+replayed event's reason instead of repeating it as an order"*. Within minutes
+`scripts/capture_draft_fixtures.py --check` reported **drift in 2 of 10 recorded
+payloads**: the replay refusal now reads
+
+> ...no longer holds once it is gone: **"**This event must name the player as the
+> recorder saw the name.**"** To void sequence 5, void back from sequence 15 to
+> sequence 6 first.
+
+with the inner clause in quotation marks. **The frontend suite was green before
+the rebase and green after it.** `--check` was the only thing that noticed. That
+is the second time in two days a recorded fixture silently stopped describing the
+contract, and the first time a mechanism rather than a person caught it. It is
+also the whole argument for `fixture-drift-gate`, which is filed and is backend's
+to wire.
+
+The two fixes compose, and neither lane knew about the other's: their quotation
+marks make the inner clause read as a *report of a hypothetical log*, and this
+screen's `<strong>` makes the trailing clause read as *the instruction*. My split
+regex targets the trailing `To void sequence N, ...` clause, which they did not
+touch, so the split still holds - confirmed by the recorded tests passing against
+regenerated fixtures, which they do only because those tests derive prose from the
+fixture rather than hardcoding it.
+
+**Rebase note, because the prescribed check misled me.** Diffing my `docs/backlog.md`
+slug set against `origin/main` reported **seven dropped items and none were
+dropped** - all seven landed on `main` after my base branched. Against my actual
+parent: zero dropped, three added. `docs/backlog.md`'s header now says to diff
+against your own merge base. I also looked for the silent direction - an item the
+base holds that `main` does not, which would be invisible to the prescribed check -
+and found zero, which is a fact about these two trees and not a property of the
+check.
+
+I also ran `git rebase` onto the moved base and started replaying the *base lane's*
+commits, hitting conflicts in `backend/src/hoops_gm/draft/service.py` that were
+none of my business. `git rebase --onto <newbase> <old base tip>` is the correct
+form when your base has itself been rebased. Aborted and redid it; nothing lost.
+
+### Could not verify
+
+- **Whether the quoted inner clause and the emphasised outer clause read well
+  together on screen.** *Not verified at all.* The browser canvas became
+  unresponsive - it timed out on `evaluate_javascript`, `read_page` and
+  `navigate_page` across four fresh instances, on both the 170-entry auction and
+  the 12-entry snake board, while the same URLs returned 200 to `Invoke-WebRequest`
+  and the vite proxy served the API fine. So the app is healthy and the tooling is
+  not. There is no other real browser on this machine: `playwright` and `puppeteer`
+  are both absent and `jsdom` is not a browser.
+
+  What survives from the previous browser session is structural and unaffected by
+  the reword: lead weight 400, remedy weight 650, 29px wider over the same string,
+  `detail.endsWith(remedy)` true. What does not survive is anyone having *looked*
+  at the sentence in its new form. **Marked as not driven, and it is the one thing
+  the coordinator specifically asked for after this rebase.**
+
+- **Whether the 170-entry log is what wedged the canvas.** Driven and **refuted**.
+  It was the obvious explanation and it would have handed me a measured cost for
+  `draft-log-virtualisation`, which I had just filed saying the cost was argued
+  rather than measured. The 12-entry board timed out identically. Recording the
+  refutation because the convenient version was one step away and I nearly took it.
+
+- **Whether `--check` catches a schema change rather than a text change.** Reasoned.
+  It compares state payloads on top-level keys only. It has now caught two text
+  changes and zero schema changes, which is evidence about what has happened, not
+  about what it covers.
+
+- **Whether one entry among 170 can be found under time pressure.** Reasoned, still.
+  See `draft-log-virtualisation`.
+
+## 2026-08-22 - frontend - My own backlog item had the dangling edge the header warns about
+
+Rebased onto `922e2c3`, which brings #65's backlog-graph CI. Ran it against my
+tree and it passed. Then I planted the defect it exists to catch - repointed
+`draft-log-virtualisation` at `draft-board-screen`, which is **not a slug in this
+file** - and it failed three tests by name, including
+`test_the_real_backlog_is_clean`. So the suite genuinely reads `docs/backlog.md`
+rather than a fixture, and my clean run meant something.
+
+**I had written that dangling edge myself, an hour earlier.** There is no
+`draft-board-screen` item; the screen lives under `draft-tracker`, whose marker
+already says *"the screen landed 2026-08-21"*. `docs/backlog.md`'s header warns
+about exactly this - *"a dependency edge can be dangling and nothing says so"* -
+and names a live example from the day before. I read that paragraph, wrote a new
+item, and put a dangling edge in it. Naming a defect class does not stop you
+producing one; the CI job that landed in the same rebase did.
+
+Worth recording that my first attempt to plant it was itself vacuous: a
+`-replace` whose pattern did not match, so the file was unchanged and the suite
+passed. The "planted:" line I had printed to confirm the edit **did not appear**,
+which is the only reason I noticed. **An experiment that quietly fails to set up
+reports the null result you were testing for.** Second time tonight that printing
+the observed state rather than the intended one saved a conclusion.
+
+### Rebasing when your own base has been rebased
+
+`git rebase <newbase>` replays every commit `<newbase>` cannot match by patch-id -
+which, when the base branch has itself been rebased, is **the base lane's entire
+history**. I hit conflicts in `backend/src/hoops_gm/draft/service.py`, a file I do
+not own and had never edited, and was one `--continue` from carrying another
+lane's half-resolved backend code inside a frontend PR.
+
+**Use `git rebase --onto <new base tip> <old base tip>`**, which replays only the
+commits that are actually yours. Check with `git log --oneline <old base tip>..HEAD`
+first and confirm the list is your work and nothing else. This will bite the next
+stacked pair, and the draft board was stacked through four base rebases in one
+night.
+
+### Could not verify
+
+- **Whether the screen still reads well.** Still not driven. The browser canvas
+  times out on every action across five instances; the coordinator reproduced it
+  independently on a sixth, so it is the shared tool rather than this worktree.
+  `#66` is held unmerged until someone looks at the screen, which is the right
+  outcome.
+- **Whether the graph job checks edge *direction* or only slug existence.** Reasoned.
+  I planted a non-existent target and it was caught; I did not plant a cycle.
+
+## 2026-08-22 - frontend - The lede promised an Undo the screen below it did not offer
+
+Rebased onto `main` after #64 squash-merged, retargeted #66, and then finally got
+a browser. The browser found a defect in the first thirty seconds that 248 green
+tests had never seen.
+
+### The browser, since the canvas is still wedged
+
+The shared canvas still times out on every action. Edge is installed and Node 24
+has a global `WebSocket`, so I launched `msedge --headless=new
+--remote-debugging-port=9222` and drove it over CDP directly. It is a real
+Chromium rendering the real app, and it is under my control rather than the
+tool's. The driver is in the session state directory, not the repository - it is
+a verification instrument, not a dependency, and it needs no install.
+
+**If the canvas is wedged for you too, this is the way through.** Attach with
+`Target.createTarget` + `Target.attachToTarget {flatten: true}`, wait for
+`Page.loadEventFired` rather than a fixed sleep, and wrap the script in an async
+IIFE because `Runtime.evaluate` takes an expression and not a function body.
+
+### The defect: standing copy that contradicts the screen it is printed on
+
+The log lede said, in bold:
+
+> Undoing the most recent entry always works; undoing an older one may be refused
+
+The demo auction's most recent entry is `#170`, which is itself a correction. It
+offers no **Undo** button, and its own row says *"A correction cannot itself be
+undone."* So the promise in bold at the top of the log was contradicted by the
+first entry underneath it.
+
+The code was right. `guaranteedCorrectionSequence` returns `null` when the last
+event is a `void`, which is correct - a void cannot be voided. **The copy was
+what was wrong**, and it was wrong in exactly one state: the state a recorder is
+in the instant after using Undo. That is the commonest correction path under an
+auction clock. Someone mistypes a sale, hits Undo, and the affordance they just
+used has vanished with the screen still insisting it always works.
+
+Fixed by adding the exception to the sentence rather than by weakening it:
+*"always works, unless it is itself a correction"*.
+
+### Why no test caught it
+
+Every test rendered a board whose last entry was a sale. The recorded auction
+fixture ends at `#18`, a sale; the snake fixture ends at `#12`, a pick. **The one
+state where the claim is false was the one state no fixture was in.** The suite
+was not wrong about anything it looked at. It had simply never been in the room.
+
+The new test cuts the recorded auction at `#14`, the void, so the log is that
+draft's own real log in its real order at the moment that correction landed. It
+asserts the log drew - `Try to void` count greater than zero - **before**
+asserting `Undo` is absent, because "no Undo button" is satisfied perfectly by a
+log that rendered nothing at all.
+
+Proved it bites by deleting the fix and re-running: fails, by name, on that test
+alone. My tamper prints a line if the pattern misses, because an edit that
+silently fails to apply reports the null result you were hoping for. That is the
+fifth time tonight deleting a thing found what writing a test could not.
+
+### What else the browser confirmed, driven rather than read
+
+- The refusal I drove against entry 1 rendered the **new** base's wording,
+  quotation marks and all: *"...no longer holds once it is gone: \"A bid needs a
+  lot on the block. Record the nomination first.\" To void sequence 1, void back
+  from sequence 170 to sequence 2 first."* The `$`-anchored split still matched,
+  `lead + remedy` reconstructed the sentence byte for byte, and the emphasis
+  landed on the clause that works.
+- **Measured the emphasis as a consequence, not a readback.** Computed style
+  reports `650` whether or not a 650 face exists. The same 40-character string
+  measured **293.83px** in the remedy against **276.63px** in the lead, so the
+  weight is real.
+- The refused void wrote nothing: `last_sequence` 170 before and 170 after.
+- The two affordances differ in paint, not only in wording - solid orange fill at
+  weight 600 with no caveat, against a dashed muted outline at weight 400 that
+  carries its caveat in a `title`. Distinguishable without reading, which is the
+  property that matters at speed. **Whether they read as different promises is
+  still not my judgement to make**, but they are measurably different objects.
+- `inflation` appears in the body text and is my own lede saying the screen has
+  none. A substring scan cannot tell a claim from its denial; I looked.
+
+### Rebase note that will bite the next stacked pair
+
+#64 **squash-merged**, so `main` holds one commit where my branch held the base
+lane's seven. Plain `git rebase origin/main` would have replayed those seven
+against a `main` that already contained them. `git rebase --onto origin/main
+<old base tip>` is the correct form, and the base squash was tree-identical to my
+old base, which I checked with `git diff --quiet` **and a control** - `HEAD~1 vs
+HEAD` exits 1 - because an empty diff and a broken diff look the same.
+
+### Could not verify
+
+- **Whether the corrected lede reads well at a glance.** I measured that it now
+  carries the exception; I cannot judge my own prose under a clock.
+- **Whether one entry among 170 can be found under time pressure.** Still
+  reasoned, not driven. `draft-log-virtualisation` remains filed on that basis.
+- **Whether headless Chromium's text metrics match the owner's windowed browser.**
+  The weight difference is large enough that I doubt it matters, but I measured
+  in headless and the owner will not be.
+- **The exception state on a snake draft.** I drove it on the auction log only;
+  the snake board's tail is a pick, so it shows the ordinary two-affordance case.
+
+## 2026-08-22 - frontend - The escaping in my forbidden-terms guard was itself incomplete
+
+CodeQL flagged `js/incomplete-sanitization` on the no-decision-numbers test.
+Reported as a security alert, and in this file it is not one - nothing untrusted
+reaches that regex, the term list is nineteen literals in the same file. But the
+finding is right and the consequence is the one that matters here.
+
+The guard built the pattern with `term.replace(/[().]/g, '\\$&')` - escaping the
+three metacharacters that happen to appear in today's list. Add a term
+containing `$`, `+`, `*` or `[` and the pattern does not throw. **It compiles to
+something that matches something else**, so that term silently stops being
+checked and `expect(found).toEqual([])` still passes. The guard against
+rendering a decision number would report clean while no longer looking for one of
+them.
+
+That is tonight's defect class inside the mechanism built to prevent a different
+one, which is now the second time a guard of mine has been blind in the exact
+direction it existed to cover.
+
+Fixed the character class to the full set, and then added the part that makes it
+a guard rather than an intention: **every pattern must match its own term**
+before the list is trusted to match none of them. Proved it by neutering
+`escape()` to the identity function - it fails naming `p(play)`, which is the
+standard of "delete a member and confirm it names the missing one" met rather
+than asserted.
+
+Worth noting how it surfaced. CodeQL had been green on this branch all night and
+went red on a commit that changed three lines of copy. It was the **retarget**:
+changing #66's base from the backend lane's branch to `main` widened "code
+changed by this pull request" to every line I had written. So a check can be
+green because of what it is comparing against rather than because the code is
+clean - the same shape as diffing a moved base against `origin/main`, which
+misled me four hours ago in the other direction.
+
+### Could not verify
+
+- **Whether any other repository guard builds a regex from a list this way.** I
+  fixed mine. I did not grep the other lanes' tests, and the pattern is a common
+  one.

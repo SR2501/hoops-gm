@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**46 done - 1 blocked - 83 pending - 130 total**
+**46 done - 1 blocked - 86 pending - 133 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 130 `###` headings, 130 unique item slugs and 130 markers, 1:1, no
+two headers: 133 `###` headings, 133 unique item slugs and 133 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -1427,7 +1427,7 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen and the bridge feed are outstanding*
+- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen landed 2026-08-21; the bridge feed is outstanding*
 - **Depends on:** `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
@@ -1456,6 +1456,105 @@ inflation, no recommendation, no `p(play)` - which is correct scope here but
 means the item's downstream readers (`auction-budget-manager`,
 `auction-inflation`, `draft-recommender`, `live-draft-availability`) are
 unblocked on their *input*, not served by it.
+
+**The screen landed on 2026-08-21** (`frontend` lane): a recording panel, a seat
+board with roster construction and per-seat spend, and the full log with
+correction affordances, at `/draft` and `/draft/:draftId`. It renders no
+decision number of any kind. Two findings from building against the live API are
+worth carrying forward. **The tail-only correction limitation is positional, not
+structural** - the brief described it as "the last sale of a nominated lot", but
+driving a void at all 27 seeded events against a fresh database each time
+measured **4 of 27 voidable, and 2 of those were not the tail**. The screen
+therefore offers a guaranteed "Undo" only on the highest sequence and a
+"Try to void" everywhere else, rather than hiding the other 26. And
+`remaining_budget` is budget minus *spent*, so a seat holding a live high bid
+still shows its full remaining budget; the screen renders the live bid as a
+visibly second, differently-coloured claim rather than reconciling the two into
+a number the backend never sent.
+
+What is still missing for the 18 October auction is the feed and the setup:
+see `draft-setup-screen` for the second.
+
+### `fixture-drift-gate` - Fail CI when a recorded fixture stops matching the backend
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`
+
+`scripts/capture_draft_fixtures.py --check` re-drives every payload the draft
+board's tests are recorded against and reports drift. It is not wired into CI,
+because the Python gate runs with `working-directory: backend` and this needs the
+app importable alongside the frontend fixtures - a job-shape change that is not a
+frontend lane's to make unilaterally.
+
+It should be. On 2026-08-21 the draft-tracker base moved from `5ec3d0f` to
+`ce4c603` carrying two message-correctness fixes, and two of six recorded refusals
+immediately held text the backend no longer produces - including a re-wrap that
+asserted something untrue about the log. **The frontend suite stayed green
+throughout**, because a recording cannot notice that it is old. It was caught by
+hand, by one lane happening to re-drive the API after a rebase.
+
+That is the same shape as the tripwire finding: not a wrong assertion, an
+*unentered* comparison. The fixtures are the frontend's only contact with the
+contract, and nothing checks they still describe it.
+
+**The script lands with the draft board; the CI wiring is `backend`'s**, since
+`.github/workflows/` is theirs and this is a job-shape change. And the hole is not
+the draft board's alone - this repository holds recorded fixtures in at least
+three places, and every one of them is a copy of another tree's behaviour that
+git reports no conflict on, because neither lane edits the other's file. The
+frontend gate does not run the backend; the backend gate does not know the
+fixtures exist. Wiring this one is worth doing on its own terms, but the general
+form is the thing to fix.
+
+### `draft-log-virtualisation` - The draft log is fifteen screens and violates the five-second rule
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`
+
+`.github/agents/frontend.md` says *design for one screen* and *if a view cannot be
+read in five seconds during a pick clock, it belongs in an evidence view*. The
+draft board's event log renders every event unvirtualised. On the seeded demo that
+is **170 entries across roughly fifteen screens**, and a real auction is larger.
+
+State it as the violation it is rather than as a refinement: **finding one row
+among 170 under an auction clock is exactly what that rule forbids.** The acute
+half was fixed in the board's first unit - the Record control and the stale
+warning are pinned and visible at every scroll position, verified at 21 of them -
+so the screen is recordable now and the log is legible and merely long. That is
+why this is filed rather than rushed into that PR at 1am. It is not why it is
+acceptable.
+
+Recorded honestly: the frontend lane located a specific entry during browser
+verification by calling `scrollIntoView` from a console. **The owner will not have
+that.** Nobody has yet driven a search for a known entry under time pressure, so
+the size of the problem is argued, not measured - and measuring it is probably the
+first half of this task.
+
+Wants a decision about what the log is *for* during recording, which is not
+obviously the same thing it is for afterwards. Likely candidates: windowing with a
+jump-to-sequence control, collapsing the settled majority behind a count, or
+splitting the recent tail from the full history entirely. That decision belongs to
+a calm hour, not to a merge.
+
+### `draft-setup-screen` - Creating a draft and its seats from the browser
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`, `frontend-skeleton`
+
+`POST /api/v1/drafts` exists and takes a league, a name, a `tool_usage`
+declaration and the full participant list, but nothing in the browser calls it.
+Today the only way to bring a draft into being is `hoops_gm.dev.seed_draft`, a
+development CLI that invents synthetic seats, or a hand-written POST. The draft
+board at `/draft` deliberately does not offer creation: it is built to be used
+under an auction clock, and a twelve-seat setup form is a calm, once-per-draft
+task that would enlarge that surface for no benefit at the moment it matters.
+
+This is small but it is on the critical path, because the owner cannot record
+his mock auction - or the real draft on **18 October 2026** - without a draft to
+record into. Needs seat names, per-seat budget for an auction, draft order for a
+snake, and the `is_mock` / `tool_usage` declaration surfaced honestly rather than
+defaulted past, since `tool_usage` is the field that records how much help was
+used and is the one a leaguemate would care about.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 
@@ -1946,3 +2045,5 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 - **Depends on:** `expected-games`, `projection-blending`, `scoring-profiles`
 
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
+
+
