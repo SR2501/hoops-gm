@@ -814,6 +814,107 @@ def test_importing_writes_one_row_per_value_with_its_lineage(seeded_players: Ses
     assert outcome.created is True
 
 
+@pytest.mark.parametrize("seed_count", [0, 1, 4, 9, 10])
+def test_every_reported_count_matches_an_independent_observation(
+    session: Session, seed_count: int
+) -> None:
+    """A count is a claim about work done, not evidence that it was done.
+
+    ``AuctionValueImport`` carries the counters, and the importer writes both
+    the counters and the rows. So asserting ``matched_count == 10`` beside
+    ``len(values) == 10`` compares two literals rather than tying the report to
+    the reality: an importer that wrote correct-looking counts and no rows
+    passes both. The bucket-sum check has the same shape one level up, since
+    every term in it comes from the same writer.
+
+    So each counter is compared here against something the importer did not
+    author: rows actually present in ``published_auction_values``, and the row
+    count against the fixture's own line count read off disk. Parametrised
+    across cohort sizes so the *relationship* is under test rather than one
+    arithmetic coincidence — a hardcoded 10 survives a single-point check.
+    """
+    for nba_id, name, team, position in FIXTURE_PLAYERS[:seed_count]:
+        seed_player(session, nba_id=nba_id, name=name, team_abbreviation=team, position=position)
+
+    outcome = import_fantraxhq(session)
+    auction_import = session.scalars(select(AuctionValueImport)).one()
+
+    csv_data_rows = (
+        len([line for line in load("fantraxhq_auction_values.csv").splitlines() if line.strip()])
+        - 1
+    )
+    assert csv_data_rows == 10, "guard: the fixture changed and this test's basis moved with it"
+    assert auction_import.row_count == csv_data_rows, (
+        "row_count must match the file, not the importer's opinion of the file"
+    )
+
+    written = session.scalars(select(PublishedAuctionValue)).all()
+    observed_players = {value.player_id for value in written}
+
+    assert auction_import.matched_count == len(observed_players), (
+        f"matched_count claims {auction_import.matched_count} players but "
+        f"{len(observed_players)} distinct players actually have rows"
+    )
+    assert outcome.values_written == len(written), (
+        f"values_written claims {outcome.values_written} but the table holds {len(written)}"
+    )
+    assert auction_import.matched_count == seed_count, (
+        "and the observation itself must track the cohort we actually seeded"
+    )
+    assert (
+        auction_import.matched_count
+        + auction_import.needs_review_count
+        + auction_import.unmatched_count
+        == csv_data_rows
+    ), "every row must land in exactly one bucket; none may vanish"
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "profile_id", "expected_data_rows"),
+    [
+        ("fantraxhq_auction_values.csv", "fantraxhq-auction-values", 10),
+        ("hashtag_auction_values.csv", "hashtag-auction-values", 8),
+        ("yahoo_draft_analysis.csv", "yahoo-draft-analysis", 5),
+    ],
+)
+def test_row_count_tracks_the_file_and_not_a_constant(
+    seeded_players: Session,
+    fixture_name: str,
+    profile_id: str,
+    expected_data_rows: int,
+) -> None:
+    """Three files of three different lengths, because one length proves nothing.
+
+    Mutation-driven: replacing ``row_count = parsed.total_rows`` with
+    ``row_count = 10`` survives any check that only ever imports the ten-row
+    FantraxHQ fixture, since the constant and the truth coincide there. That is
+    the counter-standing-in-for-an-observation failure in its hardest-to-see
+    form — the assertion is real, the value is right, and the test still cannot
+    tell the two apart.
+
+    Distinguishing them needs independent variation in the observed quantity,
+    not a stronger assertion about one value. Hence three sizes.
+    """
+    on_disk = len([line for line in load(fixture_name).splitlines() if line.strip()]) - 1
+    assert on_disk == expected_data_rows, (
+        f"{fixture_name} holds {on_disk} data rows, not the {expected_data_rows} this "
+        "test was written against; the fixture changed and the expectation did not"
+    )
+
+    import_auction_value_csv(
+        seeded_players,
+        profile_id=profile_id,
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=load(fixture_name).encode("utf-8"),
+        basis=stated_basis(),
+        original_filename=fixture_name,
+    )
+
+    auction_import = seeded_players.scalars(select(AuctionValueImport)).one()
+    assert auction_import.row_count == on_disk
+
+
 def test_a_player_we_cannot_resolve_is_counted_and_not_imported(session: Session) -> None:
     """Fail-closed. A benchmark attached to the wrong player is worse than none.
 
