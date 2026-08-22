@@ -225,6 +225,15 @@ its slug diff *after* finishing and got away with it only because `origin/main` 
 fetchable — which does not hold when the thing you must diff against is your own pre-rebase
 branch. **A check you can only run when nothing went wrong is not a check.**
 
+**Diff against your own merge base, and beware the moment two methods agree.** Diffing a slug set
+against `origin/main` reports another lane's merges as your deletions once your base has moved —
+seven false drops in one case. What makes it survive is worse than the bug: run it immediately
+after a rebase and it agrees exactly with the correct check, because the merge base *is*
+`origin/main` at that instant. **A method whose correctness depends on state that has not moved
+yet agrees with the right one precisely while it cannot mislead you**, so *"two methods agreed"*
+is weak evidence unless you can say what would make them diverge. Cross-checking is this page's
+most-recommended remedy and this is its limit.
+
 ### Rounds have a cost, and the cost is prose
 
 One unit on 2026-08-21 ran six review rounds. It found **two behavioural defects a user
@@ -379,6 +388,11 @@ claim is checkable in one grep** — do that before relying on it. And grep **ev
 appears to hedge**: proximity is not comparison. Two files invite a diff; one file invites reading
 in order, and the confident sentence arrives first — `frontend.md` carried both versions eleven
 lines apart, and the hedge is what a careful reader finds *after* acting on the unhedged one.
+**The same grep is what makes a correction complete**, because a claim is corrected in the
+document that argues it while the files merely *citing* it go untouched — and those are invisible
+from inside the document, which is why the fix feels finished. Correcting one of parity's three
+sites would have left two; after any correction, grep the distinctive phrase or numeral across
+`docs/` and fix every copy or say why one differs.
 
 **Which makes this the least reliable section in the repository, and it should say so.** It is
 the one part with nothing executable underneath it, and the class it documents is *believing

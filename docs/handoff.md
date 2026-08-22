@@ -16959,3 +16959,38 @@ zero dropped, zero added.
   person.** I established `backlog_graph.py` cannot have caught them; I did not establish what did.
 - **Whether any other lane is relying on the header check that does not exist.** The claim was
   broadcast to me; I do not know who else received it.
+### Rebase onto b49c6e6, and an append I was asked to write and did not
+
+- **The false guarantee I was asked to correct is not in the repository.** The instruction was to
+  append a correction because `docs/handoff.md` on `main` carried *"`backlog_graph.py`'s header
+  check passed on both branches - no stale header inherited through either rebase"*, merged via
+  #68/#70 and false when written. **It is not there.** `git grep -i "header check" -- docs/`
+  returns three lines, all from #72's own lane where the check does exist; `git log --all -S "no
+  stale header" -- docs/` and the same for `"header check passed"` return **no commit on any
+  branch, ever**. The nearest real sentence is a lane's own token recount at `handoff.md:16419-25`
+  reporting *its own parse* agrees with the header, correctly attributed and true. **I did not
+  write the append**, because an append correcting a sentence nobody wrote would put a false claim
+  into the file whose purpose is to prevent them - and it would be uncheckable in the direction
+  that matters, since a reader could only confirm the absence by repeating this search.
+- **Third alarm this unit that did not survive checking, and the shape is now stable.** R58's
+  malformed row, a `main` count of 130/47/1/82 that matched no tree, and this. Each was specific,
+  each was internally coherent, each named a locator - and **specificity is what made them worth
+  checking rather than what made them true.** The cost of checking is two minutes; the cost of
+  acting is a committed correction to nothing.
+- **A character-count assertion cannot see a same-length substitution.** Proving #72's newly-merged
+  header check works on my own tree, I mutated `47 done` to `12 done` - identical length, so the
+  char-count guard reported no change. Had that been my only assertion I would have printed
+  `MUTATION DID NOT APPLY` and concluded the merged check was untestable here. Caught because the
+  guard also compared the strings. **Assert the edit, not a statistic of the edit** - the check
+  itself is fine and fails correctly: `[header-disagrees-with-items] line 5 ... claims 12, file has
+  47`, rc=1, against rc=0 on the control.
+
+### Could not verify, this rebase
+
+- **What the coordinator was looking at when they reported the merged false guarantee.** I
+  established it is in no branch's history; I did not establish what they read instead.
+- **Whether the `r²` citation copies are actually wrong or merely narrower.** `backlog.md:1237`
+  and `projection-blending.md:119` carry the flat `0.726-0.947` while
+  `consensus-reproducibility.md:219` records games agreement at `0.284-0.504`. I landed the
+  *remedy* (grep the numeral after a correction) without adjudicating those three files, which
+  belong to `quant`.
