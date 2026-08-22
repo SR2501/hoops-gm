@@ -1208,6 +1208,18 @@ the model worker receives only independently released immutable packages,
 freezes the experiment before held-out outcomes are unblinded, and may never use
 mock outcomes as production or availability evidence.
 
+**Scope narrowed, 2026-08-22 —
+[`docs/models/projection-strategy.md`](models/projection-strategy.md).** Measured
+on ten seasons of game logs, a naive carry-forward predicts season-total points
+better than a careful rate × minutes × games decomposition (r² 0.611 vs 0.576),
+because games-played error swamps everything downstream of it, and a naive
+Marcel already reaches r² 0.71–0.89 on per-36 rates. **This should not be built
+as a production source before draft day.** Build the Marcel/SPS baseline only as
+a measuring stick — to quantify how much of any projection set is reproducible
+from public box scores — and ship consensus rates fused with our own
+availability instead. The unblocked work with the larger payoff is
+`participation-ledger-population`.
+
 ### `behavioural-baseline` - Modelling the owner own drafting tendencies
 
 - [ ] **pending**

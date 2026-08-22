@@ -16242,3 +16242,110 @@ misled me four hours ago in the other direction.
 - **Whether any other repository guard builds a regex from a list this way.** I
   fixed mine. I did not grep the other lanes' tests, and the pattern is a common
   one.
+## 2026-08-22 - quant - A full season of games-played history is worth 0.13 games, and that decides the projection strategy
+
+Research lane, no model and no code. Deliverable is `docs/models/projection-strategy.md` plus an
+ADR-007 amendment. The question was the owner's: what should our strategy be for building original
+projections from scratch. **The answer is not to build one before draft day.**
+
+**The measurement.** Ten seasons of `PlayerGameLogs` (2015-16..2024-25, 254,512 player-game rows,
+ten throttled requests through the existing `NbaStatsClient` - no adapter, no fixture, no schema,
+nothing persisted). Season production decomposes as games x minutes x rate, and the three factors
+are not equally predictable. Year over year, qualified cohort: **GP r2 0.052, MPG r2 0.597, per-36
+rates 0.57-0.88.** Predicting next-season GP, the constant league mean gets MAE 15.90; last season's
+GP gets 15.77. **A whole season of history buys 0.13 games.**
+
+**The result that settles it.** Predicting season-total points: naive last-season carry-forward
+r2 **0.611**; the careful Marcel-rate x Marcel-MPG x league-mean-GP decomposition r2 **0.576**. The
+sophisticated thing is worse, because games-played error swamps everything downstream of it.
+
+**I attacked my own headline before reporting it.** Range restriction is the obvious objection and it
+is real: r2(GP) runs 0.281 (no filter) to 0.046 (>=1000 min). I report the range rather than the
+flattering number. MPG r2 sits at ~0.60 at every threshold, so the *ordering* never moves - which is
+the load-bearing claim, not the point estimate.
+
+**The coordinator's framing was falsified.** He proposed minutes as the soft spot and a new
+`expected-minutes` unit as the missing work. Minutes are second-order; the ordering survives every
+cohort filter. He accepted it.
+
+**I reproduced the healthy-worker paradox in our own data.** Prior-season workload -> next-season
+GP is **r = +0.521** (all) / +0.328 (>=500 min). Naively: heavy minutes protect you from injury.
+Nobody would defend that. `arXiv:2603.26935` (fetched, confirmed via the arXiv API, with a control
+fetch of a nonsense ID that 404s) shows conditioning on participation induces collider bias that is
+*"mathematically sufficient to entirely reverse the sign"*. **This sits directly in
+`availability-model`'s path** and is the ADR-007 amendment: the model must state an identification
+strategy before it fits anything, as a Model gate item alongside calibration. My honest expectation
+is we can detect the bias but not correct it pre-draft, so the amendment requires the limitation ship
+**named**.
+
+**Two repository claims falsified incidentally, for `data-engineer`:**
+- **`docs/adapters/nba-stats.md` line 148 is wrong.** It says `PlayerGameLogs.MIN` is a "rounded
+  decimal". It is not: the executed audit found **0 mismatches beyond 0.01 min (0.6 s) against
+  MIN_SEC across all 254,512 rows**, and 0 rows had MIN absent. Driven, and the tolerance stated is
+  the one the check actually asserts - an earlier draft of this entry claimed 0.5 s, which is tighter
+  than anything I ran. The line needs correcting by its owner; I did not edit another lane's adapter
+  doc.
+- **`AVAILABLE_FLAG` is not an appearance flag.** flag=2 has n=2,695, median 23.35 min, **0%
+  zero-minute**; flag=None n=41, median 24.65 min, also 0% zero-minute. Only 50 of all 254,512 rows
+  carry zero minutes at all, so this endpoint records appearances and cannot supply non-participation
+  labels. Driven. Anyone hoping to shortcut `participation-ledger-population` through it should stop.
+
+**PostgreSQL is up** at `postgresql+psycopg://qimember@127.0.0.1:55432/` - `draftboard_demo`,
+`pr64_review`, `qimember_migration_test`, `qimember_test` all exist and two are migrated. **Every
+stats table has 0 rows.** ~20 handoff entries assert Postgres is unavailable; none of them checked.
+
+**Boundary declared rather than assumed.** Ten requests through an existing client that leave no
+artefact need no Adapter gate, so this is analysis, not `data-engineer`'s plumbing. The coordinator
+ruled it clear and gave the line: if it would need an Adapter gate it is theirs, if not it is analysis.
+
+**Also in this PR:** a one-word arbitration to `.github/agents/quant.md` ("largest **in-draft** edge")
+resolving a real contradiction with ADR-007, which claims availability is "the largest single edge".
+Both were standing, both superlative, and with eight weeks left it pointed someone's priorities two
+ways. Coordinator arbitrated; I did not rewrite my own definition unilaterally.
+
+**Could not verify:**
+- **I re-ran every analysis before shipping the prose, and two of my own published numbers did not
+  survive it.** The Marcel per-36 figures I had reported were rounded one digit the wrong way
+  (PTS 0.710 -> **0.709**, REB 0.894 -> **0.893**), and - the material one - I had been quoting the
+  ceiling as "r2 0.71-0.89 on per-36 rates" when that range **silently excluded steals at 0.496 and
+  turnovers at 0.655**. The honest range across all seven categories is **0.50-0.89**. Nobody asked
+  me to re-run; the coordinator had already quoted 0.71-0.89 back to me approvingly, which is exactly
+  why re-deriving from the script rather than from my own note was worth the four minutes. Corrected
+  in the strategy doc and the blending card.
+- **The same re-run also caught a selective table.** My range-restriction curve had shown four
+  thresholds, all accurate, and omitted two - including **>=1500 min, where r2(GP) ticks back **up**
+  to 0.077 (n=799) instead of continuing down**. That is the one row that complicates the "restriction
+  monotonically depresses the correlation" story I was telling, and it was the one missing. Also
+  corrected: I had written MPG r2 is "~0.60 at every threshold" when it sags to **0.515** at that same
+  filter. The full curve is now in the doc. The ordering claim - the load-bearing one - survives all
+  six thresholds; the tidiness did not.
+- **Whether consensus is actually good. This is the largest gap and it is structural.** I measured
+  what a naive Marcel achieves on public box scores; I never evaluated a single commercial projection
+  set. "Consensus sits near the ceiling" is therefore **reasoned**, not driven, and the whole
+  recommendation leans on it. It is checkable - an eligible held-out experiment under the
+  sequestration protocol against the BBM import we already hold - and it is the single most valuable
+  unrun experiment I can name.
+- **"Consensus over-projects star games played" is unmeasured.** Reasoned. Our data shows strong
+  regression toward ~58.5 games and even the most durable cohort averages 65, not 75 - but I have no
+  consensus GP assumption to compare against, and by design our blending layer never queries one.
+- **Age curves are unmeasured and I declined to proxy them.** Driven negative: `PlayerIndex` returns
+  27 columns with `DRAFT_YEAR`/`FROM_YEAR`/`TO_YEAR` and **no birth date or age**. A career-stage
+  proxy from a ten-season window is left-censored for anyone who debuted before 2015-16, so every
+  age claim in the strategy doc is labelled unmeasured rather than badly estimated. Separately,
+  `PlayerIndex` returned only 137 rows for 2024-25, which I cannot explain and did not chase.
+- **My own >=500-minute filter is an instance of the bias I am warning about.** Reasoned, and
+  unavoidable given the data - the GP figures are conditional on having appeared, which is exactly
+  the conditioning `arXiv:2603.26935` indicts. Reported as a range for that reason.
+- **EPM's methodology could not be retrieved.** Driven: `dunksandthrees.com/epm` and `/about` are
+  client-rendered and returned only a navigation skeleton. No resolvable primary source. Likewise the
+  widely-repeated CountTheBasket per-minute reliability figures - Wayback and
+  `basketball-reference.com/about/reliability.html` both 404. I cite them nowhere as evidence.
+- **No published year-over-year correlation for NBA games played was found at all.** Driven search,
+  nothing returned. So the GP figures here may be the only ones we have; treat them as ours to defend,
+  not as corroborated by anyone.
+- **The blending-card correlation note is an inference, not a measurement.** I did not measure the
+  correlation between the sources in the contract. I measured the naive-baseline ceiling and argued
+  from it. Reasoned, and labelled as such in the card.
+- **Observed, not fixed:** `PLAIN-ENGLISH.md` still stops at ADR-009, so ADR-010 onward remain absent
+  and my ADR-007 amendment is invisible to a reader who starts there. The previous entry flagged the
+  same thing. Two entries naming it and neither fixing it makes it a pattern.
