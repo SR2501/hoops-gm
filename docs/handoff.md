@@ -16743,3 +16743,68 @@ me, which is the correct use of this file.
 - **I did not re-examine the seven items merged from #67 beyond their edges**, unchanged from the
   previous entry. Two of them describe this PR's units and I have now read one of those two closely
   enough to mark it done; the other five are still only known to be well-formed.
+
+## 2026-08-22 - `backend` lane - Unit 2's delta path finally ran, and it ran a build earlier than I predicted
+
+**Unit 2 is no longer unverified.** Previous entries said the delta path would first execute on the
+second `main` build after #65. **That was wrong, and wrong in the safe direction** - it ran on the very
+next *pull request*, because a PR branch can read the default branch's cache. Run `32560274061`:
+
+```
+Cache hit for restore-key: run-metrics-backend-c3f86bb...
+Cache restored from key:   run-metrics-backend-c3f86bb...
+```
+
+Both jobs restored, both printed a table. What I had been calling a prediction about `restore-keys`
+prefix semantics is now **driven**: the exact key missed, the prefix hit, and the baseline came back.
+
+**The precondition I checked before the outcome.** The merge build's save step really wrote something -
+`Cache saved with key: run-metrics-frontend-c3f86bb...`, and `gh cache list` shows both entries at
+6.58 KiB and 31.25 KiB. Without that, "cache-miss confirmed" would have been indistinguishable from
+"the feature is broken and quiet".
+
+**The first real numbers:**
+
+| | previous | current | delta |
+|---|---|---|---|
+| backend `suite.test_time_ms` | 348,122.0 | 206,746.0 | -141,376.0 (-40.6%) |
+| backend `suite.tests` | 1,431 | 1,443 | +12 |
+| frontend `suite.test_time_ms` | 6,520.6 | 6,005.1 | -515.5 (-7.9%) |
+| frontend `suite.tests` | 194 | 194 | +0 |
+
+**The two count fields agree with each other**, which is the structural fix earning itself: `+12` on
+the headline and `12 test(s) not in the baseline, 0 in the baseline and not here` are derived from one
+enumeration and **cannot disagree**. Twelve is exactly the number of tests this PR adds.
+
+**A claim I nearly made and had to withdraw.** I was about to record frontend's
+`0 not in the baseline, 0 in the baseline and not here` as proof that relativising vitest's absolute
+`testResults[].name` works. **It is not proof.** GitHub's workspace root is
+`/home/runner/work/hoops-gm/hoops-gm` on both runs - verified in both logs - so **absolute paths would
+have matched too.** What this run shows is that the stored names *are* relative
+(`src/routes/SchedulePage.test.tsx::...`); it does **not** discriminate between the two
+implementations, because the environment that would break the unrelativised one never varies here. The
+relativisation still earns its place for local-versus-CI and for a runner whose root differs, but
+**that is reasoned, not driven, and this run did not change that.**
+
+**The -40.6% is almost certainly not a speedup, and the tool is right not to say so.** The biggest
+movers are all ~1,500-3,200ms collapsing to a ~200-280ms floor, which is the shape of session-scoped
+fixture and database warm-up being charged to whichever test happens to touch it first. **The set of
+tests that pays that cost differs between runs**, so the per-test table's top rows are attribution
+noise rather than signal. Two consequences worth stating:
+
+- **This is the strongest possible argument for print-don't-judge.** A threshold on suite total would
+  have fired on a **40% improvement** here, on the first run it ever had a baseline. Any direction of
+  threshold is wrong on this data.
+- **The motivating case is still not demonstrated.** The bug that commissioned this unit was a
+  *monotone climb across five runs*. One baseline cannot show a trend, and the per-test view is noisy
+  at the top. The unit makes a number visible against its predecessor, which is what it claims; it does
+  not yet show a sequence.
+
+**Could not verify:**
+- **Whether the per-test top-movers table is worth its width.** On its first real run its top fifteen
+  rows are dominated by fixture-attribution artefacts. I have one observation and will not redesign on
+  one observation, but if the next few runs look the same, the honest change is to rank by absolute
+  delta only above some duration floor, or to drop the per-test table and keep the totals.
+- **Whether suite-total is the right denominator** remains argued rather than measured, unchanged.
+- **Relativisation of vitest paths is untested by any environment that varies the root** - see above.
+  It is the one part of Unit 2 that still rests on reading the schema rather than on driven output.
