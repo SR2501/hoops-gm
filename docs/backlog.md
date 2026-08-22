@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**46 done - 1 blocked - 83 pending - 130 total**
+**46 done - 1 blocked - 86 pending - 133 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 130 `###` headings, 130 unique item slugs and 130 markers, 1:1, no
+two headers: 133 `###` headings, 133 unique item slugs and 133 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -1509,7 +1509,7 @@ form is the thing to fix.
 ### `draft-log-virtualisation` - The draft log is fifteen screens and violates the five-second rule
 
 - [ ] **pending**
-- **Depends on:** `draft-board-screen`
+- **Depends on:** `draft-tracker`
 
 `.github/agents/frontend.md` says *design for one screen* and *if a view cannot be
 read in five seconds during a pick clock, it belongs in an evidence view*. The
@@ -2045,4 +2045,5 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 - **Depends on:** `expected-games`, `projection-blending`, `scoring-profiles`
 
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
+
 

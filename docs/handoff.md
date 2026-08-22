@@ -16053,3 +16053,51 @@ form when your base has itself been rebased. Aborted and redid it; nothing lost.
 
 - **Whether one entry among 170 can be found under time pressure.** Reasoned, still.
   See `draft-log-virtualisation`.
+
+## 2026-08-22 - frontend - My own backlog item had the dangling edge the header warns about
+
+Rebased onto `922e2c3`, which brings #65's backlog-graph CI. Ran it against my
+tree and it passed. Then I planted the defect it exists to catch - repointed
+`draft-log-virtualisation` at `draft-board-screen`, which is **not a slug in this
+file** - and it failed three tests by name, including
+`test_the_real_backlog_is_clean`. So the suite genuinely reads `docs/backlog.md`
+rather than a fixture, and my clean run meant something.
+
+**I had written that dangling edge myself, an hour earlier.** There is no
+`draft-board-screen` item; the screen lives under `draft-tracker`, whose marker
+already says *"the screen landed 2026-08-21"*. `docs/backlog.md`'s header warns
+about exactly this - *"a dependency edge can be dangling and nothing says so"* -
+and names a live example from the day before. I read that paragraph, wrote a new
+item, and put a dangling edge in it. Naming a defect class does not stop you
+producing one; the CI job that landed in the same rebase did.
+
+Worth recording that my first attempt to plant it was itself vacuous: a
+`-replace` whose pattern did not match, so the file was unchanged and the suite
+passed. The "planted:" line I had printed to confirm the edit **did not appear**,
+which is the only reason I noticed. **An experiment that quietly fails to set up
+reports the null result you were testing for.** Second time tonight that printing
+the observed state rather than the intended one saved a conclusion.
+
+### Rebasing when your own base has been rebased
+
+`git rebase <newbase>` replays every commit `<newbase>` cannot match by patch-id -
+which, when the base branch has itself been rebased, is **the base lane's entire
+history**. I hit conflicts in `backend/src/hoops_gm/draft/service.py`, a file I do
+not own and had never edited, and was one `--continue` from carrying another
+lane's half-resolved backend code inside a frontend PR.
+
+**Use `git rebase --onto <new base tip> <old base tip>`**, which replays only the
+commits that are actually yours. Check with `git log --oneline <old base tip>..HEAD`
+first and confirm the list is your work and nothing else. This will bite the next
+stacked pair, and the draft board was stacked through four base rebases in one
+night.
+
+### Could not verify
+
+- **Whether the screen still reads well.** Still not driven. The browser canvas
+  times out on every action across five instances; the coordinator reproduced it
+  independently on a sixth, so it is the shared tool rather than this worktree.
+  `#66` is held unmerged until someone looks at the screen, which is the right
+  outcome.
+- **Whether the graph job checks edge *direction* or only slug existence.** Reasoned.
+  I planted a non-existent target and it was caught; I did not plant a cycle.
