@@ -17058,3 +17058,131 @@ diff should also be reworded; I left it because it records what a lane did, but 
 for the technique could take the narrative as the rule. And I did not check whether the other
 `origin/main` slug diffs recorded in this file produced wrong answers at the time - several were
 run right after a rebase, where the wrong base and the right one coincide.
+
+## 2026-08-22 - data-engineer - Seeding the market's auction values, and the branch that could not be entered
+
+`aav-source`. Published AAV imported as **market evidence, not a valuation input** (ADR-008,
+plan.md:305) - four new market-layer tables, a parser, a source registry, a circularity guard, a CLI
+and a manual-download adapter page. Derives no number; the Model gate does not apply and I kept it
+that way.
+
+**The finding that decided the unit's value.** Basketball Monster's auction values are a
+deterministic z-score transform of the BBM projections **we already import**. Seeding from BBM would
+have benchmarked us against our own primary projection input with a dollar sign on it - every match
+fake agreement, every divergence measuring the gap between two valuation formulas rather than a
+difference of opinion about a player. It was also the most tempting source, because we have paid for
+it and verified its export. It is registered anyway, specifically so the guard has something real to
+refuse rather than a branch that is green because nothing enters it.
+
+**Circularity is a refusal, not a warning** (`hoops_gm.market.independence`). A source whose
+projection lineage intersects our own imported projection sources is refused as *independent
+evidence* - not refused import, not refused display. The message says "THIS IS THE GUARD WORKING, NOT
+A DATA ERROR", because a refusal whose reason is unclear is the one that gets loosened. It keys on
+sources with **at least one import**, not on registration: a source we registered and never imported
+cannot have contaminated anything.
+
+**Shared method is a different failure from copying.** Hashtag, BBM, RotoWire and FantraxHQ all run
+the same z-score -> value-above-replacement -> budget-distribution arithmetic over *independently
+generated* projections. Their correlation is therefore strong evidence they do the same maths and
+weak evidence they agree about players. `derivation_method` and `auction_value_source_inputs` are two
+separate fields for this reason.
+
+**I falsified an inference I had been handed.** The FantraxHQ budget was described to me as "inferred
+$200 from Jokic at $74". Its published pool is 194 rows, exactly 156 non-zero, summing to **$2,655** -
+10.6% above a 12x$200 pool of $2,400, against rounding noise of sqrt(156)*0.289 ~ 3.6, so roughly
+70 sigma. The budget is recorded `UNESTABLISHED`, not inferred. Team and slot counts survive as
+inferences and are flagged inferred. The test re-derives the verdict from the transcribed counts
+rather than restating the sentence, so it is checkable rather than quoted.
+
+**`basis_category_count` was added mid-build** after realising `ScoringType` cannot express category
+*count*: 8-cat and 9-cat are both `h2h_categories`, are produced by different arithmetic, and are not
+comparable. Live, not hypothetical - FantraxHQ is 8-cat and the owner's league is 9-cat. This is the
+"two incomparable numbers made to look comparable" defect in the place it would actually have bitten.
+
+**Green-but-unentered, driven rather than assumed.** Branch coverage put the CLI at **0% - 124
+statements no test had ever entered**. Writing 18 tests that drive `main` end-to-end surfaced a real
+defect: `main` built a `Database` and never disposed it, leaking the engine and raising
+`PytestUnraisableExceptionWarning` on GC. The projections CLI disposes in a `finally`; mine did not.
+All nine new modules are now at **100% statement and branch coverage**, with two `# pragma: no cover`
+exclusions that are argued in comments rather than asserted.
+
+**The same defect class in a new shape, and the reason it mattered.** `importer.py` had a branch for
+"the resolver accepted the match but the player has no NBA crosswalk row", which skipped the row
+silently. No test could enter it, and the reason was structural rather than an oversight:
+`build_player_targets` *derives* its targets from `player_external_ids` where source = NBA, so a
+player without an NBA link is never a resolution target at all. The branch was unreachable **and
+silent** - a divergence between those two queries would have dropped a priced player out of every
+count while every count still added up. Replaced with a `raise` naming the invariant. Unreachable and
+loud is fine; unreachable and silent is the combination that hides.
+
+**A convenient argument of my own, caught by re-reading.** I first wrote the adapter page claiming
+"no live smoke, deliberately - a probe would mean crawling a publisher". Then I noticed BBM is *also*
+manual-download and *does* have one, opt-in via an env var path. My reasoning had been rhetorically
+convenient: nothing can be polled, but the **shape of the table the operator copies out** drifts, and
+a contract test pinned to a months-old fixture cannot see that. There is now an opt-in smoke, and I
+drove it rather than shipping it skipping - it passes on a real export and goes red on a renamed
+value column, on a header-only file, and on a negative dollar figure, at **three different
+assertions**. Driving the negative case showed the parser rejects it fatally first, so a further
+non-negative assertion could never be reached; I deleted it rather than ship an assertion no input
+can enter.
+
+**Hashtag projections cannot be imported at all today.** `import_projection_csv` refuses an unverified
+profile and only Basketball Monster is verified, so the guard's Hashtag arm - the case everyone
+including me described as "it fires the day we import Hashtag projections" - **cannot be driven
+through the production path**, because that path refuses Hashtag one step earlier. Pinned as an
+executable test asserting the refusal rather than left as a comment. The guard itself is proved
+end-to-end against a real BBM projection import through the real CSV path.
+
+**Deliberate departure from the projections precedent.** That importer pins exact headers and refuses
+an unverified profile. Copying it here would refuse every source, and would be a misplaced check
+rather than a strict one: **no NBA auction-value publisher offers a machine-readable export**, so the
+header spelling in the CSV describes our clipboard, not the source's contract. `header_contract_verified`
+is `False` everywhere and honestly so; the import gate sits on **basis and derivation** instead.
+
+**Fixture-deletion check, driven.** Deleting each of the four fixtures in turn takes the suite red; so
+does emptying one, and so does truncating one to its header. `REQUIRED_FIXTURES` is asserted non-empty
+and each file asserted present and non-empty before any test reads one.
+
+**Cross-dialect, and not deferred.** Migration 0017 driven from empty on **both** SQLite and
+PostgreSQL 16.9 - first line `Running upgrade  -> 0001`, 17 steps, per the rule that a run not
+beginning at `-> 0001` is not a run from empty. `alembic check` clean and `downgrade base` clean on
+both. All 6 CHECK-constraint violations driven and refused on both dialects. Full suite green on
+both. The basis-pairing CHECK is written as an explicit two-armed disjunction because SQLite and
+PostgreSQL disagree about comparing boolean expressions - found by driving it, not by reading.
+
+**A small one worth recording.** `pytest -q` printed no summary line for three runs and I nearly
+reported "exit code 0". `addopts` already contains `-q`, so my extra flag made it `-qq`, which
+suppresses the count. **Report the state you observed** - and an exit code is not a count.
+
+**Backlog:** recounted from the finished file, 45/76 -> **46 done, 1 blocked, 75 pending, 122 total**;
+122 headings, 122 unique slugs, 122 markers. Separately diffed the slug set against `origin/main`:
+122 both sides, zero added, zero dropped, with the diff asserting `origin/main` parsed non-empty
+**before** comparing, because a diff against zero slugs reports "nothing dropped" for the same reason
+any empty set answers anything. `scripts/resolve_doc_conflicts.py` was not run on this file.
+
+**Could not verify:**
+- **Whether a FantraxHQ 2026-27 edition exists.** Only the 2025-26 page was ever fetched, and the
+  $2,655 arithmetic is transcribed from it. **Reasoned, not driven** - I did not re-fetch, and if the
+  2026-27 table has a different row count the falsification needs redoing. It would not change the
+  ruling (the budget stays unestablished either way) but it would change the evidence.
+- **Hashtag's own published methodology was read, not executed.** The claim that its values are
+  z-score -> VAR -> budget-distribution over its own projections is from its documentation and the
+  configurability of its UI. **Reasoned.** I could not confirm it by reproducing a value, and I did
+  not try, because reproducing it would be deriving a number and that is outside this gate.
+- **Yahoo's window, league-size mix and drafts-per-average are recorded `unestablished`.** That is a
+  driven negative in the weak sense that I looked and the page does not state them; it is **reasoned**
+  as to whether they are documented anywhere else. Recorded as unestablished rather than blank
+  precisely so the difference survives.
+- **No auction value has been imported from a real publisher export.** Every fixture is synthetic or
+  transcribed, and labelled as such in its `.metadata.json` (`what_is_verified` / `what_is_synthetic`
+  / `what_could_not_be_established` as three separate fields). The live smoke exists to catch the
+  first real download drifting, and **has never run against a real AAV export** - only against a
+  fixture, to prove it can fire. **Driven that it fires; reasoned that it will fire on the right
+  thing.**
+- **`AuctionValueImport.notes` is declared and never set by the importer.** Observed, not fixed. It is
+  a column with no writer, which is the shape of a field that will later be assumed populated.
+- **`_MAX_PLAUSIBLE_DOLLARS = 1000` is a mis-mapped-column guard, not a budget claim,** and nothing
+  enforces that reading beyond its name and a comment. **Reasoned.**
+- **Whether the two `# pragma: no cover` exclusions are genuinely unreachable.** Both are argued from
+  reading the query that builds the targets, and one of them I converted to a `raise` for exactly that
+  reason. **Reasoned, not driven** - I could not construct an input that enters either.

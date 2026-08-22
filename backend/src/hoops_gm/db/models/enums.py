@@ -152,6 +152,84 @@ class InjuryReportStatus(enum.StrEnum):
     NOT_YET_SUBMITTED = "not_yet_submitted"
 
 
+class AuctionValueKind(enum.StrEnum):
+    """Whether one published dollar figure is an estimate or an observed price.
+
+    **Per value, not per publisher.** Yahoo's draft-analysis tool publishes a
+    projected auction value *and* an observed average auction value for the
+    same player in the same table, so deriving the kind from the source name
+    is wrong by construction — one source emits both. Pulling that table into
+    a single "value" column silently averages a model's output together with
+    market observation, which are the two things this layer exists to keep
+    apart.
+
+    ``PROJECTED`` is somebody's model converted to dollars. ``OBSERVED_MARKET``
+    is what somebody actually paid. Only the second is evidence about the
+    market; the first is evidence about a competitor's opinion.
+    """
+
+    PROJECTED = "projected"
+    OBSERVED_MARKET = "observed_market"
+
+
+class BasisEvidence(enum.StrEnum):
+    """How we came to know one of a published price list's basis facts.
+
+    Three values, not two, for the same reason :class:`FieldEvidence` has
+    three: a fact we looked for and could not find is a different claim from
+    one the source printed, and both are different from one we worked out
+    ourselves. Collapsing them loses precisely the distinction that decides
+    whether a dollar figure can be compared against anything.
+
+    The live case is FantraxHQ, whose auction table prints no budget at all.
+    A budget recorded as ``INFERRED`` obliges us to say how it was inferred;
+    recorded as ``UNESTABLISHED`` it stops the numbers being used as a
+    benchmark until someone establishes it. Left blank it would have been
+    indistinguishable from a budget nobody thought to check.
+    """
+
+    #: The source printed it. Quote it in the note or the adapter page.
+    STATED = "stated"
+    #: We worked it out. ``basis_note`` must say from what, so the next reader
+    #: can disagree with the reasoning rather than inherit the conclusion.
+    INFERRED = "inferred"
+    #: We looked and could not establish it. An investigated absence, which is
+    #: evidence; not a blank, which is silence.
+    UNESTABLISHED = "unestablished"
+
+
+class AuctionValueDerivation(enum.StrEnum):
+    """The *method* a publisher used to arrive at a dollar figure.
+
+    Kept separate from what the method consumed
+    (:class:`AuctionValueInputKind`), because the two answer different
+    questions and recording only the first hides the failure that matters.
+
+    Hashtag Basketball, Basketball Monster, RotoWire and FantraxHQ all run the
+    same z-score → value-above-replacement → budget-distribution arithmetic,
+    over projections that appear to be independently generated at each. Their
+    outputs therefore correlate strongly, and that correlation is good evidence
+    they do the same maths and weak evidence they agree about players. A single
+    "derived from projections" field cannot express that; two fields can.
+    """
+
+    Z_SCORE_BUDGET_DISTRIBUTION = "z_score_budget_distribution"
+    EDITORIAL = "editorial"
+    OBSERVED_PLATFORM_AUCTIONS = "observed_platform_auctions"
+    #: Investigated and not determined. Say where you looked in
+    #: ``derivation_evidence``, which is CHECK-constrained to be non-empty.
+    UNESTABLISHED = "unestablished"
+
+
+class AuctionValueInputKind(enum.StrEnum):
+    """What kind of upstream quantity a publisher's method consumed."""
+
+    PROJECTIONS = "projections"
+    ADP = "adp"
+    OBSERVED_AUCTIONS = "observed_auctions"
+    EDITORIAL_JUDGEMENT = "editorial_judgement"
+
+
 class MatchMethod(enum.StrEnum):
     """How an external identifier came to be attached to a canonical player."""
 

@@ -6,7 +6,11 @@ Availability — ``player_participation``, the ledger of who took part in what.
 Phase 3/4 add schedule context (``opponent_context``, ``off_night_slates``).
 Phase 5 adds the ``csv-importer`` slice of Projections — ``projection_sources``,
 ``projection_profile_versions``, ``projection_imports``, ``projections`` (per-game rates) and
-``source_games_played_assumptions``. Blending, the baseline model and
+``source_games_played_assumptions``. Phase 8 adds the *market* layer —
+``auction_value_sources``, ``auction_value_source_inputs``,
+``auction_value_imports`` and ``published_auction_values`` — which stores what
+other people published, at ``data_layer = 'market'``, and derives nothing.
+Blending, the baseline model and
 ``expected-games`` fusion are not implemented here; they consume this table
 and belong to their own backlog items. Phase 8 adds the *recorded* half of
 Draft — ``drafts``, ``draft_participants`` and the append-only ``draft_events``
@@ -32,6 +36,10 @@ from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.draft import Draft, DraftEvent, DraftParticipant
 from hoops_gm.db.models.enums import (
+    AuctionValueDerivation,
+    AuctionValueInputKind,
+    AuctionValueKind,
+    BasisEvidence,
     CategoryKind,
     CategoryOutcome,
     Conference,
@@ -71,6 +79,12 @@ from hoops_gm.db.models.league import (
 )
 from hoops_gm.db.models.league_settings import LeagueSettingsSnapshot
 from hoops_gm.db.models.lineage import RefreshRun
+from hoops_gm.db.models.market import (
+    AuctionValueImport,
+    AuctionValueSource,
+    AuctionValueSourceInput,
+    PublishedAuctionValue,
+)
 from hoops_gm.db.models.projections import (
     Projection,
     ProjectionImport,
@@ -85,7 +99,14 @@ from hoops_gm.db.models.stats import NbaGame, PlayerGameLog, PlayerSeasonStat
 __all__ = [
     "AbsenceSplit",
     "AbsenceSplitComputationRun",
+    "AuctionValueDerivation",
+    "AuctionValueImport",
+    "AuctionValueInputKind",
+    "AuctionValueKind",
+    "AuctionValueSource",
+    "AuctionValueSourceInput",
     "Base",
+    "BasisEvidence",
     "BridgePayload",
     "CategoryKind",
     "CategoryOutcome",
@@ -128,6 +149,7 @@ __all__ = [
     "ProjectionImport",
     "ProjectionProfileVersion",
     "ProjectionSource",
+    "PublishedAuctionValue",
     "RefreshArtifactType",
     "RefreshRun",
     "RosterEntry",

@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**47 done - 1 blocked - 86 pending - 134 total**
+**48 done - 1 blocked - 85 pending - 134 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers. **The count above is no longer restated anywhere in this file**, and
@@ -45,6 +45,30 @@ behaved exactly as described: the recount moved 118 -> 120 and could not have
 seen a loss, while the slug diff independently confirmed
 zero of main's 118 entries were dropped and exactly two were added. The script
 was not run on this file.
+
+**The `aav-source` lane ran the pair twice on 2026-08-22 and the second run is the
+instructive one.** Before rebasing, both checks agreed trivially: the recount moved
+45/76 -> 46/75 with the total unchanged at 122, and the slug diff found 122 on both
+sides, zero added, zero dropped — expected, because the lane closed a marker rather
+than adding an item. Recorded even so, because a lane that reports the pair only when
+it disagrees is a lane whose silence is ambiguous.
+
+Then `main` moved to `642bdb6` and the rebase conflicted on this header. **Neither
+side was usable and both were wrong**, exactly as the paragraph above predicts: `HEAD`
+said 129 total and the branch said 122, and the answer — 46/1/82/129 — is on neither
+side, because each was computed before the other landed. It came from recounting the
+resolved file.
+
+**And the number arrived in a message was wrong in a third way.** The coordinator
+relayed `main` as "128 items, 45 done / 1 blocked / 82 pending"; recounting
+`origin/main:docs/backlog.md` directly gives **45/1/83/129**, and that file's own
+header agrees with itself. Off by one on both total and pending. Nobody erred
+carelessly — the number was simply restated somewhere that cannot recount itself,
+which is the failure this header exists to prevent, arriving through chat rather
+than through a rebase. **Recount from the file; a number in a message is a copy, and
+a copy is stale on arrival.** The diff also asserts `origin/main`'s slug set parses
+non-empty **before** comparing, because a diff against zero slugs reports "nothing
+dropped" for the same reason an empty set reports anything you ask of it.
 
 **A dependency edge can be dangling and nothing said so.** Tracing the auction
 chain on 2026-08-21 to rule on sequencing turned up
@@ -1094,10 +1118,24 @@ AUCTION CRITICAL (R37, track B). Every auction mock yields real clearing prices 
 
 ### `aav-source` - Sourcing and importing seed auction values
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `csv-importer`, `fantrax-official-adapter`
 
-AUCTION CRITICAL (R37, track A). Import published AAV from whatever sources the owner finds, through the generic CSV importer rather than a bespoke path. Each source is a row in projection_sources with its own weight. MUST normalise to this league budget pool, team count and roster size before anything downstream uses it (R39) - a $200/12-team/13-spot league produces entirely different dollar values than $100/10-team/10-spot, and a raw import is silently wrong. Capture each source assumed scoring format too; most published AAV targets points leagues or default 9-cat.
+AUCTION CRITICAL (R37, track A). Import published AAV from whatever sources the owner finds, through the generic CSV importer rather than a bespoke path. MUST normalise to this league budget pool, team count and roster size before anything downstream uses it (R39) - a $200/12-team/13-spot league produces entirely different dollar values than $100/10-team/10-spot, and a raw import is silently wrong. Capture each source assumed scoring format too; most published AAV targets points leagues or default 9-cat.
+
+**AMENDED 2026-08-22, boundary ruling.** This entry originally said "each source is a row in projection_sources with its own weight". That is superseded: seed AAV lives in its own market-layer tables (`auction_value_sources`, `auction_value_source_inputs`, `auction_value_imports`, `published_auction_values`, `data_layer = 'market'`), reusing the CSV importer's *patterns* and not its tables. Recorded here so nobody re-derives the discarded design from the older sentence.
+
+Three grounds, each independently checkable and each sufficient. (1) `ProjectionSource` carries a CHECK listing projection publishers; Yahoo, FantraxHQ, RotoWire and ESPN publish no projections, so admitting them means widening a projection-layer constraint to hold non-projection publishers. (2) `ingest/projections/profiles.py` `TERMINAL_HEADER_ALIASES` already lists `aav`, `auction value` and `dollar value` - the projection parser was **built to refuse exactly this quantity**. (3) ADR-008 is Accepted and `plan.md` line 305 is explicit: a seeded AAV is market evidence, not a valuation input. This entry predates that ADR being accepted; **the ADR wins**.
+
+Also settled while building, and load-bearing for `aav-blending`:
+
+- **R39 is split.** Disclosure is this item's half and is done: basis is mandatory, non-defaultable, and records per field whether it was *stated by the source* or *inferred by us*. The conversion half - proportional vs surplus-above-reserve scaling produce materially different dollars for the same player - is a Model-gate act and belongs to `auction-values`/`quant`. This item deliberately does not convert.
+- **Circularity is a refusal, not a warning** (`hoops_gm.market.independence`). A source whose projection lineage intersects our own imported projection sources is refused as *independent evidence* - not refused import, not refused display. It fires on Hashtag the day Hashtag projections are imported; that is the guard working.
+- **Basketball Monster is disqualified as a benchmark** for as long as BBM projections are in our blend: its auction values are a deterministic z-score transform of the BBM projections we already import. It is registered anyway so the guard has something real to refuse.
+- **`value_kind` is per row, not per source.** Yahoo publishes a projected value and an observed average cost in the same table.
+- **`basis_category_count` exists because `ScoringType` cannot express category count.** 8-cat and 9-cat are both `h2h_categories` and are not comparable. FantraxHQ is 8-cat; the owner's league is 9-cat.
+
+See `docs/adapters/published-auction-values.md`.
 
 ### `action-protocol` - Defining the automation action protocol
 

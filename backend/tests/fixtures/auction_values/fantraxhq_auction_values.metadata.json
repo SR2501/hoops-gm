@@ -1,0 +1,47 @@
+{
+  "fixture": "fantraxhq_auction_values.csv",
+  "source_slug": "fantraxhq",
+  "profile_id": "fantraxhq-auction-values",
+  "published_page": "https://fantraxhq.com/2025-26-fantasy-basketball-auction-values/",
+  "read_on": "2026-08-21",
+
+  "what_is_verified": [
+    "The header contract: the published table's columns are Rank, Player, Team, Position, Value, in that order.",
+    "Value formatting: a dollar sign followed by an integer, e.g. '$74'. No decimals appear anywhere in the table.",
+    "Multi-position cells are comma-separated inside one cell, e.g. 'SF,PF'.",
+    "Player names are rendered 'First Last' with no suffix column.",
+    "The tail of the table carries an explicit '$0' rather than an empty cell, which is a published claim that a player is not worth rostering, not an absent price.",
+    "The page states: 'The prices are optimized for 8-category leagues with 156 rostered players'.",
+    "No budget, team count or per-team dollar figure is printed anywhere on the page."
+  ],
+
+  "what_is_synthetic": [
+    "Every player name, team, position and dollar value in the CSV. FantraxHQ's table is editorial content and this repository redistributes none of it.",
+    "The row count. The published table has 194 rows; this fixture has 10, chosen to exercise the same branches (multi-position cell, explicit $0 tail, ignored Rank column)."
+  ],
+
+  "transcription_of_the_published_table": {
+    "note": "Counted and summed by hand from the live page on 2026-08-21 in order to test the '$200 budget' inference that arrived with this source. The inference did not survive it.",
+    "total_rows": 194,
+    "nonzero_rows": 156,
+    "nonzero_value_sum_dollars": 2655,
+    "zero_rows": 38
+  },
+
+  "the_inference_that_failed": {
+    "claim_tested": "FantraxHQ prices a standard 12-team, $200-per-team auction, so its basis can be inferred as $200.",
+    "pool_implied_by_that_claim_dollars": 2400,
+    "pool_actually_published_dollars": 2655,
+    "excess_pct": 10.6,
+    "rounding_noise_bound_dollars": 3.6,
+    "rounding_noise_derivation": "The published values are whole dollars, so each carries at most $0.50 of rounding, with standard deviation 1/sqrt(12) = 0.289. Over 156 independent roundings the sum's standard deviation is sqrt(156) * 0.289 = 3.6. A $255 gap is roughly seventy standard deviations away and is not rounding.",
+    "conclusion": "basis_budget is UNESTABLISHED for this source, not $200. The published pool implies $221.25 per team at 12 teams, which is not a number any league uses, so the discrepancy is more likely to be in the method than in the team count.",
+    "what_survives": "156 rostered players is printed on the page, and 12 teams x 13 roster slots = 156 exactly. Team count and roster size remain reasonable INFERRED values with that arithmetic as the note. Only the budget is unestablished."
+  },
+
+  "what_could_not_be_established": [
+    "Whether a 2026-27 edition of this table exists. Only the 2025-26 page was read, so the header contract is what was verified, not the season.",
+    "The arithmetic behind the values. The article publishes no methodology, which is why the source's derivation_method is 'editorial' rather than a z-score family.",
+    "Which eight categories the '8-category' label refers to. The count is recorded in basis_category_count; the identity of the categories is not mechanically checkable and belongs in basis_note."
+  ]
+}
