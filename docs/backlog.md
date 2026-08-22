@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**48 done - 1 blocked - 85 pending - 134 total**
+**48 done - 1 blocked - 86 pending - 135 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers. **The count above is no longer restated anywhere in this file**, and
@@ -57,7 +57,10 @@ Then `main` moved to `642bdb6` and the rebase conflicted on this header. **Neith
 side was usable and both were wrong**, exactly as the paragraph above predicts: `HEAD`
 said 129 total and the branch said 122, and the answer — 46/1/82/129 — is on neither
 side, because each was computed before the other landed. It came from recounting the
-resolved file.
+resolved file. The lane then added `hashtag-projection-profile-verification` in the
+same unit, taking it to 46/1/83/130 — recounted again afterwards rather than
+incremented, because an arithmetic step on a number you just recounted is a new copy
+with the same failure mode as the old one.
 
 **And the number arrived in a message was wrong in a third way.** The coordinator
 relayed `main` as "128 items, 45 done / 1 blocked / 82 pending"; recounting
@@ -1098,7 +1101,7 @@ EXTERNALLY BLOCKED 2026-08-17: the owner found no site currently offering live m
 ### `aav-blending` - Blending AAV across sources with per-source weights
 
 - [ ] **pending**
-- **Depends on:** `aav-empirical`, `aav-source`, `layer-purity`
+- **Depends on:** `aav-empirical`, `aav-source`, `hashtag-projection-profile-verification`, `layer-purity`
 
 AUCTION CRITICAL (R37). Weighted blend of seed AAV sources plus the empirical corpus source, reusing projection-blending machinery rather than a second implementation. Versioned so every dollar value traces to its inputs. Manual per-source weight overrides supported, since the owner has priors about which sources are good.
 
@@ -1727,6 +1730,28 @@ Where the league caps games per week or per position, burning the cap early stra
 - **Depends on:** `zscore-engine`
 
 G-score per arXiv 2307.02188, absorbing both production variance and availability variance into the same framework. Default valuation scheme for H2H leagues.
+
+### `hashtag-projection-profile-verification` - Verifying the Hashtag Basketball projection profile so it can be imported
+
+- [ ] **pending**
+- **Depends on:** `csv-importer`
+
+Owned by `data-engineer`. `import_projection_csv` refuses any profile that is not
+verified, and Basketball Monster is currently the only verified profile — so **Hashtag
+projections cannot be imported today at all.** This item is the missing step, and it
+exists because `aav-source` went looking for the circularity guard's Hashtag arm and
+found it guarded a path that does not exist.
+
+Verify a real Hashtag projection export the way the BBM profile was verified: header
+aliases against an actual downloaded file, units and per-game-versus-total basis
+checked against an independent source rather than against the header's own claim, and
+a recorded fixture plus contract test per the Adapter gate.
+
+**Blocks `aav-blending`, not `aav-source`.** Seeding Hashtag *auction values* needs
+nothing from this; it is importing Hashtag *projections* that is refused. But the
+moment those projections are imported, the `aav-source` independence guard will
+correctly refuse Hashtag AAV as independent evidence — so whoever does this work
+should expect that refusal and read it as the guard working.
 
 ### `injury-conversion-cohort-population` - Populating a representative historical injury-report/participation cohort
 

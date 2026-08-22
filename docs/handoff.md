@@ -17186,3 +17186,65 @@ any empty set answers anything. `scripts/resolve_doc_conflicts.py` was not run o
 - **Whether the two `# pragma: no cover` exclusions are genuinely unreachable.** Both are argued from
   reading the query that builds the targets, and one of them I converted to a `raise` for exactly that
   reason. **Reasoned, not driven** - I could not construct an input that enters either.
+
+### Addendum, same unit - the rebase, the crosswalk ruling, and two false sentences about my own code
+
+**Rebase onto `642bdb6`.** Conflicts in `docs/backlog.md` (header) and `docs/handoff.md` (both sides
+appended entries). Kept both sides in date order. Recounted from the resolved file rather than
+reconciling: **46 done / 1 blocked / 83 pending / 130 total**, 130 headings, 130 unique slugs, 130
+markers. Slug diff against `origin/main`: 129 there, 130 here, one added, **zero dropped** - the
+added slug is the new item below. `origin/main`'s header asserts a single alembic head and `0017`
+sits on `0016` with no collision; both driven.
+
+**A number relayed in a message was wrong, and the file was right.** The coordinator relayed `main`
+as "128 items, 45/1/82". Recounting `origin/main:docs/backlog.md` directly gives **45/1/83/129**, and
+that file's own header agrees with itself. Nobody was careless - the number was restated in a place
+that cannot recount itself. Same failure the header has documented for rebases, arriving through
+chat instead. **Driven** (both sides recounted from their own files).
+
+**My conflict-marker scan matched prose about conflict markers.** Resolving `handoff.md` I searched
+for `<<<<<<< HEAD` with a plain substring match and it hit **line 10732** - an earlier handoff entry
+*quoting* a marker inside a sentence - not the conflict at 14578. The resolution I built on it left
+the real marker in place, and the only reason I noticed is that a final assertion re-scanned the
+merged text. Fixed by anchoring to line starts (`^<<<<<<< `, `^=======$`, `^>>>>>>> `) and asserting
+**exactly one of each**. `9f0561f` on `main` fixed the same class in `resolve_doc_conflicts.py` by
+matching the separator by equality rather than prefix; I hit the mirror image of it by hand an hour
+later. **The general form: a scanner for syntax must exclude prose that discusses that syntax, and a
+repository whose docs quote their own machinery is exactly where this bites.** Driven.
+
+**Two sentences I wrote about my own code were false, and both took ninety seconds to disprove.**
+Writing the crosswalk decision I asserted that unresolved names "land in `unmatched_count` with the
+verbatim text preserved, so the gap shows up as data." Checking `importer.py:346-348`: unmatched rows
+`continue` and are **never written**, so the database keeps a count and nothing else. Then I named
+the report flag `--unresolved-report`; it is `--report-dir`, and the report is gitignored and written
+only when at least one row is unresolved. Neither error was a typo - both were plausible sentences
+about a module I had written that same day, and both were *reassuring* in the direction that made the
+decision look cheaper. After the second I stopped re-reading and wrote a check instead: extract every
+`--flag` and every `Model.attr` the adapter page asserts, assert both sets parse non-empty, and
+compare against the parser and the module. Clean now. **The durable finding is that authorship is not
+evidence** - I was the least reliable available source on this code precisely because I remembered
+writing it, and the fix was mechanical rather than more care. Driven.
+
+**Crosswalk ruling recorded as a decision.** Yahoo and FantraxHQ do **not** enter `ExternalSource`
+and no `PlayerExternalId` rows are written for them, because a market publisher's id is not an
+identity anchor - putting them there is the `projection_sources` mistake one layer down. Written into
+`docs/adapters/published-auction-values.md` with the reasoning and with what the decision costs, so
+the next lane finds an argument rather than an absence. Previously a default; now a decision.
+
+**New backlog item: `hashtag-projection-profile-verification`**, `data-engineer`-owned, depends on
+`csv-importer`, and added to `aav-blending`'s dependencies. `import_projection_csv` refuses unverified
+profiles and only Basketball Monster is verified, so Hashtag projections cannot be imported today at
+all. Nobody had scoped the step that makes Hashtag usable as a primary source.
+
+#### Could not verify - addendum
+
+- **That `129` was `origin/main`'s true count at the moment I branched**, as opposed to now. I
+  recounted `origin/main` as it stands. **Reasoned.**
+- **That no *other* doc in the tree quotes a conflict marker in prose.** I fixed my own scanner; I did
+  not scan the repository for the pattern. **Reasoned.**
+- **That the flag/attribute checker covers the adapter page's claims generally.** It checks 1 flag and
+  1 `Model.attr` - every such reference the page actually makes, asserted non-empty before comparing,
+  but a page making claims in prose without backticks would slip past it entirely. **Driven for what
+  it covers, reasoned for its coverage.**
+- **Whether the unresolved-report gap matters in practice.** No import of a real full export has been
+  run, so I do not know how many priced players a real file fails to resolve. **Reasoned.**

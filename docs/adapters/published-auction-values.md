@@ -43,6 +43,41 @@ This is a deliberate departure from the projections precedent. It is recorded in
 `profiles.py`'s module docstring as well, so the next reader meets it wherever
 they arrive.
 
+## Market publisher ids do not enter the identity layer
+
+**Decision, not an omission.** Yahoo and FantraxHQ are not added to `ExternalSource`,
+and no `PlayerExternalId` row is written for them. Players are resolved by the
+existing name resolver against the NBA crosswalk and stored as `player_id`; a
+publisher's own id, where one appears in an export, is kept only in
+`published_text`-adjacent import metadata.
+
+The reason is a layering one. `PlayerExternalId` is the **identity** layer — it
+answers "who is this person, across sources that independently identify people."
+`ExternalSource` is that layer's enum. A market publisher does not identify players
+in any sense we depend on; it publishes a price against a name. Adding Yahoo and
+FantraxHQ to `ExternalSource` would put non-projection publishers into an
+identity-layer enum, **the same shape as putting seeded AAV into `projection_sources`
+would have been** — the mistake this unit's boundary ruling avoided, one layer down.
+
+The player crosswalk is `data-engineer`'s scope, so this is the lane's decision to
+make; it is written here so the next lane wanting Yahoo ids finds an argument rather
+than an absence. **If that lane has a real identity need** — a Yahoo id that resolves
+players our name resolver cannot — that is a genuine reason to revisit, and it should
+be argued on identity grounds, not on "we already import Yahoo data."
+
+**What the decision costs, stated precisely.** A row whose name the resolver cannot
+match is **not written to `published_auction_values`**; it is counted in
+`AuctionValueImport.unmatched_count`, and its verbatim name and refusal reason are
+written to a `<stem>-unresolved.csv` report the CLI emits at import time under
+`--report-dir` (gitignored `data/` by default, and written only when there is at
+least one unresolved row). So the *name* survives the import as a file, and the
+*database* keeps only a count. That is a deliberate line — this unit stores market
+evidence about identified players, and a price attached to a name we cannot resolve
+is not yet evidence about a player — but it does mean **the durable record of a
+dropped priced player is a number, and the report is gitignored.** Anyone widening
+this should treat that as the first thing to change, and should not discover it by
+finding a total that does not add up.
+
 ## The row grain, and why
 
 `(source, player, as-of date, value kind)`. One row answers "what did source X
