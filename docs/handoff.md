@@ -16476,3 +16476,51 @@ useless: a season-totals file contains nearly every small integer, so that scan 
 - **Nothing was run against the demo databases and no port was touched.** `draftboard_demo` holds
   zero projection rows, so no imported cohort could have been used as a shortcut; I read the paid CSV
   directly. **Driven.**
+
+## 2026-08-22 - frontend - Two places where the screen's styling and its property disagree
+
+Filed `draft-board-affordance-styling` after the coordinator rendered the merged
+board himself and made the judgement I had said I could not make about my own
+work. Both halves of the entry are things I did not see while building it.
+
+**The styling claim.** I made `Try to void` attemptable because a refused void
+writes nothing - driven, `last_sequence` 170 before a refused attempt and 170
+after. **I then styled it as the least consequential thing on the screen.** So
+the visual weight says *unimportant* while the property that is true is *free to
+try*. Different claims, and I rendered the wrong one. The predicted symptom is
+the owner reporting the button was "greyed out", which does not point at the
+cause.
+
+**The scarcity signal, which I missed entirely.** The coordinator's decisive
+observation was not in my four measured channels: **there is exactly one Undo
+among twelve `Try to void` buttons**, and the ratio carries more of the
+distinction than fill, weight, border or colour does individually. I could not
+have seen it - I was comparing two buttons, and the signal only exists at the
+scale of the whole screen. **The author cannot see the screen, only the
+component**, and not through carelessness: through looking at the right thing.
+
+**The tooltip asymmetry is an accident that works.** `Try to void` carries its
+caveat in a `title` and `Undo` has none. I wrote the caveat onto the button that
+needed one; I did not design a contrast. It is load-bearing anyway, and the
+predictable failure is a later consistency pass adding a tooltip to `Undo` and
+flattening it. Recorded as accidental rather than deliberate, because an entry
+claiming it was intentional would be a lie and would not warn anyone.
+
+Filed as one item because both halves are the same shape: **a place where the
+property and its rendering disagree, and where a later tidy-up would break what
+currently works.**
+
+Proved the graph job actually reads the new entry by planting
+`draft-board-screen` as its dependency - not a slug, the same defect I wrote
+four hours ago - and it failed naming the item, the bad slug and line 1539.
+Recount 134/134/134, header updated in both places, slug diff against my merge
+base `9e5fe0f`: 0 dropped, 1 added.
+
+### Could not verify
+
+- **Whether the recessive styling actually reads as disabled.** It is a
+  prediction from two people looking at a screen, not an observation of anyone
+  using one under a clock. Nobody has yet recorded a draft in anger.
+- **Whether a hover or active state is the right fix.** It is the cheapest one
+  that does not spend the contrast making the single Undo legible. I did not try
+  alternatives.
