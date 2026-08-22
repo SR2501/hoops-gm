@@ -141,7 +141,7 @@ That split is deliberate. Early on you will cross-check every recommendation, an
 
 ### Surface parity rule
 
-No draft-critical decision may be available in only one surface. Anything the overlay recommends must be inspectable in the dashboard, and anything the dashboard supports must be actionable from the overlay. This is enforced as a test, not a convention.
+No draft-critical decision may be available in only one surface. Anything the overlay recommends must be inspectable in the dashboard, and anything the dashboard supports must be actionable from the overlay. This is intended to be enforced as a test rather than a convention — `surface-parity-tests` in `docs/backlog.md` — but that test cannot be written until both surfaces exist, so **today it is a convention**. The sentence previously read "this is enforced as a test, not a convention", which was true of the intent and false of the tree.
 
 ### Proving the second monitor unnecessary
 

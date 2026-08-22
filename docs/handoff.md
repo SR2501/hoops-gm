@@ -16866,3 +16866,61 @@ operations that do not consult the wedged state. **Do not stash during a conflic
   across events, and I have not driven the difference.
 - **The rebase failure is diagnosed, not understood.** I have a reliable recovery and a plausible
   cause; I did not reproduce it deliberately.
+## 2026-08-22 - architect - A definition can assert an enforcement that does not exist
+
+**Unit:** correcting a false enforcement claim about surface parity, found by the draft-board lane
+and relayed to me. Docs-only: `docs/plan.md`, `.github/agents/frontend.md`,
+`.github/agents/bridge.md`, `docs/backlog.md`, `docs/governance/gates.md`. Prose only - no counts
+moved, no rule changed, no ownership changed.
+
+**The claim was in three places at three different strengths, and the strongest was the false one.**
+`plan.md` said parity "is enforced as a test, not a convention"; `frontend.md` said "this is
+enforced by test"; `bridge.md`'s done criteria said "surface parity tests pass". Eleven lines below
+its own false sentence, `frontend.md`'s done criteria said "surface parity tests pass **where
+applicable**" - correctly hedged, and defeated by the unhedged one above it, which is R49 exactly.
+`ownership.md` was already right: it states the rule and claims no enforcement.
+
+**The remedy I was handed was a false choice, and checking it is the finding.** I was told either
+the test gets written or the claim gets amended. **The test cannot be written.**
+`surface-parity-tests` is filed and pending behind `dashboard-evidence-views`,
+`overlay-draft-panel` and `overlay-auction-panel`, all pending - so there is no second surface to
+compare against and the test is not unwritten but **unwritable**. Only the amendment was available.
+All three sites now name the backlog item and say plainly that parity is a convention until it
+closes; `frontend.md` says "you are the enforcement", which is the true statement.
+
+**Why this matters beyond one sentence:** yesterday's unit landed *use the repository's mechanism,
+not prose describing it*, after every lane was launched without the `agent` parameter that loads
+these definitions. This is that rule's own limit. **A definition is not self-verifying** - the
+mechanism I told everyone to use was itself asserting an enforcement that did not exist. Landed as
+the second sentence of that limb in `gates.md`, with the checkable part stated: **an enforcement
+claim is checkable in one grep, so grep it before relying on it.**
+
+**Swept for others rather than fixing only the reported one.** `git grep -iE "is tested|are
+tested|test asserts|guaranteed by|checked by (a )?test|there is a test|a test (exists|enforces|
+prevents)"` across `.github/agents` and `AGENTS.md` returns nothing, and the only surviving
+"enforce" in `plan.md` is line 617, which is a future-tense item description and correct.
+
+**Backlog:** 130 headings, 130 unique slugs, 130 markers, 45 done / 1 blocked / 84 pending - split
+summed back to the heading count, matched on the marker token rather than the word. Unchanged by
+this unit, which edits prose inside one existing item. Slug-diffed against `origin/main` anyway:
+zero dropped, zero added.
+
+**Could not verify:**
+- **Driven, not reasoned, after I flagged it as reasoned.** My first draft of this entry said the
+  "no second surface exists" inference rested on reading status markers. That is the weaker of the
+  two claims `gates.md` now distinguishes, so I drove it: `userscript/` exists and is **capture-only
+  and read-only** — `src/capture.js` and `src/userscript.js` hook `fetch`/`XHR` against `/fxpa/req`
+  and pair a bridge secret, and a grep for `recommend|draft|pick|panel|overlay` across
+  `userscript/src` returns two comments and no UI. `frontend/src/routes/` holds four real pages. So
+  there is exactly one decision surface, the test genuinely cannot be written, and the amendment is
+  not too generous. **What remains unverified is narrower**: I did not read every line of the two
+  userscript sources, so "no decision UI" rests on a grep over five identifiers plus the README's
+  own description, not on reading them end to end.
+- **I changed two files I do not own.** `frontend.md` and `bridge.md` belong to those lanes.
+  I judged a false enforcement claim on a `frontend` <-> `bridge` seam to be arbitration, which is
+  in `architect`'s scope, and I changed only the tense and added a pointer - not the rule, not the
+  requirement, not the ownership. If either lane disagrees, revert those two hunks; the `plan.md`
+  and `gates.md` ones stand alone.
+- **The previous unit's could-not-verify still holds: nine of fifteen ADRs unread here.** I read
+  `frontend.md`, `bridge.md` and `ownership.md` in full for this one, and `plan.md` only around the
+  parity section.

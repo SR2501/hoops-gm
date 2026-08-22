@@ -2066,6 +2066,8 @@ Default mode: backend computes a recommendation, overlay highlights it in the Fa
 
 Test-enforced rule that no draft-critical decision is available in only one surface: anything the overlay recommends must be inspectable in the dashboard, and anything the dashboard supports must be actionable from the overlay.
 
+**Three documents asserted this was already enforced.** On 2026-08-21 `plan.md`, `.github/agents/frontend.md` and `.github/agents/bridge.md` each stated parity enforcement in the present tense while this item sat pending behind three pending dependencies — there is no second surface to compare against, so the test is not merely unwritten but **unwritable**. All three now name this item and say plainly that parity is a convention until it closes. Recorded here rather than only in the handoff, because the next lane to read those files is the one who needs it: **when you write the test, the claims that were waiting on it are the three sentences to make true again.**
+
 ### `trade-evaluator` - Building the trade evaluator
 
 - [ ] **pending**
