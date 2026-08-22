@@ -17429,13 +17429,16 @@ was reused.
   Re-running only what changed is what let two mutations survive the previous round.
 - `scripts/backlog_graph.py` exit 0. Header recounted from the finished file to
   **48 done / 1 blocked / 86 pending / 135 total**, 135 headings, 135 unique slugs,
-  135 markers, no checkbox/status contradiction. Slug diff against `origin/main`:
+  135 markers, no checkbox/status contradiction. Slug diff against **the merge base**,
+  re-run naming the sha rather than the `origin/main` ref - this file's own header block
+  now instructs the merge base, and the two were the same commit here, which is exactly
+  the case where the wrong version of that check agrees with the right one:
   134 there, 135 here, **one added** (`hashtag-projection-profile-verification`),
   **zero dropped**. The two headers reconcile exactly - `aav-source` moves
   pending -> done and one pending item is added, so done 47 -> 48, pending
   86 -> 86, total 134 -> 135.
 
-**Three checks that failed on me first, which is the part worth reading.**
+**Four checks that failed on me first, which is the part worth reading.**
 
 1. **My backlog recount reported 46/1/82 against a header saying 48/1/86, and the
    file was right.** My marker regex anchored `\*\*done\*\*` to end-of-line and six
@@ -17462,6 +17465,24 @@ was reused.
    does not exist gives **rc 4**, and rc 4 is a usage error, not a clean run - I hit
    it naming a `test_auction_value_independence.py` that has never existed, because
    the independence tests live in `test_auction_value_import.py`.
+
+4. **My handoff-append check printed a number that tested nothing, while the guard
+   behind it was sound.** The append was verified by `after.startswith(before)` - a real
+   test of purity - but the line I *printed* was a newline count reading
+   `lines before: 17359 -> after: 2`. Inside a PowerShell single-quoted here-string the
+   Python source received a literal backslash-n, so `.count()` counted escape sequences in
+   the prose rather than newlines. **I caught it only because `2` was absurd.** Had it
+   printed a plausible number I would have quoted it, and the sound assertion underneath
+   would have gone on being sound while the sentence everyone reads was false. Replaced
+   with `git diff --numstat`, an independent instrument measuring the same property:
+   **137 insertions, 0 deletions**.
+
+   The rule this instantiates: **a sound guard with an unsound report is worse than an
+   unsound guard**, because the guard runs once and the report is what gets read, quoted
+   and believed - nobody re-derives the assertion from the output. **Report the quantity
+   your assertion actually tested.** It arrived the same evening as the length-identical
+   `48` -> `12` header mutation, which is the same defect from the other side: there the
+   guard compared strings and the *evidence printed* was a character count.
 
 **Header tripwire, and it was built to defeat the failure mode the coordinator
 named.** `48 done` -> `12 done` is length-identical, so a character-count assertion
