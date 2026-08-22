@@ -8,6 +8,7 @@ test would pass with the writer disconnected entirely.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -1057,6 +1058,11 @@ def test_a_real_replay_refusal_is_still_named_as_one(session: Session) -> None:
     assert "To void sequence 1, void back from sequence 3 to sequence 2 first." in (
         refusal.value.detail
     )
+    # The inner reason must be marked as quotation. Here it is descriptive
+    # rather than an instruction, so the presence of the quotes is the claim.
+    assert '"This event must name the player as the recorder saw the name."' in (
+        refusal.value.detail
+    ), refusal.value.detail
     # Drive the remedy it names.
     service.record_void(session, draft, supersedes_sequence=3)
     service.record_void(session, draft, supersedes_sequence=2)
@@ -1081,6 +1087,12 @@ def test_the_lot_already_open_advice_can_be_followed_to_acceptance(session: Sess
     # Presence, not absence: the remedy must name the surviving nomination.
     # Naming sequence 2 -- the event being voided -- is the circularity.
     assert "or void the nomination at sequence 1." in detail, detail
+    # The inner refusal's advice is about the *hypothetical replayed* log, so
+    # following it costs a wasted round trip. It must read as a quoted reason,
+    # leaving exactly one instruction standing outside quotation marks.
+    outside = re.sub(r'"[^"]*"', "", detail)
+    assert "Record the sale" not in outside, outside
+    assert outside.count("To void sequence") == 1, outside
 
     # Follow it: clear the tail, then the target.
     service.record_void(session, draft, supersedes_sequence=3)

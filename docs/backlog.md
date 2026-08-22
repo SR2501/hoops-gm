@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 84 pending - 130 total**
+**46 done - 1 blocked - 83 pending - 130 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
+two headers: 130 `###` headings, 130 unique item slugs and 130 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -212,7 +212,7 @@ asserting every database the seed paths produce reports a revision.
 
 ### `draft-append-error-classification` - Distinguishing permanent from retryable storage failures on draft append
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-format-abstraction`
 
 The draft-event append path wraps its insert in a blanket `except` that maps **every** storage
@@ -224,6 +224,18 @@ only for connection and serialisation failures. Found on 2026-08-21 by a tripwir
 1,373 tests passed and none of them entered the handler, so a code review, a mutation matrix
 and a green PostgreSQL run all cleared it simultaneously — see the *prove a test reaches the
 code at all* bullet in the Code gate, which this item is the reason for.
+
+**Landed 2026-08-21 in PR #64, and it diverges from the remedy above in two ways worth
+recording, because "done" should not be read as "done exactly as written".** `_violated_constraint`
+reads psycopg's `diag.constraint_name` on PostgreSQL as prescribed, but **falls back to message
+text on SQLite**, which exposes no structured constraint name at all — it names the constraint
+for `CHECK`, names the columns instead for `UNIQUE`, and names nothing for `FOREIGN KEY`. Where
+the dialect will not say, the handler returns `None` and the caller treats it as **permanent**,
+the safe direction. And the one integrity violation deliberately kept *retryable* is
+`uq_draft_events_draft_sequence`: the sequence is computed as `max + 1` in Python, so a duplicate
+means a concurrent writer won the race and re-reading then re-appending genuinely does succeed.
+Driven, not assumed — 48 barrier-synchronised attempts on PostgreSQL 16.9 produced 13 wins and 35
+retryable refusals with no duplicates and a contiguous sequence.
 
 ### `draft-format-abstraction` - Abstracting snake and auction draft formats
 

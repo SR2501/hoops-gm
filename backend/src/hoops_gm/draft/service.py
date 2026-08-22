@@ -572,11 +572,15 @@ def record_void(
             if blamed == tail
             else f"void back from sequence {tail} to sequence {blamed} first"
         )
+        # The inner refusal's own advice is about the *hypothetical replayed*
+        # log, not the one that exists, so following it costs a wasted round
+        # trip. Quote it as a reason rather than leaving it standing as a
+        # second instruction, and let the only imperative be the outer one.
         raise DraftLogError(
             error.code,
             f"Voiding sequence {supersedes_sequence} was refused because sequence "
             f"{blamed}, which comes after it, no longer holds once it is gone: "
-            f"{error.detail} To void sequence {supersedes_sequence}, {remedy}.",
+            f'"{error.detail}" To void sequence {supersedes_sequence}, {remedy}.',
             sequence=blamed,
         ) from error
 

@@ -15465,3 +15465,129 @@ Adding an optional field breaks no client, so the objection is modelling rather
 than risk, but a shared cross-module contract is not this lane's to change
 quietly inside a blocked PR that a reviewer is about to re-run. Escalated to the
 coordinator to route; it is a clean, small follow-up unit.
+
+---
+
+## 2026-08-21 — backend — Three corrections, and the third guard was vacuous like the first two
+
+**PR #64, `draft-tracker`, rebased onto `642bdb6`.** Two message-correctness defects fixed, one
+Low tightened, and the backlog item `main` opened about this code closed. Docs and code only;
+no schema, no migration, and **the OpenAPI document is unchanged**.
+
+### The rebase
+
+`docs/handoff.md` conflicted twice, both append-vs-append; resolved by keeping both sides.
+`docs/backlog.md` did not conflict. Verified against **baselines captured before the rebase
+started**, per the gate note added the same day that a check you can only run when nothing went
+wrong is not a check: all 208 `##` headings from `main` and all 3 unique to this branch are
+present afterwards, and the slug set is unchanged in both directions.
+
+Two things about that verification are worth copying. My first "no markers survive" assertion
+**fired correctly and for the wrong reason** — `docs/handoff.md` legitimately contains
+`` `<<<<<<< HEAD` `` inside backticks at line 10732, in an earlier lane's entry describing this
+exact failure. Anchoring the check at line start distinguishes git's markers from quoted prose.
+And the check runs against **the commit**, not the working tree, because that same entry records
+a lane that resolved correctly and then staged a marker anyway.
+
+**One number in the brief was wrong and the file was right.** I was told `main` stood at 128
+items (45/1/82). `main` is at **129** (45/1/83) and its own header agrees with its own contents.
+Recounting from the file rather than accepting the figure is the only reason that surfaced.
+
+### The three fixes
+
+**The void re-wrap fired for the four hygiene refusals.** Those blame the sequence the *new*
+void would occupy — `tail + 1`, which does not exist — so the message claimed a later event "no
+longer holds once it is gone" about an event that was never there. Now gated on
+`supersedes_sequence < blamed <= tail`. A **positive range check rather than a denylist of the
+four codes**, because a denylist goes stale the moment a fifth hygiene rule is added.
+
+**`draft_lot_already_open` advised voiding the event you were voiding.** `_apply_nomination`
+computed its remedy from `event.sequence - 1` — arithmetic over raw sequence numbers that
+ignores which events survive — so during a void replay it named the voided event. Derivation now
+threads the last *surviving* sequence through the loop that already skips voids.
+
+**The Low: the replayed refusal's own advice stood as a second instruction.** It describes the
+*hypothetical* replayed log, so following it costs a wasted round trip before the outer
+instruction redirects correctly. It is now quoted, leaving exactly one imperative outside
+quotation marks. Scope enumerated rather than fixed at the point of complaint: two sites embed
+inner text, and the other (`service.py:166`) carries only descriptions — *"must be a positive
+integer, got X"* — never a competing instruction. That one needs nothing.
+
+### The thing this entry exists for
+
+**All three of my guards for these fixes were vacuous on first writing, and the mutation matrix
+is the only thing that said so.** Not one, three.
+
+The first two asserted the *absence* of the wrong advice; the unfixed code phrases its
+circularity differently, so both passed against the bug. The third — written *after* I had
+recorded that exact lesson, in the same file, hours earlier — asserted that the phrase
+`"Record the"` did not appear outside quotation marks, **in the one test whose inner message is
+descriptive and never contained those words at all**. Reverting the quoting fix produced GREEN.
+The guard belonged on the sibling case, whose inner message genuinely is an instruction.
+
+So the rule that keeps paying: **an absence assertion must be placed where the thing you fear
+actually occurs, and you have to observe that it occurs before you assert it does not.** I fixed
+it by printing both messages verbatim and reading them, which took two minutes and should have
+come first all three times.
+
+**And a correction is the most dangerous place to write a guard**, because it arrives with the
+confidence of having just been right about something. That is now a Code gate note; this is an
+instance of it produced by the lane that reported the finding it came from.
+
+### Verified by observation
+
+| Check | Result |
+|---|---|
+| Full suite, SQLite, rebased head | green |
+| Full suite, PostgreSQL 16.9, rebased head | green; dialect read from the live engine, not the URL |
+| Mutations, both dialects | **7/7 caught at `rc == 1`**, green before and after each revert |
+| — including both arms of the remedy ternary | separately mutated, because coverage reports a ternary covered if *either* arm runs |
+| — including the pass-through gate | removing it is caught |
+| ruff, ruff format, mypy strict | clean |
+| OpenAPI vs pre-rebase head | byte-identical; the stacked `frontend` client is unaffected |
+| Backlog | recounted from the finished file **and** slug set diffed against `origin/main`; both sides presence-asserted |
+
+### Branches green but unentered — driven by probe, not by suite
+
+This is a **different and weaker claim than covered**, and it is stated separately because the
+distinction is the one that let a permanent-error-as-transient bug through a code review, a
+mutation matrix and a green PostgreSQL run at the same time.
+
+Six refusal branches in `draft/state.py` and `service.py:399` are **not entered by the test
+suite on either dialect**. Independent review drove all seven with a purpose-built probe and
+each behaves correctly. Nobody should read the suite as evidence about them. `service.py`'s
+re-wrap pass-through, by contrast, *is* now entered by the suite, and for a structural reason
+rather than a coincidence of the current strings: the hygiene refusals blame `tail + 1`, so
+`blamed <= tail` fails and they fall through.
+
+### Could not verify
+
+- **A concurrent race against this exact head.** *Reasoned.* Review drove 48 attempts before the
+  savepoint change and 112 after, neither against these commits. Nothing here touches the append
+  or the unique constraint — the three changes are a read before the `try`, a loop variable and
+  message text — so I argue it is unaffected. I did not drive it.
+- **`_last_sequence` under a concurrent append.** *Reasoned.* It can read a tail another writer
+  has already advanced, which makes the range check *conservative*: a replay refusal published
+  unwrapped. That degrades a message, never a stored value.
+- **A third SQL dialect.** *Reasoned.* `_violated_constraint` falls through to `None` and
+  classifies permanent, the safe direction. Untested.
+- **The rendered read of this entry.** *Driven* for the table only. I have not read the
+  surrounding 15,000-line file rendered, so a structural problem above or below my own entry
+  would still be invisible to me.
+
+### Two judgement calls a reviewer should overturn if they disagree
+
+**I marked `draft-append-error-classification` done, and it is not done exactly as written.** The
+item prescribes reading the dialect's own error attributes "not the message text" and returning
+permanent for all integrity violations. The implementation does the first on PostgreSQL but
+falls back to message text on SQLite, which exposes no structured constraint name; and it keeps
+`uq_draft_events_draft_sequence` *retryable*, because the sequence is `max + 1` in Python and a
+duplicate genuinely is a concurrent writer. Both divergences are recorded in the backlog entry
+itself, so the marker cannot be read as more than it is. One line to revert.
+
+**`DraftLogError.sequence` still does not reach the HTTP body**, so the screen can say which
+entry broke but cannot highlight it. `ErrorResponse` is the app-wide envelope — *"every non-2xx
+response uses this shape"* — referenced at 25 route sites, and `sequence` is meaningless for a
+schedule or bridge error. Additive, so the objection is modelling rather than risk, but a shared
+cross-module contract is not one lane's to change quietly inside a blocked PR. Filed for the
+coordinator to route. The `frontend` lane confirmed it is not blocked by this.
