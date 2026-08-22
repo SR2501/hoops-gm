@@ -358,11 +358,23 @@ list descent *directly* rather than leaving it implied by a higher-level test. N
 and not a reminder. Every rule on this page with no mechanism behind it should be read as a
 description of something that will happen again.
 
+**And the harder limb, committed by the author of this section's source material: a mechanism
+can exist, be walked past, and nothing fails.** `.github/agents/` holds seven agent definitions
+carrying reading lists, non-goals and done criteria, and the session-creation call takes an
+`agent` parameter that loads them; every lane on 2026-08-21 was launched without it, with a
+hand-written approximation in the prompt instead — which **grew longer with each launch** as the
+day's lessons accumulated, and that is what made it feel sufficient. Nothing failed, which is
+the whole difficulty: a substitute that works emits no signal, exactly like a recount that stays
+internally consistent after a deletion. **When this repository has a mechanism for a thing,
+prose describing that mechanism is not that mechanism** — and using the mechanism feels like
+more effort rather than less, which is why nobody catches it.
+
 **Which makes this the least reliable section in the repository, and it should say so.** It is
 the one part with nothing executable underneath it, and the class it documents is *believing
 that having written something down changes behaviour*. If a rule here matters, the useful next
-step is to find the cheapest mechanism that enforces it and file that — the way the two items
-in *A true signal with no consumer* were filed instead of written up.
+step is to check whether a mechanism for it already exists — and only then, if none does, to
+find the cheapest one that enforces it and file that, the way the two items in *A true signal
+with no consumer* were filed instead of written up.
 
 ---
 

@@ -14635,14 +14635,55 @@ mutations. The chain now reads end to end: does a test reach it, does the mutati
 red, does it go red for the named reason. The defect itself is filed as
 `draft-append-error-classification`.
 
-**Backlog header:** recounted from the finished file - 128 headings, 128 unique slugs, 128 markers,
-1:1 - giving 45 done / 1 blocked / 82 pending / 128 total. **And separately** diffed the slug set
-against `origin/main`: zero of main's 122 dropped, exactly six added. The recount alone cannot see a
-dropped item; it agrees with itself perfectly after a deletion, which is how three merged items were
-lost earlier the same day. `scripts/resolve_doc_conflicts.py` was not run on this file.
+**Backlog header:** recounted from the finished file - 129 headings, 129 unique slugs, 129 markers,
+1:1 - giving 45 done / 1 blocked / 83 pending / 129 total. **And separately** diffed the slug set
+against `origin/main`: zero of main's 122 dropped, exactly seven added. The recount alone cannot see
+a dropped item; it agrees with itself perfectly after a deletion, which is how three merged items
+were lost earlier the same day. **My first two status splits were wrong in the same way as
+everything else in this unit** - they matched `done|pending|blocked` anywhere in the marker line,
+and one `pending` item's note contains the word "blocked", so the split summed to 130 against 129
+headings. Caught only because I added the split to the total. Match the token, not the word.
+`scripts/resolve_doc_conflicts.py` was not run on this file.
+
+**One correction to this unit's own launch, landed rather than confessed.** I was given the
+`architect` label in a prompt and not the `architect` **definition** — the session was created
+without the `agent` parameter that loads `.github/agents/architect.md`. Read after the fact, it
+contradicts nothing in the kickoff, but it does two things the kickoff could not. It lists
+`docs/plan.md` and every ADR under *Before you decide anything*, with the instruction **"do not
+rely on a summary in your prompt"** — and I relied on a summary in my prompt. And its Scope line
+**"keeping the risk register honest"** retroactively settles the one question I asked the
+coordinator's permission for (repairing six rows I did not write), which is the concrete cost of
+running on the label: I spent a round asking for authority the definition already gives me. The
+finding itself is landed as the closing limb of *Naming a defect class is not a mitigation*,
+because a mechanism that existed and was walked past is a stronger instance than a lesson
+written down and forgotten — and because **nothing failed**, which is what makes it undetectable.
 
 **Could not verify:**
-- **The frontend Code gate was not run: not applicable, and here is why.** This change touches no
+- **I did not read all fifteen ADRs end to end, which the definition requires before deciding
+  anything.** I enumerated `docs/decisions/` and read ADR-015 and the parts of others that other
+  lanes' findings named; I did not read ADR-001, ADR-003, ADR-004, ADR-005, ADR-009 through
+  ADR-012 or ADR-014, nor `docs/plan.md` in full. The exposure is bounded — this unit changes no
+  boundary and no contract, and cites an ADR only where a finding already named one — but
+  "bounded" is a judgement I made from inside the gap, and the definition's instruction exists
+  precisely because that judgement is not reliable. Whoever picks up the next `architect` unit
+  should assume the ADR set is unread here.
+- **`R58` was reported to me as malformed and it is not — I checked the row rather than filing
+  the item.** A structural check on the coordinator's side parsed it to a different cell count
+  from every other row. Mine had parsed it as fine. **Both were cell counts from hand-written
+  pipe splitters, and neither is evidence**: R58 legitimately contains three `\|` escapes inside
+  a code span (`grep '@router.(post\|put\|patch\|delete)'`), which GFM documents and which a
+  naive split on `|` mis-parses in one direction and a split on `(?<!\\)\|` in the other. Settled
+  by rendering it through `gh api -X POST /markdown`: **5 `<td>` cells, and the escapes render as
+  literal pipes inside the code span.** No item filed, because filing one would create work from
+  an unverified alarm — which is the row two above it in this same register. The clause is landed
+  in R59 instead. **Then I ran the check I had just said should exist**: rendering the whole file
+  and comparing each row's `<td>` count to its header's — all 65 data rows across 5 tables are
+  correct, so there is no second malformed row. That check was itself wrong on its first run and
+  reported **every row malformed**, because `<th` matches `<thead`; it is the third counting bug
+  in this unit and the third of the same shape as the `'<table>'` grep leading R59 — a pattern
+  matching more than it names. Filed as `governance-table-shape-check`, whose load-bearing
+  assertion is not the cell count (which finds nothing today) but the Owner-cell one, which finds
+  six. This change touches no
   file under `frontend/`, and `node_modules` is not installed in this worktree, so `npm run lint`
   and `npm run typecheck` both fail on a missing binary rather than on anything I wrote. Installing
   it would have produced no signal about a docs change. Written out rather than left silent, because

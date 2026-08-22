@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 82 pending - 128 total**
+**45 done - 1 blocked - 83 pending - 129 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 128 `###` headings, 128 unique item slugs and 128 markers, 1:1, no
+two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -42,10 +42,15 @@ slug set**, and until `adr-index-consistency-test` has a sibling doing that
 here, nothing does. That sibling is now filed as `backlog-dependency-graph`;
 filing it is not building it, and this edge is its first expected finding.
 
-The governance unit of 2026-08-21 added six items and ran the pair as
-prescribed: the recount moved 122 -> 128, and the slug diff against
+The governance unit of 2026-08-21 added seven items and ran the pair as
+prescribed: the recount moved 122 -> 129, and the slug diff against
 `origin/main` independently confirmed zero of main's 122 entries were dropped
-and exactly six added.
+and exactly seven added. **The status split needed a third pass**, because the
+first two matched `done|pending|blocked` anywhere in the marker line and one
+`pending` item's note contains the word "blocked" - so the split summed to 130
+against 129 headings and disagreed with the total sitting beside it. Match the
+marker **token**, not the word, and check the split sums to the total: that
+addition is the only thing that caught it.
 
 The parenthetical above said "114 headings and 114 markers" while the header two
 lines up said 115, because a rebase updated one and not the other - the prose
@@ -257,6 +262,24 @@ Vite + React + TypeScript in frontend/. Routing, typed API client, layout shell,
 - **Depends on:** `repo-create`
 
 AGENTS.md as the single entry point (roster, rules, gates). docs/governance/ownership.md (module to owning agent matrix), gates.md (the four readiness gates), owner-decisions.md (what only the owner decides), risks.md (live risk register covering ToS exposure, upstream fragility, model risk, seasonal deadlines).
+
+### `governance-table-shape-check` - Asserting the shape of the governance register tables in CI
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`, `governance-docs`
+
+Render `docs/governance/risks.md` through a GFM renderer and assert every row in every table
+has the column count its header declares, **and** that the Owner cell of each risk row is one of
+the seven agent names in `.github/agents/` (or `owner`, or a short combination). The second
+assertion is the one with a demonstrated catch: on 2026-08-21 six rows — R49, R50, R51, R53, R54
+and R57 — had their amendment prose sitting inside the Owner cell, up to **4,827 characters** in
+R51, so the Mitigation column rendered empty and the Owner column rendered as an essay. Every
+one of those rows was structurally valid, which is why cell counting missed them and why the
+length-and-membership assertion is the part that matters. Render rather than split on `|`: two
+lanes disagreed the same night about whether R58 was malformed, both having counted cells with
+hand-written pipe splitters, and R58 legitimately carries `\|` escapes inside a code span that
+GFM handles and neither splitter did. Cheap and fast; `gh api -X POST /markdown` is sufficient
+and needs no new dependency.
 
 ### `handoff-log` - Initialising the handoff log
 
