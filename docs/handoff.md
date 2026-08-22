@@ -17121,7 +17121,9 @@ loud is fine; unreachable and silent is the combination that hides.
 manual-download and *does* have one, opt-in via an env var path. My reasoning had been rhetorically
 convenient: nothing can be polled, but the **shape of the table the operator copies out** drifts, and
 a contract test pinned to a months-old fixture cannot see that. There is now an opt-in smoke, and I
-drove it rather than shipping it skipping - it passes on a real export and goes red on a renamed
+drove it rather than shipping it skipping - it passes on a realistically shaped **synthetic** export
+(see the correction appended below: an earlier version of this sentence said "a real export", which
+was false and flattering) and goes red on a renamed
 value column, on a header-only file, and on a negative dollar figure, at **three different
 assertions**. Driving the negative case showed the parser rejects it fatally first, so a further
 non-negative assertion could never be reached; I deleted it rather than ship an assertion no input
@@ -17515,3 +17517,91 @@ the harness were serialised for that reason rather than overlapped.
   **reasoned**, and it gets settled the first time the owner pastes real data in.
 - **That no other prose in the tree quotes a conflict marker.** Still not swept.
   Carried forward a third time. **Reasoned.**
+
+
+---
+
+## 2026-08-22 - `data-engineer` / `aav-source`: two merged sentences said "a real export" and I have never had one
+
+**Changed:** `scripts/mutate_aav.py` added, and one false claim corrected in two
+places - `docs/adapters/published-auction-values.md` and this file. No code.
+
+**The defect.** The adapter page and my own handoff entry both said the live smoke
+*"passes on a real export"*. Forty lines below the second one, my own could-not-verify
+field says: *"I have never run it against a real one, because I do not have one."*
+**Both sentences are mine, in the same document, and the false one is the one that
+makes the work look better.** They merged in `067cdc0`.
+
+This is *authorship is not evidence* landing on me exactly as the governance lane
+recorded it: I did not misremember an unfamiliar module, I wrote a flattering
+sentence about work I had done that day and never re-read it against the paragraph
+where I had already written the truth. **The contradiction was forty lines apart in
+a file I had read many times.**
+
+Worth naming precisely: **the honest sentence and the false one were written in the
+same sitting.** So this is not decay, and "re-read your entry before committing"
+would not have caught it - I did. What caught it was a *third party asking a question
+whose premise depended on it*. The coordinator asked where the paid AAV export lives;
+answering required checking whether one exists; it does not.
+
+**A cheap check exists and I am not proposing it as a gate.** A doc asserting a live
+probe "passes on a real X" while its own could-not-verify says no real X exists is
+grep-able in principle and unmaintainable in practice - the phrasing is unbounded.
+The durable form is the weaker one: **when a could-not-verify says you lack a thing,
+search the same document for prose claiming you used it.** That is one grep against a
+list you already wrote, and the list is short by construction.
+
+**And the coordinator's question 3 had a false premise, which is the other half.**
+It asked what I did to keep paid-CSV values out of fixtures and error messages,
+assuming a paid AAV export exists outside the repo. **There is no paid AAV source
+here at all.** The only paid thing in this area is the Basketball Monster
+*projection* subscription, which predates this unit, and BBM is **disqualified** as
+an auction benchmark precisely because its auction values are a deterministic
+transform of projections we already import. Every auction-value fixture in
+`backend/tests/fixtures/auction_values/` is synthetic and its metadata says so.
+
+**`scripts/mutate_aav.py`.** Previously it existed only in session scratch, so
+archiving this session would have destroyed it - the answer to "is it committed or
+is it a procedure you ran" was *a procedure*. Now committed, with the personal
+absolute path replaced by repo-root discovery and `PYTHONPATH` set inside the
+harness rather than assumed of the caller, and re-run from its new home to prove
+the port did not break it. Its scoring rules are the part worth keeping: an anchor
+not found **exactly once** is a harness failure, not a catch; a collection error,
+`rc 5` (nothing collected) and `rc 4` (usage error) are harness failures, not
+catches; only `rc 1` with a parsed `N failed` counts as CAUGHT; the baseline is
+asserted green before any mutation and every touched file asserted byte-identical
+after. **It must not be run concurrently with a test suite** - it edits source in
+place, so an overlapping run reads a mutated tree.
+
+**And the fix reproduced the defect it was fixing, twice over.** My edit asserted
+`"passes on a real export" not in text`, which failed - because **this entry quotes the
+sentence it is correcting.** That is two named classes colliding in one assertion: *a
+scanner for syntax must exclude prose that discusses that syntax* (fourth instance in
+this repository in two days, and the second I have hit personally), and *a wrongly-scoped
+assertion* (my second in two edits). The check that works distinguishes an **assertion**
+of the claim from a **quotation** of it - here, whether the phrase sits inside `*"..."*` -
+and the corrected run reports `adapter page: 0 occurrences`, `handoff: 1 occurrence,
+QUOTATION`. **A repository whose documents quote their own defects cannot be checked by
+searching for the defect's text.**
+
+A smaller one from the same edit: `git show HEAD:docs/handoff.md` through `subprocess`
+died with `UnicodeDecodeError: 'charmap' codec` at byte 107872, because Windows defaults
+to cp1252 and this file is UTF-8. It surfaced as a `TypeError` on a `None` stdout several
+lines later - **a decode failure arriving disguised as a different error in a different
+statement.** Pass `encoding="utf-8"` explicitly to every `subprocess` call that reads a
+repository file on this machine.
+
+**Could not verify:**
+
+- **That no other prose in this repository claims a capability its own
+  could-not-verify denies.** I found mine because a question forced me to check the
+  premise. I have not swept for the pattern, and I do not have a reliable query for
+  it. **Reasoned.**
+- **That the ported harness behaves identically to the scratch original.** It reports
+  the same 13/13 from its new home, which is the outcome, not the internals. I did
+  not diff the two execution traces. **Driven on the result, reasoned on equivalence.**
+- **That no real published export has ever been imported.** Unchanged, and now
+  *strengthened* rather than weakened: it was already the correct entry, and the
+  defect above was two sentences elsewhere contradicting it. **Driven.**
+- **That no other prose in the tree quotes a conflict marker.** Still not swept.
+  Fourth carry-forward. **Reasoned.**
