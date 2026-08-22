@@ -27,6 +27,8 @@ Gates exist because this project's failure modes are unusual — see the four po
 
   **And the green-before-mutating rule earns its place twice over.** It was written to stop a mutation that proves nothing; it has also twice stopped a *test asserting something false* from being committed, because the assertion failed before the mutation ran. One lane's new test claimed a season string of `9993-94` would be treated leniently; it would not, because that season builds a valid window that 2026 is legitimately outside. Neither use was anticipated when the rule was written, and the second is the more valuable: a mutation that proves nothing is merely useless, while a committed test encoding a false claim misleads for as long as it stays green.
 
+- **Before any of that, prove a test reaches the code at all.** Added 2026-08-21, and it is the precondition the three bullets above assume. A marker placed inside an `IntegrityError` handler and *proven to fire* by driving a real violation through it reported `TRIPWIRE ABSENT` against **1,373 passing tests** — so a blanket `except` mapping every storage failure to a *retryable* code, meaning a conforming client retries a permanent error forever, survived a code review, a mutation matrix **and** a green PostgreSQL run simultaneously. The suite had *does not contradict*; it never had *reaches*. **A mutation matrix over a branch no test enters is a matrix of unreachable mutations**, scored as caught by whatever the harness counts as non-zero. Insert the tripwire, prove it fires, run the suite, remove it. **And a matrix run on one dialect cannot vouch for code that branches on dialect** — a mutation disabling constraint-name discrimination survived on SQLite, where it is unreachable, and was caught on Postgres. The surviving row was the only thing that said the matrix had a blind spot, which is the second reason `NOT CAUGHT` must be a failure rather than a curiosity.
+
 - **Read the rendered result, not only the diff.** A section inserted by anchoring on a heading consumed that heading, orphaning the paragraph beneath it so *“Recorded here because they cost a session to find”* had no antecedent for “they”. **The diff looked correct**; only the rendered document showed the break. Anchor edits on surrounding prose rather than on a heading, and read the result.
 
 - **A reviewer that mutates code needs its own worktree.** Reviewer-enforced, not CI-enforced. Reviewer sub-agents share the author's tree by default, and mutation is a write. On one unit a reviewer's narrowed constant was left behind after its run and was caught only by the test written for that constant; one of its writes landed mid-run and produced a `JSONDecodeError` in an unrelated suite that read exactly like a real failure; and its own mutation was clobbered by an author write, **briefly reporting a false green**. Both directions produce a result that means nothing, and only one of them looks wrong. Use a detached worktree for any review that writes. **And the author side of the same rule: do not start work while a review is outstanding.** One lane edited files mid-review three times after being asked to hold the tree still, and **the reviewers disclosed it every time rather than the author** — which makes it a habit rather than a lapse, and the fix is not intending harder. A verdict on a tree that moved underneath it is not a verdict, and the author is the only party who can tell whether it moved.
@@ -40,6 +42,7 @@ Enforced by CI, except the three bullets marked otherwise.
 **Applies to:** anything calling an external source — `nba_api`, `cdn.nba.com`, Fantrax official API, `fantraxapi`, injury reports, projection CSVs.
 
 - **Recorded fixture committed.** A real captured response, checked in.
+- **Capture raw bytes — a recording that has been through a serialiser is not a recording.** Added 2026-08-21. One lane's first fixture went through PowerShell's JSON round-trip, which parsed `imported_at` into a `DateTime` and re-emitted it as `08/21/2026 15:57:03`: US locale, no timezone, no sub-second precision. **Every structural assertion would have passed**, because the shape survives — and what the capture tool destroyed was precisely the field class this project has already been bitten by (`gameEt`, in `AGENTS.md`). A recording exists to be evidence of what a producer emitted; anything that parses and re-emits substitutes its own representation for the producer's. Same family as an AST comparison that cannot see comments: **a transformation that preserves what you are checking and destroys what you are not.**
 - **Contract test** asserting the parser still works against that fixture. Runs in CI, offline, always.
 - **Live smoke test** hitting the real source, marked so it may fail without blocking a merge — but it must fail *loudly and visibly*, never silently.
 - Throttling and retry documented for the source's known limits (`stats.nba.com` ~1 req/s; Fantrax read-only, low frequency).
@@ -137,7 +140,7 @@ the moment you write it, from the code beside it.** The failure modes and their 
 recorded as R49–R58 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
 
-### Two questions no gate asks, because no gate looks at scope of application
+### Three questions no gate asks, because no gate looks at scope of application
 
 Added 2026-08-21. One lane produced four defects in one unit that were **not logic errors**. None shipped — every one was found in review and fixed before merge, across eight rounds; this section is evidence the structure caught them, not that it let them through.
 Each guard was written *correctly* and then applied to one of the two places it belonged; a
@@ -154,14 +157,24 @@ The fourth was the inverse and is why this is two questions rather than one. A g
 `ValueError` for a year outside 1..9999. The guard silently stopped covering what it was
 written for, in the commit that removed the same class two functions away.
 
-So, when you write or move a guard, ask both:
+So, when you write or move a guard, ask all three:
 
 - **Where else is this true?** A fix written while reasoning about one branch does not get
   asked this by anything in the process.
 - **What was already protecting this line, and is it still?** New code placed inside a
   function is not automatically inside the guarantees that function was making.
+- **And when you *correct* something, where does the correction's reasoning hold?** Added
+  2026-08-21 after a fourth instance on a single branch, every one of which named a mark, a
+  field or a direction and then reached one member of a symmetric pair: a middot wrapped in
+  `<code>` mid-sentence while the em dash defined beside it was not. The two questions above
+  are asked of original writing, and nothing asks them of corrections — **which is worse,
+  because a correction arrives with the confidence of having just been right about
+  something.** The same shape outside code: a guard's circularity blocked one unit, was
+  correctly worked around, and blocked the next unit the same day without being anticipated.
+  So when a guard blocks you, **enumerate its full scope once and record the list**, and the
+  next unit meets a known constraint instead of a surprise.
 
-Neither is a gate and neither should become one: a checklist item gets ticked, which is how
+None of the three is a gate and none should become one: a checklist item gets ticked, which is how
 a guard comes to pass for the wrong reason. They are questions to ask while writing.
 
 ### Verifying a change did what you think
@@ -205,6 +218,12 @@ cardinality intact, so a row-counting density check passed and a comparison iter
 it received never looked up the vanished pair — and on the screen a real count became the
 marker meaning *the backend sent no count*. **Two independent checks shared one proxy.** Assert
 membership of every key set a comparison depends on, not its size.
+
+**And capture both baselines before the rebase, not after.** `Compare-Object` needs something
+to compare against, and after a bad merge the pre-state is gone. Every lane on 2026-08-21 ran
+its slug diff *after* finishing and got away with it only because `origin/main` was still
+fetchable — which does not hold when the thing you must diff against is your own pre-rebase
+branch. **A check you can only run when nothing went wrong is not a check.**
 
 ### Rounds have a cost, and the cost is prose
 
@@ -250,6 +269,101 @@ Two corollaries, both earned the same night:
   one night; three were folded into others before landing and one shrank to two sentences,
   after reading this file rather than recalling having written it.
 
+### A true signal with no consumer
+
+Added 2026-08-21. **One test, one number, three separate opportunities, no reader.**
+
+`ProjectionsTable.recorded.test.tsx` was *deterministically* over a 5,000 ms budget rather
+than flaky, so the pass was the lucky run — and **a guard that fails slowly reads as green**,
+because a re-run converts an assertion that never completed into a permanent green check.
+Vitest printed the slow-test line every run: **3,177 → 3,309 → 3,376 → 3,714 → 4,298 ms**,
+climbing monotonically, directly above the suite total a lane quoted four separate times. And
+CI had been red across three heads for hours. Each number is unremarkable and passing; only
+the sequence is alarming, and nothing computes a delta.
+
+The same shape at every scale that day. A warning about tip-off provenance sat correct and
+unread in the field it described. A note saying the availability model was blocked lived in
+prose while the machine-readable `Depends on` edge said ready. A comment explaining that a
+marker-looking line is *content, not structure* sat one function away from the function that
+needed it, in the same commit. The ten-deep critical path through 122 backlog items was found
+by writing a twenty-line script while looking for something else.
+
+**The mitigation is tooling, not discipline, and that is the entire point of this section.**
+Asking people to read more is the one remedy this failure is immune to — every signal here was
+already visible to anyone who looked. So two items are *filed* rather than written up:
+`backlog-dependency-graph` resolves every `Depends on` token against the slug set and prints
+the longest path in CI, and `per-run-metric-delta` prints each per-run number beside its
+previous value. Note what the second deliberately is not: **a threshold recreates the cry-wolf
+guard the moment the number is legitimately allowed to grow** (R62), so it prints the delta,
+makes no judgement, and fails nothing.
+
+One correction is worth keeping, because it is instructive. The slow test was first read as a
+display artefact — a push run failing while a `pull_request` run passed on the same head — and
+history showed an earlier head red on *both* event types. Two true statements (the checks
+table did show a pass; that head did split) were generalised into a conclusion neither
+supports, which is R61 arriving inside the message that filed R61. **The real finding was the
+simpler one: a signal with no consumer is not a signal, and fixing the checks table would not
+have touched it.**
+
+### A coupling between trees that nothing here can see
+
+Added 2026-08-21. `frontend/src/test/fixtures/make_pending_date_payloads.py` imports
+`parse_teams` and `parse_schedule` from the backend package and `weekly_periods` from
+`dev/seed_schedule_grid.py`. A PR modified `parsers.py` and **nothing detected the coupling**:
+git reported no conflict because the frontend lane does not edit that file, the frontend gate
+does not run Python, the backend gate does not know the frontend imports it, and the
+mergeability label read CLEAN throughout. It did not bite — `parsers.py` added two definitions
+and altered none — and the gap is that nothing would have told either lane if it had.
+
+The same blind spot across *time* rather than language. A README told a reader to run
+`python -m hoops_gm.dev.seed_projections`, a module that existed only on an unmerged sibling
+branch. Every gate passed, because the README was **accurate about the tree it was written in
+and false about the tree it merges into**, and nothing we run checks a claim at the moment it
+becomes false: CI tests the branch, and the branch is correct.
+
+- **Name the coupling in both places, because no tool here will.** A cross-language import is
+  a dependency no gate in this repository can see.
+- **A file list answers *what will conflict*, not *what will break*.** One PR was sized by
+  file count and re-sized by the lane according to what its own code reaches into, which was
+  the question that mattered.
+- **When a lane builds against an unmerged sibling, the dependency is written in three places,
+  chosen by who hits it**: beside the command for the operator, in the backlog entry for
+  whoever picks the task up, and in the handoff for the mechanism. A dependency that lives in
+  a working directory but in nobody's *ordering* is invisible until somebody runs the command.
+- **A held lane arrives with its exposure already narrowed.** Holding a producing lane until
+  every consumer has reported costs near zero; not holding it means the consumer debugs alone
+  against code whose author is gone. What made it cheap once was a coupling discoverable in
+  one grep, so the held lane supplied the raw source hash of the coupled function *including
+  comments*, its module-level bound names before and after with none lost, and the consumer's
+  exact import sequence run against merged `main`. That is an exclusion the consumer can act
+  on — *if your verifier reddens, it is not this* — rather than a reassurance it must
+  re-derive.
+
+### Naming a defect class is not a mitigation
+
+Added 2026-08-21, and placed last because it governs everything above it.
+
+Three lanes shipped fresh instances of classes they had personally written down hours earlier,
+on the same day. A disclosure scanner descended dicts and **stopped at lists**, so a planted
+defect inside a list was invisible and the file stayed green — written in the same sitting as
+the entry recording that lesson. A mutation harness published two fictional matrices the same
+afternoon its author recorded that a check must assert it found something. The coordinator
+wrote down *ran one gate and reported another* in the morning and committed it twice within
+four hours: once running `pytest` and not `ruff format`, once running `mypy --strict` on a
+script and reporting *strict mypy clean* while eighteen unannotated test functions sat outside
+the path it had checked.
+
+**Only a mechanism helps.** The fix that worked on the scanner was two unit tests pinning the
+list descent *directly* rather than leaving it implied by a higher-level test. Not more care,
+and not a reminder. Every rule on this page with no mechanism behind it should be read as a
+description of something that will happen again.
+
+**Which makes this the least reliable section in the repository, and it should say so.** It is
+the one part with nothing executable underneath it, and the class it documents is *believing
+that having written something down changes behaviour*. If a rule here matters, the useful next
+step is to find the cheapest mechanism that enforces it and file that — the way the two items
+in *A true signal with no consumer* were filed instead of written up.
+
 ---
 
 ## Gate discipline
@@ -257,3 +371,31 @@ Two corollaries, both earned the same night:
 - Gates are not paperwork; if one is not catching anything, say so and change it.
 - Failing a gate is information, not failure. Record it in `docs/handoff.md`.
 - No gate may be waived by the agent whose work it applies to.
+- **Gate assignment and gate satisfaction are both self-reported claims.** The rule above
+  imagines waiving as an *act* — someone deciding to skip. It also happens as an *argument*: a
+  true, well-reasoned, good-faith case for a narrower gate, which is far more persuasive than
+  a skip and leaves a defensible paper trail. One lane assigned Code gate only, and every
+  premise was true; `blending` is named on the Model gate's applies-to line and the bullet
+  that bit was *version the output*. **The list was checked. The bullets were not.** So: name
+  the module on the applies-to line, then **walk every bullet under that gate and say which
+  artifact satisfies it** — that failure dies at *version the output*, because no artifact
+  could have been named for it. And the tell is a trap rather than a reassurance: the correct
+  gate there cost almost nothing (a model-card revision, no backtest), which reads as evidence
+  the gate does not apply. **A gate whose expensive bullets are inapplicable looks like a gate
+  that does not apply**, and those are not the same thing.
+- **State the veto's unit, then the gate's, and assert the gate's is at least as strict.** A
+  pre-unblind admissibility gate measured *canonical observations* while the activation veto
+  it pre-empts measures *direct outcomes*, a strict subset — so it would have passed the exact
+  case it exists to catch. A gate whose unit is looser than the veto it pre-empts removes only
+  what the veto would have removed anyway.
+- **"Gates green" has to mean all of them: run the CI-equivalent command set, or nothing.**
+  Twice in one day it meant *the gates I remembered*.
+- **The could-not-verify field states what was not checked and, separately, whether the reason
+  it is believed harmless was *driven* or *reasoned*.** `AGENTS.md` makes the field mandatory,
+  so lanes are disciplined about enumerating gaps and nothing disciplines the justification
+  attached to each. *"I could not verify X"* is checkable and gets checked; *"and I believe X
+  is unreachable"* is a load-bearing claim arriving in the same breath, wearing the humility
+  of the section around it, and nobody reviews it because a disclosure reads as an admission
+  rather than an assertion. **"Reachable, driven, harmless" and "believed unreachable" are
+  different claims and only one of them is evidence** — prefer the first, and where only the
+  second is available, say so in those words.
