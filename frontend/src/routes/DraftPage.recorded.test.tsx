@@ -1,0 +1,477 @@
+/**
+ * The draft board, driven against payloads recorded from a real backend.
+ *
+ * ## Why these tests are shaped the way they are
+ *
+ * The sharpest finding in this repository today: the backend lane put a tripwire
+ * in an error handler, drove a genuine violation through it, and ran the whole
+ * suite — `1373 passed`, and **zero tests reached the handler**. Every conflict
+ * in 1,373 tests came from an optimistic check that never touched the database.
+ * A blanket `except` survived a code review, a mutation matrix and a green
+ * PostgreSQL run simultaneously, because the suite had *"does not contradict"*
+ * where it needed *"reaches"*.
+ *
+ * So the error-state block below does not assert that nothing bad renders. It
+ * drives **every refusal body captured from the live API**, one per case, and
+ * asserts the count of states actually reached equals the number of refusals in
+ * the fixture. If a fixture entry stopped being exercised, the count moves.
+ *
+ * The refusals are real, captured against the running service and committed at
+ * `src/test/fixtures/draft-refusals.recorded.json` — including the 409, which is
+ * the one this screen must treat differently from the rest.
+ */
+
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import auctionEvents from '../test/fixtures/draft-auction-events.recorded.json'
+import auctionState from '../test/fixtures/draft-auction-state.recorded.json'
+import refusals from '../test/fixtures/draft-refusals.recorded.json'
+import snakeEvents from '../test/fixtures/draft-snake-events.recorded.json'
+import snakeState from '../test/fixtures/draft-snake-state.recorded.json'
+import { DraftPage } from './DraftPage'
+
+interface Refusal {
+  status: number
+  body: { error: string; detail: string; request_id: string }
+}
+
+const REFUSALS = refusals as unknown as Record<string, Refusal>
+
+/**
+ * A fetch stub that distinguishes reads from writes.
+ *
+ * The shared `mockFetch` helper routes on URL substring alone, and this screen
+ * GETs and POSTs the same path. Answering a POST with the read payload would
+ * make every write appear to succeed.
+ */
+function stubDraftFetch({
+  state,
+  events,
+  onWrite,
+}: {
+  state: unknown
+  events: unknown
+  onWrite?: () => Refusal | { status: number; body: unknown }
+}) {
+  const writes: unknown[] = []
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    const method = init?.method ?? 'GET'
+
+    if (method === 'POST') {
+      writes.push(
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : null,
+      )
+      const answer = onWrite?.() ?? { status: 201, body: state }
+      return Promise.resolve(
+        new Response(JSON.stringify(answer.body), {
+          status: answer.status,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    }
+
+    const body = url.includes('/events') ? events : state
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  })
+
+  vi.stubGlobal('fetch', fetchMock)
+  return { fetchMock, writes }
+}
+
+function renderBoard(draftId = '1') {
+  return render(
+    <MemoryRouter initialEntries={[`/draft/${draftId}`]}>
+      <Routes>
+        <Route path="/draft/:draftId" element={<DraftPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => {
+  vi.stubEnv('TZ', 'UTC')
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe('the draft board, from recorded payloads', () => {
+  it('draws every seat and every log entry the payloads contain', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    // Assert what was drawn, counted. "No seat is missing" would be satisfied
+    // by a board with no seats at all.
+    const seats = await screen.findByRole('heading', { name: 'Seats' })
+    expect(seats).toBeInTheDocument()
+    await waitFor(() => {
+      expect(within(screen.getByTestId('log-list')).getAllByRole('listitem')).toHaveLength(18)
+    })
+    for (const participant of auctionState.participants) {
+      expect(screen.getByTestId(`seat-${String(participant.id)}`)).toBeInTheDocument()
+    }
+    expect(auctionState.participants).toHaveLength(12)
+  })
+
+  it('shows the live bid and the remaining budget as two claims, on the one seat that has both', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    const remaining = await screen.findByTestId('seat-remaining-9')
+    const live = screen.getByTestId('seat-live-bid-9')
+
+    // Different figures, said in different words. If they were ever rendered as
+    // one number this would be the test that noticed.
+    expect(remaining).toHaveTextContent('$200.00')
+    expect(live).toHaveTextContent('$150.00')
+    expect(live).toHaveTextContent('live on Rune Halvorsen')
+    expect(live).toHaveTextContent('not subtracted above')
+    expect(screen.getByTestId('seat-9')).toHaveTextContent('left, of sales recorded')
+
+    // Exactly one caveat on the whole board. Counting is the assertion: a query
+    // for "no caveat where it does not belong" passes on a board with none.
+    const caveats = screen
+      .getAllByTestId(/^seat-live-bid-/)
+      .map((node) => node.getAttribute('data-testid'))
+    expect(caveats).toEqual(['seat-live-bid-9'])
+  })
+
+  it('renders money byte-identically to what the backend sent', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    await screen.findByTestId('seat-remaining-9')
+    let checked = 0
+    for (const participant of auctionState.participants) {
+      const node = screen.getByTestId(`seat-remaining-${String(participant.id)}`)
+      // `$200.00`, not `$200`. A float round-trip would pass a numeric
+      // comparison and fail this one, which is the point.
+      expect(node.textContent).toBe(`$${participant.remaining_budget}`)
+      checked += 1
+    }
+    expect(checked).toBe(12)
+  })
+
+  it('offers exactly one guaranteed correction and labels the rest as refusable', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    await screen.findByTestId('log-list')
+
+    const undo = screen.getAllByRole('button', { name: 'Undo' })
+    const tryVoid = screen.getAllByRole('button', { name: 'Try to void' })
+
+    expect(undo).toHaveLength(1)
+    expect(screen.getByTestId('log-undo-18')).toBe(undo[0])
+    // 18 entries, minus the guaranteed one, minus the voided sale and the void
+    // itself, which cannot be corrected at all.
+    expect(tryVoid).toHaveLength(15)
+    // And the two labels are genuinely different text, not the same affordance
+    // twice: the whole design rests on a reader telling them apart at a glance.
+    expect(undo[0]?.textContent).not.toBe(tryVoid[0]?.textContent)
+  })
+
+  it('says why the superseded entry and the correction itself cannot be undone', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    expect(await screen.findByTestId('log-reason-13')).toHaveTextContent(
+      'Already corrected by entry 14.',
+    )
+    expect(screen.getByTestId('log-reason-14')).toHaveTextContent('cannot itself be undone')
+    expect(screen.getByTestId('log-voided-13')).toHaveTextContent('withdrawn by #14')
+    expect(screen.queryByTestId('log-undo-13')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('log-tryvoid-14')).not.toBeInTheDocument()
+  })
+
+  it('reduces an ordered draft to a single field, because the seat is already fixed', async () => {
+    stubDraftFetch({ state: snakeState, events: snakeEvents })
+    renderBoard('2')
+
+    expect(await screen.findByTestId('recorder-next-pick')).toHaveTextContent('On the clock')
+    expect(screen.getByTestId('recorder-player')).toBeInTheDocument()
+    // No seat picker and no price: offering a seat choice with exactly one
+    // correct answer is a keystroke that can only go wrong.
+    expect(screen.queryByTestId('recorder-seat')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('recorder-amount')).not.toBeInTheDocument()
+  })
+
+  it('drops the player field when a lot is open, rather than validating it', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    expect(await screen.findByTestId('recorder-open-lot')).toHaveTextContent('Rune Halvorsen')
+    // Sale is the default mode, and with a lot open the sale is seat + price.
+    expect(screen.queryByTestId('recorder-player')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recorder-seat')).toBeInTheDocument()
+    expect(screen.getByTestId('recorder-amount')).toBeInTheDocument()
+  })
+})
+
+describe('recording', () => {
+  it('sends the sale the recorder typed, carrying the sequence it was looking at', async () => {
+    const { writes } = stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    await screen.findByTestId('recorder-seat')
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '151')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    await waitFor(() => {
+      expect(writes).toHaveLength(1)
+    })
+    expect(writes[0]).toEqual({
+      event_type: 'sale',
+      participant_id: 9,
+      amount: '151',
+      expected_last_sequence: 18,
+    })
+  })
+
+  it('posts a void naming the entry, not an edit', async () => {
+    const { writes } = stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('log-undo-18'))
+
+    await waitFor(() => {
+      expect(writes).toHaveLength(1)
+    })
+    expect(writes[0]).toEqual({
+      event_type: 'void',
+      supersedes_sequence: 18,
+      expected_last_sequence: 18,
+    })
+  })
+})
+
+describe('every recorded refusal, reached', () => {
+  // The count is asserted at the end of the block. Without it, a fixture entry
+  // that stopped being driven would leave this suite green and shrunken.
+  const reached = new Set<string>()
+
+  it('leads a refused non-tail void with the backend’s own wording, not this build’s copy for the code', async () => {
+    const refusal = REFUSALS['void-non-tail']!
+    stubDraftFetch({
+      state: auctionState,
+      events: auctionEvents,
+      onWrite: () => refusal,
+    })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('log-tryvoid-5'))
+
+    const headline = await screen.findByTestId('log-failure-5')
+    // Verbatim, including the sequence number, which is the only actionable
+    // part and the first casualty of any paraphrase.
+    expect(headline).toHaveTextContent(refusal.body.detail)
+    expect(headline).toHaveTextContent('sequence 6')
+    expect(headline).toHaveTextContent('Void back from the most recent event instead')
+
+    // And specifically NOT this build's copy for `draft_player_label_required`,
+    // which describes a field the void form does not have. Driving this in a
+    // browser is how the misreading was found: the code on a refused non-tail
+    // void is the *later* entry's precondition, not this action's.
+    expect(headline).not.toHaveTextContent(/as the recorder saw the name written/i)
+    // And nothing beneath it re-adds an instruction about that field either.
+    // The same misreading appeared one line down as "Type the player name and
+    // submit again" before this was pinned.
+    const alert = headline.closest('[role="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent ?? '').not.toMatch(/Type the player name/i)
+    expect(screen.queryByTestId('log-failure-backend-5')).not.toBeInTheDocument()
+    reached.add('void-non-tail')
+  })
+
+  it('shows a refused void of a void', async () => {
+    const refusal = REFUSALS['void-a-void']!
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('log-tryvoid-5'))
+    expect(await screen.findByTestId('log-failure-5')).toHaveTextContent(refusal.body.detail)
+    reached.add('void-a-void')
+  })
+
+  it('keeps this build’s explanation as the headline when the code really is about the void posted', async () => {
+    // A sequence conflict is the one refusal of a void that is genuinely about
+    // the void itself rather than a later entry, so the human explanation leads
+    // and the server's sentence supports it. Without this the rule above would
+    // be a blanket rather than a distinction.
+    const refusal = REFUSALS['sequence-conflict']!
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('log-undo-18'))
+
+    expect(await screen.findByTestId('log-failure-18')).toHaveTextContent(
+      /Another append reached this draft after this screen last read it/i,
+    )
+    expect(screen.getByTestId('log-failure-backend-18')).toHaveTextContent(refusal.body.detail)
+  })
+
+  it('tells the recorder a conflicting write was not recorded, and keeps what they typed', async () => {
+    const refusal = REFUSALS['sequence-conflict']!
+    expect(refusal.status).toBe(409)
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await screen.findByTestId('recorder-seat')
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '151')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    expect(await screen.findByTestId('recorder-error-summary')).toHaveTextContent(
+      /Another append reached this draft after this screen last read it/i,
+    )
+    // The form still holds what was typed. On a conflict the entry was correct
+    // and merely stale, and retyping it under a clock is the cost this avoids.
+    expect(screen.getByTestId('recorder-amount')).toHaveValue('151')
+    expect(screen.getByTestId('recorder-error-code')).toHaveTextContent('draft_sequence_conflict')
+    reached.add('sequence-conflict')
+  })
+
+  it('shows a refused bid in the backend’s own terms', async () => {
+    const refusal = REFUSALS['bid-not-increasing']!
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await userEvent.click(await screen.findByTestId('recorder-mode-bid'))
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '150')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    expect(await screen.findByTestId('recorder-error-backend')).toHaveTextContent(
+      refusal.body.detail,
+    )
+    reached.add('bid-not-increasing')
+  })
+
+  it('shows a refused over-budget sale', async () => {
+    const refusal = REFUSALS['budget-exceeded']!
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await screen.findByTestId('recorder-seat')
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '999')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    expect(await screen.findByTestId('recorder-error-backend')).toHaveTextContent(
+      refusal.body.detail,
+    )
+    reached.add('budget-exceeded')
+  })
+
+  it('shows a refused unknown seat', async () => {
+    const refusal = REFUSALS['unknown-participant']!
+    stubDraftFetch({ state: auctionState, events: auctionEvents, onWrite: () => refusal })
+    renderBoard()
+
+    await screen.findByTestId('recorder-seat')
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '5')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    expect(await screen.findByTestId('recorder-error-backend')).toHaveTextContent(
+      refusal.body.detail,
+    )
+    reached.add('unknown-participant')
+  })
+
+  it('drove every refusal the fixture holds', () => {
+    // Runs last, in file order. This is the assertion that makes the block
+    // above mean something: it reports the states observed, not the fixtures
+    // available, and the two must match.
+    expect(Object.keys(REFUSALS)).toHaveLength(6)
+    expect([...reached].sort()).toEqual(Object.keys(REFUSALS).sort())
+  })
+})
+
+describe('an error code this build has never seen', () => {
+  it('shows the server’s own message rather than swallowing it', async () => {
+    // `draft_row_rejected` arrived at backend head `5ec3d0f` on a reworded
+    // existing case with the OpenAPI document byte-identical, so a generator
+    // could not have shown it. A code allow-list here cannot be kept complete
+    // and would fail silently; the fallback promotes the server's `detail` to
+    // the headline instead.
+    stubDraftFetch({
+      state: auctionState,
+      events: auctionEvents,
+      onWrite: () => ({
+        status: 422,
+        body: {
+          error: 'draft_row_rejected',
+          detail: 'Sale names player 4242, which is not a player row.',
+          request_id: 'req-unknown-code',
+        },
+      }),
+    })
+    renderBoard()
+
+    await screen.findByTestId('recorder-seat')
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '5')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    const summary = await screen.findByTestId('recorder-error-summary')
+    expect(summary).toHaveTextContent('Sale names player 4242, which is not a player row.')
+    expect(screen.getByTestId('recorder-error-code')).toHaveTextContent('draft_row_rejected')
+  })
+})
+
+describe('the no-decision-numbers rule', () => {
+  it('renders none of the terms the API deliberately does not publish', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    const { container } = renderBoard()
+    await screen.findByTestId('log-list')
+
+    // Word-boundary matched against the rendered text. Substring matching would
+    // fire on "invaluable" and on the page's own sentence saying these do not
+    // exist here — which is why the lede is excluded below by matching only the
+    // panels.
+    const panels = container.querySelector('.draft__panels')
+    const log = container.querySelector('.log')
+    expect(panels).not.toBeNull()
+    expect(log).not.toBeNull()
+    const rendered = `${panels?.textContent ?? ''} ${log?.textContent ?? ''}`
+    expect(rendered.length).toBeGreaterThan(200)
+
+    const forbidden = [
+      'projected',
+      'projection',
+      'valuation',
+      'z-score',
+      'g-score',
+      'inflation',
+      'tier',
+      'rank',
+      'p(play)',
+      'availability',
+      'expected value',
+      'suggested',
+      'recommend',
+      'target price',
+      'par value',
+      'surplus',
+      'upside',
+      'sleeper',
+      'bust',
+    ]
+    const found = forbidden.filter((term) =>
+      new RegExp(`\\b${term.replace(/[().]/g, '\\$&')}`, 'i').test(rendered),
+    )
+    expect(found).toEqual([])
+  })
+})

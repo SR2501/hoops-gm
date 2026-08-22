@@ -1,6 +1,8 @@
 import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { DashboardPage } from './routes/DashboardPage'
+import { DraftPage } from './routes/DraftPage'
+import { DraftsPage } from './routes/DraftsPage'
 import { NotFoundPage } from './routes/NotFoundPage'
 import { ProjectionsPage } from './routes/ProjectionsPage'
 import { SchedulePage } from './routes/SchedulePage'
@@ -19,6 +21,8 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="schedule" element={<SchedulePage />} />
         <Route path="projections" element={<ProjectionsPage />} />
+        <Route path="draft" element={<DraftsPage />} />
+        <Route path="draft/:draftId" element={<DraftPage />} />
         <Route path="system" element={<SystemPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

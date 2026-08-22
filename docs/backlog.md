@@ -1427,7 +1427,7 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen and the bridge feed are outstanding*
+- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen landed 2026-08-21; the bridge feed is outstanding*
 - **Depends on:** `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
@@ -1456,6 +1456,44 @@ inflation, no recommendation, no `p(play)` - which is correct scope here but
 means the item's downstream readers (`auction-budget-manager`,
 `auction-inflation`, `draft-recommender`, `live-draft-availability`) are
 unblocked on their *input*, not served by it.
+
+**The screen landed on 2026-08-21** (`frontend` lane): a recording panel, a seat
+board with roster construction and per-seat spend, and the full log with
+correction affordances, at `/draft` and `/draft/:draftId`. It renders no
+decision number of any kind. Two findings from building against the live API are
+worth carrying forward. **The tail-only correction limitation is positional, not
+structural** - the brief described it as "the last sale of a nominated lot", but
+driving a void at all 27 seeded events against a fresh database each time
+measured **4 of 27 voidable, and 2 of those were not the tail**. The screen
+therefore offers a guaranteed "Undo" only on the highest sequence and a
+"Try to void" everywhere else, rather than hiding the other 26. And
+`remaining_budget` is budget minus *spent*, so a seat holding a live high bid
+still shows its full remaining budget; the screen renders the live bid as a
+visibly second, differently-coloured claim rather than reconciling the two into
+a number the backend never sent.
+
+What is still missing for the 18 October auction is the feed and the setup:
+see `draft-setup-screen` for the second.
+
+### `draft-setup-screen` - Creating a draft and its seats from the browser
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`, `frontend-skeleton`
+
+`POST /api/v1/drafts` exists and takes a league, a name, a `tool_usage`
+declaration and the full participant list, but nothing in the browser calls it.
+Today the only way to bring a draft into being is `hoops_gm.dev.seed_draft`, a
+development CLI that invents synthetic seats, or a hand-written POST. The draft
+board at `/draft` deliberately does not offer creation: it is built to be used
+under an auction clock, and a twelve-seat setup form is a calm, once-per-draft
+task that would enlarge that surface for no benefit at the moment it matters.
+
+This is small but it is on the critical path, because the owner cannot record
+his mock auction - or the real draft on **18 October 2026** - without a draft to
+record into. Needs seat names, per-seat budget for an auction, draft order for a
+snake, and the `is_mock` / `tool_usage` declaration surfaced honestly rather than
+defaulted past, since `tool_usage` is the field that records how much help was
+used and is the one a leaguemate would care about.
 
 ### `secret-scan-fixture-isolation` - Making the secret scan safe to run concurrently
 

@@ -952,3 +952,482 @@ a:focus-visible {
 .projections__integrity-inline {
   color: var(--error);
 }
+
+/* ==========================================================================
+   Draft board
+   ==========================================================================
+
+   Laid out for one laptop screen under a clock. The recorder is the widest,
+   highest-contrast thing on the page because it is the only part that has a
+   deadline; the board and the log are reference and sit quieter.
+
+   The one deliberate contrast decision worth stating: `--warn` is used for the
+   live-bid caveat and nowhere else on this screen. A seat's remaining budget
+   and its live bid are different kinds of claim, so they are given different
+   colours as well as different words — a reader scanning for money under time
+   pressure sees two marks, not one number in two places.
+   ========================================================================== */
+
+.page--draft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.page__facts {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.page__facts li::after {
+  content: '';
+}
+
+.draft__panels {
+  display: grid;
+  grid-template-columns: minmax(18rem, 22rem) 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .draft__panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -- recorder ------------------------------------------------------------ */
+
+.recorder {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.recorder h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.recorder__modes {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.recorder__mode {
+  flex: 1;
+  padding: var(--space-2);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.recorder__mode--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/**
+ * The live lot. This needs to be the most findable thing in the recording
+ * panel, so it gets a full accent border rather than an accent stripe down one
+ * side — same prominence, and it reads as its own panel instead of as a
+ * decorated paragraph.
+ */
+.recorder__context {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-sunken);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.recorder__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.recorder__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.recorder__field > span {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.recorder__field input,
+.recorder__field select {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.recorder__field input:focus-visible,
+.recorder__field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.recorder__field--amount input {
+  font-variant-numeric: tabular-nums;
+}
+
+.recorder__submit {
+  padding: var(--space-3);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: var(--bg);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recorder__submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.recorder__ok {
+  margin: var(--space-3) 0 0;
+  color: var(--ok);
+  font-size: 0.8125rem;
+}
+
+.recorder__error {
+  margin-top: var(--space-3);
+}
+
+/* -- seats --------------------------------------------------------------- */
+
+.seats h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.seats__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--space-3);
+}
+
+.seat {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+.seat--owner {
+  border-color: var(--accent);
+}
+
+.seat__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.seat__name {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.seat__you {
+  color: var(--accent);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.seat__slots {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.seat__budget {
+  margin: var(--space-3) 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.seat__budget-main,
+.seat__budget-live {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.seat__budget-live {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  /* A rule between the two figures, because they are two claims rather than
+     one figure with an annotation. */
+  border-top: 1px dashed var(--border);
+}
+
+.seat__money {
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.seat__money--live {
+  color: var(--warn);
+  font-size: 1rem;
+}
+
+.seat__budget-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.seat__budget-live .seat__budget-label strong {
+  color: var(--warn);
+}
+
+.seat__spent {
+  margin: var(--space-2) 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.seat__empty {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.seat__holdings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.seat__holding {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 0.8125rem;
+}
+
+.seat__holding-name {
+  flex: 1;
+}
+
+.seat__holding-price,
+.seat__holding-pick {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.seat__holding-seq {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- log ----------------------------------------------------------------- */
+
+.log h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.log__lede {
+  margin: 0 0 var(--space-3);
+  max-width: 62ch;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.log__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.log__entry {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+
+/**
+ * A withdrawn entry recedes — but the badge saying *why* it receded must not.
+ * That badge is the only marker separating "this was recorded" from "this is no
+ * longer in force", and it is the thing a recorder scans for after a
+ * correction. Measured at `opacity: 0.55` on the row it came out at 3.8:1
+ * against the panel, below AA, and at 10.3px: the least legible element on the
+ * screen carrying the most consequential distinction on it.
+ *
+ * So the de-emphasis is applied as colour to the parts that should retreat,
+ * rather than as `opacity` to the row. A child cannot opt out of a parent's
+ * opacity; it can override a colour.
+ */
+.log__entry--voided .log__seq,
+.log__entry--voided .log__what,
+.log__entry--voided .log__note {
+  color: var(--text-muted);
+}
+
+.log__entry--voided .log__what {
+  text-decoration: line-through;
+}
+
+.log__entry--voided .log__badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.log__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.log__seq {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  min-width: 2.5rem;
+}
+
+.log__what {
+  flex: 1;
+  font-size: 0.875rem;
+}
+
+.log__badge {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.log__undo {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* The guaranteed correction reads as the primary action: it is the one a
+   recorder reaches for under a clock and the only one that cannot be refused. */
+.log__undo--sure {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* The speculative one is deliberately quieter, and its label says "try". A
+   button that looked identical to Undo would be promising a guarantee this
+   screen does not have. */
+.log__undo--maybe {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.log__undo:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.log__note,
+.log__reason {
+  margin: var(--space-1) 0 0 3.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.log__failure {
+  margin: var(--space-2) 0 0;
+}
+
+/* -- draft list ---------------------------------------------------------- */
+
+.drafts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.drafts__item {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.drafts__link {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.drafts__meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}

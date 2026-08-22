@@ -1,0 +1,50 @@
+{
+  "void-non-tail": {
+    "status": 422,
+    "body": {
+      "error": "draft_player_label_required",
+      "detail": "Voiding sequence 5 was refused because sequence 6, which comes after it, no longer holds once it is gone: This event must name the player as the recorder saw the name. Void back from the most recent event instead.",
+      "request_id": "e1b33aab9eec441694d61bb19c91c1b4"
+    }
+  },
+  "void-a-void": {
+    "status": 422,
+    "body": {
+      "error": "draft_cannot_void_a_void",
+      "detail": "Voiding sequence 14 was refused because sequence 19, which comes after it, no longer holds once it is gone: A void cannot be undone. Record the event again instead. Void back from the most recent event instead.",
+      "request_id": "d3ee0c3d37c74dd7bf6d41652589a149"
+    }
+  },
+  "sequence-conflict": {
+    "status": 409,
+    "body": {
+      "error": "draft_sequence_conflict",
+      "detail": "The log is at sequence 18, not 2. Re-read the draft and append again.",
+      "request_id": "787744889857475d8a2440a2dda8d25e"
+    }
+  },
+  "bid-not-increasing": {
+    "status": 422,
+    "body": {
+      "error": "draft_bid_not_increasing",
+      "detail": "The bid on Rune Halvorsen already stands at 150.00.",
+      "request_id": "93f2bc828318481b83e862c1aae38577"
+    }
+  },
+  "budget-exceeded": {
+    "status": 422,
+    "body": {
+      "error": "draft_budget_exceeded",
+      "detail": "Bench Mob has 138.00 left and this is 999.",
+      "request_id": "ef3dd69ce95c4d5a9fe4edbcec2e9e1e"
+    }
+  },
+  "unknown-participant": {
+    "status": 422,
+    "body": {
+      "error": "draft_unknown_participant",
+      "detail": "Participant 999 is not a seat in this draft.",
+      "request_id": "a07ecdce937f4245afd113a70a589500"
+    }
+  }
+}

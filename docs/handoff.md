@@ -15619,3 +15619,149 @@ response uses this shape"* — referenced at 25 route sites, and `sequence` is m
 schedule or bridge error. Additive, so the objection is modelling rather than risk, but a shared
 cross-module contract is not one lane's to change quietly inside a blocked PR. Filed for the
 coordinator to route. The `frontend` lane confirmed it is not blocked by this.
+## 2026-08-21 - frontend - The draft board, and a marker that dimmed the reason along with the thing
+
+The screen the owner will have open on 18 October, built against `draft-tracker`
+at `5ec3d0f`. Routes `/draft` and `/draft/:draftId`. It renders **no** decision
+number - no valuation, ranking, tier, suggested price, inflation figure or
+`p(play)` - because the API publishes none and inventing one here is the only way
+they could appear.
+
+Three panels, in the priority the brief set. **Recording** is a mode switch
+(sale / bid / nomination), a seat select and a price, posting the recorder's
+current `last_sequence` so a stale tab is refused rather than silently
+interleaved. **Seats** show remaining budget, spend, and roster construction.
+**The log** shows every entry in order with its correction affordance.
+
+### What I got wrong first, and how each was caught
+
+- **`DraftEventList` does not exist; the type is `DraftEventsPage`.** Eighteen
+  tests passed against a type with no definition, because vitest transpiles
+  without type-checking. Only `tsc --noEmit` saw it. **A green vitest run is not
+  a type-check**, and running the four gate commands as a set rather than the
+  one I remembered is what found it.
+- **Sales that inherit their player from the open lot named nobody** - 4 of 18
+  entries read "the open lot sold to Trade Deadline". Fixed by resolving through
+  `participant.holdings[].event_sequence`, which is the backend's own
+  resolution rather than a second derivation in the browser. Caught in a real
+  browser; 231 passing tests had nothing to say about it.
+- **My error copy reintroduced, one layer down, the exact misreading the backend
+  lane had just fixed.** Voiding entry 5 is refused with
+  `draft_player_label_required`, and my code-keyed headline rendered *"This entry
+  has to name the player"* - describing a field the void form does not have. The
+  code describes the **later** entry's precondition, not the void that was
+  posted. Now a refused void shows the server's sentence verbatim as the
+  headline, and no supporting line at all, unless the code is
+  `draft_sequence_conflict` - the one refusal genuinely about the void posted.
+  Pinned as a regression test.
+- **I used an em-dash both as a missing-value marker and as ordinary punctuation
+  in the adjacent line**, which is the collision this file already warned about.
+  The marker is now the words "not recorded".
+
+### The correction limit is positional, not structural
+
+The brief said voiding "the last sale of a nominated lot" returns 201 and the
+first returns 422. That is not the rule. I posted a void against **all 27 seeded
+events, one fresh database per attempt**, and measured **4 of 27 accepted, 2 of
+them not the tail**. So the screen offers a guaranteed **Undo** on the highest
+sequence and a **Try to void** on everything else, rather than hiding 26
+affordances that mostly would have worked. A refused void **writes nothing** -
+also driven, by re-reading `last_sequence` after each refusal.
+
+### The badge that explained a withdrawal was the least legible thing on screen
+
+A withdrawn entry was dimmed with `opacity: 0.55` on the row. That dimmed the
+`WITHDRAWN BY #20` badge too - measured in the browser at **3.83:1 at 10.3px,
+weight 400**, below AA. It is the only marker separating "recorded" from "no
+longer in force", and it is what a recorder scans for straight after a
+correction: the most consequential distinction on the screen rendered as the
+least readable thing on it. Applying the de-emphasis as **colour on the parts
+that should recede** instead - a child cannot opt out of a parent's `opacity` -
+puts the badge at **9.33:1 at 11.25px/600** with the struck description at
+6.72:1.
+
+The first contrast figures I computed were **against black**, because the
+element's own `background-color` is `rgba(0,0,0,0)` and I used it without
+looking. They came back as confident, plausible, wrong numbers (11.23 and 8.08).
+The corrected probe walks up until it finds a painted background **and reports
+which element it came from**, so the value being compared against is visible in
+the output rather than assumed.
+
+### Proving a test reaches the state it claims
+
+Taking the backend lane's tripwire finding literally. `DraftPage.recorded.test.tsx`
+drives all six captured refusals and asserts **the number of error states reached
+equals the fixture count**, so a refusal that stopped being reachable fails
+rather than quietly not running. For the styling guard I reintroduced
+`opacity: 0.55` and re-ran: the suite exited non-zero, but with **`Tests  no
+tests`** - it had failed to *collect*, on `import.meta.url` not being a file URL
+under this transform. Exit code alone would have let me record "the guard fires"
+about a test that never ran, which is the `rc == 4` mistake in a different
+language. Fixed and re-driven: it now fails on the assertion, printing the rule
+body it observed.
+
+**Test independence, driven.** Mutated `live_event_count` 16 -> 17, a
+`remaining_budget` `"200.00"` -> `"200"`, and deleted a recorded refusal. All
+three failed, the deletion in two places. Fixtures restored and re-verified.
+
+**One real disagreement with the server, found by cross-checking rather than by
+a test I wrote to pass.** My `liveEventCount` counted a `void` entry as live and
+came out one above the server's `live_event_count`. The server excludes both the
+voided entry and the void itself. The server is right; the cross-check is now an
+assertion.
+
+### The budget caveat
+
+`remaining_budget` is budget minus **spent**, so a seat sitting on a live $150
+high bid still shows the full $200. The two are rendered as two claims - $200.00
+at 18.75px in the normal text colour over "left, of sales recorded", then
+$150.00 at 15px in amber over "live on <player> - not a sale, so not subtracted
+above", separated by a rule. Driven: exactly **1** caveat on the 12-seat board,
+and recording that sale collapses the two into one figure with the caveat count
+going to **0**.
+
+### Could not verify
+
+- **Legibility at a full 156-slot board** - *reasoned*. The seed fills 7 of 156.
+  Roster construction is a flat list per seat and I have not seen 13 rows in one
+  card, let alone twelve of those at once. The most likely failure is vertical,
+  and it is the state the screen will actually be in by the end of the auction.
+- **`guaranteedCorrectionSequence` when the tail is a `closed` event** -
+  *reasoned*. Driven for `sale`, `bid`, `nomination` and `void` tails. No seeded
+  draft reaches `closed`, so I could not produce the state without hand-writing
+  a log, which would have made the test a restatement of my own assumption.
+- **The 2s poll interval** - *reasoned, and it is a guess*. Not measured against
+  a second recorder on the same draft, and there is no SSE (deliberate, ADR-014).
+  Two people recording into one draft will see up to 2s of divergence; the
+  `last_sequence` precondition makes that safe rather than merely unlikely, but
+  "safe" and "not confusing under a clock" are different claims and I only have
+  the first.
+- **Anything past 27 events** - *driven only to 20*. The void measurement used
+  the 27 seeded events across two drafts; the deepest single log I exercised was
+  20. Log rendering is unvirtualised.
+- **That the screen never renders a decision number** - *driven for the recorded
+  payloads, reasoned in general*. Every number displayed traces to a response
+  field or to a count of rows, and I checked that by reading the render path.
+  But that is an argument about code I wrote, not a test, and the honest
+  statement is that no mechanism would stop a future lane adding one.
+- **CI** - *unverified at the time of writing*. The four frontend gate commands
+  pass locally (`lint`, `typecheck`, `test` 241 in 16 files, `build`). Local
+  green and CI green are different claims and this file has been wrong about
+  that twice today.
+
+### For the next lane
+
+- **A vitest suite that exits non-zero may not have run.** Check for `Tests  no
+  tests` before recording that anything was caught. This is the frontend spelling
+  of `rc == 4`.
+- **`getComputedStyle(el).backgroundColor` is `rgba(0,0,0,0)` far more often than
+  you expect**, and every contrast ratio computed against it is silently a ratio
+  against black. Walk to the first painted ancestor and print which one it was.
+- **A code-keyed error message describes the precondition that failed, not the
+  action the user took.** When those differ - which is precisely the case for a
+  refused void - showing your own copy for the code tells the user about a form
+  field that is not on their screen. Show the server's sentence.
+- **There is no way to create a draft from the browser.** `POST /api/v1/drafts`
+  exists; nothing calls it, so the only route today is a development CLI that
+  invents synthetic seats. Filed as `draft-setup-screen`, and it is on the
+  critical path for 18 October in a way its size does not suggest.
