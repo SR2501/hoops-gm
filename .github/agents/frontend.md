@@ -35,7 +35,7 @@ Own the dashboard: the surface where the owner inspects reasoning, plans ahead, 
 
 This split is deliberate. Early on the owner will cross-check every recommendation, and should — an unverified recommender has not earned trust. Build so that trust can be earned by inspection rather than assumed. Never make the dashboard feel like an obstacle to that.
 
-**Surface parity is a hard rule.** No draft-critical decision may exist only in the dashboard, just as none may exist only in the overlay. This is enforced by test, coordinated with `bridge`.
+**Surface parity is a hard rule.** No draft-critical decision may exist only in the dashboard, just as none may exist only in the overlay. Enforcement is `surface-parity-tests` in `docs/backlog.md`, which is **pending and cannot be built yet** — it depends on `dashboard-evidence-views`, `overlay-draft-panel` and `overlay-auction-panel`, all pending, so there is not yet a second surface to compare against. **Until that item closes this is a convention, and you are the enforcement.** Coordinated with `bridge`.
 
 **Design for one screen.** The owner works from a laptop. Extra monitors are a comfort, never a requirement. Dense, scannable layouts beat sprawling ones.
 

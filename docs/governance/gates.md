@@ -367,7 +367,15 @@ day's lessons accumulated, and that is what made it feel sufficient. Nothing fai
 the whole difficulty: a substitute that works emits no signal, exactly like a recount that stays
 internally consistent after a deletion. **When this repository has a mechanism for a thing,
 prose describing that mechanism is not that mechanism** — and using the mechanism feels like
-more effort rather than less, which is why nobody catches it.
+more effort rather than less, which is why nobody catches it. **And the rule above is
+insufficient on its own, because a mechanism can itself be prose asserting an enforcement**:
+`.github/agents/frontend.md` stated *"surface parity is a hard rule, enforced by test"*, and no
+such test exists — `surface-parity-tests` is pending behind three pending dependencies, and the
+one non-dashboard surface in the tree (`userscript/`) is capture-only, so the test is not merely
+unwritten but **unwritable, since there is no second decision surface to compare against**.
+`plan.md` and `bridge.md` carried the same claim. So *use the mechanism rather than prose
+describing it* is right and incomplete; **a definition is not self-verifying, and an enforcement
+claim is checkable in one grep** — do that before relying on it.
 
 **Which makes this the least reliable section in the repository, and it should say so.** It is
 the one part with nothing executable underneath it, and the class it documents is *believing
