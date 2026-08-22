@@ -17638,3 +17638,66 @@ One caveat on the count, since this file is where such things get overstated lat
 rebase's fire was **mine and deliberate** - I replaced the header with a placeholder specifically
 to watch the guard trip before correcting it, which is a test of the guard, not a defect in the
 file. The three real catches were counts moved by other lanes' changes arriving through a rebase.
+
+### The mutation harness that would have cleared a tool of doing nothing
+
+The coordinator ran a mutation against `scripts/backlog_graph.py` on `main` to check it really
+guards the header, and reported that it **did not** - `header "46 done" -> "12 done"` exiting `0`.
+Two defects in the harness, both of which they caught themselves:
+
+- **The dangling-edge injection was a no-op.** They wrote `Depends on: \`slug\`` where the file
+  carries `- **Depends on:** \`slug\``. The file was never modified, so the tool was clean about a
+  defect that was never planted.
+- **`Select-Object -First` zeroed the exit code, twice, five minutes apart** - a trap they had
+  written into the register themselves.
+
+Together those produce a **confident, fully evidenced, entirely false** report that the tool
+catches nothing, supported by two clean-looking runs. **The harness was the defect, in the
+investigation of whether the harness was the defect.**
+
+Re-run properly against merged `main` - control asserted green first, only `rc == 1` counted as
+caught, revert asserted green after:
+
+```
+CONTROL   unmodified                    rc=0
+MUTATION  header 47 done -> 12 done     rc=1   caught
+REVERT    restored                      rc=0
+
+CONTROL   unmodified                    rc=0
+MUTATION  dangling edge, correct syntax rc=1   caught, named the bogus slug and both lines
+REVERT    restored                      rc=0
+```
+
+The original conclusion was also **obsolete rather than merely wrong**: `_check_header` and
+`HEADER_RE` reached `main` in `b49c6e6`, and the run predated it.
+
+### A size check cannot tell you a mutation applied
+
+The obvious fix to a no-op injection is to assert the file changed by the expected number of
+characters, and the dangling-edge case reports `+120` cleanly. **It is worthless for the mutation
+that mattered.** `47` and `12` are both two characters, so the mutated file is **byte-identical in
+length** to the original - a size assertion reports a clean apply on a file it cannot distinguish
+from unmodified.
+
+What works is reading the mutated field back and asserting it says what you meant:
+
+```
+header now: **12 done - 1 blocked - 86 pending - 134 total**
+```
+
+That is *report the state you observed, never the parameter you passed* - applied to the mutation
+rather than to the result, which is the half nobody applies it to. **The check you reach for to
+validate a harness fails in exactly the cases a harness is subtlest about**, because the subtle
+mutations are the small ones and the small ones are the ones that do not change length.
+
+### The base assertion narrows the window; it does not close it
+
+`git merge-base HEAD origin/main` equalling `git rev-parse origin/main` immediately before pushing
+is a real improvement and is now house practice. Its limit should travel with it: **a merge can
+land between the assertion and the push.** That is not hypothetical - it is what happened on rebase
+seven, where #71 merged while the push was in flight.
+
+What the assertion actually buys is converting a **silent stale push** into a **local refusal**. It
+does not make the base stable; only the freeze does that. Stating the limit alongside the practice
+matters here specifically, because the failure it half-solves is one where a green result looks
+exactly as green when it is about a base nobody will merge.
