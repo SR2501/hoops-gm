@@ -11427,7 +11427,7 @@ reason I have not imagined, the copy I wrote may be describing the wrong thing.
 the pushed SHA.
 
 **Next:** PR open against `sr2501-real-schedule-import`, stacked and not mergeable until
-that lane lands. On landing: rebase forward (checking `git merge-base --is-ancestor` first),
+that lane lands. On landing: rebase forward (asserting `git diff --stat origin/main..HEAD` is empty for that lane's paths - **not** `git merge-base --is-ancestor`, which returns 1 on every squash-merged lane; see the correction at the end of this file),
 re-capture and compare the fixture against committed code, re-run the code gate and the
 mutation harness, then retarget to `main`.
 **Next:** PR #47 is open as a **draft against `main`**, not against
@@ -11438,7 +11438,7 @@ the PR unopened would have forfeited review at an exact head. `architect` confir
 draft-on-main as the right posture and the coordinator has set the merge order: the
 schedule-import lane lands first, then this. Draft status is the guard.
 
-On that lane landing: rebase forward (checking `git merge-base --is-ancestor` first),
+On that lane landing: rebase forward (asserting `git diff --stat origin/main..HEAD` is empty for that lane's paths - **not** `git merge-base --is-ancestor`, which returns 1 on every squash-merged lane; see the correction at the end of this file),
 re-capture and compare the fixture against committed code, remove the wire optionality and
 the "cannot say" notice with it, and re-run the code gate and the mutation harness.
 
@@ -17755,6 +17755,25 @@ full gate ran again.*
 
 
 ---
+
+
+**Correction, 2026-08-22, driven not reasoned.** Two `Next:` lines above told lanes to
+check `git merge-base --is-ancestor` before rebasing forward once a dependency landed.
+**Under squash merging that returns 1 on every lane that lands cleanly**, so the alarm
+value is the default outcome and the guard fires on the success case - which is the
+guard the next person loosens.
+
+Driven against my own merged branch rather than argued: #69's pre-merge head `fc4fb62`
+landed as `067cdc0`, and `git merge-base --is-ancestor fc4fb62 origin/main` returns
+**rc 1** while `git diff --stat fc4fb62 origin/main -- backend/src/hoops_gm/market/` is
+**empty**. The work is demonstrably present and the check says it is not. `git rev-list
+--parents -n 30 origin/main` gives **28 of 30 single-parent**, which is the mechanism.
+
+Use the question you actually mean. *Did the work land?* - `git diff --stat
+origin/main..HEAD` over that lane's paths, empty. *Is my base still the tip?* - the
+push-time `git merge-base HEAD origin/main == git rev-parse origin/main` assertion.
+The branch-to-branch use elsewhere in this file is a different question and is correct.
+
 
 ## 2026-08-22 - `data-engineer` / `aav-source`: two merged sentences said "a real export" and I have never had one
 
