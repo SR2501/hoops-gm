@@ -74,6 +74,41 @@ def _parse(fixture_name: str, instant: datetime):  # type: ignore[no-untyped-def
     )
 
 
+def test_the_parametrised_sets_are_not_empty() -> None:
+    """A parametrisation over an empty set collects nothing and passes vacuously.
+
+    Added after a sibling lane found a test iterating `client.app.routes` — one
+    lazy `_IncludedRouter`, so the loop ran zero times and every assertion about
+    routes "passed". Same mechanism as reading `tipoff_utc` off a wrapper object
+    and getting `None` 1,230 times: **a check that iterates must first assert it
+    found something to iterate over.**
+
+    Every other test in this file is parametrised over one of these two sets or
+    reads `SUPPORTED_SEASONS` directly, so emptying either would silently delete
+    coverage rather than fail. The counts are pinned rather than merely asserted
+    non-empty, because dropping from three seasons to one is the realistic
+    regression and `> 0` would not notice it.
+    """
+    assert len(SUPPORTED_SEASONS) == 3, sorted(SUPPORTED_SEASONS)
+    assert len(SEASONS_WITH_A_PROBED_DOUBTFUL) == 2, sorted(SEASONS_WITH_A_PROBED_DOUBTFUL)
+    assert set(SUPPORTED_SEASONS) > SEASONS_WITH_A_PROBED_DOUBTFUL
+    for fixture_name, _ in SUPPORTED_SEASONS.values():
+        assert (FIXTURES / fixture_name).exists(), fixture_name
+
+
+def test_every_fixture_this_file_names_actually_parses_to_entries() -> None:
+    """And the parsed results are non-empty, so no assertion runs over nothing.
+
+    The status assertions below all count entries. A fixture that parsed to zero
+    entries would make `Counter()[X] > 0` false rather than vacuous, so this is
+    belt-and-braces — but the completeness test's `for` loop and the digest
+    test's loop both iterate, and this pins that they have something to iterate.
+    """
+    for season, (fixture_name, instant) in sorted(SUPPORTED_SEASONS.items()):
+        parsed = _parse(fixture_name, instant)
+        assert len(parsed.entries) > 0, f"{season}: {fixture_name} parsed to zero entries"
+
+
 @pytest.mark.parametrize("season", sorted(SUPPORTED_SEASONS))
 def test_each_planned_sweep_season_still_parses(season: str) -> None:
     """A real report from every season the sweep will touch is readable."""
