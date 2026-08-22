@@ -288,8 +288,10 @@ $env:HOOPS_GM_AAV_PROFILE = 'hashtag-auction-values'
 pytest -m live_smoke -k PublishedAuctionValue
 ```
 
-Absent either variable it skips. **It was driven rather than assumed**: it
-passes on a real export, and goes red on a renamed value column, on a
+Absent either variable it skips. **It was driven rather than assumed** - but be
+exact about against what. **No real published export has ever been run through
+it, because nobody here has one.** It passes on a *realistically shaped synthetic*
+export, and goes red on a renamed value column, on a
 header-only file, and on a negative dollar figure — at three *different*
 assertions, so each one does distinct work rather than one catch-all absorbing
 every case. Driving the negative case also showed the parser rejects it fatally
