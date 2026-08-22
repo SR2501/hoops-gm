@@ -17,19 +17,59 @@ build it before draft day.**
 
 ## The recommendation, first
 
-**Ship consensus per-game rates fused with our own availability number.** Do not
-build an in-house per-game *production* model before Sunday 18 October 2026.
+**Ship consensus per-game rates *and* their minutes, fused with our own
+availability number.** Do not build an in-house per-game *production* model
+before Sunday 18 October 2026.
 
 1. **Consume consensus rates as-is.** We cannot beat them, we would add nothing
    measurable, and a rate disagreement is not defensible in a draft room.
-2. **Assert our own games-played number.** This is the only factor where an
-   independent claim is both possible and explicable.
-3. **Build the naive Marcel/SPS baseline only as a measuring stick** — never as a
+2. **Consume their minutes as-is too.** *Amended on measured evidence — see
+   [`consensus-reproducibility.md`](consensus-reproducibility.md).* Minutes agree
+   with a naive baseline far less well than rates do (r² 0.395–0.747 against
+   0.813–0.958), and the commercial minutes view **amplifies** rather than
+   shrinks: slope 1.06–1.09 within a fixed games bucket, after removing a
+   divisor confound that accounted for roughly half the raw 1.157. Amplification
+   is the signature of information no box score contains — depth charts,
+   offseason moves, role changes. We cannot reproduce it and should not pretend
+   to.
+3. **Assert our own games-played number.** This is the only factor where an
+   independent claim is both possible and explicable — and the space that claim
+   aims at is now measured rather than assumed: the one commercial set we hold
+   puts **84.7% of its rotation cohort on two `games` values**, expressing
+   almost no per-player availability opinion.
+4. **Build the naive Marcel/SPS baseline only as a measuring stick** — never as a
    production source — to quantify how much of any projection set is reproducible
-   from public box scores by a monkey.
-4. **Spend the remaining weeks unblocking `participation-ledger-population`,**
+   from public box scores by a monkey. *This has since been done*:
+   [`consensus-reproducibility.md`](consensus-reproducibility.md).
+5. **Spend the remaining weeks unblocking `participation-ledger-population`,**
    which is where the unpredictable variance actually lives and is currently the
    binding constraint on the entire spine.
+
+### Where the production/availability seam falls — an ADR-002 clarification
+
+ADR-002 requires that per-game production and expected games played be computed
+separately and fused explicitly. It does not say *where in the decomposition* the
+seam sits, and the recommendation above now depends on that answer, so state it:
+
+```
+season total  =  games played  ×  minutes per game  ×  per-minute rate
+                 └── ours ──┘    └──────── theirs ────────┘
+```
+
+**The seam falls at games, not at minutes.** Minutes-per-game is *role* — it is
+production-side, and it is informed by depth charts and offseason moves we do not
+hold. Games-played is *availability*, and it is the one factor where a commercial
+set publishes two tiers covering 85% of the relevant pool and expresses
+essentially no per-player opinion. The seam belongs where our information
+advantage begins, and that has now been measured rather than assumed.
+
+**Flagged for `architect`:** this is offered as a clarification, not an amendment
+request. ADR-002 decides *that* the two are separated and fused explicitly; this
+identifies *where* the boundary lands in the decomposition, which reads as
+implementation of the decision rather than a change to it. If `architect` reads
+the placement as itself a decision, an amendment is warranted; the argument for
+that reading is that placing the seam at games is what licenses consuming a
+third party's minutes, and that is a strategy commitment rather than a detail.
 
 ---
 
@@ -47,6 +87,16 @@ player-game rows, ten throttled requests**, one per season, because that endpoin
 returns a whole league-season at a time. 2019-20 and 2020-21 are excluded from
 every headline as disrupted (bubble and 72-game seasons); including them moves
 nothing material and both figures are reported below.
+
+> **Window warning for anyone reusing this setup.** These t→t+1 results are
+> self-contained and unaffected by the end of the window: each pair is compared
+> against the season that follows it. **But 2025-26 is complete — 26,651 rows —
+> and any experiment that projects *2026-27* must include it.** A follow-up lane
+> inherited this window without rechecking availability and would have built a
+> baseline one season stale, making every measured disagreement partly an
+> artefact of staleness, invisibly, with every number still looking plausible.
+> Check what seasons exist at the time of *your* use; do not inherit a sibling's
+> window.
 
 ### Year-over-year stability, season *t* → *t+1*
 
@@ -175,12 +225,29 @@ leaving accuracy on the table in both directions.**
 
 ## Why an in-house rate model cannot pay for itself
 
-**1. The information is exhausted, not merely hard.** A naive Marcel reaches
-r² **0.50–0.89** across the seven per-36 categories — 0.71–0.89 for the volume
-categories that drive most rosters (PTS, REB, AST, BLK, FG3M), with steals the
-outlier at 0.50 and turnovers at 0.66. Whatever remains is largely irreducible
-from public box scores. We would be competing for a residual that the best
-public system in the world also cannot reach.
+**1. The information is largely exhausted, and this is now measured on a
+commercial set rather than inferred.** A naive Marcel reaches r² **0.50–0.89**
+across the seven per-36 categories — 0.71–0.89 for the volume categories that
+drive most rosters (PTS, REB, AST, BLK, FG3M), with steals the outlier at 0.50
+and turnovers at 0.66.
+
+When this document was first written, the step from *"a naive baseline reproduces
+most of what public box scores support"* to *"so does consensus"* was an
+inference. It has since been checked directly against a paid Basketball Monster
+export —
+[`consensus-reproducibility.md`](consensus-reproducibility.md) — and the
+inference held, though not for quite the reason assumed:
+
+- A naive baseline agrees with that commercial set at **r² 0.726–0.947** per
+  game across all eleven categories, and **raw carry-forward with no modelling at
+  all** reaches 0.658–0.942.
+- **But the commercial set is not itself naive.** Its shrinkage toward the mean
+  tracks each category's year-over-year instability almost inverse-monotonically
+  — steals shrunk 17.6% against a t→t+1 r² of 0.570, rebounds 0% against 0.881 —
+  using the stability column measured above, without sight of that export.
+
+So the residual we would be competing for is small *and* the incumbent is
+demonstrably doing principled work within it. Both halves point the same way.
 
 **2. A rate disagreement is not defensible in a draft room.** The acceptance test
 for any disagreement is one row, under a bid clock:
@@ -213,6 +280,8 @@ rather than a belief about players.
 
 - **We make no rate claim**, so there is no rate agreement that could be fake. We
   are not measured against consensus on rates because we do not contest them.
+  Under the amended recommendation the same holds for **minutes**: we consume
+  theirs, so we make no minutes claim either.
 - **Our availability model cannot see consensus's games assumption.**
   `docs/models/projection-blending.md` records that games-played assumptions are
   not inputs and that `source_games_played_assumptions` is a table the blending
@@ -221,6 +290,14 @@ rather than a belief about players.
   Monster's `games` is persisted only as the source assumption, with every season
   total divided by it. **The one quantity we disagree about is the one quantity
   our model never observes their answer for.**
+- **One caveat this now needs.** A follow-up measurement
+  ([`consensus-reproducibility.md`](consensus-reproducibility.md)) *did* read that
+  `games` column, offline, to quantify the gap. That is evaluation, not input,
+  and the distinction is the whole of the anti-circularity argument: the moment
+  any measured commercial games figure is used to tune our availability model —
+  including informally, by an author who remembers the number — the structural
+  guarantee above becomes a good intention again. **Read it to score ourselves,
+  never to fit ourselves.**
 - **ADR-002's seam is therefore the anti-circularity mechanism**, not merely a
   modelling preference. That is a stronger justification than ADR-002 itself
   gives.
@@ -249,12 +326,29 @@ modified Kalman filter, the two blended by a gradient-boosted tree, plus
 per-stat aging curves and opponent, seasonality, free-agency and interaction
 effects — is substantially more elaborate than Marcel. It is not a Marcel variant.
 
-The honest mechanism is different and still supports the conclusion: **public
-systems agree largely because they consume the same public box scores and all sit
-near the ceiling of what those inputs support.** The measured ceiling is above:
-a monkey gets r² 0.71–0.89 on the volume categories (0.50 on steals, the
-weakest). The spread between sophisticated systems is
-small *because the information is exhausted*, not because anyone is copying.
+The honest mechanism is different, and the version of it this document can
+actually support is the weaker one: **public systems agree largely because they
+consume the same public box scores, and their rates are largely reproducible from
+those box scores — and for the decision at hand it does not matter why.** The
+measured reproducibility is above: a monkey gets r² 0.71–0.89 on the volume
+categories (0.50 on steals, the weakest), and 0.726–0.947 against an actual
+commercial export.
+
+**The stronger claim — that public systems "sit near the ceiling of what those
+inputs support" — is not established here and should not be quoted as though it
+were.** No experiment in this document, or in
+[`consensus-reproducibility.md`](consensus-reproducibility.md), observes an
+outcome; both measure agreement between opinions, and high agreement is equally
+consistent with *"consensus is at the ceiling"* and *"consensus is also naive."*
+The calibrated-shrinkage result above is real evidence against the second
+reading, but evidence is not the same as a demonstrated ceiling, which would
+require held-out outcomes nobody here has.
+
+**The recommendation does not depend on which is true.** If consensus is at the
+ceiling we cannot beat it; if consensus is merely reproducible we would be
+rebuilding something already free. Either way, do not build an in-house rate
+model before draft day. The weaker claim is sufficient, so the stronger one is
+not worth asserting.
 
 Two consequences:
 
@@ -339,9 +433,9 @@ sign of its aggregate. Every directional claim this document relies on:
 | Multi-year averaging *hurts* for minutes and scoring rate | **measured** — MPG r² 0.602 vs 0.675; PTS/36 0.710 vs 0.753. The intuitive direction is wrong |
 | Prior workload predicts *more* future availability, not less | **measured** — r = +0.52; the counterintuitive sign, and it is survivorship |
 | Durable players stay more durable | **measured** — +14.0 games between extreme groups |
-| A naive baseline reproduces most of what public box scores support | **measured for the baseline, UNMEASURED for consensus.** We measured what Marcel achieves; we have not measured what any consensus source achieves, because that requires an eligible held-out experiment we have not run |
-| Consensus is well calibrated on rates and poorly calibrated on games | **UNMEASURED.** Plausible, load-bearing if true, and not checked. This is the single most valuable unrun experiment in this document |
-| Consensus systematically over-projects games for stars | **UNMEASURED.** Our data shows strong regression toward ~58.5 games, but we have not compared that to any published assumption |
+| A naive baseline reproduces most of what public box scores support | **measured for the baseline; now also measured for one commercial set.** A naive baseline agrees with a paid Basketball Monster 2026-27 export at r² 0.726–0.947 per game and 0.813–0.958 per-36 across eleven categories. Note this is *agreement*, not accuracy — see [`consensus-reproducibility.md`](consensus-reproducibility.md) |
+| Consensus is well calibrated on rates and poorly calibrated on games | **partly measured, and the framing was wrong.** Rate agreement is high (above) and that set's shrinkage tracks category instability inverse-monotonically. But its `games` column is not poorly calibrated so much as *barely populated*: 31 distinct values across 505 rows, 18 in the rotation cohort, **84.7% of that cohort on two values**. There is little availability opinion there to be calibrated. True calibration remains unmeasurable without outcomes |
+| Consensus systematically over-projects games for stars | **measured, and the magnitude is modest.** The commercial mean is 65.0 games against a 61.4 observed three-season mean; 63.9% of joined rows sit above their own unshrunk history. The gap is **+5.1 against our shrunk baseline and +3.9 unshrunk** — reported both ways because the shrinkage is our own tuning parameter and inflated the effect by roughly 30% |
 | Age curves regress older players down | **UNMEASURED and not cheaply measurable.** `PlayerIndex` carries no birth date or age — verified, one request, its 27 columns include `DRAFT_YEAR`, `FROM_YEAR` and `TO_YEAR` but no age. A career-stage proxy from our ten-season window is left-censored for anyone who debuted before 2015-16. Deliberately not proxied badly |
 | Rookies are over-projected by consensus | **UNMEASURED.** Noting only that DARKO initialises every rookie identically, adjusted only for age, because it holds no NCAA, summer-league or preseason data |
 | High-variance players should be discounted | **UNMEASURED.** This is G-score's premise (ADR-003) and is not evidence from this analysis |
@@ -402,7 +496,18 @@ blending contract already does this; anything new must too.
 
 - **Whether consensus is actually good.** Everything here measures what is
   *reproducible from public box scores*, not what any commercial source achieves.
-  No consensus projection set was evaluated. This is the largest gap.
+  A follow-up measurement ([`consensus-reproducibility.md`](consensus-reproducibility.md))
+  has since evaluated one paid set, but it measures **agreement between two
+  opinions with no outcomes on either side**. Neither document establishes that
+  consensus is good; both establish that its rates are largely reproducible.
+  This remains the largest gap and no experiment available before draft day
+  closes it.
+- **What this baseline is structurally blind to.** The follow-up found **66 of
+  the commercial set's rows have no NBA game log in ten seasons** — roughly 8 of
+  them at rotation minutes. Rookies and international signings are not merely
+  harder for a historical baseline; they are *absent* from it. "We have no
+  number" is a different claim from "we are less confident", and any screen that
+  renders them identically is lying.
 - **Anything about 2026-27 specifically.** Rookies, players returning from a lost
   season, new roles after an offseason move, rule changes, and the current injury
   landscape are all invisible to a ten-season historical decomposition.
