@@ -304,7 +304,19 @@ describe('every recorded refusal, reached', () => {
     // part and the first casualty of any paraphrase.
     expect(headline).toHaveTextContent(refusal.body.detail)
     expect(headline).toHaveTextContent('sequence 6')
-    expect(headline).toHaveTextContent('Void back from the most recent event instead')
+    // The instruction is asserted as a *property of the recorded detail* rather
+    // than as a literal. The literal here used to be "Void back from the most
+    // recent event instead"; the base moved to `ce4c603` and the backend now
+    // says "To void sequence 5, void back from sequence 15 to sequence 6
+    // first." Pinning the sentence again would just reschedule this failure.
+    //
+    // What must hold is that the refusal tells the recorder which sequence to
+    // deal with first, and that the screen shows that sentence rather than a
+    // paraphrase of it.
+    expect(refusal.body.detail).toMatch(/to void sequence \d+/i)
+    const instruction = /to void sequence \d+[^.]*\./i.exec(refusal.body.detail)
+    if (instruction === null) throw new Error('the fixture carries no instruction to assert on')
+    expect(headline).toHaveTextContent(instruction[0])
 
     // And specifically NOT this build's copy for `draft_player_label_required`,
     // which describes a field the void form does not have. Driving this in a

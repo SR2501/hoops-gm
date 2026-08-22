@@ -15812,3 +15812,121 @@ failure instead of a null comparison.
   through both. `no-unnecessary-type-assertion` wanted `!` gone where
   `Node.contains` accepts null; `tsc` wanted it for `.className`. Narrow with an
   explicit `throw` and both are satisfied, with a named failure as a bonus.
+
+---
+
+## 2026-08-21 - frontend - The recording that could not notice it was old
+
+Second unit on the draft board (PR #66). The base moved `5ec3d0f` -> `ce4c603`
+under me carrying two message-correctness fixes, and rebasing onto it turned up
+the sharpest thing I found tonight.
+
+**Two of six recorded refusal fixtures held text the backend no longer produces,
+and the whole frontend suite stayed green.** One of them was the dead re-wrap the
+backend lane had just deleted - my fixture asserted, in a committed file, a
+sentence that asserted something untrue about the log. Nothing failed, because a
+recording cannot notice that it is old. The tests were accurate about what was
+recorded and no longer accurate about the contract, which is the non-independence
+trap in its purest form: the source of truth moved and the copy did not.
+
+It was caught only because I re-drove the API by hand after the rebase. Nothing
+in the repository would have caught it, and no amount of frontend test-writing
+would have either.
+
+So the fix is a mechanism, not a lesson: `scripts/capture_draft_fixtures.py`.
+`--write` regenerates the refusal fixtures from a freshly seeded backend, one
+database per case. `--check` re-drives all nine recorded payloads and reports
+**what it observed against what is committed**, exiting non-zero on drift. It
+refuses to report success having compared nothing. Running it against the old
+fixtures reproduces the failure exactly - 4 of 9 drifted, and it prints both
+sentences side by side. The original fixtures were captured ad hoc with no script
+kept, which is why there was nothing to re-run; that is now fixed.
+
+It is **not wired into CI**, because the Python gate runs with
+`working-directory: backend` and this needs the app importable alongside the
+frontend fixtures. That is a job-shape change and not a frontend lane's to make
+unilaterally in its own PR. Filed as `fixture-drift-gate` and raised with the
+coordinator.
+
+### The stale-state finding, which is the same shape
+
+`frontend.md` lists "loading, empty, error and stale-data states handled" as a
+done criterion, and this screen looked like it passed: blocking `fetch` in a real
+browser for twelve seconds produced a banner reading "Showing data from
+12:19:28 AM". Driven, observed, rendered.
+
+Then I deleted `staleAfterMs` from `DraftPage` to watch the new tests fail, and
+**all 23 still passed**. `AsyncBoundary` raises that banner on
+`isStale || refreshFailed || refreshPending`, and this screen polls every two
+seconds, so data can only age when a read has failed or is in flight - both of
+which raise the banner on their own. `isStale` never decides anything here.
+**`staleAfterMs` on this screen is inert configuration**, and my browser
+observation was true about the banner and wrong about the mechanism.
+
+Left wired as a backstop for the day polling learns to pause, documented as inert
+in the test file rather than claimed as covered. The two new tests do cover the
+state a recorder actually hits mid-auction, and were proven to fire by making the
+reads succeed - both then fail on the absent banner.
+
+I would not have found this by writing more tests. I found it by trying to break
+the one I had just written.
+
+### The stale warning was fifteen screens from the recorder
+
+The full 156-slot board is ~11,000px. The recorder is sticky; the stale banner
+was not, so someone could be typing a sale fifteen screens down while the warning
+that reads had stopped sat at the top, off screen. Recording into a stale board
+under an auction clock is the harm. Pinned it, scoped to `.page--draft` so the
+short read screens that share `AsyncBoundary` do not inherit a decision made for
+a page fifteen times their length. Measured: visible at all 21 scroll positions,
+11.22:1 contrast at 12.75px, no overlap with the submit button.
+
+One measured cost, stated rather than hidden: at scroll position 0 exactly, the
+banner's own height pushes the submit button 26px below the fold. 1 of 21
+positions, only while stale, and one scroll notch fixes it. I judged showing the
+warning worth 26px at the very top of a fifteen-screen page.
+
+### What the base change did to the screen
+
+Re-verified in a browser rather than trusting the suite, because the base altered
+text I render verbatim. A refused deep void now reads:
+
+> Voiding sequence 3 was refused because sequence 4, which comes after it, no
+> longer holds once it is gone: Ansel Whitcombe is on the block, not Dov Kestrel.
+> To void sequence 3, void back from sequence 170 to sequence 4 first.
+
+That is a large improvement on what it replaced, and it arrives on exactly the
+path my "try to void" affordance generates. Worth saying that the two-affordance
+design and that fix were arrived at independently, from opposite sides.
+
+Also worth saying: on a 170-entry log the instruction is correct and asks for
+something nobody will do mid-auction. I render it verbatim anyway. It makes the
+real cost of a deep correction vivid instead of hiding it behind a softer
+paraphrase, which is the right failure direction for this screen.
+
+I re-drove the void probe against `ce4c603`: **4 of 27 voidable, two of them not
+the tail** - unchanged. The positional finding survives the base move, so the
+two-affordance design still matches the API.
+
+### Could not verify
+
+- **Whether the drift check would catch a *schema* change as well as a prose
+  change.** It compares state payloads on top-level keys only, so a field that
+  changed type or meaning underneath an unchanged key would pass. **Reasoned**,
+  not driven - I did not plant one. The prose path is driven, twice.
+- **Whether `isStale` is truly unreachable on this screen, or merely unreached by
+  anything I could construct.** I argued it from the three-way condition and the
+  poll interval and could not build a case that reaches it. **Reasoned.** If
+  polling ever pauses, it becomes live and the pinned threshold matters.
+- **Whether one entry among 170 can be found under time pressure.** The log is
+  unvirtualised and the page is fifteen screens. Every correction affordance
+  works and I have driven them; whether a person can *locate* the right row while
+  an auction clock runs is untested and I do not think a test settles it.
+  **Reasoned**, and it is the thing I would watch first in the mock auction.
+- **The 2s poll interval against a second concurrent recorder.** Still a guess,
+  still unmeasured. There is one recorder by design, so this only matters if that
+  assumption breaks.
+- **Whether `--check` stays honest as fixtures grow.** It asserts it checked
+  something and prints the count, but nothing forces a *new* fixture to be added
+  to it. **Reasoned.** A fixture added without a case here would be unchecked and
+  silent - the same class, one level up.

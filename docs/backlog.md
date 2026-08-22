@@ -1475,6 +1475,27 @@ a number the backend never sent.
 What is still missing for the 18 October auction is the feed and the setup:
 see `draft-setup-screen` for the second.
 
+### `fixture-drift-gate` - Fail CI when a recorded fixture stops matching the backend
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`
+
+`scripts/capture_draft_fixtures.py --check` re-drives every payload the draft
+board's tests are recorded against and reports drift. It is not wired into CI,
+because the Python gate runs with `working-directory: backend` and this needs the
+app importable alongside the frontend fixtures - a job-shape change that is not a
+frontend lane's to make unilaterally.
+
+It should be. On 2026-08-21 the draft-tracker base moved from `5ec3d0f` to
+`ce4c603` carrying two message-correctness fixes, and two of six recorded refusals
+immediately held text the backend no longer produces - including a re-wrap that
+asserted something untrue about the log. **The frontend suite stayed green
+throughout**, because a recording cannot notice that it is old. It was caught by
+hand, by one lane happening to re-drive the API after a rebase.
+
+That is the same shape as the tripwire finding: not a wrong assertion, an
+*unentered* comparison. The fixtures are the frontend's only contact with the
+contract, and nothing checks they still describe it.
 ### `draft-setup-screen` - Creating a draft and its seats from the browser
 
 - [ ] **pending**
