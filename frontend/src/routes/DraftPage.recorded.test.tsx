@@ -212,6 +212,36 @@ describe('the draft board, from recorded payloads', () => {
     expect(undo[0]?.textContent).not.toBe(tryVoid[0]?.textContent)
   })
 
+  it('stops promising a guaranteed undo once the last entry is itself a correction', async () => {
+    // The state a recorder is in the instant after using Undo — the commonest
+    // correction under a clock. Found by looking at the demo board in a browser,
+    // where the lede promised an Undo that the screen below it did not offer.
+    //
+    // These are the recorded auction's own entries, cut where that correction
+    // landed, so the log is a real log in its real order. Only the log is under
+    // assertion here; the budgets belong to the full 18 entries.
+    const throughTheCorrection = {
+      ...auctionEvents,
+      events: auctionEvents.events.filter((event) => event.sequence <= 14),
+      last_sequence: 14,
+    }
+    expect(throughTheCorrection.events).toHaveLength(14)
+    expect(throughTheCorrection.events.at(-1)?.event_type).toBe('void')
+
+    stubDraftFetch({ state: auctionState, events: throughTheCorrection })
+    renderBoard()
+
+    await screen.findByTestId('log-list')
+
+    // Assert the log drew before asserting anything is missing from it. "No Undo
+    // button" is satisfied perfectly by a log that rendered nothing at all.
+    expect(screen.getAllByRole('button', { name: 'Try to void' }).length).toBeGreaterThan(0)
+    expect(screen.queryAllByRole('button', { name: 'Undo' })).toHaveLength(0)
+
+    // So the standing copy must carry the exception while that is true.
+    expect(screen.getByTestId('log-lede')).toHaveTextContent('unless it is itself a correction')
+  })
+
   it('says why the superseded entry and the correction itself cannot be undone', async () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents })
     renderBoard()

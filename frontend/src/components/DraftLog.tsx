@@ -82,11 +82,14 @@ export function DraftLog({ model, onRecorded }: DraftLogProps) {
   return (
     <section className="log" aria-labelledby="log-title">
       <h2 id="log-title">Log</h2>
-      <p className="log__lede">
+      <p className="log__lede" data-testid="log-lede">
         Every entry, in the order it was recorded. <strong>Nothing here is ever edited.</strong> A
         correction is a new entry that withdraws an earlier one, so the record of what was
         originally typed survives alongside it.{' '}
-        <strong>Undoing the most recent entry always works; undoing an older one may be refused</strong>{' '}
+        <strong>
+          Undoing the most recent entry always works, unless it is itself a correction; undoing an
+          older one may be refused
+        </strong>{' '}
         — the log is replayed without it, and a later entry may no longer hold. Trying costs
         nothing: a refused correction records nothing at all.
       </p>

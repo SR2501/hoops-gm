@@ -16101,3 +16101,104 @@ night.
   outcome.
 - **Whether the graph job checks edge *direction* or only slug existence.** Reasoned.
   I planted a non-existent target and it was caught; I did not plant a cycle.
+
+## 2026-08-22 - frontend - The lede promised an Undo the screen below it did not offer
+
+Rebased onto `main` after #64 squash-merged, retargeted #66, and then finally got
+a browser. The browser found a defect in the first thirty seconds that 248 green
+tests had never seen.
+
+### The browser, since the canvas is still wedged
+
+The shared canvas still times out on every action. Edge is installed and Node 24
+has a global `WebSocket`, so I launched `msedge --headless=new
+--remote-debugging-port=9222` and drove it over CDP directly. It is a real
+Chromium rendering the real app, and it is under my control rather than the
+tool's. The driver is in the session state directory, not the repository - it is
+a verification instrument, not a dependency, and it needs no install.
+
+**If the canvas is wedged for you too, this is the way through.** Attach with
+`Target.createTarget` + `Target.attachToTarget {flatten: true}`, wait for
+`Page.loadEventFired` rather than a fixed sleep, and wrap the script in an async
+IIFE because `Runtime.evaluate` takes an expression and not a function body.
+
+### The defect: standing copy that contradicts the screen it is printed on
+
+The log lede said, in bold:
+
+> Undoing the most recent entry always works; undoing an older one may be refused
+
+The demo auction's most recent entry is `#170`, which is itself a correction. It
+offers no **Undo** button, and its own row says *"A correction cannot itself be
+undone."* So the promise in bold at the top of the log was contradicted by the
+first entry underneath it.
+
+The code was right. `guaranteedCorrectionSequence` returns `null` when the last
+event is a `void`, which is correct - a void cannot be voided. **The copy was
+what was wrong**, and it was wrong in exactly one state: the state a recorder is
+in the instant after using Undo. That is the commonest correction path under an
+auction clock. Someone mistypes a sale, hits Undo, and the affordance they just
+used has vanished with the screen still insisting it always works.
+
+Fixed by adding the exception to the sentence rather than by weakening it:
+*"always works, unless it is itself a correction"*.
+
+### Why no test caught it
+
+Every test rendered a board whose last entry was a sale. The recorded auction
+fixture ends at `#18`, a sale; the snake fixture ends at `#12`, a pick. **The one
+state where the claim is false was the one state no fixture was in.** The suite
+was not wrong about anything it looked at. It had simply never been in the room.
+
+The new test cuts the recorded auction at `#14`, the void, so the log is that
+draft's own real log in its real order at the moment that correction landed. It
+asserts the log drew - `Try to void` count greater than zero - **before**
+asserting `Undo` is absent, because "no Undo button" is satisfied perfectly by a
+log that rendered nothing at all.
+
+Proved it bites by deleting the fix and re-running: fails, by name, on that test
+alone. My tamper prints a line if the pattern misses, because an edit that
+silently fails to apply reports the null result you were hoping for. That is the
+fifth time tonight deleting a thing found what writing a test could not.
+
+### What else the browser confirmed, driven rather than read
+
+- The refusal I drove against entry 1 rendered the **new** base's wording,
+  quotation marks and all: *"...no longer holds once it is gone: \"A bid needs a
+  lot on the block. Record the nomination first.\" To void sequence 1, void back
+  from sequence 170 to sequence 2 first."* The `$`-anchored split still matched,
+  `lead + remedy` reconstructed the sentence byte for byte, and the emphasis
+  landed on the clause that works.
+- **Measured the emphasis as a consequence, not a readback.** Computed style
+  reports `650` whether or not a 650 face exists. The same 40-character string
+  measured **293.83px** in the remedy against **276.63px** in the lead, so the
+  weight is real.
+- The refused void wrote nothing: `last_sequence` 170 before and 170 after.
+- The two affordances differ in paint, not only in wording - solid orange fill at
+  weight 600 with no caveat, against a dashed muted outline at weight 400 that
+  carries its caveat in a `title`. Distinguishable without reading, which is the
+  property that matters at speed. **Whether they read as different promises is
+  still not my judgement to make**, but they are measurably different objects.
+- `inflation` appears in the body text and is my own lede saying the screen has
+  none. A substring scan cannot tell a claim from its denial; I looked.
+
+### Rebase note that will bite the next stacked pair
+
+#64 **squash-merged**, so `main` holds one commit where my branch held the base
+lane's seven. Plain `git rebase origin/main` would have replayed those seven
+against a `main` that already contained them. `git rebase --onto origin/main
+<old base tip>` is the correct form, and the base squash was tree-identical to my
+old base, which I checked with `git diff --quiet` **and a control** - `HEAD~1 vs
+HEAD` exits 1 - because an empty diff and a broken diff look the same.
+
+### Could not verify
+
+- **Whether the corrected lede reads well at a glance.** I measured that it now
+  carries the exception; I cannot judge my own prose under a clock.
+- **Whether one entry among 170 can be found under time pressure.** Still
+  reasoned, not driven. `draft-log-virtualisation` remains filed on that basis.
+- **Whether headless Chromium's text metrics match the owner's windowed browser.**
+  The weight difference is large enough that I doubt it matters, but I measured
+  in headless and the owner will not be.
+- **The exception state on a snake draft.** I drove it on the auction log only;
+  the snake board's tail is a pick, so it shows the ordinary two-affordance case.
