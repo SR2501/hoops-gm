@@ -1657,6 +1657,100 @@ def test_established_disjoint_lineage_with_an_unknown_method_is_a_caveat(
     assert findings[0].admissible is True
 
 
+def test_the_row_accounting_assertion_can_actually_fail(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The partition guard, driven rather than assumed.
+
+    Removing this guard broke no test, because every fixture partitions
+    correctly - which is what you want from the fixtures and useless as
+    evidence about the guard. An invariant no input can violate is the same
+    vacuous coverage as an assertion no input can enter; the difference is
+    only that this one raises instead of swallowing.
+
+    So violate it directly: hand the importer a parse result whose
+    ``total_rows`` disagrees with the rows it carries, and assert it refuses
+    rather than writing an import row whose counters do not add up.
+    """
+    seed_player(session, nba_id=1, name="Player Alpha", team_abbreviation="BOS", position="SF")
+
+    csv_text = "Rank,Player,Team,Position,Value\n1,Player Alpha,BOS,SF,$90\n"
+
+    from hoops_gm.ingest.auction_values import importer as importer_module
+    from hoops_gm.ingest.auction_values.models import AuctionValueParseResult
+    from hoops_gm.ingest.auction_values.parser import parse_auction_value_csv
+
+    real_parse = parse_auction_value_csv
+
+    def miscounting_parse(text: str, profile: AuctionValueProfile) -> AuctionValueParseResult:
+        parsed = real_parse(text, profile)
+        # One data row was read; claim three. Nothing else changes, so the two
+        # halves of the partition now sum to less than the whole.
+        return replace(parsed, total_rows=3)
+
+    monkeypatch.setattr(importer_module, "parse_auction_value_csv", miscounting_parse)
+
+    with pytest.raises(AssertionError) as caught:
+        import_auction_value_csv(
+            session,
+            profile_id="fantraxhq-auction-values",
+            season="2026-27",
+            as_of_date=date(2026, 8, 21),
+            csv_bytes=csv_text.encode("utf-8"),
+            basis=stated_basis(),
+            original_filename="miscounted.csv",
+        )
+
+    message = str(caught.value)
+    assert "does not partition" in message
+    assert "3 data rows" in message, (
+        f"the message must report the state observed, not the parameter passed; got {message!r}"
+    )
+
+
+def test_an_inferred_basis_is_found_even_when_the_value_is_not_the_enum_object(
+    seeded_players: Session,
+) -> None:
+    """Equality, not identity, against a column that stores strings.
+
+    ``BasisEvidence`` is a ``StrEnum``, so a plain ``"inferred"`` loaded from
+    the database compares equal to ``BasisEvidence.INFERRED`` and is not the
+    same object. Every path in the tests today happens to hand back the enum
+    member, which is why reverting this to ``is`` broke nothing - the
+    reviewer's own note said as much, and an unreachable fix is untested by
+    definition unless the unreachable state is built by hand.
+
+    So build it: set the attribute to the bare string the column can hold.
+    """
+    session = seeded_players
+    outcome = import_fantraxhq(
+        session,
+        basis=stated_basis(
+            note="every field inferred here so the equality path has something to find.",
+        ),
+    )
+    auction_import = outcome.auction_import
+
+    # A value equal to the member but not identical to it - what a driver
+    # returning plain strings would produce.
+    for _value_column, evidence_column in BASIS_FIELDS:
+        setattr(auction_import, evidence_column, str(BasisEvidence.INFERRED.value))
+    session.flush()
+
+    observed = [getattr(auction_import, evidence_column) for _v, evidence_column in BASIS_FIELDS]
+    assert observed, "BASIS_FIELDS is empty, so this test would assert nothing"
+    assert all(v is not BasisEvidence.INFERRED for v in observed), (
+        f"the point of this test is a non-identical value; got {observed!r}"
+    )
+
+    verdict = assess_benchmark_admissibility(session, auction_import)
+    codes = [f.code for f in verdict.findings]
+    assert BASIS_INFERRED in codes, (
+        f"an inferred basis stored as a plain string must still surface; got {codes!r}"
+    )
+
+
 def test_a_duplicated_player_row_is_refused_diagnostically_not_at_the_unique_key(
     session: Session,
 ) -> None:
