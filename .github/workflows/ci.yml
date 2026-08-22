@@ -65,7 +65,81 @@ jobs:
         run: mypy
 
       - name: Tests
-        run: pytest
+        # --junitxml feeds the run-metrics steps below. pytest writes it as a
+        # side effect of the run it was already doing, so the Code gate's own
+        # timing is unchanged.
+        run: pytest --junitxml=junit.xml
+
+      # --- Per-run numbers, printed against their baseline ------------------
+      #
+      # See scripts/run_metrics.py. Print the delta, never judge it: there is
+      # no budget here and no red build for a number that grew.
+      #
+      # Deliberately no continue-on-error, for the same reason live-smoke has
+      # none. These steps have exactly one failure mode — the collector parsed
+      # zero test cases, meaning the reporter's format changed underneath it —
+      # and painting that green would leave a metrics job publishing an empty
+      # table for months. A slow test cannot fail them; a broken collector can,
+      # and should.
+      - name: Restore metrics baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: backend/metrics-baseline
+          key: run-metrics-backend-${{ github.sha }}
+          restore-keys: run-metrics-backend-
+
+      - name: Collect run metrics
+        run: >-
+          python ../scripts/run_metrics.py collect --label backend
+          --junit junit.xml --out run-metrics/metrics.json
+
+      - name: Print each number against its baseline
+        run: >-
+          python ../scripts/run_metrics.py report
+          --current run-metrics/metrics.json
+          --baseline metrics-baseline/metrics.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      # Saved only on the default branch, so every branch compares against
+      # main rather than against its own previous run. The climb that motivated
+      # this unit was 3,177 -> 3,309 -> 3,376 -> 3,714 -> 4,298 ms across one
+      # branch's runs: as run-to-run deltas that reads +132, +67, +338, +584,
+      # four unremarkable numbers. Against a fixed baseline it accumulates into
+      # a single +1,121.
+      - name: Stage the new baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          mkdir -p metrics-baseline
+          cp run-metrics/metrics.json metrics-baseline/metrics.json
+
+      - name: Save metrics baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/cache/save@v4
+        with:
+          path: backend/metrics-baseline
+          key: run-metrics-backend-${{ github.sha }}
+
+  backlog-graph:
+    name: Code gate — every backlog dependency resolves
+    runs-on: ubuntu-latest
+    # No dependencies to install: the script is stdlib-only, like
+    # check_no_secrets.py, so it cannot rot when a package moves.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Fails on an edge naming an item that does not exist, a cycle, a
+      # self-edge, a duplicated slug, an item with no status, a heading it
+      # cannot read, and a `done` item resting on an unfinished one. It never
+      # fails on the *shape* of the remaining work — path lengths and the ready
+      # set are printed, because no honest edit to the backlog shortens a chain
+      # and the only changes that would turn such a job green are deleting an
+      # edge or misreporting a status.
+      #
+      # --summary, not stdout alone: a number printed in a green job's log is
+      # read about as often as the vitest slow-test line was.
+      - run: python scripts/backlog_graph.py --summary "$GITHUB_STEP_SUMMARY"
 
   migrations:
     name: Backend — migrations apply from empty
@@ -188,7 +262,55 @@ jobs:
         run: npm run typecheck
 
       - name: Tests
-        run: npm test
+        # Two reporters: `default` keeps the console output a human reads when
+        # a test fails, `json` writes the per-test durations the metrics steps
+        # below diff against main. Dropping `default` here would trade a
+        # readable failure for a number, which is a bad trade.
+        run: npm test -- --reporter=default --reporter=json --outputFile.json=vitest-report.json
+
+      # --- Per-run numbers, printed against their baseline ------------------
+      #
+      # This is the suite the motivating climb happened in: a single test went
+      # 3,177 -> 3,309 -> 3,376 -> 3,714 -> 4,298 ms across consecutive runs
+      # into vitest's 5,000 ms default timeout. Every value was printed, every
+      # value was unremarkable, and nothing computed the difference.
+      #
+      # No continue-on-error, and no threshold. See the backend job.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Restore metrics baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: frontend/metrics-baseline
+          key: run-metrics-frontend-${{ github.sha }}
+          restore-keys: run-metrics-frontend-
+
+      - name: Collect run metrics
+        run: >-
+          python ../scripts/run_metrics.py collect --label frontend
+          --vitest vitest-report.json --out run-metrics/metrics.json
+
+      - name: Print each number against its baseline
+        run: >-
+          python ../scripts/run_metrics.py report
+          --current run-metrics/metrics.json
+          --baseline metrics-baseline/metrics.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Stage the new baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          mkdir -p metrics-baseline
+          cp run-metrics/metrics.json metrics-baseline/metrics.json
+
+      - name: Save metrics baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/cache/save@v4
+        with:
+          path: frontend/metrics-baseline
+          key: run-metrics-frontend-${{ github.sha }}
 
       - name: Build
         run: npm run build

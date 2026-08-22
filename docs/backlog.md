@@ -31,16 +31,22 @@ seen a loss, while the slug diff against `origin/main` independently confirmed
 zero of main's 118 entries were dropped and exactly two were added. The script
 was not run on this file.
 
-**A dependency edge can be dangling and nothing says so.** Tracing the auction
+**A dependency edge can be dangling and nothing said so.** Tracing the auction
 chain on 2026-08-21 to rule on sequencing turned up
 `schedule-cohort-fingerprint-list` depending on `injury-report-backfill`, which
-is not a slug in this file — the item is `injury-report-historical-backfill`.
-Left as found, because guessing which item another lane meant is worse than
-reporting it. Recorded because it is the same shape as the counts: **the graph
+was not a slug in this file — the item is `injury-report-historical-backfill`.
+**Resolved to that item on 2026-08-21 and no longer dangling**, when
+`scripts/backlog_graph.py` landed and made it a CI failure rather than a note.
+The resolution is a judgement, not a derivation: `injury-conversion-cohort-population`
+is the plausible wrong answer, and the two are distinguishable only by reading
+what each item says. It changed no readiness outcome, because both candidates
+are `done`. Recorded because it is the same shape as the counts: **the graph
 is only as trustworthy as the last time someone resolved every edge against the
 slug set**, and until `adr-index-consistency-test` has a sibling doing that
-here, nothing does. That sibling is now filed as `backlog-dependency-graph`;
-filing it is not building it, and this edge is its first expected finding.
+here, nothing does. That sibling is now filed as `backlog-dependency-graph`.
+**Built on 2026-08-21** as `scripts/backlog_graph.py`, so it now runs on every
+push rather than when a lane goes looking for something else - and this edge
+was indeed its first finding.
 
 The governance unit of 2026-08-21 added seven items and ran the pair as
 prescribed: the recount moved 122 -> 129, and the slug diff against
@@ -1687,7 +1693,7 @@ Durability discount/premium layered over raw value. Separate total-value and per
 ### `schedule-cohort-fingerprint-list` - Restoring what the injury cohort manifest watches
 
 - [ ] **pending**
-- **Depends on:** `injury-report-backfill`
+- **Depends on:** `injury-report-historical-backfill`
 
 `DEFAULT_SOURCE_FINGERPRINT_PATHS` in `ingest/injury_report/cohort_evidence.py` omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which the generator directly calls (`parse_schedule`, for the `schedule_league_v2` reconciliation view — the cohort's only genuinely independent witness). Found 2026-08-20 when one change touched that file and `db/lineage.py` together: the alarm fired on the file outside the derivation and stayed **silent** on the file inside it, which is a false green, not merely a coarse one.
 

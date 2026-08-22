@@ -127,7 +127,11 @@ known-first-party = ["hoops_gm"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+# `../scripts` is outside this package on purpose: the repo's scripts are
+# stdlib-only tools run from the repo root, and until now nothing type-checked
+# them at all. A script that is checked while its tests are not is the gap that
+# shipped a broken harness today, so both sides are listed.
+files = ["src", "tests", "../scripts"]
 strict = true
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
