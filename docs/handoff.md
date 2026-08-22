@@ -15982,3 +15982,74 @@ registration: it fails naming `void-replay-two-instructions`.
 - **Whether one entry among 170 can be found under time pressure.** Reasoned. The
   log is unvirtualised and I found seq 6 by `scrollIntoView`, which the owner does
   not have.
+
+## 2026-08-22 - frontend - The drift gate fired on its first real test, and I could not re-look at the screen
+
+Rebased the draft board onto `6c0c75a`, which carries the backend's *"quote the
+replayed event's reason instead of repeating it as an order"*. Within minutes
+`scripts/capture_draft_fixtures.py --check` reported **drift in 2 of 10 recorded
+payloads**: the replay refusal now reads
+
+> ...no longer holds once it is gone: **"**This event must name the player as the
+> recorder saw the name.**"** To void sequence 5, void back from sequence 15 to
+> sequence 6 first.
+
+with the inner clause in quotation marks. **The frontend suite was green before
+the rebase and green after it.** `--check` was the only thing that noticed. That
+is the second time in two days a recorded fixture silently stopped describing the
+contract, and the first time a mechanism rather than a person caught it. It is
+also the whole argument for `fixture-drift-gate`, which is filed and is backend's
+to wire.
+
+The two fixes compose, and neither lane knew about the other's: their quotation
+marks make the inner clause read as a *report of a hypothetical log*, and this
+screen's `<strong>` makes the trailing clause read as *the instruction*. My split
+regex targets the trailing `To void sequence N, ...` clause, which they did not
+touch, so the split still holds - confirmed by the recorded tests passing against
+regenerated fixtures, which they do only because those tests derive prose from the
+fixture rather than hardcoding it.
+
+**Rebase note, because the prescribed check misled me.** Diffing my `docs/backlog.md`
+slug set against `origin/main` reported **seven dropped items and none were
+dropped** - all seven landed on `main` after my base branched. Against my actual
+parent: zero dropped, three added. `docs/backlog.md`'s header now says to diff
+against your own merge base. I also looked for the silent direction - an item the
+base holds that `main` does not, which would be invisible to the prescribed check -
+and found zero, which is a fact about these two trees and not a property of the
+check.
+
+I also ran `git rebase` onto the moved base and started replaying the *base lane's*
+commits, hitting conflicts in `backend/src/hoops_gm/draft/service.py` that were
+none of my business. `git rebase --onto <newbase> <old base tip>` is the correct
+form when your base has itself been rebased. Aborted and redid it; nothing lost.
+
+### Could not verify
+
+- **Whether the quoted inner clause and the emphasised outer clause read well
+  together on screen.** *Not verified at all.* The browser canvas became
+  unresponsive - it timed out on `evaluate_javascript`, `read_page` and
+  `navigate_page` across four fresh instances, on both the 170-entry auction and
+  the 12-entry snake board, while the same URLs returned 200 to `Invoke-WebRequest`
+  and the vite proxy served the API fine. So the app is healthy and the tooling is
+  not. There is no other real browser on this machine: `playwright` and `puppeteer`
+  are both absent and `jsdom` is not a browser.
+
+  What survives from the previous browser session is structural and unaffected by
+  the reword: lead weight 400, remedy weight 650, 29px wider over the same string,
+  `detail.endsWith(remedy)` true. What does not survive is anyone having *looked*
+  at the sentence in its new form. **Marked as not driven, and it is the one thing
+  the coordinator specifically asked for after this rebase.**
+
+- **Whether the 170-entry log is what wedged the canvas.** Driven and **refuted**.
+  It was the obvious explanation and it would have handed me a measured cost for
+  `draft-log-virtualisation`, which I had just filed saying the cost was argued
+  rather than measured. The 12-entry board timed out identically. Recording the
+  refutation because the convenient version was one step away and I nearly took it.
+
+- **Whether `--check` catches a schema change rather than a text change.** Reasoned.
+  It compares state payloads on top-level keys only. It has now caught two text
+  changes and zero schema changes, which is evidence about what has happened, not
+  about what it covers.
+
+- **Whether one entry among 170 can be found under time pressure.** Reasoned, still.
+  See `draft-log-virtualisation`.
