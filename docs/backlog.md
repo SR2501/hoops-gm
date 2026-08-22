@@ -1213,12 +1213,21 @@ mock outcomes as production or availability evidence.
 on ten seasons of game logs, a naive carry-forward predicts season-total points
 better than a careful rate × minutes × games decomposition (r² 0.611 vs 0.576),
 because games-played error swamps everything downstream of it, and a naive
-Marcel already reaches r² 0.71–0.89 on per-36 rates. **This should not be built
-as a production source before draft day.** Build the Marcel/SPS baseline only as
-a measuring stick — to quantify how much of any projection set is reproducible
-from public box scores — and ship consensus rates fused with our own
-availability instead. The unblocked work with the larger payoff is
-`participation-ledger-population`.
+Marcel already reaches r² **0.50–0.89** on per-36 rates — 0.71–0.89 on the volume
+categories, with steals at 0.50 and turnovers at 0.66 as the weak tail. **This
+should not be built as a production source before draft day.** Build the
+Marcel/SPS baseline only as a measuring stick — to quantify how much of any
+projection set is reproducible from public box scores — and ship consensus rates
+**and consensus minutes** fused with our own games-played number instead. The
+unblocked work with the larger payoff is `participation-ledger-population`.
+
+**Amended 2026-08-22 —
+[`docs/models/consensus-reproducibility.md`](models/consensus-reproducibility.md).**
+The measuring stick was built and run against a commercial projection set.
+Consensus rates are largely reproducible from public box scores (r² 0.726–0.947
+per game), but consensus **minutes** amplify rather than regress relative to a
+naive baseline, which is information no box score contains — so consume those
+too. The ADR-002 seam therefore falls at **games, not minutes**.
 
 ### `behavioural-baseline` - Modelling the owner own drafting tendencies
 
