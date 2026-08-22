@@ -361,6 +361,70 @@ rate (~1.5% on the committed cohort, but not guaranteed stable across seasons).
 The one-season row applies the 98.5% join rate and is consistent; the multi-season
 sentence does not.
 
+**Everything above §4.2 is superseded by measurement.** It is kept because the
+reasoning was the basis for a spend decision and because three of its predictions
+turned out false — which is more useful recorded than deleted.
+
+### 4.2 Measured, 2026-08-21 — and it falsifies three predictions in this document
+
+A report-only sweep of the full 2025-26 regular season (640 candidates, 637 + 3
+fetched, 0 unavailable, 0 forbidden) against a throwaway database produced
+**13,819 canonical latest-pre-tip observations across all 164 game dates**.
+Evidence:
+[`nba-injury-report-2025-26-status-census.json`](../adapters/nba-injury-report-2025-26-status-census.json).
+
+**The go/no-go clears, and not narrowly.** Under the frozen §4 date rule the
+holdout is 41 of 164 dates (25.0%, 2026-03-02..2026-04-12):
+
+| Status | Held out | Floor | Verdict |
+|---|---:|---:|---|
+| `out` | 2,979 | 30 | clears |
+| `doubtful` | **84** | 30 | **clears — 2.8×** |
+| `questionable` | 335 | 30 | clears |
+| `probable` | 92 | 30 | clears |
+| `available` | 469 | 30 | clears |
+
+These are canonical observations, a conservative **upper bound** on direct
+outcomes, so this does not prove activation — it proves the season is not
+disqualified on arithmetic, which is what the gate asks.
+
+**Prediction 1, falsified: the scaled projection was 2.3× too low.** §4 projected
+~37 held-out `doubtful`. Measured: **84**. Whole-season `doubtful` is 221, not
+the projected ~149.
+
+**Prediction 2, falsified: December was not peak `doubtful` density — it was
+below average.** The committed cohort gives 21 over 26 dates = 0.808/date. The
+full season measures 221 over 164 = **1.348/date**. The seasonality argument in
+§4 was right that the projection was biased and wrong about the direction.
+
+**Prediction 3, falsified, and this one was `quant`'s and mine together: the era
+effect runs the opposite way for `doubtful`.** §4.1 reasoned that shorter lead
+times resolve more players, so the legacy era should carry *more* canonical
+`doubtful`. Measured:
+
+| Era | Game dates | `doubtful`/date | Median lead |
+|---|---:|---:|---:|
+| legacy | 60 | 0.917 | 150 min |
+| 15-minute | 104 | **1.596** | 75 min |
+
+Ratio **0.57×** — the 15-minute era carries **74% more** `doubtful` per date, not
+fewer. The mechanism §4.1 describes is real and the sign was wrong.
+
+**What appears to be happening instead is a volume effect, not a resolution
+effect.** Total observations per game date rise from 71.3 (legacy) to 91.7
+(15-minute), and `available` more than doubles, 5.57 → 11.13 per date. More
+designations are filed overall in the 15-minute era. `questionable` (1.10×) and
+`probable` (1.09×) are close to flat, so the era difference is concentrated in
+`out`, `available` and `doubtful` rather than spread evenly — which is not what a
+pure volume story predicts either. **This is an observation, not an explanation,
+and identifying one is `quant`'s work under the Model gate, not this lane's.**
+
+**The stratification requirement in §5 stands and is strengthened.** The eras
+differ materially on every status; a pooled rate would average across a real
+discontinuity. What changes is that nobody may now predict which way a pooled
+estimate is biased without measuring it — this document predicted the sign and
+was wrong.
+
 ### The sweep is a box-score ingest with an injury-report attachment
 
 **Corrected 2026-08-21, after the coordinator promoted this work and asked for

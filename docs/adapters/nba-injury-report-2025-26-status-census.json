@@ -1,0 +1,1126 @@
+{
+  "activation_floor_check": {
+    "floor_per_status": 30,
+    "held_out_first_game_date": "2026-03-02",
+    "held_out_game_dates": 41,
+    "held_out_last_game_date": "2026-04-12",
+    "held_out_status_counts": {
+      "available": 469,
+      "doubtful": 84,
+      "out": 2979,
+      "probable": 92,
+      "questionable": 335
+    },
+    "split_rule": "frozen pre-registration section 4: development = first floor(0.50*N) game dates, selection = next floor(0.25*N), held out = remainder",
+    "verdict_is_an_upper_bound": true
+  },
+  "canonical_observations": {
+    "resolved_player_id": 13684,
+    "total": 13819,
+    "unresolved_player_id": 135
+  },
+  "generated_at_utc": "2026-08-22T03:10:07.761738+00:00",
+  "kind": "nba_injury_report_status_census",
+  "operator": "data-engineer",
+  "schema_version": 1,
+  "scope": {
+    "cadence_era_boundary": "2025-12-22",
+    "first_game_date": "2025-10-21",
+    "game_dates": 164,
+    "games": 1230,
+    "games_with_tipoff": 1230,
+    "last_game_date": "2026-04-12",
+    "season": "2025-26",
+    "season_type": "regular"
+  },
+  "status_counts_by_era": {
+    "15_minute": {
+      "game_dates": 104,
+      "lead_time_minutes": {
+        "count": 9539,
+        "maximum": 1530,
+        "median": 75,
+        "minimum": 15
+      },
+      "status_counts": {
+        "available": 1157,
+        "doubtful": 166,
+        "out": 7218,
+        "probable": 267,
+        "questionable": 731
+      }
+    },
+    "legacy": {
+      "game_dates": 60,
+      "lead_time_minutes": {
+        "count": 4280,
+        "maximum": 1650,
+        "median": 150,
+        "minimum": 15
+      },
+      "status_counts": {
+        "available": 334,
+        "doubtful": 55,
+        "out": 3260,
+        "probable": 168,
+        "questionable": 463
+      }
+    }
+  },
+  "status_counts_by_game_date": {
+    "2025-10-21": {
+      "out": 14,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2025-10-22": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 46,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2025-10-23": {
+      "available": 1,
+      "out": 14
+    },
+    "2025-10-24": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 53,
+      "probable": 2,
+      "questionable": 11
+    },
+    "2025-10-25": {
+      "available": 3,
+      "out": 33,
+      "questionable": 2
+    },
+    "2025-10-26": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 56,
+      "probable": 3,
+      "questionable": 7
+    },
+    "2025-10-27": {
+      "available": 5,
+      "doubtful": 2,
+      "out": 75,
+      "probable": 1,
+      "questionable": 9
+    },
+    "2025-10-28": {
+      "available": 2,
+      "out": 31,
+      "probable": 4,
+      "questionable": 3
+    },
+    "2025-10-29": {
+      "available": 3,
+      "doubtful": 3,
+      "out": 67,
+      "probable": 4,
+      "questionable": 14
+    },
+    "2025-10-30": {
+      "available": 3,
+      "doubtful": 1,
+      "out": 26,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2025-10-31": {
+      "available": 1,
+      "out": 55,
+      "probable": 6,
+      "questionable": 7
+    },
+    "2025-11-01": {
+      "available": 5,
+      "out": 31,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2025-11-02": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 64,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2025-11-03": {
+      "available": 8,
+      "out": 62,
+      "probable": 5,
+      "questionable": 8
+    },
+    "2025-11-04": {
+      "available": 5,
+      "out": 41,
+      "probable": 1,
+      "questionable": 8
+    },
+    "2025-11-05": {
+      "available": 10,
+      "out": 86,
+      "probable": 4,
+      "questionable": 18
+    },
+    "2025-11-06": {
+      "out": 5,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2025-11-07": {
+      "available": 10,
+      "doubtful": 3,
+      "out": 84,
+      "probable": 2,
+      "questionable": 13
+    },
+    "2025-11-08": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 62,
+      "probable": 5,
+      "questionable": 17
+    },
+    "2025-11-09": {
+      "available": 7,
+      "out": 56,
+      "probable": 1,
+      "questionable": 4
+    },
+    "2025-11-10": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 59,
+      "probable": 5,
+      "questionable": 13
+    },
+    "2025-11-11": {
+      "available": 3,
+      "out": 49,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2025-11-12": {
+      "available": 11,
+      "doubtful": 2,
+      "out": 92,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2025-11-13": {
+      "out": 31,
+      "questionable": 2
+    },
+    "2025-11-14": {
+      "available": 10,
+      "out": 67,
+      "probable": 5,
+      "questionable": 10
+    },
+    "2025-11-15": {
+      "available": 2,
+      "out": 47,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2025-11-16": {
+      "available": 3,
+      "doubtful": 1,
+      "out": 62,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-11-17": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 66,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2025-11-18": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 40,
+      "questionable": 11
+    },
+    "2025-11-19": {
+      "available": 6,
+      "doubtful": 3,
+      "out": 79,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2025-11-20": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 34,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2025-11-21": {
+      "available": 5,
+      "out": 81,
+      "probable": 6,
+      "questionable": 11
+    },
+    "2025-11-22": {
+      "available": 3,
+      "doubtful": 3,
+      "out": 55,
+      "probable": 3,
+      "questionable": 10
+    },
+    "2025-11-23": {
+      "available": 9,
+      "out": 70,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2025-11-24": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 88,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2025-11-25": {
+      "available": 4,
+      "out": 20,
+      "questionable": 2
+    },
+    "2025-11-26": {
+      "available": 5,
+      "out": 68,
+      "probable": 5,
+      "questionable": 10
+    },
+    "2025-11-28": {
+      "available": 8,
+      "doubtful": 4,
+      "out": 91,
+      "probable": 4,
+      "questionable": 12
+    },
+    "2025-11-29": {
+      "available": 6,
+      "out": 68,
+      "probable": 8,
+      "questionable": 17
+    },
+    "2025-11-30": {
+      "available": 7,
+      "out": 71,
+      "questionable": 5
+    },
+    "2025-12-01": {
+      "available": 16,
+      "out": 79,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2025-12-02": {
+      "available": 11,
+      "out": 48,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2025-12-03": {
+      "available": 11,
+      "doubtful": 1,
+      "out": 78,
+      "probable": 8,
+      "questionable": 21
+    },
+    "2025-12-04": {
+      "available": 10,
+      "out": 39,
+      "probable": 1,
+      "questionable": 4
+    },
+    "2025-12-05": {
+      "available": 11,
+      "doubtful": 4,
+      "out": 107,
+      "probable": 6,
+      "questionable": 19
+    },
+    "2025-12-06": {
+      "available": 6,
+      "doubtful": 4,
+      "out": 65,
+      "probable": 4,
+      "questionable": 6
+    },
+    "2025-12-07": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 58,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2025-12-08": {
+      "available": 3,
+      "out": 24,
+      "questionable": 5
+    },
+    "2025-12-09": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 8,
+      "questionable": 3
+    },
+    "2025-12-10": {
+      "out": 10,
+      "questionable": 4
+    },
+    "2025-12-11": {
+      "doubtful": 1,
+      "out": 36,
+      "questionable": 4
+    },
+    "2025-12-12": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 72,
+      "probable": 8,
+      "questionable": 5
+    },
+    "2025-12-13": {
+      "available": 1,
+      "out": 11,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2025-12-14": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 72,
+      "probable": 2,
+      "questionable": 11
+    },
+    "2025-12-15": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 38,
+      "probable": 2,
+      "questionable": 7
+    },
+    "2025-12-17": {
+      "doubtful": 1,
+      "out": 21,
+      "questionable": 3
+    },
+    "2025-12-18": {
+      "available": 7,
+      "doubtful": 2,
+      "out": 105,
+      "probable": 1,
+      "questionable": 18
+    },
+    "2025-12-19": {
+      "available": 7,
+      "out": 43,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-12-20": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 95,
+      "probable": 1,
+      "questionable": 8
+    },
+    "2025-12-21": {
+      "available": 6,
+      "out": 52,
+      "probable": 3,
+      "questionable": 2
+    },
+    "2025-12-22": {
+      "available": 17,
+      "doubtful": 3,
+      "out": 67,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2025-12-23": {
+      "available": 25,
+      "doubtful": 1,
+      "out": 118,
+      "probable": 4,
+      "questionable": 12
+    },
+    "2025-12-25": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 26,
+      "probable": 9,
+      "questionable": 6
+    },
+    "2025-12-26": {
+      "available": 24,
+      "out": 82,
+      "probable": 2,
+      "questionable": 2
+    },
+    "2025-12-27": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 73,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-12-28": {
+      "available": 5,
+      "out": 61,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2025-12-29": {
+      "available": 24,
+      "doubtful": 1,
+      "out": 90,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2025-12-30": {
+      "available": 5,
+      "out": 41,
+      "questionable": 1
+    },
+    "2025-12-31": {
+      "available": 8,
+      "out": 71,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-01": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 52,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-01-02": {
+      "available": 9,
+      "out": 100,
+      "probable": 5,
+      "questionable": 3
+    },
+    "2026-01-03": {
+      "available": 7,
+      "out": 71,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-01-04": {
+      "available": 13,
+      "out": 72,
+      "probable": 2,
+      "questionable": 10
+    },
+    "2026-01-05": {
+      "available": 14,
+      "out": 69,
+      "probable": 7,
+      "questionable": 2
+    },
+    "2026-01-06": {
+      "available": 14,
+      "doubtful": 2,
+      "out": 51,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-01-07": {
+      "available": 17,
+      "out": 113,
+      "probable": 1,
+      "questionable": 10
+    },
+    "2026-01-08": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 27,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2026-01-09": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 89,
+      "probable": 4,
+      "questionable": 7
+    },
+    "2026-01-10": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 50,
+      "probable": 1,
+      "questionable": 9
+    },
+    "2026-01-11": {
+      "available": 12,
+      "out": 84,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-12": {
+      "available": 6,
+      "doubtful": 3,
+      "out": 48,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-01-13": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 64,
+      "probable": 3,
+      "questionable": 3
+    },
+    "2026-01-14": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 64,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-01-15": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 77,
+      "probable": 9,
+      "questionable": 8
+    },
+    "2026-01-16": {
+      "available": 12,
+      "out": 56,
+      "questionable": 3
+    },
+    "2026-01-17": {
+      "available": 10,
+      "out": 81,
+      "probable": 10,
+      "questionable": 12
+    },
+    "2026-01-18": {
+      "available": 2,
+      "doubtful": 3,
+      "out": 59,
+      "probable": 4,
+      "questionable": 6
+    },
+    "2026-01-19": {
+      "available": 13,
+      "doubtful": 4,
+      "out": 73,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2026-01-20": {
+      "available": 9,
+      "out": 55,
+      "probable": 3,
+      "questionable": 6
+    },
+    "2026-01-21": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 66,
+      "questionable": 2
+    },
+    "2026-01-22": {
+      "available": 22,
+      "doubtful": 1,
+      "out": 66,
+      "questionable": 9
+    },
+    "2026-01-23": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 73,
+      "probable": 3,
+      "questionable": 12
+    },
+    "2026-01-24": {
+      "available": 12,
+      "doubtful": 3,
+      "out": 50,
+      "probable": 6,
+      "questionable": 4
+    },
+    "2026-01-25": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 45,
+      "probable": 2,
+      "questionable": 12
+    },
+    "2026-01-26": {
+      "available": 6,
+      "out": 60,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2026-01-27": {
+      "available": 9,
+      "out": 62,
+      "probable": 6,
+      "questionable": 6
+    },
+    "2026-01-28": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 72,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-29": {
+      "available": 19,
+      "out": 81,
+      "probable": 5,
+      "questionable": 7
+    },
+    "2026-01-30": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 78,
+      "probable": 3,
+      "questionable": 5
+    },
+    "2026-01-31": {
+      "available": 10,
+      "doubtful": 7,
+      "out": 49,
+      "probable": 4,
+      "questionable": 2
+    },
+    "2026-02-01": {
+      "available": 13,
+      "doubtful": 1,
+      "out": 89,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-02-02": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 30,
+      "probable": 2,
+      "questionable": 2
+    },
+    "2026-02-03": {
+      "available": 23,
+      "out": 95,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2026-02-04": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 62,
+      "probable": 2,
+      "questionable": 5
+    },
+    "2026-02-05": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 94,
+      "probable": 3,
+      "questionable": 7
+    },
+    "2026-02-06": {
+      "available": 16,
+      "out": 58,
+      "probable": 1,
+      "questionable": 6
+    },
+    "2026-02-07": {
+      "available": 15,
+      "doubtful": 3,
+      "out": 88,
+      "probable": 2,
+      "questionable": 10
+    },
+    "2026-02-08": {
+      "available": 9,
+      "out": 33,
+      "questionable": 11
+    },
+    "2026-02-09": {
+      "available": 13,
+      "out": 82,
+      "probable": 3,
+      "questionable": 11
+    },
+    "2026-02-10": {
+      "available": 5,
+      "doubtful": 3,
+      "out": 28,
+      "questionable": 2
+    },
+    "2026-02-11": {
+      "available": 24,
+      "doubtful": 2,
+      "out": 122,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2026-02-12": {
+      "available": 1,
+      "doubtful": 4,
+      "out": 24,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-02-19": {
+      "available": 11,
+      "out": 78,
+      "probable": 2,
+      "questionable": 6
+    },
+    "2026-02-20": {
+      "available": 17,
+      "out": 80,
+      "probable": 2,
+      "questionable": 5
+    },
+    "2026-02-21": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 49,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2026-02-22": {
+      "available": 4,
+      "doubtful": 2,
+      "out": 91,
+      "probable": 3,
+      "questionable": 19
+    },
+    "2026-02-23": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 27,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-02-24": {
+      "available": 26,
+      "out": 96,
+      "probable": 1,
+      "questionable": 5
+    },
+    "2026-02-25": {
+      "available": 2,
+      "out": 63,
+      "probable": 2
+    },
+    "2026-02-26": {
+      "available": 19,
+      "doubtful": 2,
+      "out": 88,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2026-02-27": {
+      "available": 1,
+      "doubtful": 5,
+      "out": 44,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2026-02-28": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 44,
+      "probable": 2
+    },
+    "2026-03-01": {
+      "available": 9,
+      "doubtful": 6,
+      "out": 88,
+      "probable": 3,
+      "questionable": 14
+    },
+    "2026-03-02": {
+      "available": 2,
+      "out": 39,
+      "questionable": 1
+    },
+    "2026-03-03": {
+      "available": 14,
+      "out": 92,
+      "questionable": 6
+    },
+    "2026-03-04": {
+      "doubtful": 5,
+      "out": 42,
+      "probable": 1,
+      "questionable": 14
+    },
+    "2026-03-05": {
+      "available": 17,
+      "doubtful": 2,
+      "out": 81,
+      "questionable": 6
+    },
+    "2026-03-06": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 56,
+      "probable": 3,
+      "questionable": 10
+    },
+    "2026-03-07": {
+      "available": 3,
+      "out": 57,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-03-08": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 81,
+      "probable": 3,
+      "questionable": 19
+    },
+    "2026-03-09": {
+      "available": 7,
+      "out": 50,
+      "questionable": 1
+    },
+    "2026-03-10": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 98,
+      "probable": 5,
+      "questionable": 14
+    },
+    "2026-03-11": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 50,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2026-03-12": {
+      "available": 20,
+      "doubtful": 6,
+      "out": 78,
+      "probable": 3,
+      "questionable": 11
+    },
+    "2026-03-13": {
+      "available": 20,
+      "doubtful": 3,
+      "out": 74,
+      "questionable": 9
+    },
+    "2026-03-14": {
+      "available": 13,
+      "out": 54,
+      "probable": 5,
+      "questionable": 7
+    },
+    "2026-03-15": {
+      "available": 12,
+      "doubtful": 4,
+      "out": 66,
+      "probable": 5,
+      "questionable": 22
+    },
+    "2026-03-16": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 73,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2026-03-17": {
+      "available": 19,
+      "doubtful": 1,
+      "out": 77,
+      "probable": 1,
+      "questionable": 6
+    },
+    "2026-03-18": {
+      "available": 21,
+      "doubtful": 1,
+      "out": 79,
+      "questionable": 10
+    },
+    "2026-03-19": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 82,
+      "probable": 1,
+      "questionable": 5
+    },
+    "2026-03-20": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 60
+    },
+    "2026-03-21": {
+      "available": 7,
+      "doubtful": 2,
+      "out": 93,
+      "probable": 2,
+      "questionable": 29
+    },
+    "2026-03-22": {
+      "available": 6,
+      "out": 44,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2026-03-23": {
+      "available": 14,
+      "doubtful": 2,
+      "out": 97,
+      "probable": 2,
+      "questionable": 11
+    },
+    "2026-03-24": {
+      "available": 3,
+      "out": 37,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2026-03-25": {
+      "available": 23,
+      "doubtful": 3,
+      "out": 107,
+      "probable": 2,
+      "questionable": 17
+    },
+    "2026-03-26": {
+      "available": 10,
+      "out": 32
+    },
+    "2026-03-27": {
+      "available": 21,
+      "doubtful": 4,
+      "out": 90,
+      "probable": 5,
+      "questionable": 1
+    },
+    "2026-03-28": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 66,
+      "probable": 3,
+      "questionable": 6
+    },
+    "2026-03-29": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 80,
+      "probable": 1,
+      "questionable": 12
+    },
+    "2026-03-30": {
+      "available": 14,
+      "doubtful": 4,
+      "out": 69,
+      "probable": 2,
+      "questionable": 14
+    },
+    "2026-03-31": {
+      "available": 7,
+      "out": 61,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-04-01": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 87,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2026-04-02": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 44,
+      "questionable": 7
+    },
+    "2026-04-03": {
+      "available": 16,
+      "doubtful": 6,
+      "out": 77,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-04-04": {
+      "available": 8,
+      "out": 21,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2026-04-05": {
+      "available": 12,
+      "out": 109,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-04-06": {
+      "available": 2,
+      "doubtful": 2,
+      "out": 42,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-04-07": {
+      "available": 15,
+      "doubtful": 4,
+      "out": 91,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2026-04-08": {
+      "available": 10,
+      "doubtful": 9,
+      "out": 48,
+      "probable": 4,
+      "questionable": 2
+    },
+    "2026-04-09": {
+      "available": 13,
+      "out": 61,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2026-04-10": {
+      "available": 19,
+      "doubtful": 7,
+      "out": 151,
+      "probable": 7,
+      "questionable": 24
+    },
+    "2026-04-12": {
+      "available": 17,
+      "doubtful": 6,
+      "out": 183,
+      "probable": 8,
+      "questionable": 16
+    }
+  },
+  "status_counts_whole_season": {
+    "available": 1491,
+    "doubtful": 221,
+    "out": 10478,
+    "probable": 435,
+    "questionable": 1194
+  },
+  "what_this_is": "Canonical latest-pre-tip-off report designations for every 2025-26 regular-season game, counted by game date and by reporting-cadence era. Report STATUS only, which is the conversion model's input; no participation outcome is consulted and none exists in the database this was generated from. Produced by a report-only sweep against a THROWAWAY database, deliberately: the injury-report backfill needs tip-off instants, and sourcing those from ScheduleLeagueV2 would degenerate the cohort manifest's cross_source_tipoff_reconciliation into comparing one endpoint with itself. A count never becomes a manifest, so a disposable database is the right home for it.",
+  "why_canonical_counts_are_a_conservative_bound": "Direct outcomes are a subset of canonical observations - rows with unresolved identity or with no participation row are excluded - so a status failing the activation floor here can never pass, while a status clearing it here is not yet proven to clear it. The bound errs toward doing more work, which is the right direction for a gate whose failure mode is wasting hours."
+}

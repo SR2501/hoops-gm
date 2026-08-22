@@ -14019,3 +14019,129 @@ A count never becomes a manifest, so a disposable database is the right home for
 
 No fit was run, no cohort regenerated, no conversion rate emitted, no live source called, and no
 owner-only decision made.
+
+## 2026-08-21 — data-engineer — The go/no-go clears, and measuring it falsified three of my own predictions
+
+**Unit:** report-only sweep of the full 2025-26 regular season against a throwaway database, to
+convert the binding go/no-go from a scaled projection into a measurement. **640 candidates, no
+participation, no generator change.** Evidence:
+`docs/adapters/nba-injury-report-2025-26-status-census.json`.
+
+### The answer
+
+**It clears, and not narrowly.** 13,819 canonical latest-pre-tip observations across all 164
+game dates. Under the frozen §4 date rule the holdout is 41 dates (25.0%,
+2026-03-02..2026-04-12), and held-out `doubtful` is **84 against a floor of 30** — a 2.8×
+margin. Every status clears.
+
+These are canonical observations, a conservative **upper bound** on direct outcomes, so this
+does not prove activation. It proves the season is not disqualified on arithmetic, which is
+what the gate asks.
+
+### I quoted the coordinator 341 requests. It was 640.
+
+Caught **before** spending, by running `plan` — which enumerates candidates without fetching —
+rather than trusting my own estimate. I had conflated it with the ~340 figure for a *legacy*
+season; my own earlier estimate for 2025-26 was ~670, which was close. The decision was robust
+to the correction (640 requests ≈ 21 minutes against 2,462 for participation) so I proceeded and
+led the report with it.
+
+**The general form: a planning subcommand that costs nothing is worth running even when you
+believe you already know the number**, because the belief and the number came from the same
+place.
+
+### Three predictions in the literature review, all falsified, all in the safe direction
+
+**1. The scaled projection was 2.3× too low.** §4 projected ~37 held-out `doubtful`. Measured
+**84**. Whole-season `doubtful` is 221 against a projected ~149.
+
+**2. December was not peak `doubtful` density — it was below average.** The committed cohort
+gives 0.808/date; the full season measures **1.348/date**. My seasonality argument was right
+that the projection was biased and wrong about which way.
+
+**3. The era effect runs the opposite way, and this one was `quant`'s reasoning and mine
+together.** §4.1 argued that shorter lead times resolve more players, so the legacy era should
+carry *more* canonical `doubtful`:
+
+| Era | Game dates | `doubtful`/date | Median lead |
+|---|---:|---:|---:|
+| legacy | 60 | 0.917 | 150 min |
+| 15-minute | 104 | **1.596** | 75 min |
+
+Ratio **0.57×**. The 15-minute era carries **74% more** `doubtful` per date. The mechanism is
+real; the sign was wrong.
+
+What appears to be happening is a **volume** effect rather than a resolution effect —
+observations per date rise 71.3 → 91.7 and `available` more than doubles — but `questionable`
+(1.10×) and `probable` (1.09×) are near flat, so it is not evenly spread and a pure volume story
+does not fit either. **That is an observation, not an explanation.** Identifying one is `quant`'s
+work under the Model gate.
+
+**§5's stratification requirement stands and is strengthened**, with one change: nobody may now
+predict the direction of a pooled estimate's bias without measuring it. This document predicted
+the sign and was wrong, and the reasoning that produced it was careful, mechanistic and endorsed
+by two lanes.
+
+### Resume behaviour, driven rather than described
+
+The first pass ended with **3 failures out of 640, all `getaddrinfo failed`** on one date — a
+DNS blip the tool reports under "contract drift, not 'missing'", which is a mislabel worth
+knowing about. They failed at *fetch*, so nothing was cached, so the resume retried them: second
+pass fetched **3**, skipped **637 already settled**, 0 failures, exit 0, and replayed the cached
+637 at disk speed because `NbaStatsClient.fetch` checks the cache before `limiter.acquire()`.
+
+That is divergence 2 from my earlier analysis behaving as predicted, in the benign direction: a
+failure *before* a response is cached is retried; a bad response that got cached would not be.
+
+### Where the artifacts went, and why
+
+Raw store: `C:\Users\steverones\hoops-gm-data\data\raw` — **durable**, so the 640 requests count
+once and a later real sweep reuses every capture. Database:
+`C:\Users\steverones\hoops-gm-data\throwaway-report-sweep.db` — **throwaway by design**, because
+the injury-report backfill needs tip-off instants and sourcing those from `ScheduleLeagueV2`
+would degenerate the cohort manifest's `cross_source_tipoff_reconciliation` into comparing one
+endpoint with itself. A count never becomes a manifest, so a disposable database is its right
+home, and the durable one never receives a `ScheduleLeagueV2` instant.
+
+Setup cost 5 requests: `nba-identity`, `season 2025-26` (no participation), `schedule_import`.
+
+### The pinned-file set, enumerated as the coordinator asked
+
+The circularity that stopped `--raw-root` and Unit 2's generator half was hit twice because the
+first encounter produced a workaround and never produced the question *"which files are pinned,
+and what else will want to edit them?"* The set, from
+`nba-injury-report-cohort-2025-12-08--2026-01-04.json`'s `operator.source_fingerprints`, all four
+currently matching:
+
+| File | What it is |
+|---|---|
+| `backend/src/hoops_gm/ingest/backfill.py` | season/participation ingest CLI — the participation sweep runs from here |
+| `backend/src/hoops_gm/ingest/injury_report/backfill.py` | injury-report CLI, candidate generation, coverage gates |
+| `backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py` | the manifest generator itself, and `source_file_sha256` |
+| `backend/src/hoops_gm/ingest/nba/parsers.py` | LeagueGameFinder / box score / player log parsers |
+
+**Anything editing one of these must land with a manifest regeneration.** That is now a known
+constraint rather than a discovery, which is the whole point of writing it down.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when written. Local: 1,301 offline tests, Ruff, strict mypy
+  over 142 files, backlog recomputed from the finished file, and the new census artifact passes
+  Unit 2's disclosure-surface test — which is that test covering a new artifact on the day it
+  lands, the property directory-scoping was chosen for.
+- **That the era difference is a volume effect.** **Reasoned**, from marginals. The per-status
+  pattern does not fit a pure volume story and I have not tested an alternative. Flagged for
+  `quant` rather than resolved here.
+- **That the direct-outcome count will also clear.** The 84 is an upper bound. The committed
+  cohort's exclusion rate was ~1.5%, which would leave ~83, but that rate is not guaranteed
+  stable across a season and participation does not exist yet. **Reasoned.**
+- **Why three careful predictions were all wrong in the same direction.** Being conservative
+  three times is lucky rather than principled, and I do not have an account of the common cause.
+  The honest statement is that the December window was unrepresentative in more ways than I
+  identified.
+- **Whether the 3 DNS failures cost any observation.** They were retried and imported on the
+  resume, and the final run reports 0 failures over 640 candidates, so I believe not — but I did
+  not diff the two runs' imported counts per date to prove it. **Reasoned.**
+
+No fit was run, no conversion rate was emitted, no participation data was touched, the cohort
+manifest was not regenerated, and no owner-only decision was made.
