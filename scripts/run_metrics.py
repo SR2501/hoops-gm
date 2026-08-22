@@ -165,6 +165,13 @@ def _source_id() -> str:
     commit before this one or from a fortnight-old cache the restore-key
     happened to match. The comparison base is an input to the result, so it is
     reported rather than assumed.
+
+    `GITHUB_SHA` is **not a stable key for one commit**. On a `pull_request`
+    event it is the ephemeral merge commit, not the branch head - driven, not
+    assumed: a run whose head was `b107f1b` reported `0d0cc81`. On `push` it is
+    the head. So the same tree can be recorded under two identities depending on
+    which event ran it. That is honest for naming *a run*, which is all a delta
+    needs, but do not reach for it to track one commit across event types.
     """
     sha = os.environ.get("GITHUB_SHA", "")
     return sha[:7] if sha else "local"

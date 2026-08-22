@@ -17621,3 +17621,20 @@ class contaminates the diagnosis of the next thing that looks like it.**
 Consequence: this entry did not make #72 and lands as a follow-up. That is the correct outcome and
 the cheap one - it is documentation - but had it been a code fix I believed was in the merge, I
 would have reported it green on `main` and been wrong.
+
+### The rebase where the guard had nothing to say
+
+Rebase five, onto `e05f09b` (#70), was docs-only and moved no counts. The header check ran and
+**found nothing** - and that is worth recording, because a guard that fires on every rebase is
+reporting on the process rather than on the file.
+
+Across six rebases the header check caught **three** genuinely stale counts and stayed silent on
+the rest. Its credibility comes from the silence as much as the catches: if it had fired every
+time, the correct read would have been that it was measuring how often lanes rebase, not whether
+the file is self-consistent. **The true negative is half the evidence and almost nobody writes it
+down.** Four catches alone is a much weaker claim than four catches with the clean passes named.
+
+One caveat on the count, since this file is where such things get overstated later: the sixth
+rebase's fire was **mine and deliberate** - I replaced the header with a placeholder specifically
+to watch the guard trip before correcting it, which is a test of the guard, not a defect in the
+file. The three real catches were counts moved by other lanes' changes arriving through a rebase.
