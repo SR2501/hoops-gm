@@ -332,10 +332,27 @@ it.
 
 **This cannot be sized from anything committed.** The cohort manifest publishes
 whole-cohort `status_counts` only, with no by-date or by-era split, so the
-era-conditional `doubtful` rate is not computable today. Unit 2's per-status
-by-game-date denominators would make it computable — and Unit 2 is currently
-scheduled *after* the sweep decision it would inform. That ordering is worth
-revisiting.
+era-conditional `doubtful` rate is not computable today.
+
+**And the obvious fix is blocked by the same circularity that stopped the
+`--raw-root` flag.** Emitting by-date, by-era denominators means editing
+`cohort_evidence.py`, whose SHA-256 is pinned against the committed manifest by
+`test_every_recorded_source_fingerprint_matches_the_file_today`; changing it
+makes that manifest's provenance a claim about a file that no longer exists, and
+regenerating the manifest needs the database the sweep exists to fill.
+
+**There is a way out that costs ~341 requests and no code change.** The
+injury-report half of the sweep produces canonical observations *by date*, and
+canonical counts are a conservative upper bound on direct outcomes — a season
+failing the floor on the upper bound can never pass. So a report-only sweep of
+2025-26 yields both the cheap go/no-go **and** the era-conditional status
+composition, without participation and without touching the generator.
+
+One constraint on doing it: the injury-report backfill needs tip-off instants,
+and sourcing those from `ScheduleLeagueV2` would degenerate the cohort
+manifest's `cross_source_tipoff_reconciliation` into comparing one endpoint with
+itself. So a report-only sweep must run against a **throwaway database**, never
+the durable one. Its output is a count, and a count never becomes a manifest.
 
 **A second unit error in the same figures.** The two- and three-season totals are
 in **canonical** observations while the floor of 30 is in **direct outcomes**.
@@ -532,12 +549,28 @@ sweep"; that is **Unit 3** below, unchanged in substance.
 | Unit | Work | Network | Gate |
 |---|---|---|---|
 | **1** | This document + the archive-reach probe | 30 requests, done | Adapter + Code |
-| **1b** | **2025-26 participation ingest — promoted to the critical path** | ~2,462, ~45 min floor | Adapter |
-| **2** | Manifest disclosure contract test: outcome-keyed field allow-list, `joined_direct_outcomes`, per-status direct-outcome counts by game date, exclusion classes by status | none | Code |
-| **3** | 2025-26 injury reports + regenerated manifest | ~670 | Adapter |
-| **4** | 2024-25 (participation + reports) | ~2,800 | Adapter |
-| **5** | 2023-24 (participation + reports) | ~2,800 | Adapter |
-| **6** | Per-season and per-era trend report, handed to `quant` | none | Code |
+| **2** | **Disclosure-surface contract test — moved ahead of the sweep** | none, **done** | Code |
+| **2b** | Cohort-generator fields: `joined_direct_outcomes`, per-status direct-outcome counts by game date, exclusion classes by status | none | Code |
+| **3** | 2025-26 participation ingest — pre-draft critical path | ~2,462, ~45 min floor | Adapter |
+| **4** | 2025-26 injury reports + regenerated manifest + go/no-go | ~670 | Adapter |
+| **5** | 2024-25 (participation + reports) | ~2,800 | Adapter |
+| **6** | 2023-24 (participation + reports) | ~2,800 | Adapter |
+| **7** | Per-season and per-era trend report, handed to `quant` | none | Code |
+
+**Unit 2 moved ahead of the sweep by coordinator decision, on §4.1's reasoning.**
+A go/no-go computed on a knowingly optimistic projection is not a gate. Unit 2 is
+offline and costs no requests, so scheduling it after the expensive decision it
+informs was the sequencing error.
+
+**Unit 2 splits, and the second half is blocked by the same circularity that
+stopped the `--raw-root` flag.** The contract test (2) is a test file and lands
+freely. The generator fields (2b) require editing `cohort_evidence.py`, which
+`test_every_recorded_source_fingerprint_matches_the_file_today` pins by SHA-256
+against the committed cohort manifest — so changing it makes that manifest's
+provenance a claim about a file that no longer exists, and regenerating the
+manifest needs the database the sweep exists to fill. **2b therefore lands with
+the regeneration in Unit 4, not before it**, and the era-conditional composition
+§4.1 asks for has to come from somewhere else in the meantime — see §4.1.
 
 **Unit 1b is not part of the conversion study, and that is the point.** The
 coordinator traced the dependency graph after approving this plan and found that

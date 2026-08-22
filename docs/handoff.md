@@ -13917,3 +13917,105 @@ a tool is working are not part of its output contract.
 
 No fit was run, no cohort regenerated, no conversion rate emitted, no live source called beyond
 the probe already recorded, and no owner-only decision made.
+
+## 2026-08-21 — data-engineer — Unit 2's contract test, and a scanner that reported clean because it never looked
+
+**Unit:** the disclosure-surface contract test the frozen pre-registration assigns to
+`data-engineer`, moved ahead of the sweep by coordinator decision on `quant`'s §4.1 reasoning.
+Offline; no requests. `backend/tests/test_disclosure_surface.py`, 7 tests.
+
+### What it enforces, and why it is a closed set
+
+The frozen protocol's invariant: *no new outcome-keyed field may be added, at any granularity,
+in any manifest version*, beyond the single whole-cohort `participation_outcome_counts` already
+present. A granularity rule was tried first and rejected by both reviewers as necessary but not
+sufficient — git makes cross-manifest differencing free, and the planned operation is widening
+the same window, so the added dates' outcome marginal falls out by subtraction.
+
+Derived rather than recalled: exactly **one** container carries outcome keys today,
+`participation_join.participation_outcome_counts`, with five values. The allow-list is a literal
+in the test file, deliberately not computed from the manifest — an expected value derived from
+the artefact under test is the tautology this lane shipped in Unit 1.
+
+### Scoped to the directory, not the filename — because of this lane's own artifact
+
+`quant`'s tightening. The protocol says "in any manifest version", which reads as a constraint
+on the cohort manifest. But Unit 1 committed `nba-injury-report-archive-reach-probe.json` to the
+same directory: an evidence artifact that is **not** a manifest and would sit outside a
+filename-scoped test entirely. So the scan covers every JSON under `docs/adapters/`, and a new
+evidence artifact is covered on the day it lands rather than the day someone remembers.
+
+### The harness caught my own scanner reporting clean on the case it exists for
+
+M3 added an outcome breakdown to a record inside the probe artifact — **the exact attack
+directory-scoping was written to stop** — and the whole file stayed green.
+
+`_leaf_paths` returned lists as leaves. It descended into dicts and stopped at lists, so
+everything inside `observations` was invisible. The scan reported clean because it never looked
+there, which is the `app.routes` mechanism arriving in code I wrote *in the same sitting* as I
+recorded that lesson.
+
+Fixed to descend through lists, with no index segment — indices would make the allow-list
+positional, so adding a record could move a permitted path, and the invariant is about field
+names rather than positions. Two unit tests now pin the descent directly rather than leaving it
+implied by the directory scan.
+
+### Mutation results, under the stricter rule
+
+Four mutations, all **rc == 1** — genuine assertion failures, not collection errors — with green
+asserted before each and restored after. This harness records **which test** caught each, after
+`code-review` showed two of Unit 1's four mutations reddened on neighbouring conditions:
+
+| Mutation | Caught by |
+|---|---|
+| by-game-date outcome breakdown added to the manifest | the "adds a field" test, plus the presence test |
+| the allow-listed field deleted | the presence test — the "adds" check alone cannot see a deletion |
+| a **non-manifest** document grows an outcome field | the "adds" test and the probe-specific test |
+| the outcome vocabulary emptied, blinding the detector | the vocabulary guard and both scanner tests |
+
+Each reddens the test whose docstring names that property.
+
+### What Unit 2 could not deliver, and why
+
+The generator half — `joined_direct_outcomes`, per-status direct-outcome counts by game date,
+exclusion classes by status — **is blocked by the same circularity that stopped the `--raw-root`
+flag, and I did not anticipate it a second time.** Emitting those fields means editing
+`cohort_evidence.py`, whose SHA-256 is pinned against the committed cohort manifest. Changing it
+makes that manifest's provenance a claim about a file that no longer exists; regenerating it
+needs the database the sweep exists to fill.
+
+**So §4.1's era-conditional measurement cannot be obtained from the generator before the sweep
+either**, which weakens the case for moving Unit 2 ahead — the half that would have informed the
+go/no-go is the half that is blocked. The contract test still had to land before any widened
+manifest, so the reordering was not wasted, but it did not buy what it was reordered for.
+
+**There is a way out that costs ~341 requests and no code change**, now recorded in §4.1: the
+injury-report half of the sweep produces canonical observations *by date*, and canonical counts
+are a conservative upper bound on direct outcomes, so a report-only sweep yields both the cheap
+go/no-go and the era-conditional composition. It must run against a **throwaway database**,
+because the injury-report backfill needs tip-offs and sourcing those from `ScheduleLeagueV2`
+would degenerate `cross_source_tipoff_reconciliation` into comparing one endpoint with itself.
+A count never becomes a manifest, so a disposable database is the right home for it.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when written. Local: 1,301 offline tests, Ruff, strict mypy
+  over 142 files, backlog recomputed from the finished file.
+- **That the outcome-token scan has no remaining blind spot.** It now descends dicts and lists,
+  and I drove both. It would still miss an outcome encoded as a *value* rather than a key — a
+  field like `{"breakdown": "played=292;inactive=1418"}` — and I have not guarded that, because
+  I cannot enumerate encodings. **Reasoned.** The honest scope is: outcome-keyed *fields* are
+  caught at any depth in any published JSON; outcome data smuggled inside a string is not.
+- **That `docs/adapters/` is the only directory that will ever publish such artifacts.** The
+  scan is scoped there because that is where they live today. A future artifact under
+  `docs/models/` would escape it. **Reasoned**, and worth a second look when one appears.
+- **Whether moving Unit 2 ahead was net positive.** The contract test is better landed early.
+  The measurement it was reordered to enable turned out to be blocked. I would call the decision
+  correct on the information available and unlucky on the information that surfaced.
+- **The Postgres cross-dialect check the coordinator offered.** I have **no** deferred
+  cross-dialect claim in this lane — nothing here touches schema, migrations or SQL; the work is
+  documents, fixtures and offline tests. Recorded as "not applicable" rather than left silent,
+  since twenty handoff entries have asserted a Postgres limitation nobody checked.
+
+No fit was run, no cohort regenerated, no conversion rate emitted, no live source called, and no
+owner-only decision made.
