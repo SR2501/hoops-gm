@@ -75,11 +75,18 @@ def seeded(
 
 
 def cohort_csv(database: Database, *, limit: int = COHORT) -> bytes:
-    """A manual-profile table naming players that really exist in this database.
+    """A FantraxHQ-shaped table naming players that really exist in this database.
 
     Built from the seeded cohort for the same reason the projection CLI tests
     build theirs that way: otherwise an exit code of 5 could mean "the guard
     fired" or "the names were spelled wrong", and the test could not tell.
+
+    The profile is FantraxHQ rather than manual because manual is now *refused*
+    as a benchmark: it records no lineage, and unrecorded lineage is a refusal
+    rather than a clearance. These tests are about the CLI's plumbing — echo
+    suppression, report writing, dry-run, convergence — so they need a source
+    that legitimately passes the guard, not one that used to pass it by
+    accident.
     """
     with database.session() as session:
         players = unique_named_players(session, limit=limit)
@@ -98,7 +105,7 @@ def write_csv(tmp_path: Path, content: bytes, name: str = "auction.csv") -> Path
 def base_argv(csv_path: Path, tmp_path: Path) -> list[str]:
     """A fully stated basis. Individual tests override one field at a time."""
     return [
-        "manual-auction-values",
+        "fantraxhq-auction-values",
         SEASON,
         AS_OF,
         str(csv_path),

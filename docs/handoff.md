@@ -17087,8 +17087,9 @@ generated* projections. Their correlation is therefore strong evidence they do t
 weak evidence they agree about players. `derivation_method` and `auction_value_source_inputs` are two
 separate fields for this reason.
 
-**I falsified an inference I had been handed.** The FantraxHQ budget was described to me as "inferred
-$200 from Jokic at $74". Its published pool is 194 rows, exactly 156 non-zero, summing to **$2,655** -
+**I falsified an inference I had been handed.** The FantraxHQ budget was described to me as inferred
+as $200 from the price of a single named player [cell redacted 2026-08-22 — see the addendum below].
+Its published pool is 194 rows, exactly 156 non-zero, summing to **$2,655** -
 10.6% above a 12x$200 pool of $2,400, against rounding noise of sqrt(156)*0.289 ~ 3.6, so roughly
 70 sigma. The budget is recorded `UNESTABLISHED`, not inferred. Team and slot counts survive as
 inferences and are flagged inferred. The test re-derives the verdict from the transcribed counts
@@ -17248,3 +17249,108 @@ all. Nobody had scoped the step that makes Hashtag usable as a primary source.
   it covers, reasoned for its coverage.**
 - **Whether the unresolved-report gap matters in practice.** No import of a real full export has been
   run, so I do not know how many priced players a real file fails to resolve. **Reasoned.**
+
+
+---
+
+### 2026-08-22 - `data-engineer` - `aav-source` remediation: ten review findings, and three defects the remediation itself produced
+
+An independent review of #69 returned four blockers, four required items and two notes. All ten are
+fixed and **each is pinned by a mutation that dies**, not by a test that passes. The three findings
+worth carrying forward are all in the second category: things the *remediation* did wrong.
+
+#### The blockers, and what each actually was
+
+**A - the live-smoke probe printed source rows**, reversing the policy stated sixty lines above it in
+the same file. Three assertions interpolated parser issue messages, which embed the player name and
+the raw cell. Rewritten to report counts and row numbers only. The mechanism matters: **pytest's
+assertion rewriting renders the operands of a bare `assert`**, so `assert parsed.rows, "clean
+message"` still dumps a full row repr. `if cond: raise AssertionError(...)` does not, which is why the
+sibling Basketball Monster probe is written that way and why mirroring it meant copying its *form*,
+not just its intent. Drove all three branches against synthetic exports and **scanned the captured
+output mechanically for leaked tokens** rather than reading it. Zero.
+
+The uncomfortable part is the shape: I built that probe *after* correcting myself for having no live
+smoke at all. **The remediation carried the defect.**
+
+**B and C - a count invariant that no fixture could falsify, and a counter at the wrong grain.**
+`matched + needs_review + unmatched == row_count` is false whenever a price is unreadable, and no
+fixture contained one, so the assertion could not fail. Separately `rejected_row_numbers` is
+row-grained while values are value-grained, so a two-value-column row with one bad price was both
+written and counted rejected. Added `rows_yielding_values` and `fully_rejected_row_numbers`, two
+fixtures, and an in-importer partition assertion.
+
+**D, with G and I - the guard failed open.** A source with no lineage rows was cleared as admissible,
+because the overlap test examined an empty set and found no overlap. Two live routes: `manual` was
+reported as independent market evidence with the CLI exiting 0, and **deleting the lineage rows flipped
+a live circular refusal into a clearance**. The rule is now *refuse unless lineage is established and
+disjoint* - three verdicts rather than two. `derivation_method` is now actually read, an `INFERRED`
+basis now surfaces as a caveat instead of being byte-identical to a stated one, and an identity
+comparison against a string column became equality.
+
+Fixing it **broke six tests that were relying on the fail-open**. That is the correct consequence and
+I record it because a fix that broke nothing would have been the warning sign.
+
+**E, F, H, J** - duplicate player rows now refuse by name and line number rather than surfacing as an
+undiagnostic integrity error; the Basketball Monster claim is narrowed to source-level reachability
+because no such profile exists; the redistribution problem in the fixtures is dealt with below; and
+the CRLF rationale in the checksum now has a test, so its mutation dies.
+
+#### Three defects the remediation produced, which are the transferable part
+
+**1. A fixture built on a documented missing-value token exercises nothing.** The C mutation
+*survived* my first fix. The fixture used `n/a` as its unreadable price - but `n/a` is in
+`_MISSING_TOKENS`, meaning *the source published no price*, a legitimate absence that raises **no issue
+at all**. I had built a fixture for unreadable prices containing no unreadable price. Found it by
+measuring the parse rather than by reasoning about the fixture; rebuilt it around a percentage figure,
+and the mutation then died. **The general form: a token that means "absent" and a token that means
+"malformed" are different inputs, and a test named for the second can be built entirely from the
+first.** Driven.
+
+**2. My own tripwire fired on my own explanatory prose.** The redistribution fix required removing a
+verbatim published cell from four source files, five assertions and this file. I added a scan to keep
+it out - and it went red immediately, on the paragraph I had just written *explaining* the leak, which
+quoted the cell in order to explain it. I fixed the prose rather than exempting the scan. This is the
+second instance in two days of **a scanner for syntax matching prose that discusses that syntax**, and
+the first where the prose was written by the person who wrote the scanner, in the same edit. Driven.
+
+**3. Two `edit` calls silently absorbed two following test bodies.** Both used a `def` line as the
+anchor and omitted it from the replacement, so the following tests became statements inside mine. The
+symptom was an unrelated-looking attribute error on a fixture object. **I did not then re-read the
+file - I ran an AST scan** for module-level bare expressions, lowercase module-level assignments and
+duplicate test names, which is a check that does not depend on my attention. 59 top-level tests, no
+duplicates, no orphaned bodies. Driven.
+
+#### The fixtures, and a deliberate deviation from append-only
+
+`docs/handoff.md` is append-only by precedent and I **broke that deliberately**, redacting a published
+cell in place rather than appending a correction. Appending would have left the leaked value in the
+file, which is the thing being fixed; a correction that preserves the defect is not a correction. I am
+naming it here rather than doing it quietly, because a silent edit to an append-only file is exactly
+the kind of thing that later reads as corruption.
+
+All three fixtures were **regenerated on a stated arithmetic ramp** rather than edited, and the
+metadata now states *the generation rule* instead of asserting synthetic-ness. That converts the
+redistribution promise from a claim into something a reader can check against the file in about ten
+seconds - which the previous metadata could not do, and which is how the coincidence the reviewer
+spotted became visible at all.
+
+#### Could not verify
+
+- **That the live probe leaks nothing against a real export.** I drove all three branches against
+  synthetic exports and mechanically scanned the output; I have never run it against a real one,
+  because I do not have one. The assertions no longer interpolate parser detail, which is structural,
+  but the claim "nothing leaks in practice" is **reasoned**. The scan itself is **driven**.
+- **That the mutation set is complete.** 18 mutations re-run and all now die, but the set is one I and
+  the reviewer chose. A mutation neither of us thought of is not covered by either. **Driven for the
+  18, reasoned for the coverage.**
+- **That no other prose in the tree quotes a conflict marker.** Still not swept - carried forward
+  unchanged from the previous entry, and now two instances old rather than one. **Reasoned.**
+- **That no other fixture in the repository contains a non-redistributable published value.** I
+  regenerated the three that are mine. I did not audit the others. **Reasoned.**
+- **That `basketball_monster` having no profile is the only case where the guard's reachability claim
+  outruns the database.** I checked that one because the reviewer named it. I did not enumerate the
+  other profiles against persisted rows. **Reasoned.**
+- **Whether refusing duplicate player rows is the behaviour an operator wants.** It is the behaviour
+  that avoids inventing market evidence, which is why I chose it, but no operator has hand-transcribed
+  a real table through this path yet. **Reasoned.**

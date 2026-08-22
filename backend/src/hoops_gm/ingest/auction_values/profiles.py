@@ -319,9 +319,19 @@ BASKETBALL_MONSTER_SOURCE = AuctionSourceDescriptor(
         ),
     ),
     notes=(
-        "Registered so the independence guard has something real to refuse. Not a benchmark: "
-        "measuring our disagreement against it would compare us to our own primary projection "
-        "input with a dollar sign on it, and every match would be fake agreement."
+        "Registered as a source so the independence guard has something real to refuse, and it "
+        "does: with Basketball Monster projections imported, this source is refused as a "
+        "benchmark, proved end-to-end through the ordinary projection CSV path.\n"
+        "        Note the limit of that claim. There is no basketball_monster *profile*, so no "
+        "auction-value file can be imported under this source and no auction_value_imports row "
+        "for it can exist in a real database. The refusal is therefore reachable at the source "
+        "level — which is where independence is assessed — and not through the import path. "
+        "Hashtag is the case that would arise from an ordinary import, and even that awaits a "
+        "verified Hashtag projection profile, because import_projection_csv refuses an "
+        "unverified profile and only Basketball Monster is verified today.\n"
+        "        Not a benchmark regardless: measuring our disagreement against it would "
+        "compare us to our own primary projection input with a dollar sign on it, and every "
+        "match would be fake agreement."
     ),
 )
 
@@ -333,8 +343,14 @@ MANUAL_SOURCE = AuctionSourceDescriptor(
     derivation_evidence=(
         "Escape hatch for a list the owner types or pastes from somewhere without a profile. "
         "Its derivation is unestablished by construction — nothing about the file says where "
-        "the numbers came from — which is why it carries UNESTABLISHED rather than a guess, "
-        "and why the independence guard cannot clear it as independent evidence."
+        "the numbers came from — which is why it carries UNESTABLISHED rather than a guess.\n"
+        "        The independence guard refuses it, and the mechanism is worth naming "
+        "precisely, because an earlier version of this sentence was false. The guard does not "
+        "read derivation_method at all; it reads recorded lineage. This source declares no "
+        "inputs, and unrecorded lineage is a refusal rather than a caveat, so manual imports "
+        "are stored and displayable but never admissible as independent evidence. Previously "
+        "the guard cleared it — the overlap test examined an empty set and found no overlap — "
+        "so this paragraph described a refusal that was not happening."
     ),
 )
 
@@ -370,12 +386,13 @@ FANTRAXHQ_PROFILE = AuctionValueProfile(
     header_contract_verified=False,
     verification_evidence=(
         "Column labels Rank / Player / Team / Position / Value, dollar-prefixed integer values "
-        "('$74'), 'First Last' names and comma-separated multi-position cells were read "
-        "directly from the published page on 2026-08-21, not inherited from a summary. The "
-        "page prints 'The prices are optimized for 8-category leagues with 156 rostered "
-        "players' and prints no budget anywhere. NOT verified: any machine-readable export, "
-        "because none exists — the operator transcribes the HTML table, so the header spelling "
-        "in the CSV is our convention and the aliases above are matched loosely on purpose."
+        "with no decimals anywhere, 'First Last' names and comma-separated multi-position cells "
+        "were read directly from the published page on 2026-08-21, not inherited from a "
+        "summary. The page prints 'The prices are optimized for 8-category leagues with 156 "
+        "rostered players' and prints no budget anywhere. NOT verified: any machine-readable "
+        "export, because none exists — the operator transcribes the HTML table, so the header "
+        "spelling in the CSV is our convention and the aliases above are matched loosely on "
+        "purpose."
     ),
 )
 

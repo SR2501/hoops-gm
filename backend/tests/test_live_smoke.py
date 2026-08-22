@@ -235,6 +235,18 @@ class TestPublishedAuctionValueExportIsAlive:
         Asserts the presence of parsed values, not the absence of errors. An
         empty file, a header-only file and a file whose every row was rejected
         all produce "no fatal issues" if you only look for issues.
+
+        **Failures report counts and row numbers only.** Parser issue messages
+        embed the player name and the raw cell, so interpolating one would print
+        rows of a non-redistributable table into the log — and this probe is
+        schedule-gated on a real export existing, so it would do that precisely
+        when there was something real to print. Header labels are reported,
+        because a renamed column is the drift being detected and a header is not
+        row content. `raise AssertionError` rather than `assert` throughout, for
+        the same reason the BBM probe above does it: pytest's assertion
+        rewriting renders the operands of a bare `assert`, which would dump
+        `PublishedValueRow` reprs even from an assertion whose own message is
+        clean.
         """
         configured = os.getenv(_AAV_CSV_ENV)
         profile_id = os.getenv(_AAV_PROFILE_ENV)
@@ -257,19 +269,29 @@ class TestPublishedAuctionValueExportIsAlive:
                 f"{profile.profile_id!r}: {error}"
             ) from None
 
-        assert parsed.total_rows > 0, (
-            f"{profile.display_name} export produced no data rows at all; a header-only "
-            "file parses without error and imports nothing"
-        )
-        assert parsed.rows, (
-            f"{profile.display_name} export parsed {parsed.total_rows} rows and yielded no "
-            f"values; issues were {[issue.message for issue in parsed.issues]!r}"
-        )
-        assert not parsed.fatal_issues, (
-            f"{profile.display_name} export drifted: "
-            f"{[(issue.row_number, issue.message) for issue in parsed.fatal_issues]!r}"
-        )
-        # No negative-value backstop here on purpose. Driving a `$-74` row
+        total_rows = parsed.total_rows
+        value_count = len(parsed.rows)
+        issue_count = len(parsed.issues)
+        fatal_rows = sorted({issue.row_number for issue in parsed.fatal_issues})
+
+        if total_rows <= 0:
+            raise AssertionError(
+                f"{profile.display_name} export produced no data rows at all; a header-only "
+                "file parses without error and imports nothing"
+            )
+        if value_count == 0:
+            raise AssertionError(
+                f"{profile.display_name} export parsed {total_rows} rows and yielded no "
+                f"values ({issue_count} issues raised). Messages are suppressed here; "
+                f"re-run the parser locally to see them."
+            )
+        if fatal_rows:
+            raise AssertionError(
+                f"{profile.display_name} export drifted: {len(fatal_rows)} rows rejected "
+                f"fatally at row numbers {fatal_rows}. Messages are suppressed here; "
+                f"re-run the parser locally to see them."
+            )
+        # No negative-value backstop here on purpose. Driving a negative price
         # through this probe showed the parser already rejects it as a fatal
         # issue, so a further `value_dollars >= 0` assertion below could never
         # be reached — it would read as a second line of defence and be an

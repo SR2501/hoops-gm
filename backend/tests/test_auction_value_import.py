@@ -33,6 +33,7 @@ confident, plausible, wrong benchmark rather than a crash.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -67,6 +68,7 @@ from hoops_gm.ingest.auction_values.importer import (
     AuctionImportOutcome,
     BasisDeclaration,
     BasisIncomplete,
+    DuplicatePlayerRows,
     import_auction_value_csv,
     register_auction_value_source,
 )
@@ -92,9 +94,11 @@ from hoops_gm.ingest.projections import (
     import_projection_csv,
 )
 from hoops_gm.market.independence import (
+    BASIS_INFERRED,
     BASIS_UNESTABLISHED,
     CIRCULAR_LINEAGE,
     DERIVATION_UNESTABLISHED,
+    LINEAGE_UNESTABLISHED,
     assess_benchmark_admissibility,
     assess_source_independence,
     imported_projection_sources,
@@ -250,6 +254,75 @@ def test_every_required_fixture_is_present_and_non_empty() -> None:
     assert not empty, f"empty auction-value fixtures: {empty}"
 
 
+def test_every_fixture_value_is_generated_by_the_rule_the_metadata_states() -> None:
+    """ "Every value is synthetic" is a promise no assertion was checking.
+
+    An earlier revision of these fixtures opened at the published table's real
+    top value while the metadata beside it declared every value synthetic. Both
+    the claim and the counter-example sat in the same directory and nothing
+    compared them, because the claim was prose.
+
+    So the metadata now states the *rule* the values come from, and this test
+    re-derives the values from that rule. A fixture value that is not on the
+    ramp fails here, whatever the prose says. The point is not that $10 steps
+    are correct — it is that a plausible price list can no longer pass.
+    """
+    metadata = json.loads(load("fantraxhq_auction_values.metadata.json"))
+    declared = metadata["how_the_synthetic_values_were_generated"]["values"]
+    assert declared, "no generated values declared"
+
+    permitted = {Decimal(text.lstrip("$")) for text in declared}
+    assert permitted, "the declared value set parsed empty"
+
+    checked = 0
+    for name in ("fantraxhq", "hashtag", "yahoo"):
+        profile = profile_for(
+            {
+                "fantraxhq": "fantraxhq-auction-values",
+                "hashtag": "hashtag-auction-values",
+                "yahoo": "yahoo-draft-analysis",
+            }[name]
+        )
+        filename = {
+            "fantraxhq": "fantraxhq_auction_values.csv",
+            "hashtag": "hashtag_auction_values.csv",
+            "yahoo": "yahoo_draft_analysis.csv",
+        }[name]
+        result = parse_auction_value_csv(load(filename), profile)
+        assert result.rows, f"{filename} parsed no rows, so this checked nothing"
+        for row in result.rows:
+            checked += 1
+            # Yahoo's second column is the same ramp shifted down $5, so that
+            # the two kinds are distinguishable; permit that offset explicitly
+            # rather than widening the set until everything fits.
+            assert row.value_dollars in permitted or row.value_dollars + 5 in permitted, (
+                f"{filename} carries {row.value_dollars}, which the stated "
+                f"generation rule does not produce — either the fixture holds a "
+                f"real published value or the metadata rule is stale"
+            )
+    assert checked >= 20, f"only {checked} values checked across three fixtures"
+
+
+def test_no_fixture_or_document_reproduces_the_published_top_value() -> None:
+    """A tripwire on the specific cell that got through once already.
+
+    This is deliberately narrow. It cannot detect redistribution in general,
+    and claiming otherwise would be the reassuring-green-check failure. It
+    detects the one cell this repository is known to have leaked, in the places
+    it leaked into, so that reintroducing it is loud.
+    """
+    leaked = "74"
+    searched = []
+    for path in sorted(FIXTURES.glob("*")):
+        searched.append(path)
+        text = path.read_text(encoding="utf-8")
+        assert f"${leaked}" not in text, (
+            f"{path.name} reproduces the published top value; the metadata in "
+            f"this directory promises no published dollar value appears here"
+        )
+    assert len(searched) >= 4, f"searched only {len(searched)} fixture files"
+
+
 def test_fantraxhq_metadata_separates_what_was_verified_from_what_is_synthetic() -> None:
     """The metadata file has to make both claims, not just the flattering one."""
     metadata = json.loads(load("fantraxhq_auction_values.metadata.json"))
@@ -258,6 +331,9 @@ def test_fantraxhq_metadata_separates_what_was_verified_from_what_is_synthetic()
     assert metadata["what_could_not_be_established"], (
         "an empty 'could not establish' list is the unexamined blank this unit exists to avoid"
     )
+    rule = metadata["how_the_synthetic_values_were_generated"]
+    assert rule["rule"], "the generation rule is unstated, so 'synthetic' is unfalsifiable"
+    assert rule["values"], "the generation rule declares no values"
 
 
 def test_the_two_hundred_dollar_budget_inference_does_not_survive_the_published_pool() -> None:
@@ -438,7 +514,7 @@ class TestFantraxHqContract:
         assert {row.value_raw for row in zeros} == {"$0"}
 
     def test_the_source_text_is_kept_beside_the_parsed_number(self) -> None:
-        """``$74`` and ``74`` parse identically and are different claims.
+        """``$90`` and ``90`` parse identically and are different claims.
 
         A source switching notation is a signal that its table changed, and it
         is only visible if the original text survives the parse.
@@ -447,8 +523,8 @@ class TestFantraxHqContract:
             load("fantraxhq_auction_values.csv"), profile_for("fantraxhq-auction-values")
         )
         alpha = next(row for row in result.rows if row.player_name == "Player Alpha")
-        assert alpha.value_dollars == Decimal("74")
-        assert alpha.value_raw == "$74"
+        assert alpha.value_dollars == Decimal("90")
+        assert alpha.value_raw == "$90"
         assert alpha.position == "SF,PF"
 
 
@@ -492,7 +568,7 @@ class TestYahooContract:
             load("yahoo_draft_analysis.csv"), profile_for("yahoo-draft-analysis")
         )
         assert "% Drafted" in result.ignored_headers
-        assert all(row.value_dollars <= Decimal("71") for row in result.rows)
+        assert all(row.value_dollars <= Decimal("90") for row in result.rows)
 
 
 @pytest.mark.adapter_contract
@@ -801,8 +877,8 @@ def test_importing_writes_one_row_per_value_with_its_lineage(seeded_players: Ses
     assert {value.season for value in values} == {"2026-27"}
 
     alpha = next(v for v in values if v.source_player_name == "Player Alpha")
-    assert alpha.value_dollars == Decimal("74")
-    assert alpha.value_raw == "$74"
+    assert alpha.value_dollars == Decimal("90")
+    assert alpha.value_raw == "$90"
 
     auction_import = session.scalars(select(AuctionValueImport)).one()
     assert auction_import.profile_id == "fantraxhq-auction-values"
@@ -861,12 +937,28 @@ def test_every_reported_count_matches_an_independent_observation(
     assert auction_import.matched_count == seed_count, (
         "and the observation itself must track the cohort we actually seeded"
     )
+    # Two accountings with two different grains, kept apart on purpose. The
+    # ten-row FantraxHQ fixture maps one value column, so one row is one player
+    # is one value and all three grains coincide — which is exactly what let the
+    # earlier single assertion look complete while being unable to fail.
+    parsed = parse_auction_value_csv(
+        load("fantraxhq_auction_values.csv"), profile_for("fantraxhq-auction-values")
+    )
+    assert parsed.total_rows == csv_data_rows, "the parse disagrees with the file"
+
+    assert len(parsed.rows_yielding_values) + auction_import.rejected_count == csv_data_rows, (
+        f"rows must partition: {len(parsed.rows_yielding_values)} yielded values and "
+        f"{auction_import.rejected_count} were rejected, against {csv_data_rows} data rows"
+    )
+
+    distinct_players = {row.player_name for row in parsed.rows}
+    assert distinct_players, "no players parsed, so the bucket accounting below checks nothing"
     assert (
         auction_import.matched_count
         + auction_import.needs_review_count
         + auction_import.unmatched_count
-        == csv_data_rows
-    ), "every row must land in exactly one bucket; none may vanish"
+        == len(distinct_players)
+    ), "every player reaching resolution must land in exactly one bucket; none may vanish"
 
 
 @pytest.mark.parametrize(
@@ -936,9 +1028,125 @@ def test_a_player_we_cannot_resolve_is_counted_and_not_imported(session: Session
     assert (
         auction_import.matched_count
         + auction_import.needs_review_count
-        + (auction_import.unmatched_count)
+        + auction_import.unmatched_count
+        + auction_import.rejected_count
         == 10
     ), "every row must land in exactly one resolution bucket; none may vanish"
+
+
+def test_a_row_whose_price_is_unreadable_is_counted_rejected_and_not_written(
+    session: Session,
+) -> None:
+    """The bucket accounting is only meaningful if a row can fall outside it.
+
+    Every fixture used to carry a readable price in every row, so
+    ``matched + needs_review + unmatched == row_count`` could not fail: nothing
+    could ever be missing from the three buckets. The assertion was real, the
+    arithmetic was right, and the fixture's incidental shape meant it could not
+    distinguish a complete accounting from an incomplete one. No strengthening
+    of the assertion fixes that — only an input that breaks it.
+
+    Two of the five rows here carry a percentage and a dash where a price
+    belongs. Both must be refused, counted, and absent from the table.
+    """
+    for nba_id, name, team, position in (
+        (1, "Player Alpha", "BOS", "SF"),
+        (2, "Player Beta", "LAL", "PG"),
+        (3, "Player Gamma", "DEN", "C"),
+        (4, "Player Delta", "MIA", "PG"),
+        (5, "Player Epsilon", "PHX", "SG"),
+    ):
+        seed_player(session, nba_id=nba_id, name=name, team_abbreviation=team, position=position)
+
+    fixture = "fantraxhq_auction_values_unreadable_price.csv"
+    outcome = import_auction_value_csv(
+        session,
+        profile_id="fantraxhq-auction-values",
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=load(fixture).encode("utf-8"),
+        basis=stated_basis(),
+        original_filename=fixture,
+    )
+
+    auction_import = session.scalars(select(AuctionValueImport)).one()
+    assert auction_import.row_count == 5
+    assert auction_import.rejected_count == 2, (
+        "two rows carry an unreadable price; if this is 0 the counter is not "
+        "observing the parse at all"
+    )
+
+    written = session.scalars(select(PublishedAuctionValue)).all()
+    assert {value.source_player_name for value in written} == {
+        "Player Alpha",
+        "Player Beta",
+        "Player Delta",
+    }
+    assert outcome.values_written == 3
+
+    assert (
+        auction_import.matched_count
+        + auction_import.needs_review_count
+        + auction_import.unmatched_count
+        + auction_import.rejected_count
+        == auction_import.row_count
+    ), "a rejected row must be accounted for, not silently missing from every bucket"
+
+
+def test_a_partially_unreadable_row_still_yields_a_value_and_is_not_counted_rejected(
+    session: Session,
+) -> None:
+    """Rejection is row-grained; prices are value-grained. They are not the same.
+
+    Yahoo prints two value columns. A row with one unreadable price still
+    publishes the other, so it must be written *and* must not be counted as a
+    rejected row — the counter previously said "1 row rejected" while that
+    row's other value was being written beside it, so the counter contradicted
+    the table it was describing.
+
+    The fixture uses a percentage in the unreadable cell, not ``n/a``. That
+    matters: ``n/a`` is a documented missing-value token meaning the source
+    published no price, which is a legitimate absence and raises no issue at
+    all. A first draft of this fixture used it and the test passed while
+    exercising nothing — the two row-number sets it exists to separate were
+    still identical. Measuring the parse rather than trusting the intent is
+    what surfaced that.
+    """
+    for nba_id, name, team, position in (
+        (1, "Player Alpha", "BOS", "SF"),
+        (2, "Player Beta", "LAL", "PG"),
+        (3, "Player Gamma", "DEN", "C"),
+        (4, "Player Delta", "MIA", "PG"),
+    ):
+        seed_player(session, nba_id=nba_id, name=name, team_abbreviation=team, position=position)
+
+    fixture = "yahoo_draft_analysis_partial_price.csv"
+    outcome = import_auction_value_csv(
+        session,
+        profile_id="yahoo-draft-analysis",
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=load(fixture).encode("utf-8"),
+        basis=stated_basis(),
+        original_filename=fixture,
+    )
+
+    auction_import = session.scalars(select(AuctionValueImport)).one()
+    assert auction_import.row_count == 4
+    assert auction_import.rejected_count == 1, (
+        "only Player Delta's row yields nothing; Player Beta's row is partially "
+        "unreadable and still publishes a projected value"
+    )
+
+    written = session.scalars(select(PublishedAuctionValue)).all()
+    beta = [value for value in written if value.source_player_name == "Player Beta"]
+    assert len(beta) == 1, "the readable half of a partially unreadable row must survive"
+    assert beta[0].value_kind is AuctionValueKind.PROJECTED
+    assert not [value for value in written if value.source_player_name == "Player Delta"]
+
+    # 3 rows yield values (2 values, 1 value, 2 values) and 1 yields none.
+    assert outcome.values_written == 5
+    assert len(outcome.parsed.rows_yielding_values) + auction_import.rejected_count == 4
 
 
 def test_nothing_is_written_to_the_identity_crosswalk(seeded_players: Session) -> None:
@@ -1014,7 +1222,7 @@ def test_yahoo_stores_both_kinds_for_the_same_player_and_date(seeded_players: Se
         AuctionValueKind.OBSERVED_MARKET,
         AuctionValueKind.PROJECTED,
     }
-    assert {v.value_dollars for v in alpha} == {Decimal("71"), Decimal("66")}
+    assert {v.value_dollars for v in alpha} == {Decimal("90"), Decimal("85")}
 
 
 def test_registering_a_source_twice_updates_its_lineage_rather_than_duplicating(
@@ -1370,17 +1578,250 @@ def test_the_guard_fires_on_hashtag_the_day_we_import_hashtag_projections(
     assert "stop importing hashtag projections" in findings[0].detail.lower()
 
 
-def test_a_source_with_no_recorded_inputs_is_a_caveat_not_a_refusal(session: Session) -> None:
-    """An investigated unknown is usable, provided it is labelled.
+def test_a_source_with_no_recorded_inputs_is_refused_not_cleared(session: Session) -> None:
+    """Absence of evidence is not a clearance, and this is where it arrived.
 
-    Distinct from circularity in both code and verdict, which is why they are
-    separate findings rather than one boolean.
+    The guard tested whether a source's lineage *intersects* ours. With no
+    lineage rows the intersection is empty, so the check passed — and reported
+    independence for a source about whose lineage nothing whatsoever is known.
+    The empty-set failure, inside the guard written to prevent a different one.
+
+    The rule is "refuse unless lineage is established and disjoint", so this is
+    ``admissible=False``.
     """
     source_row = register_auction_value_source(session, source_for("manual"))
     findings = assess_source_independence(session, source_row)
+    assert [f.code for f in findings] == [LINEAGE_UNESTABLISHED]
+    assert findings[0].admissible is False
+    assert "Absence of evidence is not a clearance" in findings[0].detail
+
+
+def test_deleting_a_sources_lineage_cannot_launder_a_circular_refusal(
+    session: Session,
+) -> None:
+    """The post-hoc edit route into the fail-open, driven rather than argued.
+
+    This is the one that makes the defect concrete rather than theoretical: a
+    source the guard is *actively refusing* becomes admissible if its lineage
+    rows are removed. Under the old rule the refusal depended on the very rows
+    that recorded the problem, so deleting the evidence deleted the finding.
+
+    Note the first half asserts the refusal is live before the delete. Without
+    that, a version of this test where the guard never fired at all would pass
+    the second half for the wrong reason.
+    """
+    record_projection_import(session, ExternalSource.BASKETBALL_MONSTER)
+    source_row = register_auction_value_source(session, source_for("basketball_monster"))
+
+    before = assess_source_independence(session, source_row)
+    assert [f.code for f in before] == [CIRCULAR_LINEAGE], (
+        "the guard must be refusing before the delete, or the assertion after it proves nothing"
+    )
+    assert before[0].admissible is False
+
+    deleted = (
+        session.query(AuctionValueSourceInput)
+        .filter(AuctionValueSourceInput.source_id == source_row.id)
+        .delete(synchronize_session=False)
+    )
+    assert deleted > 0, "no lineage rows were deleted, so this test did not exercise the route"
+    session.flush()
+
+    after = assess_source_independence(session, source_row)
+    assert [f.code for f in after] == [LINEAGE_UNESTABLISHED]
+    assert after[0].admissible is False, (
+        "deleting the rows that recorded a circularity must not clear the source"
+    )
+
+
+def test_established_disjoint_lineage_with_an_unknown_method_is_a_caveat(
+    session: Session,
+) -> None:
+    """The caveat that survives, and the one ``DERIVATION_UNESTABLISHED`` now means.
+
+    Splitting the old single finding in two matters because they are different
+    claims: "we do not know what it consumes" is a refusal, "we know what it
+    consumes and not how it turns that into dollars" is a caveat. The code
+    previously never read ``derivation_method`` at all, so a finding named for
+    derivation was in fact reporting on lineage.
+    """
+    descriptor = replace(
+        source_for("fantraxhq"),
+        derivation_method=AuctionValueDerivation.UNESTABLISHED,
+    )
+    assert descriptor.inputs, "this test needs a source that does record lineage"
+    source_row = register_auction_value_source(session, descriptor)
+
+    findings = assess_source_independence(session, source_row)
     assert [f.code for f in findings] == [DERIVATION_UNESTABLISHED]
     assert findings[0].admissible is True
-    assert "not a clean bill of health" in findings[0].detail
+
+
+def test_a_duplicated_player_row_is_refused_diagnostically_not_at_the_unique_key(
+    session: Session,
+) -> None:
+    """Routine operator input, previously an undiagnostic exit 4.
+
+    The ingest mechanism is a person hand-transcribing an HTML table into a
+    CSV, so transcribing one row twice is an ordinary slip rather than a
+    pathological input. It used to reach the unique key and surface as
+    ``IntegrityError`` — "database error", naming no player and no line.
+
+    Note this seeds the players first: without that the rows would be dropped
+    at resolution and never collide, and the test would pass while exercising
+    nothing.
+    """
+    seed_player(session, nba_id=1, name="Player Alpha", team_abbreviation="BOS", position="SF")
+    seed_player(session, nba_id=2, name="Player Beta", team_abbreviation="LAL", position="PG")
+
+    csv_text = (
+        "Rank,Player,Team,Position,Value\n"
+        "1,Player Alpha,BOS,SF,$90\n"
+        "2,Player Beta,LAL,PG,$80\n"
+        "3,Player Alpha,BOS,SF,$70\n"
+    )
+
+    with pytest.raises(DuplicatePlayerRows) as caught:
+        import_auction_value_csv(
+            session,
+            profile_id="fantraxhq-auction-values",
+            season="2026-27",
+            as_of_date=date(2026, 8, 21),
+            csv_bytes=csv_text.encode("utf-8"),
+            basis=stated_basis(),
+            original_filename="duplicated.csv",
+        )
+
+    message = str(caught.value)
+    assert "Player Alpha" in message, "the operator needs to know which player"
+    assert "rows 2 and 4" in message, (
+        f"the operator needs both line numbers to find the duplicate; got {message!r}"
+    )
+    assert "Player Beta" not in message, "only the duplicated player should be named"
+
+
+def test_a_player_published_twice_at_different_kinds_is_not_a_duplicate(
+    session: Session,
+) -> None:
+    """The duplicate check must not break Yahoo, where two rows per player is correct.
+
+    Yahoo prints a projected and an observed value for the same player. Keying
+    the check on player name alone would refuse every Yahoo file — a guard that
+    fires on correct input is worse than no guard, because it gets removed.
+    """
+    for nba_id, name, team, position in (
+        (1, "Player Alpha", "BOS", "SF"),
+        (2, "Player Beta", "LAL", "PG"),
+        (3, "Player Gamma", "DEN", "C"),
+        (4, "Player Delta", "MIA", "PG"),
+        (5, "Player Epsilon", "PHX", "SG"),
+    ):
+        seed_player(session, nba_id=nba_id, name=name, team_abbreviation=team, position=position)
+
+    outcome = import_auction_value_csv(
+        session,
+        profile_id="yahoo-draft-analysis",
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=load("yahoo_draft_analysis.csv").encode("utf-8"),
+        basis=stated_basis(),
+        original_filename="yahoo_draft_analysis.csv",
+    )
+    assert outcome.values_written == 10, "two kinds per player must both survive"
+
+
+def test_the_same_table_saved_with_windows_line_endings_is_the_same_import(
+    seeded_players: Session,
+) -> None:
+    """The CRLF normalisation in ``_content_checksum`` was rationale with no test.
+
+    Mutation M13 — deleting the ``\\r\\n`` replacement — survived the whole
+    suite, because every fixture is written with LF endings and nothing ever
+    fed the importer a CRLF file. The docstring argued the case convincingly
+    and no input could tell whether the code did it.
+
+    It matters operationally: the operator transcribes into whatever editor is
+    to hand, and a re-save that only changed line endings would otherwise
+    register as a new import of new content.
+    """
+    lf_bytes = load("fantraxhq_auction_values.csv").replace("\r\n", "\n").encode("utf-8")
+    crlf_bytes = lf_bytes.replace(b"\n", b"\r\n")
+    assert crlf_bytes != lf_bytes, "the fixture already had CRLF endings, so this proves nothing"
+    assert b"\r\n" in crlf_bytes, "no CRLF present in the payload under test"
+
+    first = import_auction_value_csv(
+        seeded_players,
+        profile_id="fantraxhq-auction-values",
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=lf_bytes,
+        basis=stated_basis(),
+        original_filename="fantraxhq_auction_values.csv",
+    )
+    second = import_auction_value_csv(
+        seeded_players,
+        profile_id="fantraxhq-auction-values",
+        season="2026-27",
+        as_of_date=date(2026, 8, 21),
+        csv_bytes=crlf_bytes,
+        basis=stated_basis(),
+        original_filename="fantraxhq_auction_values.csv",
+    )
+
+    assert second.created is False, "a line-ending change must not create a second import"
+    assert second.auction_import.id == first.auction_import.id
+    assert second.auction_import.content_sha256 == first.auction_import.content_sha256, (
+        "the checksum must be taken over normalised bytes"
+    )
+    assert seeded_players.scalars(select(AuctionValueImport)).all().__len__() == 1
+
+
+def test_an_inferred_basis_is_admissible_but_never_silent(seeded_players: Session) -> None:
+    """The distinction was recorded per field and then dropped at consumption.
+
+    ``BasisEvidence`` separates STATED from INFERRED at import, at some cost in
+    schema and CLI surface. But the only consumer checked for UNESTABLISHED, so
+    an INFERRED budget produced ``findings == ()`` — byte-identical to a fully
+    stated basis. A distinction that no consumer reads is not recorded in any
+    sense that matters, and this is the live FantraxHQ shape rather than a
+    hypothetical: its team and slot counts are inferences.
+
+    Admissible, because an inference is usable. Never silent, because the
+    inference might be wrong — and one already was.
+    """
+    session = seeded_players
+    outcome = import_fantraxhq(
+        session,
+        basis=stated_basis(
+            team_count=12,
+            team_count_evidence=BasisEvidence.INFERRED,
+            note="12 teams inferred from the pool size; the page states no league size.",
+        ),
+    )
+    verdict = assess_benchmark_admissibility(session, outcome.auction_import)
+
+    codes = [finding.code for finding in verdict.findings]
+    assert BASIS_INFERRED in codes, (
+        f"an inferred basis produced findings {codes}; if this is empty the "
+        "stated/inferred distinction is being dropped at consumption again"
+    )
+    inferred = next(f for f in verdict.findings if f.code == BASIS_INFERRED)
+    assert inferred.admissible is True, "an inference is usable; it is only not silent"
+    assert "basis_team_count" in inferred.detail
+    assert "12 teams inferred from the pool size" in inferred.detail, (
+        "the operator's note is the only record of how the inference was made"
+    )
+
+    fully_stated = import_fantraxhq(
+        session,
+        basis=stated_basis(),
+        as_of_date=date(2026, 8, 22),
+    )
+    stated_verdict = assess_benchmark_admissibility(session, fully_stated.auction_import)
+    assert stated_verdict.findings != verdict.findings, (
+        "an inferred basis and a stated one must not produce identical findings; "
+        "that identity is the defect this test exists to prevent"
+    )
 
 
 def test_an_unestablished_basis_blocks_benchmark_use_on_its_own(seeded_players: Session) -> None:

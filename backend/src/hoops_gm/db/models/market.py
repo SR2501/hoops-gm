@@ -377,9 +377,9 @@ class PublishedAuctionValue(IntPk, TimestampMixin, Base):
     would silently collapse a model's output and a market observation into
     whichever the importer happened to write second.
 
-    ``value_raw`` keeps the publisher's own text ("$74", "74.0", "$1"). A
+    ``value_raw`` keeps the publisher's own text ("$90", "90.0", "$1"). A
     disputed row then resolves without re-fetching a page that may since have
-    been revised, and a units error stays visible: "$74" and "74" are the same
+    been revised, and a units error stays visible: "$90" and "90" are the same
     parsed number and different claims about what was published.
     """
 

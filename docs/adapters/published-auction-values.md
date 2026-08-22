@@ -130,10 +130,31 @@ A blend of four sources that are three copies of one is worse than one source
 honestly labelled, because it looks like agreement.
 
 `hoops_gm.market.independence` refuses to treat a source as **independent
-evidence** when its recorded projection lineage intersects our own imported
-projection sources. It is not a refusal to import, and not a refusal to display:
-a source can be present, labelled, and inadmissible as a benchmark at the same
-time, and that is the honest state.
+evidence** unless its projection lineage is *established* and *disjoint* from
+our own imported projection sources. It is not a refusal to import, and not a
+refusal to display: a source can be present, labelled, and inadmissible as a
+benchmark at the same time, and that is the honest state.
+
+Note the shape of that rule, because the first version got it wrong. It refused
+when lineage *intersected*, which means a source with **no recorded lineage**
+was cleared — the overlap test examined an empty set, found no intersection,
+and reported independence about a source nothing was known of. Two routes
+demonstrated it: `manual` was reported admissible and the CLI exited 0, and
+deleting a refused source's lineage rows flipped a live circularity refusal to
+admissible, so the refusal depended on the very rows that recorded the problem.
+There are therefore **three** lineage verdicts, not two:
+
+| Lineage state | Verdict | Finding |
+|---|---|---|
+| Overlaps ours | refused | `circular_lineage` |
+| Not recorded at all | refused | `lineage_unestablished` |
+| Established and disjoint | admissible | `derivation_unestablished` as a caveat if the *method* is unknown |
+
+A source believed to observe real auctions rather than derive from projections
+still records an input row — with no projection source — so "established as
+deriving from nothing of ours" stays distinguishable from "nobody looked". That
+distinction is the whole point of this page, and the guard now enforces it
+rather than assuming it.
 
 The refusal message says so explicitly, including the line **"THIS IS THE GUARD
 WORKING, NOT A DATA ERROR"** — a refusal whose reason is unclear is the one that
@@ -155,7 +176,20 @@ export.
 
 BBM is registered in the source registry anyway, precisely **so the guard has
 something real to refuse** rather than a branch that is green because nothing
-ever enters it.
+ever enters it. The refusal is proved end-to-end against a real BBM projection
+import through the ordinary CSV path.
+
+Be precise about how far that goes, though. There is **no `basketball_monster`
+auction-value profile**, so no auction-value file can be imported under this
+source and no `auction_value_imports` row for it can exist in a real database.
+The refusal is reachable at the **source** level — which is where independence
+is assessed, so the mechanism is genuinely exercised — but not through the
+import path. Hashtag is the case that would arise from an ordinary import, and
+even that is not reachable today: `import_projection_csv` refuses an unverified
+projection profile and only Basketball Monster is verified, so Hashtag
+projections cannot be imported at all. That path refuses Hashtag one step
+earlier. See the `hashtag-projection-profile-verification` backlog item, which
+blocks `aav-blending` for exactly this reason.
 
 ### Shared method is a separate failure from copying
 

@@ -31,7 +31,7 @@ class PublishedValueRow:
     observation, which is the exact confusion this whole layer exists to
     prevent.
 
-    ``value_raw`` keeps the source's own text. ``$74`` and ``74`` parse to the
+    ``value_raw`` keeps the source's own text. ``$90`` and ``90`` parse to the
     same :class:`~decimal.Decimal` and are different claims about what was
     published, and a units mistake is only visible if the original survives.
     """
@@ -86,4 +86,29 @@ class AuctionValueParseResult:
 
     @property
     def rejected_row_numbers(self) -> frozenset[int]:
+        """Rows carrying at least one fatal issue.
+
+        **Not the same as rows that produced nothing.** A profile mapping two
+        value columns can have one of them unreadable and still yield a value
+        from the other, so a row can appear here *and* in :attr:`rows`. Use
+        :attr:`fully_rejected_row_numbers` for the accounting question "did this
+        row contribute anything", and this one for "did anything go wrong here".
+        """
         return frozenset(issue.row_number for issue in self.fatal_issues)
+
+    @property
+    def rows_yielding_values(self) -> frozenset[int]:
+        """Row numbers that produced at least one value."""
+        return frozenset(row.row_number for row in self.rows)
+
+    @property
+    def fully_rejected_row_numbers(self) -> frozenset[int]:
+        """Rows that produced no value at all.
+
+        This is the count that completes the row accounting: every data row
+        either yields values or lands here, and the two partition
+        :attr:`total_rows`. The row-grained/value-grained distinction is easy to
+        lose because on a single-value-column profile the two properties are
+        equal, which is exactly the fixture shape that hides the difference.
+        """
+        return self.rejected_row_numbers - self.rows_yielding_values

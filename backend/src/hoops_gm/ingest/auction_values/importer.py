@@ -37,7 +37,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.models.enums import BasisEvidence, ExternalSource, ScoringType
+from hoops_gm.db.models.enums import AuctionValueKind, BasisEvidence, ExternalSource, ScoringType
 from hoops_gm.db.models.identity import PlayerExternalId
 from hoops_gm.db.models.market import (
     BASIS_FIELDS,
@@ -61,9 +61,52 @@ __all__ = [
     "AuctionImportOutcome",
     "BasisDeclaration",
     "BasisIncomplete",
+    "DuplicatePlayerRows",
     "import_auction_value_csv",
     "register_auction_value_source",
 ]
+
+
+class DuplicatePlayerRows(ValueError):
+    """The file publishes the same player and value kind more than once.
+
+    Routine input rather than a pathological one: the ingest mechanism is an
+    operator hand-transcribing an HTML table, and transcribing a row twice is
+    an ordinary slip. Left undetected it reached the database and surfaced as
+    an ``IntegrityError`` on the unique key — exit 4, "database error", which
+    tells the operator nothing about which line of their file to look at.
+
+    Refused rather than de-duplicated. Two rows for one player are two
+    published claims, and if they disagree there is no basis in the file for
+    choosing between them; picking one would invent market evidence. If they
+    agree, deleting one is still a silent edit to what a source published. The
+    operator can see both line numbers and decide.
+    """
+
+
+def _refuse_duplicate_player_rows(parsed: AuctionValueParseResult) -> None:
+    """Fail on a duplicated player before the write rather than at the unique key."""
+    first_seen: dict[tuple[str, AuctionValueKind], int] = {}
+    collisions: list[str] = []
+    for row in parsed.rows:
+        key = (row.player_name, row.value_kind)
+        earlier = first_seen.get(key)
+        if earlier is None:
+            first_seen[key] = row.row_number
+            continue
+        collisions.append(
+            f"{row.player_name} ({row.value_kind.value}) appears at rows {earlier} and "
+            f"{row.row_number}"
+        )
+    if collisions:
+        detail = "; ".join(collisions)
+        raise DuplicatePlayerRows(
+            f"the file publishes the same player and value kind more than once: {detail}. "
+            f"Two rows for one player are two claims about what was published, so this is "
+            f"refused rather than de-duplicated — remove the transcription duplicate, or if "
+            f"the source really prints the player twice, decide which row is the published "
+            f"value before importing."
+        )
 
 
 class BasisIncomplete(ValueError):
@@ -337,6 +380,8 @@ def import_auction_value_csv(
         distinct.setdefault(row.player_name, (row.player_name, row.team, row.position))
     resolved, identity_report = _resolve_player_ids(session, list(distinct.values()))
 
+    _refuse_duplicate_player_rows(parsed)
+
     session.query(PublishedAuctionValue).filter(
         PublishedAuctionValue.import_id == auction_import.id
     ).delete(synchronize_session=False)
@@ -366,7 +411,18 @@ def import_auction_value_csv(
     auction_import.matched_count = len(identity_report.accepted)
     auction_import.needs_review_count = len(identity_report.needs_review)
     auction_import.unmatched_count = len(identity_report.unmatched)
-    auction_import.rejected_count = len(parsed.rejected_row_numbers)
+    # Rows that contributed nothing, not rows that had something wrong with
+    # them. On a two-value-column profile those differ, and using the latter
+    # made this counter claim a row was rejected while its other value was
+    # being written — a counter contradicting the table beside it.
+    auction_import.rejected_count = len(parsed.fully_rejected_row_numbers)
+
+    if auction_import.rejected_count + len(parsed.rows_yielding_values) != parsed.total_rows:
+        raise AssertionError(
+            f"row accounting does not partition the file: {parsed.total_rows} data rows, "
+            f"{len(parsed.rows_yielding_values)} yielding values, "
+            f"{auction_import.rejected_count} yielding none"
+        )
     session.flush()
 
     return AuctionImportOutcome(

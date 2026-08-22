@@ -36,14 +36,37 @@ have imported. Nothing subtler: no similarity score, no threshold. The join is
 source with no imported file contributes nothing to our numbers, and refusing
 on it would be refusing on an intention rather than on data we hold.
 
-**It will fire on Hashtag the day we import Hashtag projections.** That is the
-guard working, not a false positive, and the message says so — a refusal whose
-reason is unclear is the one that gets loosened.
+**The rule is "refuse unless lineage is established and disjoint", not "refuse
+when lineage intersects".** Those differ on the case that matters. An earlier
+version implemented the second, so a source with *no* recorded lineage was
+cleared: the overlap test examined an empty set, found no intersection, and
+reported that as independence. Deleting a source's lineage rows turned a live
+circularity refusal into a pass. Absence of evidence is not a clearance, and
+the empty-set check reporting success is the oldest failure in this
+repository's register — it arrived here in the guard written to prevent a
+different one.
+
+So there are three lineage verdicts, not two: overlapping lineage refuses,
+*unrecorded* lineage refuses, and established disjoint lineage passes,
+carrying a caveat if the derivation *method* is unknown. A source believed to
+observe real auctions rather than derive from projections still records an
+input row — with no projection source — so that "established as deriving from
+nothing of ours" stays distinguishable from "nobody looked".
+
+**It fires on any source whose projection lineage we also import.** That is
+demonstrated end-to-end against a real Basketball Monster projection import
+through the ordinary CSV path. Hashtag is the case people reach for, and it is
+a genuinely reachable circular case *at the source level*, but note that no
+Hashtag projection can be imported today at all: ``import_projection_csv``
+refuses an unverified profile and only Basketball Monster is verified. That
+path refuses Hashtag one step earlier, so the Hashtag arm of this guard awaits
+an import path that does not yet exist.
 
 Separately, a basis we could not establish also blocks benchmark use, for an
 unrelated reason: a dollar figure whose budget, league size or category count
 is unknown is not comparable to ours at all. Same verdict, different cause, and
-the two are reported as different findings rather than one boolean.
+the two are reported as different findings rather than one boolean. A basis we
+*inferred* rather than read is admissible but never silent.
 """
 
 from __future__ import annotations
@@ -53,7 +76,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from hoops_gm.db.models.enums import BasisEvidence, ExternalSource
+from hoops_gm.db.models.enums import AuctionValueDerivation, BasisEvidence, ExternalSource
 from hoops_gm.db.models.market import (
     BASIS_FIELDS,
     AuctionValueImport,
@@ -74,8 +97,16 @@ __all__ = [
 #: humans and logs, not a stored vocabulary, and adding one should not require
 #: a migration.
 CIRCULAR_LINEAGE = "circular_lineage"
+#: No lineage rows at all, so overlap could not be tested. A refusal.
+LINEAGE_UNESTABLISHED = "lineage_unestablished"
+#: Lineage is known and disjoint, but the method turning inputs into dollars
+#: is not. A caveat.
 DERIVATION_UNESTABLISHED = "derivation_unestablished"
 BASIS_UNESTABLISHED = "basis_unestablished"
+#: A basis field carries a figure we inferred rather than one the source
+#: stated. A caveat, and deliberately not silent — see the note in
+#: :func:`assess_benchmark_admissibility`.
+BASIS_INFERRED = "basis_inferred"
 
 
 @dataclass(frozen=True)
@@ -177,13 +208,36 @@ def assess_source_independence(
     if not inputs:
         findings.append(
             IndependenceFinding(
+                code=LINEAGE_UNESTABLISHED,
+                admissible=False,
+                detail=(
+                    f"{source.slug} has no recorded inputs, so its lineage could not be tested "
+                    f"for overlap with ours at all. This is a refusal, not a caveat: the check "
+                    f"above examined an empty set and would have reported 'no overlap' for a "
+                    f"source that is wholly derived from projections we import.\n"
+                    f"        Absence of evidence is not a clearance. Two routes make that "
+                    f"concrete — a source registered with no lineage rows clears, and deleting "
+                    f"the lineage rows of a source the guard is actively refusing flips it to "
+                    f"admissible. Both are demonstrated in the tests.\n"
+                    f"        To make {source.slug} admissible, record what it derives from. "
+                    f"A source believed to observe real auctions still records an input row "
+                    f"with kind=OBSERVED_AUCTIONS and no projection source, so 'we established "
+                    f"that it derives from nothing of ours' and 'nobody looked' remain "
+                    f"distinguishable."
+                ),
+            )
+        )
+    elif source.derivation_method is AuctionValueDerivation.UNESTABLISHED:
+        findings.append(
+            IndependenceFinding(
                 code=DERIVATION_UNESTABLISHED,
                 admissible=True,
                 detail=(
-                    f"{source.slug} has no recorded inputs, so its lineage could not be tested "
-                    f"for overlap with ours. This is an investigated unknown, not a clean bill "
-                    f"of health: it may be circular in a way we cannot see. Usable as a "
-                    f"benchmark only while labelled as such."
+                    f"{source.slug} has recorded inputs, so its lineage was tested and does not "
+                    f"overlap ours, but *how* it turns those inputs into dollars is not "
+                    f"established. That is a genuine caveat rather than a refusal: the "
+                    f"circularity question is answered, the method question is not. Usable as a "
+                    f"benchmark while labelled as such."
                 ),
             )
         )
@@ -210,7 +264,7 @@ def assess_benchmark_admissibility(
     unestablished = [
         value_column
         for value_column, evidence_column in BASIS_FIELDS
-        if getattr(auction_import, evidence_column) is BasisEvidence.UNESTABLISHED
+        if getattr(auction_import, evidence_column) == BasisEvidence.UNESTABLISHED
     ]
     if unestablished:
         missing = ", ".join(unestablished)
@@ -228,6 +282,38 @@ def assess_benchmark_admissibility(
                     f"proportional scaling and scaling only the surplus above the per-slot "
                     f"reserve give materially different dollars for the same player — and it "
                     f"belongs to auction-values under the Model gate, not here."
+                ),
+            )
+        )
+
+    inferred = [
+        value_column
+        for value_column, evidence_column in BASIS_FIELDS
+        if getattr(auction_import, evidence_column) == BasisEvidence.INFERRED
+    ]
+    if inferred:
+        guessed = ", ".join(inferred)
+        findings.append(
+            IndependenceFinding(
+                code=BASIS_INFERRED,
+                admissible=True,
+                detail=(
+                    f"import {auction_import.id} ({source.slug}, as of "
+                    f"{auction_import.as_of_date}) has an inferred basis for: {guessed}. These "
+                    f"figures were not stated by the source; we deduced them, and a deduction "
+                    f"about a budget is exactly the kind of claim that has already been wrong "
+                    f"here once.\n"
+                    f"        This is a caveat rather than a refusal, but it must not be "
+                    f"silent. The stated/inferred distinction was recorded per field at import "
+                    f"and was then dropped at consumption: an inferred basis produced findings "
+                    f"byte-identical to a fully stated one, so the distinction existed in the "
+                    f"database and nowhere a decision could see it. Recording a distinction "
+                    f"that no consumer reads is the same as not recording it."
+                    + (
+                        f"\n        Basis note: {auction_import.basis_note}"
+                        if auction_import.basis_note
+                        else ""
+                    )
                 ),
             )
         )

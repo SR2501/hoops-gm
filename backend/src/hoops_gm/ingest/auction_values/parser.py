@@ -13,7 +13,7 @@ average cost and a projected value side by side. The parser emits one
 would blend market observation into model output.
 
 **Money is parsed as :class:`~decimal.Decimal`, and the source's own text is
-kept.** ``$74`` and ``74`` produce the same number and are different claims
+kept.** ``$90`` and ``90`` produce the same number and are different claims
 about what was published; if a source ever switches notation, the parsed
 number alone would not show it.
 
