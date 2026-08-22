@@ -2,10 +2,10 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**46 done - 1 blocked - 86 pending - 133 total**
+**46 done - 1 blocked - 87 pending - 134 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
-two headers: 133 `###` headings, 133 unique item slugs and 133 markers, 1:1, no
+two headers: 134 `###` headings, 134 unique item slugs and 134 markers, 1:1, no
 duplicate item names. Neither side of a rebase conflict is ever a usable input here, because
 each was computed before the other lane's items landed - one lane measured main at
 39/71/111 and its own branch at 40/69/110 when the truth was 40/71/112, so no
@@ -1556,6 +1556,47 @@ obviously the same thing it is for afterwards. Likely candidates: windowing with
 jump-to-sequence control, collapsing the settled majority behind a count, or
 splitting the recent tail from the full history entirely. That decision belongs to
 a calm hour, not to a merge.
+
+### `draft-board-affordance-styling` - The void button's styling makes a claim the button does not
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker`
+
+The draft log offers two corrections. **Undo** is guaranteed and is painted as a
+solid orange fill at weight 600. **Try to void** may be refused and is painted as
+a dashed, transparent outline in `rgb(152, 161, 179)`.
+
+`Try to void` is attemptable *because a refused void writes nothing* - a fact
+about the backend, driven against a seeded log whose `last_sequence` was 170
+before a refused attempt and 170 after. **It was then styled to look like the
+least consequential thing on the screen.** So the visual weight encodes
+*"unimportant"* when the property that is actually true is *"free to try"*. Those
+are different claims, and the screen renders the wrong one.
+
+The predicted symptom is **the owner reporting that "the void button was greyed
+out"** - which is the form the report will arrive in and does not obviously point
+at the cause. It is not disabled. The fix is a hover or active state that proves
+it is live, rather than more colour at rest, which would cost the contrast that
+makes the single Undo legible.
+
+**That contrast is the thing not to break while fixing this.** There is exactly
+one Undo among twelve `Try to void` buttons, and the scarcity carries more of the
+distinction than any single visual channel does. This was not visible to the lane
+that built it, which was comparing two buttons rather than looking at a screen.
+
+**The tooltip asymmetry is an accident that works, and must not be normalised.**
+`Try to void` carries the caveat in a `title`; `Undo` has none. That was not
+designed as a contrast - the caveat was written onto the button that needed one.
+It is load-bearing anyway: a caveat on both would flatten them. **The predictable
+failure is a later tidy-up adding a tooltip to `Undo` for consistency**, which
+would remove a distinction nobody recorded as deliberate.
+
+Both halves of this item are the same shape, which is why they are one item: a
+place where the property and its rendering disagree, and where a later
+consistency pass would break the thing that currently works. The styling says
+*unimportant* and means *free*; the tooltip asymmetry looks *inconsistent* and is
+*correct*.
+
 
 ### `draft-setup-screen` - Creating a draft and its seats from the browser
 

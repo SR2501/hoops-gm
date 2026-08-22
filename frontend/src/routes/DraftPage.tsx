@@ -25,12 +25,21 @@
  * a whole board and `useAsync` retains it whole, which is what keeps a failed
  * refresh from mixing rows from two reads.
  *
+ * It does, however, *compare* — one integer, not the payload. A poll that comes
+ * back carrying the `last_sequence` it already had describes a draft that has
+ * not moved, so the previous bundle is returned by identity and the memoised
+ * board below skips re-rendering entirely. This is the use `last_sequence` was
+ * published for; `draftTypes.ts` says so at the field, and nothing was doing it.
+ * Retaining the payload whole and comparing a version token are compatible: the
+ * comparison decides whether to *replace* the retained payload, never whether to
+ * merge into it.
+ *
  * **A failed refresh keeps the board on screen.** An empty board mid-auction is
  * worse than a slightly stale one, and `AsyncBoundary`'s warm path plus the
  * single-code retry policy are the two independent things that make it true.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getDraft, getDraftEvents } from '../api/draftEndpoints'
 import { describeDraftError, isRetryableDraftError } from '../api/draftErrors'
@@ -79,6 +88,14 @@ export function DraftPage() {
     setTick((value) => value + 1)
   }, [])
 
+  // The last bundle handed out, with the version token it was built from. Keyed
+  // by draft id as well, so navigating between drafts cannot match a sequence
+  // number from a different log — they are per-draft counters, and draft 3's
+  // entry 170 is not draft 2's.
+  const lastBundleRef = useRef<{ draftId: number; sequence: number; bundle: DraftBundle } | null>(
+    null,
+  )
+
   const draft = useAsync<DraftBundle>(
     async (options) => {
       // Both reads, then the pair is held together. `last_sequence` on the
@@ -86,7 +103,21 @@ export function DraftPage() {
       // checked against each other rather than assumed to agree.
       const state = await getDraft(draftId, options)
       const page = await getDraftEvents(draftId, options)
-      return { state, events: page.events }
+
+      // Unmoved log, unchanged draft: hand back the very same object so
+      // `setData` bails out and the memoised board is skipped.
+      const previous = lastBundleRef.current
+      if (
+        previous !== null &&
+        previous.draftId === draftId &&
+        previous.sequence === page.last_sequence
+      ) {
+        return previous.bundle
+      }
+
+      const bundle = { state, events: page.events }
+      lastBundleRef.current = { draftId, sequence: page.last_sequence, bundle }
+      return bundle
     },
     [draftId, tick],
     { shouldRetry: isRetryableDraftError },
@@ -125,7 +156,14 @@ export function DraftPage() {
   )
 }
 
-function DraftBoardView({
+/**
+ * Memoised on the bundle's identity, which is what makes the version-token
+ * comparison above worth anything. Without this the board re-renders on every
+ * poll regardless, because `useAsync` sets `fetchedAt` and `status` each time
+ * and those changes reach this component's parent no matter what `data` does.
+ * The two changes only work as a pair.
+ */
+const DraftBoardView = memo(function DraftBoardView({
   bundle,
   onRecorded,
 }: {
@@ -213,4 +251,4 @@ function DraftBoardView({
       </div>
     </>
   )
-}
+})

@@ -16476,3 +16476,193 @@ useless: a season-totals file contains nearly every small integer, so that scan 
 - **Nothing was run against the demo databases and no port was touched.** `draftboard_demo` holds
   zero projection rows, so no imported cohort could have been used as a shortcut; I read the paid CSV
   directly. **Driven.**
+
+## 2026-08-22 - frontend - Two places where the screen's styling and its property disagree
+
+Filed `draft-board-affordance-styling` after the coordinator rendered the merged
+board himself and made the judgement I had said I could not make about my own
+work. Both halves of the entry are things I did not see while building it.
+
+**The styling claim.** I made `Try to void` attemptable because a refused void
+writes nothing - driven, `last_sequence` 170 before a refused attempt and 170
+after. **I then styled it as the least consequential thing on the screen.** So
+the visual weight says *unimportant* while the property that is true is *free to
+try*. Different claims, and I rendered the wrong one. The predicted symptom is
+the owner reporting the button was "greyed out", which does not point at the
+cause.
+
+**The scarcity signal, which I missed entirely.** The coordinator's decisive
+observation was not in my four measured channels: **there is exactly one Undo
+among twelve `Try to void` buttons**, and the ratio carries more of the
+distinction than fill, weight, border or colour does individually. I could not
+have seen it - I was comparing two buttons, and the signal only exists at the
+scale of the whole screen. **The author cannot see the screen, only the
+component**, and not through carelessness: through looking at the right thing.
+
+**The tooltip asymmetry is an accident that works.** `Try to void` carries its
+caveat in a `title` and `Undo` has none. I wrote the caveat onto the button that
+needed one; I did not design a contrast. It is load-bearing anyway, and the
+predictable failure is a later consistency pass adding a tooltip to `Undo` and
+flattening it. Recorded as accidental rather than deliberate, because an entry
+claiming it was intentional would be a lie and would not warn anyone.
+
+Filed as one item because both halves are the same shape: **a place where the
+property and its rendering disagree, and where a later tidy-up would break what
+currently works.**
+
+Proved the graph job actually reads the new entry by planting
+`draft-board-screen` as its dependency - not a slug, the same defect I wrote
+four hours ago - and it failed naming the item, the bad slug and line 1539.
+Recount 134/134/134, header updated in both places, slug diff against my merge
+base `9e5fe0f`: 0 dropped, 1 added.
+
+### Could not verify
+
+- **Whether the recessive styling actually reads as disabled.** It is a
+  prediction from two people looking at a screen, not an observation of anyone
+  using one under a clock. Nobody has yet recorded a draft in anger.
+- **Whether a hover or active state is the right fix.** It is the cheapest one
+  that does not spend the contrast making the single Undo legible. I did not try
+  alternatives.
+
+## 2026-08-22 - frontend - The draft board's defects that only exist across time
+
+Three defects on the merged draft board, all of the same shape: **correct data,
+wrong rendering**. The owner found them by watching the screen for ten seconds.
+248 tests, a code review, green CI and two rendered inspections had all missed
+them, because every one of those looks at a single render and none of these
+defects exists in one.
+
+### What was wrong, measured
+
+Sampling `/draft/2` at 40ms for nine seconds with nothing happening in the draft:
+
+| | before | after |
+|---|---|---|
+| distinct page heights | 1522, 1601 | 1540 |
+| distinct positions of the log | 341, 420 | 948 (one) |
+| displacement | **80px, every 2 seconds** | **0** |
+| banner appearances in 9s | 4 | 0 |
+
+**A banner entered the layout flow every two seconds, pushed every click target
+on the page down 80px, and vanished about 40ms later.** On a screen whose entire
+purpose is fast, accurate entry under an auction clock, a recorder clicking
+inside that window hits whatever slid into the position they aimed at.
+
+Three separate causes, fixed separately on purpose:
+
+1. **The banner fired on every successful poll.** `AsyncBoundary` raised it on
+   `isStale || refreshFailed || refreshPending`, and `refreshPending` is true
+   during *every* poll. It announced "Showing data from 3:41:12" about data one
+   second old and entirely fine - **a staleness warning that was false on 100%
+   of its occurrences.** Now a background refresh is announced only after
+   `slowRefreshAfterMs` (1s); a refresh the reader asked for, or one following a
+   failure, still announces immediately.
+
+   This is my own earlier finding taken one clause further. I wrote that
+   `isStale` is inert here because polling keeps `fetchedAt` fresh, and stopped
+   there. The same sentence contains `refreshPending`, which is the clause that
+   was actually firing. I had the mechanism written down and read only the half
+   I was looking for.
+
+2. **The banner was in the layout flow.** The rule was already
+   `position: sticky` - someone had already fixed *where the banner sits* and
+   sticky keeps an element visible while leaving its space fully reserved.
+   **The declaration looks like the fix and is not**, which is why this one now
+   has a regression test on the stylesheet rather than only a measurement. Now
+   `position: fixed`, pinned bottom-right: the top is where the sticky recorder
+   is, and a fixed banner there would have covered the controls instead of
+   displacing them - trading a moving target for a hidden one.
+
+   Fixed independently of (1) because correcting the timing alone would have
+   hidden this and left the hazard for the one case where the banner is
+   genuinely needed, which is exactly when the recorder is most likely clicking.
+
+3. **`last_sequence` was published as a version token and nothing compared it.**
+   `draftTypes.ts` says at the field that it exists so "a poll compares one
+   integer instead of diffing the payload". The fetcher built a fresh bundle
+   every two seconds regardless. Now an unmoved log returns the previous bundle
+   by identity, and `DraftBoardView` is memoised.
+
+   **The two halves only work together**, which is worth stating because either
+   alone looks like a fix and is not: the comparison alone changes nothing,
+   because `useAsync` sets `fetchedAt` and `status` every poll and those reach
+   the parent whatever `data` does; the memo alone changes nothing, because a
+   fresh bundle never compares equal. Deleting the memo: **4 model builds across
+   3 polls instead of 1.**
+
+### The alarming half of the report was wrong, and the refutation is the finding
+
+The measurement also showed the recorder's player input having its `name` and
+`type` attributes rewritten 39 times in nine seconds - the field someone types
+into under a clock. I was ready to report it as a hazard.
+
+Captured the old and new values instead of the count:
+
+```
+type: "text" -> "text"      name: null -> null      one DOM node throughout
+```
+
+**Every one of those writes was a no-op.** It is React's controlled-input
+bookkeeping, and the node identity never changed. So:
+
+> **A MutationObserver record reports an assignment, not a difference.**
+
+That is the same shape as `getComputedStyle` echoing a declared `font-weight`
+that no installed face can render: **an API that reads back what was written is
+a parameter readback, not an observation.** It is the tenth of this family and
+the second inside my own instrumentation. The count was real, the inference was
+entirely wrong, and it was pointing at the most alarming possible conclusion -
+which is exactly when a count is most likely to be believed.
+
+It also means the "article subtree replaced ~10 times" in the original report is
+the same 9 records: the banner inserting and removing itself, counted twice.
+
+### A defect I introduced, in the direction I was fixing
+
+Delaying the announcement of a pending refresh put a *new* flicker in the
+failure state: after a failed read, `refreshFailed` goes false while the retry is
+in flight, so the banner would have blinked out between retries - the flicker I
+was removing, reintroduced in the one state the banner exists for. Fixed with an
+exemption for a refresh that follows a failure, and it has its own test that
+advances the clock by nothing at all.
+
+### How the tests were established
+
+Every one of the five things above was deleted and the named test watched to
+fail. The harness prints `TAMPER-MISSED` when its pattern does not match, because
+an edit that silently fails to apply reports the pass I was hoping for.
+
+One caught by that discipline: my first tamper for the memo left unbalanced
+parentheses, so the suite failed to *load*. It looked like the test biting and
+was a syntax error wearing its costume. Redone as a balanced removal, it fails
+with `expected 4 to be 1`, which is the behaviour rather than the parser.
+
+The three zeros in the after-measurement are only trustworthy because of a
+control that forced the banner on screen by patching `fetch` to reject: banner
+present (`bannerAppeared: true` at 1460ms), MutationObserver alive (it recorded
+the insertion), **and height and log position both unchanged**. Without that, "0
+displacement, 0 banners, 0 mutations" is indistinguishable from a dead probe.
+
+### Could not verify
+
+- **The shared component's warm path in a browser, on anything but the draft
+  board.** `AsyncBoundary` is used by six screens. Both other data screens are on
+  their *cold error* path in this environment - projections has no Basketball
+  Monster import for the season, schedule cannot establish freshness - so the
+  browser told me nothing about them. They are covered only by their vitest
+  suites (24 + 55 + 7 tests). If the delay regresses anything there, nothing I
+  ran would have seen it.
+- **Whether the bottom-right position is right for a recorder mid-auction.** It
+  is out of flow and on screen, which is what was asked for. Whether it is
+  *noticed* by someone typing at the top of the page is a question about a
+  person under time pressure and I have not watched one.
+- **An 18px difference in resting page height between the pre-fix and post-fix
+  runs** (1522 vs 1540), with the banner absent in both. Within each run the
+  height is stable, which is the property under test, but I did not explain the
+  difference across runs and am not claiming it is nothing.
+- **Whether 1000ms is the right threshold.** Chosen to sit well above a local
+  poll and below the point a reader suspects the screen is broken. Not measured
+  against a slow network, which is the case it exists for.
+- **Whether any of this holds in a windowed browser.** All measurements are
+  headless Edge over CDP.

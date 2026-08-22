@@ -10,7 +10,7 @@
  * report from an hour ago is not.
  */
 
-import type { ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from '../api/client'
 import type { AsyncState } from '../api/useAsync'
 import { useIsStale } from '../api/useStale'
@@ -52,6 +52,30 @@ interface AsyncBoundaryProps<T> {
    * error, so an implementation never has to handle `null`.
    */
   describeError?: (error: Error) => ErrorDescription
+  /**
+   * How long a refresh nobody asked for may run before the screen mentions it.
+   *
+   * A view that re-reads on a timer puts this component into `loading` on every
+   * tick. Announcing each one produced a warning that was false on every single
+   * occurrence: the draft board polls every two seconds, so it flashed
+   * "Showing data from 3:41:12" — about data one second old and perfectly
+   * current — twice a minute, for roughly 40ms each time. A guard that fires on
+   * every input carries no information.
+   *
+   * A refresh that is *slow* is worth saying, because then the screen really
+   * might be showing something older than it looks. So this is a delay rather
+   * than a suppression: the banner still arrives, just not for the ordinary
+   * case it was drowning in.
+   *
+   * A refresh the reader asked for is exempt and announced immediately — that
+   * is a response to a click, and swallowing it for a second would read as the
+   * button not working. So is a refresh that follows a failure. This component
+   * can only recognise its own Refresh button, so a view that renders its own
+   * reload affordance gets the delay; on the draft board that is correct, where
+   * the caller re-reads after a successful append and the write has already
+   * given its own feedback.
+   */
+  slowRefreshAfterMs?: number
 }
 
 export function AsyncBoundary<T>({
@@ -62,9 +86,48 @@ export function AsyncBoundary<T>({
   staleAfterMs,
   label = 'data',
   describeError,
+  slowRefreshAfterMs = 1000,
 }: AsyncBoundaryProps<T>) {
   const { status, data, error, fetchedAt, reload } = state
   const isStale = useIsStale(fetchedAt, staleAfterMs)
+
+  // Whether this refresh is worth interrupting the reader about. A ref rather
+  // than state on purpose: it is set in a click handler and read in an effect
+  // that only runs when `status` changes, so it survives the render caused by
+  // `reload()` and cannot be cleared in between.
+  const readerAskedRef = useRef(false)
+  // Whether the previous settled state was a failure. A refresh that follows one
+  // announces immediately: the banner is already up and saying something true,
+  // and letting a pending refresh take it down for a second would reintroduce
+  // the flicker this change exists to remove — in the one state that most needs
+  // to hold still.
+  const recoveringRef = useRef(false)
+  const [announceRefresh, setAnnounceRefresh] = useState(false)
+
+  useEffect(() => {
+    if (status !== 'loading') {
+      if (status === 'error') recoveringRef.current = true
+      if (status === 'success') recoveringRef.current = false
+      readerAskedRef.current = false
+      setAnnounceRefresh(false)
+      return
+    }
+    if (readerAskedRef.current || recoveringRef.current) {
+      setAnnounceRefresh(true)
+      return
+    }
+    const timer = setTimeout(() => {
+      setAnnounceRefresh(true)
+    }, slowRefreshAfterMs)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [status, slowRefreshAfterMs])
+
+  const requestReload = useCallback(() => {
+    readerAskedRef.current = true
+    reload()
+  }, [reload])
 
   if (status === 'idle' || (status === 'loading' && data === null)) {
     return (
@@ -108,7 +171,7 @@ export function AsyncBoundary<T>({
             {requestId ? <>Request {requestId}</> : null}
           </p>
         ) : null}
-        <button type="button" onClick={reload}>
+        <button type="button" onClick={requestReload}>
           Retry
         </button>
       </div>
@@ -122,7 +185,10 @@ export function AsyncBoundary<T>({
   // A failed refresh that leaves older data on screen is exactly the case
   // where the screen must say so rather than look current.
   const refreshFailed = status === 'error'
-  const refreshPending = status === 'loading'
+  // Whether a request is actually in flight, versus whether it is worth saying
+  // so. The first governs the button; the second governs the banner.
+  const refreshInFlight = status === 'loading'
+  const refreshPending = refreshInFlight && announceRefresh
   const dataIsEmpty = isEmpty?.(data) ?? false
   const failureWording = described?.summary ?? backendWording
   // The backend's own words, on the warm path too.
@@ -167,8 +233,8 @@ export function AsyncBoundary<T>({
           </span>
           <button
             type="button"
-            onClick={refreshPending ? undefined : reload}
-            aria-disabled={refreshPending}
+            onClick={refreshInFlight ? undefined : requestReload}
+            aria-disabled={refreshInFlight}
           >
             {refreshPending ? 'Refreshing…' : 'Refresh'}
           </button>
