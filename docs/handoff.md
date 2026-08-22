@@ -16808,3 +16808,61 @@ noise rather than signal. Two consequences worth stating:
 - **Whether suite-total is the right denominator** remains argued rather than measured, unchanged.
 - **Relativisation of vitest paths is untested by any environment that varies the root** - see above.
   It is the one part of Unit 2 that still rests on reading the schema rather than on driven output.
+
+
+## 2026-08-22 - `backend` lane - A delta with no stated referent, and a rebase git could not finish
+
+**Changed:** `scripts/run_metrics.py` records the run that produced each metrics file and the report
+names both runs it compared. Plus the third and fourth stale-header catches by the guard added
+yesterday, both from other lanes' merges.
+
+**The gap, raised by the coordinator and confirmed rather than assumed.** The report printed
+`previous | current | delta` and **never said what `previous` was.** The artifact carried `schema` and
+`label` and no identity at all, so the question was not "does it print the source" but "does the
+source exist anywhere" - and it did not. A delta is a claim about two runs; without naming them the
+table cannot distinguish *the commit before this one* from *a fortnight-old cache the restore-key
+prefix happened to match*. **The base you compare against is an input to the result.** It now reads
+``Current run `bbbbbbb` against baseline `aaaaaaa` ``, driven with two synthetic junit files and two
+different `GITHUB_SHA` values rather than asserted from the schema.
+
+**`SCHEMA` deliberately not bumped.** Every baseline now in the cache predates this field. Bumping
+would make `read_metrics` reject them, discarding a perfectly readable baseline and **silently
+dropping the first delta after merge** - the unit's whole purpose - to gain nothing. A missing source
+reads `unknown`, which is the honest answer. Reporting this run's own sha for a file that never
+carried one would be the parameter-for-state swap in the module whose docstring forbids it. Pinned by
+a test that builds a source-less payload and asserts both that it still loads and that it does not
+borrow the current sha.
+
+**Two more stale headers caught, neither of them mine.** #64 flipped an item to `done`; #66 landed
+with `main` at 133 items. Both times the guard named the fields and the line and both times an
+independent token recount agreed with it. **Three catches in a day, and the last two were counts moved
+by other lanes' merges arriving through a rebase** - the case I could not have suspected, since the
+conflict markers were nowhere near line 5.
+
+**A coordinator figure was stale for the fourth time**, and this one is worth recording because it was
+wrong in a new way: I was told `main` read 130 items, 47/1/82. `main` actually read **133 items,
+46/1/86**. Not a transcription slip - the *shape* differed, because `#66` had landed between the
+message being composed and my reading it. The finished file is 133, 47/1/85: main's 46 plus the single
+flip my own commit makes. **The delta between my result and main is exactly what my commit does**,
+which is the check that makes the number believable rather than merely recomputed.
+
+**The rebase git would not finish.** After resolving both files, `git rebase --continue` reported
+*"You must edit all merge conflicts"* while `git status` in the same second reported *"all conflicts
+fixed: run git rebase --continue"* and `git ls-files -u` returned **zero** unmerged entries. **Two of
+git's own commands disagreed about the state of git's own index** - the plumbing said clean, the
+porcelain said clean, and the operation refused. Triggered by an earlier `git stash push` that failed
+with `could not write index` while a conflict was in progress. Resolved by `git commit -C <sha>` then
+`git rebase --quit` then `git cherry-pick` the remaining commit, which reaches the identical tree by
+operations that do not consult the wedged state. **Do not stash during a conflicted rebase.**
+
+**Could not verify:**
+- **Whether the provenance line survives contact with a real cache miss on a branch.** Driven locally
+  with two shas and unit-tested for the `None`-baseline path, but the first CI run after this merge
+  will still compare against a source-less baseline and print `unknown`. **That is the expected
+  output, not a defect**, and I am recording it in advance so nobody reads it as one.
+- **Whether `GITHUB_SHA` is the right identity.** It is the merge commit for a `pull_request` event
+  and the branch head for `push`, so the same code can be reported under two ids depending on trigger.
+  It is honest either way - it names the run - but it is not a stable key for tracking one commit
+  across events, and I have not driven the difference.
+- **The rebase failure is diagnosed, not understood.** I have a reliable recovery and a plausible
+  cause; I did not reproduce it deliberately.

@@ -542,5 +542,98 @@ def test_a_non_ascii_test_name_survives_the_round_trip(
         ]
     )
 
-    _, loaded = metrics.read_metrics(out)
+    _, _, loaded = metrics.read_metrics(out)
     assert any("\u00d7" in key for key in loaded), "the multiplication sign was lost"
+
+
+def test_a_metrics_file_records_the_run_that_produced_it(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delta is a claim about two runs, so each file must say which run it is."""
+    monkeypatch.setenv("GITHUB_SHA", "abcdef1234567890")
+    out = tmp_path / "m.json"
+    metrics.write_metrics(out, "backend", [metrics.Metric("suite.tests", 3.0, "count")])
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["source"] == "abcdef1", payload
+
+    _, source, loaded = metrics.read_metrics(out)
+    assert source == "abcdef1"
+    assert loaded, "the metrics themselves must survive the added field"
+
+
+def test_a_metrics_file_written_outside_ci_says_local(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    out = tmp_path / "m.json"
+    metrics.write_metrics(out, "backend", [metrics.Metric("suite.tests", 3.0, "count")])
+
+    assert json.loads(out.read_text(encoding="utf-8"))["source"] == "local"
+
+
+def test_a_baseline_with_no_source_is_unknown_not_this_run(
+    metrics: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cache outlives this change, so the first real baseline will lack a source.
+
+    Reporting it as this run's own sha would be the parameter-for-state swap: the
+    report would name a referent it never read. `SCHEMA` is deliberately not
+    bumped for this, because doing so would discard a perfectly readable baseline
+    and silently drop the first delta after merge - a worse outcome than an
+    honestly labelled `unknown`.
+    """
+    monkeypatch.setenv("GITHUB_SHA", "1111111222222")
+    out = tmp_path / "old.json"
+    out.write_text(
+        json.dumps(
+            {
+                "schema": metrics.SCHEMA,
+                "label": "backend",
+                "metrics": [{"key": "suite.tests", "value": 3.0, "unit": "count"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    label, source, loaded = metrics.read_metrics(out)
+    assert label == "backend"
+    assert source == "unknown", "a file with no source must not borrow this run's sha"
+    assert loaded, "an older file must still be usable as a baseline"
+
+
+def test_the_report_names_both_runs_it_compared(metrics: ModuleType) -> None:
+    """Without this the delta column is a number with no referent."""
+    current = {"suite.tests": metrics.Metric("suite.tests", 5.0, "count")}
+    baseline = {"suite.tests": metrics.Metric("suite.tests", 4.0, "count")}
+
+    report = metrics.render_report(
+        "backend",
+        current,
+        baseline,
+        top=5,
+        current_source="cafe123",
+        baseline_source="beef456",
+    )
+
+    assert "`cafe123`" in report, report
+    assert "`beef456`" in report, report
+    # The line must survive rewording; assert the pairing, not a phrase.
+    provenance = [line for line in report.splitlines() if "cafe123" in line]
+    assert len(provenance) == 1
+    assert "beef456" in provenance[0], provenance
+
+
+def test_the_report_claims_no_baseline_when_there_is_none(metrics: ModuleType) -> None:
+    """The provenance line must not appear when nothing was compared against."""
+    report = metrics.render_report(
+        "backend",
+        {"suite.tests": metrics.Metric("suite.tests", 5.0, "count")},
+        None,
+        top=5,
+        current_source="cafe123",
+        baseline_source="unknown",
+    )
+
+    assert "against baseline" not in report, report
+    assert "No baseline available" in report

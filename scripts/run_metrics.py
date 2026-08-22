@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
@@ -150,12 +151,26 @@ def write_metrics(path: Path, label: str, metrics: Sequence[Metric]) -> None:
     payload = {
         "schema": SCHEMA,
         "label": label,
+        "source": _source_id(),
         "metrics": [asdict(metric) for metric in metrics],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def read_metrics(path: Path) -> tuple[str, dict[str, Metric]]:
+def _source_id() -> str:
+    """Name the run that produced a metrics file.
+
+    A delta is a claim about two runs, and without this the report is a number
+    with no referent: it cannot say whether the previous column came from the
+    commit before this one or from a fortnight-old cache the restore-key
+    happened to match. The comparison base is an input to the result, so it is
+    reported rather than assumed.
+    """
+    sha = os.environ.get("GITHUB_SHA", "")
+    return sha[:7] if sha else "local"
+
+
+def read_metrics(path: Path) -> tuple[str, str, dict[str, Metric]]:
     payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     schema = payload.get("schema")
     if schema != SCHEMA:
@@ -167,7 +182,9 @@ def read_metrics(path: Path) -> tuple[str, dict[str, Metric]]:
         str(entry["key"]): Metric(str(entry["key"]), float(entry["value"]), str(entry["unit"]))
         for entry in payload.get("metrics") or []
     }
-    return str(payload.get("label", "")), metrics
+    # An older file with no source is reported as unknown rather than silently
+    # attributed to this run, which would be the parameter-for-state swap again.
+    return str(payload.get("label", "")), str(payload.get("source") or "unknown"), metrics
 
 
 def _format(value: float, unit: str) -> str:
@@ -193,6 +210,8 @@ def render_report(
     baseline: dict[str, Metric] | None,
     *,
     top: int,
+    current_source: str = "unknown",
+    baseline_source: str = "unknown",
 ) -> str:
     out: list[str] = [f"## Run metrics - {label}", ""]
 
@@ -201,6 +220,13 @@ def render_report(
             "No baseline available, so no deltas below. A baseline is cached on the "
             "default branch; a first run on a new branch, an evicted cache or a "
             "changed metrics schema all land here. Nothing is wrong."
+        )
+        out.append("")
+    else:
+        out.append(
+            f"Current run `{current_source}` against baseline `{baseline_source}`. "
+            "The base a delta is measured from is an input to the delta, so it is "
+            "named here rather than assumed to be the previous commit."
         )
         out.append("")
 
@@ -286,22 +312,30 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"error: {args.current} does not exist", file=sys.stderr)
         return 1
 
-    label, current = read_metrics(args.current)
+    label, current_source, current = read_metrics(args.current)
     if not current:
         print(f"error: {args.current} holds no metrics", file=sys.stderr)
         return 1
 
     baseline: dict[str, Metric] | None = None
+    baseline_source = "unknown"
     if args.baseline and args.baseline.is_file():
         try:
-            _, baseline = read_metrics(args.baseline)
+            _, baseline_source, baseline = read_metrics(args.baseline)
         except (ValueError, json.JSONDecodeError, KeyError) as error:
             # An unreadable baseline is a missing baseline. It must never be the
             # reason a build goes red: this whole unit is print-only.
             print(f"note: ignoring unusable baseline {args.baseline}: {error}", file=sys.stderr)
             baseline = None
 
-    report = render_report(label or args.label, current, baseline, top=args.top)
+    report = render_report(
+        label or args.label,
+        current,
+        baseline,
+        top=args.top,
+        current_source=current_source,
+        baseline_source=baseline_source,
+    )
     print(report)
     sys.stdout.flush()
     if args.summary is not None:
