@@ -14145,3 +14145,109 @@ constraint rather than a discovery, which is the whole point of writing it down.
 
 No fit was run, no conversion rate was emitted, no participation data was touched, the cohort
 manifest was not regenerated, and no owner-only decision was made.
+
+## 2026-08-22 — data-engineer — The participation ledger exists: 1,227 of 1,230 games, 43,037 rows
+
+**Unit:** the 2025-26 participation ingest, the pre-draft critical-path item. `availability-model`
+is blocked by two independent routes and this is the one nothing else can supply. Seven month
+slices, stdout captured per slice, durable database and durable raw store outside both checkouts.
+
+### The result
+
+| | |
+|---|---:|
+| games in scope | 1,230 |
+| distinct game dates | 164 |
+| **games with participation** | **1,227 (99.76%)** |
+| games with `tipoff_utc` | 1,227 |
+| **participation rows** | **43,037** |
+| distinct players | 596 |
+| rows per covered game | 35.1 |
+
+**No outcome counts are reported anywhere in this entry, and none were looked at.** Coverage and
+row counts are denominators; the outcome distribution is the conversion study's target and stays
+sealed until that study is fitted. Unit 2's contract test enforces this for committed artifacts;
+nothing enforces it for a handoff entry, which is exactly why it is stated.
+
+### The invariant that mattered, checked after every slice
+
+Tip-offs in the durable database must come from `BoxScoreSummaryV3`, never `ScheduleLeagueV2`,
+or the cohort manifest's `cross_source_tipoff_reconciliation` degenerates into comparing one
+endpoint with itself — and nothing records the provenance of a persisted instant, so no reader
+could tell afterwards.
+
+`schedule_import` was **never run against this database**. The observable proxy is that
+`games with tipoff` must equal `games with participation` and never 1,230; it was checked after
+the first slice (80 = 80) and at the end (1,227 = 1,227). A fresh database was created for this
+rather than reusing the report-sweep one, which *does* carry `ScheduleLeagueV2` instants and is
+named `throwaway-report-sweep.db` for that reason.
+
+### Three games have no summary at source, and it is not what the error message says
+
+`0022500259`, `0022500260`, `0022500261` — all on 2025-11-19, an NBA Cup group-play night — fail
+`BoxScoreSummaryV3` with `AttributeError: 'NoneType' object has no attribute 'get'` from inside
+`nba_api`. Reproducible across two runs.
+
+The tool reports *"the endpoint may have changed or the request may name something that does not
+exist"*. **Those are different conditions with different remedies and it cannot tell them
+apart, so I drove it**: the neighbouring game `0022500258`, same date, same endpoint, returns a
+complete `boxScoreSummary`. **The endpoint has not changed.** The source simply returns no
+summary body for those three game ids, while `LeagueGameFinder` lists them and
+`BoxScoreTraditionalV3` serves them.
+
+So this is a **cross-source disagreement**, not drift: three games exist in one endpoint and not
+in another. Under R35 a missing row is never an absence, so those three games contribute no
+participation rows and no inference is drawn from their silence. 0.24% of the season, recorded
+rather than patched.
+
+### Divergence 2 did not bite, and my description of it needed a correction
+
+I warned the coordinator that *a cached bad response replays its failure deterministically and
+will not retry until the entry is cleared*. That is true in general and **did not apply here**,
+and the distinction is worth having precisely:
+
+`NbaStatsClient.fetch` calls `store.put` **after** `call_with_retry(self._invoke)` returns. The
+`nba_api` parse failure happens *inside* `_invoke`, so nothing is ever cached — verified from the
+raw store index, where those three game ids carry a `BoxScoreTraditionalV3` capture and **no**
+`BoxScoreSummaryV3` capture. Every retry is a genuine re-fetch, which is why the failure
+reproduces rather than being replayed.
+
+**The corruption-caching risk therefore attaches to a narrower case than I described**: a
+response that reaches `store.put` and then fails *downstream* parsing — `parse_box_score_summary_v3`
+rather than `nba_api`'s own deserialisation. Worth knowing before someone clears a raw store
+trying to fix a failure that was never cached.
+
+*(A cheap trap in the checking, avoided by looking twice: a fourth game, `0022500367`, briefly
+appeared to have Traditional-without-Summary. It was a race with an in-flight write — that game
+has a tip-off and is fully ingested. Reading a growing index once would have manufactured a
+fourth failure.)*
+
+### The DNS mislabel, filed
+
+Separate from the above and already agreed with the coordinator: the injury-report sweep reported
+three `getaddrinfo failed` transport errors under the heading *"3 FAILURES (contract drift, not
+'missing')"*. A DNS failure is not contract drift, and the two have opposite remedies — one is
+"retry", the other is "stop and investigate the upstream". Filed for the next unit that is in
+that file; not fixed here, because that file is one of the four pinned by the cohort manifest's
+source fingerprints.
+
+### Could not verify
+
+- **CI on this head.** Not pushed when written. The ingest itself touched no repository file;
+  the durable database and raw store are outside both checkouts and gitignored by construction.
+- **That the three missing games are permanently missing.** Reproducible across two runs tonight.
+  Whether the source backfills them later is unknown, and a re-run costs 6 requests, so this is
+  cheap to re-check rather than worth asserting. **Driven for now, not for always.**
+- **Why those three games specifically.** They share a date and an NBA Cup context, which is a
+  correlation across three observations. I did not check whether other Cup group-play games in
+  other months are affected — the ingest covered them and did not fail, which is weak evidence
+  against a Cup explanation but not a test of one. **Reasoned.**
+- **That 43,037 rows is the right number.** It is 35.1 per covered game, which is plausible for
+  two ~17-man dressed-and-inactive lists, and it is what the source returned. I have not
+  independently derived an expected count, and I would not know a 5% shortfall if I saw one.
+- **Anything about the outcome distribution.** Not looked at, deliberately. So I cannot say
+  whether the labels are usable for `availability-model` beyond their count — only that they
+  exist, at scale, with the game and player coverage above.
+
+No fit was run, no conversion rate was emitted, no cohort manifest was regenerated, no repository
+file was changed by the ingest, and no owner-only decision was made.
