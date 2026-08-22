@@ -16382,7 +16382,9 @@ neither side is ground truth.
   lane's independent stability figures, measured without sight of this export. This is the finding
   worth keeping and I did not anticipate it. **Driven.**
 - **The commercial games field is a tier, not an estimate:** 31 distinct values over 505 rows, and
-  **84.7% of the rotation cohort on two values, 71 and 66.** So weak games agreement (r2 0.284-0.504)
+  **84.7% of the rotation cohort on just two values** (not printed - a mode is the one statistic
+  guaranteed to be a verbatim paid cell, and my leak scan screened names and rates but waved
+  distributional facts through). So weak games agreement (r2 0.284-0.504)
   is not sophistication we cannot match - there is little there to match. Cross-checked against
   something independent rather than believed: the adapter's screenshot reconciliation established
   that dividing by `games` reproduces the source's own displayed per-game figures, so it is
@@ -16395,9 +16397,14 @@ neither side is ground truth.
   (0.896 vs 0.386 normalised MAE, a 2.4x spread against ~1.6x on rates). Plus **66 rows with no NBA
   game log in ten seasons at all**, ~8 at rotation minutes, for whom the honest caveat is "we have no
   number" rather than "less confident".
-- **New recommendation: consume consensus minutes, not only rates.** Their minutes *amplify* rather
-  than regress (slope > 1), which is a deliberate role opinion no box score contains. The strategy
-  does not currently say this.
+- **New recommendation, since accepted by the owner: consume consensus minutes, not only rates.**
+  Their minutes *amplify* rather than regress (slope 1.06-1.09 within a fixed games bucket), which is
+  a deliberate role opinion no box score contains. This puts the **ADR-002 seam at games, not
+  minutes** - minutes-per-game is role and therefore production-side; games-played is availability.
+  Flagged to `architect` as a clarification rather than an amendment request, with the argument
+  against my own read stated: locating the seam is what licenses consuming a third party's minutes,
+  which is a strategy commitment rather than a detail. `docs/models/projection-strategy.md` is
+  updated on `sr2501-projection-strategy-research`, coordinated through PR #68 rather than around it.
 
 **Every directional claim I made survived measurement and every magnitude was wrong - three times.**
 The games gap was +5.1 against my shrunk baseline and **+3.9 against the unshrunk one**, so ~30% of
@@ -16421,8 +16428,19 @@ added.** I did not modify `docs/backlog.md`.
 regressing silently. Its self-test asserts the banned set is non-empty and >=400, that its scope
 covers **505/505** parsed paid rows (a guard whose scope excludes the thing under test passes
 vacuously - the 330-file secret scan), that it raises on a real paid name, and that it does not raise
-on innocuous text. No rate, name or cell value from the paid export reached stdout, a log, this
-repository or any message.
+on innocuous text.
+
+**And it still let one through, which is the more useful half of this entry.** My first report and
+this entry both printed the two modal `games` values verbatim. The filter screened names and
+rate-shaped decimals and treated anything distributional as an aggregate - but **a mode is the one
+summary statistic guaranteed to be a verbatim cell**, unlike a mean, which almost never is. The
+finding was always the concentration, never the values, so both are now stated as "two values" and
+the numbers are gone. A rewritten scan compares my text against the mode, min and max of every paid
+column - 23 candidate values - and carries a tripwire that plants a modal value and **must** hit or
+the run is declared invalid. It fires; my handoff entry and my edits to the strategy document return
+**0 hits**, and the two hits in the report are my own n=232 coinciding with a season-total maximum.
+An intermediate version that flagged *any* coinciding number returned 436 hits and was discarded as
+useless: a season-totals file contains nearly every small integer, so that scan tests nothing.
 
 ### Could not verify
 
@@ -16430,6 +16448,11 @@ repository or any message.
   opinions. The slope analysis rescues the *rate* question from the single-season limitation;
   **nothing rescues the games question**, where I can show only that the two sides differ and that one
   is coarse. **Reasoned.**
+- **Whether anything leaked before I noticed the mode class.** The values sat in a pushed commit and
+  a PR branch for some hours before removal. They are gone from the working tree and from the tip of
+  both branches, but **they remain in this branch's git history** until it is squashed or rewritten,
+  and I have not rewritten published history. **Driven** that the tip is clean; **driven** that the
+  history is not; the decision on whether that matters is the owner's, not mine.
 - **Whether the games tiering is the vendor's modelling choice or an artefact of this export view.**
   One file cannot distinguish them, and I did not obtain a second. **Reasoned.**
 - **19 further joinable rows**, 13 at rotation minutes, recoverable by a first-initial-plus-surname

@@ -171,8 +171,8 @@ into it. Holding the divisor fixed:
 | | n | MPG slope |
 |---|---|---|
 | pooled across buckets | 232 | **1.157** |
-| within games bucket 71 | 126 | 1.086 |
-| within games bucket 66 | 67 | 1.057 |
+| within modal games bucket A | 126 | 1.086 |
+| within modal games bucket B | 67 | 1.057 |
 
 **About half the amplification was the confound.** The direction survives; the
 magnitude, reported pooled, would have been roughly double the truth.
@@ -185,6 +185,33 @@ must happen, since the divisor cancels for a rate.
 deliberate role opinion is exactly the thing our ten-season history cannot
 produce, and it is not a rate claim we would be conceding.
 
+**This was accepted by the owner and changes the recommendation** in
+`projection-strategy.md`, which previously said *consume rates, assert games* and
+now says **consume rates and minutes, assert games**.
+
+### Where that puts the ADR-002 seam
+
+```
+season total  =  games played  ×  minutes per game  ×  per-minute rate
+                 └── ours ──┘    └──────── theirs ────────┘
+```
+
+ADR-002 requires production and availability to be computed separately and fused
+explicitly. It does not say where in the decomposition the seam sits, and this
+measurement now decides it: **the seam falls at games, not at minutes.**
+Minutes-per-game is role — production-side, informed by depth charts and
+offseason moves we do not hold, and demonstrably amplified rather than shrunk.
+Games-played is availability, and it is where the commercial set expresses almost
+no per-player opinion.
+
+**Flagged for `architect`, not decided here.** My read is that this is
+implementation of ADR-002 rather than a change to it — the ADR decides *that*
+they are separate, this identifies *where*. The argument against my own read,
+which `architect` should weigh: placing the seam at minutes-vs-games is precisely
+what licenses consuming a third party's minutes, and that is a strategy
+commitment rather than a detail. I do not think it needs an amendment; I am not
+confident enough to leave it unflagged.
+
 ---
 
 ## Games played: there is almost nothing there
@@ -194,8 +221,16 @@ falling as the cohort tightens. The reason is not sophistication we cannot match
 
 **The commercial games field is a tier, not a per-player estimate.** Across 505
 rows it takes **31 distinct values**. Within the rotation cohort it prices most
-carefully (its own MPG ≥ 20, n = 249) it takes 18, and **84.7% of them sit on two
-values: 71 and 66.**
+carefully (its own MPG ≥ 20, n = 249) it takes 18, and **84.7% of them sit on
+just two values**, which are five games apart and both sit above the observed
+three-season league mean.
+
+> **Why the two values are not printed here.** They are the *mode* of a paid
+> column, and a mode is the one summary statistic guaranteed to be a verbatim
+> cell. My own leak scan passed them because it screened names and rates and
+> treated anything distributional as an aggregate — the same defect class as a
+> check whose scope excludes the thing under test. The finding is the
+> concentration, not the values, and it survives their removal intact.
 
 **Cross-check, because a field that claims to be a projection should be checked
 against something independent rather than believed.** The adapter's semantic
