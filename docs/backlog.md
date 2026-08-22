@@ -1496,6 +1496,46 @@ hand, by one lane happening to re-drive the API after a rebase.
 That is the same shape as the tripwire finding: not a wrong assertion, an
 *unentered* comparison. The fixtures are the frontend's only contact with the
 contract, and nothing checks they still describe it.
+
+**The script lands with the draft board; the CI wiring is `backend`'s**, since
+`.github/workflows/` is theirs and this is a job-shape change. And the hole is not
+the draft board's alone - this repository holds recorded fixtures in at least
+three places, and every one of them is a copy of another tree's behaviour that
+git reports no conflict on, because neither lane edits the other's file. The
+frontend gate does not run the backend; the backend gate does not know the
+fixtures exist. Wiring this one is worth doing on its own terms, but the general
+form is the thing to fix.
+
+### `draft-log-virtualisation` - The draft log is fifteen screens and violates the five-second rule
+
+- [ ] **pending**
+- **Depends on:** `draft-board-screen`
+
+`.github/agents/frontend.md` says *design for one screen* and *if a view cannot be
+read in five seconds during a pick clock, it belongs in an evidence view*. The
+draft board's event log renders every event unvirtualised. On the seeded demo that
+is **170 entries across roughly fifteen screens**, and a real auction is larger.
+
+State it as the violation it is rather than as a refinement: **finding one row
+among 170 under an auction clock is exactly what that rule forbids.** The acute
+half was fixed in the board's first unit - the Record control and the stale
+warning are pinned and visible at every scroll position, verified at 21 of them -
+so the screen is recordable now and the log is legible and merely long. That is
+why this is filed rather than rushed into that PR at 1am. It is not why it is
+acceptable.
+
+Recorded honestly: the frontend lane located a specific entry during browser
+verification by calling `scrollIntoView` from a console. **The owner will not have
+that.** Nobody has yet driven a search for a known entry under time pressure, so
+the size of the problem is argued, not measured - and measuring it is probably the
+first half of this task.
+
+Wants a decision about what the log is *for* during recording, which is not
+obviously the same thing it is for afterwards. Likely candidates: windowing with a
+jump-to-sequence control, collapsing the settled majority behind a count, or
+splitting the recent tail from the full history entirely. That decision belongs to
+a calm hour, not to a merge.
+
 ### `draft-setup-screen` - Creating a draft and its seats from the browser
 
 - [ ] **pending**
