@@ -16924,3 +16924,38 @@ zero dropped, zero added.
 - **The previous unit's could-not-verify still holds: nine of fifteen ADRs unread here.** I read
   `frontend.md`, `bridge.md` and `ownership.md` in full for this one, and `plan.md` only around the
   parity section.
+
+### Rebase onto 9e5fe0f, and three things the verification found
+
+- **`scripts/backlog_graph.py` does not check the header, and I was told it did.** The signal to
+  rebase said it "now also checks the header against the file" and had "caught two real stale
+  headers in two hours", offered as grounds to trust its pass. I injected three defects into a
+  copy before trusting it: a duplicate slug **fails, naming both line numbers**; a dangling
+  `Depends on:` **fails, naming the line**; a header saying `132 total` over a 133-item file
+  **passes, exit 0**. The script never parses the header - `grep -n 'total\|header'` finds only a
+  `Counter` over statuses. The recompute is real but lives in `scripts/resolve_doc_conflicts.py`,
+  which only runs **when a conflict occurs**, so the two catches were rebase resolutions rather
+  than CI. **A header edited on a branch that merges cleanly is checked by nothing** - which is
+  the shape `gates.md` already names, inverted: a check that runs only when something went wrong
+  misses every case where nothing did. Not fixed here; #71 is prose-only and this is a code change
+  in `backlog-dependency-graph`'s area. Filed as a message to the coordinator, not as an item,
+  because the item is another lane's.
+- **Sixth instance of the word-for-token class, mine, inside the check for it.** My recount used
+  `^- \[[ x]\] \*\*(done|pending|blocked)\*\*\s*$` and returned **128 against 133 headings**,
+  because five items carry dated prose after the marker. The producer's own `STATUS_RE` at
+  `backlog_graph.py:69` omits the anchor and is right. **I reimplemented a parser the producer
+  exposes, and got it wrong, in the unit that landed "ask the producer".** Caught only by summing
+  the split back to the heading count; relaxed, it gives 46/86/1 = 133, matching the header.
+- **R59's own mutation-harness instance, committed by me, four hours after writing it.** I ran the
+  suite with `PYTHONPATH` set to `<root>\src` rather than `backend\src`; pytest exited **4** on a
+  conftest `ModuleNotFoundError` having run zero tests. That is the exact failure R59 records - a
+  non-zero exit that a harness would score as a pass. It was visible only because I read the exit
+  code's *meaning* rather than its truthiness. Correct run: **1,496 tests, 0 failures, 0 errors,
+  396s**, from `--junit-xml` rather than the terminal summary, which I could not capture reliably.
+
+### Could not verify, this rebase
+
+- **Whether the two "stale headers" the coordinator reported were caught by the resolver or by a
+  person.** I established `backlog_graph.py` cannot have caught them; I did not establish what did.
+- **Whether any other lane is relying on the header check that does not exist.** The claim was
+  broadcast to me; I do not know who else received it.

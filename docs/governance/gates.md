@@ -375,7 +375,10 @@ one non-dashboard surface in the tree (`userscript/`) is capture-only, so the te
 unwritten but **unwritable, since there is no second decision surface to compare against**.
 `plan.md` and `bridge.md` carried the same claim. So *use the mechanism rather than prose
 describing it* is right and incomplete; **a definition is not self-verifying, and an enforcement
-claim is checkable in one grep** — do that before relying on it.
+claim is checkable in one grep** — do that before relying on it. And grep **even when the file
+appears to hedge**: proximity is not comparison. Two files invite a diff; one file invites reading
+in order, and the confident sentence arrives first — `frontend.md` carried both versions eleven
+lines apart, and the hedge is what a careful reader finds *after* acting on the unhedged one.
 
 **Which makes this the least reliable section in the repository, and it should say so.** It is
 the one part with nothing executable underneath it, and the class it documents is *believing
