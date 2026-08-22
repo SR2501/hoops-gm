@@ -16349,3 +16349,103 @@ ways. Coordinator arbitrated; I did not rewrite my own definition unilaterally.
 - **Observed, not fixed:** `PLAIN-ENGLISH.md` still stops at ADR-009, so ADR-010 onward remain absent
   and my ADR-007 amendment is invisible to a reader who starts there. The previous entry flagged the
   same thing. Two entries naming it and neither fixing it makes it a pattern.
+
+## 2026-08-22 - quant - A monkey reproduces the commercial rates, and the commercial games column is two numbers
+
+Tested the one sentence an accepted strategy rests on and that its own author labelled *reasoned,
+not driven*: **"consensus sits near the ceiling of what public box scores support."** That lane
+measured what a naive Marcel reproduces from public data and never evaluated a commercial set.
+Report: `docs/models/consensus-reproducibility.md`. It is a **measurement, not a model** - nothing
+fitted, nothing shipped, no player-level number, and it does not claim the Model gate.
+
+**Everything is framed as agreement, never accuracy.** There are no outcomes and no held-out season;
+neither side is ground truth.
+
+- **The export was identified by hash, not filename** - SHA-256 matched the value pinned in
+  `docs/adapters/basketball-monster-projections.md`. Parsed through the existing
+  `parse_projection_csv`/`BASKETBALL_MONSTER_PROFILE`, not a reimplementation: 536 rows, 505 parsed,
+  **31 rejected, and the 31 are exactly the zero/missing-games tail the adapter doc predicts, for the
+  stated reason.** An independent exercise of a documented claim that held.
+- **The prior lane's window was a year short and it would have wrecked this experiment.** It used
+  2015-16..2024-25. **2025-26 is complete and available - 26,651 rows, one request.** A 2026-27
+  commercial projection is built with 2025-26 in hand, so a baseline stopping at 2024-25 is stale and
+  every disagreement is partly that artefact. Used 2016-17..2025-26, eleven throttled `PlayerGameLogs`
+  calls through the existing client. The prior lane's own t->t+1 results are unaffected; they are
+  self-contained.
+- **Rates: r2 0.726-0.947 per-game across all 11 categories and all four cohorts** (floor steals,
+  ceiling blocks), 0.813-0.958 per-36. **Raw carry-forward with no modelling at all gets 0.658-0.942**
+  and beats Marcel on points, threes and minutes. Cohort selection is on *our* side at every
+  threshold, never on the commercial value.
+- **But it is not naive, and a slope shows this without needing outcomes.** Shrinkage of commercial
+  per-36 toward the mean tracks each category's year-over-year instability almost inverse-monotonically
+  - steals shrunk 17.6% (least stable, r2 0.570), rebounds 0% (most stable, 0.881) - against the prior
+  lane's independent stability figures, measured without sight of this export. This is the finding
+  worth keeping and I did not anticipate it. **Driven.**
+- **The commercial games field is a tier, not an estimate:** 31 distinct values over 505 rows, and
+  **84.7% of the rotation cohort on two values, 71 and 66.** So weak games agreement (r2 0.284-0.504)
+  is not sophistication we cannot match - there is little there to match. Cross-checked against
+  something independent rather than believed: the adapter's screenshot reconciliation established
+  that dividing by `games` reproduces the source's own displayed per-game figures, so it is
+  demonstrably their divisor. **Driven.** Whether the tiering is a modelling choice or an artefact of
+  this export view - **reasoned, and one file cannot settle it.**
+- **Rates >> minutes >> games at every threshold**, the same ordering `projection-strategy.md`
+  reached by a different route. Two unrelated experiments, one ordering.
+- **Disagreement is concentrated, not diffuse.** Short-history, recently-debuted and
+  returning-from-absence players disagree 1.5-2.4x more than established ones, **widest on minutes**
+  (0.896 vs 0.386 normalised MAE, a 2.4x spread against ~1.6x on rates). Plus **66 rows with no NBA
+  game log in ten seasons at all**, ~8 at rotation minutes, for whom the honest caveat is "we have no
+  number" rather than "less confident".
+- **New recommendation: consume consensus minutes, not only rates.** Their minutes *amplify* rather
+  than regress (slope > 1), which is a deliberate role opinion no box score contains. The strategy
+  does not currently say this.
+
+**Every directional claim I made survived measurement and every magnitude was wrong - three times.**
+The games gap was +5.1 against my shrunk baseline and **+3.9 against the unshrunk one**, so ~30% of
+it was my own tuning constant. The minutes slope was 1.157 pooled and **1.057-1.086 within a fixed
+games bucket**, so about half the amplification was the bucketed divisor leaking into implied MPG;
+the PTS/36 control barely moved (0.929 -> 0.903/0.972), which is what proves the check discriminates
+rather than deflating everything. Direction right every time, size wrong every time. Worth naming as
+a pattern rather than three footnotes.
+
+**The recount tried to lie to me, in this unit's own defect class.** My first backlog marker regex
+scanned each block's first 400 characters for `done|pending|blocked` and returned a confident
+**43/2/84** - I was one step from reporting "the header is wrong". The real marker is
+`- [x] **done**`; the regex was matching those words in item *prose*. It ran, produced a plausible
+number, and nothing crashed. Corrected parse: **45 done / 1 blocked / 83 pending / 129 total**, 129
+headings, 129 unique slugs, 129 markers, 1:1, no duplicates - matches the header exactly. Separately,
+slug diff against `origin/main` with **main asserted non-empty first** (129, plus a >50 sanity floor,
+because an empty parse reports "zero dropped" for the same reason it reports nothing): **0 dropped, 0
+added.** I did not modify `docs/backlog.md`.
+
+**The leak filter was proved to fire, not assumed to** - the risk register records a previous unit's
+regressing silently. Its self-test asserts the banned set is non-empty and >=400, that its scope
+covers **505/505** parsed paid rows (a guard whose scope excludes the thing under test passes
+vacuously - the 330-file secret scan), that it raises on a real paid name, and that it does not raise
+on innocuous text. No rate, name or cell value from the paid export reached stdout, a log, this
+repository or any message.
+
+### Could not verify
+
+- **Whether either side is right. There are no outcomes.** Every number is an agreement between two
+  opinions. The slope analysis rescues the *rate* question from the single-season limitation;
+  **nothing rescues the games question**, where I can show only that the two sides differ and that one
+  is coarse. **Reasoned.**
+- **Whether the games tiering is the vendor's modelling choice or an artefact of this export view.**
+  One file cannot distinguish them, and I did not obtain a second. **Reasoned.**
+- **19 further joinable rows**, 13 at rotation minutes, recoverable by a first-initial-plus-surname
+  key. Deliberately not folded in: that key matches falsely and verifying candidates needs reading
+  paid names. **n=419 is a slight undercount and I chose not to close it. Driven** - I counted them.
+- **Whether "consensus" generalises beyond this one commercial set.** One source was evaluated. Every
+  conclusion is about it. **Driven** that only one file exists here; **reasoned** that others behave
+  similarly, and I would not lean on that.
+- **The 34 unmatched rows whose surname exists in NBA logs.** Some are my normalisation failing, some
+  are coincidence. I reported the split rather than resolving it, because resolving it means reading
+  paid names. **Driven** as a count, **unresolved** as a cause.
+- **That the strategy branch's prose was ever wrong in the way I was told.** I was briefed that its
+  ceiling range excluded steals and turnovers. **On `origin/sr2501-projection-strategy-research` it
+  already reads "0.50-0.89 ... steals the outlier at 0.50 and turnovers at 0.66"** - the correction is
+  present. Either it was fixed before I arrived or the brief described a superseded state. **Driven**
+  that the branch is correct now; I did not check its history to see which.
+- **Nothing was run against the demo databases and no port was touched.** `draftboard_demo` holds
+  zero projection rows, so no imported cohort could have been used as a shortcut; I read the paid CSV
+  directly. **Driven.**
