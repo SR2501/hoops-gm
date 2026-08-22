@@ -17701,3 +17701,52 @@ What the assertion actually buys is converting a **silent stale push** into a **
 does not make the base stable; only the freeze does that. Stating the limit alongside the practice
 matters here specifically, because the failure it half-solves is one where a green result looks
 exactly as green when it is about a base nobody will merge.
+
+### A verified absence is a statement about a base, not about the tree
+
+The general case of the base-is-an-input family, found by the auction lane and recorded here
+because this is where the rest of that family lives.
+
+**A positive claim survives a rebase. A negative one expires the moment anything merges, and
+nothing in the record marks the transition.** "This table exists", "this constraint fires",
+"this dependency resolves" stay true as the base moves. "*Nothing else* claims this migration
+number", "*no other* item has this slug", "there are *no* references to `app.routes`" are true only
+of the tree that was in front of you.
+
+The auction lane had recorded, as a properly **driven** observation, that `origin/main` carried a
+single alembic head with no collision. It was true. It was true **of `642bdb6`**. Five merges later
+both `main` and their branch carried an `0017` and twenty tests broke. **The check that went looking
+for exactly that collision ran, was correct, and found nothing - because at that moment there was
+nothing to find.**
+
+Verified here rather than taken on report: `origin/main` at `3a25ff4` carries
+`alembic/versions/0017_draft_tracker.py`, which arrived through a merge. Any branch that checked
+for an `0017` collision before that landed got a clean answer that was accurate and is now false.
+
+This is the missing general case of the four arrivals already recorded above - the CodeQL retarget,
+the `restore-keys` prefix, the false-deletion slug diff, and a green run against a superseded base.
+Those are four instances of *the base you compare against is an input to the result*. This says
+**which** results decay: **the negative ones, silently, and only the negative ones.**
+
+Two consequences worth carrying:
+
+- **Re-derive negatives at the moment of use; positives can be cited.** A recorded absence needs
+  its base named beside it or it should not be quoted at all. The governance lane had already
+  half-anticipated this by writing *"the `app.routes` grep covered merged `main` at `9f0561f`
+  only"* - the right instinct, and the reason that entry aged better than it had to.
+- **Serialising a queue has a cost nobody was pricing.** The longer a branch is held before merging,
+  the more of its verified negatives have quietly expired. That is an argument against long holds
+  which sits directly against the freeze protocol that made tonight's merges safe, and both are
+  true at once.
+
+It also explains why the register's own decay is asymmetric. **Documenting a defect class creates
+permanent matches for the grep that detects it** - a positive that survives forever - **while the
+absence that grep was run to establish expires on the next merge.** The noise is durable and the
+signal is not, which is the same shape from the other end.
+
+---
+
+*Appended after telling the coordinator this branch was finished. Flagging that rather than
+quietly reopening it: they asked for this entry here specifically, because the family it completes
+already lives in this file, and #69 merges ahead of #74 regardless so nothing is displaced. The
+full gate ran again.*
