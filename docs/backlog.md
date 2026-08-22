@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**45 done - 1 blocked - 83 pending - 129 total**
+**45 done - 1 blocked - 84 pending - 130 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers: 129 `###` headings, 129 unique item slugs and 129 markers, 1:1, no
@@ -31,16 +31,22 @@ seen a loss, while the slug diff against `origin/main` independently confirmed
 zero of main's 118 entries were dropped and exactly two were added. The script
 was not run on this file.
 
-**A dependency edge can be dangling and nothing says so.** Tracing the auction
+**A dependency edge can be dangling and nothing said so.** Tracing the auction
 chain on 2026-08-21 to rule on sequencing turned up
 `schedule-cohort-fingerprint-list` depending on `injury-report-backfill`, which
-is not a slug in this file — the item is `injury-report-historical-backfill`.
-Left as found, because guessing which item another lane meant is worse than
-reporting it. Recorded because it is the same shape as the counts: **the graph
+was not a slug in this file — the item is `injury-report-historical-backfill`.
+**Resolved to that item on 2026-08-21 and no longer dangling**, when
+`scripts/backlog_graph.py` landed and made it a CI failure rather than a note.
+The resolution is a judgement, not a derivation: `injury-conversion-cohort-population`
+is the plausible wrong answer, and the two are distinguishable only by reading
+what each item says. It changed no readiness outcome, because both candidates
+are `done`. Recorded because it is the same shape as the counts: **the graph
 is only as trustworthy as the last time someone resolved every edge against the
 slug set**, and until `adr-index-consistency-test` has a sibling doing that
-here, nothing does. That sibling is now filed as `backlog-dependency-graph`;
-filing it is not building it, and this edge is its first expected finding.
+here, nothing does. That sibling is now filed as `backlog-dependency-graph`.
+**Built on 2026-08-21** as `scripts/backlog_graph.py`, so it now runs on every
+push rather than when a lane goes looking for something else - and this edge
+was indeed its first finding.
 
 The governance unit of 2026-08-21 added seven items and ran the pair as
 prescribed: the recount moved 122 -> 129, and the slug diff against
@@ -1687,7 +1693,7 @@ Durability discount/premium layered over raw value. Separate total-value and per
 ### `schedule-cohort-fingerprint-list` - Restoring what the injury cohort manifest watches
 
 - [ ] **pending**
-- **Depends on:** `injury-report-backfill`
+- **Depends on:** `injury-report-historical-backfill`
 
 `DEFAULT_SOURCE_FINGERPRINT_PATHS` in `ingest/injury_report/cohort_evidence.py` omits `backend/src/hoops_gm/ingest/nba/schedule.py`, which the generator directly calls (`parse_schedule`, for the `schedule_league_v2` reconciliation view — the cohort's only genuinely independent witness). Found 2026-08-20 when one change touched that file and `db/lineage.py` together: the alarm fired on the file outside the derivation and stayed **silent** on the file inside it, which is a false green, not merely a coarse one.
 
@@ -1865,6 +1871,30 @@ Multi-asset trade evaluation: category deltas, punt-build impact, schedule and f
 - **Depends on:** `trade-evaluator`
 
 Scan league rosters for mutually beneficial trades from category surplus/deficit matching and differing risk tolerance between managers.
+
+### `vitest-explicit-timeout` - Setting an explicit test timeout the metrics job can read
+
+- [ ] **pending**
+- **Depends on:** `ci-pipeline`
+
+`scripts/run_metrics.py` prints each test duration against its baseline but
+deliberately prints no headroom against the timeout, because `frontend/vite.config.ts`
+sets no `testTimeout` and 5,000 ms is therefore vitest's *implicit default*.
+Hard-coding that number here would be the `README.md` item-count failure with a
+millisecond value in it: a constant copied out of someone else's tool, correct
+on the day it was written and stale the day they change their default.
+
+Set an explicit `testTimeout` in `vite.config.ts`, then have `run_metrics.py`
+read it and print each duration as a fraction of the limit that actually
+applies. The value becomes a decision this repository has made and can defend,
+rather than one it inherited without noticing. Keep it printed, never asserted -
+a headroom column that fails a build is the threshold this tooling exists to
+avoid.
+
+`frontend` owns it — it is their config and they will be in that file. The
+script half is cross-boundary: no row in `docs/governance/ownership.md` covers
+`scripts/`, so whoever picks this up should expect to agree that with
+`architect` rather than infer it.
 
 ### `waiver-clear-monitor` - Monitoring waiver clears and free agent availability
 

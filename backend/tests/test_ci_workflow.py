@@ -94,7 +94,7 @@ def test_the_code_gate_runs_on_push_and_pull_request(triggers: dict[str, Any]) -
 
 @pytest.mark.parametrize(
     "job_name",
-    ["backend", "frontend", "migrations", "secrets", "postgres"],
+    ["backend", "frontend", "migrations", "secrets", "postgres", "backlog-graph"],
 )
 def test_code_gate_jobs_are_not_conditional(jobs: dict[str, Any], job_name: str) -> None:
     """A gate with an ``if`` is a gate someone can arrange not to run."""
@@ -137,3 +137,248 @@ def test_the_postgres_job_uses_a_password_that_needs_url_encoding(
     url = str(jobs["postgres"]["env"]["TEST_DATABASE_URL"])
 
     assert "%25" in url, "no percent-encoded '%' in the CI database URL"
+
+
+# --- The backlog dependency graph job ------------------------------------
+
+
+def test_the_backlog_graph_job_actually_runs_the_checker(jobs: dict[str, Any]) -> None:
+    """A job named for a check is not a check.
+
+    The dangling edge this job exists to catch (`injury-report-backfill`, an
+    item that does not exist) survived in the file for as long as it did
+    because every reader assumed something was resolving those tokens.
+    """
+    steps = jobs["backlog-graph"]["steps"]
+    assert steps, "backlog-graph declares no steps"
+    commands = " ".join(str(step.get("run", "")) for step in steps)
+
+    assert "scripts/backlog_graph.py" in commands
+
+
+def test_the_backlog_graph_job_writes_to_the_step_summary(jobs: dict[str, Any]) -> None:
+    """A number in a green job's log is a number nobody reads.
+
+    That is the whole lesson of the duration climb: vitest printed it every
+    run, above the summary a human quoted four separate times.
+    """
+    steps = jobs["backlog-graph"]["steps"]
+    commands = " ".join(str(step.get("run", "")) for step in steps)
+
+    assert "GITHUB_STEP_SUMMARY" in commands
+
+
+# --- Per-run metrics -----------------------------------------------------
+
+METRIC_JOBS = ["backend", "frontend"]
+
+
+def _steps(jobs: dict[str, Any], job_name: str) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = jobs[job_name]["steps"]
+    assert steps, f"{job_name} declares no steps"
+    return steps
+
+
+def _metrics_commands(jobs: dict[str, Any], job_name: str) -> str:
+    """Every ``run:`` line in the job that invokes the metrics script.
+
+    Asserts it found some, because a helper that silently returns an empty
+    string turns every caller into a test that passes over nothing.
+    """
+    found = [
+        str(step["run"])
+        for step in _steps(jobs, job_name)
+        if "run_metrics.py" in str(step.get("run", ""))
+    ]
+    assert found, f"{job_name} never invokes run_metrics.py"
+    return " ".join(found)
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_the_metrics_steps_both_collect_and_report(jobs: dict[str, Any], job_name: str) -> None:
+    """Collecting without reporting is a file nobody looks at."""
+    commands = _metrics_commands(jobs, job_name)
+
+    assert "run_metrics.py collect" in commands
+    assert "run_metrics.py report" in commands
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_the_report_reads_the_file_the_collector_wrote(jobs: dict[str, Any], job_name: str) -> None:
+    """Two paths written six lines apart are two paths that can drift.
+
+    If they drift, ``report`` reads a file that is not there, treats it as a
+    missing baseline, and prints a serene table of first-ever numbers on every
+    run forever. Nothing goes red.
+    """
+    commands = _metrics_commands(jobs, job_name)
+    out = _flag_value(commands, "--out")
+    current = _flag_value(commands, "--current")
+
+    assert out == current, f"collect writes {out!r} but report reads {current!r}"
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_the_baseline_path_is_the_directory_that_is_cached(
+    jobs: dict[str, Any], job_name: str
+) -> None:
+    """The cached directory and the ``--baseline`` file must agree.
+
+    The cache action's ``path`` is relative to the workspace; the script's
+    arguments are relative to the job's working directory. Getting that
+    mismatched restores a real baseline into a place nothing reads.
+    """
+    commands = _metrics_commands(jobs, job_name)
+    baseline = _flag_value(commands, "--baseline")
+
+    cached = [
+        str(step["with"]["path"])
+        for step in _steps(jobs, job_name)
+        if str(step.get("uses", "")).startswith("actions/cache")
+    ]
+    assert cached, f"{job_name} caches nothing, so no run can ever have a baseline"
+
+    working_dir = jobs[job_name]["defaults"]["run"]["working-directory"]
+    for path in cached:
+        assert path == f"{working_dir}/{baseline.split('/')[0]}"
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_the_baseline_is_only_saved_on_the_default_branch(
+    jobs: dict[str, Any], job_name: str
+) -> None:
+    """Every branch must compare against main, not against itself.
+
+    The motivating climb was 3,177 -> 3,309 -> 3,376 -> 3,714 -> 4,298 ms. As
+    run-to-run deltas that is +132, +67, +338, +584: four numbers nobody would
+    act on. Against a fixed baseline it is one +1,121.
+
+    If a branch saved its own baseline it would re-anchor every run, and the
+    tool would print the forgettable version of the exact sequence it was
+    built to make visible.
+    """
+    saving = [
+        step
+        for step in _steps(jobs, job_name)
+        if str(step.get("uses", "")).startswith("actions/cache/save")
+        or (
+            "metrics-baseline" in str(step.get("run", ""))
+            # The report step names the same directory to *read* it, and is
+            # rightly unconditional. Only writers are in scope here.
+            and "run_metrics.py" not in str(step.get("run", ""))
+        )
+    ]
+    assert saving, f"{job_name} never saves a baseline, so no run can ever have one"
+
+    for step in saving:
+        condition = str(step.get("if", ""))
+        assert "default_branch" in condition, (
+            f"a step in {job_name} writes the baseline under {condition!r}, "
+            "which is not restricted to the default branch"
+        )
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_restoring_the_baseline_is_not_restricted_to_the_default_branch(
+    jobs: dict[str, Any], job_name: str
+) -> None:
+    """The mirror of the rule above, and easy to get backwards.
+
+    Only main writes; everything reads. A conditional restore would leave
+    branches -- where the change under review actually is -- with no
+    comparison at all.
+    """
+    restoring = [
+        step
+        for step in _steps(jobs, job_name)
+        if str(step.get("uses", "")).startswith("actions/cache/restore")
+    ]
+    assert restoring, f"{job_name} never restores a baseline"
+
+    for step in restoring:
+        assert "if" not in step
+
+
+@pytest.mark.parametrize("job_name", METRIC_JOBS)
+def test_the_metrics_steps_are_not_painted_green(jobs: dict[str, Any], job_name: str) -> None:
+    """These steps have exactly one failure mode, and it is worth a red build.
+
+    ``collect`` fails only when it parsed zero test cases -- meaning the
+    reporter's format moved underneath it. A slow test cannot fail it. Adding
+    ``continue-on-error`` would leave a broken collector publishing an empty
+    table for months, which is this repository's most common defect: a check
+    that examined an empty set and reported success.
+    """
+    for step in _steps(jobs, job_name):
+        if "run_metrics.py" in str(step.get("run", "")):
+            assert "continue-on-error" not in step
+
+
+def test_the_backend_metrics_read_the_report_pytest_writes(jobs: dict[str, Any]) -> None:
+    """``--junitxml`` in one step, ``--junit`` in another, nothing joining them."""
+    steps = _steps(jobs, "backend")
+    pytest_commands = [
+        str(step["run"]) for step in steps if str(step.get("run", "")).startswith("pytest")
+    ]
+    assert pytest_commands, "the backend job does not run pytest"
+
+    written = _flag_value(" ".join(pytest_commands), "--junitxml")
+    read = _flag_value(_metrics_commands(jobs, "backend"), "--junit")
+
+    assert written == read, f"pytest writes {written!r}, collect reads {read!r}"
+
+
+def test_the_frontend_metrics_read_the_report_vitest_writes(jobs: dict[str, Any]) -> None:
+    steps = _steps(jobs, "frontend")
+    test_commands = [
+        str(step["run"]) for step in steps if "--outputFile.json" in str(step.get("run", ""))
+    ]
+    assert test_commands, "the frontend job writes no vitest JSON report"
+
+    written = _flag_value(" ".join(test_commands), "--outputFile.json")
+    read = _flag_value(_metrics_commands(jobs, "frontend"), "--vitest")
+
+    assert written == read, f"vitest writes {written!r}, collect reads {read!r}"
+
+
+def test_the_frontend_keeps_a_readable_reporter(jobs: dict[str, Any]) -> None:
+    """Collecting a duration must not cost the output a human reads on failure.
+
+    ``--reporter=json`` alone replaces the console reporter, so a failing test
+    would report as a machine-readable blob. The metric is worth less than
+    knowing which test broke.
+    """
+    steps = _steps(jobs, "frontend")
+    test_commands = [
+        str(step["run"]) for step in steps if "--outputFile.json" in str(step.get("run", ""))
+    ]
+    assert test_commands, "the frontend job writes no vitest JSON report"
+
+    for command in test_commands:
+        assert "--reporter=default" in command
+
+
+def _flag_value(command: str, flag: str) -> str:
+    """Read ``--flag value`` or ``--flag=value`` out of a shell command.
+
+    Asserts the flag is present rather than returning a default, so a renamed
+    flag fails the test that uses it instead of comparing two empty strings
+    and passing.
+    """
+    tokens = command.replace("\n", " ").split()
+    for index, token in enumerate(tokens):
+        if token == flag:
+            assert index + 1 < len(tokens), f"{flag} has no value in {command!r}"
+            return tokens[index + 1]
+        if token.startswith(f"{flag}="):
+            return token.split("=", 1)[1]
+    raise AssertionError(f"{flag} not found in {command!r}")
+
+
+def test_the_flag_reader_fails_on_a_flag_that_is_not_there() -> None:
+    """The helper above is load-bearing for six tests; it must not return ''."""
+    assert _flag_value("pytest --junitxml=junit.xml", "--junitxml") == "junit.xml"
+    assert _flag_value("collect --junit junit.xml", "--junit") == "junit.xml"
+
+    with pytest.raises(AssertionError):
+        _flag_value("pytest --junitxml=junit.xml", "--vitest")

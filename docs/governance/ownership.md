@@ -23,6 +23,7 @@ One owner per module. Ownership means: you write it, you are accountable for it,
 | `frontend/` | `frontend` | |
 | `userscript/` | `bridge` | |
 | `.github/workflows/` | `backend` | `safety` must approve changes affecting the Automation gate |
+| `scripts/` | `backend` | Repository-level developer tooling. Code gate only — no model math and no product surface; a script that produced a decision-bearing number would be `quant`'s and would need the Model gate. Arbitrated by `architect` on 2026-08-21 after `backlog_graph.py` and `run_metrics.py` were built into a directory no row covered |
 | `docs/models/` | `quant` | One card per model that produces a decision-bearing number |
 
 ## Shared seams

@@ -14721,3 +14721,240 @@ written down and forgotten — and because **nothing failed**, which is what mak
   full. I added a four-line cross-reference to `backend/README.md` instead, on the grounds that the
   operator starting the server is reading that file - but nobody asked for that and it may be
   redundant.
+
+## 2026-08-21 - backend - Nothing computed the backlog graph, and nothing computed a delta
+
+Two units, both mechanisms rather than rules, both earned by failures today. `scripts/backlog_graph.py`
+resolves every `Depends on:` token in `docs/backlog.md`; `scripts/run_metrics.py` prints each per-run
+number next to its previous value. Both are wired into CI, both have tests, and both test suites were
+mutation-checked (11/11, 10/10, and 12/12 for the CI-shape tests).
+
+**The line I drew between failing and printing, which was the real design work.** CI fails only where
+the file asserts something that cannot be true and exactly one edit makes it true: an edge naming an
+item that does not exist, a cycle, a self-edge, a duplicate slug, an item with no status, a heading the
+parser cannot read, a checkbox disagreeing with its status word, and a `done` item resting on an
+unfinished one. It never fails on the *shape* of the remaining work. The ten-deep auction chain is
+printed, never asserted, and the reason is sharper than cry-wolf: for a long path, the only edits that
+turn such a job green are deleting an edge or misreporting a status. **A guard whose own remedy is
+falsifying the data it reads is worse than no guard.**
+
+**The unit cannot detect the second of the three failures it was commissioned for**, and I want that
+stated rather than implied away. `availability-model` carried prose saying it was blocked while its
+`Depends on:` line named only `done` items. Distinguishing that from a correct file requires reading
+English. What the script does instead is **print the ready set**, so a human contradicts it in ten
+seconds. That is visibility, not detection, and it is said in the module docstring and in the report
+body so nobody later reads the job's green tick as cover.
+
+**Running the tool found a bug in my own readiness rule.** I first defined ready as `status != done`
+with all dependencies done. That reported `blind-mocks` - marked `blocked`, externally blocked because
+no site offers auction mocks, with zero dependencies - as **ready**. The script's own output would have
+been an instance of the defect class it prints the ready set to expose. Ready now means `status ==
+pending`. Pinned by `test_a_blocked_item_is_never_reported_ready`.
+
+**The dangling edge is fixed, and it is a judgement.** `schedule-cohort-fingerprint-list` depended on
+`injury-report-backfill`, which is not a slug. I resolved it to `injury-report-historical-backfill`
+because the backlog's own header prose already named that resolution, so this is not me guessing at
+another lane's intent. `injury-conversion-cohort-population` is the plausible wrong answer. Both
+candidates are `done`, so readiness is unchanged either way - the risk is bounded, not absent.
+
+**Unit 2 prints the delta and does not judge it.** No threshold, no budget, no red build for a number
+that grew; a guard that cries wolf is the one the next person deletes. The suite total is the **sum of
+individual test durations**, not runner wall-clock, because wall-clock swings with parallelism and a
+column that is noise most weeks trains its reader to skip the table - the same disease. The baseline is
+cached **on the default branch only**, so every branch compares against main. That is deliberate: the
+motivating climb read as +132, +67, +338, +584 run-to-run, four forgettable numbers, but against a
+fixed baseline the same climb is one accumulating +1,121.
+
+**The one place it exits non-zero is not a judgement about a number.** `collect` refuses when it parsed
+zero test cases, because a metrics file over an empty set renders later as a serene empty table - this
+repository's most common defect, seven instances today. I gave the metrics steps no `continue-on-error`
+for the same reason: a slow test cannot fail them, but a collector broken by a reporter format change
+can, and should.
+
+**Two things I checked rather than assumed.** vitest's `testResults[].name` is an **absolute path**;
+collecting it unrelativised would make every test read as added-and-removed every run, so no delta
+would ever be computed and the table would look fine. And junit `time` is in **seconds** while vitest
+`duration` is in **milliseconds** - read the first as the second and the 4.97s test that motivated all
+this prints as 4.97. I generated real output from both reporters instead of trusting either schema.
+
+**Headroom against the timeout was considered and dropped.** `frontend/vite.config.ts` sets no
+`testTimeout`, so 5,000 ms is vitest's *implicit default*. Printing "86% of budget" would mean
+hard-coding someone else's default into this repository - stale by construction, with a millisecond
+value in it. If the owner would rather set an explicit `testTimeout`, the script can read it and the
+column becomes honest.
+
+**A test-quality mistake worth recording.** My first "never judges a number" test scanned the output
+for words like `fail`, `budget`, `threshold` - and tripped on the report's own disclaimer saying it
+cannot fail a build. Word-scanning was a weak proxy that would also have passed over a threshold
+phrased differently. It is now a magnitude sweep from 1.1x to 1000x, all of which must exit zero,
+because any limit set anywhere is crossed at one magnitude and not the ones below it. A deliberately
+planted threshold confirms it bites.
+
+**mypy now covers `scripts/`.** It did not before - `files = ["src", "tests"]` - which is exactly the
+gap named as a past failure. All four scripts already pass strict, so this cost nothing but closes it.
+
+**Gates:** `ruff check`, `ruff format --check`, `mypy`, and the full `pytest` (1,422 passed, 31
+deselected). `ruff format` failed on the first pass, which is the second time today that "gates green"
+meant "the gates I remembered".
+
+**Backlog header:** re-derived from the finished file - **45 done / 1 blocked / 76 pending / 122
+total**, which matches the header unchanged. Separately diffed the slug set against `origin/main`:
+122 unique both sides, **zero added, zero removed**. The two checks catch different things; my edits
+changed an edge and header prose, not the item set, and only the diff can say that.
+
+**Could not verify:**
+- **CI has now run both units, and this is the sharper version of the caveat.** Both jobs pass on the
+  PR; `collect` succeeded on the runner, which *proves* it parsed at least one test case, because
+  parsing none is its one non-zero exit; and `Stage`/`Save the new baseline` correctly **skipped** on a
+  non-default branch. What remains undriven is the half that needs a baseline to exist: `main` has
+  never saved one, so every run so far took the cache-miss path and printed "No baseline available".
+  **The delta-printing path - the entire point of the unit - has not executed in CI.** It will first
+  run on the second `main` build after merge, and that run is the one to actually read.
+- **The GitHub Actions cache behaviour is therefore still reasoned, not driven.** That a `restore-keys`
+  prefix match returns main's most recent cache, and that a default-branch cache is readable from
+  branches, are documented semantics; the restore step has only ever missed. If the reasoning is wrong
+  the failure is benign - every run prints "No baseline available" - but it is benign in the way that
+  looks identical to working, which is why it needs reading rather than assuming.
+- **The dangling edge resolution is a judgement, driven only as far as "both candidates are `done`".**
+  I confirmed readiness is unchanged either way. I did not confirm intent with whoever wrote the line.
+- **Unit 1 cannot see prose contradicting an edge**, as above. Reasoned, and I believe it is not
+  mechanisable without reading English.
+- **Whether the suite-total metric is the right one is unfalsified.** I argued wall-clock is noisier,
+  but I did not measure the variance of either across runs on this repository, so "noisier" is
+  reasoned. One week of main-branch runs would settle it and I would rather it were settled than
+  argued.
+- **The frontend gate was re-run and is green** (`lint`, `typecheck`, `test` 194 passed, `build`). I
+  changed no frontend source, only the command CI invokes, and drove that command to a real report.
+- **Unit 2 has no history beyond one previous value.** It compares against a baseline, not a series, so
+  it makes the *accumulated* climb visible but plots nothing. That was the smallest honest thing; if
+  two points prove insufficient in practice, say so and it can grow.
+
+
+## 2026-08-21 - `backend` lane - PR #65 review findings: a count that reported zero beside 1,428 real observations
+
+Two findings from the coordinator's independent review of #65. Both taken. The first is the more
+interesting one, because it is today's defect class **inside the tool commissioned to prevent it**.
+
+**Finding 1 (medium): `collect_junit` reported `suite.tests` as 0 while writing 1,422 real durations.**
+The review found that `count += 1` was the only line in either collector covered by no assertion -
+delete it and all 24 tests passed. I did not take that on report: I deleted the line myself and drove
+it, and the suite did survive. Driven against the real junit the mutated collector exits **0**, writes
+the file, and prints `suite.tests` as `0` in the same table as 1,422 test durations. The zero-case
+refusal does not fire because `cases` is non-empty. `COUNT_KEY` was asserted twice and **both
+assertions ran against `collect_vitest`**.
+
+**I fixed the cause rather than the finding.** The suggested two-line assertion would have closed this
+instance; the shape that produced it was `count` being a *second accumulator* for a fact the loop
+already had, so two sources of truth could drift apart silently and only one was watched. Both
+collectors now build one `observed` list and derive count, total and per-test metrics from it in
+`_summarise`, so the headline count and the rows underneath cannot disagree - there is nothing left to
+disagree with. `observed` deliberately retains cases with no duration: **the count is of tests
+observed, the total is of durations recorded, and those are different questions.** Four new tests,
+including one asserting the class-level invariant that no collector reports zero tests beside real
+durations. Mutation-tested 4/4 caught.
+
+**Finding 2 (low): the Ready list was computed on a graph the tool had just declared unsound.** A
+dangling edge is not in `fatal`, so `_edges()` silently drops the unresolvable edge and the item whose
+constraint just vanished is printed under "Ready - every dependency done", identical to the clean file
+and with no caveat. The build is red, so it is not a false green - but `--summary` exists precisely
+because the artifact is what gets read. I took the caveat rather than promoting it to `fatal`, which
+keeps the useful output while refusing the false claim. Driven both ways against the real backlog with
+the dangling edge reintroduced.
+
+**Also added: the `done-rests-on-unfinished` message now names its own erasing fix.** The coordinator's
+honest note against my fail/print line is that this is the single failing condition whose cheapest
+green-making edits are my own disqualifier - delete the edge, or flip the dependency to `done`. It
+fires after the fact, when the cheapest repair erases the evidence. There is no mechanism for that, so
+the remedy is written into the defect message the person will actually read.
+
+**A recount caught its own checker.** Re-deriving the header, my first independent regex required the
+status line to end after `**pending**` and returned a clean-looking **119 done+blocked+pending against
+123 headings**. Four items carry prose on the status line. Had I trusted it I would have "corrected" a
+correct header downward. The header is **45 done - 1 blocked - 77 pending - 123 total**, agreed by two
+independent methods: 123 checkbox lines counted by pattern, and `backlog_graph.py`'s own parse
+reporting 123 items (1 blocked, 45 done, 77 pending). Slug set diffed against `origin/main`:
+**122 -> 123, exactly one added (`vitest-explicit-timeout`), zero removed.**
+
+**Governance, unprompted and worth someone's attention: `scripts/` has no row in
+`docs/governance/ownership.md`.** Both units live there. `.github/workflows/` is `backend` and
+`backend/src/hoops_gm/dev/` is `backend` "developer tooling", so I proceeded by analogy - but an
+analogy is not a rule, and the work I was commissioned to do is owned by nobody. Related: I was
+launched with the `backend` **label** in prose rather than the `agent` parameter that loads the
+definition. I have since read `.github/agents/backend.md` and found no contradiction with the kickoff;
+the non-goals (model math, ingestion adapters, frontend and userscript code, automation policy) are
+all untouched, which the diff confirms. One soft boundary crossed and named rather than hidden: I
+changed the *command* the `frontend` job runs. The workflow file is backend-owned; the invocation is
+frontend's.
+
+**Gates.** Full Code gate re-run from `backend/` after these edits, not the subset I remembered:
+`ruff check` clean, `ruff format --check` clean (167 files), `mypy` clean across 153 source files
+including `../scripts`, `pytest` **1431 passed**. `mypy` caught two `attr-defined` errors in a new
+test on the first pass, which is the second time this week the type-check found something the tests
+could not.
+
+**Could not verify:**
+- **Unit 2 is unverified in CI, and will remain unverified until the second `main` build after
+  merge.** Every visible signal is green - both jobs pass, `collect` succeeded on the runner, the save
+  steps correctly skipped - and the thing the unit exists to do has not run once. `main` has never
+  saved a baseline, so every run so far took the cache-miss path. **Reasoned, not driven**, and benign
+  in the way that looks identical to working. That run is to be *read*, not assumed.
+- **GitHub Actions `restore-keys` prefix semantics remain reasoned.** The restore step has only ever
+  missed. Unchanged from the previous entry.
+- **The structural fix is verified by mutation, not by proof.** I can show four mutations of the
+  count path are caught and that the headline is derived from the same enumeration as the rows. I
+  cannot show there is no third accumulator anywhere - I can only say I removed the one there was.
+- **`done-rests-on-unfinished` has zero violations today**, so the erasing-fix warning has never been
+  read by anyone tripping it. Its usefulness is **reasoned**. The message is tested to exist and to
+  name the fix; whether it actually deters the erasing repair is unfalsified and probably unfalsifiable
+  short of someone tripping it.
+- **The `scripts/` ownership gap is an observation, not a ruling.** `architect` owns that call. I did
+  not edit `ownership.md`.
+- **I did not re-run the frontend gate for this change.** No frontend file or command changed since
+  the previous entry, where it was driven green. **Reasoned**, and cheaply falsifiable by CI.
+
+## 2026-08-21 - `backend` lane - Rebasing onto #67, and a header that was two different wrong numbers
+
+**Unit:** rebasing PR #65 onto `642bdb6`, resolving `docs/backlog.md` and `docs/handoff.md` by hand,
+and adding the arbitrated `scripts/` ownership row.
+
+**The conflict was not an append.** #67 filed `backlog-dependency-graph` and `per-run-metric-delta` -
+**the two units this PR builds** - so the resolution needed a duplicate-slug check rather than a
+concatenation. There is none: 130 headings, 130 unique slugs. The backlog prose conflict was a real
+disagreement, not a whitespace one: `main` said the sibling to `adr-index-consistency-test` "is now
+filed as `backlog-dependency-graph`; filing it is not building it", which stopped being true in this
+PR. Kept both sides and marked it built.
+
+**The header was two different wrong numbers and neither side was right.** Git offered `129` from
+`main` and `123` from my branch. Both are honest records of a file that no longer exists. Taking
+either would have been the counting failure the header's own prose is about, and there is no
+resolution that is a choice between them - the finished file has to be recounted. It is **130**:
+45 done, 1 blocked, 84 pending, split summing to the total, 130 headings, 130 unique slugs, 130
+status markers, 1:1. Agreed by token-matched grep and independently by `backlog_graph.py`'s own parse,
+which also confirms no dangling edge among the seven items merged from `main`.
+
+**A number in the instruction I was given was wrong, and only recounting caught it.** I was told
+`main` was at **128**. It is at **129** - 45/1/83 - and #67 added **seven** slugs, not six. Nothing
+turned on it, because the rule is to recount from the finished file rather than carry a number
+forward, and this is the third time today that rule has paid for itself. It is the same shape as the
+one I hit yesterday inside my own recount: a number that travels is a number that goes stale.
+
+**`scripts/` now has a row**, `backend`-owned, Code gate only, no model math and no product surface.
+**This is `architect`'s arbitration, recorded by me - not a lane assigning itself ownership of the
+directory it just wrote into.** I raised the hole and deliberately did not close it myself. The row
+names the boundary that matters: a script producing a decision-bearing number would be `quant`'s and
+would need the Model gate.
+
+**Could not verify:**
+- **Unit 2 remains unverified in CI**, unchanged and unchangeable by this entry: `main` has never
+  saved a baseline, so every run has taken the cache-miss path. It first executes on the second `main`
+  build after merge, and that run is to be read rather than assumed. **Reasoned, not driven.**
+- **The prose resolution is a judgement.** I kept both sides and marked the item built, which I
+  believe is what both authors would want. I did not confirm that with the governance lane. Cheaply
+  falsifiable by reading the paragraph.
+- **The seven merged items are unexamined beyond their edges.** `backlog_graph.py` confirms every
+  `Depends on:` token in them resolves and adds no cycle. It cannot confirm any of them says
+  something true, and two of them describe this PR's own units - **whether what I built matches what
+  they specify is a reading, and I have not done it.** Their statuses are left `pending` for that
+  reason; marking my own commissioning items `done` is not a call I should make unreviewed.
+- **The ownership row is recorded, not derived.** I did not re-examine whether `backend` is the right
+  owner; `architect` ruled and I wrote it down.
