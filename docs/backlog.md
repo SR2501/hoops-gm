@@ -2,7 +2,13 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**49 done - 1 blocked - 85 pending - 135 total**
+**52 done - 1 blocked - 87 pending - 140 total**
+
+(Recomputed from the status markers in this finished file, never
+reconciled from two headers: 140 `###` headings and
+140 markers, 1:1, no duplicate item names. Neither side of a
+rebase conflict is a usable input here, because each was computed before
+the other lane's items landed.)
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers. **The count above is no longer restated anywhere in this file**, and
@@ -413,10 +419,20 @@ visible without anyone holding five runs in their head.
 
 Crosswalk resolver joining Fantrax IDs, NBA IDs and projection-CSV name strings. Fantrax exposes no NBA.com player id, so there is no anchor pair; matches begin with normalized name + team + position and retain per-field three-valued evidence, confidence, and manual overrides. Ship an unmatched-players report and a manual-override UI. Highest-risk foundational item - needs its own test suite.
 
+### `player-position-nba` - Ingesting the NBA-published player position
+
+- [x] **done** - Landed 2026-08-20 in #48.
+- **Depends on:** *(nothing)*
+
+### `player-position-fantrax` - Ingesting Fantrax position eligibility
+
+- [ ] **pending**
+- **Depends on:** `player-identity`
+
 ### `player-position-eligibility` - Ingesting player position and Fantrax position eligibility
 
-- [ ] **pending** — *NBA-position half landed 2026-08-20; Fantrax-eligibility half outstanding*
-- **Depends on:** *(nothing, for the NBA-position half — **done**)*; `player-identity` for the Fantrax-eligibility half
+- [ ] **pending** — *umbrella; the landed half is now `player-position-nba` and only `player-position-fantrax` is outstanding*
+- **Depends on:** `player-position-nba`, `player-position-fantrax`
 
 **The dependency deliberately does not point at `player-identity` for the whole item.** `player-identity` specifies matching on "normalized name + team + **position**" — with no position data in the project, that third field did not exist, so ordering all position work behind identity would have left the highest-risk foundational item permanently short of one of the three fields it was specified to use. The NBA-position half needed no crosswalk and landed first; only Fantrax eligibility, which is per-player-per-league, needs the crosswalk.
 
@@ -1514,10 +1530,27 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
 
 Mock drafts for both snake and auction against calibrated opponent models, including durability-weighted and stars-and-scrubs strategies. Used to pressure-test builds before the real thing.
 
+### `draft-tracker-persistence` - The recorded draft log, its derivation and its API
+
+- [x] **done** - Landed 2026-08-21 in #64: `drafts`, `draft_participants` and
+  `draft_events` (migration `0017`), an ordered append-only event log as the only
+  stored fact, with every board and roster derived from it.
+- **Depends on:** `draft-format-abstraction`
+
+### `draft-tracker-screen` - The draft board on screen
+
+- [x] **done** - Landed 2026-08-22 in #66, with the recorder's own guidance in #77.
+- **Depends on:** `draft-tracker-persistence`, `frontend-skeleton`
+
+### `draft-tracker-bridge-feed` - Feeding the tracker from the bridge and official API
+
+- [ ] **pending**
+- **Depends on:** `draft-tracker-persistence`, `bridge-capture`, `fantrax-official-adapter`
+
 ### `draft-tracker` - Building the live draft tracker
 
-- [ ] **pending** — *recorded-log persistence and read/write API landed 2026-08-21; the screen landed 2026-08-21; the bridge feed is outstanding*
-- **Depends on:** `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
+- [ ] **pending** — *umbrella; the two landed halves are now `draft-tracker-persistence` and `draft-tracker-screen`, and only `draft-tracker-bridge-feed` is outstanding*
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
 

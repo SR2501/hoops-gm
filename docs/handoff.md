@@ -18395,3 +18395,51 @@ was corrected in place; this file records the past and so is only appended to.
   own connection error is already loud. That is a design choice I have driven
   only for SQLite and in-memory; no Postgres store was pointed at a nonexistent
   database to see what the failure actually looks like. **Reasoned.**
+
+## 2026-08-23 - architect - a shipped half of a bundled item had nowhere legal to live
+
+**What was wrong.** `draft-tracker` bundles three deliverables - recorded-log
+persistence, the screen, and the bridge feed. Two landed; the third did not; so
+the item is `pending` and its status line carried the split in *prose*. When the
+frontend lane finished a fix to the shipped screen half, it had nowhere to file
+it: `backlog_graph.py` correctly refuses a `done` item resting on an unfinished
+one, and both available repairs were false - mark `draft-tracker` done (the bridge
+feed does not exist) or delete a real edge (the tool names and refuses that). It
+withdrew its entry rather than force one, which was the right call.
+
+**It had already recurred before it was named.** `player-position-eligibility`
+carries the same shape from 2026-08-20: NBA-position half landed, Fantrax half
+outstanding, the split living in prose.
+
+**Additive, not a split.** `draft-tracker` has **eight inbound edges**
+(`auction-budget-manager`, `auction-inflation`, `draft-recommender`,
+`fixture-drift-gate`, `draft-log-virtualisation`, `draft-board-affordance-styling`,
+`draft-setup-screen`, `live-draft-availability`), counted from the file rather
+than assumed. Splitting would have required repointing every one of them, each a
+judgement, against a guard whose whole job is refusing edge edits. So the umbrella
+slugs and all eight edges are **untouched**, and sub-items now carry the halves that
+actually landed. No slug dropped: 135 before, 140 after, five added, zero removed.
+
+**Driven, not reasoned.** The fix was proved by appending a `done` item depending
+on `draft-tracker-screen` and confirming `backlog_graph.py` exits 0, then
+restoring - character count asserted before and after, because `47` to `12` is
+length-identical and a size check would not have seen the edit either way. Before
+the change that same probe is the case the tool refuses.
+
+**Header recomputed by `scripts/resolve_doc_conflicts.py` during the rebase, then
+verified by an independent regex recount that agreed at 140/52/1/87** - two methods,
+and the second is the only reason the first is trustworthy. Every one of the five
+deleted lines was printed and inspected; all five are the marker and depends lines
+the new blocks replace.
+
+**Could not verify.** That no *other* backlog item bundles deliverables the same
+way. I searched for pending markers whose prose says a part landed and found
+exactly these two; an item that bundles silently, without saying so in its status
+line, is invisible to that search and I did not read all 140. **Reasoned.**
+
+**Could not verify.** That the sub-item dependency edges I wrote are the right ones.
+`draft-tracker-screen` depending on `draft-tracker-persistence` and
+`frontend-skeleton` is what the merged work actually did, read from the PRs; the
+bridge feed's edges are copied from the umbrella's and are a **guess about work that
+has not started**. Wrong edges here are cheap to correct and would not be caught by
+any gate. **Reasoned.**
