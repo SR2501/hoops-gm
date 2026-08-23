@@ -18850,3 +18850,252 @@ paths, not sent another message.**
   entry lands because it was quoted at me with a line number. That is not a search. **Reasoned,
   and unswept** - the third consecutive entry from this lane to name an unswept pattern rather
   than sweep it.
+## 2026-08-23 — backend — One command, one database, three screens
+
+**The demo could not be rebuilt by anyone who had not been told how.** Its state
+lived in three separate SQLite files, one backend serves one file, so the owner
+opened the dashboard to a working draft board beside two `409` error pages. The
+three dev seeders always composed; nobody had run them in one order, and the
+composition existed only as commands someone happened to know.
+
+`python -m hoops_gm.dev.seed_demo` is that composition, in **one session**, so a
+refusal from the draft seed rolls the schedule and projection writes back with
+it. `docs/demo.md` is the committed runbook. `backend/tests/test_seed_demo.py`
+drives all three routes against **one** seeded database — which is the part that
+was missing, because each seeder already had a test proving its own endpoint
+could answer, and such a test stays green whether or not the other two are
+pointed somewhere else.
+
+**Three claims in the reconstruction I started from were wrong, and each was
+wrong in a way that reads as a design limit.**
+
+**One.** *"Order is forced by three refusal guards and only this one satisfies
+all of them."* `seed_projections` already composes `seed_schedule_grid`
+internally, so running the schedule seed first is redundant, not required.
+Driven: `seed_projections` then `seed_draft` on an empty database, exit 0 both
+times. The single real constraint is `seed_draft` **last**, and it is hard — its
+`[demo] ` leagues carry `fantrax_league_id IS NULL`, the first arm of
+`require_safe_demo_target`, so a drafts-first database can never have the other
+two screens seeded into it at all.
+
+**Two.** *"Real-scale schedule and real projections cannot share a database."*
+The refusal cited is real — I reproduced it verbatim, along with the full
+real-season numbers (**1,206 published, 1,200 imported, 6 pending, 30 teams, 25
+periods, 2,400 team-games**), which are all correct. The **conclusion** is
+wrong. The guard compares the database against *the cohort the seed just
+parsed*; it fires because the schedule seed ran against a live capture and the
+projection seed then ran against the *committed* fixture. Two cohorts, correctly
+refused. `--fixtures-dir` is a **single** directory supplying all four fixtures,
+and the live directory as documented holds only two of them — so the limit is a
+missing file, not a design boundary. Driven: one database holding **1,200
+imported games, 2,400 team-schedule rows, 30 teams, 25 periods, 60 projection
+rows and 2 drafts**, from one `seed_demo` invocation, exit 0, with a schedule
+version byte-identical (`e80a3aecca0e86eb`) to the real-season-only seed —
+which is what establishes the cohort is the full season rather than something
+narrowed to get past a check. **`require_safe_demo_target` was not touched.** It
+was satisfied honestly. The projections themselves are unchanged and still
+invented; all that moved is the schedule they sit beside.
+
+**Three, and this one is mine to have found rather than inherited.** The
+composition is **reproducible from empty, not idempotent** — nobody had run the
+command twice. The second run refuses, and the message names *a league*, which
+reads like "your data is in danger" rather than "you already did this".
+`looks_like_a_previous_demo_seed` adds the sentence distinguishing them. It is a
+diagnostic printed after a refusal that has already fired: it grants no
+permission and changes no guard.
+
+**A test I wrote passed for a reason its own docstring denied.** The rollback
+test planted an arbitrary foreign league — which makes `require_safe_demo_target`
+refuse *before any write at all*, so the "nothing was written" assertions passed
+vacuously and proved nothing about rollback. Its docstring said the refusal
+arrived from `seed_drafts` after the projection writes. It did not. The version
+that works plants the seed's **own** league (`FANTRAX_LEAGUE_ID`, `SEASON`,
+which `_league` adopts) carrying a non-`[demo]` draft, which is the one
+arrangement where everything the first seeder wrote is on the floor when the
+second refuses. Reading could not have found this; the mutation that did —
+inserting `session.commit()` between the two seeders, which is exactly what
+composing them at the shell does — reddens **exactly one test**. `NOT CAUGHT`
+would have been the only signal, and the vacuous version would have survived it.
+
+**`encoding="utf-8"` on `subprocess` is the right fix in one direction and the
+bug in the other.** The entry above this one records that reading a repository
+file through `subprocess` on this machine needs `encoding="utf-8"`, because
+Windows defaults to cp1252 and the tree is UTF-8. Reading a **child process's
+console output** is the opposite: the child encodes in cp1252, so declaring
+`utf-8` on the read side raised `UnicodeDecodeError` on the first em dash in a
+test docstring. My harness reported five `HARNESS_FAILURE(rc=1)` results — real
+reds it could not attribute. **It failed correctly**: the scoring rules the
+`aav-source` lane wrote refuse to score an unparseable run as a catch, and
+without them this would have printed five plausible catches. Fixed by making the
+producer agree (`PYTHONIOENCODING=utf-8`) rather than guessing harder on the
+consumer, plus `errors="replace"` so a mangled byte can never turn a verdict
+into a crash. **A remedy stated without its direction is half a remedy.**
+
+**A probe I wrote measured the guard in front of the thing I was asking about.**
+Writing down what an empty database does to each screen, I drove three routes
+through `TestClient` with `environment="development"` and got three `403`s. I
+had measured `require_loopback_host` — `TestClient` reports a synthetic
+`testclient` host — and learned nothing whatever about the database. Three
+identical status codes across three unrelated routes is the tell, and it is the
+same shape as a scan that returns true on a working screen: **a uniform answer
+usually means something upstream answered instead.** With
+`environment="test"` the real answers are: no schema at all raises
+`OperationalError` on every route; schema with no rows gives `/drafts` `200` and
+an empty list while the other two give `404 *_league_not_found`; and a
+**draft-only** database gives `/drafts` `200` with both mocks while the other
+two give `409` — `schedule_grid_not_current` and
+`projections_source_not_imported`. That last row is the owner's original
+symptom reproduced from empty, and it explains the mechanism: the draft seed's
+`[demo] ` league *is* league 1, so the other two screens get past the league
+lookup and fail on lineage that database never held. `409` therefore means
+*this league exists and its schedule was never seeded here*, which is exactly
+the partially-composed state this unit removes. The table is in `docs/demo.md`.
+
+**Both of those are one detector, worth naming once rather than twice.**
+*Constancy where variation is expected* — three identical codes across three
+routes that should differ, a scan returning true on every screen including the
+working ones, a counter reading the same on a 404 as on a real page. It costs
+nothing to check and it is the cheapest thing that distinguishes "I measured the
+system" from "I measured the thing in front of the system".
+
+**A restated count on `main` was unguarded, and the paragraph beneath it said
+so while being wrong about it.** Resolving the third rebase conflict on
+`docs/backlog.md`, I found a parenthetical directly under the header carrying
+`140 ### headings and 140 markers` — a second copy of the count — sitting two
+lines above a paragraph asserting *"the count above is no longer restated
+anywhere in this file"*. `scripts/backlog_graph.py` checks the header line only,
+and `scripts/resolve_doc_conflicts.py` recomputes the header unconditionally and
+the parenthetical never, so nothing on either side could see it; a header
+conflict does not touch prose two lines below, which is how it survived. I
+removed the integers and kept the property, which both tools still enforce. This
+is a change to text I did not write, in a PR about something else, so it is
+called out here and in the PR body rather than folded in quietly. It is the
+`AGENTS.md` rule (*"do not restate that count here or anywhere else"*) failing
+in the one file that states it.
+
+**And a real store slipped through every guard, which I found only because the
+coordinator asked whether my seeder refuses a wrong path.** I would have
+answered "the existing refusals cover it" and been wrong. The owner's local
+database at `hoops-gm-data/hoops_gm.db` — outside every checkout, because
+`core/config.py` anchors a relative SQLite path to each worktree's own root —
+holds **0 leagues** and **1,230 games, all 2025-26**, beside a 43,037-row
+participation ledger. `require_safe_demo_target` keys on `leagues`;
+its cohort check keys on *this* season. Both passed it cleanly.
+`require_safe_projection_target` passed too, because the crosswalk is entirely
+`nba`-source and there was no prior Basketball Monster import to conflict with.
+
+Driven against a **migrated copy**, never the original: the composed seed exited
+**0** and wrote 3 leagues, 2 drafts, 10 synthetic 2026-27 games and 60
+`synthetic-demo-*` rows that became the current Basketball Monster crosswalk.
+That is precisely the harm `require_safe_projection_target` exists to prevent,
+arriving by the one route it cannot see.
+
+**The real store escaped only because its schema is at `0016`** — `seed_drafts`
+crashes on a missing `drafts` table and the transaction rolls back. Protection by
+accident, removed the moment anyone runs `alembic upgrade head` on it, which
+matters more now that the ledger has been found and more code is about to read
+it. Closed by `_require_no_real_ingest`, keyed on two signals no seeder writes:
+any `player_participation` row, and any `nba_games` row for another season.
+**This is the third instance of one shape in this file's history — a guard whose
+scope is narrower than the harm** — and like the first two it was closed by
+widening the evidence rather than the intent.
+
+**Adding that guard immediately broke a test, and the test was right.**
+`test_seed_cli_leaves_no_schema_behind_when_it_refuses` builds a schema holding
+only `leagues`, and my `SELECT` against `player_participation` raised
+`OperationalError` instead of a clean refusal — reintroducing, in the guard
+itself, the exact failure that test was written for. Fixed by checking table
+existence first: an absent table cannot hold a row, so skipping it is honest
+rather than a swallowed error, and it costs nothing on the case that motivated
+this because the real store carries both tables. **The mutation that matters
+here is M11**, which widens that skip to skip a table that *is* present: it
+turns the whole guard into a no-op that still reads like a guard, and it is
+caught only by a test planting real evidence rather than one that merely reaches
+the function.
+
+**Gate.** Code gate: `ruff check`, `ruff format --check`, bare `mypy` (179
+files), the **full suite on SQLite (1,650 passed) and on PostgreSQL 16.9 (1,644
+passed, 6 skipped)**, plus `alembic upgrade head`, `check`, `downgrade base` and
+`upgrade head` again on Postgres. Postgres was available at
+`postgresql+psycopg://qimember@127.0.0.1:55432`; the scratch databases were
+dropped through SQLAlchemy and each drop confirmed by re-querying `pg_database`,
+because `DROP DATABASE IF EXISTS` succeeds identically either way. **No
+migrations touched**, so no duplicate revision number is possible from this
+branch. `scripts/backlog_graph.py` green after it caught two real defects in my
+own edit — a stale header, and an edge to `draft-tracker`, which is pending for
+the bridge feed and is not what this rests on. Mutation evidence:
+`scripts/mutate_seed_demo.py`, **11 mutations, 11 caught, 0 survived, 0 harness
+failures**.
+
+**Those ran on `4b58ace`; the tree pushed is `1f76d76`, and the difference is
+stated rather than smoothed over.** `1f76d76` (#84) changed two documentation
+files and no code. Re-run against it: the doc gates, and the 83 tests that read
+documentation. **Not** re-run: the two full suites and the mutation harness,
+which take about 40 minutes together against a `main` that moved six times in
+the course of this unit. That is a deliberate judgement about a docs-only delta,
+not an oversight, and it is the one place where "green" describes a tree one
+documentation commit behind the tree being merged. **The honest general point:
+when the merge queue moves faster than the gate takes to run, no branch can ever
+be green on its own final base**, and pretending otherwise by re-running until
+the numbers line up would just produce a more confident version of the same
+gap.
+
+**Could not verify:**
+
+- **~~That `docs/demo.md` gets a stranger from zero to three screens.~~
+  Partly closed, by another lane rather than by me.** I drove every command and
+  counted rows in the database but never opened a browser, because the owner's
+  demo holds 8000/5173. The coordinator lane then pointed a backend at a
+  composed real-season database and read the screens: `/schedule` **30 rows,
+  832 cells**, `/projections` **60 rows, 1,140 cells**, `/draft` both mocks —
+  and, unplanned, **the schedule version rendered on screen as
+  `e80a3aecca0e86eb`**, matching what the seed reported. Two independent paths,
+  one fingerprint, which is a better check than either alone. What remains open
+  is the acceptance test as literally stated: **nobody has followed
+  `docs/demo.md` cold.** Both of us knew the answer before reading it — and
+  that gap is not one a browser probe closes, because the thing untested is the
+  *instructions*, not the rendering. `scripts/browser_probe.mjs` (landed in #82,
+  after this unit's screens were read) is the named tool for the rendering half
+  if it needs re-checking; there is no tool for the other half.
+  **Driven on the data by me, driven on the screens by another lane, and
+  untested as instructions.**
+- **That the real-season path works from a capture other than the one on this
+  machine.** I used the live `ScheduleLeagueV2` payload a previous session left
+  in its own session state. A different capture, or a mid-season one, could
+  publish a cohort that behaves differently. **Driven once, on one payload.**
+- **That no other document in this repository still asserts the two corrected
+  claims.** I fixed the reconstruction I was handed and updated `README.md` and
+  `backend/README.md`. I did not sweep the tree for other prose asserting that
+  the three seeders must run in three commands, or that a real season and
+  projections are mutually exclusive. **Reasoned.**
+- **That `looks_like_a_previous_demo_seed` never misfires in practice.** A real
+  league literally named `[demo] something` would get the wrong advice. The
+  refusal still stands and nothing is permitted, so the cost is a misleading
+  sentence rather than a write — but I asserted that rather than driving it.
+  **Reasoned.**
+- **~~That the verified absences above survive anything merging.~~ The
+  base-split caveat is resolved.** `main` moved six times during this unit
+  (`060be6b` → `6f22a3e` → `b6945c4` → `1d84c33` → `020c549` → `4b58ace` →
+  `1f76d76`). Earlier drafts of
+  this entry admitted lint, types and both suites had run on one base while the
+  doc checks ran on a later one — a true statement about a tree nobody would
+  merge. **After the final rebase every gate ran on `020c549`**, one tree, and
+  that caveat no longer stands. What has *not* been re-read is main's new prose
+  across those four commits: `docs/adapters/participation-ledger-store.md`,
+  ADR-002's amendment, `docs/models/consensus-reproducibility.md`,
+  `scripts/browser_probe.mjs` and eight new handoff entries.
+  **Driven on the gates, not on the prose.**
+- **That `_require_no_real_ingest` names every store worth refusing.** It keys
+  on two signals with no demo provenance. A real store holding *only* players
+  and crosswalk rows — an identity backfill that never ran the participation
+  loader and never ingested a season — carries neither signal and would still be
+  seeded. I did not close that because refusing on `players` would refuse the
+  seed's own 580-player output, and I would rather state the hole than add a
+  check that fires on the demo. **Driven on the store that exists, reasoned
+  about the one that might.**
+- **That the guard is right to let a mistyped path create a new file.** SQLite
+  creates a database on connect, so a wrong path still yields an empty file and
+  a demo seeded somewhere unintended. For a *seeder* I judged that acceptable —
+  the output is a throwaway by construction and the seed prints the URL it used
+  — where for a *reader* the same behaviour yields an honest, reproducible,
+  meaningless zero. That is a judgement, not a measurement. **Reasoned.**

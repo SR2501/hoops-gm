@@ -68,6 +68,20 @@ docker compose up --build
 Everything binds to `127.0.0.1`. Nothing is exposed to the network — see
 [`docs/decisions/ADR-001-local-first.md`](docs/decisions/ADR-001-local-first.md).
 
+A fresh database has no data in it, so every screen fails closed. To get all
+three working screens offline from committed fixtures, in one command against
+one database:
+
+```bash
+cd backend
+python -m hoops_gm.dev.seed_demo --database-url sqlite:///./demo_all.db
+DATABASE_URL=sqlite:///./demo_all.db python -m hoops_gm
+```
+
+[`docs/demo.md`](docs/demo.md) is the whole runbook, including the four
+environment traps that each cost an hour and how to drive it against the real
+2026-27 season.
+
 | Where | What |
 |---|---|
 | [`backend/`](backend/) | FastAPI service, SQLAlchemy models, Alembic migrations |
@@ -81,6 +95,7 @@ Start with **[`AGENTS.md`](AGENTS.md)**, then **[`docs/handoff.md`](docs/handoff
 | Where | What |
 |---|---|
 | [`docs/plan.md`](docs/plan.md) | The full plan, including the research that constrains it |
+| [`docs/demo.md`](docs/demo.md) | **How to bring the demo up.** One command, one database, three screens — plus the environment traps and the real-season path |
 | [`docs/backlog.md`](docs/backlog.md) | **The task list.** Every work item with its dependencies and status; the counts live in that file's own header, recomputed from it. A task is ready when every dependency is done |
 | [`docs/governance/OPEN-ci-billing.md`](docs/governance/OPEN-ci-billing.md) | Resolved 2026-08-17: the repository was made public and GitHub Actions was restored |
 | [`docs/handoff.md`](docs/handoff.md) | Append-only project memory. Read before starting; append when finishing |
