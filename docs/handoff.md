@@ -19317,3 +19317,136 @@ distinction is now asserted in the module rather than assumed by its readers.
   have none at all, the rest have between 4 and 33 matches. **That is a grep,
   not a finding**, and reporting it as though it were the second kind is exactly
   the error I withdrew a claim for yesterday. **Reasoned, and weakly.**
+## 2026-08-23 - data-engineer - the widened cohort is admissible, and the join that proves it crosses two databases
+
+**The answer first: every status clears §2's floor of 30 held-out direct
+outcomes. `doubtful` is binding at 83, 2.77x.** Full 2025-26 regular season,
+164 game dates, holdout `2026-03-02..2026-04-12`. Evidence at
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`; method at
+`docs/adapters/nba-injury-report-cohort-admissibility.md`. No fit, no unblind,
+the frozen preregistration untouched, and **zero external requests** - both
+stores were already on disk.
+
+### The contamination question was the real work
+
+**No single store holds both halves**, driven: `hoops_gm.db` has 43,037
+participation rows and **0** injury-report rows; `throwaway-report-sweep.db` has
+69,922 report rows and **0** participation rows. So any status-to-outcome
+question crosses two databases, which is what `hoops-gm-data\README.md` warns
+about - the sweep took its tip-offs from `ScheduleLeagueV2`, and every lead time
+plus the pre-tip-off selection itself rests on `tipoff_utc`.
+
+**The exposure is removed rather than bounded.**
+`select_canonical_pregame_observations` takes a `game_tipoffs` mapping, so the
+generator feeds it the *participation* store's `BoxScoreSummaryV3` instants
+while reading report rows from the sweep. The sweep's own `tipoff_utc` column is
+never read. `test_shifting_the_report_store_tipoff_is_reported_but_changes_no_count`
+moves it four hours and asserts every count is unchanged.
+
+**And the check the README says the sweep destroys is restored by doing it
+across stores** - 1,227 games compared, **0** tip-off disagreements, **0**
+`game_date` disagreements, 3 without both instants and those 3 are exactly the
+documented `0022500259/260/261` gap.
+
+**Driven positive evidence that the two stores really are different endpoints**,
+rather than my trusting the README's attribution: the sweep holds tip-offs for
+**1,230** games *including* those three, and `BoxScoreSummaryV3` has no body for
+them at source, so it cannot have produced them. The ledger's own README proxy
+also holds exactly at 1,227 = 1,227.
+
+The join is on source-stable identity (`nba_game_id` x NBA `external_id`), never
+surrogates. The surrogates do coincide - 1,230/1,230 and 5,206/5,206 - which I
+checked and deliberately did not rely on; the join test builds two stores with
+**disjoint** id bases so a silent fallback fails loudly.
+
+### The reduction nobody had priced, which is the finding under the finding
+
+The owner flagged that full-season `doubtful` at ~100x the floor "says very
+little", and was right for a reason neither of us had named. The chain is
+`2,087 raw -> 221 canonical -> 217 direct -> 83 held-out`. **Canonicalisation
+costs 9.4x on its own** - one latest pre-tip-off row per player-game, so a
+player listed `doubtful` on six successive reports whose last pre-tip status is
+`out` contributes zero `doubtful`. The two steps the brief named cost 1.02x and
+2.6x. A raw status histogram overstates cohort size by an order of magnitude.
+
+### I cannot reproduce the committed manifest, and the reason is data, not code
+
+Restricted to `2025-12-08..2026-01-04` my pipeline gives 1,950 canonical against
+the manifest's 1,948, with per-status drift (`out` +3, `available` +7,
+`questionable` -5, `probable` -2, `doubtful` -1). Everything structural matches
+exactly: 28 unresolved, 0 without-anchor, 2 without-participation-row, canonical
+lead time 15..1650, joined 15..540, 173 games, 26 game dates.
+
+**Driven explanation:** the sweep holds **88** distinct report timestamps in that
+window against the manifest's **35**. Denser capture means the latest pre-tip row
+is more often a later, more-resolved report, which moves observations out of the
+intermediate statuses into `out`/`available` - the exact direction of the drift.
+
+### Three things the count cannot see
+
+Two are declared in the artifact pre-unblind, on the coordinator's ruling. The
+holdout is the **end-of-season shutdown window, which is not the regime the tool
+is used in** - and that must reach the model card verbatim. The
+`FIFTEEN_MINUTE_ERA_START` boundary (2025-12-22 ET, `client.py:81`) falls inside
+the cohort: development is 68% legacy in direct outcomes while selection and
+holdout are **100%** short-lead, so a fit would rest substantially on a regime
+the holdout contains none of. **The 50/25/25 boundaries are deliberately not
+moved**, per §4's own warning about choosing proportions because these are
+inconvenient.
+
+The third is a non-replication. **ADR-007 line 62's 1.596/0.917 unresolved
+`doubtful` era figures do not reproduce here**: 0.019 short-lead against 0.033
+legacy, ~50x smaller and reversed. That gap is too large to be noise, so the two
+are almost certainly counting different populations - canonical rows here,
+plausibly raw report rows there. **I am not claiming ADR-007 is wrong**, and I
+say so in the artifact rather than letting a summariser turn a non-replication
+into a refutation.
+
+### The disclosure guard was scoped wrong and the coordinator caught it
+
+§2's closed set was pinned to *the manifest*; my work emits a second artefact,
+so the guard would have passed while the surface widened. Now scoped to **every
+committed JSON under `docs/`**, keyed by `(filename, path)` with list indices
+normalised so reordering cannot evade it. It found a real gap immediately:
+`participation-ledger-2025-26-coverage.json` publishes `seasons[].outcomes` and
+was outside the old glob. Not a breach in substance - a whole-*ledger* marginal
+is strictly less informative than the cohort-restricted one §2 already permits -
+but listed, because an unlisted field is indistinguishable from an unnoticed one.
+
+**A collision I would not have predicted:** the same file's `seasons[].reasons`
+also trips the detector, because **`not_with_team` is a member of both
+`ParticipationOutcome` and `DnpReason`**. It is `DnpReason`-keyed and is not an
+outcome marginal. Allow-listed with the mechanism stated rather than the
+detector weakened, and the overlap pinned at exactly `{"not_with_team"}`.
+
+**Could not verify.** That the denser-capture mechanism accounts for *all* of
+the manifest drift. I have the direction and the density and did not match
+row-for-row - matching needs both sides' row keys and the manifest publishes only
+aggregates. With `doubtful` at 83 against 30 I do not think any plausible version
+reverses the verdict, but that is a judgement. **Reasoned.**
+
+**Could not verify.** Which endpoint each store's persisted `tipoff_utc`
+actually came from. Nothing records the provenance of a persisted instant - the
+very gap the README exists to flag. I have driven that the two stores *agree* on
+1,227 instants and that the sweep holds three the box-score endpoint cannot
+serve, which is strong circumstantial evidence of independence. It is not the
+same as reading a provenance field, because there is none. **Driven agreement,
+reasoned independence.**
+
+**Could not verify.** ADR-007's original 1.596/0.917 measurement. I state that it
+does not replicate on *my* population; I did not reconstruct its four-week window
+or determine whether it counted raw or canonical rows, so I cannot say which of
+us is measuring the thing the era argument needs. **Reasoned, and someone holding
+that artifact should close it.**
+
+**Could not verify.** That the sweep's report coverage is uniform across the
+season. The holdout's per-status counts are measured directly, so admissibility
+does not depend on uniformity - but a thinner-covered stretch inside development
+would shift the fit in ways no count here exposes. I did not profile capture
+density by date beyond the one window I compared against the manifest.
+**Reasoned.**
+
+**Could not verify.** That `docs/` is the whole disclosure surface. The guard
+scans every committed JSON there, which covers all four evidence artifacts today.
+An artefact committed elsewhere - or in a non-JSON format - is outside it, and
+the coordinator's point about second artefacts applies recursively. **Reasoned.**
