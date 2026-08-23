@@ -19542,3 +19542,44 @@ reporting zero exclusions on those two statuses, so the two facts are not
 independent of each other - agreement there is entailed, not corroborating.
 The informative agreements are the three statuses that differ. **Driven, and
 deliberately discounted.**
+
+### Addendum, 2026-08-23 rebase onto `74c8ba4`: this module is invisible to the new store-creating-reader census
+
+Not a defect in either lane, and worth writing down before it becomes one.
+
+`backend/tests/test_store_creating_readers.py` (#83) makes the store-creating
+reader audit permanent by scanning the package for **`Database.from_settings(`**
+and requiring every site to carry an explicit classification. Driven against
+this branch: it finds **12** sites, and
+`ingest/injury_report/cohort_admissibility.py` is **not** one of them, because
+`read_only_engine` opens its stores with `create_engine` over a
+`sqlite3.connect(..., mode=ro)` creator instead.
+
+**So a reader with exactly the hazard that census exists to catch sits outside
+it, and passes vacuously.** SQLite's create-on-connect applies to my path
+identically - `sqlite3.connect` on a mistyped path creates an empty database
+just as `Database.from_settings` does. My path is guarded, and
+`TestTheStoreIsNotCreatedByLookingAtIt` asserts it refuses a missing file *and*
+that the probe did not create the file it was checking for. **But that guard is
+mine, in my test file, and the census would not have noticed its absence.**
+
+The census documents a scope limit - `SCOPE_LIMIT`, "classifies creation, not
+destination" - and that is a different limit from this one. **The scan pattern
+itself is a scope limit and is not recorded as one.** This is the audit lane's
+own grep caution turned on the audit: *a search that misses is
+indistinguishable from an absence*, and a census that enumerates one spelling of
+"open a store" reports on that spelling rather than on the hazard.
+
+**Deliberately not fixed here.** Widening the scan to `create_engine` and
+`sqlite3.connect` would re-classify sites whose verdicts are the audit lane's
+judgement, not mine, and a census whose membership rule changes under a
+different lane is worse than one with a recorded gap. Reported to the
+coordinator instead, so it is **requested rather than discovered** - the same
+disposition the participation-ledger lane took toward the cross-store join that
+became this unit.
+
+**Could not verify.** Whether any *other* module opens a store outside the
+census's spelling. I checked my own and counted the census's 12; I did not grep
+the package for every `create_engine` or `sqlite3.connect` call and classify
+them. **Reasoned, and it is the same question the census answers for its own
+spelling.**
