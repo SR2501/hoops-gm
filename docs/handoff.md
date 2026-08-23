@@ -17859,3 +17859,134 @@ repository file on this machine.
   defect above was two sentences elsewhere contradicting it. **Driven.**
 - **That no other prose in the tree quotes a conflict marker.** Still not swept.
   Fourth carry-forward. **Reasoned.**
+
+
+## 2026-08-23 - quant - The citation was sound and under-reported, and the seam never needed locating
+
+Adjudicated the flat `0.726-0.947` quoted in `docs/backlog.md` and
+`docs/models/projection-blending.md` against the `0.284-0.504` games agreement in
+`docs/models/consensus-reproducibility.md`, and answered `architect`'s ADR-002 amendment
+question. **Docs only - no code changed.** Still a measurement, not a model: nothing was
+fitted, no Model gate is claimed, and re-deriving an existing figure to check what it covers
+is not a new model.
+
+**The suspicion was reasonable and specifically wrong.** A rates figure is not being quoted
+as covering games.
+
+- **Settled from the measurement, not the prose.** The original script was never committed,
+  so I rebuilt the crudest of its baselines - last season carried forward, no modelling -
+  which needs one season and therefore re-derives from the **cached** 2025-26 `PlayerGameLogs`
+  with **no request and no refit**. Export identified by hash, matching the pinned contract
+  value. 400 of 505 rows joined, cohorts n = 400/361/244/110 selected on our side.
+  **11 rate categories 0.626-0.937; minutes 0.345-0.775; games 0.280-0.448** against the
+  published 0.658-0.942 / 0.395-0.747 / 0.284-0.504. Close, not identical - my join has one
+  season of history where the original had ten. **Driven.**
+- **The decisive fact needs none of that precision: games agreement never reaches 0.5 by
+  either route, so it cannot sit inside a range whose floor is 0.726.** Had games been in the
+  pool the published floor would be ~0.28; had minutes been, ~0.35-0.40. Structural
+  corroboration: `games` is not a stat column of `BASKETBALL_MONSTER_PROFILE` at all.
+- **The real defect is the mirror image of the suspected one - under-reporting, at the site
+  that matters.** `docs/backlog.md` quoted the rates figure, then the minutes finding, then
+  concluded *"the seam therefore falls at games, not minutes"* **with no games figure in it
+  anywhere.** The strongest channel quoted, the load-bearing one omitted, in the file a reader
+  consults first. Fixed at all four sites, and "per game" - a *unit*, sitting one clause from a
+  games argument where it reads as a *scope* - is now labelled as such wherever it appears.
+
+**Two arithmetic facts the correlations could not show.** Asked because ADR-002 line 21
+captures the games assumption separately *"so our availability model can override it rather
+than compound with it"*, and a rate made by dividing a total by that assumption is a candidate
+for compounding.
+
+- **`minutes / games` is an exact integer for 505 of 505 rows**, against a shuffled-divisor
+  control at 10.9%. Their minutes total *is* their games tier times an integer MPG. The
+  per-game figure is recoverable without residue; the total is not. **Driven.**
+- **For the counting categories, every candidate divisor tests at chance** - totals sit on a
+  1dp grid for 100% of rows, `/games` 1.8-11.1%, `/minutes x36` 2.4-9.9%, `/minutes` 0.8-8.9%,
+  shuffled control 3.2-10.5%. Publication rounding destroyed the signature. **We cannot show
+  their rates are tier-free. Undetermined, not resolved.**
+
+**The test that condemned `games` had never been run on `minutes`.** This is the finding I did
+not expect. `games` was rejected as a tier on *31 distinct values, 84.7% of the rotation cohort
+on two*; the recommendation to **consume** minutes rested only on the slope evidence. Applied
+identically to both - and it **replicates the published figure exactly**, games at their
+MPG >= 20, n = 249, 18 distinct, 84.7% on two:
+
+| column | cohort | distinct | top 2 | effective levels |
+|---|---|---|---|---|
+| `games` | whole file | 31 | 60.0% | **4.5** |
+| minutes-per-game | whole file | 34 | 10.5% | **29.2** |
+| `games` | their MPG >= 20 | 18 | **84.7%** | **2.5** |
+| minutes-per-game | their MPG >= 20 | 18 | 20.5% | **14.9** |
+
+**Distinct-value count alone would have called the two columns identical** - 18 against 18.
+Concentration separates them 6x. The licence to consume their minutes survives a test it had
+never been given. Qualification, placed here rather than below because a summary drops it: their
+MPG is **integer-valued for 505/505 rows**, so 14.9 effective levels is a real per-player
+opinion and not a fine one.
+
+**ADR-002: amended, and I argued the reason rather than complying with it.** `architect`'s lean
+was amendment-not-new-ADR because "the decision did not change - its seam was located." Same
+destination, and I think the stated reason is wrong: **inside ADR-002's own two-factor
+vocabulary there was never a second candidate seam**, so nothing was located. The measurement
+introduced a *three-factor* decomposition in which the question is askable for the first time.
+The amendment imports that vocabulary and attaches the divisor hazard - never consume a source's
+seasonal totals, never multiply a consumed rate by that source's own games figure - which is new,
+is stated nowhere, and reads as fidelity to the publisher while doing it. `Proposed` only.
+**No new ADR:** nothing decided changed, no boundary moved, and `docs/decisions/README.md:13`
+already makes amend-rather-than-supersede the house rule. Added an
+**amendments-awaiting-acceptance** table to that README, because the index column describes an
+ADR's body and an `Accepted` row silently hides a `Proposed` amendment - two are now waiting.
+`PLAIN-ENGLISH.md` was deliberately **not** touched: it declares itself frozen at ADR-009, which
+is a call someone already made in response to the complaint I would otherwise have repeated.
+
+**The leak scan reproduced the failure it was built to avoid, and I caught it on the first run.**
+Screening my added lines against the mode, min and max of every paid column returned **6 hits**,
+five of which were the single digits `1 2 3 4 6` - the **modes** of season-total counting columns,
+which match any English prose containing "clause 4" or "6x". That is the 436-hit scan the previous
+unit discarded as useless, arriving through a narrower door. Candidates under two digits are now
+dropped **deliberately and in writing**, with the cost stated: a genuine single-digit leak would
+pass. Re-run: **1 hit**, `244`, the **max of `fouls`** coinciding with a cohort size I computed
+from public game logs and never read from that column - the same coincidence class as the previous
+unit's n=232. Kept. The tripwire plants a candidate and the run is invalid unless it fires; it
+fired, and the scan refuses if its candidate set or its scope looks too small.
+
+**Re-run over the finished diff including this entry: 4 hits, and two of them expose the
+inverse defect.** `232` and `244` are cohort sizes, both the same coincidence class, both kept.
+The other two are **paid surnames that are ordinary English words** - they fired on my own
+sentences, not on any row. That is the failure mode that gets a real leak through: a scan that
+cries wolf on prose trains its reader to wave hits past. **Left unfixed and named instead**,
+because narrowing it (requiring capitalisation, or an adjacent name token) would trade a false
+positive I can see for a false negative I cannot. Every hit in this unit was adjudicated by
+hand, which is the only thing that actually works at this hit rate.
+
+### Could not verify
+
+- **That the published `0.726-0.947` is exactly the eleven columns I believe it is.** The
+  original script was never committed, so the column set is an inference from three
+  independent supports - the named floor and ceiling are categories, the arithmetic excludes
+  both other channels, and `games` is structurally not a stat column. **I re-derived a
+  *different* baseline and reasoned across.** The stronger check - re-running Marcel 5/4/3 -
+  needs two uncached seasons and ten more throttled requests, which I judged not worth the
+  external calls for a conclusion three routes already agree on. **Driven on the exclusion,
+  reasoned on the exact membership.**
+- **Whether their counting rates carry the games tier.** Undetermined above, and it matters:
+  if their native quantity is the season total, then every rate we consume was manufactured by
+  dividing by a 2.5-effective-level column. One file with 1dp publication rounding cannot
+  answer it. **Driven that the test is at chance; the question itself is open.**
+- **Whether `244` is genuinely a coincidence.** It is my cohort size, computed from public
+  logs, and it is the maximum of a paid column. I cannot prove independence, only that the
+  derivation never touched that column. **Reasoned.**
+- **Whether the minutes licence is right, as opposed to better-evidenced than it was.** I
+  showed minutes is 6x less concentrated than games. I did not show that consuming an
+  integer-valued MPG beats deriving our own, and no experiment here could - there are no
+  outcomes. **The licence is now tested against the standard that condemned its neighbour,
+  which is a weaker claim than correct.**
+- **Whether any other range in these documents pools channels of different quality.** I fixed
+  the one I was sent at, plus the three sites quoting it. I did not sweep for the pattern, and
+  the pattern is general: any range spanning a strong and a weak channel reads as the strong
+  one. **Reasoned, and unswept.**
+- **That the anti-circularity cost recorded on 2026-08-22 has not widened.** I read the
+  `games` column again - its concentration, not its values - which is the behavioural, not
+  structural, protection that entry describes. **Whoever builds the availability model should
+  now not be me either.** Driven that I read it; reasoned that a concentration statistic is a
+  weaker exposure than a modal value.

@@ -31,7 +31,13 @@ before Sunday 18 October 2026.
    divisor confound that accounted for roughly half the raw 1.157. Amplification
    is the signature of information no box score contains — depth charts,
    offseason moves, role changes. We cannot reproduce it and should not pretend
-   to.
+   to. **The coarseness test that condemned `games` was later run on `minutes`
+   too, because adopting a column on evidence that was never asked of it is how
+   a licence outlives its reason:** in the same rotation cohort both columns take
+   18 distinct values, but `games` puts 84.7% on two of them and minutes 20.5%
+   — **2.5 effective levels against 14.9**. The licence survives. Their MPG is
+   nonetheless integer-valued, so it is a real per-player opinion and not a fine
+   one.
 3. **Assert our own games-played number.** This is the only factor where an
    independent claim is both possible and explicable — and the space that claim
    aims at is now measured rather than assumed: the one commercial set we hold
@@ -239,8 +245,9 @@ export —
 inference held, though not for quite the reason assumed:
 
 - A naive baseline agrees with that commercial set at **r² 0.726–0.947** per
-  game across all eleven categories, and **raw carry-forward with no modelling at
-  all** reaches 0.658–0.942.
+  game across all eleven **scored rate categories** — a range that excludes
+  minutes (0.395–0.747) and games (0.284–0.504) — and **raw carry-forward with
+  no modelling at all** reaches 0.658–0.942.
 - **But the commercial set is not itself naive.** Its shrinkage toward the mean
   tracks each category's year-over-year instability almost inverse-monotonically
   — steals shrunk 17.6% against a t→t+1 r² of 0.570, rebounds 0% against 0.881 —
@@ -332,7 +339,8 @@ consume the same public box scores, and their rates are largely reproducible fro
 those box scores — and for the decision at hand it does not matter why.** The
 measured reproducibility is above: a monkey gets r² 0.71–0.89 on the volume
 categories (0.50 on steals, the weakest), and 0.726–0.947 against an actual
-commercial export.
+commercial export **on rates alone — that export's games column agrees at only
+0.284–0.504, and the two figures must never be quoted as one**.
 
 **The stronger claim — that public systems "sit near the ceiling of what those
 inputs support" — is not established here and should not be quoted as though it
@@ -433,7 +441,7 @@ sign of its aggregate. Every directional claim this document relies on:
 | Multi-year averaging *hurts* for minutes and scoring rate | **measured** — MPG r² 0.602 vs 0.675; PTS/36 0.710 vs 0.753. The intuitive direction is wrong |
 | Prior workload predicts *more* future availability, not less | **measured** — r = +0.52; the counterintuitive sign, and it is survivorship |
 | Durable players stay more durable | **measured** — +14.0 games between extreme groups |
-| A naive baseline reproduces most of what public box scores support | **measured for the baseline; now also measured for one commercial set.** A naive baseline agrees with a paid Basketball Monster 2026-27 export at r² 0.726–0.947 per game and 0.813–0.958 per-36 across eleven categories. Note this is *agreement*, not accuracy — see [`consensus-reproducibility.md`](consensus-reproducibility.md) |
+| A naive baseline reproduces most of what public box scores support | **measured for the baseline; now also measured for one commercial set.** A naive baseline agrees with a paid Basketball Monster 2026-27 export at r² 0.726–0.947 per game and 0.813–0.958 per-36 **across eleven scored rate categories — not minutes (0.395–0.747) and not games (0.284–0.504)**. Note this is *agreement*, not accuracy — see [`consensus-reproducibility.md`](consensus-reproducibility.md) |
 | Consensus is well calibrated on rates and poorly calibrated on games | **partly measured, and the framing was wrong.** Rate agreement is high (above) and that set's shrinkage tracks category instability inverse-monotonically. But its `games` column is not poorly calibrated so much as *barely populated*: 31 distinct values across 505 rows, 18 in the rotation cohort, **84.7% of that cohort on two values**. There is little availability opinion there to be calibrated. True calibration remains unmeasurable without outcomes |
 | Consensus systematically over-projects games for stars | **measured, and the magnitude is modest.** The commercial mean is 65.0 games against a 61.4 observed three-season mean; 63.9% of joined rows sit above their own unshrunk history. The gap is **+5.1 against our shrunk baseline and +3.9 unshrunk** — reported both ways because the shrinkage is our own tuning parameter and inflated the effect by roughly 30% |
 | Age curves regress older players down | **UNMEASURED and not cheaply measurable.** `PlayerIndex` carries no birth date or age — verified, one request, its 27 columns include `DRAFT_YEAR`, `FROM_YEAR` and `TO_YEAR` but no age. A career-stage proxy from our ten-season window is left-censored for anyone who debuted before 2015-16. Deliberately not proxied badly |
