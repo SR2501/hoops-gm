@@ -317,6 +317,138 @@ describe('recording', () => {
   })
 })
 
+/**
+ * The panel that is typed into has to explain itself.
+ *
+ * The defect these guard was measured in a browser, not inferred: the whole
+ * text content of the recording panel on the seeded auction was
+ * `Sale Bid Nomination PLAYER SEAT <twelve seats> PRICE Record` — 39 words,
+ * none explanatory — while the log beside it carried 80 words about what a
+ * correction is. **The half the owner reads was documented and the half he
+ * types into was not.**
+ *
+ * Every assertion below counts elements that must exist. A word count would
+ * pass on 39 words of seat names, and "renders no confusing text" is satisfied
+ * by rendering nothing at all — the shape of check that already reported a
+ * clean scan on two broken screens in this repository.
+ */
+describe('the recording panel explaining its own use', () => {
+  it('names the recorder’s role and all three auction entry types, in countable pieces', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    const guide = await screen.findByTestId('recorder-guide')
+
+    // Four explanatory elements, counted: the lede, the hint under the mode
+    // buttons, and the four points behind the disclosure.
+    expect(screen.getByTestId('recorder-lede')).toHaveTextContent('does not advise')
+    expect(screen.getByTestId('recorder-mode-hint')).toHaveTextContent(
+      'Only Sale fills a roster slot',
+    )
+    expect(within(guide).getAllByRole('listitem')).toHaveLength(4)
+
+    // Each of the three modes is a button *and* explained, so a reader is never
+    // choosing between three unlabelled nouns.
+    for (const term of ['Sale', 'Nomination', 'Bid']) {
+      expect(screen.getByTestId(`recorder-mode-${term.toLowerCase()}`)).toBeInTheDocument()
+      expect(guide).toHaveTextContent(term)
+    }
+  })
+
+  it('says a draft recorded as sales alone is still a correct roster', async () => {
+    // The claim a recorder under a clock most needs and is least likely to
+    // guess. Driven against the live API before it was written on screen: a
+    // sale with no lot open was accepted and moved `selections_made` 7 -> 8,
+    // while a nomination and a bid each left it where it was.
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    const guide = await screen.findByTestId('recorder-guide')
+    expect(guide).toHaveTextContent('sales alone still has every roster right')
+    expect(guide).toHaveTextContent('A sale needs no nomination in front of it')
+  })
+
+  it('explains the absent seat and price on an ordered draft as derivations', async () => {
+    stubDraftFetch({ state: snakeState, events: snakeEvents })
+    renderBoard('2')
+
+    // The absences are asserted elsewhere. What is asserted here is that each
+    // one is accounted for in prose, at the point it is noticed.
+    const context = await screen.findByTestId('recorder-next-pick')
+    expect(context).toHaveTextContent('derived rather than asked for')
+    expect(context).toHaveTextContent('no budget, so there is no price either')
+
+    const guide = screen.getByTestId('recorder-guide')
+    expect(within(guide).getAllByRole('listitem')).toHaveLength(3)
+    expect(guide).toHaveTextContent('a derivation, not a missing feature')
+  })
+
+  it('says where a recorded entry goes, in both formats', async () => {
+    for (const [id, state, events] of [
+      ['1', auctionState, auctionEvents],
+      ['2', snakeState, snakeEvents],
+    ] as const) {
+      stubDraftFetch({ state, events })
+      const view = renderBoard(id)
+
+      const guide = await screen.findByTestId('recorder-guide')
+      expect(guide).toHaveTextContent('into the log beside this panel')
+      expect(guide).toHaveTextContent('Undo')
+      expect(guide).toHaveTextContent('Nothing there is edited in place')
+
+      view.unmount()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('recedes once the first entry is recorded, and does not fight a reopen', async () => {
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    const guide = await screen.findByTestId<HTMLDetailsElement>('recorder-guide')
+    // Open to start with: a reader who has never used the panel is the case it
+    // exists for, and there is no cheap way to recognise one.
+    expect(guide.open).toBe(true)
+
+    await userEvent.selectOptions(screen.getByTestId('recorder-seat'), '9')
+    await userEvent.type(screen.getByTestId('recorder-amount'), '12')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    await screen.findByTestId('recorder-ok')
+    expect(guide.open).toBe(false)
+    // And the summary survives the collapse, so the same reader a week later
+    // gets it back without leaving the screen.
+    expect(screen.getByTestId('recorder-guide-summary')).toBeInTheDocument()
+
+    // Reopened deliberately, then another entry recorded: the automatic
+    // collapse is spent, so this must not close it a second time.
+    await userEvent.click(screen.getByTestId('recorder-guide-summary'))
+    expect(guide.open).toBe(true)
+
+    await userEvent.type(screen.getByTestId('recorder-amount'), '13')
+    await userEvent.click(screen.getByTestId('recorder-submit'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('recorder-ok')).toBeInTheDocument()
+    })
+    expect(guide.open).toBe(true)
+  })
+
+  it('leaves the log’s own explanation intact, which this panel was not allowed to pay for', async () => {
+    // The recording panel gaining prose must not have been funded by
+    // deduplicating the log's. Both are asserted in one place so a future edit
+    // that moves words from one to the other fails here.
+    stubDraftFetch({ state: auctionState, events: auctionEvents })
+    renderBoard()
+
+    const lede = await screen.findByTestId('log-lede')
+    expect(lede).toHaveTextContent('Nothing here is ever edited')
+    expect(lede).toHaveTextContent('a new entry that withdraws an earlier one')
+    expect(lede).toHaveTextContent('unless it is itself a correction')
+    expect(lede).toHaveTextContent('a refused correction records nothing at all')
+  })
+})
+
 describe('every recorded refusal, reached', () => {
   // Registered into the file-scoped `reached` set and checked in `afterAll`,
   // not in a trailing `it`. A trailing `it` runs when *this block* ends, so a
@@ -513,6 +645,27 @@ describe('an error code this build has never seen', () => {
 })
 
 describe('the no-decision-numbers rule', () => {
+  /*
+   * Before widening the scope below, read this.
+   *
+   * This guard matches **vocabulary** as a proxy for leaked decision numbers,
+   * so it also catches prose *denying* they exist. That is not a bug in it, and
+   * the cost is real and permanent: **the most natural phrasing of the most
+   * important fact on this screen is unavailable to it.**
+   *
+   * Concretely, the recording panel's lede wanted to read *"it is a record, not
+   * a recommendation"* and cannot, because `recommend` is on the list and the
+   * panel is inside `.draft__panels`. It says *"this panel records; it does not
+   * advise"* instead. The page lede a few lines up the DOM *does* use the
+   * natural wording, and is legal only because it sits outside the two
+   * containers scanned here — an exemption by position, not by intent.
+   *
+   * So the temptation, when a denial sentence trips this, is to widen the scope
+   * or exempt an element. **Move the copy instead.** A guard relaxed to admit
+   * one sentence is a guard that gets relaxed again, and this one is the only
+   * thing standing between a screen that recommends nothing and a screen that
+   * quietly starts to. Losing a phrasing is the cheaper half of that trade.
+   */
   it('renders none of the terms the API deliberately does not publish', async () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents })
     const { container } = renderBoard()

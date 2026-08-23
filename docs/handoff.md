@@ -17990,3 +17990,189 @@ hand, which is the only thing that actually works at this hit rate.
   structural, protection that entry describes. **Whoever builds the availability model should
   now not be me either.** Driven that I read it; reasoned that a concentration statistic is a
   weaker exposure than a modal value.
+---
+
+## 2026-08-23 — `frontend` / `draft-recorder-self-documenting`: the panel he reads was documented, the panel he types into was not
+
+*Dated 2026-08-22 when written and corrected to 2026-08-23 during the rebase onto
+`6f22a3e`, in place, because the entry was still unmerged. The original was true by
+the local clock at the moment of writing — the unit started at 23:30 and the browser
+driving all happened after midnight — and it became **misleading** only when quant's
+2026-08-23 entry landed above it, since this file is newest-at-bottom and a reader
+scanning dates would have read the order as wrong. **A timestamp that is accurate
+when written and false after someone else appends is the same shape as a verified
+negative expiring on the next merge**, recorded elsewhere in this file: both are
+claims about a tree rather than about the work, and neither announces the transition.*
+
+**Changed:** `DraftRecorder.tsx` gains two always-visible lines and a disclosure
+below the submit button; the ordered-draft context line now accounts for the
+absent price as well as the absent seat; the success line says where the entry
+went. `styles.css` gains four rules. Six tests added to
+`DraftPage.recorded.test.tsx`. No backend change, no new dependency, no API
+change.
+
+**The defect, measured rather than described.** Driven in headless Edge over CDP
+against a locally seeded database, the entire text content of the **recording**
+panel on the auction board was:
+
+```
+Sale Bid Nomination PLAYER SEAT <twelve seat names> PRICE Record
+```
+
+39 words, none of them explanatory, next to a **log** panel carrying 80 words on
+what a correction is and why attempting one is free. The asymmetry is the finding
+and it is worth stating as one: **the prose was written in the panel that was
+pleasant to write prose about, not the panel the owner acts in.** Nothing in any
+gate looks at where explanation accumulates, and nothing ever will.
+
+**The coordinator's report was wrong about half of it, and the half it was wrong
+about is the informative half.** It said both boards had no prose. The ordered
+board already said *"the seat is fixed by the recorded order, so only the player
+is typed"* — one sentence, doing the harder of the two jobs. So the true shape
+was not *"the recorder was never documented"* but *"the recorder was documented
+exactly once, where a lane happened to notice an absence while building it."*
+That predicts where the next such gap will be better than the report did.
+
+**Three claims on screen were driven against the live API before being written.**
+The backend's own docstring asserts the first one and I did not take it:
+
+- A **sale with no lot open** was accepted, the seat's holdings gained the
+  player, and `selections_made` moved 7 → 8.
+- A **nomination** and a **bid** each left `selections_made` at 8. So *a draft
+  recorded as sales alone still has every roster right* is a driven claim, and it
+  is the one a recorder under a clock most needs and is least likely to guess.
+- The append landed as `#16 Probe Onlysale sold to Bench Mob for $7.00` with
+  `log-undo-16` beside it.
+
+**A substring probe could not have established the second one, and nearly said
+the opposite.** Checking whether the seats panel *mentioned* the nominated
+player returned **true** after a nomination — because the panel prints the
+nominee's name against the high bidder as the live-bid caveat, which is a
+different quantity from a holding and reads identically to a text scan. **The
+count is the measurement that separates them and the substring is not.** This is
+the same shape as the coordinator's warning about scanning for error strings,
+arriving from the other direction: not a false positive on absence, a false
+positive on presence.
+
+**Now true:**
+
+- The recording panel answers, on both formats: what it is for, what each entry
+  type does, which one is load-bearing, why the ordered form has one field, and
+  where a recorded entry goes.
+- Auction panel: 39 → 208 words. Ordered panel: 29 → 164. The log's lede is
+  **still 80 words**, asserted by a test that fails if any of its four clauses is
+  moved into the recorder — the deduplication this work was explicitly not
+  allowed to pay with.
+- The guidance recedes on the first successful record and **only that once**;
+  a deliberate reopen followed by another record leaves it open. Driven in a
+  browser, not only in jsdom.
+
+**On receding, since it was asked as an open question.** It recedes, but to a
+summary line rather than to nothing, and the reason is which state produced the
+complaint. The owner had *already used* this screen — the seeded demo carries 15
+entries. So teaching that fires only on an empty draft would be absent in exactly
+the state that generated the bug report. The disclosure sits **below** the submit
+button, and that placement is the part that was measured: toggling it open, shut
+and open again left the first field at **538px each time**. Because expanding it
+cannot displace a field, reopening it mid-draft costs nothing, which is what
+makes receding safe rather than lossy.
+
+**The always-visible prose costs 83px on the auction board and 84px on the
+ordered one**, measured before and after at 1440×900. The panel is sticky, so
+once scrolled that is a first field ~250px from the top of the viewport rather
+than ~166px.
+
+**The no-decision-numbers guard fired on my copy, and I moved the copy.** The
+first draft of the lede read *"it is a record, not a recommendation"*, which is
+the clearest phrasing of the most important fact on the screen. The guard in
+`DraftPage.recorded.test.tsx` word-boundary matches `recommend` across
+everything inside `.draft__panels`; the page lede is exempt only because it sits
+outside them. Widening that scope to admit one sentence would have traded a real
+guard for a phrasing, so the sentence became *"this panel records; it does not
+advise"*. **Worth naming so nobody re-litigates it from scratch: the guard
+matches vocabulary as a proxy for leaked decision numbers, so it constrains prose
+*denying* them too.** That is a real, small, permanent tax on this screen's copy
+and it is the correct trade — but it is a trade, not a free win, and the next
+lane to hit it should know it is expected rather than a bug.
+
+**`scripts/backlog_graph.py` refused this work's backlog item, correctly, and
+there was no honest way to satisfy it.** I filed
+`draft-recorder-self-documenting` as **done** depending on `draft-tracker`. The
+graph rejected it: `draft-tracker` is **pending**, because its bridge feed is
+outstanding, and a `done` item may not rest on an unfinished one. Both repairs
+available were false — marking `draft-tracker` done (the bridge feed does not
+exist) or deleting a real edge (the tool names this and refuses it by name). So
+the item was withdrawn and this entry is the record.
+
+**The general form, which is not about this item:** `draft-tracker` bundles
+persistence, the screen and the bridge feed, and two of the three have landed.
+The graph's invariant is right, and the granularity underneath it means **a
+completed fix to a shipped part of a partially-shipped item has nowhere legal to
+be recorded in `backlog.md`.** Splitting that item is `architect`'s call, not
+mine. Until then, findings of this kind land here.
+
+**Two environment traps, both already on the coordinator's list, both of which I
+walked into anyway.**
+
+- `python scripts\backlog_graph.py | Select-Object -First 25` printed two defects
+  and reported `EXIT=0`. The untruncated run returns **1**. I had been warned
+  about this exact trap in the same prompt that assigned the work, and the reason
+  it still landed is that the truncation was there to keep the output readable,
+  not to check an exit code — **the pipeline-closing side effect is invisible at
+  the point you write it.** Assign the run to a variable, then filter the
+  variable.
+- Reverting a file to `HEAD` to build a positive control **destroyed uncommitted
+  work in a file I had forgotten to back up.** I copied `DraftRecorder.tsx` aside,
+  ran `git checkout HEAD -- <component> <stylesheet>` to take a before
+  measurement, and lost the stylesheet edits. Recovered because they were still
+  in this session's transcript, which is not a recovery mechanism. **Commit
+  before reverting anything to measure against it** — the backup you take is the
+  file you were thinking about, and the one you lose is the other one.
+
+**Could not verify:**
+
+- **That the four things the panel now teaches are the four a first-time reader
+  actually needs.** They are the coordinator's list, and the coordinator watched
+  the owner use the screen; I did not. Nobody has put this copy in front of the
+  owner, and no test can tell prose that teaches from prose that is merely
+  present. The counts below prove the elements exist and say nothing about
+  whether they land. **Reasoned.**
+- **That it is legible inside a 30-second pick.** The five-second rule in
+  `.github/agents/frontend.md` is a claim about a human under time pressure and
+  every number here is a rendered dimension. `rehearsal-harness` is the item that
+  would measure it and it is pending behind ten others. **Reasoned.**
+- **That the expanded disclosure does not run past the fold on the owner's own
+  laptop.** At 1440×900 with the page scrolled to the top, the auction panel is
+  755px starting at 341px, so its last point sits below the fold; scrolling pins
+  the sticky panel and it fits at 771px of 900. The form is on screen throughout,
+  in both states. I do not know the owner's viewport. **Driven at 1440×900,
+  reasoned for anything else.**
+- **That `p(play)`, reliability grades and shutdown risk belong on this panel.**
+  `.github/agents/frontend.md` says availability belongs *wherever a player is
+  displayed*, and this panel displays players and shows none of it. That is not
+  an oversight and not something this unit could fix: the API publishes no
+  availability at all, and adding a placeholder would be the recommendation this
+  screen exists not to make. **Driven** that the field does not exist upstream;
+  **reasoned** that a recording panel is the right place for it once it does.
+- **That the copy is correct for an ordered draft that has a budget.** Both
+  claims about the missing price field are conditioned on
+  `state.format.auction_budget === null` and fall back to a shorter sentence
+  otherwise, but the seeded corpus has no such draft and I did not synthesise
+  one. The conditional is exercised by neither test. **Reasoned.**
+- **That the backend, userscript and migration suites still pass.** The diff is
+  three files, all under `frontend/`, and I ran the frontend gate only — lint,
+  typecheck, 263 tests, build, all green, matching the four steps in
+  `.github/workflows/ci.yml`. The other jobs are untouched by construction rather
+  than by observation. **Driven** on the frontend, **reasoned** on the rest.
+- **That no other panel in this app has the same asymmetry.** The finding is that
+  explanation accumulates where it is pleasant to write, which is a property of
+  every screen, not this one. I checked the draft board and stopped. The schedule
+  grid, projections table and stock watch were not looked at. **Reasoned.**
+
+**Next:** `bridge` owns the matching problem one surface over. When
+`overlay-draft-panel` and `overlay-auction-panel` land, the overlay will need its
+own answer to *what is this and what does it do to my roster*, and
+`surface-parity-tests` will not catch a missing explanation — it compares
+decisions, not prose. `architect` may want to look at whether `draft-tracker`
+should be split, since the graph currently has no legal place to record a
+completed fix to a shipped half of it.
