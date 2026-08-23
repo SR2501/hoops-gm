@@ -356,6 +356,25 @@ def read_only_engine(path: str | Path) -> Engine:
     reproducible, meaningless zero — a false zero manufactured by the very
     check written to settle the question. Assert on the filesystem first, and
     assert it there rather than inferring from the absence of an error.
+
+    **Two independent barriers, and an earlier version of this docstring
+    overstated the first one's role.** It said create-on-connect "applies to
+    this path identically", which is false: line 367 builds a ``mode=ro`` URI,
+    and a read-only connection *refuses* a missing file rather than creating
+    it — driven, not reasoned (``sqlite3.OperationalError: unable to open
+    database file``, and no file appears). So the explicit ``is_file`` check is
+    belt-and-braces rather than the only thing standing between this module and
+    a meaningless zero.
+
+    It is kept, for two reasons that survive the correction. It raises
+    ``FileNotFoundError`` naming the path and *why* the zero would have been
+    meaningless, where the driver raises a bare "unable to open database file"
+    that reads like a permissions problem. And it does not depend on the URI
+    staying ``mode=ro``: a future caller wanting read-write access would delete
+    that flag and silently inherit create-on-connect, with this guard the only
+    remaining refusal. See
+    ``test_mode_ro_is_a_second_independent_barrier``, which pins the
+    belt-and-braces claim so the docstring cannot drift back.
     """
     resolved = Path(path)
     if not resolved.is_file():

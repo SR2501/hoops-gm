@@ -19999,3 +19999,55 @@ stop meaning what the lane that wrote them said. Reported instead.
 (short-lead), but no report filed between 00:00 and the first tip-off on
 2025-12-22 - the one window where an off-by-one in either direction is
 invisible in aggregate. **Reasoned.**
+
+### Correction to my own merged claim: `mode=ro` refuses, so the escaped site was never an exposure
+
+My `fa705b5` addendum says, of `read_only_engine`: *"SQLite's create-on-connect
+applies to my path identically - `sqlite3.connect` on a mistyped path creates an
+empty database just as `Database.from_settings` does."*
+
+**That is false, and the probe-traps lane caught it before I did.** Driven:
+
+```
+plain connect on a missing path   -> file created:  True
+mode=ro connect on a missing path -> OperationalError: unable to open database file
+                                     file created:  False
+```
+
+Line 367 builds `file:...?mode=ro`, so a read-only connection **refuses** a
+missing file rather than creating one. The explicit `is_file` check is
+**belt-and-braces, not the only barrier**, and the escaped census site is
+**unclassified rather than unguarded** - a latent hole, not an exposure. Their
+framing is right and mine overstated it.
+
+**The guard is kept, for two reasons that survive the correction**, and they are
+different from the reason originally given. It raises `FileNotFoundError` naming
+the path and *why* a zero there would be meaningless, where the driver raises a
+bare "unable to open database file" that reads like a permissions fault. And it
+does not depend on the URI staying `mode=ro`: a future caller wanting
+read-write access deletes that flag and silently inherits create-on-connect,
+with this guard the only remaining refusal. Both are now pinned by
+`test_mode_ro_is_a_second_independent_barrier` and
+`test_the_guard_reports_why_rather_than_how`, so the docstring cannot drift back
+to the stronger claim.
+
+**This is the fourth instance in one day of a real result carried by a
+conclusion slightly stronger than its evidence, and it is mine.** The other
+three were caught by someone whose expectation was violated. **Mine was caught
+by someone auditing a claim that agreed with what everyone already believed** -
+the create-on-connect hazard is real, is documented in this repository, and had
+just been demonstrated by another lane, so "it applies here too" read as
+obviously true and nobody had cause to check it. I did not check it either, and
+I wrote it.
+
+That is the same failure I described in the entry above - *the check that only
+gets run when the answer is surprising* - arriving from the other direction, in
+the very entry that named it. **I named the mechanism and was standing in it.**
+The general form is worth more than either instance: **inheriting a real hazard
+into a new context is an unexamined inheritance even when the hazard is real,
+because what goes unchecked is not the hazard but its applicability.**
+
+**Could not verify.** Whether any *other* `mode=ro` claim in this module's prose
+has the same defect. I drove this one and re-read the docstring it came from; I
+did not re-audit every mechanism sentence I wrote today against an experiment.
+**Reasoned**, and the honest expectation is that at least one more is soft.
