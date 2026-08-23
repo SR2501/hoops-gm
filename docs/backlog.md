@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**48 done - 1 blocked - 86 pending - 135 total**
+**49 done - 1 blocked - 85 pending - 135 total**
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers. **The count above is no longer restated anywhere in this file**, and
@@ -1770,7 +1770,7 @@ Run the bounded, resumable `injury-report-historical-backfill` operator tool at 
 **2026-08-21, `quant`: this cohort is representative but not large enough to activate the model it was built for, and the shortfall is arithmetic rather than a review finding.** `injury-status-conversion`'s activation rule needs at least 30 held-out **direct outcomes** for every status; whole-cohort canonical `doubtful` is **21** and `probable` is **59**, direct outcomes are a subset of canonical observations, and a chronological holdout is a subset of the cohort, so no split can reach the floor. That does not retract this item - it delivered the representative cohort it was scoped to deliver, and the floor is a downstream requirement nobody had checked against it. It does mean **a re-run of the same four weeks buys a model that cannot activate.** Widening is an owner decision on live-source spend and is not taken here. Two requirements for whoever runs it: the window must be wide enough that every status clears the floor inside the declared holdout (a planning figure of roughly 4.5x the current width follows from v1's 32% holdout share, but it is an estimate and probably an underestimate, since December reporting is not April reporting and late-season shutdowns inflate `out` without inflating `doubtful` - the gate is the measured count, never the multiplier); and the manifest must publish **per-status direct-outcome counts by game date, plus exclusion classes by status**, so any chronological split is checkable before unblinding. That disclosure is deliberately partition-agnostic - publishing counts by a declared partition would write an availability-layer parameter into an observations-layer artifact, a backward flow under ADR-008 - and it carries one invariant: **the pre-unblind disclosure surface adds no outcome-keyed field at any granularity, in any manifest version**, beyond the single whole-cohort `participation_outcome_counts` already present. A granularity rule ("outcome counts stay whole-cohort") was tried first and rejected by both reviewers as necessary but not sufficient: git makes cross-manifest differencing free, and widening the same window produces cohort B superset of cohort A with both committed, so the added dates' outcome marginal falls out by subtraction. `data-engineer` owns a contract test pinning the outcome-keyed field set to a frozen allow-list.
 ### `injury-status-conversion` - Modelling injury status conversion rates
 
-- [ ] **pending** - Protocol frozen 2026-08-21 at `docs/models/injury-status-conversion-preregistration.md`; **no model is fitted and no number is emitted.** Two findings block the fit, both re-derived from the committed cohort manifest rather than from prose. **(1)** The manifest publishes canonical `status_counts` and joined `participation_outcome_counts` as two separate marginals with **no status x outcome contingency**, so no conversion rate is fittable from anything on `main`. (Row-level data for the *invalidated* v1 cohort is reachable on the local-only branch `sr2501-injury-status-conversion`, which is why the freeze carries a contamination disclosure; it is superseded and non-consumable, and the **corrected** cohort has no row-level artifact anywhere.) The corrected row-level outcomes live only in the gitignored database and raw store, which the coordinator searched for across nine worktrees plus the owner's main checkout: the one real database holds **0 rows** in both `player_participation` and `player_game_logs`. **(2)** More decisively, the activation rule requires at least 30 held-out direct outcomes for every status, and whole-cohort `doubtful` is **21**. Direct outcomes are a subset of canonical observations and a chronological holdout is a subset of the cohort, so **21 < 30 unconditionally** - activation fails on arithmetic before any outcome is examined, and `probable` at 59 would need the holdout to hold more than half the `probable` observations. **The `2025-12-08..2026-01-04` cohort can therefore never activate this model**, so regenerating it as-is would spend a full live archive sweep on a guaranteed veto. The freeze turns this into a pre-unblind admissibility gate: per-status direct-outcome counts are inputs rather than outcome values, so a cohort that cannot activate is refused *before* an unblind is spent. Resuming needs a widened cohort - see `injury-conversion-cohort-population`.
+- [ ] **pending** - Protocol frozen 2026-08-21 at `docs/models/injury-status-conversion-preregistration.md`; **no model is fitted and no number is emitted.** Two findings block the fit, both re-derived from the committed cohort manifest rather than from prose. **(1)** The manifest publishes canonical `status_counts` and joined `participation_outcome_counts` as two separate marginals with **no status x outcome contingency**, so no conversion rate is fittable from anything on `main`. (Row-level data for the *invalidated* v1 cohort is reachable on the local-only branch `sr2501-injury-status-conversion`, which is why the freeze carries a contamination disclosure; it is superseded and non-consumable, and the **corrected** cohort has no row-level artifact anywhere.) The corrected row-level outcomes live only in the gitignored database and raw store, which the coordinator searched for across nine worktrees plus the owner's main checkout: the one real database holds **0 rows** in both `player_participation` and `player_game_logs`. **CORRECTED 2026-08-22: that search was exhaustive over the wrong domain and its conclusion is false.** The participation ledger is populated - 43,037 rows over 596 players across 1,227 of 1,230 games - at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, which sits *outside every checkout* and so was in none of the ten places searched. The 0-row reading was a true statement about `C:\Users\steverones\hoops-gm\hoops_gm.db`, a different file with the same basename, because `backend/src/hoops_gm/core/config.py:94` anchors the default relative SQLite path to each checkout's own root. See `participation-ledger-population` and `docs/adapters/participation-ledger-store.md`. **This changes what is reachable, and changes nothing about whether this item can proceed:** finding (2) below is arithmetic on the committed cohort manifest and is untouched by where the rows live. Whether a status x outcome contingency is now derivable is a separate question that has not been driven, and is `quant`'s to answer under the frozen protocol rather than something to assume from a row count. **(2)** More decisively, the activation rule requires at least 30 held-out direct outcomes for every status, and whole-cohort `doubtful` is **21**. Direct outcomes are a subset of canonical observations and a chronological holdout is a subset of the cohort, so **21 < 30 unconditionally** - activation fails on arithmetic before any outcome is examined, and `probable` at 59 would need the holdout to hold more than half the `probable` observations. **The `2025-12-08..2026-01-04` cohort can therefore never activate this model**, so regenerating it as-is would spend a full live archive sweep on a guaranteed veto. The freeze turns this into a pre-unblind admissibility gate: per-status direct-outcome counts are inputs rather than outcome values, so a cohort that cannot activate is refused *before* an unblind is spent. Resuming needs a widened cohort - see `injury-conversion-cohort-population`.
 - **Depends on:** `injury-report-ingest`, `injury-report-historical-backfill`, `injury-conversion-cohort-population`, `participation-ledger`
 
 Empirical conversion of report status to actual play rate, segmented by team, player and game context. QUESTIONABLE is not a coin flip and varies meaningfully by source - this rate is itself a modelled quantity.
@@ -1889,7 +1889,40 @@ DEPRIORITISED - league confirmed auction on 2026-08-17. Snake is retained for mu
 
 ### `participation-ledger-population` - Populating the participation ledger at season scale
 
-- [ ] **pending**
+- [x] **done** - Driven 2026-08-22 and **the count is inseparable from its
+  store**, because that separation is what made this item's status disputed
+  within `main` itself. The ledger holds **43,037 participation rows over 596
+  players across 1,227 of 1,230 final games** (164 game dates, 26,651 box
+  scores, schema `0016`) at
+  `C:\Users\steverones\hoops-gm-data\hoops_gm.db`. Committed census:
+  `docs/adapters/participation-ledger-2025-26-coverage.json`; narrative and
+  rebuild recipe: `docs/adapters/participation-ledger-store.md`.
+  **Both prior reports were correct.** A handoff entry reporting the ledger
+  populated and this file's `injury-status-conversion` entry reporting "the one
+  real database holds **0 rows**" had queried two different SQLite files that
+  share the basename `hoops_gm.db`:
+  `backend/src/hoops_gm/core/config.py:94` anchors the default relative SQLite
+  path to `REPO_ROOT`, so every worktree resolves the identical
+  `sqlite:///./hoops_gm.db` to a **different, separately-empty file**. The
+  coordinator's search across nine worktrees plus the main checkout could not
+  have found the real store, which sits *outside every checkout* so that
+  `git worktree remove` cannot destroy hours of throttled fetching. **Exhaustive
+  over the wrong domain** - and a verified absence is a statement about the
+  places you looked, not about the world.
+  The gaps are the three 2025-11-19 games `0022500259`/`0022500260`/`0022500261`,
+  which carry no `boxScoreSummary` body at source while neighbouring
+  `0022500258` does; under R35 they contribute no rows and nothing is inferred
+  from their silence. Coverage is **measured, not assumed**: absences are 16,447
+  explicit rows (`inactive` 10,937, `did_not_play` 4,426, `did_not_dress` 1,007,
+  `not_with_team` 77) rather than missing ones, and `inactive_list_available` is
+  true for all 43,037, so no row stands in silently for an endpoint that stopped
+  reporting. The tip-off contamination proxy was re-derived independently at
+  **1,227 == 1,227, clean**.
+  The repair for the underlying defect is `hoops_gm.availability.coverage`:
+  `LedgerCoverage` holds the counts and the `StoreIdentity` as fields of one
+  frozen record, so **there is no public path to a count in that module without
+  the path it was read from**, and an unmigrated store is reported by name
+  rather than as a bare `no such table` traceback.
 - **Depends on:** `participation-ledger`, `nba-stats-ingest`
 
 **The critical path of the entire auction chain, and until this item existed the

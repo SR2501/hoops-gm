@@ -1,4 +1,11 @@
-"""Availability and teammate-absence evidence."""
+"""Availability and teammate-absence evidence.
+
+``hoops_gm.availability.coverage`` is deliberately **not** re-exported here. It
+is an operator tool with a ``main()``, and importing it into the package
+namespace makes ``python -m hoops_gm.availability.coverage`` emit a runpy
+double-import ``RuntimeWarning`` on every run. Same reason
+``hoops_gm.ingest.__init__`` omits ``backfill``. Import it by full path.
+"""
 
 from hoops_gm.availability.absence_splits import (
     ABSENCE_SPLIT_EVIDENCE_VERSION,

@@ -18176,3 +18176,222 @@ own answer to *what is this and what does it do to my roster*, and
 decisions, not prose. `architect` may want to look at whether `draft-tracker`
 should be split, since the graph currently has no legal place to record a
 completed fix to a shipped half of it.
+## 2026-08-22 - `data-engineer` / `participation-ledger-population`: both reports were true, and neither named its store
+
+**Two claims about `player_participation` sat on `main` simultaneously and both
+were correct.** A handoff entry reported the ledger populated at roughly 43,037
+rows; the `injury-status-conversion` backlog entry reported that a coordinator
+had searched nine worktrees plus the owner's main checkout and found **0 rows**.
+`docs/backlog.md` still marked the item `pending`. I was asked for the truth,
+driven, and it is this:
+
+| Store | `player_participation` | `player_game_logs` |
+|---|---|---|
+| `C:\Users\steverones\hoops-gm-data\hoops_gm.db` | **43,037** | 26,651 |
+| `C:\Users\steverones\hoops-gm\hoops_gm.db` (main checkout) | **0** | 0 |
+| `C:\Users\steverones\hoops-gm-data\throwaway-report-sweep.db` | 0 | 26,651 |
+| 16 other `.db` files across all worktrees | 0 | 0 |
+| PostgreSQL @ 55432 (3 databases) | no ledger data | — |
+
+They are **two different files sharing the basename `hoops_gm.db`**.
+`backend/src/hoops_gm/core/config.py:94` anchors a relative SQLite path to
+`REPO_ROOT`, which is *each checkout's own root*, so the identical
+`sqlite:///./hoops_gm.db` resolves to a different, separately-empty file in
+every worktree. The populated store sits **outside every checkout** so that
+`git worktree remove` cannot destroy hours of throttled fetching — and was
+therefore in none of the ten places searched. **The search was exhaustive over
+the wrong domain**, which is the failure a confident `0` is worst at revealing.
+
+**A verified absence is a statement about the places you looked.** That is the
+transferable half. The other half is narrower and worse: *neither report named
+the path it read*, so neither could be checked, and reconciling them required
+re-deriving both from scratch. The counts were not wrong. They were unfalsifiable.
+
+### What I built, and why it is shaped this way
+
+`hoops_gm.availability.coverage`. `LedgerCoverage` holds the counts **and** the
+`StoreIdentity` as fields of one frozen record, produced by one function that
+takes the store from the session's own bind rather than from a caller-supplied
+label. There is no public path in that module to a count without the path it
+came from — the specific mistake is made inexpressible rather than discouraged.
+Passwords are hidden in the rendered URL, so the output is safe to paste into a
+handoff entry, which is where numbers like these end up.
+
+Exit codes: `0` populated, `1` reachable but empty, `2` no participation schema.
+That third case is the one an operator actually meets first — a fresh worktree —
+and it previously died with a bare `no such table: nba_games` traceback naming
+nothing. It now names the store and says what to do.
+
+**Measured coverage** (`docs/adapters/participation-ledger-2025-26-coverage.json`,
+regenerable by the committed path): 43,037 rows, 596 players, **1,227 of 1,230**
+final games, 164 dates, 26,651 box scores, schema `0016`. Absences are **16,447
+explicit rows**, not missing ones — the "did not play" versus "no observation"
+distinction the item required. `inactive_list_available` is true for all 43,037,
+so no row silently stands in for an endpoint that stopped reporting.
+
+The gaps are `0022500259`/`0022500260`/`0022500261`, all 2025-11-19, all
+carrying no `boxScoreSummary` body at source while neighbouring `0022500258`
+does. My tool found them independently before I read the store's own README, and
+they agree exactly. The tool **lists them by date rather than rounding 1,227/1,230
+up to complete**, because a gap a report does not name is a gap nobody chases.
+
+### The knowledge existed and was unreachable, which is a different defect
+
+`hoops-gm-data\README.md` is excellent and documents all of this — the two
+databases, the contamination proxy, the rebuild recipe, the three-game gap. It
+lives **only in that un-versioned directory**, reachable exclusively by someone
+who already knew where to look. So the house rule "nothing important lives only
+in a chat" had a hole in it the same shape: nothing important should live only
+in an un-versioned directory either. Its content is now on the repository side
+at `docs/adapters/participation-ledger-store.md`, which is what the split always
+intended — *the repository holds the evidence about the data, never the data*.
+
+I re-derived its claims rather than copying them. The contamination proxy
+(`games with tipoff_utc == games with participation`) is **1,227 == 1,227,
+clean**, driven.
+
+### The suite caught two ADR-001 violations I introduced, and it was right
+
+`test_no_raw_driver_sql_in_the_package` and
+`test_no_module_outside_engine_construction_branches_on_dialect` both went red
+on my first full run. I had used `exec_driver_sql` for the `alembic_version`
+read, and named a field `sqlite_path`, which matches `_DIALECT_BRANCH_PATTERN`.
+
+**The tempting fix was to add my module to `_DIALECT_AWARE_MODULES` and rename a
+variable to dodge a regex.** Both would have been real erosions dressed as
+tidying. Instead the dialect knowledge moved to where ADR-001 says it belongs —
+`render_store_url` now lives in `db/session.py`, already the sanctioned
+dialect-aware module — and the caller receives a dialect-neutral
+`(safe_url, local_path)` pair without ever asking which database it is talking
+to. The raw SQL became a Core `Table` select. **The variable rename was a
+consequence of the correct fix, not a substitute for it.**
+
+Also: exporting the module from `availability/__init__.py` made
+`python -m hoops_gm.availability.coverage` emit a runpy double-import
+`RuntimeWarning` on every run. `ingest/__init__.py` omits `backfill` for exactly
+this reason; I followed the existing convention rather than inventing one, and
+wrote the reason into the docstring so the next person does not re-add it.
+
+### Gates
+
+Code gate green as CI runs it: `ruff check` 0, `ruff format --check` 0, `mypy`
+strict 0 (175 files), `check_no_secrets.py` 0 over 391 tracked files (re-run
+**after** staging, since it scans tracked files and would otherwise not have
+seen any of mine), `backlog_graph.py` 0 defects. Backlog header recounted from
+the finished file to **49/1/85/135**; slug set diffed against my own merge base
+at `060be6b` — 135 both sides, zero added, zero dropped, as expected for a
+status flip.
+
+No Adapter gate work: I called no external source. **No Model gate work, and
+deliberately no number a decision rests on** — everything here is a descriptive
+count of rows that exist. `p(play)` and anything fitted remain `quant`'s.
+
+I also corrected finding **(1)** of the `injury-status-conversion` entry, which
+asserted the 0-row reading as fact. Its status is untouched and finding **(2)**
+— whole-cohort `doubtful` at 21 against a floor of 30 — is arithmetic on the
+committed manifest and is unaffected by where the rows live. I did not
+regenerate the cohort and did not go near the fit.
+
+**Could not verify:**
+
+- **That `hoops-gm-data` is the only populated store on this machine.** I swept
+  the whole user profile for `*.db`/`*.sqlite`/`*.sqlite3` and queried every
+  non-cache hit, plus all five PostgreSQL databases. That is a statement about
+  **this machine, under this user, for those three extensions** — a store on
+  another volume, under another account, or with an unusual suffix would not
+  have appeared. This is the same class of claim whose over-reading caused the
+  contradiction, so I am stating its domain rather than its conclusion.
+  **Driven, within a named domain.**
+- **That the ledger's contents are correct, as opposed to present.** I verified
+  row counts, coverage, outcome and reason distributions, and that absences are
+  explicit rows. I did **not** verify that any individual player's participation
+  matches what actually happened in that game. A populated ledger that is
+  systematically wrong would pass every check in this entry. **Not attempted.**
+- **That the rebuild recipe in `participation-ledger-store.md` actually
+  reproduces the store.** It is transcribed from the store's README and matches
+  the CLI surface of `ingest/backfill.py`, which I read. I did not execute it —
+  doing so would have re-run a season-scale ingest against a live source at the
+  one moment the fetch budget matters most. **Reasoned, and the highest-value
+  thing left unproven here.**
+- **Whether a status x outcome contingency is now derivable for
+  `injury-status-conversion`.** The row-level outcomes are reachable and 69,922
+  `injury_report_entries` exist in a *third* store, but joining them is `quant`'s
+  work under the frozen protocol and I deliberately did not attempt it. That the
+  rows exist does not mean the contingency does. **Not attempted, by design.**
+- **That the three unobserved games are permanently absent rather than
+  transiently so.** I confirmed they are absent from our store and that the
+  store's README records them as reproducible at source; I did not re-fetch
+  them tonight. **Reasoned.**
+- **That no other repository prose asserts a row count without naming its
+  store.** This entry fixes the two instances I was pointed at. I did not sweep
+  for the pattern, and the sweep is not obviously mechanisable — a number beside
+  a path is fine, a number alone may be quoting one. **Reasoned.**
+
+### Follow-up, same unit: the fix contained the defect it was fixing
+
+Reviewing against the coordinator's constraint that reachability be *explicit
+and refusable rather than implicit*, I found the trap **inside my own tool**.
+
+SQLite creates a database on connect rather than refusing. So
+`DATABASE_URL` pointing at a mistyped path produced a brand-new empty file, and
+the coverage report then answered "is the ledger populated" with an honest,
+reproducible, meaningless **no** — a *fresh* false zero, manufactured by the
+very check written to settle one. I had already seen the symptom without reading
+it: an earlier run left a stray `hoops_gm.db` in this worktree root that I
+deleted as untidiness rather than recognising as evidence.
+
+`missing_local_store` in `db/session.py` now refuses before an engine is built,
+naming the absent path and declining to create it. Driven both ways: a typo'd
+path exits 2 and leaves **no file** behind (asserted on the filesystem, not
+inferred from the message), and the real store still exits 0 with 43,037.
+
+The dialect knowledge stayed in `session.py` for the same ADR-001 reason as
+`render_store_url`, and the test asserts the *absence of the created file*
+rather than only the returned value — a check that merely confirmed the return
+value would pass identically whether or not the file had been created.
+
+**This is the third distinct thing in one unit that took the same shape**: a
+check whose scope, not whose logic, was wrong. The worktree sweep looked in ten
+correct places and the store was in an eleventh. My schema check asserted table
+presence but not file presence. Both reported accurately and both misled.
+`Select-Object -First` zeroing `$LASTEXITCODE` bit me once more here too, briefly
+showing the real store exiting 2 when it exits 0.
+
+### Three stores, three disjoint slices
+
+Recorded as an observation, not acted on:
+
+| Store | participation | box scores | injury reports | schedule |
+|---|---|---|---|---|
+| `hoops-gm-data\hoops_gm.db` | 43,037 | 26,651 | 0 | 0 |
+| `hoops-gm-data\throwaway-report-sweep.db` | 0 | 26,651 | 69,922 | 2,460 |
+| main checkout `hoops_gm.db` | 0 | 0 | 0 | 0 |
+
+**No single store holds both participation outcomes and injury-report
+statuses**, so any status-to-outcome question needs a deliberate cross-store
+join between two databases whose tip-offs come from deliberately *independent*
+sources — which is the contamination `hoops-gm-data\README.md` exists to warn
+about. That is a Model-gate decision and it is `quant`'s, so I have written it
+down to be **requested rather than discovered**. I did not attempt it.
+
+### On the earlier sweep entry
+
+Left standing and unedited, deliberately. It was an **accurate report of what
+was actually run**, and its conclusion was false only because the domain
+excluded a sibling directory. Rewriting it into having been wrong would destroy
+the more useful record — that a complete, correctly-executed enumeration can
+still answer the wrong question. `docs/backlog.md` asserts the present and so
+was corrected in place; this file records the past and so is only appended to.
+
+**Could not verify (follow-up):**
+
+- **That no other read-only tool in this repository creates the store it
+  inspects.** I fixed mine. `Database.from_settings` is used widely and SQLite's
+  create-on-connect applies to every one of those call sites; most are writers,
+  for which it is correct behaviour. I did not audit which are readers.
+  **Reasoned, and a real remaining exposure.**
+- **That `missing_local_store` is right for a server-backed URL.** It returns
+  `None` for anything that is not a local file, on the argument that a server's
+  own connection error is already loud. That is a design choice I have driven
+  only for SQLite and in-memory; no Postgres store was pointed at a nonexistent
+  database to see what the failure actually looks like. **Reasoned.**

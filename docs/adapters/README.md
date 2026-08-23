@@ -20,6 +20,19 @@ is down or returns garbage.
 | Published auction values (seed AAV) | [published-auction-values.md](published-auction-values.md) | Working, manual download (no network) |
 | `cdn.nba.com` live feeds | — | **Blocked** from this network (R26); Phase 6 |
 
+## Where the ingested data actually lives
+
+The ledgers those adapters populate are **not** in this repository and **not** in
+any worktree — see
+[participation-ledger-store.md](participation-ledger-store.md), which names the
+store, records its measured coverage, and explains why a search across nine
+worktrees plus the main checkout returned a confident and misleading `0` on
+2026-08-22.
+
+The rule that page exists to enforce: **a row count without the path it came
+from is not evidence.** `python -m hoops_gm.availability.coverage` prints the
+two together and cannot print one without the other.
+
 ## The two halves of the gate do different jobs
 
 A **contract test** runs offline against a committed fixture. It catches *our*
