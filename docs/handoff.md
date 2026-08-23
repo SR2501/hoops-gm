@@ -18524,3 +18524,255 @@ directory instead of fighting it.
 - **That the leak scan's benign classes stay benign.** A cohort size coinciding with a paid maximum
   was benign twice (n=232, n=244). A third coincidence would still need adjudicating by hand, and
   the failure mode is a reader who has learned the hits are noise. **Named, not fixed.**
+---
+
+## 2026-08-23 — `frontend` — the harness was a procedure, and the trap I documented bit the branch nobody runs twice
+
+**Changed:** `scripts/browser_probe.mjs` added. No product code, no test change,
+no doc change other than this entry.
+
+**Why it exists.** Asked what this session held that `main` did not, I checked
+instead of answering from memory, and the honest answer was two things. `git
+ls-files | grep -E 'cdp|headless|probe'` returned **nothing**: the CDP driver
+that found the recording-panel defect lived only in session scratch, so
+archiving the session would have destroyed it. And the *positive control* — the
+six new tests run against a reverted component, 5 failed / 1 passed, the one
+pass being correct because the log was never broken — appears in `main` only as
+the **trap it caused** (the revert destroying an un-backed-up file), never as
+the **method**. The `5 of 6` that greps in `docs/handoff.md` today is the
+schedule lane's, about `MATCHUP` parsing, and unrelated.
+
+This is `scripts/mutate_aav.py` again, one lane later: *"is it committed or is
+it a procedure you ran"* — **a procedure.** The `aav-source` lane recorded that
+shape four days ago and I reproduced it without recognising it, which is worth
+saying plainly, because I had read that entry.
+
+**The control is an exit code, not a comment.** `--differs-from <file>` re-reads
+a saved measurement and **exits 1 if the new reading is identical**. That
+encodes *a measurement that cannot fail is worth nothing* somewhere it cannot be
+skimmed past: a probe that reads the same on both states is evidence about
+neither, and this refuses to let that look like a pass. It deliberately does not
+check *which way* the reading moved — that is the probe author's claim, and a
+harness scoring direction would be asserting it knew what "fixed" looks like.
+
+Both directions of the control were driven against its own behaviour: identical
+state → `exit 1` with the refusal printed; genuinely different state (the snake
+board against the auction board) → `exit 0`, `control passed`.
+
+**And then the trap already written in its own header bit it.** Environment fact
+4 in that file says `PUT /json/close/<id>` returns the plain string `Target is
+closing`, which throws on parse *after* the measurement has printed, surfacing
+on Windows as a libuv assertion and exit code `-1073740791`. That was written,
+in that file, when the first `--differs-from` refusal printed its message
+correctly and returned **`-1073740791` instead of `1`** — the same assertion,
+different cause: `process.exit()` called while the CDP socket handle was still
+closing.
+
+Two things about *where* it landed, which is the part worth carrying:
+
+- **It was the failure path.** The success path had been run four times and was
+  clean. The branch that reports a refusal is the branch nobody runs twice, and
+  it is precisely the branch a caller keying on the exit code most needs to be
+  right. **A control whose refusal returns a garbage exit code is not a control**
+  — it returns neither pass nor fail.
+- **Writing a trap down does not clear it from your own code.** I documented the
+  libuv/exit-code interaction and then shipped a second instance of it, in the
+  same file, below the paragraph describing it. That is the mechanism behind *a
+  known failure mode is a hypothesis, not a diagnosis*, arriving one level more
+  embarrassing: not "I forgot", but "I wrote it down and the writing did not
+  make me look at the other call sites."
+
+Fixed by setting `process.exitCode` and letting the loop drain, never
+`process.exit()` after the socket opens. Re-driven: refusal now returns a clean
+`1`.
+
+**A re-measurement that changes nothing is not a control.** Correcting something
+I reported to the coordinator during the draft-board unit and had not examined
+closely enough. I had recorded that reading the DOM synchronously after a click
+returns the pre-render state, and that I "re-measured with a delay" to get the
+right answer. **The re-measurement was not a control.** It clicked a mode that
+was *already active*, so no state changed, both reads agreed, and the agreement
+was mistaken for evidence that the synchronous read was safe. That is the same
+non-falsifiable reading the rule at the top of the harness forbids, wearing the
+costume of diligence.
+
+Driven properly this time, with a transition that genuinely removes an element —
+`Sale` → `Bid` drops the player field:
+
+```
+playerFieldBeforeClick:                 true
+playerFieldReadSynchronouslyAfterClick: true      <- stale
+playerFieldAfterRender:                 false
+raceReproduced:                         true
+```
+
+The claim survives. **The evidence I originally had for it did not**, and the
+two are different things.
+
+**The substring trap, recorded reproducibly** rather than as a sentence in a
+report: checking whether the seats panel "mentioned" a nominated player returns
+**true**, because the panel prints the nominee's name against the high bidder as
+the live-bid caveat — textually identical to a holding, a different quantity.
+`selections_made` separates them (7 → 8 on a sale; unmoved on a nomination and a
+bid); the substring cannot, **in either direction**. The generalisation is
+sharper than the one this project has been circulating: not *assert presence
+rather than absence*, but **a substring cannot distinguish the quantity either
+way, and only a count can.**
+
+**Four idioms that look like diligence and are not**, each driven here:
+
+- `python scripts\backlog_graph.py | Select-Object -First 25` printed two real
+  defects and reported `EXIT=0`; untruncated it returns `1`.
+- `git checkout HEAD -- <files>` to take a before-measurement destroyed
+  uncommitted work in the file I was *not* thinking about. Commit first.
+- `python -m uvicorn hoops_gm.api.main:app` fails; there is an `api/` package,
+  and the ASGI app is a factory at `hoops_gm.app:create_app`. The plausible
+  guess is wrong.
+- `msedge` is not on `PATH`; `where.exe msedge` finds nothing. The binary is at
+  `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+
+The first two share a mechanism the coordinator and I converged on: **the damage
+lands in the concern you are not attending to.** I truncated for readability and
+lost an exit code; I backed up the file I was editing and lost the file I had
+edited earlier. Neither was ignorance.
+
+**Could not verify:**
+
+- **That `browser_probe.mjs` works anywhere but this machine.** Driven only
+  against Edge 151 headless on Windows, Node 24, ports 9362/5174. It assumes a
+  global `WebSocket` (Node ≥22) and it never launches a browser. Chrome should
+  behave identically because the protocol is Chromium's, and I did not run it.
+  **Driven on Edge/Windows, reasoned everywhere else.**
+- **That nothing else in this session died with it.** I checked for a committed
+  CDP driver and for the positive-control method, both of which were genuinely
+  missing, and I swept the numbers — `538px`, `83px`, `755px`, `1440` are all in
+  `main`. I did not re-read every message I sent the coordinator against the
+  merged file. **Driven on the specific items, reasoned on completeness.**
+- **That the control's refusal is the *right* refusal.** `--differs-from`
+  compares serialised JSON byte-for-byte, so a probe returning a timestamp, a
+  request id or any incidental variation will "differ" and pass a control it
+  should have failed. **That is a real hole and I am not closing it**: the fix
+  is a probe that returns only what it is measuring, which is a discipline, not
+  something the harness can check. Named here rather than left for someone to
+  discover as a false green. **Driven** that it compares exactly this way.
+- **That committing this was wanted.** The coordinator asked me to answer four
+  questions and stay idle, and I did more than that. The reasoning is that
+  `scripts/mutate_aav.py` set the precedent explicitly, *prefer reversible* makes
+  an unwanted PR cheaper than a destroyed harness, and archiving is irreversible.
+  If that was the wrong call it is one `gh pr close` away. **A judgement, not a
+  measurement.**
+
+**Next:** nothing blocks on this. `frontend` still holds the open question of
+whether the four things the recording panel teaches are the four a first-time
+reader needs; the owner reading it is the only instrument for that, and no test
+in this repository can substitute. Anyone verifying a screen in a browser should
+read the header of `scripts/browser_probe.mjs` before writing a probe, and
+specifically should not trust a probe they have not shown can fail.
+
+
+---
+
+## 2026-08-23 — `frontend` — CodeQL pointed one line away from a real defect, and the diagnosis everyone reached first was wrong
+
+**Changed:** `scripts/browser_probe.mjs` — the CDP message handler is now total.
+No other file.
+
+**The misdiagnosis is the finding, not the fix.** `CodeQL` failed on #82 in **2
+seconds** while four sibling PRs passed. The coordinator inferred — reasonably —
+that two seconds is too fast to be analysis, that this must be a startup or
+configuration failure, and that the likely cause was `browser_probe.mjs` being
+the first JavaScript outside `frontend/` defeating default-setup autodetection.
+Every step of that reasoning is sound. **The premise was false.**
+
+Read from the API rather than from the reasoning:
+
+```
+Analyze (javascript-typescript)   success   59s
+CodeQL                            failure    2s
+  app:   github-advanced-security
+  title: 1 new alert including 1 high severity security vulnerability
+```
+
+**JavaScript analysis ran for 59 seconds and succeeded.** The 2-second check is
+the *rollup* that posts the alert count, not the analysis. So the duration that
+looked like evidence of a config failure was evidence of nothing — a check that
+reports a result is fast precisely because it is not doing the work.
+
+Worth stating as a class, because the decision framework built on top of it was
+**correct and would have produced a confidently wrong action**: the coordinator
+had already ruled that suppressing was illegitimate, that moving the file was
+legitimate, and that they would *merge it red with the reason recorded* if
+CodeQL simply could not analyse a standalone Node script. That is the right
+policy. Applied to this diagnosis it would have shipped **a real high-severity
+finding described as "a check that cannot analyse a file."** A sound framework
+on a false premise does not fail safe; it launders the false premise into a
+decision nobody re-examines.
+
+**What the alert actually said, and the precise verdict.**
+`js/unvalidated-dynamic-method-call`, high, `browser_probe.mjs:187` —
+`listener(payload.params)`, where `listener` came from
+`oneShot.get(payload.method)` and `payload.method` arrives off the wire.
+
+Neither "CodeQL found a bug" nor "CodeQL was wrong" is the honest summary.
+Driven, both claims in one run:
+
+```
+Map.get('toString')   -> undefined      // the flagged lookup
+({})['toString']      -> function       // what it would be on a plain object
+pending.get(9999).resolve({})
+  -> TypeError: Cannot read properties of undefined (reading 'resolve')
+```
+
+- **The flagged mechanism is not reachable as described.** `oneShot` is a `Map`,
+  so a hostile `payload.method` cannot reach a prototype member; the dispatch
+  only ever finds a resolver this file installed. On a plain object it would
+  have been exactly the reported vulnerability.
+- **The line two above it was a real unguarded dereference.** A reply carrying
+  an `id` never sent — or a duplicate arriving after its entry was deleted —
+  threw. CodeQL did not flag that line.
+
+**So the alert pointed one line away from a genuine defect, and the fix that
+clears it is the fix the adjacent line needed anyway.** That is a third
+category worth naming beside true and false positive: **an alert whose
+mechanism is wrong and whose neighbourhood is right.** Dismissing it on the
+mechanism — which the Map evidence fully justifies — would have left the real
+bug in place, and the dismissal would have been *correct on its own terms*.
+
+**Why this was not a nuisance in a dev script.** An uncaught exception inside a
+WebSocket listener does not reject the promise anyone is awaiting; it surfaces
+as an unhandled error and **replaces the exit code**. This harness's entire
+value is an exit code worth reading, and `--differs-from` refusing is the branch
+a caller keys on. So this is fact 5 from the file's own header — *never let a
+frame you cannot interpret corrupt an exit code* — arriving through a different
+door, in the same file, for the third time in one session. The handler now
+returns a defined outcome for a non-JSON frame, a non-object payload, an unknown
+request id, a missing `method`, and a `method` naming no listener.
+
+Re-driven after the fix, all three: probe returns the same reading (`exit 0`),
+control refuses an identical reading (`exit 1`), control passes on a genuinely
+different state (`exit 0`).
+
+**Could not verify:**
+
+- **That the alert is now clear.** I re-ran the harness, not CodeQL; the fix
+  removes the flagged construct and I have not seen the scan agree. If it still
+  fires, the `typeof listener !== 'function'` guard is the thing to look at
+  first, and my position would then be that the mechanism argument above stands
+  on its own evidence. **Driven on behaviour, unverified on the scanner.**
+- **That no *other* CodeQL alert exists on this branch.** I queried
+  `state=open` for `refs/pull/82/head` and got exactly one. That is a negative
+  about a ref at a moment, which this file already records as the kind of claim
+  that expires — it was true of `d997213`. **Driven, and scoped to that commit.**
+- **That the handler is total against a hostile peer rather than an unexpected
+  one.** Every branch now has a defined outcome for malformed input, but the
+  threat model here is a browser this machine launched, not an attacker. I did
+  not fuzz it. **Reasoned.**
+- **That `2 seconds means config failure` has not already been believed
+  elsewhere.** It is a natural inference and it was wrong here; I have not
+  looked for other places it may have been drawn. **Reasoned.**
+
+**Next:** nothing blocks. If a lane sees a fast-failing `CodeQL` check again,
+read `.output.title` on the check run before reasoning about duration —
+`gh api repos/<owner>/<repo>/commits/<sha>/check-runs` carries it, and
+`gh run view` returns 404 for these because they are check runs under default
+setup rather than Actions runs this repository owns.
