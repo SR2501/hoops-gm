@@ -382,6 +382,58 @@ This is offered as a real cost of having run the experiment, not a
 disclaimer. The experiment was still worth running — but the cost should be
 paid deliberately rather than discovered later.
 
+### Scope of that staffing rule, ruled 2026-08-23 by `architect`
+
+The rule above was read more widely than it is written, so its scope is now
+stated here rather than inferred from it.
+
+**The predicate is not *did you look*. It is *did you acquire a quantity a prior
+could be tuned toward*.**
+
+- **Values exclude:** a mode, a mean, a player-level figure, an extremum of the
+  contested column.
+- **Facts do not:** a concentration, a correlation, a count. There is no number
+  in "2.5 effective levels" for an estimate to be pulled toward.
+
+**The exclusion expires on publication.** Once a quantity is in `main`, every
+lane holds it, and excluding one lane for knowing what the repository tells
+everyone is theatre — *legible* theatre, which is how a guardrail loses the
+authority it needs for the cases that matter.
+
+That limb is not hypothetical here. **This document already publishes a mean of
+the contested column** — the rotation-cohort games figure in the Level table
+above, and the gap against our baseline stated both shrunk and unshrunk. That is
+a value by the test above, it has been in `main` since 2026-08-22, and it is
+therefore held by every lane rather than by its author. An exclusion keyed on it
+would exclude everyone or no one.
+
+**Two readings are withdrawn**, both `architect`'s: that the rule binds everyone
+who has measured any input the availability model consumes — applied across
+lanes without citing the sentence it came from — and an accompanying "three lanes
+are now excluded" count, asserted without the three ever being enumerated. **No
+artefact in this repository records who has read which column**, so the true
+number was unavailable to the person asserting it and remains unavailable now.
+
+Why the wide reading was wrong in direction and not merely in size: it made the
+cheapest route to staying eligible for the most important model in the project
+**measuring less**. A rule whose incentive is to look away is worse than no rule,
+because it is obeyed.
+
+**A narrower recusal, kept voluntarily and not required by the above.** The
+author of this document should not be the one who chooses the availability
+model's shrinkage *target*, having read this column's distribution twice and
+being unable to demonstrate what has been forgotten. That is a caution about one
+parameter, not a disqualification from the model, and it is recorded as the
+author's own rather than as the rule's consequence — a self-recusal presented as
+a requirement is how a rule silently widens again.
+
+What survives unchanged is the class, which is the durable half and is not about
+staffing at all: **a guarantee enforced by what code can see, destroyed by what a
+person has seen, and no diff shows it.** The gate that would catch a forbidden
+query cannot catch a memory. That asymmetry is why the rule exists, and it is
+why a narrow rule that is actually enforced beats a wide one re-derived from
+recollection at each invocation — which is how the wide reading arose.
+
 ---
 
 ## Addendum, 2026-08-23 — a citation was challenged, and the challenge was wrong in an instructive direction
