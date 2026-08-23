@@ -19099,3 +19099,221 @@ gap.
   the output is a throwaway by construction and the seed prints the URL it used
   — where for a *reader* the same behaviour yields an honest, reproducible,
   meaningless zero. That is a judgement, not a measurement. **Reasoned.**
+## 2026-08-23 - `data-engineer`: auditing the store-creating readers, and correcting my own claim from yesterday
+
+Follow-up to the participation-ledger unit, which ended by flagging that I had
+fixed create-on-connect in *my* tool without checking the others. Driving the
+audit produced two things: an inventory, and **the discovery that the reason I
+gave yesterday for the fix was wrong.**
+
+### The correction first, because everything else depends on it
+
+Yesterday I wrote, and the coordinator quoted back approvingly, that SQLite's
+create-on-connect **"manufactures a false zero"**. I drove it today. It does not.
+
+Pointed at an absent path, a reporting command creates an *unmigrated* file and
+then dies on `no such table`. That is litter plus a misdiagnosis — the error
+blames the schema when the fault is the path — but it is **loud**, and nobody
+reads a traceback as a result.
+
+**The real false-zero vector is a store that is migrated and empty.** Driven:
+`alembic upgrade head` into a fresh file, then
+`injury_report.backfill observations 2025-26` prints `games in scope: 0`,
+`observed: 0` and exits **0**. Indistinguishable from a real answer by exit
+code, and **no path anywhere in the output**. That is exactly what the main
+checkout's `hoops_gm.db` was — schema `0003`, tables present, zero rows — when
+it reported 0 against a real ledger of 43,037.
+
+So the original contradiction was never about file creation at all. I reached
+for the most serious-sounding mechanism rather than the one I could evidence,
+which is the *rhetorical convenience* failure `AGENTS.md` names, and it survived
+a coordinator review because it sounded right. **What actually closes the false
+zero is naming the store beside the count** — which is what `coverage.py` does,
+and which I had already built for the correct reason before explaining it with
+the wrong one.
+
+`absent_store_refusal` stays, on the narrower evidenced ground: an accurate
+message naming the file, and no stray databases. That is worth having. It is
+not a false-zero fix and no longer claims to be.
+
+### The inventory
+
+11 `Database.from_settings` call sites in `src/hoops_gm`, counted and printed
+before classifying, because a clean report over zero sites is the defect being
+hunted rather than a pass. Tests, `conftest.py` and `alembic/env.py` build
+engines deliberately and are out of scope.
+
+| Call site | Verdict |
+|---|---|
+| `availability/coverage.py` | reports — guarded |
+| `ingest/injury_report/cohort_evidence.py` | reports — **blocked, see below** |
+| `ingest/injury_report/backfill.py` (`observations`) | reports — **blocked** |
+| `app.py`, 3 x `dev/seed_*.py`, `ingest/backfill.py`, 2 x `import_csv.py` | writes |
+| `ingest/schedule_import.py` | writes, **and already correct** |
+
+`schedule_import` was the pleasant surprise: it builds the engine *inside* the
+non-dry-run branch, so its read-only path never opens a store at all. That is
+the shape the others should have had.
+
+The two `--dry-run` importers write and roll back, so they need a migrated store
+and return no count. Classified `writes` and left alone.
+
+### Why two fixes were written, driven, and then reverted
+
+I fixed both blocked readers, drove both refusals on the filesystem, and the
+full suite then failed on `test_cohort_evidence.py`. The committed cohort
+manifest pins a **whole-file SHA-256 of four source files, two of which are
+exactly these**. A whole-file hash cannot tell a guard clause that refuses
+before doing any work from a change to the derivation, so **any** edit to them —
+including a correctness fix — invalidates its provenance.
+
+Repairing it means re-running the manifest's own `operator.commands`, which
+include the injury-report `plan`/`run` pair. That is cohort work, explicitly out
+of scope, and per `docs/backlog.md` that cohort can never activate its model
+(whole-cohort `doubtful` is 21 against a floor of 30).
+
+**And there is a sharper problem I did not expect.** The manifest declares
+`manifest_is_a_pure_function_of_persisted_state: true`, but per yesterday's
+three-store finding **no store now holds both participation outcomes and injury
+report entries** — participation is in `hoops_gm.db` with 0 report rows, the
+69,922 report rows are in `throwaway-report-sweep.db` with 0 participation, and
+that one took its tip-offs from `ScheduleLeagueV2` on purpose, which its own
+README calls *permanently unusable for any cohort manifest*. So the state this
+manifest is a pure function of may not currently exist anywhere. I did not
+attempt to reconstruct it and I am not confident either way — but it means
+"just regenerate it" is not obviously a small job, and the owner should decide
+rather than discover.
+
+So the guards are reverted, and the exposure is **recorded rather than hidden**:
+`ENGINE_CALL_SITES` carries a third state, `blocked`, with `BLOCKED_REASON`, and
+a test asserts the manifest still fingerprints those files — so the moment that
+stops being true, the block is provably stale and the suite says so.
+
+Silently reverting would have been the worse option: one of the two *writes that
+very manifest*.
+
+### The audit is a test, not an event
+
+A new call site fails `test_every_engine_call_site_is_classified` until someone
+classifies it. The guard check runs all three directions — a guarded reporter
+that stops refusing fails, a writer that starts refusing fails, and a `blocked`
+site that *starts* being guarded also fails, so lifting the block forces the
+classification to be corrected rather than left lying. **The previous audit was
+a one-off sweep, and a one-off sweep is exactly what missed this.**
+
+### Two more things executing found that reading would not
+
+**The mutation caught a hole in my own test.** Removing the guard turned only
+the *behavioural* test red; the static check stayed green because it searched
+for `absent_store_refusal` and the now-unused **import line still contained the
+name** — precisely what a careless edit leaves behind. Changed to match
+`absent_store_refusal(`, a call rather than a mention. Re-mutated, both fail,
+baseline green before and the file **byte-identical by hash** after.
+
+**`git checkout docs/handoff.md` restored from a stale index, not from `main`,
+and silently dropped 48 lines.** It exited 0. I caught it only because I ran
+`git diff --numstat origin/main` afterwards out of habit from the last unit and
+saw `0 48`. The index still held staged content from the pre-squash-merge
+branch, including a `docs/backlog.md` 33 lines short — which, committed, would
+have silently reverted the backlog entry that had just merged. `git checkout
+<path>` takes the index unless you name a source; **`git checkout origin/main --
+<path>` is the one that means what it reads like.** Same class again: a command
+whose scope, not whose logic, was wrong.
+
+### Driving the Postgres claim demoted it and then improved the tool
+
+Recorded last entry as *reasoned*: `missing_local_store` returning `None` for a
+server-backed URL is fine because the server's own error is loud. Driven against
+`definitely_not_a_database` on 55432 — **Postgres refuses rather than creating**,
+so the reasoning held.
+
+**But the tool reported the refusal as an empty ledger.** An uncaught
+`SQLAlchemyError` exits `1`, and `1` is that tool's documented code for *"read
+it, it holds nothing"*. Unreachable and empty were the same signal — the same
+two-states-one-signal collapse, one layer up from where I had just fixed it.
+Now caught, named, and exit `2`, verified across all three states on Postgres as
+well as SQLite. The regression test uses a file containing
+`b"this is not a SQLite database"`, so it needs no server and holds on either
+dialect.
+
+### Incidental
+
+`observations` against the real durable store exits 0 and reports **1,227
+`no_candidate_coverage`, 0 observed**. Not a gap in the participation ledger —
+the injury-report rows are in a different store. A number that looks like a
+finding and is a store-selection artifact, surfacing unprompted while I tested
+something else, which is the entire subject of these two units.
+
+`ingest/injury_report/backfill.py` also never disposes its engine. Minor, real,
+and one more thing the fingerprint currently blocks fixing.
+
+**Could not verify:**
+
+- **That `Database.from_settings` is the only way a store gets opened.** I
+  scanned for it, `create_db_engine` and `create_engine(`. A call site building
+  an engine some other way, or constructing `Database(...)` directly, would not
+  have appeared. **Driven within a named pattern set**, and naming the set is
+  the point — the defect that started all this came from a search whose domain
+  was wrong rather than whose logic was.
+- **That the cohort manifest is actually unregenerable.** I established that no
+  single store now holds both slices and that the commands include a live
+  `plan`/`run`. I did **not** try to regenerate it, so "may not exist anywhere"
+  is the honest strength of that claim, not "does not". **Reasoned, and the
+  thing most worth someone else checking.**
+- **That the writers I left are safe rather than merely loud.** Classified by
+  reading each `main()`; I did not execute any writer against an absent store.
+  **Reasoned, deliberately** — a wrong classification turning a working writer
+  into a crash is worse than a documented exposure.
+- **That `app.py` serving an auto-created empty database is acceptable.** It
+  reports no quantity at startup, which is why it is out of scope rather than
+  resolved. **Named, not decided.**
+- **The rebuild recipe.** Still transcribed, not executed. Third carry-forward.
+
+### Rebase note, same unit: the census caught a call site before anyone looked
+
+Rebasing this branch onto `842a289` (#81), `test_every_engine_call_site_is_classified`
+failed on **`dev/seed_demo.py`** — a twelfth `Database.from_settings` call site
+that arrived in another lane's merge while this branch was in review. Nobody
+went looking for it. The census failed on first contact and named it.
+
+That is the difference between an audit and a sweep, and it is the reason the
+inventory was written as a test rather than reported as a finding. Classified
+`writes`: it takes its target as `--database-url` rather than from the
+environment, passes `_env_file=None` so a repo-root `.env` cannot redirect it,
+and carries its own `DemoSeedRefused` guard.
+
+### And #81 found a second exposure through the same door, which this module does not cover
+
+The coordinator asked whether any of the eight `writes` sites can be pointed at
+an existing populated store. **Yes — that question is entirely outside what
+this census asks**, and I have recorded the boundary in `SCOPE_LIMIT` rather
+than leaving a `writes` verdict to be misread as a safety claim.
+
+Every classification here answers *"may this command **create** a store it
+should not?"*. #81's finding is *"may this command **write into a store it did
+not create**?"* — the composed seeder pointed at the owner's real 43,037-row
+ledger exits **0** and writes into it, because all three guards key on proxies
+(`leagues` count, current season, a prior BBM import) that the real store
+happens to answer safely.
+
+**It is the false zero with the sign flipped.** There, a populated store
+answered **zero** to a question that was really about a different store. Here, a
+populated store answers **yes** to a guard that asked a proxy question. In both
+cases the number is honest, reproducible, and the answer to something other
+than what was asked — which is now three instances of that one shape, across
+three unrelated mechanisms.
+
+I am not widening the census to cover destination in this unit; it is a
+different question needing different evidence, and I was mid-rebase. But the
+one-line answer is that **`writes` means "creating a database is legitimate for
+this command", never "this command is safe to point anywhere"**, and the
+distinction is now asserted in the module rather than assumed by its readers.
+
+**Could not verify (rebase note):**
+
+- **Whether the other seven writers have the same proxy-guard weakness as the
+  composed seeder.** I checked only whether each *has* guard-shaped code, which
+  is a count of matches and not an assessment — `app.py` and `ingest/backfill.py`
+  have none at all, the rest have between 4 and 33 matches. **That is a grep,
+  not a finding**, and reporting it as though it were the second kind is exactly
+  the error I withdrew a claim for yesterday. **Reasoned, and weakly.**
