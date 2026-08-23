@@ -20216,3 +20216,81 @@ the seeder prints and assert them, rather than assuming a delete succeeded. And
 anyone writing a probe should put a quantity they expect to *move* beside the
 quantity they expect to *hold* — one reading, no revert, and a blind probe
 becomes visible.
+
+
+---
+
+## 2026-08-23 — `frontend` — my own generalisation was over-strong, found while writing it into governance
+
+**Changed:** `docs/governance/gates.md` gains the scope-attachment rule, in a
+narrower form than I proposed it. This entry corrects a claim I made in
+`ade4fa9` and repeated to the coordinator, who accepted it.
+
+**The claim, as I made it:** all four recorded overstatements *"share a
+mechanical signature — each upgraded a scoped, dated, counted observation into
+an unscoped present-tense property"*, and therefore **the tell is not the
+strength of the claim, it is the disappearance of the scope**.
+
+**That is false for the first example I cited, and I found it by checking the
+examples rather than citing them from my own summary.** The sentence was *"the
+census stays green at 12 sites while the package has 13 ways in"*, and the
+correction to it, already in this file, says in its own words: **"The count is
+right and *ways in* is doing too much work."** The count was there. The scope
+was there. What was wrong was the word `ways in` describing a site that builds
+`file:...?mode=ro` and can neither create a store nor write into one.
+
+**Nothing was unscoped. My rule would not have touched it.** What caught it was
+someone re-deriving what line 367 actually does — which is the remedy this
+project already has, and not the new one I was proposing.
+
+So the honest split, and it is two classes rather than one:
+
+- **A scope disappears.** *"checked at `74c8ba4`"* → *"in `backend/src`"*;
+  *"against committed fixtures"* → *"on a real export"*. Attaching the scope
+  makes these expire visibly.
+- **A correctly-scoped observation is described in a stronger word than the
+  mechanism supports.** *"13 sites"* → *"13 ways in"*. **Untouched by any of
+  this**, and still caught only by a second reader re-deriving, or not at all.
+
+The rule is real and worth having for the first class. **My claim that it
+covered the second was the same defect it describes**: a true observation about
+two instances, generalised to four, stated without the scope that would have let
+the next reader check it cheaply. The coordinator had written *"do not let me
+talk you into a stronger version of your own finding; that would be the defect
+performing itself a fifth time"*, and the fifth instance was already in my draft
+when he wrote it — mine, not his.
+
+**What actually caught it is the part worth carrying.** Not care, and not the
+warning. **I went to quote the example and the quote did not say what I had
+said it said.** Three sentences of the correction I was citing contradicted my
+summary of it, and I only saw them because I pulled the surrounding context to
+get the wording right. **Citing from a summary of a source you have read is
+where this class lives**; the `aav-source` lane recorded the same shape as
+*authorship is not evidence*, and this is its neighbour: **your own paraphrase
+is not evidence either, and it is the one you are least likely to re-open.**
+
+The cheap habit, which needs no tooling: **when a claim rests on quoting
+something, paste the quote before writing the conclusion, not after.** The
+ordering is the whole mechanism — a conclusion written first supplies the words
+you then go looking for.
+
+**Could not verify:**
+
+- **That the two-class split is exhaustive.** It covers three cited instances
+  and I did not re-derive the fourth from its source, having just demonstrated
+  the cost of not doing that. A third class may exist. **Reasoned, and
+  deliberately weaker than the claim it replaces.**
+- **That attaching scope helps at all in practice.** It is a writing habit with
+  no gate behind it and one day of evidence. The argument is that a scoped claim
+  decays visibly rather than silently; nobody has yet caught a real defect with
+  it. **Reasoned.**
+- **That my other generalisations from today survive the same check.** I checked
+  this one because I was quoting it into a governance file. *"Carry an invariant
+  and a mover in the same payload"* and *"the branch that reports a refusal is
+  the branch nobody runs twice"* were both driven, but neither was re-derived
+  from its source at the moment I wrote it up. **Reasoned.**
+
+**Next:** nothing blocks. Anyone extending the scope-attachment rule should note
+it addresses one sub-class only, and that the sub-class it does not address is
+the one that has produced the more consequential errors here — a read-only site
+called a way in, and a fixture run called a real export.
