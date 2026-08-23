@@ -120,7 +120,11 @@ Mock outcomes are permanently ineligible.
   systems is small because **consensus rates are largely reproducible from
   public box scores** — and for this contract's purposes it does not matter
   whether that is because the information is exhausted or because the sources
-  are themselves naive. Every source in this contract reads the same box scores.
+  are themselves naive. **That range covers the eleven scored rate categories
+  only.** It excludes minutes (0.395–0.747) and excludes games played
+  (0.284–0.504), which are measured separately and agree far less well; "per
+  game" above is a unit, not a scope. Every source in this contract reads the
+  same box scores.
   **Blending N sources that share inputs and are mutually reproducible buys far
   less error reduction than N independent opinions would**, and the weights
   cannot detect the difference. See

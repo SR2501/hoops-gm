@@ -91,7 +91,21 @@ commercial value**, so nothing here selects on the quantity being measured.
 
 ## Rates: the full range, and the subset it is drawn from
 
-Per-game agreement, **all 11 categories across all four cohorts: r² 0.726 –
+**This range covers scored rate categories only. Minutes and games are excluded
+from it and are reported separately below.** The eleven are PTS, REB, AST, STL,
+BLK, TOV and FG3M, plus FGM, FGA, FTM and FTA — the nine scored categories with
+the two percentage categories expanded into their volume components, because a
+percentage category is volume-weighted impact and not a raw percentage. Neither
+`minutes` nor `games` is among them, and `games` could not be: it is not a stat
+column of `BASKETBALL_MONSTER_PROFILE` at all but a `games_played_alias`, which
+`ProjectionSourceRow` carries to a separate table so nothing downstream reaches
+it while reading a rate.
+
+**Whenever this range is quoted, quote its subset with it** — the phrase "per
+game" below is a *unit* (per-game rather than per-36) and not a scope, and it
+has already been misread as one. See the addendum dated 2026-08-23.
+
+Per-game agreement, **all 11 rate categories across all four cohorts: r² 0.726 –
 0.947.** The floor is **steals** (0.726, our-MPG ≥ 20); the ceiling is **blocks**
 (0.947, our-MPG ≥ 28). Per-36, which strips out the shared minutes channel:
 **0.813 – 0.958**.
@@ -211,6 +225,12 @@ which `architect` should weigh: placing the seam at minutes-vs-games is precisel
 what licenses consuming a third party's minutes, and that is a strategy
 commitment rather than a detail. I do not think it needs an amendment; I am not
 confident enough to leave it unflagged.
+
+> **Adjudicated 2026-08-23.** An amendment was written — but for neither reason
+> given above. Inside ADR-002's own two-factor vocabulary there was never a
+> second candidate seam, so nothing was located; and the hazard that does
+> warrant an amendment is one this section did not notice. See the addendum
+> below and ADR-002's Amendments section.
 
 ---
 
@@ -355,7 +375,126 @@ paid deliberately rather than discovered later.
 
 ---
 
-## What this measurement cannot see
+## Addendum, 2026-08-23 — a citation was challenged, and the challenge was wrong in an instructive direction
+
+**Status: still a measurement, still not a model.** Nothing here is fitted.
+Re-deriving an existing figure to check what it covers is not a new model; the
+one genuinely new quantity below is a concentration statistic of a source
+column, which is a census of one file rather than a sample, and it is published
+in exactly the form the `games` finding above was already published in. No
+Model gate is claimed, and there is nothing here for a held-out year to hold
+out.
+
+### The challenge
+
+The governance lane observed that `docs/backlog.md` and
+`docs/models/projection-blending.md` carry the flat `0.726–0.947` while this
+document records games agreement at `0.284–0.504`, and suspected a **rates-only**
+figure was being quoted as though it covered **games** — the exact conflation
+ADR-002 exists to prevent, in the documents arguing for the blending approach.
+
+### It is not that, and the range is arithmetically incapable of being that
+
+Settled from the measurement rather than the prose. The crudest baseline above —
+last season's per-game line carried forward, with no modelling at all — needs a
+single season, so it re-derives from cache with **no request and no refit**.
+Independently rebuilt against the cached 2025-26 `PlayerGameLogs` (26,651 rows),
+joined on exact normalised name, 400 of 505 rows matched, cohorts n = 400 / 361 /
+244 / 110 selected on **our** observed MPG:
+
+| channel | re-derived r² across all four cohorts | as published above |
+|---|---|---|
+| the 11 rate categories | **0.626 – 0.937** | 0.658 – 0.942 |
+| minutes | 0.345 – 0.775 | 0.395 – 0.747 |
+| games | **0.280 – 0.448** | 0.284 – 0.504 |
+
+The re-derivation is close but not identical, and the gap is expected: this join
+uses one season of history where the original used ten, so it matches 400 rather
+than 419 rows and its cohorts are differently populated.
+
+**The decisive fact needs none of that precision. Games agreement never reaches
+0.5 in any cohort by either route, so it cannot sit inside a range whose floor is
+0.726.** Had `games` been in the pool, the published floor would have been
+roughly 0.28. Had `minutes` been in it, roughly 0.35–0.40. The range is
+rates-only, and the structural check agrees: `games` is not a stat column of the
+profile at all.
+
+### The defect is real, and it is the mirror image of the one suspected
+
+The citations do not over-claim. They **under-report**, and at the site that
+matters most. `docs/backlog.md`'s amendment quoted the rates figure, then the
+minutes finding, then concluded *"the ADR-002 seam therefore falls at games, not
+minutes"* — **with no games figure in it anywhere.** The strongest channel was
+quoted and the load-bearing one omitted, in the file a reader consults first. The
+seam is at games because games agreement is 0.284–0.504 against a two-value
+column, not because minutes amplify; a reader was left to infer the conclusion
+from the wrong half of the evidence.
+
+Compounding it, "per game" in those citations is a *unit* and sits one clause
+from a games-played argument, where it reads as a *scope*. It has now
+demonstrably misled one careful reader. Every citation site has been given its
+subset and, where it makes the seam claim, its games counterpart.
+
+### Two arithmetic facts about the export that the correlations could not show
+
+Asked because ADR-002 line 21 captures the games assumption separately *"so our
+availability model can override it rather than **compound** with it"* — and a
+per-game rate obtained by dividing a season total by that same assumption is a
+candidate for compounding.
+
+**The vendor's minutes quantity is an integer MPG multiplied by the games tier,
+exactly.** `minutes ÷ games` is an exact integer for **505 of 505 rows**, against
+a shuffled-divisor control at 10.9%. It is therefore recoverable without loss and
+carries no tier residue — consuming their minutes-per-game inherits nothing from
+the column we reject.
+
+**For the counting categories, no divisor recovers a rounder native quantity, and
+this is undetermined rather than resolved.** Season totals sit on a one-decimal
+grid for 100% of rows; `total ÷ games` lands on that grid for 1.8–11.1%,
+`36 × total ÷ minutes` for 2.4–9.9%, and `total ÷ minutes` for 0.8–8.9% — against
+a shuffled-divisor control of 3.2–10.5%. Every candidate is **at chance**. So
+publication rounding has destroyed whatever grid the native quantity had, and
+this file cannot say whether their counting rates are native or manufactured by
+dividing by a two-value tier. **Reasoned, and the honest answer is that we do not
+know.** The consequence is recorded in ADR-002's amendment rather than waved
+past: multiplying a consumed rate by *their* games — or consuming a season total
+— re-imports the tier, and looks like a feature while doing it.
+
+### The test that condemned `games` had never been run on `minutes`
+
+This is the part I did not expect and it is the finding worth keeping. The case
+against the `games` column was its coarseness, evidenced as *31 distinct values,
+84.7% of the rotation cohort on two*. The recommendation to **consume** their
+minutes rested only on the slope evidence. **The same coarseness test was never
+applied to the column being adopted.**
+
+Applied now, identically to both, and note first that it **replicates the
+published figure exactly** — games in the rotation cohort (their MPG ≥ 20,
+n = 249): 18 distinct values, 84.7% on two. Independent replication, different
+author, same file.
+
+| column | cohort | n | distinct | top 2 share | **effective levels** |
+|---|---|---|---|---|---|
+| `games` | whole file | 505 | 31 | 60.0% | **4.5** |
+| minutes-per-game | whole file | 505 | 34 | 10.5% | **29.2** |
+| `games` | their MPG ≥ 20 | 249 | 18 | **84.7%** | **2.5** |
+| minutes-per-game | their MPG ≥ 20 | 249 | 18 | 20.5% | **14.9** |
+
+Effective levels is 1 / Σp², the count of distinct values a uniform column would
+need to be this concentrated; a column on two values scores 2.
+
+**Distinct-value count alone would have said the two columns are identical** —
+18 against 18 in the rotation cohort. It is concentration, not variety, that
+separates them, and it separates them by **6×**. The seam location survives the
+test that was owed to it, and it now rests on a measurement rather than on the
+absence of one.
+
+A qualification that belongs next to the result rather than below it: their MPG
+is **integer-valued for 505 of 505 rows**, so it is coarser than a
+one-decimal-looking column would be. Fourteen effective levels is a real
+per-player opinion; it is not a fine one.
+
+
 
 - **Whether either side is right.** There are no outcomes here. Every figure is
   an agreement between two opinions, and the experiment is symmetric in a way an
@@ -366,6 +505,10 @@ paid deliberately rather than discovered later.
   differ and that one of them is coarse.
 - **Whether the games tiering is a modelling choice or an export artefact.**
   One file cannot distinguish these.
+- **Whether the vendor's counting-stat rates are native or manufactured by
+  dividing by that tier.** Publication rounding to one decimal destroys the
+  arithmetic signature that would answer it; every candidate divisor tests at
+  chance. Added 2026-08-23.
 - **Sources other than this one.** "Consensus" is one commercial set here. The
   conclusions are about it, not about every published projection.
 - **19 further joinable rows.** A first-initial-plus-surname key would recover up

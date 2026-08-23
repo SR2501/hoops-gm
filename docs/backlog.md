@@ -1287,10 +1287,15 @@ unblocked work with the larger payoff is `participation-ledger-population`.
 **Amended 2026-08-22 —
 [`docs/models/consensus-reproducibility.md`](models/consensus-reproducibility.md).**
 The measuring stick was built and run against a commercial projection set.
-Consensus rates are largely reproducible from public box scores (r² 0.726–0.947
-per game), but consensus **minutes** amplify rather than regress relative to a
+Consensus **rates** are largely reproducible from public box scores (r²
+0.726–0.947 across the eleven scored rate categories; "per game" there is a unit,
+not a scope), but consensus **minutes** amplify rather than regress relative to a
 naive baseline, which is information no box score contains — so consume those
-too. The ADR-002 seam therefore falls at **games, not minutes**.
+too. **Their `games` column agrees at only r² 0.284–0.504 and carries 2.5
+effective levels in the rotation cohort against minutes' 14.9** — that, not the
+minutes result, is why the ADR-002 seam falls at **games, not minutes**. Amended
+2026-08-23: the three figures must be quoted together, because quoting the rates
+range alone next to a seam claim reads as a games claim, and did.
 
 ### `behavioural-baseline` - Modelling the owner own drafting tendencies
 

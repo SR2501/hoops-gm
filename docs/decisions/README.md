@@ -54,3 +54,16 @@ The recursive weekly refresh amendments to ADR-011 and ADR-012 were accepted by
 the project owner on **2026-08-17**. They extend the original sequencing
 decisions with versioned cascade and freshness requirements; they do not choose
 the SOS formulation or convergence thresholds.
+
+## Amendments awaiting acceptance
+
+An amendment carries its own status, and the index column above describes the
+ADR's body rather than its amendments — so an `Accepted` row can hold a
+`Proposed` amendment and nothing in the table says so. Listed here instead:
+
+| ADR | Amendment | Dated | Written by |
+|---|---|---|---|
+| [002](ADR-002-production-vs-availability.md) | The decomposition is three-factor in practice; discarding a source's `games` column does not discard its games assumption | 2026-08-23 | `quant` |
+| [007](ADR-007-availability-in-spine.md) | The availability model must state an identification strategy before it fits anything | 2026-08-22 | `quant` |
+
+Agents write `Proposed` only. Only the project owner accepts.
