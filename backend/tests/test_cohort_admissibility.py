@@ -30,6 +30,7 @@ These are offline and read committed artifacts only. No store, no network.
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -464,6 +465,41 @@ class TestTheStoreIsNotCreatedByLookingAtIt:
     def test_a_directory_is_refused_too(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             read_only_engine(tmp_path)
+
+    def test_mode_ro_is_a_second_independent_barrier(self, tmp_path: Path) -> None:
+        """Which barrier is actually refusing — driven, not assumed.
+
+        An earlier docstring on :func:`read_only_engine` claimed SQLite's
+        create-on-connect "applies to this path identically", implying the
+        explicit ``is_file`` check was the only thing preventing a false zero.
+        It is not. A ``mode=ro`` connection refuses a missing file outright, so
+        the guard is belt-and-braces.
+
+        That distinction is the difference between "an exposure" and "a latent
+        hole", and only the second was ever true here. Pinned so the docstring
+        cannot drift back to the stronger claim, and so a future caller who
+        drops ``mode=ro`` finds out here.
+        """
+        missing = tmp_path / "absent.db"
+        uri = "file:" + missing.as_posix() + "?mode=ro"
+        with pytest.raises(sqlite3.OperationalError):
+            sqlite3.connect(uri, uri=True).close()
+        assert not missing.exists(), "a mode=ro connection created a database"
+
+        # ...and the contrast that makes it a real second barrier: the same
+        # connect WITHOUT mode=ro does create, which is the hazard the guard
+        # was written for and which this module has simply never been exposed
+        # to through this path.
+        plain = tmp_path / "plain.db"
+        sqlite3.connect(str(plain)).close()
+        assert plain.exists(), "baseline wrong: plain connect did not create"
+
+    def test_the_guard_reports_why_rather_than_how(self, tmp_path: Path) -> None:
+        # The reason the belt-and-braces check earns its keep: the driver's own
+        # refusal is a bare "unable to open database file", which reads like a
+        # permissions fault. This one names the path and the consequence.
+        with pytest.raises(FileNotFoundError, match="meaningless zero"):
+            read_only_engine(tmp_path / "absent.db")
 
 
 class TestTheCommittedAdmissibilityArtifact:
