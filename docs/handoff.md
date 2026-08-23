@@ -19583,3 +19583,163 @@ census's spelling. I checked my own and counted the census's 12; I did not grep
 the package for every `create_engine` or `sqlite3.connect` call and classify
 them. **Reasoned, and it is the same question the census answers for its own
 spelling.**
+
+## 2026-08-23 — backend — Two traps from the demo-seed unit that were only in a chat
+
+`#81` merged as `842a289`. Asked what this session held that the repository did
+not, I checked instead of recalling. Three of the four candidates were already
+committed — the `403` tell and the constancy detector at `handoff.md:18939` and
+`18955`, the `409` mechanism in `docs/demo.md`, the `PYTHONIOENCODING` pair in
+`scripts/mutate_seed_demo.py:57`. These two were not, and both are the same
+species as the defects that unit existed to correct.
+
+### A probe that cannot return `True` is not a probe
+
+Mid-rebase I checked whether a rebase was in progress with
+`Test-Path .git\rebase-merge`. It answered `False`. **A rebase was in progress.**
+
+`.git` in a linked worktree is a *file* containing a `gitdir:` pointer, not a
+directory, so `.git\rebase-merge` cannot resolve **under any condition**. The
+probe is not flaky and it does not have a false-negative case: it is
+constant-`False` structurally. Driven just now, in a clean tree:
+
+```
+Test-Path .git\rebase-merge                            False
+Test-Path .git -PathType Container                     False
+Test-Path .git -PathType Leaf                          True     <- it is a file
+git rev-parse --git-dir      C:/Users/.../.git/worktrees/sr2501-solid-dollop
+```
+
+Use `git rev-parse --git-path rebase-merge` and test *that*. It resolves through
+the worktree indirection and is correct in both layouts.
+
+**A second lane hit this the same day and did not notice.** Reviewing the
+finding, the coordinator ran the check against its own worktree and found it had
+used `Test-Path .git\rebase-merge` during its own rebase that morning, printing
+`rebase in progress: False`. That rebase had completed, so the answer happened
+to be right — **it was right by luck and reported as a measurement.** Two
+independent instances, two worktrees, one day, neither noticed at the time.
+That is what makes this worth a paragraph rather than a footnote: the probe does
+not announce itself, because its wrong answer is also the common answer.
+
+**`AGENTS.md` and the coordinator brief both already warn that `.git` is a file
+in a worktree — in the *write* direction**, where a redirect to `..\.git\x`
+writes nowhere. This is the read direction, and it is the more dangerous half:
+a write that goes nowhere is silent, but a *state check* that is silently always
+`False` invites the destructive action. "No rebase in progress" is the premise
+under which someone runs `git checkout <path>` or starts fresh work, and this
+repository has already lost 48 handoff lines at exit 0 to exactly that.
+
+**This is the degenerate case of the detector named in the entry above**, which
+is why it belongs beside it rather than in a tooling note. *Constancy where
+variation is expected* — three identical `403`s across three unrelated routes, a
+banner counter reading the same on a 404 — and here the constant is not merely
+observed but **structural**: the check has no input that produces the other
+answer. The cheapest version of that test is to ask what would have to be true
+for this probe to return the opposite, and to distrust it if the answer is
+"nothing".
+
+### `resolve_doc_conflicts.py`'s own advice, followed literally, reproduces a defect
+
+Rebasing `#81` for the third time, the resolver refused the `docs/backlog.md`
+header conflict:
+
+> *this conflict block holds more than the header count line, and this script
+> only knows how to regenerate that. Collapsing it would delete both sides of
+> everything else. **Resolve by hand, keep both sides' content**, then re-run.*
+
+The refusal is correct and the reason it gives is correct. **The instruction is
+not, for this block.** Both sides were the same parenthetical carrying different
+integers, so "keep both sides' content" yields *two* copies of a paragraph
+restating the count — which is precisely the unguarded-second-copy defect `#81`
+removed from that file in the same rebase. The tool's advice, followed to the
+letter, reconstructs the thing the commit was fixing.
+
+What works: collapse to **one** copy with a placeholder header, then re-run and
+let the tool recompute unconditionally. Recorded here because the refusal path
+is undocumented outside the script's own message, and because the general shape
+is worth more than the instance — **generic advice attached to a specific
+refusal is not specific advice**, and a message that is right about *why* it is
+refusing can still be wrong about what to do next.
+
+### A third instance, dated, and narrower than it was reported to me
+
+`#85` landed while this entry was in review, and the coordinator offered its
+`create_engine` site as a third instance of the same shape. It is one, and it
+has a property neither of mine has — **it is dated.** Verified both sides
+myself rather than taking the grep:
+
+```
+git grep -n "create_engine"   74c8ba4 -- backend/src/  ->  2 hits, both in db/session.py
+git grep -n "create_engine"   fa705b5 -- backend/src/  ->  4 hits, two new, both in
+                                                           ingest/injury_report/cohort_admissibility.py
+git grep -n "sqlite3.connect" 74c8ba4 -- backend/src/  ->  0 hits
+```
+
+So `test_every_engine_call_site_is_classified` was not believed-complete, it
+**was** complete: every store-opening in the package really did go through the
+one spelling it scans for, which is a literal substring match on
+`Database.from_settings(`. Driven on merged `main`: the census sees **12** sites
+and passes **9 tests green**, while `cohort_admissibility.py:368` opens an
+engine it cannot see. The gap is not historical debt nobody noticed — **a merge
+opened it, at exit 0, with the check green** — and it is visible only because
+the cohort lane volunteered it.
+
+**One correction to how it was put to me, because it changes what the finding
+claims.** The framing was *"the census stays green at 12 sites while the package
+has 13 ways in"*. The count is right and *ways in* is doing too much work: line
+367 builds `file:...?mode=ro`, so the escaped site is **read-only by
+construction** and can neither create a store nor write into one. It is an
+**unclassified** site, not an unguarded one. What decayed is the check's
+coverage; no hazard is currently through it. That is the difference between "a
+latent hole" and "an exposure", and only the first is true today.
+
+This is the third time in one day a real result has arrived with a conclusion
+slightly stronger than its evidence — an ADR figure that did not replicate, my
+rollback test whose docstring named a mechanism that was not firing, and now
+this. The pattern is worth more than any of the three instances.
+
+**What the three traps share, stated once.** *A check whose domain excludes the
+thing it is for.* The audit lane's was scope narrower than harm; mine was a path
+that cannot resolve; this one is a scan pattern narrower than the hazard. The
+third adds what the first two cannot: **a complete check can be made incomplete
+by someone else's merge, and nothing reports it.** Fixing it belongs to
+`data-engineer` against the audit lane's judgements, not here.
+
+**Could not verify:**
+
+- **That `git rev-parse --git-path` is correct in every worktree layout.** Driven
+  in this linked worktree and reasoned for the ordinary case, where it returns
+  `.git/rebase-merge` unchanged. Not driven in a submodule or a bare-plus-worktree
+  layout. **Driven once.**
+- **That no other state probe in this repository reads through a bare `.git`.**
+  I grepped `scripts/` and `docs/` for `Test-Path` and `.git` and found nothing,
+  but that is a search for one spelling of the mistake. A shell one-liner in a
+  handoff entry would not be found by it. **Reasoned.**
+- **That the resolver has no other block type whose advice misfires the same
+  way.** I hit one. I did not enumerate the refusal paths in the script to see
+  whether the others carry advice that is specific enough. **Reasoned, and the
+  cheaper check I did not do.**
+- **That `cohort_admissibility.py:368` is the only site the census now misses.**
+  I grepped `create_engine` and `sqlite3.connect` across `backend/src/` and
+  found no others, but those are two spellings of a store-opening and the whole
+  point of this instance is that a scan pattern can be narrower than the hazard.
+  A third spelling would escape my check exactly as it escapes the census.
+  **Driven on two patterns, which is the same class of evidence the finding is
+  about.**
+- **~~That either finding matters again.~~ The `.git` one already did, the same
+  day, to the lane that reviewed it.** I wrote that both findings cost me a
+  wrong diagnosis and cost the repository nothing, and that they were recorded
+  on the argument that the next person hits them at a worse moment — *"a
+  prediction rather than an observation"*. The coordinator then ran the check
+  against its own worktree and found it had used `Test-Path .git\rebase-merge`
+  during its own rebase that morning, printing `rebase in progress: False`. Its
+  rebase had in fact completed, so it was not misled — **but it was right by
+  luck and reported it as a measurement**, which is the failure mode rather than
+  an escape from it. Two independent instances in one day, in different
+  worktrees, neither of which noticed at the time. **Driven, and no longer a
+  prediction.** Recorded as a correction rather than an edit because the
+  original sentence was the honest thing to write when I wrote it, and the
+  interesting part is how fast it was answered.
+- **That the resolver finding has a second instance.** It does not, that I know
+  of. It stays on the prediction footing the bullet above has left. **Reasoned.**
