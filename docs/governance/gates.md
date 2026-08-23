@@ -140,6 +140,42 @@ the moment you write it, from the code beside it.** The failure modes and their 
 recorded as R49–R58 in `risks.md` — deliberately in one place, because a lesson restated in
 two files drifts in one of them.
 
+**Write conclusions with their scope attached.** Not *"the package has 13 ways in"* but *"at
+`74c8ba4`, 13"*. This does not prevent overstatement — nothing cheap does. It makes the
+claim **decay visibly**: the next reader checks the commit and disagrees in seconds, without
+anyone having needed to catch it when written. It converts an undetectable error into an
+**expiring** one, which is the class this project already knows how to handle. `Could not
+verify` already enforces exactly this for one field; the same discipline belongs in prose,
+where every recorded overstatement so far has lived.
+
+Added 2026-08-23. The rule above is narrower than the defect class it sits under, and the
+narrowing was found while writing this paragraph — by checking the examples rather than
+citing them from a summary. **Of the recorded overstatements, some lose a scope and some do
+not**, and only the first kind is addressed here:
+
+- *"zero `sqlite3.connect`, checked at `74c8ba4`"* became *"zero `sqlite3.connect` in
+  `backend/src`"*. **The commit vanished**, and one merge later the sentence was false. This
+  rule addresses it.
+- *"the smoke test passes against committed fixtures"* became *"passes on a real export"*.
+  **What it was run against vanished.** This rule addresses it.
+- *"the census stays green at 12 sites while the package has 13 ways in"*. **The count was
+  right and dated; `ways in` overstated a capability** — the escaped site builds
+  `file:...?mode=ro` and can neither create a store nor write into one. Nothing was
+  unscoped. **This rule would not have touched it**, and only re-deriving what the code does
+  did.
+
+So: attaching scope converts *one* recognisable sub-class from undetectable to expiring. The
+sub-class where a correctly-scoped observation is described in a stronger word than the
+mechanism supports is untouched by it, and remains what it was — caught by a second reader
+re-deriving, or not caught at all.
+
+Keep that limit attached, because the alternative is this defect performing itself again.
+**It cannot be claimed that this would have caught any of the four**; every one was caught by
+another agent whose expectation was violated, and nothing here catches the ones that quietly
+agree with us. What it claims is weaker and defensible: where a scope is attached, the claim
+becomes **falsifiable in seconds by the next reader**. That is not prevention, and it should
+not be written up as prevention.
+
 ### Three questions no gate asks, because no gate looks at scope of application
 
 Added 2026-08-21. One lane produced four defects in one unit that were **not logic errors**. None shipped — every one was found in review and fixed before merge, across eight rounds; this section is evidence the structure caught them, not that it let them through.
