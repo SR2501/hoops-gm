@@ -480,7 +480,7 @@ class TestPlayerPositionImport:
         after = accepted_pairs(with_position=True)
 
         assert len(before) == len(after), "the sizes coincide, which is the trap"
-        assert before != after, "and the sets do not — so a count proves nothing here"
+        assert before != after, "and the sets do not - so a count proves nothing here"
 
         # The duplicate-name case position exists to settle.
         assert ("05uiu", "1630552") in after - before

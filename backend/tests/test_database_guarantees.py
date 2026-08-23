@@ -63,7 +63,7 @@ def test_every_enum_column_has_a_check_constraint() -> None:
     ]
 
     assert unprotected == [], (
-        "enum columns without a CHECK constraint — an unknown value will insert "
+        "enum columns without a CHECK constraint - an unknown value will insert "
         "cleanly through any path that bypasses the ORM"
     )
 

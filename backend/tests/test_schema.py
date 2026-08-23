@@ -420,7 +420,7 @@ def test_no_table_anywhere_stores_a_percentage() -> None:
     ]
 
     assert offenders == [], (
-        "store makes and attempts, not a percentage — see risk R9. If a column "
+        "store makes and attempts, not a percentage - see risk R9. If a column "
         "here is genuinely not a fantasy ratio, add it to "
         "PERCENTAGE_COLUMN_ALLOWLIST with a comment saying why."
     )

@@ -20294,3 +20294,414 @@ you then go looking for.
 it addresses one sub-class only, and that the sub-class it does not address is
 the one that has produced the more consequential errors here — a read-only site
 called a way in, and a fixture run called a real export.
+## 2026-08-23 - `data-engineer` - When you withdraw a claim, grep the tree for the claim's own words
+
+**Its own first use found twice as many sites as the people who went looking.**
+
+I withdrew a claim on 2026-08-23: that SQLite's create-on-connect
+"manufactures a false zero". Driven, it does not — an absent path yields an
+*unmigrated* file whose first query dies on `no such table`, which is loud. The
+false zero comes from a store that is **migrated and empty**, which answers
+honestly with zero and exits 0.
+
+The withdrawal was recorded in a handoff entry and in one docstring. Neither is
+where the claim gets re-derived. So it propagated.
+
+The coordinator and I each counted the damage independently and **we both got
+the same wrong number.** Three sites, we said. Then I ran the grep:
+
+```
+git grep -n "meaningless zero" -- backend/ docs/ scripts/
+```
+
+**Six.** The three we knew, plus a test comment in
+`test_cohort_admissibility.py`, plus a paragraph in
+`docs/adapters/nba-injury-report-cohort-admissibility.md`, plus a design
+judgement in this file. Two careful readers, two independent counts, same
+error — which is exactly the failure mode a second reader cannot fix and the
+one this project has hit before.
+
+**The remedy costs one grep per withdrawal and it is not a fix for rhetorical
+convenience.** Nothing cheap is, and `gates.md` is right to disclaim that
+class. What it fixes is **propagation of an already-caught claim**, which is a
+strictly easier problem: the withdrawn phrasing is a literal string, so
+inheriting it is *unexamined inheritance*, which `AGENTS.md` names as the kind
+we know how to catch. One error became six sites purely because nothing carried
+the correction to them.
+
+### Assertion versus quotation, and the one I deliberately left
+
+A repository that documents its own defects cannot be checked by searching for
+the defect's text — the `aav-source` lane established that on 2026-08-22, and
+my corrections now contain the withdrawn phrase themselves. The discriminator
+is the same one that lane found: **is the phrase asserted, or quoted inside a
+correction?**
+
+Five sites were assertions and are corrected. **The sixth is in this file and
+stays**, for two reasons. It is the append-only past record, which is corrected
+by appending rather than editing. And it was already honest: the `seed_demo`
+lane wrote it inside a *"could not verify"* block and labelled it **"That is a
+judgement, not a measurement. Reasoned."** It is a correctly-hedged inheritance
+of a claim that was true-sounding at the time, which is a different artifact
+from an assertion, and destroying it would destroy the evidence of how far the
+claim travelled.
+
+That is the more interesting half of the finding, actually: **the claim reached
+a design decision.** That lane used it to justify letting a *seeder* create a
+file while holding a *reader* to a stricter standard. The reasoning survives —
+the seeder conclusion is still right — but it was reached partly from a premise
+that is false.
+
+### Where the correction went wrong the first time, which is the reusable part
+
+In `db/session.py` I corrected the **docstring** and left the claim in the
+**message string it prints**, twenty lines below, directly contradicting it.
+The docstring is what a maintainer reads. The message is what a human reads at
+2am when something is broken. **I fixed the part that explains and left the
+part that speaks**, and the next lane to write a store-opener copied the
+speaking part.
+
+So the grep is not only about other people's files. Run it on your own.
+
+### How the contradiction was caught at all, since re-reading did not do it
+
+I had already read that function while writing the sentence. Reading it again
+produced nothing. **I caught it because I wrote a test asserting something
+about the filesystem and it failed for the wrong reason** — the failure was
+about an unmigrated schema, not about a missing file, and the gap between the
+error I expected and the error I got was the whole finding.
+
+**Rhetorical convenience is invisible to review, including your own. The only
+detector I have found is executing a check whose outcome the sentence
+predicts.** A sentence that cannot be turned into such a check is a sentence
+nothing will ever contradict.
+
+**Could not verify:**
+
+- **That `"meaningless zero"` is the only phrasing that propagated.** The grep
+  catches verbatim and near-verbatim restatements; a paraphrase — "an empty
+  database would answer nothing", say — escapes it entirely. I did not search
+  for paraphrases and I do not have a reliable way to. **Driven for one
+  string, and the limitation is the interesting part: this is a check whose
+  search pattern is part of its claim**, which is the same lesson as the census
+  scan two entries up. **Reasoned.**
+- **That correcting the five sites did not weaken any guard.** Every guard is
+  byte-for-byte unchanged; only stated reasons moved, and each site now says so
+  explicitly so a later reader does not mistake the correction for a rollback.
+  The `cohort_admissibility` guard in particular is *correct and worth keeping*
+  on its narrower ground. Verified by the tests around each staying green, not
+  by re-reading. **Driven.**
+
+## 2026-08-23 - `data-engineer` - Finishing a withdrawal, and making the census fail when a new door appears
+
+Commissioned after the pre-archive question. Four parts, base **`0609c64`**,
+built under merge freeze and not rebased.
+
+### The census now fails loudly instead of decaying quietly
+
+`test_every_engine_call_site_is_classified` scanned for one spelling,
+`Database.from_settings(`. When written that was **every** way into a store in
+the package — so the limit was invisible, because *exhaustive* and *narrow*
+look identical until something moves. Then `cohort_admissibility.py` opened one
+through `create_engine` over a `sqlite3.connect` creator, and the census went
+from exactly complete to quietly incomplete **at exit 0, with the check green**.
+
+Widening the call-site scan was the obvious remedy and it is the wrong one. A
+call spelling is an **open set** — `create_engine(...)`, `sa.create_engine(...)`,
+`engine_from_config(...)`, a `creator=` lambda, a helper returning an Engine.
+Adding two spellings buys exactly two.
+
+**Imports are a closed set.** To open a store you must first import something
+that can, and that is a short list of engine factories and DBAPI drivers. So
+`test_no_unsanctioned_module_can_open_a_store` walks the AST of every module
+and requires anything importing one to be in `SANCTIONED_STORE_OPENERS` **with
+a written reason**. Two entries today: `db/session.py`, because it is the
+implementation; and `cohort_admissibility.py`, because it opens
+`file:...?mode=ro` and can neither create nor write.
+
+AST rather than text, and that distinction is driven rather than argued.
+Mutating `coverage.py` to `from sqlalchemy import create_engine as ce`:
+
+```
+grep 'create_engine(' finds : 0     <- a text scan sees nothing
+pytest exit = 1                     <- the rule fires
+```
+
+A second mutation (`import sqlite3` into an unlisted module) also fired, and a
+third dropped `store=` from the startup log and fired. All three restored
+byte-identical by hash, baseline green before each.
+
+**Its own limits are asserted in the module, by the rule this unit exists to
+enforce.** `SCAN_LIMIT` records that the call-site scan finds one spelling.
+`SCOPE_LIMIT` already recorded that verdicts classify *creation, not
+destination*. And the import rule's own hole is stated: `importlib.import_module`
+defeats it, which is adversarial where the hazard is accidental. It answers
+**"is the census complete?"**, never "is this site correct" — membership is what
+decayed, verdicts did not.
+
+### `app.py` names its store, and deliberately does not guard
+
+The startup log carried `dialect=sqlite` but not *which* SQLite. A server
+reporting zeros because it was pointed at an empty store is, from outside,
+identical to one reporting zeros because the season has not started.
+
+**I did not add a refusal guard, and I think asking for one would have been the
+mistake.** "Is this the right store?" cannot be answered from content. Every
+such guard keys on a proxy — a row count, a season, a prior import — and #81
+proved a proxy is exactly what fails when the store is real but wrong. So the
+guard keys on nothing. It logs.
+
+**The path stays off the HTTP surface**, and this is a boundary rather than an
+oversight: `api/routes/health.py:44` deliberately keeps connection-URL
+information out of responses. Putting a filesystem path in a response body is a
+REST-contract decision plus a disclosure one, owned by `backend`, not something
+to do incidentally inside a unit about withdrawing a claim. A test pins it, so
+a later change has to be deliberate.
+
+### `scripts/predict_union.py`
+
+Committed with tests, since this repo has already shipped a checked script whose
+tests were not. Its docstring states the arithmetic it assumes — that both sides
+only appended — and, more usefully, states that **the prediction is necessary
+and not sufficient**: a correct entry count survives an entry being *swapped*
+rather than dropped, and only `git diff --numstat` sees that. The two answer
+different questions.
+
+Its heading pattern is anchored on the ISO date rather than on prose, because an
+em-dash separator silently failed a narrower grep during this lane's own rebase
+and was briefly reported as a lost entry. A zero base is refused rather than
+predicted from, for the same reason: a pattern that matches nothing is not a
+file that contains nothing.
+
+### The three sites were six
+
+Covered in its own entry above. Every guard is unchanged; only stated reasons
+moved.
+
+**Could not verify:**
+
+- **That the import rule's name list is complete.** `_ENGINE_FACTORIES` and
+  `_DBAPI_MODULES` are enumerations I wrote, and an ORM or driver nobody uses
+  yet is not in them. This is the **same shape as the defect it replaces** — a
+  closed set is only closed relative to what you listed — and I want that said
+  plainly rather than discovered. It is a much smaller and slower-moving set
+  than call spellings, which is the whole argument, but it is not a proof.
+  **Reasoned.**
+- **That no module opens a store without importing anything.** A module could
+  receive an open `Session` or `Engine` from a caller and be invisible to both
+  checks. That is *correct* — such a module is not choosing a store — but it
+  means neither check enumerates "code that touches a database", only "code
+  that picks one". **Reasoned, and the distinction is deliberate.**
+- **That the startup log renders the path usefully under `log_format=console`.**
+  Asserted on the structlog *event*, not on rendered bytes, because
+  `configure_logging` binds stderr before pytest can swap it. The event carries
+  the right value; how the console renderer prints it is unchecked. **Driven on
+  the event, not on the output.**
+- **Anything about `app.py` beyond startup.** Whether a server should refuse to
+  start against an empty store at all is a real question and is not mine.
+  **Named, not decided.**
+
+### Addendum: a failure message is a user interface, and on Windows it is cp1252
+
+The coordinator asked me to write the import rule's failure text for a stranger
+who meets it mid-rebase, on someone else's branch, having read none of the
+reasoning. Good instruction. I wrote the message, then — because reviewing my
+own prose is exactly what does not work — **triggered the failure and read what
+actually came out.**
+
+It came out garbled. Six assertion messages in that file contained em-dashes,
+and pytest rendered them to a Windows console through **cp1252**, where `—`
+becomes a replacement character. `exactly complete when written, and went
+silently incomplete` arrived broken at the punctuation. On CI (Linux, UTF-8) it
+is fine, which is the trap: **the encoding that mangles it is the owner's own
+machine**, and CI would never show it.
+
+All six are now ASCII, and `test_the_guidance_messages_survive_a_windows_console`
+walks this file's AST and fails on any non-ASCII character inside an `assert`
+message. Docstrings and comments are deliberately exempt — those are read in an
+editor, which handles UTF-8. Only the strings a console prints are constrained.
+
+The general form, since it is not really about encodings: **guidance text is
+shipped output, and shipped output has to be executed to be checked.** I would
+not have found this by proofreading, because proofreading is done in an editor
+that renders the character correctly. It is the same method that caught the
+withdrawn claim two entries up — run the thing and read what it says, rather
+than read what you wrote.
+
+**Could not verify:** that no *other* test file has the same problem. The new
+check scans only its own module, deliberately: a repository-wide rule about
+assertion text is a bigger claim than this unit earns, and I would rather leave
+a narrow check that is true than a wide one nobody agreed to. **Named, not
+fixed.**
+
+### The finding is not about encodings
+
+Extending the previous addendum, because the coordinator found a second
+instance by taking my rule seriously about my own fix, and it is in a worse
+place than the one I fixed.
+
+**Every gate this project has is green about an environment chosen for
+reproducibility, and silent about the environment that actually exists.** CI is
+Linux with a UTF-8 console. The owner is on Windows, where Python writes
+through cp1252. Nothing we run bridges that, and nothing we run ever will,
+because CI's whole value is that it is *not* anybody's machine. Encoding is the
+example. The finding is that **the reader whose experience matters most is the
+one no gate was checking**, and that is structural rather than an oversight.
+
+`scripts/resolve_doc_conflicts.py` was the worse instance. My assertion
+messages fire in a test, for someone reading a failure. That script's messages
+fire when a lane is **mid-rebase, blocked, reading the console to decide what
+to type next** — the least forgiving moment in this workflow — and it compounds
+with something already recorded about that file: its refusal advice is wrong
+for the count-parenthetical case. A lane could meet a **garbled** rendering of
+**already-wrong** advice while stuck. I fixed only the encoding; the advice is
+a behavioural change to a script other lanes depend on and needs its own unit.
+
+### Measured, then split, because "fix it everywhere" was not honest
+
+24 offending strings across 14 files. Not three.
+
+| Domain | Strings | Files | Action |
+|---|---|---|---|
+| `scripts/` | 5 | 2 | fixed |
+| `backend/tests/` | 14 | 9 | fixed |
+| `backend/src/` | 5 | 3 | **left, with the reason** |
+
+`backend/src` is not laziness. Two of its three CLI modules —
+`ingest/backfill.py` and `ingest/injury_report/backfill.py` — are pinned by
+whole-file SHA-256 in the committed cohort manifest, so editing them
+invalidates its provenance and fails `test_cohort_evidence.py`. Fixing the one
+unblocked module and leaving its two siblings would be arbitrary. The number is
+now written down rather than waiting to be rediscovered, and the right moment
+is whenever that manifest is next regenerated.
+
+`test_console_encoding.py` states `CHECKED_ROOTS` as an asserted constant with
+that reasoning beside it, because **a check's domain is part of its claim** and
+this is the fifth time today that lesson has been the finding.
+
+### Two things only executing could have found
+
+**An escape is not ASCII.** `resolve_doc_conflicts.py` wrote its em dash as
+`\u2014`. The file was pure ASCII on disk; the rendered output was still
+broken. A grep for the character reports that file clean, and my own
+source-line-based fixer skipped it. The check reads the string's **value**, not
+the file's bytes, which is why it caught what the fixer missed — and there is
+now a test pinning specifically that.
+
+**The report mangled the character it was reporting.** My first version
+interpolated `repr(ch)`, so a message explaining that an em dash cannot be
+printed arrived with a broken em dash in it. Characters are now named
+`U+2014 EM DASH`, pure ASCII.
+
+That second one is the sharper of the two, because **my own new check could not
+have caught it.** The bad character entered at *runtime* through an f-string,
+where a scan for non-ASCII *literals* is structurally blind. The fix was to
+assert on the **rendered** output instead — the only formulation that could
+have seen it. Fifth instance in one unit of a check whose domain was narrower
+than its hazard, and this time the check was mine and the hazard was the check.
+
+### The method, which is the reusable half
+
+**Run the thing and read what it says, rather than read what you wrote.**
+
+Proofreading cannot find this class, structurally: proofreading happens in an
+editor that renders the character correctly. Reviewing my own message would
+have shown me a perfect em dash forever. Both instances came from triggering
+the failure and looking at the console — the same method that caught the
+withdrawn claim, where a test failed for the *wrong reason* and the gap between
+the error I expected and the one I got was the entire finding.
+
+**Could not verify:**
+
+- **That `assert`, `print` and `sys.exit` are every console surface.** They are
+  every one this repository uses today, which I checked. `sys.stderr.write`,
+  `logging` with a console handler, `warnings.warn` and `argparse`'s own help
+  and error text are all unconstrained. `argparse` is the most likely next
+  instance, since help text is prose and prose attracts typography. **Driven
+  for three node kinds, named for the rest.**
+- **That cp1252 is the encoding the owner's console actually uses.** It is what
+  Python reported when it raised `UnicodeEncodeError` here, repeatedly, which is
+  strong evidence for this machine and this shell. A different terminal or code
+  page would differ. **Driven on the machine that matters, not proven general.**
+
+### Rebase onto `0f99429`: I deleted five tests and every gate stayed green
+
+The worst thing I did in this unit, caught by arithmetic rather than by any check.
+
+Moving a test out of `test_store_creating_readers.py` into its own module, I
+cut the source between two function names with a slice. The names I picked had
+**four other tests between them**, and the slice took all of them:
+`test_every_engine_call_site_is_classified` — the census test that is the whole
+point of the previous unit — plus `test_reporting_commands_refuse_and_writers_do_not`,
+`test_the_blocked_sites_are_blocked_for_a_recorded_reason`,
+`test_coverage_refuses_an_absent_store_without_creating_it` and
+`test_an_unreadable_store_is_not_reported_as_an_empty_one`.
+
+**The full suite passed. `ruff` passed. `mypy` passed.** Deleting a test breaks
+nothing, and a suite that reports `1733 passed` after losing five is telling the
+truth about the tests that remain.
+
+I caught it because I had **predicted** the count: 1735 before, minus one moved,
+plus four added, should be 1738. It said 1733. The gap was the entire finding —
+the same technique as `predict_union.py`, applied to a number I had no reason to
+think was at risk.
+
+**The general check, which this repository already has in another form:** a
+recount of the finished thing agrees with itself perfectly after a deletion.
+`docs/backlog.md` learned this and gained a slug-set diff against the merge
+base. Test suites have exactly the same hole and nothing guarding it. So I ran
+the analogue —
+
+```
+base test names: 317   now: 333   DROPPED: none   ADDED: 16
+```
+
+— comparing the set of `test_*` function names against the base across every
+touched test file. **A count cannot see a deletion that a addition masks; only
+the set difference can.** I would file this as a check worth having, and I have
+not built it, because a repo-wide rule about test-name sets is a bigger claim
+than this unit earns and it belongs to whoever owns CI shape.
+
+### The withdrawn claim propagated again *while I was withdrawing it*
+
+`test_cohort_admissibility.py` on `0f99429` asserts
+`pytest.raises(FileNotFoundError, match="meaningless zero")`. A **test pinning
+the withdrawn wording**, added in #88 — after my sweep ran, and before my
+correction merged.
+
+So the count I published was true of the tree I ran it on and false of the tree
+it landed in. **A withdrawal is not finished when you have swept; it is finished
+when it merges**, and in a repository with concurrent lanes those are different
+moments. Nothing about the grep is wrong; its scope was a commit, and the commit
+moved.
+
+Its intent was right and is preserved — the guard must name the path and say
+what actually goes wrong, unlike the driver's bare "unable to open database
+file". It now matches `wrong path` and separately asserts the path appears.
+
+### Scope, attached, per the rule added in #89
+
+The counts this unit published, with the commits that make them checkable:
+
+- **`"meaningless zero"`: 6 sites**, at `0609c64`, over `backend/ docs/ scripts/`.
+  **7 by `0f99429`**, the extra one added by #88 in the interval.
+- **Non-ASCII console strings: 24**, at `0609c64`, over assert messages, `print`
+  and `sys.exit` args — `scripts/` 5, `backend/tests/` 14, `backend/src/` 5.
+- **`Database.from_settings` call sites: 12**, at `842a289`.
+- **Modules importing an engine factory or DBAPI driver: 2**, at `0609c64`.
+
+Each of those is now falsifiable in seconds by re-running the command against
+the named commit, which is the whole of what the rule claims and is not
+prevention.
+
+**Could not verify:**
+
+- **That no *other* edit in this unit dropped something silently.** The
+  test-name diff covers `backend/tests/`. Deleted non-test functions, deleted
+  fixtures, and deleted lines inside surviving functions are not covered by it,
+  and `mypy` only catches the ones something still references. **Driven for test
+  names, not for anything else.**
+- **That `1738` was the right prediction rather than a lucky one.** It matched
+  after restoring five tests, which is consistent, but I derived it from my own
+  memory of what I had added. A prediction from the same head that made the
+  error is weaker evidence than an independent one. **Reasoned.**

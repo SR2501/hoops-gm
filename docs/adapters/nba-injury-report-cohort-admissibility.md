@@ -297,9 +297,15 @@ gives byte-identical bytes.
 
 **`read_only_engine` asserts the file exists on the filesystem before opening
 it.** SQLite creates a database on connect rather than refusing, so a mistyped
-path yields a brand-new empty file and a count against it is an honest,
-reproducible, meaningless zero — a false zero manufactured by the very check
-written to settle the question.
+path yields a brand-new empty file — an *unmigrated* one, whose first query
+dies on `no such table`. That is litter plus a misdiagnosis, blaming the schema
+for what is a wrong path, and the guard is worth having for exactly that.
+
+**It is not protection against a false zero, and an earlier version of this
+paragraph said it was.** That claim was withdrawn on 2026-08-23 after being
+driven: the false zero comes from a store that is *migrated and empty*, which
+answers honestly with zero and exits successfully. No filesystem check sees
+that one — reporting the store alongside the count is what does.
 
 **The by-date table settles any split without regeneration.** If the split
 moves, recompute the §2 block from `direct_outcome_counts_by_game_date` and

@@ -269,7 +269,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
             f"{path}: this file was conflicted with diff3/zdiff3 markers "
             "(`|||||||`). This script resolves the two-sided form only. Note "
             "that a heading appearing solely in the base section means both "
-            "sides deleted it, which is not a loss — resolve by hand."
+            "sides deleted it, which is not a loss - resolve by hand."
         )
 
     # Collapse a conflicted block **only when its entire content is the count
@@ -302,7 +302,7 @@ def resolve_backlog(path: pathlib.Path) -> None:
         excerpt = "\n".join(block.strip().split("\n")[:8])
         if not _has_content(block):
             sys.exit(
-                f"{path}: a conflict block containing no content at all — a "
+                f"{path}: a conflict block containing no content at all - a "
                 "whitespace-only conflict, which two lanes deleting the same "
                 "paragraph will produce. There is no header here to "
                 "regenerate, so collapsing it would inject one the file does "
@@ -415,12 +415,12 @@ def resolve_backlog(path: pathlib.Path) -> None:
             f"found {written}. Refusing to write.\n\n"
             "This counts the lines that exist; it does not know which "
             "mechanism produced them, so it names the possibilities rather "
-            "than asserting one — an earlier version asserted 'both sides' "
+            "than asserting one - an earlier version asserted 'both sides' "
             "headers survived' for a second header this script had itself "
             "injected one line earlier, and sent the operator looking for a "
             "duplicate that the merge never contained.\n\n"
             "Two can mean both sides' headers survived a block the collapse "
-            "regex did not match — a stash-style `<<<<<<< Updated upstream` "
+            "regex did not match - a stash-style `<<<<<<< Updated upstream` "
             "label, for instance, since the regex is anchored on HEAD. Zero "
             "can mean the header was collapsed and not restored. Read the "
             "file rather than trusting either reading of this number."
@@ -526,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         print("    git diff --name-only --diff-filter=U")
         print(
             "If that lists none of the files above, the hit is in committed "
-            "content rather than an unresolved merge \u2014 check the line itself."
+            "content rather than an unresolved merge - check the line itself."
         )
         return 1
 

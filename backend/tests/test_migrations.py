@@ -582,7 +582,7 @@ def test_every_enum_column_has_its_own_check_listing_every_member(
 
     assert not problems, (
         "enum columns whose migrated CHECK does not match the model: "
-        f"{problems}. Autogenerate does not detect a widened enum — the "
+        f"{problems}. Autogenerate does not detect a widened enum - the "
         "migration has to drop and recreate the CHECK by hand, as 0002 does."
     )
 
