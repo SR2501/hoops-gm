@@ -38,6 +38,56 @@
  * correct. Clearing it would make the recorder retype, under the clock, the
  * thing they had already typed right — so the values stay and the message says
  * what to change.
+ *
+ * ## Why this panel explains itself, and where
+ *
+ * The owner opened the finished board and said he had no idea how to use it.
+ * The gap was precise and measurable: the **log** panel carried four sentences
+ * of prose about what a correction is, and the panel he actually types into
+ * carried none. Driven in a browser against the seeded auction at `/draft/1`,
+ * the whole text content of this section was:
+ *
+ *     Sale Bid Nomination PLAYER SEAT <twelve seat names> PRICE Record
+ *
+ * Thirty-nine words, none of them explanatory. **The half he reads was
+ * documented and the half he uses was not.** Snake was better but not by much —
+ * it already said the seat is fixed by the recorded order, and said nothing
+ * about anything else.
+ *
+ * Three claims are made on screen below, and each was driven against the live
+ * API rather than read off a docstring:
+ *
+ * - **A sale needs no nomination before it.** Recorded `Probe Onlysale` to a
+ *   seat for $7 with no lot open: accepted, the seat's holdings gained the
+ *   player, and `selections_made` moved 7 → 8.
+ * - **Nomination and bid fill no roster slot.** Recorded one of each:
+ *   `selections_made` stayed at 8 across both. (The seats panel *does* print
+ *   the nominee's name against the high bidder — that is the live-bid caveat,
+ *   not a holding, and a substring check on the panel cannot tell them apart.
+ *   The count is the measurement that can.)
+ * - **A recorded entry lands at the top of the log with Undo on it.** The
+ *   append above became `#16 Probe Onlysale sold to Bench Mob for $7.00` with
+ *   `log-undo-16` beside it.
+ *
+ * ## Why the guidance recedes, and why it does not disappear
+ *
+ * This screen has two users who are the same person in different states: one
+ * who has never recorded anything and needs to learn the panel, and one who is
+ * mid-auction with thirty seconds a pick and needs the space. So the split is
+ * by cost. The two lines that are cheapest and most load-bearing — *this
+ * records, it does not advise*, and *only a sale fills a slot* — are always
+ * visible. Everything else sits in a disclosure that **recedes on the first
+ * successful record and only that once**; a second auto-collapse would fight a
+ * reader who had deliberately reopened it.
+ *
+ * It recedes to a summary line rather than to nothing, because the state that
+ * produced this defect is *"has recorded before, does not remember"* — the
+ * owner a week later, on a draft that already has entries. Teaching that only
+ * ever fires on an empty draft would be gone exactly when it was next needed.
+ *
+ * And the disclosure sits **below** the submit button. Expanding it therefore
+ * cannot displace a field, which is what makes reopening it safe to do at any
+ * point in a draft rather than only before one starts.
  */
 
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
@@ -66,6 +116,11 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [lastRecorded, setLastRecorded] = useState<string | null>(null)
+  // Open to begin with: a reader who has never used this panel is the case the
+  // guidance exists for, and there is no cheap way to recognise one.
+  const [guideOpen, setGuideOpen] = useState(true)
+  // Whether the one automatic collapse has already been spent.
+  const hasReceded = useRef(false)
 
   const firstFieldRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null)
   const ids = useId()
@@ -94,6 +149,13 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
     setAmount('')
     setError(null)
     setLastRecorded(summary)
+    // The recorder has now seen the panel work once, so the space the guidance
+    // occupies is worth more than the guidance. Once only — after this the
+    // disclosure belongs to whoever opened it.
+    if (!hasReceded.current) {
+      hasReceded.current = true
+      setGuideOpen(false)
+    }
     // The seat is deliberately *not* cleared in an auction: consecutive entries
     // on one lot are usually the same seat bidding itself up, and re-picking it
     // every time is the keystroke this screen can most afford to save.
@@ -190,6 +252,23 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
     <section className="recorder" aria-labelledby={`${ids}-title`}>
       <h2 id={`${ids}-title`}>Recording</h2>
 
+      {/* Two sentences, always visible, chosen because they are the two a
+          reader cannot afford to be missing while typing. Everything else is
+          in the disclosure below the form.
+
+          Says "does not advise" rather than "is not a recommender", and that is
+          not a stylistic preference. The `no-decision-numbers` guard in
+          `DraftPage.recorded.test.tsx` word-boundary matches `recommend` over
+          everything inside `.draft__panels`, and the page lede is exempt only
+          because it sits outside them. Widening that scope to fit this sentence
+          would trade a real guard for a phrasing, so the phrasing moved. The
+          cost is worth naming: the guard matches vocabulary as a proxy for
+          leaked decision numbers, so it constrains prose *denying* them too. */}
+      <p className="recorder__lede" data-testid="recorder-lede">
+        <strong>You type what happened in the room.</strong> This panel records; it does not
+        advise.
+      </p>
+
       {isAuction ? (
         <div className="recorder__modes" role="group" aria-label="What to record">
           {(['sale', 'bid', 'nomination'] as const).map((candidate) => (
@@ -209,6 +288,18 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
             </button>
           ))}
         </div>
+      ) : null}
+
+      {/* Sits directly under the three buttons because it is about the choice
+          between them, and because a recorder who reads only one line should
+          read the one that says two of the three are optional. Driven, not
+          assumed: a nomination and a bid each left `selections_made` where it
+          was, and a sale with no lot open moved it. */}
+      {isAuction ? (
+        <p className="recorder__hint" data-testid="recorder-mode-hint">
+          Only <strong>Sale</strong> fills a roster slot. Nomination and bid are optional detail —
+          skip them and the roster is still right.
+        </p>
       ) : null}
 
       {isAuction && lotIsOpen ? (
@@ -239,8 +330,12 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
             <>
               On the clock: <strong>{nextPickSeat.display_name}</strong> — round{' '}
               {state.next_pick.round_number}, pick {state.next_pick.pick_in_round} (overall{' '}
-              {state.next_pick.overall_pick}). The seat is fixed by the recorded order, so only the
-              player is typed.
+              {state.next_pick.overall_pick}). The seat is fixed by the recorded order, so it is
+              derived rather than asked for
+              {state.format.auction_budget === null
+                ? ', and this draft has no budget, so there is no price either'
+                : ''}
+              . The player&apos;s name is the only thing to type.
             </>
           )}
         </p>
@@ -325,7 +420,12 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
 
       {lastRecorded !== null && error === null ? (
         <p className="recorder__ok" role="status" data-testid="recorder-ok">
-          {lastRecorded}. Log is at entry {state.last_sequence}.
+          {/* Deliberately does not claim the entry is *at the top*: the poll can
+              pick up a write this tab did not make between the append and this
+              render, and "look in the log beside this panel" stays true either
+              way. */}
+          {lastRecorded}. Log is at entry {state.last_sequence} — it is in the log beside this
+          panel, where it can be undone.
         </p>
       ) : null}
 
@@ -351,6 +451,84 @@ export function DraftRecorder({ model, onRecorded, onAttempted }: DraftRecorderP
           </p>
         </div>
       ) : null}
+
+      {/*
+        Below the form on purpose. Opening it cannot move a field, which is
+        what makes it safe to reopen mid-draft rather than only before one
+        starts. See the note at the top of this file.
+
+        The last point overlaps the log's own lede, and that overlap is
+        deliberate rather than an oversight: the log explains what a correction
+        *is*, which is a different question from where the thing you just typed
+        went. Nothing is taken from the log to pay for it.
+      */}
+      <details
+        className="recorder__guide"
+        data-testid="recorder-guide"
+        open={guideOpen}
+        onToggle={(toggleEvent) => {
+          setGuideOpen(toggleEvent.currentTarget.open)
+        }}
+      >
+        <summary data-testid="recorder-guide-summary">
+          {isAuction ? 'What each of the three records' : 'What this form records'}
+        </summary>
+        <ul className="recorder__guide-points" data-testid="recorder-guide-points">
+          {isAuction ? (
+            <>
+              <li>
+                <strong>Sale</strong> — who bought whom, and for how much. The only entry that puts
+                a player on a roster.
+              </li>
+              <li>
+                <strong>Nomination</strong> and <strong>Bid</strong> — who put a player up, and the
+                prices called on the way. Colour, not the record. A room moves faster than typing,
+                and a draft recorded as sales alone still has every roster right.
+              </li>
+              <li>
+                A sale needs no nomination in front of it. While a lot <em>is</em> on the block the
+                sale takes its player from the lot, so the player field goes away and only the seat
+                and the price are typed.
+              </li>
+              <RecordDestinationPoint />
+            </>
+          ) : (
+            <>
+              <li>
+                The player&apos;s name is the whole entry. No seat is asked for because the
+                recorded turn order already fixes who is on the clock, and a picker would offer a
+                choice with one correct answer.
+              </li>
+              <li>
+                No price is asked for either
+                {state.format.auction_budget === null
+                  ? ' — this draft has no budget for one to come out of'
+                  : ''}
+                . Their absence is a derivation, not a missing feature.
+              </li>
+              <RecordDestinationPoint />
+            </>
+          )}
+        </ul>
+      </details>
     </section>
+  )
+}
+
+/**
+ * Where a recorded entry goes, which is the same answer in both formats.
+ *
+ * Says *newest first* rather than *at the top*: the ordering is this build's
+ * own decision in `DraftLog` and is therefore something the screen can promise,
+ * where a claim about which row is first is only true until the poll picks up a
+ * write from somewhere else.
+ */
+function RecordDestinationPoint() {
+  return (
+    <li>
+      <strong>Record</strong> puts what you typed into the log beside this panel, which runs newest
+      first, with <strong>Undo</strong> on it. Nothing there is edited in place — the log explains
+      how corrections work.
+    </li>
   )
 }
