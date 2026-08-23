@@ -17992,7 +17992,17 @@ hand, which is the only thing that actually works at this hit rate.
   weaker exposure than a modal value.
 ---
 
-## 2026-08-22 — `frontend` / `draft-recorder-self-documenting`: the panel he reads was documented, the panel he types into was not
+## 2026-08-23 — `frontend` / `draft-recorder-self-documenting`: the panel he reads was documented, the panel he types into was not
+
+*Dated 2026-08-22 when written and corrected to 2026-08-23 during the rebase onto
+`6f22a3e`, in place, because the entry was still unmerged. The original was true by
+the local clock at the moment of writing — the unit started at 23:30 and the browser
+driving all happened after midnight — and it became **misleading** only when quant's
+2026-08-23 entry landed above it, since this file is newest-at-bottom and a reader
+scanning dates would have read the order as wrong. **A timestamp that is accurate
+when written and false after someone else appends is the same shape as a verified
+negative expiring on the next merge**, recorded elsewhere in this file: both are
+claims about a tree rather than about the work, and neither announces the transition.*
 
 **Changed:** `DraftRecorder.tsx` gains two always-visible lines and a disclosure
 below the submit button; the ordered-draft context line now accounts for the
