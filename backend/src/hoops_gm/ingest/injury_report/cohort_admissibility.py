@@ -529,6 +529,49 @@ def build_admissibility_evidence(
 
     return {
         "cohort_dates_are_the_split_denominator": True,
+        "comparability_to_committed_manifest": {
+            "directly_comparable": False,
+            "statement": (
+                "THE WIDENED COUNTS ARE COMPUTED ON A DENSER, DIFFERENTLY-COMPOSED "
+                "REPORT SET THAN THE COMMITTED FOUR-WEEK MANIFEST, AND THE TWO ARE "
+                "NOT DIRECTLY COMPARABLE. Restricting this pipeline to the "
+                "manifest's own 2025-12-08..2026-01-04 window does not reproduce "
+                "it: 1,950 canonical observations against 1,948, with per-status "
+                "drift of out +3, available +7, questionable -5, probable -2, "
+                "doubtful -1. Everything structural matches exactly (28 "
+                "unresolved, 0 without-anchor, 2 without-participation-row, "
+                "canonical lead time 15..1650, joined 15..540, 173 games, 26 game "
+                "dates), so this is a difference in the report set rather than in "
+                "the code."
+            ),
+            "driven_explanation": (
+                "The report store holds 88 distinct report timestamps in that "
+                "window against the manifest's 35. Denser capture means the "
+                "latest pre-tip-off row is more often a later, more-resolved "
+                "report, which moves observations out of the intermediate "
+                "statuses into out/available -- the exact direction of the drift."
+            ),
+            "reasoned_not_driven": (
+                "That this mechanism accounts for ALL of the difference. The "
+                "direction and the density are measured; no row-for-row match was "
+                "made, and none is computable, because the committed manifest "
+                "publishes aggregates only and an overlap needs both sides' row "
+                "keys. Held-out doubtful at 83 against a floor of 30 leaves a "
+                "2.8x margin and the observed four-week discrepancy moved "
+                "doubtful by one, so this is not believed to reverse the verdict "
+                "-- but that is a judgement, not a measurement, and it is "
+                "recorded as one."
+            ),
+            "measured_on": "2026-08-23; not recomputed by this run",
+            "v1_veto_independently_confirmed": (
+                "The same restricted-window run reproduces the preregistration's "
+                "own stated holdout share (0.3219 against its stated 32%) and "
+                "gives held-out doubtful = 3 against v1's recorded 4. So §2's "
+                "arithmetic veto on the four-week cohort is confirmed by a "
+                "pipeline that had every opportunity to disagree, on DENSER data. "
+                "The four-week cohort was correctly refused."
+            ),
+        },
         "cross_store_tipoff_agreement": agreement.as_summary(),
         "direct_outcome_counts_by_game_date": {
             day.isoformat(): {s: counts[s] for s in COHORT_STATUSES if counts[s]}

@@ -19456,3 +19456,89 @@ density by date beyond the one window I compared against the manifest.
 scans every committed JSON there, which covers all four evidence artifacts today.
 An artefact committed elsewhere - or in a non-JSON format - is outside it, and
 the coordinator's point about second artefacts applies recursively. **Reasoned.**
+
+## 2026-08-23 - data-engineer - the widened cohort, independently reproduced, and the caution that was right for the wrong reason
+
+Addendum to the entry above, recording what a second pair of eyes found and one
+correction the coordinator asked to have written down in their own words.
+
+### Reproduced with a different tool, and it holds
+
+The coordinator did **not** re-run the pipeline. They wrote raw SQL against both
+stores - latest pre-tip-off row per game x player, restricted to the holdout
+`2026-03-02..2026-04-12` - and got canonical `out` 2,979, `available` 469,
+`questionable` 335, `probable` 92, `doubtful` 84 against my **direct-outcome**
+2,963 / 467 / 335 / 92 / 83.
+
+**The relationship is the check, not the equality.** Direct outcomes are a
+subset of canonical observations, so their figures sitting one to sixteen
+*above* mine is the only correct relationship; `questionable` and `probable`
+matching to the row means zero exclusions on those statuses, which is exactly
+what my exclusion table reports. They also independently counted 164 game dates
+and 41 in the holdout, so the §4 split is arithmetic they checked rather than
+took. **Two tools, two people, same answer.**
+
+### The empty-set failure that looks like a clean result
+
+Their first SQL attempt joined `injury_report_entries.game_id` straight to
+`nba_games.nba_game_id` - a local surrogate integer against a source-stable
+string, across two databases - and it returned **zero rows and no error**. That
+would have read as "nothing joins across these stores" rather than "this key is
+wrong". It is the same class as the false zero a mistyped SQLite path
+manufactures, and it is why the join test builds its two fixture stores with
+**disjoint** surrogate id bases. Now recorded in
+`docs/adapters/nba-injury-report-cohort-admissibility.md` so the next person
+meets it before the mistake rather than after.
+
+### The correction, in the coordinator's own framing
+
+They asked for this to be recorded their way, and it is worth more in their
+words than mine: *"I gave you the caution correctly and the mechanism wrongly."*
+
+Their brief warned that full-season `doubtful` at ~100x the floor "says very
+little", and named two reductions - direct outcomes being a subset of canonical
+observations, and a holdout being a subset of the cohort. **Both are real and
+both are minor.** They cost 1.02x and 2.6x. The reduction that actually matters
+is **canonicalisation, at 9.4x**, because a player listed `doubtful` across six
+successive reports whose last pre-tip status is `out` contributes **zero**
+`doubtful`. So the caution was sound and the arithmetic behind it was about the
+wrong quantity: `2,087 raw -> 221 canonical -> 217 direct -> 83 held-out`.
+
+**Had `doubtful` been ten times smaller this would have failed for a reason the
+original framing could not see.** A correct warning derived from a wrong
+mechanism survives only while its conclusion happens to hold, which is precisely
+the "rhetorical convenience" failure `AGENTS.md` says has no CI job.
+
+### v1's veto independently confirmed, which is worth as much as the headline
+
+Restricting my pipeline to the four-week window reproduces the
+preregistration's own stated holdout share - **0.3219 against its stated 32%** -
+and gives held-out `doubtful` = **3** against v1's recorded **4**. So §2's
+arithmetic veto on the `2025-12-08..2026-01-04` cohort is confirmed by a
+pipeline built independently of it, **on denser data**, that had every
+opportunity to disagree. The four-week cohort was correctly refused. That is now
+in the artifact rather than only in a chat.
+
+### Range confirmed by the owner-facing ruling
+
+Full season, `2025-10-21..2026-04-12`, holdout `2026-03-02..2026-04-12`, on the
+stated ground that shrinking the range to chase a cleaner report set would be
+**choosing a cohort by looking at its properties**, which is the thing the
+freeze exists to prevent. The late-season-behaviour limitation the coordinator
+raised alongside it was already declared in the artifact and is unchanged.
+
+**Could not verify.** That the coordinator's SQL and my pipeline are genuinely
+independent implementations rather than two expressions of the same
+misunderstanding. They agree on the numbers and reached them by different
+routes, which is evidence; they also both read the same preregistration and the
+same store, so a shared misreading of what "latest pre-tip-off" means would
+survive both. **Reasoned.** The strongest independent check remains structural -
+their canonical counts bounding my direct counts from above, in the right
+direction, on every status.
+
+**Could not verify.** That `questionable` and `probable` matching to the row is
+confirmation rather than coincidence. It follows from my exclusion table
+reporting zero exclusions on those two statuses, so the two facts are not
+independent of each other - agreement there is entailed, not corroborating.
+The informative agreements are the three statuses that differ. **Driven, and
+deliberately discounted.**

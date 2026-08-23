@@ -37,6 +37,24 @@ nba_games.nba_game_id  x  player_external_ids[source='nba'].external_id
 The two stores' surrogates happen to coincide (1,230/1,230 games,
 5,206/5,206 anchors). That was checked, and deliberately **not** relied on.
 
+### The trap this shape sets, hit by an independent reviewer
+
+Reproducing the headline with raw SQL, the coordinator's first attempt joined
+`injury_report_entries.game_id` **directly to** `nba_games.nba_game_id` — a
+local surrogate *integer* against a source-stable *string*, across two
+databases. It returned **zero rows and no error.**
+
+That is the dangerous failure, not a loud one: an empty result set is
+indistinguishable from a clean run that simply found nothing, and it would have
+read as "no observations join across these stores" rather than "this join key is
+wrong". `injury_report_entries.game_id` is a foreign key into its **own**
+database's `nba_games.id`; it means nothing in the other store.
+
+The generator resolves both sides through source-stable identity for exactly
+this reason, and `test_every_observation_joins_despite_disjoint_surrogate_ids`
+builds the two fixture stores with **disjoint id bases** so a silent fallback to
+surrogates fails loudly rather than passing by coincidence.
+
 ---
 
 ## The contamination question, and why the answer is "sound"

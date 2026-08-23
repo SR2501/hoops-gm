@@ -260,6 +260,39 @@ class TestTheLimitationsAreDeclaredPreUnblind:
         assert section["split_game_dates"]["held_out"] == n - int(n * 0.50) - int(n * 0.25)
 
 
+class TestComparabilityIsStatedRatherThanSoftened:
+    """The one thing the headline number must not be read without.
+
+    Owner ruling 2026-08-23: the discrepancy against the committed manifest
+    does not reverse the verdict, and is *also* not to be waved away. These
+    pin the honest statement in place so a later edit cannot quietly soften it
+    into "broadly consistent".
+    """
+
+    def test_non_comparability_is_declared_not_implied(self) -> None:
+        block = _load(ADMISSIBILITY)["comparability_to_committed_manifest"]
+        assert block["directly_comparable"] is False
+        assert "NOT DIRECTLY COMPARABLE" in block["statement"]
+
+    def test_the_driven_and_reasoned_halves_are_kept_apart(self) -> None:
+        # The whole value of this block is that it does not present a reasoned
+        # claim as a measured one.
+        block = _load(ADMISSIBILITY)["comparability_to_committed_manifest"]
+        assert "88 distinct report timestamps" in block["driven_explanation"]
+        assert "judgement, not a measurement" in block["reasoned_not_driven"]
+
+    def test_the_v1_veto_confirmation_is_recorded(self) -> None:
+        # Confirming the four-week cohort was correctly refused is worth as
+        # much as the admissibility result: it is evidence this pipeline can
+        # disagree with the protocol and did not.
+        block = _load(ADMISSIBILITY)["comparability_to_committed_manifest"]
+        assert "0.3219" in block["v1_veto_independently_confirmed"]
+        assert "correctly refused" in block["v1_veto_independently_confirmed"]
+
+    def test_it_adds_no_outcome_keyed_field(self) -> None:
+        assert _surface(ADMISSIBILITY) == set()
+
+
 class TestOutcomeKeyedDetection:
     def test_the_two_enums_collide_on_exactly_one_token(self) -> None:
         # Justifies the `seasons[].reasons` allow-list entry. That field is
