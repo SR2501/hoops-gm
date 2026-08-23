@@ -146,16 +146,22 @@ RECONCILED_GAME_COLUMNS: Final[tuple[str, ...]] = ("tipoff_utc", "game_date")
 OPENS_STORES_OUTSIDE_THE_CENSUS: Final = (
     "Opens two SQLite stores via sqlite3.connect(mode=ro) and one via "
     "sqlite3.connect on the output path, none of them through the settings-based "
-    "Database factory, so test_store_creating_readers.py's literal-string scan "
-    "does not see this module. Read-only inputs cannot be created by opening "
-    "them; the output is refused if it already exists."
+    "Database factory. The literal-string call census in "
+    "test_store_creating_readers.py cannot see any of them; the AST import rule "
+    "in the same file can, and this module is recorded in its allowlist rather "
+    "than hidden from it. Read-only inputs cannot be created by opening them; "
+    "the output is refused if it already exists."
 )
 
-#: The reason text for this module's entry in the AST-based store-opening rule
-#: that replaces the literal-string census. **Adjudicated by the coordinator on
-#: 2026-08-24, requested rather than discovered** — the rule was not yet on
-#: ``main`` when this landed, so the reason is recorded here, at the site, ready
-#: to be lifted into the rule's allowlist verbatim once the mechanism exists.
+#: The reason text for this module's entry in the AST-based store-opening rule.
+#: **Adjudicated by the coordinator on 2026-08-24, requested rather than
+#: discovered** — routed up for a decision instead of being added quietly.
+#:
+#: The rule landed on ``main`` in #90 and fired on this module on the very next
+#: rebase, naming it exactly as its failure message promised. The entry now
+#: exists in ``SANCTIONED_STORE_OPENERS``; this constant is the same reason kept
+#: at the site, because the allowlist is in the test file and a reader of *this*
+#: module should not have to go looking to learn that it is sanctioned and why.
 #:
 #: The ruling accepted a distinction this module forced:
 #:

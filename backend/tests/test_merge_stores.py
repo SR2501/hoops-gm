@@ -377,20 +377,21 @@ def test_the_module_declares_that_it_opens_stores_outside_the_census() -> None:
     assert len(OPENS_STORES_OUTSIDE_THE_CENSUS) > 200
 
 
-def test_the_granted_allowlist_reason_survives_until_the_rule_exists() -> None:
-    """The adjudicated reason must not rot while waiting for its mechanism.
+def test_the_granted_allowlist_reason_is_the_one_actually_in_the_rule() -> None:
+    """The reason at the site and the reason in the allowlist must not drift.
 
-    The AST-based store-opening rule that replaces the literal-string census was
-    not on ``main`` when this module landed, so its allowlist entry could not be
-    added. The coordinator granted the entry anyway, on the distinction that
-    creating a store *as a declared purpose* is a different category from
-    opening one to read it and creating it by accident.
+    Renamed from ``..._survives_until_the_rule_exists``. The rule was not on
+    ``main`` when this module landed, so the coordinator's granted reason was
+    parked here at the site; #90 landed the rule, it fired on this module on the
+    next rebase exactly as its message promised, and the entry now exists. **A
+    test whose name asserts the rule does not exist yet is itself a decayed
+    check** — which is precisely the failure #90 was written up for.
 
-    A granted-but-unplaced reason is exactly the kind of thing that quietly
-    disappears in a later refactor and then gets rediscovered as an undisclosed
-    store-opener. This test is what makes it survive the wait: the reason has to
-    keep naming why the output connect cannot be ``mode=ro``, and has to keep
-    saying it was adjudicated rather than assumed.
+    So it now does the job the wait made impossible: bind the two copies
+    together. The allowlist lives in ``test_store_creating_readers.py`` and the
+    explanation lives beside the code it explains, which is right for a reader
+    of either — but two copies of one justification is how a stale exemption
+    outlives its cause.
     """
     reason = STORE_RULE_ALLOWLIST_REASON
 
@@ -399,6 +400,19 @@ def test_the_granted_allowlist_reason_survives_until_the_rule_exists() -> None:
     # The load-bearing asymmetry: inputs are read-only, the output cannot be.
     assert "cannot create an absent file" in reason
     assert "Adjudicated" in reason, "an exemption must record that it was granted, not assumed"
+
+    census = (Path(__file__).resolve().parent / "test_store_creating_readers.py").read_text(
+        encoding="utf-8"
+    )
+    assert "ingest/injury_report/merge_stores.py" in census, (
+        "this module opens stores by a spelling the literal-string census cannot see. "
+        "It must be recorded in the AST rule's allowlist rather than invisible to it."
+    )
+    for claim in ("declared purpose", "mode=ro", "adjudicated", "2026-08-24"):
+        assert claim in census.lower() or claim in census, (
+            f"the allowlist entry has dropped {claim!r} while the reason kept at the "
+            f"site still carries it, so the two justifications have drifted apart"
+        )
 
 
 def test_the_output_connect_is_the_only_one_that_can_create_a_store(tmp_path: Path) -> None:

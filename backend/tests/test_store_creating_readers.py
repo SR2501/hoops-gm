@@ -210,6 +210,22 @@ SANCTIONED_STORE_OPENERS: dict[str, str] = {
         "error, not a hard call, and a census whose value is that every verdict "
         "means something cannot afford a meaningless one."
     ),
+    "ingest/injury_report/merge_stores.py": (
+        "creates a store deliberately, as its declared purpose - adjudicated by "
+        "the architect on 2026-08-24 and granted as a legitimate entry rather "
+        "than a widening. The distinction accepted verbatim: 'creates a store "
+        "deliberately, as its declared purpose' is a different category from "
+        "'opens a store to read it and might create one by accident'. Writing "
+        "the merged store IS the job here — no single store holds both halves of "
+        "the widened cohort, so the durable ledger's participation rows and the "
+        "sweep's injury reports must be assembled into one, and a `mode=ro` "
+        "writer is a contradiction in terms. Refusing it would be the rule "
+        "mistaking its own hazard. The asymmetry is pinned, not asserted: the "
+        "two *input* connects are `file:...?mode=ro` and "
+        "`test_read_only_actually_opens_read_only` drives a write against one "
+        "and goes red if the guard is dropped; only the single output connect "
+        "can create anything."
+    ),
 }
 
 #: Names whose import means "this module can open a database".
@@ -311,7 +327,7 @@ def test_no_site_is_left_in_the_removed_blocked_category() -> None:
         "a site was reclassified as 'blocked'. That category was removed after both "
         f"its members were fixed ({LIFTED_REASON}). If a genuinely new exposure "
         "exists, reinstate the category together with a written reason and a test "
-        "that its cause is still live — do not add a bare entry."
+        "that its cause is still live - do not add a bare entry."
     )
     assert set(ENGINE_CALL_SITES.values()) == {"reports", "writes"}
 
