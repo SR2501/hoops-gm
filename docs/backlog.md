@@ -2,7 +2,13 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**53 done - 1 blocked - 87 pending - 141 total**
+**53 done - 1 blocked - 88 pending - 142 total**
+
+(Recomputed from the status markers in this finished file, never
+reconciled from two headers: 142 `###` headings and
+142 markers, 1:1, no duplicate item names. Neither side of a
+rebase conflict is a usable input here, because each was computed before
+the other lane's items landed.)
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1253,6 +1259,55 @@ Typed action schema, backend command queue, userscript-side executor, and result
 - **Depends on:** `blind-mocks`, `list-perturbation`, `mock-ingestion`
 
 Owner will follow the list, so list reliability is the product. Measure adherence per decision (~13 per auction, 10 mocks = ~130 observations). Track overall rate and where deviation clusters by position, price tier and draft stage. Separate systematic deviation (bias to guard against) from situational deviation (real information the model lacks, therefore a feature). Cannot measure whether a deviation was correct - mocks do not play out and scoring against the list own valuation is circular.
+
+### `adr-007-era-figure-population` - Naming which population ADR-007's era figures count
+
+- [ ] **pending**
+- **Depends on:** `injury-conversion-cohort-population`
+
+`docs/decisions/ADR-007-availability-in-spine.md:62` records **1.596 unresolved
+`doubtful` per date in the short-lead era against 0.917 legacy**, and calls the
+direction "the opposite direction from what three of us had jointly predicted".
+That figure is cited when arguing the reporting-era boundary bites hardest on
+the scarcest status. **It does not state which population it counts, and it does
+not replicate at season scale.**
+
+Measured 2026-08-23 by `data-engineer` on the widened cohort and published in
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`
+(`direct_outcomes_by_report_era.unresolved_identity_exclusions_by_era_and_status`
+over `game_dates_by_era`): **0.019 per date short-lead (2/104) against 0.033
+legacy (2/60)** - roughly **fifty times smaller and reversed**.
+
+**This is a non-replication, not a contradiction, and the distinction is the
+whole point of the item.** A fiftyfold gap is far too large to be sampling
+noise, so the two are almost certainly counting different populations. The
+reconciling mechanism is specific and checkable: the widened-cohort figure
+counts **canonical** observations - one latest pre-tip-off row per player-game -
+whose identity did not resolve, whereas a count over **raw report rows** would
+be far larger, because a player carried `doubtful` across many successive
+reports contributes one canonical row and many raw ones. If ADR-007's figure is
+a raw-row count, both numbers are right and only the ADR's wording is missing.
+
+**Closing this needs the four-week artifact behind ADR-007's measurement, which
+the cohort lane does not have** - it did not re-derive the original and
+deliberately declined to assert the ADR was wrong. Whoever holds it should
+determine whether the figure is over raw or canonical rows and add that clause
+to line 62. **Agents write `Proposed` only; an ADR edit that changes its
+recorded meaning is an owner decision.**
+
+Scope is one clarifying clause, not a re-measurement. **A fiftyfold discrepancy
+sitting unremarked in a document this project cites is worse than either number
+being wrong**, because both readings look authoritative and nothing
+distinguishes them. The season-scale side is already pinned by
+`test_the_adr_007_figure_does_not_replicate_and_that_is_recorded`, so it cannot
+quietly revert to the inherited figure; nothing yet pins the ADR side.
+
+**What is unaffected.** The era **composition** finding is a different mechanism
+and stands: development is 68% legacy in direct outcomes while selection and
+holdout are 100% short-lead. The claim withdrawn by the coordinator on
+2026-08-23 is narrower - that era-dependent *exclusion* concentrates on
+`doubtful`. It does not: 2 rows in each era, with unresolved exclusions landing
+overwhelmingly on `out` (74 legacy, 45 short-lead).
 
 ### `adr-index-consistency-test` - Testing that the decision log's two indexes cannot drift
 

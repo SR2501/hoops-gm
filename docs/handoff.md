@@ -19437,7 +19437,13 @@ reasoned independence.**
 does not replicate on *my* population; I did not reconstruct its four-week window
 or determine whether it counted raw or canonical rows, so I cannot say which of
 us is measuring the thing the era argument needs. **Reasoned, and someone holding
-that artifact should close it.**
+that artifact should close it** - filed as `adr-007-era-figure-population` so it
+is a tracked one-line clarification rather than a discrepancy nobody owns. The
+coordinator, who had cited the figure to this lane as established, **withdrew the
+narrower claim it supported** on reading this: era-dependent *exclusion* does not
+concentrate on `doubtful` (2 rows in each era; unresolved lands overwhelmingly on
+`out`, 74 legacy and 45 short-lead). The era **composition** finding is a
+different mechanism and stands unchanged.
 
 **Could not verify.** That the sweep's report coverage is uniform across the
 season. The holdout's per-status counts are measured directly, so admissibility
