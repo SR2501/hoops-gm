@@ -19809,3 +19809,83 @@ judgement about cost, not a judgement that it is uninteresting.
 **Next:** nothing blocks. If the owner bounces off one of the four, point 3 is
 the pre-examined addition; if he bounces because the list read as four equal
 things, point 1 is the lever and splitting it is the wrong direction.
+
+
+---
+
+## 2026-08-23 — `frontend` — the report about check decay contained a decayed check, dated
+
+**Changed:** this entry only. No code. Recorded here rather than sent, because
+the thing it records is a claim expiring inside a message.
+
+**Context.** I was asked whether the census-decay finding changed anything in my
+open PR. It does not — #86 is about *why those four claims of copy, in that
+order*, not about what the recorder captures, so the decay shape has no natural
+sentence there. But checking the report before answering turned up something
+better than a line of prose.
+
+**The correction in that report is right, and I drove it rather than agreeing.**
+`read_only_engine` in `ingest/injury_report/cohort_admissibility.py:351` is
+read-only by construction, and both halves hold against the real function:
+
+```
+creates_a_store:               refused: FileNotFoundError
+file_materialised_after_refusal: False
+reads:                         1
+writes:                        refused: OperationalError
+rows_after_write_attempt:      1
+```
+
+The last line is the one worth having. **The write's failure and the write's
+non-arrival are separate claims**, and an `OperationalError` is evidence of the
+first only — so the row count was read back through an independent `sqlite3`
+connection. *Unclassified, not unguarded* is the correct characterisation.
+
+**And the same report carries a negative that had already expired.** It states
+*"zero `sqlite3.connect` in `backend/src`"*, checked at `74c8ba4`. At `0609c64`
+there is **exactly one**, at `cohort_admissibility.py:368` — inside the very
+function the report was classifying. It arrived at `fa705b5`, which is two
+merges after the commit that was checked; `git cat-file -e
+74c8ba4:...cohort_admissibility.py` returns *"exists on disk, but not in
+74c8ba4"*.
+
+So the report was **true when written and false when read**, which is precisely
+the property it was written to describe. That is not an error in it — every
+sentence was accurate about the tree in front of its author — and this file
+already carries the general rule: *re-derive negatives at the moment of use;
+positives can be cited*.
+
+**What is new is the dating.** The existing entries state the rule and give
+instances from the same lane that discovered it. This is an instance that
+survived a lane boundary, in a message *about* the phenomenon, hours old, and
+where the checking lane and the reporting lane are different people. **A rule
+that has been written down, agreed, and restated by the person who filed it
+still did not fire on the sentence they were writing at the time.** The failure
+mode is not ignorance of the rule; it is that a negative does not feel like a
+measurement while you are typing it.
+
+Nothing is exposed. The escaped site cannot write, as driven above, and the
+census cannot see it because `test_every_engine_call_site_is_classified` scans
+for the literal `"Database.from_settings("` while this site reaches
+`create_engine` directly. **Both facts are needed to state the risk correctly**,
+and either alone reads as a bigger or smaller problem than it is.
+
+**Could not verify:**
+
+- **That `mode=ro` is the mechanism doing the refusing.** The write failed and
+  did not land, driven. I did not isolate whether the refusal comes from the URI
+  flag, the file being opened by another handle, or SQLAlchemy — so
+  *"read-only by construction"* is confirmed as **behaviour** and taken on
+  reading as **mechanism**. If someone later changes the URI and the behaviour
+  survives on a different cause, that distinction is where the surprise lives.
+  **Driven on behaviour, reasoned on cause.**
+- **That one `sqlite3.connect` is the current total.** True of `0609c64`. This
+  entry is itself the kind of claim it is about, and saying so here is the only
+  thing that keeps it honest. **Driven, and scoped to that commit.**
+- **That no other prose in this repository asserts a count of engine call sites
+  taken at an earlier commit.** Not swept. **Reasoned.**
+
+**Next:** nothing blocks. If the census is widened, `create_engine(` and
+`sqlite3.connect(` are the two literals it does not currently scan for, and
+`ingest/injury_report/cohort_admissibility.py` is the site that would newly
+appear.
