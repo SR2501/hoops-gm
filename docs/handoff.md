@@ -18776,3 +18776,77 @@ read `.output.title` on the check run before reasoning about duration —
 `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` carries it, and
 `gh run view` returns 404 for these because they are check runs under default
 setup rather than Actions runs this repository owns.
+
+
+## 2026-08-23 - quant - Land a ruling that existed only in a chat, and record where the pre-archive answer lives
+
+Two small durability fixes, no new measurement and no new number.
+
+**The anti-circularity staffing rule now states its own scope.** `architect` ruled that the
+predicate is **not "did you look" but "did you acquire a quantity a prior could be tuned toward"** -
+**values** exclude (a mode, a mean, a player-level figure, an extremum), **facts** do not (a
+concentration, a correlation, a count), and **the exclusion expires on publication**. Both the
+wider reading - that it binds everyone who measured any input the model consumes - and an
+unenumerated "three lanes are excluded" count are withdrawn. That ruling lived only in a
+cross-session message. The rule it corrects is a paragraph in
+`docs/models/consensus-reproducibility.md`, which is this lane's file, so the scope note lands
+beside the rule rather than in a governance doc that does not own it.
+
+**I nearly committed the superseded version of this, which is the near-miss worth recording.** My
+first draft of the scope note stated the *earlier* ruling - that reading a distribution's shape is
+reading the distribution, and that it therefore bound me. The ruling moved in my favour while that
+PR sat open. Had it merged, `main` would have carried a scope note contradicting the accepted
+ruling, **and a future reader follows the file, not the chat** - which is the precise failure this
+lane has spent the day fixing, about to be committed by the lane fixing it. Caught only because the
+PR had not landed yet. **A correction that arrives while your own PR is open is a race, and nothing
+in the gates watches it.**
+
+**The publication limb is not hypothetical, and I checked rather than asserted it.** This document
+has published a **mean** of the contested column - the rotation-cohort games figure in its Level
+table - since `e05f09b` (#70), 2026-08-22. That is a *value* by the test above, sitting in `main`,
+held by every lane. An exclusion keyed on it excludes everyone or no one, which is what makes
+expiry-on-publication load-bearing rather than a courtesy.
+
+**A narrower recusal is kept voluntarily**, and the note says so in those words: the author should
+not choose the availability model's shrinkage *target*, having read this column's distribution
+twice. That is a caution about one parameter, not a disqualification, and it is recorded as the
+author's own rather than as the rule's consequence - **a self-recusal presented as a requirement is
+how a rule silently widens again.**
+
+**Why the wide reading was wrong in direction, not merely in size:** it made the cheapest route to
+staying eligible for the most important model in the project **measuring less**. A rule whose
+incentive is to look away is worse than no rule, because it is obeyed.
+
+**The class underneath is the durable half and is not about staffing:** a guarantee enforced by
+what code can see, destroyed by what a person has seen, **and no diff shows it.** A gate that
+catches a forbidden query cannot catch a memory. That is why a narrow rule which is actually
+enforced beats a wide one re-derived from recollection each time it is invoked - which is how the
+wide reading arose.
+
+**Where the pre-archive answer lives.** It was requested three times and answered in chat twice
+before it was committed, which is the house rule failing in real time. It is now entirely in the
+repository: `scripts/consensus_rederivation.py` (the re-derivation, the shuffled-divisor control
+and the narrowed leak scan, all four as subcommands) and the 2026-08-23 entry above titled *"the
+six ways of settling it that do not work"*. **A future asker should be pointed at those two
+paths, not sent another message.**
+
+### Could not verify
+
+- **That the rule is now the right width**, only that it is narrower, cited, checkable, and no
+  longer inverts its own incentive. It turns on whether shape-without-values can anchor a prior.
+  I argued it cannot and the ruling accepted that - but **I am the beneficiary of my own argument
+  and cannot referee it.** The scope note carries that limitation; a summary of it will not.
+  **Reasoned, by an interested party.**
+- **That no other lane is bound.** The withdrawn count was never enumerated and I did not
+  enumerate it either, because **no artefact in this repository records who has read which
+  column.** So the true number is unknown to me and to the person who asserted it - a slightly
+  worse position than "three was wrong", and the honest form of it. **Driven that the count was
+  unsupported; the quantity itself is unavailable.**
+- **Whether the near-miss above has siblings.** A ruling that moves while a PR implementing the
+  previous ruling is open is a race with no gate watching it. I found this one because the newer
+  ruling was sent to me directly. **Nothing sweeps for a merged document that states a superseded
+  decision, and I did not build one. Reasoned, and unswept.**
+- **Whether anything else ruled in a chat this week is still only there.** I found the ruling this
+  entry lands because it was quoted at me with a line number. That is not a search. **Reasoned,
+  and unswept** - the third consecutive entry from this lane to name an unswept pattern rather
+  than sweep it.
