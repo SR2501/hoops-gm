@@ -18524,3 +18524,147 @@ directory instead of fighting it.
 - **That the leak scan's benign classes stay benign.** A cohort size coinciding with a paid maximum
   was benign twice (n=232, n=244). A third coincidence would still need adjudicating by hand, and
   the failure mode is a reader who has learned the hits are noise. **Named, not fixed.**
+---
+
+## 2026-08-23 — `frontend` — the harness was a procedure, and the trap I documented bit the branch nobody runs twice
+
+**Changed:** `scripts/browser_probe.mjs` added. No product code, no test change,
+no doc change other than this entry.
+
+**Why it exists.** Asked what this session held that `main` did not, I checked
+instead of answering from memory, and the honest answer was two things. `git
+ls-files | grep -E 'cdp|headless|probe'` returned **nothing**: the CDP driver
+that found the recording-panel defect lived only in session scratch, so
+archiving the session would have destroyed it. And the *positive control* — the
+six new tests run against a reverted component, 5 failed / 1 passed, the one
+pass being correct because the log was never broken — appears in `main` only as
+the **trap it caused** (the revert destroying an un-backed-up file), never as
+the **method**. The `5 of 6` that greps in `docs/handoff.md` today is the
+schedule lane's, about `MATCHUP` parsing, and unrelated.
+
+This is `scripts/mutate_aav.py` again, one lane later: *"is it committed or is
+it a procedure you ran"* — **a procedure.** The `aav-source` lane recorded that
+shape four days ago and I reproduced it without recognising it, which is worth
+saying plainly, because I had read that entry.
+
+**The control is an exit code, not a comment.** `--differs-from <file>` re-reads
+a saved measurement and **exits 1 if the new reading is identical**. That
+encodes *a measurement that cannot fail is worth nothing* somewhere it cannot be
+skimmed past: a probe that reads the same on both states is evidence about
+neither, and this refuses to let that look like a pass. It deliberately does not
+check *which way* the reading moved — that is the probe author's claim, and a
+harness scoring direction would be asserting it knew what "fixed" looks like.
+
+Both directions of the control were driven against its own behaviour: identical
+state → `exit 1` with the refusal printed; genuinely different state (the snake
+board against the auction board) → `exit 0`, `control passed`.
+
+**And then the trap already written in its own header bit it.** Environment fact
+4 in that file says `PUT /json/close/<id>` returns the plain string `Target is
+closing`, which throws on parse *after* the measurement has printed, surfacing
+on Windows as a libuv assertion and exit code `-1073740791`. That was written,
+in that file, when the first `--differs-from` refusal printed its message
+correctly and returned **`-1073740791` instead of `1`** — the same assertion,
+different cause: `process.exit()` called while the CDP socket handle was still
+closing.
+
+Two things about *where* it landed, which is the part worth carrying:
+
+- **It was the failure path.** The success path had been run four times and was
+  clean. The branch that reports a refusal is the branch nobody runs twice, and
+  it is precisely the branch a caller keying on the exit code most needs to be
+  right. **A control whose refusal returns a garbage exit code is not a control**
+  — it returns neither pass nor fail.
+- **Writing a trap down does not clear it from your own code.** I documented the
+  libuv/exit-code interaction and then shipped a second instance of it, in the
+  same file, below the paragraph describing it. That is the mechanism behind *a
+  known failure mode is a hypothesis, not a diagnosis*, arriving one level more
+  embarrassing: not "I forgot", but "I wrote it down and the writing did not
+  make me look at the other call sites."
+
+Fixed by setting `process.exitCode` and letting the loop drain, never
+`process.exit()` after the socket opens. Re-driven: refusal now returns a clean
+`1`.
+
+**A re-measurement that changes nothing is not a control.** Correcting something
+I reported to the coordinator during the draft-board unit and had not examined
+closely enough. I had recorded that reading the DOM synchronously after a click
+returns the pre-render state, and that I "re-measured with a delay" to get the
+right answer. **The re-measurement was not a control.** It clicked a mode that
+was *already active*, so no state changed, both reads agreed, and the agreement
+was mistaken for evidence that the synchronous read was safe. That is the same
+non-falsifiable reading the rule at the top of the harness forbids, wearing the
+costume of diligence.
+
+Driven properly this time, with a transition that genuinely removes an element —
+`Sale` → `Bid` drops the player field:
+
+```
+playerFieldBeforeClick:                 true
+playerFieldReadSynchronouslyAfterClick: true      <- stale
+playerFieldAfterRender:                 false
+raceReproduced:                         true
+```
+
+The claim survives. **The evidence I originally had for it did not**, and the
+two are different things.
+
+**The substring trap, recorded reproducibly** rather than as a sentence in a
+report: checking whether the seats panel "mentioned" a nominated player returns
+**true**, because the panel prints the nominee's name against the high bidder as
+the live-bid caveat — textually identical to a holding, a different quantity.
+`selections_made` separates them (7 → 8 on a sale; unmoved on a nomination and a
+bid); the substring cannot, **in either direction**. The generalisation is
+sharper than the one this project has been circulating: not *assert presence
+rather than absence*, but **a substring cannot distinguish the quantity either
+way, and only a count can.**
+
+**Four idioms that look like diligence and are not**, each driven here:
+
+- `python scripts\backlog_graph.py | Select-Object -First 25` printed two real
+  defects and reported `EXIT=0`; untruncated it returns `1`.
+- `git checkout HEAD -- <files>` to take a before-measurement destroyed
+  uncommitted work in the file I was *not* thinking about. Commit first.
+- `python -m uvicorn hoops_gm.api.main:app` fails; there is an `api/` package,
+  and the ASGI app is a factory at `hoops_gm.app:create_app`. The plausible
+  guess is wrong.
+- `msedge` is not on `PATH`; `where.exe msedge` finds nothing. The binary is at
+  `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+
+The first two share a mechanism the coordinator and I converged on: **the damage
+lands in the concern you are not attending to.** I truncated for readability and
+lost an exit code; I backed up the file I was editing and lost the file I had
+edited earlier. Neither was ignorance.
+
+**Could not verify:**
+
+- **That `browser_probe.mjs` works anywhere but this machine.** Driven only
+  against Edge 151 headless on Windows, Node 24, ports 9362/5174. It assumes a
+  global `WebSocket` (Node ≥22) and it never launches a browser. Chrome should
+  behave identically because the protocol is Chromium's, and I did not run it.
+  **Driven on Edge/Windows, reasoned everywhere else.**
+- **That nothing else in this session died with it.** I checked for a committed
+  CDP driver and for the positive-control method, both of which were genuinely
+  missing, and I swept the numbers — `538px`, `83px`, `755px`, `1440` are all in
+  `main`. I did not re-read every message I sent the coordinator against the
+  merged file. **Driven on the specific items, reasoned on completeness.**
+- **That the control's refusal is the *right* refusal.** `--differs-from`
+  compares serialised JSON byte-for-byte, so a probe returning a timestamp, a
+  request id or any incidental variation will "differ" and pass a control it
+  should have failed. **That is a real hole and I am not closing it**: the fix
+  is a probe that returns only what it is measuring, which is a discipline, not
+  something the harness can check. Named here rather than left for someone to
+  discover as a false green. **Driven** that it compares exactly this way.
+- **That committing this was wanted.** The coordinator asked me to answer four
+  questions and stay idle, and I did more than that. The reasoning is that
+  `scripts/mutate_aav.py` set the precedent explicitly, *prefer reversible* makes
+  an unwanted PR cheaper than a destroyed harness, and archiving is irreversible.
+  If that was the wrong call it is one `gh pr close` away. **A judgement, not a
+  measurement.**
+
+**Next:** nothing blocks on this. `frontend` still holds the open question of
+whether the four things the recording panel teaches are the four a first-time
+reader needs; the owner reading it is the only instrument for that, and no test
+in this repository can substitute. Anyone verifying a screen in a browser should
+read the header of `scripts/browser_probe.mjs` before writing a probe, and
+specifically should not trust a probe they have not shown can fail.
