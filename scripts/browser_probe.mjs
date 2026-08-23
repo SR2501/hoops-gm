@@ -172,20 +172,67 @@ let nextId = 0
 const pending = new Map()
 const oneShot = new Map()
 
+/**
+ * The message handler is **total**: every frame the browser can send has a
+ * defined outcome, including frames this harness did not ask for.
+ *
+ * That is not defensive habit, it is the harness's own claim. An uncaught
+ * exception inside a WebSocket listener does not reject the promise anyone is
+ * awaiting — it surfaces as an unhandled error and replaces the exit code with
+ * something the caller never meant. **This harness exists to produce an exit
+ * code worth reading**, so a frame it cannot interpret must not be able to
+ * corrupt one. It is the same failure as fact 5 in the header, entering by a
+ * different door.
+ *
+ * Found by CodeQL, which flagged the `listener(...)` dispatch below as an
+ * unvalidated dynamic method call. **The flagged mechanism is not reachable as
+ * described and the adjacent one was real** — worth recording precisely rather
+ * than as "CodeQL found a bug" or "CodeQL was wrong":
+ *
+ *   - `oneShot` is a `Map`, so a hostile `payload.method` cannot reach a
+ *     prototype member. Driven: `new Map().get('toString')` is `undefined`,
+ *     where `({})['toString']` is a `function`. The dispatch only ever finds a
+ *     resolver this file installed.
+ *   - **But `pending.get(payload.id)` two lines up was unguarded**, and a
+ *     response carrying an `id` never sent — or a duplicate arriving after the
+ *     entry was deleted — threw `TypeError: Cannot read properties of
+ *     undefined`. Driven, same run.
+ *
+ * So the alert pointed one line away from a real defect. The `typeof` guard
+ * below is not alert-appeasement: it is the same totality the `waiter` check
+ * needs, applied to the branch beside it.
+ */
 socket.addEventListener('message', (message) => {
-  const payload = JSON.parse(message.data)
+  let payload
+  try {
+    payload = JSON.parse(message.data)
+  } catch {
+    console.error('Ignoring a frame that is not JSON.')
+    return
+  }
+  if (payload === null || typeof payload !== 'object') return
+
   if (payload.id !== undefined) {
     const waiter = pending.get(payload.id)
     pending.delete(payload.id)
+    // A reply to a request this harness never made, or a duplicate of one
+    // already settled. Dereferencing it threw before this guard existed.
+    if (waiter === undefined) {
+      console.error(`Ignoring a reply to unknown request id ${String(payload.id)}.`)
+      return
+    }
     if (payload.error) waiter.reject(new Error(JSON.stringify(payload.error)))
     else waiter.resolve(payload.result)
     return
   }
+
+  if (typeof payload.method !== 'string') return
   const listener = oneShot.get(payload.method)
-  if (listener) {
-    oneShot.delete(payload.method)
-    listener(payload.params)
-  }
+  // Only ever a resolver installed by `once()` — but checked rather than
+  // assumed, so the branch is total like the one above it.
+  if (typeof listener !== 'function') return
+  oneShot.delete(payload.method)
+  listener(payload.params)
 })
 
 function send(method, params = {}) {

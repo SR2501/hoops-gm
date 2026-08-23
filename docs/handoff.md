@@ -18668,3 +18668,111 @@ reader needs; the owner reading it is the only instrument for that, and no test
 in this repository can substitute. Anyone verifying a screen in a browser should
 read the header of `scripts/browser_probe.mjs` before writing a probe, and
 specifically should not trust a probe they have not shown can fail.
+
+
+---
+
+## 2026-08-23 — `frontend` — CodeQL pointed one line away from a real defect, and the diagnosis everyone reached first was wrong
+
+**Changed:** `scripts/browser_probe.mjs` — the CDP message handler is now total.
+No other file.
+
+**The misdiagnosis is the finding, not the fix.** `CodeQL` failed on #82 in **2
+seconds** while four sibling PRs passed. The coordinator inferred — reasonably —
+that two seconds is too fast to be analysis, that this must be a startup or
+configuration failure, and that the likely cause was `browser_probe.mjs` being
+the first JavaScript outside `frontend/` defeating default-setup autodetection.
+Every step of that reasoning is sound. **The premise was false.**
+
+Read from the API rather than from the reasoning:
+
+```
+Analyze (javascript-typescript)   success   59s
+CodeQL                            failure    2s
+  app:   github-advanced-security
+  title: 1 new alert including 1 high severity security vulnerability
+```
+
+**JavaScript analysis ran for 59 seconds and succeeded.** The 2-second check is
+the *rollup* that posts the alert count, not the analysis. So the duration that
+looked like evidence of a config failure was evidence of nothing — a check that
+reports a result is fast precisely because it is not doing the work.
+
+Worth stating as a class, because the decision framework built on top of it was
+**correct and would have produced a confidently wrong action**: the coordinator
+had already ruled that suppressing was illegitimate, that moving the file was
+legitimate, and that they would *merge it red with the reason recorded* if
+CodeQL simply could not analyse a standalone Node script. That is the right
+policy. Applied to this diagnosis it would have shipped **a real high-severity
+finding described as "a check that cannot analyse a file."** A sound framework
+on a false premise does not fail safe; it launders the false premise into a
+decision nobody re-examines.
+
+**What the alert actually said, and the precise verdict.**
+`js/unvalidated-dynamic-method-call`, high, `browser_probe.mjs:187` —
+`listener(payload.params)`, where `listener` came from
+`oneShot.get(payload.method)` and `payload.method` arrives off the wire.
+
+Neither "CodeQL found a bug" nor "CodeQL was wrong" is the honest summary.
+Driven, both claims in one run:
+
+```
+Map.get('toString')   -> undefined      // the flagged lookup
+({})['toString']      -> function       // what it would be on a plain object
+pending.get(9999).resolve({})
+  -> TypeError: Cannot read properties of undefined (reading 'resolve')
+```
+
+- **The flagged mechanism is not reachable as described.** `oneShot` is a `Map`,
+  so a hostile `payload.method` cannot reach a prototype member; the dispatch
+  only ever finds a resolver this file installed. On a plain object it would
+  have been exactly the reported vulnerability.
+- **The line two above it was a real unguarded dereference.** A reply carrying
+  an `id` never sent — or a duplicate arriving after its entry was deleted —
+  threw. CodeQL did not flag that line.
+
+**So the alert pointed one line away from a genuine defect, and the fix that
+clears it is the fix the adjacent line needed anyway.** That is a third
+category worth naming beside true and false positive: **an alert whose
+mechanism is wrong and whose neighbourhood is right.** Dismissing it on the
+mechanism — which the Map evidence fully justifies — would have left the real
+bug in place, and the dismissal would have been *correct on its own terms*.
+
+**Why this was not a nuisance in a dev script.** An uncaught exception inside a
+WebSocket listener does not reject the promise anyone is awaiting; it surfaces
+as an unhandled error and **replaces the exit code**. This harness's entire
+value is an exit code worth reading, and `--differs-from` refusing is the branch
+a caller keys on. So this is fact 5 from the file's own header — *never let a
+frame you cannot interpret corrupt an exit code* — arriving through a different
+door, in the same file, for the third time in one session. The handler now
+returns a defined outcome for a non-JSON frame, a non-object payload, an unknown
+request id, a missing `method`, and a `method` naming no listener.
+
+Re-driven after the fix, all three: probe returns the same reading (`exit 0`),
+control refuses an identical reading (`exit 1`), control passes on a genuinely
+different state (`exit 0`).
+
+**Could not verify:**
+
+- **That the alert is now clear.** I re-ran the harness, not CodeQL; the fix
+  removes the flagged construct and I have not seen the scan agree. If it still
+  fires, the `typeof listener !== 'function'` guard is the thing to look at
+  first, and my position would then be that the mechanism argument above stands
+  on its own evidence. **Driven on behaviour, unverified on the scanner.**
+- **That no *other* CodeQL alert exists on this branch.** I queried
+  `state=open` for `refs/pull/82/head` and got exactly one. That is a negative
+  about a ref at a moment, which this file already records as the kind of claim
+  that expires — it was true of `d997213`. **Driven, and scoped to that commit.**
+- **That the handler is total against a hostile peer rather than an unexpected
+  one.** Every branch now has a defined outcome for malformed input, but the
+  threat model here is a browser this machine launched, not an attacker. I did
+  not fuzz it. **Reasoned.**
+- **That `2 seconds means config failure` has not already been believed
+  elsewhere.** It is a natural inference and it was wrong here; I have not
+  looked for other places it may have been drawn. **Reasoned.**
+
+**Next:** nothing blocks. If a lane sees a fast-failing `CodeQL` check again,
+read `.output.title` on the check run before reasoning about duration —
+`gh api repos/<owner>/<repo>/commits/<sha>/check-runs` carries it, and
+`gh run view` returns 404 for these because they are check runs under default
+setup rather than Actions runs this repository owns.
