@@ -40,6 +40,15 @@ currently say.
 
 ## Setup, stated so it can be disproved cheaply
 
+**The measurements below are re-runnable.** `scripts/consensus_rederivation.py`
+holds them as four subcommands — `rates`, `divisor`, `concentration`,
+`leak-scan` — reading the export by hash and the public side from the recorded
+payload store, offline, refusing rather than fetching. It was committed on
+2026-08-23, after the *absence* of a committed derivation forced a later lane to
+rebuild one from scratch merely to check a citation. It reproduces the
+addendum's figures. It does **not** reproduce the originals in this section,
+which still have no committed derivation.
+
 **Paid-source discipline.** The commercial export is paid and its rows are
 deliberately absent from this repository. No rate, name, or cell value from it
 reaches stdout, a log, a committed artefact, or this document. Only counts,

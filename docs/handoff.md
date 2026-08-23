@@ -18443,3 +18443,84 @@ line, is invisible to that search and I did not read all 140. **Reasoned.**
 bridge feed's edges are copied from the umbrella's and are a **guess about work that
 has not started**. Wrong edges here are cheap to correct and would not be caught by
 any gate. **Reasoned.**
+
+## 2026-08-23 - quant - Commit the harness that settled the citation, and the six ways of settling it that do not work
+
+The citation adjudication merged as `6f22a3e` **left its own measurements uncommitted**, which is
+precisely the defect it existed to work around: the original consensus-reproducibility script was
+never committed, and that is why re-deriving it was necessary at all. `scripts/consensus_rederivation.py`
+now holds all four measurements as subcommands - `rates`, `divisor`, `concentration`, `leak-scan`.
+Docs-and-script only; no production code. Still not a model and no Model gate claimed.
+
+**Reproduces the merged figures exactly**, which is the point of committing it: rates
+0.626-0.937, minutes 0.345-0.775, games 0.280-0.448; `minutes / games` integral 505/505 against
+a shuffled control at 10.9%; games 2.5 effective levels against minutes' 14.9 at their MPG >= 20,
+replicating the published 84.7%-on-two.
+
+**The private path is deliberately not in it.** `HOOPS_GM_BBM_PROJECTION_CSV` and
+`HOOPS_GM_RAW_ROOT`, refusing when unset - `docs/adapters/basketball-monster-projections.md`
+says neither the private artifact **nor its path** is committed, and a research script is not
+exempt from an adapter boundary just because it is not an adapter.
+
+**Every guard was exercised against a varied input, not asserted.** Altered export -> hash refusal;
+absent store -> no-fetch refusal; unset env -> no-path refusal; empty diff -> the leak scan refuses
+rather than reporting a clean pass over nothing. `python -m mypy` clean; `../scripts` is inside
+`files` in `backend/pyproject.toml`, so a script committed here is strict-typed whether its author
+expected that or not.
+
+**And the harness shipped with this repository's own defect class inside the check written to
+prevent it.** My shuffled-divisor guard compared the raw **count** against a **percentage**
+threshold - `if control > 50.0` where `control` was 55 rows. It refused a valid run at 10.9%, so I
+found it in one execution. **It failed safe by luck, not design:** the same units error with a
+cohort under 50 rows would have passed every input silently, and the guard's whole purpose is to
+catch a dataset that discriminates nothing. A guard is code and gets no epistemic discount for
+being a guard.
+
+### Six things that fail, each of which looks like the obvious way to do this
+
+Recorded because none of them leaves a trace in a diff, and each cost real time.
+
+1. **Re-running the *original* Marcel 5/4/3 baseline to check the citation.** It needs ten seasons,
+   two of them uncached, so it costs eleven throttled requests against an unstable upstream to
+   answer a question the crudest single-season baseline already answers. **The cheap baseline is
+   the right instrument** - the argument turns on channels not overlapping, which needs no
+   precision at all.
+2. **Screening committed prose against every number that appears in the paid file.** 436 hits. A
+   season-totals export contains nearly every small integer, so the scan tests nothing. The prior
+   lane found this and I nearly rebuilt it.
+3. **Screening against modes and extremes, without excluding single digits.** The narrower door to
+   the same room: five of the first six hits were `1 2 3 4 6`, the **modes of season-total counting
+   columns**, matching any prose containing "clause 4" or "6x". Single-digit candidates are now
+   dropped, in writing, with the cost named - a genuine single-digit leak passes.
+4. **Distinct-value count as a coarseness test.** It is the intuitive statistic and it is blind
+   here: `games` and minutes-per-game take **the same 18 distinct values** in the rotation cohort.
+   Reporting counts would have concluded the two columns are equivalent, which is the opposite of
+   the truth. Use 1/sum(p^2).
+5. **Inferring the vendor's native quantity from how round its per-game figures look, without a
+   shuffled control.** A tidy dataset makes many divisors look clean. The control is what turns
+   100% into evidence, and without it the counting-stat result reads as "no signal" rather than
+   "at chance" - which are different claims.
+6. **`Select-String -Path <dir> -Recurse`.** Not a parameter; `-Path` takes files. Use the repo's
+   grep tooling. Small, but it cost a round trip and will again.
+
+Also: this machine has **no `mypy` on PATH** - `python -m mypy` from `backend/` with
+`PYTHONPATH="$PWD\src"`. And PowerShell has no heredoc, so a Python snippet with nested quotes
+inside `python -c "@..."` dies on backslash-escaping; write a file to the session artefacts
+directory instead of fighting it.
+
+### Could not verify
+
+- **That committing the harness makes the original figures reproducible.** It reproduces *my*
+  re-derivation, which used one season of history where the original used ten. The published
+  0.658-0.942 / 0.395-0.747 / 0.284-0.504 still has **no committed derivation**, and this script
+  does not restore one - it provides an independent instrument that agrees, which is a weaker and
+  different thing. **Driven that mine reproduces; the original remains unreproducible.**
+- **That `HOOPS_GM_RAW_ROOT` is the right name.** I introduced it. No other code reads it - the
+  production default is `Path("data") / "raw"` in two modules - so this script names a variable
+  nothing else honours. **Driven by grep; a `backend` lane may want it unified.**
+- **That the six failures above are the six that matter.** They are the ones I hit. The category is
+  by construction the one nobody can enumerate, and a list of six is evidence about my path through
+  the problem, not about the problem. **Reasoned.**
+- **That the leak scan's benign classes stay benign.** A cohort size coinciding with a paid maximum
+  was benign twice (n=232, n=244). A third coincidence would still need adjudicating by hand, and
+  the failure mode is a reader who has learned the hits are noise. **Named, not fixed.**
