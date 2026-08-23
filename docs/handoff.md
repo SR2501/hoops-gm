@@ -20829,3 +20829,164 @@ right, and its test encoded an assumption about the world that its author held
 without noticing. **The same shape as everything else this week** - the check
 was narrower than the thing it claimed, and it took an unrelated lane doing an
 ordinary thing to expose it. Here that lane was me, one day later.
+
+
+## 2026-08-24 - data-engineer - the widened cohort as an artifact, and two leaks a schema could never have caught
+
+**Changed.** PR #85 cleared the widened cohort *in principle* - it delivered a
+verdict (`admissible`, `doubtful` binding at 83) and, verified by `git show
+--stat fa705b5` rather than assumed, **no manifest and no fingerprint**. This
+unit produces the artifact:
+`docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json` - full
+2025-26 regular season, 1,230 games across 164 game dates, 13,789 canonical
+observations, 13,598 joined against the participation ledger. Every count and
+fingerprint recomputed; nothing carried forward. **Zero external requests**: both
+stores were already on disk.
+
+**The generator takes one `Session`, and no single store could serve it.** The
+durable ledger has 43,037 participation rows and **0** injury-report entries; the
+report sweep has 69,922 entries and **0** participation rows. Rather than teach a
+56 KB generator to read two stores, this adds
+`hoops_gm.ingest.injury_report.merge_stores`, which assembles one store and emits
+a **receipt**, and feeds the existing generator unchanged - so the derivation is
+identical to the reviewed one and the change is reversible.
+
+**The merge direction is load-bearing and was measured, not assumed.** Reports
+are copied *into the ledger*, never the reverse. The ledger's `nba_games.tipoff_utc`
+is `BoxScoreSummaryV3`-sourced; the sweep's is `ScheduleLeagueV2`. Merging the
+wrong way yields a manifest whose `cross_source_tipoff_reconciliation` compares one
+endpoint **with itself** and reports `agreed: true` - the README's exact warning,
+and dangerous rather than merely wrong because *nothing records the provenance of a
+persisted instant*, so no reader could tell from the output that the check was
+vacuous. A green `agreed: true` is what a correct run also looks like. The receipt
+now makes that provenance a persisted fact. Two further measurements decided it:
+the sweep has NULL `home_score`/`away_score` on **all 1,230** games, and three games
+(`0022500259/60/61`) carry NULL ledger tip-offs deliberately left absent rather
+than backfilled across endpoints.
+
+**Reconciles exactly with #85, and that was the point of not rebuilding it.** All
+five `canonical_observations_by_status` match identically (available 1489,
+doubtful 221, out 10453, probable 435, questionable 1191), and the exclusion
+cascade matches: 13,789 canonical - 135 unresolved identity - 56 without a
+participation row = 13,598 joined. The apparent `games_in_scope` gap (1,230 vs
+1,227) is a denominator convention, not a disagreement: 1,227 is games *with*
+tip-offs.
+
+**Two privacy leaks, both found by reading the generated artifact, neither
+catchable by any schema.** `docs/adapters/nba-injury-report.md:1021` calls this
+manifest "the privacy-safe provenance manifest", and that label was reviewed
+across five rounds against the four-week window - where
+`trusted_entry_cascade.unresolved_game_id_sample` happened to be **empty**. The
+widened window is the first run that populates it, so the only bulk player-keyed
+field in an otherwise wholly aggregate artifact appeared under a label whose review
+never saw it exercised. It published **50 rows of real player names**. Separately,
+the merge receipt embedded absolute store paths, writing the operator's **home
+directory into a committed file three times**. Neither is malformed. Neither
+violates a schema. An absolute path is *correct*. Names are now withheld
+(`(withheld)`, with a note saying where the named rows actually live - `backfill
+observations` renders the identical sample **with** names to the operator console,
+so no diagnostic is lost), paths reduced to filenames beside the sha256 that was
+always the real identity, and both pinned by
+`TestTheCommittedManifestsAreActuallyPrivacySafe`, **proved load-bearing by
+experiment**: a probe manifest carrying a name and an absolute path was written,
+both tests were watched to fail naming the exact field, and the probe removed.
+
+**The outcome marginal is withheld, and that is routed rather than decided here.**
+`participation_outcome_counts` carries a withholding notice instead of a value. The
+four-week manifest is committed and a widened manifest is its **superset**, so
+publishing the marginal in both yields the added dates' marginal by subtraction,
+with by-date denominators supplying the composition - the section 2 attack, written
+down in advance. Whether a widened cohort may carry the field **at all** is a
+`quant` judgement against the blind, not an ingestion one. Publishing is
+irreversible and withholding is not, so the reversible direction is the default.
+`--outcome-marginal include` regenerates it once ruled admissible. This too was
+proved load-bearing rather than assumed green: generating with `include` was
+observed to fail `test_the_union_over_the_whole_surface_equals_the_frozen_set`.
+**No allow-list was widened, no frozen set edited, no fixture regenerated to
+match.**
+
+**The four-week manifest is frozen, not regenerated, and this is a finding.** It
+**no longer reproduces** - independently of anything this unit did. The sweep now
+holds 36 distinct in-window report timestamps against the 35 it held then, so the
+same code over the same window yields 1,950 canonical observations against the
+published 1,948, with per-status drift; `scope.expected_games` and six
+`trusted_entry_cascade` fields additionally go null because the operational
+coverage artifacts are now season-scoped and range-mismatched evidence is
+discarded. Regenerating would restate published **pre-unblind** counts including a
+frozen-set outcome marginal, and would destroy the reference #85's own
+`comparability_to_committed_manifest` measures its drift against. Recorded as
+`SUPERSEDED_MANIFESTS` - a registry naming a reason, not a skip - so exempting a
+manifest is a visible reviewed edit.
+
+**Both blocked cohort-evidence readers are lifted.** `backfill.py` and
+`cohort_evidence.py` move `blocked` -> `reports` in the store-creating-reader
+census; the `blocked` category and `BLOCKED_REASON` are **removed** rather than
+emptied, as that category's own test instructed. Free rider taken: `backfill.py`'s
+`main()` never disposed its engine, and now does under `try/finally`, with an
+absent-store guard returning 2.
+
+**This module opens stores in a spelling the census cannot see, and says so.**
+`merge_stores` opens by `sqlite3.connect(mode=ro)`, invisible to the census's
+literal `"Database.from_settings("` scan. Declared in
+`OPENS_STORES_OUTSIDE_THE_CENSUS` with a test. The declaration itself first
+*created* a false census entry - my honest docstring spelled the call verbatim and
+the scan, which strips comments but **not docstrings or string literals**, matched
+it. A false entry in an audit register is worse than the silence it fixes. Reworded,
+and pinned by a test.
+
+**Three defects in the generator, fixed.** `operator.commands` hardcoded
+`2025-12-08`/`2026-01-04` regardless of the window generated; `scope.selection_basis`
+asserted "inclusive four-week window centred on the 2025-12-22 boundary" for a
+full-season window (both now derived, four-week prose preserved verbatim for its own
+window); and `source_fingerprints` **silently dropped** declared-but-missing paths -
+which had already cost a fingerprint, `db/lineage.py`, before I found it. It now
+refuses.
+
+**The inherited era-boundary caveat is settled, and my first answer to it was
+vacuous.** I first counted boundary violations among captured report URLs and got 0
+- which is guaranteed by construction, because `is_fifteen_minute_era` gates
+candidate generation so the other format is never probed. A witness that cannot
+disagree is not a witness. The non-vacuous form: HTTP 200 fetches of a *legacy* URL
+at 2025-12-21 17:00 ET and a *new-format* URL at 2025-12-22 16:30 ET each had a real
+falsification opportunity, placing the true transition in
+**(2025-12-21 17:00 ET, 2025-12-22 16:30 ET]** - inside which
+`FIFTEEN_MINUTE_ERA_START = 2025-12-22` sits. Against the cohort: **zero** reports
+in the ambiguous window, and era classification agrees with the filename format on
+**all 582** reports (461 new / 121 legacy, 0 mismatches), checked against
+`source_url`, an independent field that could have disagreed.
+
+**Gates.** Code: `ruff check` clean, `ruff format --check` clean, `mypy` clean over
+185 files, 249 tests green in one invocation across
+`test_cohort_evidence`, `test_cohort_admissibility`, `test_store_creating_readers`,
+`test_merge_stores`, `test_injury_report_backfill`. `scripts/check_no_secrets.py`
+clean over 406 tracked files **with the artifact staged**, so the scan actually
+covered it. Adapter: fixtures committed, contract tests present, **zero external
+requests** made by this unit.
+
+**Could not verify.**
+
+- **Whether the legacy `report_timestamp` offset is correct.** Legacy timestamps run
+  +30 min (116 reports) or +45 min (5 reports) past the filename hour; new-format is
+  exact. The five +45s are the last five legacy reports (12-19 -> 12-21), a real
+  cadence shift, so the value is content-derived rather than a hardcoded offset - but
+  **I did not open a PDF to confirm it against the printed masthead time.** Lead time
+  is decision-bearing, so this is a real gap, not a nit.
+- **Whether an unfetched report sits inside the era-ambiguous window.** The raw index
+  records only HTTP 200s, so absence there is not absence in the archive. The
+  boundary is bounded, not pinned.
+- **Whether the four-week manifest's drift is only the 36th timestamp.** I measured
+  that the counts differ and identified a sufficient cause; I did not enumerate every
+  differing row and prove no second cause contributes.
+- **Whether any *other* module opens a store outside the census's spelling.** I
+  checked mine. `cohort_admissibility.py` also sits outside it (`read_only_engine`),
+  so the census passes at 12 sites while the package has 13+ ways in. Not widened
+  here - that reclassifies the audit lane's verdicts and is its own unit.
+- **Whether the widened window may carry an outcome marginal at all.** Withheld by
+  default; this is `quant`'s call and is not mine to wave through.
+
+**Next.** `quant` rules on the outcome marginal and, if admissible, regenerates with
+`--outcome-marginal include`; the cohort fingerprint
+`8e1986229b3644daa1f7bffa3ce2362e8cfb438da4b1085c0803aebe53f8176e` and every
+exclusion count must reproduce exactly under section 8 condition 8, so this artifact
+is final rather than iterated. The coordinator holds the census-widening question and
+the four-week freeze.

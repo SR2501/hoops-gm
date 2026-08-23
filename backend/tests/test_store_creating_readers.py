@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import ast
 import gc
-import json
 from pathlib import Path
 
 import pytest
@@ -60,9 +59,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: ``"writes"``   — creating the database is legitimate; left alone deliberately,
 #:                  because a wrong classification here turns a working writer
 #:                  into a crash, which is worse than a documented exposure.
-#: ``"blocked"``  — reports a quantity and is **knowingly unguarded**. See
-#:                  :data:`BLOCKED_REASON`. Recorded rather than fixed, so the
-#:                  exposure is visible instead of forgotten.
+#:
+#: The ``"blocked"`` category is gone. It held exactly two sites, both pinned by
+#: the committed four-week cohort manifest's whole-file fingerprints, and both
+#: were lifted when the widened cohort was regenerated — which is the event
+#: :data:`BLOCKED_REASON` named as the condition for lifting them. The category
+#: is removed rather than left empty, on the instruction its own test carried.
 ENGINE_CALL_SITES: dict[str, str] = {
     "app.py": "writes",
     "availability/coverage.py": "reports",
@@ -71,9 +73,12 @@ ENGINE_CALL_SITES: dict[str, str] = {
     "dev/seed_schedule_grid.py": "writes",
     "ingest/auction_values/import_csv.py": "writes",
     "ingest/backfill.py": "writes",
-    # `observations` reports; `plan` and `run` write.
-    "ingest/injury_report/backfill.py": "blocked",
-    "ingest/injury_report/cohort_evidence.py": "blocked",
+    # `observations` and `plan` report; `run` writes. The previous note here
+    # said "`plan` and `run` write", which was half wrong: `build_plan` only
+    # reads and `plan` returns before anything is written. Checked, not
+    # inherited — see `backfill.STORE_REPORTING_COMMANDS`.
+    "ingest/injury_report/backfill.py": "reports",
+    "ingest/injury_report/cohort_evidence.py": "reports",
     "ingest/projections/import_csv.py": "writes",
     # Already correct before this audit: the engine is built only inside the
     # non-dry-run branch, so the read-only path never opens a store at all.
@@ -121,27 +126,24 @@ SCOPE_LIMIT = "classifies creation, not destination; see docs/handoff.md 2026-08
 #: instead of widening this pattern.
 SCAN_LIMIT = "finds one call spelling; membership is guarded by the import rule below"
 
-#: Why the two ``blocked`` sites are not fixed here.
+#: How the two formerly-``blocked`` sites were lifted, kept because a resolved
+#: exposure that leaves no trace is indistinguishable from one nobody found.
 #:
-#: The committed cohort manifest
-#: ``docs/adapters/nba-injury-report-cohort-2025-12-08--2026-01-04.json`` pins a
-#: whole-file SHA-256 of four source files, two of which are exactly these. A
-#: whole-file hash cannot distinguish a guard clause that refuses before doing
-#: any work from a change to the derivation itself, so **any** edit to them —
-#: including a correctness fix — invalidates the manifest's provenance and
-#: `test_cohort_evidence.py` fails.
+#: The committed four-week cohort manifest pins a whole-file SHA-256 of four
+#: source files, two of which were exactly those sites. A whole-file hash cannot
+#: distinguish a guard clause that refuses before doing any work from a change to
+#: the derivation itself, so **any** edit to them — including a correctness fix —
+#: invalidated the manifest's provenance and turned `test_cohort_evidence.py`
+#: red. Repairing it meant regenerating a cohort, which nothing could do: the
+#: manifest generator takes one `Session`, and no single store held both the
+#: injury reports and the participation ledger.
 #:
-#: Repairing it means re-running the manifest's own `operator.commands`, which
-#: include the injury-report `plan`/`run` pair. That is cohort work, it is
-#: explicitly out of scope, and per `docs/backlog.md` the cohort in question can
-#: never activate its model (whole-cohort `doubtful` is 21 against a floor of
-#: 30). Reverting the guard silently would have hidden a live false-zero
-#: generator — and one of these two *writes that very manifest*, so an invented
-#: empty store there would record "no cohort" as a finding.
-#:
-#: So it is recorded instead, and the owner decides. This constant exists to
-#: make that decision impossible to lose.
-BLOCKED_REASON = "fingerprinted by the committed cohort manifest; see docs/handoff.md 2026-08-23"
+#: `ingest/injury_report/merge_stores.py` closed that, the widened cohort was
+#: regenerated over the edited files, and the guards went in with it. The
+#: four-week manifest is now registered as superseded rather than regenerated —
+#: see `SUPERSEDED_MANIFESTS` in `test_cohort_evidence.py` for why that is a
+#: freeze and not a skip.
+LIFTED_REASON = "unblocked by the widened cohort regeneration; see docs/handoff.md 2026-08-24"
 
 
 def _call_sites() -> set[str]:
@@ -289,14 +291,6 @@ def test_reporting_commands_refuse_and_writers_do_not() -> None:
         guards = "absent_store_refusal(" in source
         if kind == "reports":
             assert guards, f"{relative} reports a quantity but does not refuse an absent store"
-        elif kind == "blocked":
-            # Asserted, not merely commented. If someone regenerates the cohort
-            # manifest and adds the guard, this fails and forces the
-            # classification to be corrected rather than left lying.
-            assert not guards, (
-                f"{relative} is now guarded - good. Reclassify it as 'reports' and "
-                f"drop it from the blocked set ({BLOCKED_REASON})."
-            )
         else:
             assert not guards, (
                 f"{relative} is classified as a writer but refuses an absent store - "
@@ -304,27 +298,22 @@ def test_reporting_commands_refuse_and_writers_do_not() -> None:
             )
 
 
-def test_the_blocked_sites_are_blocked_for_a_recorded_reason() -> None:
-    """A known exposure with no written reason decays into an unknown one."""
-    blocked = {k for k, v in ENGINE_CALL_SITES.items() if v == "blocked"}
+def test_no_site_is_left_in_the_removed_blocked_category() -> None:
+    """The category was emptied by a fix, so re-adding one must be deliberate.
 
-    assert blocked, "if nothing is blocked, remove the category rather than leaving it empty"
-    assert BLOCKED_REASON
-    # The manifest that causes the block must still fingerprint them, or the
-    # block has outlived its cause and should be lifted.
-    manifest = json.loads(
-        (
-            REPO_ROOT / "docs" / "adapters" / "nba-injury-report-cohort-2025-12-08--2026-01-04.json"
-        ).read_text(encoding="utf-8")
+    ``blocked`` meant "reports a quantity and is knowingly unguarded". Both of
+    its members were guarded once :data:`LIFTED_REASON` describes; the category
+    is gone. Reintroducing it by hand — rather than fixing the site — is the
+    move this guards against, because a fresh ``blocked`` entry would inherit
+    none of the scrutiny the original two carried.
+    """
+    assert "blocked" not in set(ENGINE_CALL_SITES.values()), (
+        "a site was reclassified as 'blocked'. That category was removed after both "
+        f"its members were fixed ({LIFTED_REASON}). If a genuinely new exposure "
+        "exists, reinstate the category together with a written reason and a test "
+        "that its cause is still live — do not add a bare entry."
     )
-    fingerprinted = {
-        path.removeprefix("backend/src/hoops_gm/")
-        for path in manifest["operator"]["source_fingerprints"]
-    }
-    assert blocked <= fingerprinted, (
-        f"these are blocked but no longer fingerprinted by the cohort manifest, "
-        f"so nothing stops them being fixed now: {sorted(blocked - fingerprinted)}"
-    )
+    assert set(ENGINE_CALL_SITES.values()) == {"reports", "writes"}
 
 
 def test_a_docstring_cannot_forge_a_census_entry(tmp_path: Path) -> None:
@@ -504,10 +493,10 @@ def test_the_blocked_readers_report_zero_without_naming_their_store(
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{store.as_posix()}")
 
-    # That CLI never disposes its engine — a real if minor leak, and one more
-    # thing the manifest fingerprint currently blocks fixing. Capture and close
-    # what it opens, so a pooled connection is not finalised during teardown
-    # after tmp_path has removed the file underneath it.
+    # This CLI now disposes its engine, but the capture stays: `main` opens the
+    # store through `Database.from_settings`, and a pooled connection finalised
+    # during teardown — after tmp_path has removed the file underneath it — is a
+    # different failure from the one being tested. Disposing twice is harmless.
     opened: list[Database] = []
     original = Database.from_settings
 

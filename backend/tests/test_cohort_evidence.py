@@ -28,6 +28,7 @@ fixture whose every game sits comfortably inside the window.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,11 +40,13 @@ from hoops_gm.ingest.injury_report import parse_injury_report_pdf
 from hoops_gm.ingest.injury_report.cohort_evidence import (
     RECONCILIATION_VIEWS,
     VIEW_INDEPENDENCE,
+    WITHHELD_PLAYER_NAME,
     GameIdentityReconciliation,
     TipoffReconciliation,
     _league_game_finder_ids,
     _player_game_log_ids,
     _reason_evidence,
+    _redacted_unresolved_sample,
     _schedule_league_ids,
     content_sha256,
     refusal_reason,
@@ -58,6 +61,39 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = (
     REPO_ROOT / "docs" / "adapters" / "nba-injury-report-cohort-2025-12-08--2026-01-04.json"
 )
+
+#: Every committed cohort population-evidence manifest, live or superseded.
+COHORT_MANIFEST_GLOB = "nba-injury-report-cohort-2*.json"
+
+#: The manifest current code is expected to reproduce. Its fingerprints must
+#: describe the files as they are today.
+LIVE_MANIFEST_PATH = (
+    REPO_ROOT / "docs" / "adapters" / "nba-injury-report-cohort-2025-10-21--2026-04-12.json"
+)
+
+#: Manifests that are deliberately frozen, mapped to why. A superseded manifest
+#: still publishes source fingerprints, and those fingerprints still describe
+#: the code that produced *it* -- which is what provenance means. What they no
+#: longer describe is the code as it is today, and that is not a defect to be
+#: repaired by regenerating them.
+#:
+#: This is a registry rather than a skip so that exempting a manifest is a
+#: visible, reviewed edit naming a reason, not a quiet deletion from a list.
+#: Anything committed and not named here is checked against live code.
+SUPERSEDED_MANIFESTS: dict[Path, str] = {
+    MANIFEST_PATH: (
+        "Superseded by the widened full-season cohort. It is NOT regenerated, for a "
+        "reason stronger than convenience: the operational state it was a pure function "
+        "of no longer exists. The report sweep behind it held 35 distinct report "
+        "timestamps in this window; the store today holds 36, so re-running the same "
+        "code over the same window yields 1,950 canonical observations against the "
+        "1,948 published here, with per-status drift. Regenerating would therefore "
+        "restate published pre-unblind counts -- including an outcome marginal inside "
+        "the frozen section 2 disclosure surface -- and would additionally destroy the "
+        "reference that PR #85's own admissibility evidence measures its drift against, "
+        "making that artifact incoherent. Frozen deliberately. See docs/handoff.md."
+    ),
+}
 
 SEASON = "2025-26"
 START = date(2025, 12, 8)
@@ -589,18 +625,65 @@ class TestTheCommittedManifestStillDescribesThisCode:
     """
 
     def test_every_recorded_source_fingerprint_matches_the_file_today(self, manifest: Any) -> None:
-        fingerprints = manifest["operator"]["source_fingerprints"]
-        assert fingerprints, "the manifest records no source fingerprints at all"
-        stale = {
-            relative: (recorded, source_file_sha256(REPO_ROOT / relative))
-            for relative, recorded in sorted(fingerprints.items())
-            if source_file_sha256(REPO_ROOT / relative) != recorded
-        }
+        """Every committed manifest not registered as superseded describes live code.
+
+        Scoped by discovery rather than by a hardcoded path, so adding a manifest
+        opts it in automatically. ``manifest`` is still the four-week fixture the
+        rest of this module asserts against; this test deliberately ignores it and
+        walks the committed set, because the property is about the set.
+        """
+        del manifest
+        committed = sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB))
+        assert committed, "no committed cohort manifests were discovered at all"
+        live = [path for path in committed if path not in SUPERSEDED_MANIFESTS]
+        assert live, (
+            "every committed cohort manifest is registered as superseded, so nothing "
+            "checks the generator's fingerprints against live code any more"
+        )
+        stale: dict[str, dict[str, tuple[str, str]]] = {}
+        for path in live:
+            fingerprints = json.loads(path.read_text(encoding="utf-8"))["operator"][
+                "source_fingerprints"
+            ]
+            assert fingerprints, f"{path.name} records no source fingerprints at all"
+            drifted = {
+                relative: (recorded, source_file_sha256(REPO_ROOT / relative))
+                for relative, recorded in sorted(fingerprints.items())
+                if source_file_sha256(REPO_ROOT / relative) != recorded
+            }
+            if drifted:
+                stale[path.name] = drifted
         assert not stale, (
-            "the committed cohort manifest fingerprints code that has since changed: "
+            "a live cohort manifest fingerprints code that has since changed: "
             f"{stale}. Regenerate it with the commands in its own operator.commands, or "
             "the provenance it publishes is a claim about a file that no longer exists."
         )
+
+    def test_a_superseded_manifest_is_registered_with_a_reason_and_keeps_its_fingerprints(
+        self,
+    ) -> None:
+        """Freezing a manifest is allowed; freezing one silently is not.
+
+        A superseded manifest is exempt from the liveness check above, which is
+        exactly the kind of exemption that rots into a blanket skip. So assert the
+        exemption is narrow: the file still exists, still publishes fingerprints,
+        and the registry states why it is frozen rather than merely that it is.
+        """
+        for path, reason in SUPERSEDED_MANIFESTS.items():
+            assert path.is_file(), (
+                f"{path.name} is registered as superseded but is not committed. A "
+                "registry entry for an absent file exempts nothing and hides that the "
+                "evidence was deleted rather than frozen."
+            )
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            assert manifest["operator"]["source_fingerprints"], (
+                f"{path.name} is frozen with no fingerprints, so it evidences nothing "
+                "about the code that produced it"
+            )
+            assert len(reason) > 200, (
+                f"{path.name} is exempted by a reason too short to be one. Say what "
+                "state it was a pure function of and why that state is gone."
+            )
 
     def test_the_manifest_agrees_with_itself_about_the_cohort_scope(self, manifest: Any) -> None:
         """The three places the game count appears must not be able to drift apart."""
@@ -622,6 +705,93 @@ class TestTheCommittedManifestStillDescribesThisCode:
                 f"{game_id} is missing from the committed cohort - this is the exact "
                 "omission that invalidated the previous one"
             )
+
+
+class TestTheCommittedManifestsAreActuallyPrivacySafe:
+    """`docs/adapters/nba-injury-report.md` calls these manifests privacy-safe.
+
+    That label was reviewed across five rounds against the four-week window --
+    and in *that* window `unresolved_game_id_sample` happened to be empty, so
+    the only bulk player-keyed field in the artifact was reviewed without ever
+    being seen populated. The widened window is the first run that fills it.
+
+    Two leaks were found this way, both by reading a generated artifact rather
+    than by any test: 50 rows of real player names, and the operator's home
+    directory embedded three times through the merge receipt's store paths.
+    Neither violates a schema. Neither is malformed. This is the check that
+    makes the label mean something on every future window.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB)),
+        ids=lambda path: path.name,
+    )
+    def test_no_committed_manifest_embeds_a_filesystem_path(self, path: Path) -> None:
+        raw = path.read_text(encoding="utf-8")
+
+        drive_letters = re.findall(r"[A-Za-z]:\\\\", raw)
+        assert not drive_letters, (
+            f"{path.name} embeds an absolute Windows path. The operational stores live "
+            f"under the operator's home directory, so this publishes an account name. "
+            f"Store identity is carried by the sha256, never by the directory."
+        )
+        for home_marker in ("/Users/", "/home/", "C:\\\\Users"):
+            assert home_marker not in raw, (
+                f"{path.name} embeds {home_marker!r}, which is a home directory"
+            )
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB)),
+        ids=lambda path: path.name,
+    )
+    def test_the_unresolved_sample_withholds_player_names(self, path: Path) -> None:
+        """Shape kept, name dropped -- and the note says where the names live.
+
+        The rows are not deleted: date, matchup and team are what make the
+        sample diagnosable in aggregate, and they stay. Only the name goes, and
+        only from the committed copy, because `backfill observations` renders
+        the identical sample *with* names to the operator console. Identity
+        work reads that. The committed file was the one place the names were
+        durable and the one place they bought nothing.
+        """
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        sample = manifest["trusted_entry_cascade"]["unresolved_game_id_sample"]
+
+        for row in sample:
+            assert len(row) == 4, f"{path.name}: unexpected sample row width {len(row)}"
+            assert row[3] == WITHHELD_PLAYER_NAME, (
+                f"{path.name} publishes a player name in "
+                f"trusted_entry_cascade.unresolved_game_id_sample: {row!r}"
+            )
+        if sample:
+            assert manifest["trusted_entry_cascade"]["unresolved_game_id_sample_note"], (
+                f"{path.name} withholds names without saying so or where they are"
+            )
+
+    def test_redaction_keeps_the_row_and_cannot_be_widened_into_a_leak(self) -> None:
+        """A future fifth column must not arrive already published.
+
+        The cascade's sample tuple is documented as four fields. If it grows,
+        the new field lands in a committed artifact by default unless the
+        redactor truncates -- so it truncates, and this pins that.
+        """
+        redacted = _redacted_unresolved_sample(
+            [
+                ("2026-01-08", "MIA@CHI", "Miami Heat", "Herro, Tyler"),
+                ("2026-01-08", "MIA@CHI", "Chicago Bulls", "Giddey, Josh", "questionable"),
+            ]
+        )
+
+        assert redacted == [
+            ["2026-01-08", "MIA@CHI", "Miami Heat", WITHHELD_PLAYER_NAME],
+            ["2026-01-08", "MIA@CHI", "Chicago Bulls", WITHHELD_PLAYER_NAME],
+        ]
+        assert all("Herro" not in str(row) and "Giddey" not in str(row) for row in redacted)
+        assert all("questionable" not in row for row in redacted), (
+            "a widened source tuple leaked a fifth field into the committed artifact"
+        )
 
 
 class TestThePositionFieldIsWatchedAtTheSourceNotOnlyInTheManifest:

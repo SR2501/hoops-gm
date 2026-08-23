@@ -73,12 +73,13 @@ from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.enums import ExternalSource, SeasonType
 from hoops_gm.db.models.identity import PlayerExternalId
 from hoops_gm.db.models.stats import NbaGame
-from hoops_gm.db.session import Database
+from hoops_gm.db.session import Database, absent_store_refusal
 from hoops_gm.ingest.injury_report.backfill import (
     DEFAULT_RAW_ROOT,
     BackfillGame,
     CanonicalPregameObservation,
     CoverageReport,
+    ExclusionCascade,
     ExpectedGameCoverage,
     MissingTipoffGame,
     coverage_for_games,
@@ -88,6 +89,7 @@ from hoops_gm.ingest.injury_report.backfill import (
     games_to_backfill,
     select_canonical_pregame_observations,
 )
+from hoops_gm.ingest.injury_report.client import FIFTEEN_MINUTE_ERA_START
 from hoops_gm.ingest.nba.client import NbaStatsClient
 from hoops_gm.ingest.nba.parsers import parse_league_game_finder, result_tables
 from hoops_gm.ingest.nba.schedule import parse_schedule
@@ -148,6 +150,27 @@ DEFAULT_SOURCE_FINGERPRINT_PATHS: Final[tuple[str, ...]] = (
     "backend/src/hoops_gm/db/lineage.py",
     "backend/src/hoops_gm/ingest/injury_report/backfill.py",
     "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py",
+    # The cohort cannot be assembled without it: no single store holds both
+    # the participation rows and the injury reports, so this module's bytes
+    # are as much a part of the derivation as the parser's.
+    "backend/src/hoops_gm/ingest/injury_report/merge_stores.py",
+)
+
+#: Manifest key recording that the whole-cohort participation outcome marginal
+#: was deliberately not published, and why. Written **in place of** the field,
+#: so the omission is a positive statement rather than an absence a reader has
+#: to notice.
+WITHHELD_OUTCOME_MARGINAL: Final[str] = (
+    "Withheld pre-unblind. Section 2 of the frozen preregistration closes the "
+    "outcome-keyed disclosure surface to a fixed set of (artifact, field) pairs. The "
+    "four-week manifest is already committed and a widened manifest is a superset of "
+    "it, so publishing this marginal in both would yield the added dates' outcome "
+    "marginal by subtraction, with the by-date denominators supplying the composition. "
+    "Whether a widened cohort may carry this field at all is a quant judgement against "
+    "the blind, not an ingestion one. Publishing is irreversible and withholding is "
+    "not, so the reversible direction is taken by default and the decision is routed "
+    "rather than assumed. The value is computed and present in the operational "
+    "manifest; regenerate with --outcome-marginal include once ruled admissible."
 )
 
 
@@ -811,6 +834,9 @@ def build_cohort_evidence(
     repo_root: Path,
     source_paths: Sequence[str] = DEFAULT_SOURCE_FINGERPRINT_PATHS,
     report_dir: Path,
+    out_name: str,
+    merge_receipt: Mapping[str, Any] | None = None,
+    include_outcome_marginal: bool = False,
 ) -> dict[str, Any]:
     """Assemble the whole manifest from persisted state. Reads no clock."""
     ready, missing_tipoff = games_to_backfill(
@@ -866,6 +892,13 @@ def build_cohort_evidence(
         anchors=anchors,
         ready_game_pks=[game.game_id for game in ready],
     )
+    if not include_outcome_marginal:
+        # Replaced, not deleted. A silently absent field is indistinguishable
+        # from one nobody thought to compute.
+        join = {
+            **join,
+            "participation_outcome_counts": WITHHELD_OUTCOME_MARGINAL,
+        }
 
     lead_times = [obs.lead_time_minutes for obs in observations]
     status_counts = Counter(obs.status.value for obs in observations)
@@ -892,6 +925,7 @@ def build_cohort_evidence(
         },
         "cross_source_reconciliation": reconciliation.as_summary(),
         "cross_source_tipoff_reconciliation": tipoffs.as_summary(),
+        "store_assembly": _store_assembly(merge_receipt),
         "kind": MANIFEST_KIND,
         "limitations": [
             "Evidence only. No injury-status conversion rate, threshold, probability or "
@@ -909,6 +943,7 @@ def build_cohort_evidence(
             "Capture timestamps in source_capture_summary record when requests were made. They "
             "are provenance, not reproducible values: a fresh live sweep necessarily produces "
             "different ones.",
+            *_unverified_cascade_stages(cascade),
         ],
         "operational_artifacts": {
             "files": (
@@ -916,33 +951,14 @@ def build_cohort_evidence(
             ),
         },
         "operator": {
-            "commands": [
-                "python -m alembic upgrade head",
-                "python -m hoops_gm.ingest.backfill nba-identity --season 2025-26",
-                "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation "
-                "--start 2025-12-08 --end 2026-01-04",
-                "python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 "
-                "--start 2025-12-08 --end 2026-01-04 --max-requests 120",
-                "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 "
-                "--start 2025-12-08 --end 2026-01-04 --max-requests 120",
-                "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 "
-                "--start 2025-12-08 --end 2026-01-04",
-                "python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 "
-                "--start 2025-12-08 --end 2026-01-04 "
-                "--out ../docs/adapters/"
-                "nba-injury-report-cohort-2025-12-08--2026-01-04.json",
-            ],
+            "commands": operator_commands(season=season, start=start, end=end, out_name=out_name),
             "manifest_is_a_pure_function_of_persisted_state": True,
             "source_fingerprint_method": (
                 "SHA-256 of each file's bytes with CRLF normalised to LF, which equals the "
                 "SHA-256 of the committed Git blob for a file Git stores with LF endings and is "
                 "invariant across checkout newline configuration and operating system."
             ),
-            "source_fingerprints": {
-                relative: source_file_sha256(repo_root / relative)
-                for relative in sorted(source_paths)
-                if (repo_root / relative).is_file()
-            },
+            "source_fingerprints": _source_fingerprints(repo_root, source_paths),
         },
         "participation_join": join,
         "position_evidence": _position_evidence(
@@ -960,14 +976,7 @@ def build_cohort_evidence(
             "games_with_tipoff": len(ready),
             "season": season,
             "season_type": season_type.value,
-            "selection_basis": (
-                "Inclusive four-week window centred on the 2025-12-22 NBA injury-report archive "
-                "format/cadence boundary, selected from the official schedule before any per-game "
-                "or PDF sweep. Unchanged from the invalidated cohort: the window was never the "
-                "defect. What changed is that the corrected LeagueGameFinder parser no longer "
-                "drops a game whose two official team rows repeat one canonical MATCHUP string, "
-                "so the window now yields every official game it always contained."
-            ),
+            "selection_basis": _selection_basis(start, end),
             "start_game_date": start.isoformat(),
         },
         "source_capture_summary": _capture_summary(store),
@@ -1006,9 +1015,10 @@ def build_cohort_evidence(
             "games_unresolved_evidence": cascade.games_unresolved_evidence,
             "mastheads_recovered": cascade.mastheads_recovered,
             "missing_from_ingest": cascade.missing_from_ingest,
-            "unresolved_game_id_sample": [
-                list(sample) for sample in cascade.unresolved_game_id_sample
-            ],
+            "unresolved_game_id_sample": _redacted_unresolved_sample(
+                cascade.unresolved_game_id_sample
+            ),
+            "unresolved_game_id_sample_note": UNRESOLVED_SAMPLE_NOTE,
         },
     }
 
@@ -1168,6 +1178,251 @@ def refusal_reason(
     return None
 
 
+class MissingFingerprintSource(RuntimeError):
+    """A declared fingerprint path is absent, so the manifest would under-claim."""
+
+
+def _store_assembly(receipt: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Where each half of this cohort came from, as a persisted record.
+
+    Without this, a manifest cannot distinguish a real two-endpoint tip-off
+    check from a vacuous one. ``cross_source_tipoff_reconciliation`` compares
+    ``nba_games.tipoff_utc`` against ``ScheduleLeagueV2``; if the generator is
+    pointed at the injury-report sweep store, whose ``tipoff_utc`` is *itself*
+    ScheduleLeagueV2-sourced, that check compares one endpoint with itself and
+    still reports ``agreed: true, witnessed: true``. The output of a vacuous
+    check is byte-identical to the output of a sound one.
+
+    So the provenance is carried here, from a receipt written by
+    :mod:`hoops_gm.ingest.injury_report.merge_stores` at assembly time, rather
+    than asserted by this module about a session it cannot interrogate. Absent
+    a receipt the manifest says so plainly instead of implying a guarantee it
+    never checked.
+    """
+    if receipt is None:
+        return {
+            "receipt_present": False,
+            "warning": (
+                "No merge receipt was supplied, so this manifest cannot evidence which "
+                "store its tip-off instants came from. If the generator was pointed at a "
+                "store whose nba_games.tipoff_utc is ScheduleLeagueV2-sourced, then "
+                "cross_source_tipoff_reconciliation compared that endpoint against itself "
+                "and its `agreed: true` is vacuous. Treat the tip-off check as unverified."
+            ),
+        }
+    return {"receipt_present": True, "receipt": dict(receipt)}
+
+
+def _source_fingerprints(repo_root: Path, source_paths: Sequence[str]) -> dict[str, str]:
+    """Fingerprint every declared path, or refuse — never silently fewer.
+
+    **Driven, 2026-08-23.** The previous implementation filtered on
+    ``if (repo_root / relative).is_file()``, and that filter had already cost
+    something real: ``backend/src/hoops_gm/db/lineage.py`` was declared in
+    :data:`DEFAULT_SOURCE_FINGERPRINT_PATHS` *and present on disk* when the
+    committed four-week manifest was generated, yet the manifest records only
+    four of the five. The declared set and the recorded set silently disagreed,
+    and nothing could notice: ``test_every_recorded_source_fingerprint_matches_
+    the_file_today`` iterates the **recorded** fingerprints, so a path that was
+    dropped before being written is invisible to it by construction.
+
+    That is the same shape as every other defect this module guards against — a
+    check that ranges over what survived rather than over what was promised. A
+    missing declared dependency now refuses, because a manifest that
+    under-reports its own derivation inputs publishes a provenance claim
+    narrower than the truth while looking complete.
+    """
+    missing = sorted(relative for relative in source_paths if not (repo_root / relative).is_file())
+    if missing:
+        raise MissingFingerprintSource(
+            f"declared fingerprint source(s) not found under {repo_root}: {missing}. "
+            f"Refusing to publish a manifest that silently records fewer dependencies "
+            f"than its derivation declares — fix the path or drop it from "
+            f"DEFAULT_SOURCE_FINGERPRINT_PATHS deliberately."
+        )
+    return {relative: source_file_sha256(repo_root / relative) for relative in sorted(source_paths)}
+
+
+#: The window the committed four-week manifest was selected over, and the prose
+#: that manifest published for it. Held verbatim so that field stays
+#: byte-reproducible for its own window rather than being restated by a later
+#: refactor; every other window derives its own description.
+FOUR_WEEK_SELECTION_WINDOW: Final = (date(2025, 12, 8), date(2026, 1, 4))
+
+FOUR_WEEK_SELECTION_BASIS: Final = (
+    "Inclusive four-week window centred on the 2025-12-22 NBA injury-report archive "
+    "format/cadence boundary, selected from the official schedule before any per-game "
+    "or PDF sweep. Unchanged from the invalidated cohort: the window was never the "
+    "defect. What changed is that the corrected LeagueGameFinder parser no longer "
+    "drops a game whose two official team rows repeat one canonical MATCHUP string, "
+    "so the window now yields every official game it always contained."
+)
+
+
+#: Cascade fields that are ``None`` when the persisted operational evidence for
+#: them was computed against a *different* date range than the one being
+#: reported, mapped to the cascade stages a reader would otherwise assume were
+#: verified. Grouped by the artifact that supplies them, because they go absent
+#: together and for one reason.
+_UNVERIFIED_CASCADE_STAGES: Final[tuple[tuple[str, str, str], ...]] = (
+    (
+        "expected_games",
+        "stages 1-2 (official expected slate, and games missing from ingest)",
+        "the expected-game-slate report",
+    ),
+    (
+        "candidates_attempted",
+        "stages 5-8 (candidate report timestamps attempted, quarantined, "
+        "forbidden and not-yet-published)",
+        "the coverage report",
+    ),
+)
+
+
+#: Why the committed manifest carries the unresolved sample without its names.
+#:
+#: ``docs/adapters/nba-injury-report.md`` calls this manifest "the privacy-safe
+#: provenance manifest", and that label was reviewed -- across five rounds --
+#: against the ``2025-12-08..2026-01-04`` window, where this sample happened to
+#: be **empty**. It is a bounded, deliberate field with a real diagnostic
+#: purpose, and it was simply never exercised. The widened window is the first
+#: run to populate it, at which point the only bulk row-level, player-keyed
+#: field in an otherwise wholly aggregate artifact appears under a label whose
+#: review never saw it.
+#:
+#: The names are public -- the NBA publishes these reports -- so this is not a
+#: personal-data breach and is not described as one. It is a label quietly
+#: becoming less true than when it was granted, which is the failure this
+#: project keeps finding.
+#:
+#: Redaction costs nothing here because it loses no diagnostic: ``backfill
+#: observations`` already renders the same sample **with** names to the operator
+#: console, and the row-level store is on disk. Identity work reads those. The
+#: committed copy was the only place the names were durable, and the one place
+#: they earn nothing.
+UNRESOLVED_SAMPLE_NOTE: Final = (
+    "Player names are withheld from this committed artifact and replaced with "
+    "'(withheld)'. The date, matchup and team are kept, which is what makes the "
+    "sample diagnosable in aggregate. The named rows are not lost: "
+    "`python -m hoops_gm.ingest.injury_report.backfill observations` renders "
+    "this same sample with names to the operator console, and the rows are in "
+    "the store. Withheld here because this file is committed and is the "
+    "artifact docs/adapters/nba-injury-report.md calls privacy-safe -- a label "
+    "reviewed against the four-week window, where this sample was empty."
+)
+
+#: The placeholder written in place of a withheld name. A constant so a reader
+#: cannot mistake it for a real parsed value and a test can assert on it.
+WITHHELD_PLAYER_NAME: Final = "(withheld)"
+
+
+def _redacted_unresolved_sample(
+    sample: Sequence[Sequence[str]],
+) -> list[list[str]]:
+    """Keep the sample's shape and drop only the player name.
+
+    Positional, matching ``ExclusionCascade.unresolved_game_id_sample``'s
+    documented ``(game_date, matchup_raw, team_raw, player_name_raw)``. Rows of
+    an unexpected width are passed through untouched *except* that nothing
+    beyond the third column survives, so a future widening of the tuple cannot
+    silently reintroduce a name-bearing column into a committed file.
+    """
+    return [[*row[:3], WITHHELD_PLAYER_NAME] for row in sample]
+
+
+def _unverified_cascade_stages(cascade: ExclusionCascade) -> list[str]:
+    """State which cascade stages are unverified, rather than leaving nulls bare.
+
+    ``backfill`` deliberately reports ``None`` rather than ``0`` when the
+    persisted evidence for a stage was computed against a different date range
+    -- "unverified, not zero", which is the right call. But the manifest was
+    publishing those nulls with nothing beside them, and a bare ``null`` in an
+    evidence artifact reads as "measured, and empty" at least as easily as it
+    reads as "not measured". This makes the distinction a *statement* rather
+    than something a reader has to already know to recover.
+    """
+    absent = [
+        (stage, artifact)
+        for field, stage, artifact in _UNVERIFIED_CASCADE_STAGES
+        if getattr(cascade, field) is None
+    ]
+    return [
+        f"UNVERIFIED, NOT ZERO: {stage} are null because {artifact} persisted for this "
+        "season was computed against a different date range, and range-mismatched "
+        "evidence is discarded rather than presented as if it answered this question. "
+        "The numbers that ARE reported here do not depend on it. Populating it requires "
+        "a backfill run over this exact range, which re-probes every candidate timestamp "
+        "that previously returned 404 -- those are not cached, so it is not free."
+        for stage, artifact in absent
+    ]
+
+
+def _selection_basis(start: date, end: date) -> str:
+    """Describe how *this* window was selected, derived rather than asserted.
+
+    This field used to be the four-week prose unconditionally. Regenerating over
+    the widened window therefore published a manifest that opened by calling
+    itself an "inclusive four-week window centred on the 2025-12-22 boundary"
+    while covering the whole regular season and straddling that boundary rather
+    than centring on it. Nothing would have caught it: the string is
+    well-formed, the schema is satisfied, and every number beside it is correct.
+    It is the failure mode this project keeps meeting -- a self-describing field
+    that lies, checked only for form.
+    """
+    if (start, end) == FOUR_WEEK_SELECTION_WINDOW:
+        return FOUR_WEEK_SELECTION_BASIS
+    boundary = FIFTEEN_MINUTE_ERA_START.date()
+    spans_boundary = start < boundary <= end
+    return (
+        f"Inclusive {start.isoformat()}..{end.isoformat()} window over the official "
+        "schedule, selected before any per-game or PDF sweep. "
+        + (
+            "The window spans the 2025-12-22 NBA injury-report archive format/cadence "
+            "boundary rather than centring on it, so it is composed of both report "
+            "eras and the composition is not balanced by construction -- read "
+            "direct_outcomes_by_report_era before treating it as homogeneous."
+            if spans_boundary
+            else "The window lies wholly on one side of the 2025-12-22 NBA "
+            "injury-report archive format/cadence boundary."
+        )
+    )
+
+
+def operator_commands(*, season: str, start: date, end: date, out_name: str) -> list[str]:
+    """The exact recipe that reproduces *this* manifest.
+
+    Derived from the arguments rather than hardcoded. The previous version
+    embedded ``2025-12-08``/``2026-01-04`` as literals, so regenerating over any
+    other window published a recipe that reproduces a **different** cohort while
+    presenting itself as this one's provenance. A reproduction recipe that
+    silently names the wrong window is worse than none, for the same reason a
+    stale fingerprint is: it looks checked.
+
+    The merge step is part of the recipe because it is part of the derivation.
+    No single store holds both halves of this cohort — the durable ledger has
+    the participation rows and no injury reports, the sweep store has the
+    reports and no participation — so a recipe omitting the merge cannot
+    reproduce the ``participation_join`` section at all. It would instead
+    produce a confident zero.
+    """
+    window = f"--start {start.isoformat()} --end {end.isoformat()}"
+    return [
+        "python -m alembic upgrade head",
+        f"python -m hoops_gm.ingest.backfill nba-identity --season {season}",
+        f"python -m hoops_gm.ingest.backfill season {season} --with-participation {window}",
+        f"python -m hoops_gm.ingest.injury_report.backfill plan {season} "
+        f"{window} --max-requests 120",
+        f"python -m hoops_gm.ingest.injury_report.backfill run {season} "
+        f"{window} --max-requests 120",
+        f"python -m hoops_gm.ingest.injury_report.backfill observations {season} {window}",
+        "python -m hoops_gm.ingest.injury_report.merge_stores "
+        "--participation-db <participation ledger> --report-db <injury report sweep> "
+        "--out <merged store>",
+        f"python -m hoops_gm.ingest.injury_report.cohort_evidence {season} {window} "
+        f"--out ../docs/adapters/{out_name}",
+    ]
+
+
 def render_cohort_evidence(evidence: Mapping[str, Any]) -> str:
     """Canonical JSON text: sorted keys, two-space indent, trailing newline."""
     return json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
@@ -1204,6 +1459,27 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
     parser.add_argument("--report-dir", type=Path, default=Path("data") / "reports")
     parser.add_argument(
+        "--merge-receipt",
+        type=Path,
+        default=None,
+        help=(
+            "the .merge-receipt.json written beside the merged store. Supplies the "
+            "provenance that distinguishes a real two-endpoint tip-off check from a "
+            "vacuous one; omitted, the manifest records that it could not evidence it"
+        ),
+    )
+    parser.add_argument(
+        "--outcome-marginal",
+        choices=("withhold", "include"),
+        default="withhold",
+        help=(
+            "whether to publish participation_join.participation_outcome_counts. "
+            "Defaults to withholding: publication is irreversible and section 2 of the "
+            "frozen preregistration closes the outcome-keyed disclosure surface, so "
+            "including it is a deliberate act requiring a quant ruling"
+        ),
+    )
+    parser.add_argument(
         "--allow-fetch",
         action="store_true",
         help=(
@@ -1214,49 +1490,67 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     )
     args = parser.parse_args(argv)
 
+    settings = get_settings()
+    # This command reports quantities and writes an evidence artifact from
+    # them. An absent store would be created empty on connect and would then
+    # record "no cohort" as a finding — a false zero published as evidence.
+    if (refusal := absent_store_refusal(settings.database_url)) is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+
     season_type = SeasonType(args.season_type)
     store = RawPayloadStore(args.raw_root)
-    database = Database.from_settings(get_settings())
+    receipt: dict[str, Any] | None = None
+    if args.merge_receipt is not None:
+        receipt = json.loads(args.merge_receipt.read_text(encoding="utf-8"))
+    database = Database.from_settings(settings)
     nba = NbaStatsClient(store=store) if args.allow_fetch else None
 
-    with database.session() as session:
-        reconciliation = reconcile_game_identity(
-            session,
-            season=args.season,
-            season_type=season_type,
-            start=args.start,
-            end=args.end,
-            store=store,
-            nba=nba,
-        )
-        tipoffs = _tipoff_reconciliation(
-            session,
-            season=args.season,
-            season_type=season_type,
-            start=args.start,
-            end=args.end,
-            store=store,
-        )
-        refusal = refusal_reason(reconciliation, tipoffs)
-        if refusal is not None:
-            print(refusal, file=sys.stderr)
-            return 1
-        evidence = build_cohort_evidence(
-            session,
-            season=args.season,
-            season_type=season_type,
-            start=args.start,
-            end=args.end,
-            store=store,
-            reconciliation=reconciliation,
-            tipoffs=tipoffs,
-            repo_root=args.repo_root,
-            report_dir=args.report_dir,
-        )
+    try:
+        with database.session() as session:
+            reconciliation = reconcile_game_identity(
+                session,
+                season=args.season,
+                season_type=season_type,
+                start=args.start,
+                end=args.end,
+                store=store,
+                nba=nba,
+            )
+            tipoffs = _tipoff_reconciliation(
+                session,
+                season=args.season,
+                season_type=season_type,
+                start=args.start,
+                end=args.end,
+                store=store,
+            )
+            refusal = refusal_reason(reconciliation, tipoffs)
+            if refusal is not None:
+                print(refusal, file=sys.stderr)
+                return 1
+            evidence = build_cohort_evidence(
+                session,
+                season=args.season,
+                season_type=season_type,
+                start=args.start,
+                end=args.end,
+                store=store,
+                reconciliation=reconciliation,
+                tipoffs=tipoffs,
+                repo_root=args.repo_root,
+                report_dir=args.report_dir,
+                out_name=args.out.name,
+                merge_receipt=receipt,
+                include_outcome_marginal=args.outcome_marginal == "include",
+            )
+    finally:
+        database.dispose()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(render_cohort_evidence(evidence), encoding="utf-8", newline="\n")
     print(f"wrote {args.out}")
+    print(f"  store: {settings.database_url}")
     print(f"  views agreed: {sorted(reconciliation.views)}")
     print(f"  games: {len(reconciliation.union)}")
     return 0
