@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, event, func, select
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import Executable
@@ -114,6 +114,27 @@ def render_store_url(url: URL) -> tuple[str, str | None]:
     if url.get_backend_name() == "sqlite" and database and database != ":memory:":
         local_path = str(Path(database).resolve())
     return url.render_as_string(hide_password=True), local_path
+
+
+def missing_local_store(url: URL | str) -> str | None:
+    """The store's path, when the URL names a local file that does not exist.
+
+    Exists because SQLite **creates** a database on connect rather than
+    refusing. For a writer that is the desired behaviour; for a read-only
+    reporting tool it is a trap, and a specific one: a mistyped path yields a
+    brand-new empty file, and every subsequent count against it is honest,
+    reproducible and zero. That is how a *fresh* false zero gets manufactured
+    by the very check meant to settle one.
+
+    Returns ``None`` for a store that exists, and for any store that is not a
+    local file (a server-backed URL cannot be inspected this cheaply, and its
+    own connection error is the loud failure).
+    """
+    resolved = make_url(url) if isinstance(url, str) else url
+    _, local_path = render_store_url(resolved)
+    if local_path is not None and not Path(local_path).exists():
+        return local_path
+    return None
 
 
 @dataclass(slots=True)

@@ -54,9 +54,15 @@ frozen record, and there is no public path to one without the other. Passwords
 are hidden in the rendered URL, so its output is safe to paste into a handoff
 entry or a CI summary.
 
-Exit codes: `0` populated, `1` reachable but empty, `2` no participation schema
-in that store (which is what a fresh worktree gives you, reported by path rather
-than as a bare `no such table` traceback).
+Exit codes: `0` populated, `1` reachable but empty, `2` unusable — either no
+participation schema in that store, or **no database file at that path at all**.
+
+That second case is a refusal, not a failure. SQLite *creates* a database on
+connect rather than refusing, so a mistyped `DATABASE_URL` would otherwise
+produce a brand-new empty file and then report it, honestly and reproducibly, as
+holding zero rows. **A read-only report that manufactures its own subject is how
+you get a fresh false zero from the very check meant to settle one**, so this
+tool checks for the file before it builds an engine and declines to create it.
 
 Add `--json` for the machine-readable form. The committed census at
 [`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)
@@ -110,11 +116,29 @@ complete, because a gap a report does not name is a gap nobody chases.
 ---
 
 ## Two databases in that directory, and they are not interchangeable
-
 `throwaway-report-sweep.db` sits beside the real one and holds 69,922
 `injury_report_entries`, 2,460 `team_schedule` rows and **zero** participation
 rows. It took its tip-offs from `ScheduleLeagueV2` **on purpose**, which makes it
 permanently unusable for any cohort manifest.
+
+### Three stores, three disjoint slices, none of them joinable alone
+
+Worth stating plainly, because it is the shape of the data rather than an
+accident:
+
+| Store | participation | box scores | injury reports | schedule |
+|---|---|---|---|---|
+| `hoops_gm.db` | 43,037 | 26,651 | 0 | 0 |
+| `throwaway-report-sweep.db` | 0 | 26,651 | 69,922 | 2,460 |
+| the main checkout's `hoops_gm.db` | 0 | 0 | 0 | 0 |
+
+**No single store holds both participation outcomes and injury-report
+statuses.** Any status-to-outcome question therefore needs a deliberate join
+across two stores whose tip-offs come from *different and deliberately
+independent* sources — which is exactly the contamination the paragraph below
+warns about. That join is a Model-gate matter belonging to `quant` under the
+frozen protocol in `docs/models/`. It is recorded here so that it is
+**requested rather than discovered**.
 
 `hoops_gm.db` took every `tipoff_utc` from `BoxScoreSummaryV3` during the
 per-game participation pass. `schedule_import` must never be run against it,

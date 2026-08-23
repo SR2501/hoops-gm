@@ -18326,3 +18326,72 @@ regenerate the cohort and did not go near the fit.
   store.** This entry fixes the two instances I was pointed at. I did not sweep
   for the pattern, and the sweep is not obviously mechanisable — a number beside
   a path is fine, a number alone may be quoting one. **Reasoned.**
+
+### Follow-up, same unit: the fix contained the defect it was fixing
+
+Reviewing against the coordinator's constraint that reachability be *explicit
+and refusable rather than implicit*, I found the trap **inside my own tool**.
+
+SQLite creates a database on connect rather than refusing. So
+`DATABASE_URL` pointing at a mistyped path produced a brand-new empty file, and
+the coverage report then answered "is the ledger populated" with an honest,
+reproducible, meaningless **no** — a *fresh* false zero, manufactured by the
+very check written to settle one. I had already seen the symptom without reading
+it: an earlier run left a stray `hoops_gm.db` in this worktree root that I
+deleted as untidiness rather than recognising as evidence.
+
+`missing_local_store` in `db/session.py` now refuses before an engine is built,
+naming the absent path and declining to create it. Driven both ways: a typo'd
+path exits 2 and leaves **no file** behind (asserted on the filesystem, not
+inferred from the message), and the real store still exits 0 with 43,037.
+
+The dialect knowledge stayed in `session.py` for the same ADR-001 reason as
+`render_store_url`, and the test asserts the *absence of the created file*
+rather than only the returned value — a check that merely confirmed the return
+value would pass identically whether or not the file had been created.
+
+**This is the third distinct thing in one unit that took the same shape**: a
+check whose scope, not whose logic, was wrong. The worktree sweep looked in ten
+correct places and the store was in an eleventh. My schema check asserted table
+presence but not file presence. Both reported accurately and both misled.
+`Select-Object -First` zeroing `$LASTEXITCODE` bit me once more here too, briefly
+showing the real store exiting 2 when it exits 0.
+
+### Three stores, three disjoint slices
+
+Recorded as an observation, not acted on:
+
+| Store | participation | box scores | injury reports | schedule |
+|---|---|---|---|---|
+| `hoops-gm-data\hoops_gm.db` | 43,037 | 26,651 | 0 | 0 |
+| `hoops-gm-data\throwaway-report-sweep.db` | 0 | 26,651 | 69,922 | 2,460 |
+| main checkout `hoops_gm.db` | 0 | 0 | 0 | 0 |
+
+**No single store holds both participation outcomes and injury-report
+statuses**, so any status-to-outcome question needs a deliberate cross-store
+join between two databases whose tip-offs come from deliberately *independent*
+sources — which is the contamination `hoops-gm-data\README.md` exists to warn
+about. That is a Model-gate decision and it is `quant`'s, so I have written it
+down to be **requested rather than discovered**. I did not attempt it.
+
+### On the earlier sweep entry
+
+Left standing and unedited, deliberately. It was an **accurate report of what
+was actually run**, and its conclusion was false only because the domain
+excluded a sibling directory. Rewriting it into having been wrong would destroy
+the more useful record — that a complete, correctly-executed enumeration can
+still answer the wrong question. `docs/backlog.md` asserts the present and so
+was corrected in place; this file records the past and so is only appended to.
+
+**Could not verify (follow-up):**
+
+- **That no other read-only tool in this repository creates the store it
+  inspects.** I fixed mine. `Database.from_settings` is used widely and SQLite's
+  create-on-connect applies to every one of those call sites; most are writers,
+  for which it is correct behaviour. I did not audit which are readers.
+  **Reasoned, and a real remaining exposure.**
+- **That `missing_local_store` is right for a server-backed URL.** It returns
+  `None` for anything that is not a local file, on the argument that a server's
+  own connection error is already loud. That is a design choice I have driven
+  only for SQLite and in-memory; no Postgres store was pointed at a nonexistent
+  database to see what the failure actually looks like. **Reasoned.**

@@ -434,7 +434,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     import argparse
 
     from hoops_gm.core.config import get_settings
-    from hoops_gm.db.session import Database
+    from hoops_gm.db.session import Database, missing_local_store
 
     parser = argparse.ArgumentParser(
         description=(
@@ -447,7 +447,24 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
     args = parser.parse_args(argv)
 
-    database = Database.from_settings(get_settings())
+    settings = get_settings()
+
+    # Refuse before connecting. SQLite would otherwise create the file and then
+    # honestly report it as empty, which manufactures exactly the kind of
+    # confident, reproducible, meaningless zero this tool exists to prevent.
+    absent = missing_local_store(settings.database_url)
+    if absent is not None:
+        print(
+            f"ERROR: no database file at {absent}\n"
+            f"  Refusing to create one: this is a read-only report, and an empty "
+            f"store invented here would answer 'is the ledger populated' with a "
+            f"reproducible and meaningless no.\n"
+            f"  Check DATABASE_URL, or run `alembic upgrade head` to build it "
+            f"deliberately."
+        )
+        return 2
+
+    database = Database.from_settings(settings)
     try:
         with database.session() as session:
             coverage = measure_coverage(session, seasons=args.seasons)

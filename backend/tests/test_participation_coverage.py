@@ -36,7 +36,7 @@ from hoops_gm.db.models import (
     PlayerParticipation,
     SeasonType,
 )
-from hoops_gm.db.session import Database, render_store_url
+from hoops_gm.db.session import Database, missing_local_store, render_store_url
 
 SEASON = "2025-26"
 
@@ -374,6 +374,36 @@ def test_a_store_without_the_schema_names_the_store_it_checked(tmp_path: Path) -
         assert caught.value.store.local_path is not None
     finally:
         database.dispose()
+
+
+def test_an_absent_local_store_is_reported_without_being_created(tmp_path: Path) -> None:
+    """A read-only report must not manufacture the store it is reporting on.
+
+    SQLite creates a database on connect rather than refusing, so a mistyped
+    path would otherwise yield a new empty file and a count that is honest,
+    reproducible and meaningless — a fresh false zero, produced by the very
+    check meant to settle one.
+    """
+    absent = tmp_path / "not-here" / "hoops_gm.db"
+
+    reported = missing_local_store(f"sqlite:///{absent.as_posix()}")
+
+    assert reported == str(absent)
+    assert not absent.exists()
+    assert not absent.parent.exists()
+
+
+def test_an_existing_local_store_is_not_reported_as_missing(tmp_path: Path) -> None:
+    present = tmp_path / "hoops_gm.db"
+    present.write_bytes(b"")
+
+    assert missing_local_store(f"sqlite:///{present.as_posix()}") is None
+
+
+def test_a_server_backed_store_is_never_reported_as_missing() -> None:
+    """Only a local file can be checked this cheaply; a server speaks for itself."""
+    assert missing_local_store("postgresql+psycopg://h/db") is None
+    assert missing_local_store("sqlite:///:memory:") is None
 
 
 def test_a_password_never_reaches_the_rendered_store(session: Session) -> None:
