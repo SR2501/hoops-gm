@@ -2,13 +2,25 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**52 done - 1 blocked - 87 pending - 140 total**
+**53 done - 1 blocked - 87 pending - 141 total**
 
 (Recomputed from the status markers in this finished file, never
-reconciled from two headers: 140 `###` headings and
-140 markers, 1:1, no duplicate item names. Neither side of a
+reconciled from two headers; the `###` headings and the status markers
+correspond 1:1, with no duplicate item names. Neither side of a
 rebase conflict is a usable input here, because each was computed before
 the other lane's items landed.)
+
+**The numbers that used to sit in the paragraph above were removed on
+2026-08-23**, by the `demo-one-command` lane, and the reason is the paragraph
+immediately below this one. It says *"the count above is no longer restated
+anywhere in this file"*, and that was false: the block above restated it twice
+(`140 ### headings and 140 markers`) while `scripts/backlog_graph.py` checks
+only the header line, so the prose copy was exactly the unguarded second copy
+this file warns about — instantiated in the file that warns about it. It
+survived because a rebase conflict on the header does not touch prose two lines
+below, and `scripts/resolve_doc_conflicts.py` recomputes the header
+unconditionally and the parenthetical never. The property is worth stating and
+the integers were not; both tools still enforce the property.)
 
 (Recomputed from the status markers in this finished file, never reconciled from
 two headers. **The count above is no longer restated anywhere in this file**, and
@@ -856,6 +868,76 @@ and resolution succeeds by construction rather than by luck. **The numbers are
 invented** and the docstring says so first: nothing derived from the cohort is a
 projection anyone should look at, and a fixture captured from it proves shape and
 nothing else.
+
+### `demo-one-command` - One command, one database, three screens
+
+- [x] **done**
+- **Depends on:** `projections-seed`, `draft-format-abstraction`, `schedule-grid-ui`
+
+The three dev seeders always composed and **nobody had run them in one order**.
+Demo state lived in three separate SQLite files, one backend serves one file, so
+the owner opened the dashboard on 2026-08-22 to a working draft board beside two
+`409` error pages. Nothing was broken. The composition existed only as commands
+someone happened to know, which is the failure mode `AGENTS.md` names first:
+*nothing important lives only in a chat.*
+
+`python -m hoops_gm.dev.seed_demo` is that composition, `docs/demo.md` is the
+runbook, and `backend/tests/test_seed_demo.py` drives all three routes against
+**one** seeded database. That last part is the regression test for the whole
+item: each seeder already had a test proving its own endpoint could answer, and
+a test that seeds one database and reads one endpoint is green whether or not
+the other two are pointed somewhere else.
+
+Three corrections to the reconstruction this unit started from, each driven:
+
+- **`seed_schedule_grid` before `seed_projections` is redundant, not required.**
+  `seed_projections` already composes it. Only `seed_draft`-last is a real
+  constraint, and it is a hard one — its `[demo] ` leagues carry
+  `fantrax_league_id IS NULL`, which is the first arm of
+  `require_safe_demo_target`, so a drafts-first database can never have the
+  other two screens seeded into it at all.
+- **Real-scale schedule and projections are not mutually exclusive.** The
+  refusal that suggested they were (*"already holds 2026-27 game `0022600004`,
+  which is outside the fixture cohort"*) fires when the schedule seed runs
+  against a live capture and the projection seed is then run against the
+  *committed* fixture — two cohorts, correctly refused. Give both the same
+  `--fixtures-dir` and it is one cohort. Driven 2026-08-23: one database with
+  1,200 imported games, 2,400 team-schedule rows, 30 teams, 25 periods, 60
+  projection rows and 2 drafts, exit 0, schedule version byte-identical to the
+  real-season-only seed. **`require_safe_demo_target` was not touched**; it was
+  satisfied honestly. The projections themselves remain synthetic — all that
+  changed is the schedule they sit beside.
+- **The composition is reproducible from empty, not idempotent.** Re-running it
+  refuses, because the draft seed leaves rows the schedule seed is written to
+  refuse, and the message names a league — which reads like data loss rather
+  than a repeat. `looks_like_a_previous_demo_seed` adds the sentence that tells
+  the two apart. It grants no permission and changes no guard.
+
+Mutation evidence in `scripts/mutate_seed_demo.py`: 11 mutations, 11 caught, 0
+survived, 0 harness failures. M07 — a `session.commit()` between the two
+seeders, which is exactly what composing them at the shell does — is the only
+one that distinguishes "one atomic session" from "the refusal happened to fire
+before anything was written", and it reddens exactly one test.
+
+**A real store slipped every guard, and closing it was the larger half of this
+unit.** The owner's database at `hoops-gm-data/hoops_gm.db` holds 0 leagues and
+1,230 games all in 2025-26, so the league check and the cohort check both passed
+it; the crosswalk is entirely `nba`-source, so the projection check passed too.
+Driven against a migrated copy, the composed seed exited **0** and wrote 3
+leagues, 2 drafts, 10 synthetic games and 60 `synthetic-demo-*` rows that became
+the current Basketball Monster crosswalk, beside a 43,037-row participation
+ledger. It escaped in reality only because its schema is at `0016` and
+`seed_drafts` crashes on a missing table — protection by accident, removed by
+one `alembic upgrade head`. `_require_no_real_ingest` closes it on two signals
+no seeder writes: any `player_participation` row, and any `nba_games` row for
+another season.
+
+**On the dependency list.** `hoops_gm.dev.seed_draft` landed under
+`draft-tracker`, which is still **pending** for the bridge feed — so this item
+does *not* depend on it, and an edge to it would have been a false claim that
+this rests on a live draft feed. The recorded relationship is here in prose
+rather than as an edge, and the real edge is to `draft-format-abstraction`,
+which is what the draft seeder drives its events through.
 
 ### `schedule-grid-pending-periods` - Showing that a scoring period is not fully scheduled
 

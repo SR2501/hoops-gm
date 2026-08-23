@@ -78,6 +78,7 @@ from hoops_gm.calendar import (
 )
 from hoops_gm.core.config import Settings
 from hoops_gm.db.base import Base
+from hoops_gm.db.models.availability import PlayerParticipation
 from hoops_gm.db.models.league import League
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
@@ -153,6 +154,67 @@ class DemoSeedRefused(RuntimeError):
     """The target database, or the fixture, is not safe to seed from."""
 
 
+def _require_no_real_ingest(session: Session) -> None:
+    """Refuse a database carrying evidence of a real ingest, league or not.
+
+    Two signals, checked independently because either can be present without
+    the other — a store built by the identity backfill has players and no
+    participation, and a store built by the participation loader has both.
+    Neither is written by any module under ``hoops_gm.dev``, which is what
+    makes their presence conclusive rather than suggestive:
+
+    * **any ``player_participation`` row.** No seeder writes this table. It is
+      the availability ledger, the thing this whole project is for.
+    * **any ``nba_games`` row for a season other than this one.** Every seeder
+      parses with ``season=SEASON``, so a different season cannot have come
+      from here.
+
+    Deliberately *not* keyed on ``players`` or ``nba_teams``: ``seed_projections``
+    imports 580 players and ``import_teams`` writes 30 teams, so those tables
+    are populated by a legitimate demo seed and refusing on them would refuse
+    the seed's own output. The two signals above are the ones with no demo
+    provenance at all.
+
+    **A missing table is treated as holding no rows, which is why the
+    existence check is here rather than a ``try``.** This function runs before
+    ``create_schema_only_on_a_fresh_database`` has been allowed to do anything,
+    and against a half-built schema — an operator's Alembic database behind
+    head, which is the exact case
+    ``test_seed_cli_leaves_no_schema_behind_when_it_refuses`` pins — a bare
+    ``SELECT`` raises ``OperationalError`` and replaces a clear refusal with a
+    traceback. Skipping an absent table is not a weakened guard: a table that
+    does not exist cannot contain a row. It costs nothing on the case that
+    motivated this, because the real store carries both tables.
+
+    This runs before every other check and before any write, so a refusal here
+    leaves the database exactly as it was found.
+    """
+
+    tables = set(inspect(session.get_bind()).get_table_names())
+
+    if PlayerParticipation.__tablename__ in tables:
+        participation = session.scalar(select(PlayerParticipation.id).limit(1))
+        if participation is not None:
+            raise DemoSeedRefused(
+                "this database holds player_participation rows, the availability ledger, "
+                "which no seeder writes. That makes it a real store rather than a throwaway, "
+                "whether or not it holds a league: seeding would register a synthetic 2026-27 "
+                "schedule cohort and a synthetic Basketball Monster crosswalk inside it. "
+                "Nothing was written. Use a throwaway --database-url."
+            )
+
+    if NbaGame.__tablename__ in tables:
+        foreign_season = session.scalar(
+            select(NbaGame.season).where(NbaGame.season != SEASON).limit(1)
+        )
+        if foreign_season is not None:
+            raise DemoSeedRefused(
+                f"this database holds {foreign_season!r} games, and every seeder here only "
+                f"ever writes {SEASON}. That makes it a real store rather than a throwaway. "
+                "Nothing was written. Use a throwaway --database-url."
+            )
+
+
 def load_fixture(fixtures_dir: Path, name: str) -> Any:
     path = fixtures_dir / name
     if not path.is_file():
@@ -181,7 +243,32 @@ def require_safe_demo_target(session: Session, *, cohort_game_ids: set[str]) -> 
     season is protected by the producer. The gap closed here is the realistic
     one: a working database that is empty or only partly populated for this
     season but already holds the operator's real league.
+
+    **A third gap was found on 2026-08-23 and is closed by the first check
+    below: a real store holding no league at all.** Every check in this
+    function used to key on ``leagues`` or on *this* season's ``nba_games``,
+    and the owner's real local database — the one at
+    ``hoops-gm-data/hoops_gm.db``, invisible to a checkout because the default
+    relative SQLite path anchors to each worktree's own root — holds **0
+    leagues** and **1,230 games, all 2025-26**. Both existing checks passed it
+    cleanly. Driven against a migrated copy: the composed seed exited **0**
+    and wrote 3 leagues, 2 drafts, 10 synthetic 2026-27 games and **60
+    ``synthetic-demo-*`` rows that became the current Basketball Monster
+    crosswalk**, into a database holding a 43,037-row participation ledger.
+
+    That is the same harm ``require_safe_projection_target`` exists to prevent,
+    arriving by the one route it cannot see: there was no *prior* Basketball
+    Monster import to conflict with, so nothing refused. The store was
+    protected only by its schema being at ``0016`` — ``seed_drafts`` crashed on
+    a missing ``drafts`` table and the transaction rolled back. **Protection by
+    accident is not protection**, and migrating that store to head removes it.
+
+    This is the third instance of one shape in this file's history — *a guard
+    whose scope is narrower than the harm* — and the first two were both closed
+    by widening the evidence rather than the intent.
     """
+
+    _require_no_real_ingest(session)
 
     # Selected as a row keyed on the non-nullable `League.id`, not as the
     # nullable `fantrax_league_id` alone. A league created before Fantrax

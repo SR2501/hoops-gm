@@ -159,6 +159,28 @@ See `docs/adapters/fantrax-private.md`.
 
 ## Local demo data
 
+**Start here: [`../docs/demo.md`](../docs/demo.md).** One command seeds one
+database that all three screens read:
+
+```bash
+cd backend
+python -m hoops_gm.dev.seed_demo --database-url sqlite:///./demo_all.db
+DATABASE_URL=sqlite:///./demo_all.db python -m hoops_gm
+```
+
+The rest of this section documents the three seeders `seed_demo` composes,
+because their refusals and their fixture handling are worth understanding
+before you point one at a database you care about. Running them individually
+still works; running them into three *different* files is what produced a
+dashboard with one working screen and two `409`s.
+
+Note that `seed_schedule_grid` before `seed_projections` is **redundant, not
+required** — `seed_projections` already composes it. `seed_draft` last **is**
+required: its `[demo] ` leagues are exactly what `require_safe_demo_target`
+refuses.
+
+### The schedule grid
+
 The schedule grid fails closed on missing, stale or unverifiable lineage, so
 "it returns 409" says nothing about whether it can ever return anything else.
 This seeds one database to a genuinely verified state, offline, from the
