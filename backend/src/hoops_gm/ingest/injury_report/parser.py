@@ -322,10 +322,23 @@ def _verify_masthead(page: Any, report_timestamp: datetime) -> datetime:
     requested_eastern = report_timestamp.astimezone(EASTERN)
     # A tolerance, not an exact match. Verified live 2026-08-17: the legacy
     # hourly filename era names a file "01PM" for a report whose own masthead
-    # reads "1:30 PM" -- the filename only ever encodes the hour, and the
-    # report is consistently published at :30 past it. An exact-minute
-    # comparison would reject every legacy-era fetch as a "mismatched
-    # capture" when nothing has actually gone wrong.
+    # reads "1:30 PM" -- the filename only ever encodes the hour, so an
+    # exact-minute comparison would reject every legacy-era fetch as a
+    # "mismatched capture" when nothing has actually gone wrong.
+    #
+    # MEASURED 2026-08-24 over all 582 cached reports, which corrects the
+    # "consistently :30" reading this comment used to carry. Legacy-era offsets
+    # are :30 for 116 reports and **:45 for 5** -- the last five legacy reports
+    # (2025-12-19..2025-12-21), a real cadence shift immediately before the
+    # fifteen-minute era began. New-format filenames encode the minute and are
+    # exact (0 offset, all 461).
+    #
+    # So the corpus maximum is **exactly 45 minutes** against a strict ``>``
+    # bound: those five captures pass with **zero margin**. Deliberately not
+    # widened here -- the bound is doing real work and loosening it on the
+    # strength of five reports would trade a live tripwire for comfort -- but it
+    # is a genuine fragility, not a comfortable margin, and it is recorded so
+    # the next cadence shift is read as expected rather than as a surprise.
     if abs(masthead_eastern - requested_eastern) > timedelta(minutes=45):
         raise _contract(
             f"masthead reports {masthead_eastern.isoformat()} but "

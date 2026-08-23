@@ -20990,3 +20990,74 @@ requests** made by this unit.
 exclusion count must reproduce exactly under section 8 condition 8, so this artifact
 is final rather than iterated. The coordinator holds the census-widening question and
 the four-week freeze.
+
+
+## 2026-08-24 - data-engineer - closing my own "could not verify": the masthead, checked against 582 documents
+
+**Changed.** One comment in `ingest/injury_report/parser.py`, corrected against
+measurement. No behaviour change. This entry exists because the entry above it
+declared a gap and this closes it; **that entry is left exactly as written**,
+because it was true when written and amending it to agree with a later finding
+is the thing append-only forbids.
+
+**The gap.** I shipped the widened cohort declaring that I had **not** opened a
+PDF to confirm `report_timestamp` against the printed masthead, and that lead
+time is decision-bearing so it was a real gap rather than a nit. Holding for a
+rebase window, I closed it.
+
+**Result: 582 of 582 cached reports match exactly.** For every capture, the
+stored `report_timestamp` equals the PDF's own printed
+`Injury Report: MM/DD/YY HH:MM (AM|PM)` masthead converted Eastern -> UTC. Zero
+mismatches, zero unparsed, zero absent from the store. This checks the stored
+instant against **document content**, which is independent of the filename --
+the self-describing field that could have lied and is exactly the class of thing
+this project keeps getting caught by.
+
+**What it confirms is a docstring, and that is the point.** `parser.py` already
+claims the persisted value is "always the PDF's own masthead, never the
+request". That claim is now exercised against the whole corpus rather than
+believed. Unexamined inheritance is the failure mode with a test available; this
+is that test being run.
+
+**Two findings the check produced that the claim did not.**
+
+**(1) The tolerance has zero margin.** `_verify_masthead` accepts up to
+`timedelta(minutes=45)` under a strict `>`. The measured legacy-era offset
+distribution is **:30 for 116 reports and :45 for 5** -- so five real captures
+sit *exactly* on the bound and pass only because the comparison is `>` rather
+than `>=`. One further notch of cadence drift would have rejected them as
+"stale or mismatched capture" contract violations. **Deliberately not widened:**
+the bound is doing real work, and loosening it on the strength of five reports
+trades a live tripwire for comfort. Recorded so the next shift reads as expected
+rather than as a surprise.
+
+**(2) The comment was measurably wrong.** It read that the legacy report "is
+consistently published at :30 past" the filename hour. It is not: the five :45
+reports are the last five legacy reports, 2025-12-19..2025-12-21, immediately
+before the fifteen-minute era begins -- a real cadence shift, which is also why
+the offset is content-derived rather than a hardcoded constant. Corrected in
+place with the measured distribution, since a comment that is wrong about the
+corpus is worse than no comment.
+
+**A correction to my own earlier arithmetic, before anyone reuses it.** My first
+pass at the offset distribution produced a spread from -495 to +660 minutes,
+which is nonsense. Cause: the two filename shapes are
+`Injury-Report_2025-10-20_05PM.pdf` (legacy) and
+`Injury-Report_2025-12-22_04_30PM.pdf` (new) -- the new format separates hour
+and minute with an **underscore**, so a `_(\d{2})(AM|PM)` pattern reads its
+*minutes* as an hour. Re-measured per era, the numbers are clean: legacy
+{+30: 116, +45: 5}, new {0: 461}. The 582/582 masthead equality was never
+affected, because it does not read the filename at all. **My earlier
+"461 new / 121 legacy, 0 mismatches" split is confirmed correct** (421 PM + 40
+AM = 461).
+
+**Gates.** Comment-only change to source. `ruff check`, `ruff format --check`
+and `mypy` re-run clean; the five-suite run stays at 249 passed. Zero external
+requests -- every one of the 582 PDFs was already cached.
+
+**Could not verify.** Whether any report exists in the archive that was never
+fetched, and so is absent from the 582. The raw index records only HTTP 200s, so
+this checks every capture I **have**, not every capture there **is** -- the same
+residual the era-boundary window carries, and it is not closeable from cache by
+construction. Also unverified: whether the :45 cadence continued past
+2025-12-21, since the legacy era ends there and the question stops being askable.
