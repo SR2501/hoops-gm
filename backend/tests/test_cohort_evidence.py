@@ -28,6 +28,7 @@ fixture whose every game sits comfortably inside the window.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,13 +40,17 @@ from hoops_gm.ingest.injury_report import parse_injury_report_pdf
 from hoops_gm.ingest.injury_report.cohort_evidence import (
     RECONCILIATION_VIEWS,
     VIEW_INDEPENDENCE,
+    WITHHELD_PLAYER_NAME,
     GameIdentityReconciliation,
     TipoffReconciliation,
     _league_game_finder_ids,
+    _operational_artifacts,
     _player_game_log_ids,
     _reason_evidence,
+    _redacted_unresolved_sample,
     _schedule_league_ids,
     content_sha256,
+    operator_commands,
     refusal_reason,
     source_file_sha256,
 )
@@ -58,6 +63,39 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = (
     REPO_ROOT / "docs" / "adapters" / "nba-injury-report-cohort-2025-12-08--2026-01-04.json"
 )
+
+#: Every committed cohort population-evidence manifest, live or superseded.
+COHORT_MANIFEST_GLOB = "nba-injury-report-cohort-2*.json"
+
+#: The manifest current code is expected to reproduce. Its fingerprints must
+#: describe the files as they are today.
+LIVE_MANIFEST_PATH = (
+    REPO_ROOT / "docs" / "adapters" / "nba-injury-report-cohort-2025-10-21--2026-04-12.json"
+)
+
+#: Manifests that are deliberately frozen, mapped to why. A superseded manifest
+#: still publishes source fingerprints, and those fingerprints still describe
+#: the code that produced *it* -- which is what provenance means. What they no
+#: longer describe is the code as it is today, and that is not a defect to be
+#: repaired by regenerating them.
+#:
+#: This is a registry rather than a skip so that exempting a manifest is a
+#: visible, reviewed edit naming a reason, not a quiet deletion from a list.
+#: Anything committed and not named here is checked against live code.
+SUPERSEDED_MANIFESTS: dict[Path, str] = {
+    MANIFEST_PATH: (
+        "Superseded by the widened full-season cohort. It is NOT regenerated, for a "
+        "reason stronger than convenience: the operational state it was a pure function "
+        "of no longer exists. The report sweep behind it held 35 distinct report "
+        "timestamps in this window; the store today holds 36, so re-running the same "
+        "code over the same window yields 1,950 canonical observations against the "
+        "1,948 published here, with per-status drift. Regenerating would therefore "
+        "restate published pre-unblind counts -- including an outcome marginal inside "
+        "the frozen section 2 disclosure surface -- and would additionally destroy the "
+        "reference that PR #85's own admissibility evidence measures its drift against, "
+        "making that artifact incoherent. Frozen deliberately. See docs/handoff.md."
+    ),
+}
 
 SEASON = "2025-26"
 START = date(2025, 12, 8)
@@ -589,18 +627,65 @@ class TestTheCommittedManifestStillDescribesThisCode:
     """
 
     def test_every_recorded_source_fingerprint_matches_the_file_today(self, manifest: Any) -> None:
-        fingerprints = manifest["operator"]["source_fingerprints"]
-        assert fingerprints, "the manifest records no source fingerprints at all"
-        stale = {
-            relative: (recorded, source_file_sha256(REPO_ROOT / relative))
-            for relative, recorded in sorted(fingerprints.items())
-            if source_file_sha256(REPO_ROOT / relative) != recorded
-        }
+        """Every committed manifest not registered as superseded describes live code.
+
+        Scoped by discovery rather than by a hardcoded path, so adding a manifest
+        opts it in automatically. ``manifest`` is still the four-week fixture the
+        rest of this module asserts against; this test deliberately ignores it and
+        walks the committed set, because the property is about the set.
+        """
+        del manifest
+        committed = sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB))
+        assert committed, "no committed cohort manifests were discovered at all"
+        live = [path for path in committed if path not in SUPERSEDED_MANIFESTS]
+        assert live, (
+            "every committed cohort manifest is registered as superseded, so nothing "
+            "checks the generator's fingerprints against live code any more"
+        )
+        stale: dict[str, dict[str, tuple[str, str]]] = {}
+        for path in live:
+            fingerprints = json.loads(path.read_text(encoding="utf-8"))["operator"][
+                "source_fingerprints"
+            ]
+            assert fingerprints, f"{path.name} records no source fingerprints at all"
+            drifted = {
+                relative: (recorded, source_file_sha256(REPO_ROOT / relative))
+                for relative, recorded in sorted(fingerprints.items())
+                if source_file_sha256(REPO_ROOT / relative) != recorded
+            }
+            if drifted:
+                stale[path.name] = drifted
         assert not stale, (
-            "the committed cohort manifest fingerprints code that has since changed: "
+            "a live cohort manifest fingerprints code that has since changed: "
             f"{stale}. Regenerate it with the commands in its own operator.commands, or "
             "the provenance it publishes is a claim about a file that no longer exists."
         )
+
+    def test_a_superseded_manifest_is_registered_with_a_reason_and_keeps_its_fingerprints(
+        self,
+    ) -> None:
+        """Freezing a manifest is allowed; freezing one silently is not.
+
+        A superseded manifest is exempt from the liveness check above, which is
+        exactly the kind of exemption that rots into a blanket skip. So assert the
+        exemption is narrow: the file still exists, still publishes fingerprints,
+        and the registry states why it is frozen rather than merely that it is.
+        """
+        for path, reason in SUPERSEDED_MANIFESTS.items():
+            assert path.is_file(), (
+                f"{path.name} is registered as superseded but is not committed. A "
+                "registry entry for an absent file exempts nothing and hides that the "
+                "evidence was deleted rather than frozen."
+            )
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            assert manifest["operator"]["source_fingerprints"], (
+                f"{path.name} is frozen with no fingerprints, so it evidences nothing "
+                "about the code that produced it"
+            )
+            assert len(reason) > 200, (
+                f"{path.name} is exempted by a reason too short to be one. Say what "
+                "state it was a pure function of and why that state is gone."
+            )
 
     def test_the_manifest_agrees_with_itself_about_the_cohort_scope(self, manifest: Any) -> None:
         """The three places the game count appears must not be able to drift apart."""
@@ -622,6 +707,93 @@ class TestTheCommittedManifestStillDescribesThisCode:
                 f"{game_id} is missing from the committed cohort - this is the exact "
                 "omission that invalidated the previous one"
             )
+
+
+class TestTheCommittedManifestsAreActuallyPrivacySafe:
+    """`docs/adapters/nba-injury-report.md` calls these manifests privacy-safe.
+
+    That label was reviewed across five rounds against the four-week window --
+    and in *that* window `unresolved_game_id_sample` happened to be empty, so
+    the only bulk player-keyed field in the artifact was reviewed without ever
+    being seen populated. The widened window is the first run that fills it.
+
+    Two leaks were found this way, both by reading a generated artifact rather
+    than by any test: 50 rows of real player names, and the operator's home
+    directory embedded three times through the merge receipt's store paths.
+    Neither violates a schema. Neither is malformed. This is the check that
+    makes the label mean something on every future window.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB)),
+        ids=lambda path: path.name,
+    )
+    def test_no_committed_manifest_embeds_a_filesystem_path(self, path: Path) -> None:
+        raw = path.read_text(encoding="utf-8")
+
+        drive_letters = re.findall(r"[A-Za-z]:\\\\", raw)
+        assert not drive_letters, (
+            f"{path.name} embeds an absolute Windows path. The operational stores live "
+            f"under the operator's home directory, so this publishes an account name. "
+            f"Store identity is carried by the sha256, never by the directory."
+        )
+        for home_marker in ("/Users/", "/home/", "C:\\\\Users"):
+            assert home_marker not in raw, (
+                f"{path.name} embeds {home_marker!r}, which is a home directory"
+            )
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted((REPO_ROOT / "docs" / "adapters").glob(COHORT_MANIFEST_GLOB)),
+        ids=lambda path: path.name,
+    )
+    def test_the_unresolved_sample_withholds_player_names(self, path: Path) -> None:
+        """Shape kept, name dropped -- and the note says where the names live.
+
+        The rows are not deleted: date, matchup and team are what make the
+        sample diagnosable in aggregate, and they stay. Only the name goes, and
+        only from the committed copy, because `backfill observations` renders
+        the identical sample *with* names to the operator console. Identity
+        work reads that. The committed file was the one place the names were
+        durable and the one place they bought nothing.
+        """
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        sample = manifest["trusted_entry_cascade"]["unresolved_game_id_sample"]
+
+        for row in sample:
+            assert len(row) == 4, f"{path.name}: unexpected sample row width {len(row)}"
+            assert row[3] == WITHHELD_PLAYER_NAME, (
+                f"{path.name} publishes a player name in "
+                f"trusted_entry_cascade.unresolved_game_id_sample: {row!r}"
+            )
+        if sample:
+            assert manifest["trusted_entry_cascade"]["unresolved_game_id_sample_note"], (
+                f"{path.name} withholds names without saying so or where they are"
+            )
+
+    def test_redaction_keeps_the_row_and_cannot_be_widened_into_a_leak(self) -> None:
+        """A future fifth column must not arrive already published.
+
+        The cascade's sample tuple is documented as four fields. If it grows,
+        the new field lands in a committed artifact by default unless the
+        redactor truncates -- so it truncates, and this pins that.
+        """
+        redacted = _redacted_unresolved_sample(
+            [
+                ("2026-01-08", "MIA@CHI", "Miami Heat", "Herro, Tyler"),
+                ("2026-01-08", "MIA@CHI", "Chicago Bulls", "Giddey, Josh", "questionable"),
+            ]
+        )
+
+        assert redacted == [
+            ["2026-01-08", "MIA@CHI", "Miami Heat", WITHHELD_PLAYER_NAME],
+            ["2026-01-08", "MIA@CHI", "Chicago Bulls", WITHHELD_PLAYER_NAME],
+        ]
+        assert all("Herro" not in str(row) and "Giddey" not in str(row) for row in redacted)
+        assert all("questionable" not in row for row in redacted), (
+            "a widened source tuple leaked a fifth field into the committed artifact"
+        )
 
 
 class TestThePositionFieldIsWatchedAtTheSourceNotOnlyInTheManifest:
@@ -862,6 +1034,218 @@ class TestTheReasonVocabularyIsWatchedAtTheSource:
         from test_live_smoke import KNOWN_REASON_CATEGORIES
 
         assert KNOWN_REASON_CATEGORIES == _KNOWN_REASON_CATEGORIES
+
+
+class TestTheRecipeNamesEveryArgumentThatChangesTheManifest:
+    """The recipe a manifest publishes must reproduce *that* manifest.
+
+    Found by reading emitted output rather than the code emitting it: two
+    arguments were load-bearing but invisible, so following the published recipe
+    verbatim produced a weaker manifest with nothing saying so.
+    """
+
+    @staticmethod
+    def _recipe() -> list[str]:
+        return operator_commands(
+            season="2025-26",
+            start=date(2025, 10, 21),
+            end=date(2026, 4, 12),
+            out_name="whatever.json",
+            game_dates=164,
+            games_missing_tipoff=3,
+        )
+
+    @staticmethod
+    def _final(commands: list[str]) -> str:
+        matches = [c for c in commands if "cohort_evidence" in c]
+        assert len(matches) == 1, f"expected exactly one cohort_evidence step, got {matches}"
+        return matches[0]
+
+    def test_the_recipe_names_the_store_to_read(self) -> None:
+        """FAILS IF: the recipe stops saying which store the final step reads.
+
+        This is the one that matters. ``cohort_evidence`` reads whatever
+        ``DATABASE_URL`` names. Pointed at the report sweep it compares
+        ``ScheduleLeagueV2`` against itself and publishes ``agreed: true`` — a
+        vacuous check indistinguishable in the output from a correct one. A
+        recipe silent on that choice invites the exact failure the manifest's
+        own reconciliation section exists to rule out.
+        """
+        final = self._final(self._recipe())
+        assert "DATABASE_URL=" in final, (
+            "the final step reads DATABASE_URL and the recipe does not name it, so "
+            "following the recipe picks a store by accident"
+        )
+        assert "merged store" in final, "DATABASE_URL must name the merged store specifically"
+        assert "HOOPS_GM_DATABASE_URL" not in final, (
+            "the prefixed spelling is silently ignored in favour of the default rather "
+            "than rejected, so publishing it would hand the reader a silent wrong store"
+        )
+
+    def test_the_recipe_passes_the_merge_receipt(self) -> None:
+        """FAILS IF: the recipe drops ``--merge-receipt``.
+
+        It defaults to ``None``, and omitted the manifest records that it could
+        not evidence its store assembly. The recipe would then reproduce
+        something strictly weaker than the artefact carrying it.
+        """
+        assert "--merge-receipt" in self._final(self._recipe())
+
+    def test_the_merge_output_and_the_store_read_are_the_same_path(self) -> None:
+        """FAILS IF: the recipe merges into one store and then reads another.
+
+        The two steps are joined only by a path, and a recipe that writes
+        ``<merged store>`` then reads something else is how a correct-looking
+        sequence produces an empty cohort.
+        """
+        commands = self._recipe()
+        merge = next(c for c in commands if "merge_stores" in c)
+        written = re.search(r"--out (\S+|<[^>]+>)", merge)
+        assert written is not None
+        assert written.group(1) in self._final(commands)
+
+    #: Driven, not reasoned: ``backfill plan 2025-26 --start 2025-10-21
+    #: --end 2026-04-12 --no-cache`` reports ``candidates=640 to_fetch=640``.
+    #: ``--no-cache`` makes the planner count every candidate regardless of
+    #: local cache state, which is exactly the cold-cache number a reader
+    #: following this recipe faces.
+    DRIVEN_COLD_CACHE_CANDIDATES = 640
+
+    def test_the_request_budget_admits_the_whole_window(self) -> None:
+        """FAILS IF: the recipe publishes a budget that aborts on a cold cache.
+
+        ``enforce_request_budget`` **raises** ``BackfillBudgetExceeded``; it does
+        not truncate, and it fires before any network call. The previous recipe
+        carried ``--max-requests 120`` inherited from the four-week window, where
+        91 candidates fit. Over this window there are 640, so step 5 aborted with
+        zero progress for every reader whose cache was cold -- which is every
+        reader, the cache being gitignored. It reproduced only for the author.
+        """
+        run = next(c for c in self._recipe() if "backfill run" in c)
+        budget = re.search(r"--max-requests (\d+)", run)
+        assert budget is not None, "the run step must state a request budget"
+        assert int(budget.group(1)) >= self.DRIVEN_COLD_CACHE_CANDIDATES, (
+            f"--max-requests={budget.group(1)} is below the {self.DRIVEN_COLD_CACHE_CANDIDATES} "
+            "candidates this window actually plans, so the published recipe aborts at "
+            "step 5 on any cold cache"
+        )
+
+    def test_the_request_budget_moves_with_the_window(self) -> None:
+        """FAILS IF: the budget is hardcoded again.
+
+        The date literals were fixed by derivation and the budget was left
+        behind, one line away. A recipe whose budget does not move with its
+        window is a literal waiting to be inherited by the next regeneration.
+        """
+        wider = operator_commands(
+            season="2025-26",
+            start=date(2025, 10, 21),
+            end=date(2026, 4, 12),
+            out_name="whatever.json",
+            game_dates=328,
+            games_missing_tipoff=3,
+        )
+        narrow = re.search(r"--max-requests (\d+)", next(c for c in self._recipe() if " run " in c))
+        doubled = re.search(r"--max-requests (\d+)", next(c for c in wider if " run " in c))
+        assert narrow is not None and doubled is not None
+        assert int(doubled.group(1)) == 2 * int(narrow.group(1)), (
+            "doubling the game dates must double the budget; a budget that does not "
+            "track the window is a hardcoded literal wearing a derived spelling"
+        )
+
+    def test_the_recipe_admits_the_games_that_have_no_tipoff(self) -> None:
+        """FAILS IF: the recipe omits ``--allow-missing-tipoff``.
+
+        This guard fires *before* the budget. Three games in this window have no
+        ingested tip-off instant and the default allowance is 0, so step 5 exits
+        1 on coverage before the budget is ever consulted. The three are the same
+        games the manifest already enumerates as ``games_without_both_instants``,
+        so stating them here discloses nothing new -- it just stops the recipe
+        aborting on a fact the artefact already publishes.
+        """
+        run = next(c for c in self._recipe() if "backfill run" in c)
+        allowance = re.search(r"--allow-missing-tipoff (\d+)", run)
+        assert allowance is not None, (
+            "the run step must state its tip-off allowance; the default is 0 and this "
+            "window has 3 games without one, so the recipe aborts before it fetches"
+        )
+        assert int(allowance.group(1)) == 3
+
+    def test_every_step_before_the_merge_names_the_store_it_writes(self) -> None:
+        """FAILS IF: the recipe lets the two source stores collapse into one.
+
+        The ``DATABASE_URL`` correction reached the final step only. Steps 1-6
+        named no store, while step 7 named the ledger and the sweep as two
+        distinct things. Followed verbatim everything lands in one database,
+        ``--participation-db`` and ``--report-db`` resolve to the same file, and
+        ``surrogate_identity_agreement`` and ``cross_store_nba_games_reconciliation``
+        become self-comparisons reporting ``agreed: true`` -- the vacuous-agreement
+        failure this artefact exists to rule out, relocated to the merge step.
+        """
+        commands = self._recipe()
+        merge = next(c for c in commands if "merge_stores" in c)
+        participation = re.search(r"--participation-db (\S+|<[^>]+>)", merge)
+        report = re.search(r"--report-db (\S+|<[^>]+>)", merge)
+        assert participation is not None and report is not None
+        assert participation.group(1) != report.group(1), (
+            "the merge reads two stores; if the recipe names the same path twice the "
+            "cross-store checks compare a store with itself and agree vacuously"
+        )
+
+        for command in commands:
+            if "merge_stores" in command:
+                continue
+            assert "DATABASE_URL=" in command, (
+                f"step names no store, so following the recipe picks one by accident: {command}"
+            )
+
+        ingest = [c for c in commands if "ingest.backfill " in c and "injury_report" not in c]
+        sweep = [c for c in commands if "injury_report.backfill" in c]
+        assert ingest and sweep
+        assert all(participation.group(1) in c for c in ingest), (
+            "the participation steps must write the store the merge reads as --participation-db"
+        )
+        assert all(report.group(1) in c for c in sweep), (
+            "the injury report sweep steps must write the store the merge reads as --report-db"
+        )
+
+
+class TestAnAbsentArtifactDirectoryIsDistinguishableFromAnEmptyOne:
+    """FAILS IF: the manifest stops recording whether it looked.
+
+    Caught on a regeneration, not by review: run from ``backend/`` instead of the
+    data root, ``operational_artifacts.files`` silently emptied and three files'
+    sizes and hashes left the manifest. Every cohort number was byte-identical,
+    so nothing in the interesting fields moved. ``--report-dir`` is cwd-relative,
+    which is the same anchoring hazard that hid the participation ledger.
+    """
+
+    def test_a_missing_directory_says_so(self, tmp_path: Path) -> None:
+        artifacts = _operational_artifacts(tmp_path / "not-here")
+        assert artifacts["directory_present"] is False
+        assert artifacts["files"] == {}
+        assert "note" in artifacts
+
+    def test_a_real_but_empty_directory_is_the_other_answer(self, tmp_path: Path) -> None:
+        empty = tmp_path / "reports"
+        empty.mkdir()
+        artifacts = _operational_artifacts(empty)
+        assert artifacts["directory_present"] is True
+        assert artifacts["files"] == {}
+
+    def test_the_two_cases_do_not_compare_equal(self, tmp_path: Path) -> None:
+        """The whole point. An identical value for both is the defect."""
+        empty = tmp_path / "reports"
+        empty.mkdir()
+        assert _operational_artifacts(empty) != _operational_artifacts(tmp_path / "not-here")
+
+    def test_the_absence_note_leaks_no_operator_path(self, tmp_path: Path) -> None:
+        """This manifest is committed, and two absolute-path leaks were already
+        found in it by reading the output rather than the schema."""
+        absolute = tmp_path / "some" / "operator" / "path"
+        note = _operational_artifacts(absolute)["note"]
+        assert str(absolute) not in note
+        assert str(tmp_path) not in note
 
 
 class TestSourceFingerprintsAreCheckoutIndependent:

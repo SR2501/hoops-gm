@@ -234,7 +234,7 @@ from hoops_gm.db.models.enums import InjuryReportStatus, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.injury_report import CURRENT_EVIDENCE_SCHEMA_VERSION, InjuryReportEntry
 from hoops_gm.db.models.stats import NbaGame
-from hoops_gm.db.session import Database
+from hoops_gm.db.session import Database, absent_store_refusal
 from hoops_gm.ingest.errors import SourceError
 from hoops_gm.ingest.importers import ImportCounts, import_injury_report_entries
 from hoops_gm.ingest.injury_report.client import (
@@ -271,6 +271,21 @@ NEAR_TIP_OFFSETS: Final[tuple[timedelta, ...]] = (
 )
 
 DEFAULT_RAW_ROOT: Final = Path("data") / "raw"
+
+#: Subcommands that **report a quantity** and must therefore refuse an absent
+#: local store rather than creating one on connect.
+#:
+#: ``plan`` is included after checking rather than inheriting the claim. The
+#: store-creating-reader census recorded "``observations`` reports; ``plan`` and
+#: ``run`` write", and that is half wrong: :func:`build_plan` only reads, and
+#: ``plan`` returns before any write. Pointed at an empty store it reports zero
+#: fetches — which reads as "this window is already fully captured", the most
+#: expensive possible false zero here, because acting on it means never
+#: fetching the reports at all.
+#:
+#: ``run`` is deliberately absent: it writes, and creating the database is
+#: legitimate for a writer.
+STORE_REPORTING_COMMANDS: Final[frozenset[str]] = frozenset({"observations", "plan"})
 DEFAULT_CHECKPOINT_DIR: Final = Path("data") / "reports"
 DEFAULT_MAX_REQUESTS: Final = 250
 #: Refuse to run against a requested game scope with any missing tip-off by
@@ -2942,8 +2957,31 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     args = parser.parse_args(argv)
     season_type = SeasonType(args.season_type)
     settings = get_settings()
-    database = Database.from_settings(settings)
 
+    if (
+        args.command in STORE_REPORTING_COMMANDS
+        and (refusal := absent_store_refusal(settings.database_url)) is not None
+    ):
+        print(refusal, file=sys.stderr)
+        return 2
+
+    database = Database.from_settings(settings)
+    try:
+        return _dispatch(args, season_type=season_type, database=database)
+    finally:
+        # This CLI never disposed its engine. Minor, but real: the pool was
+        # left to be finalised at interpreter shutdown, which is why
+        # ``test_store_creating_readers.py`` has to capture and close what this
+        # opens before ``tmp_path`` removes the file underneath it. A ``finally``
+        # rather than a trailing call, because every branch above returns
+        # early and several of them return on an error path.
+        database.dispose()
+
+
+def _dispatch(  # pragma: no cover - operator tool
+    args: argparse.Namespace, *, season_type: SeasonType, database: Database
+) -> int:
+    """The command body, split out so :func:`main` can guarantee disposal."""
     if args.command == "observations":
         with database.session() as session:
             ready, missing = games_to_backfill(
