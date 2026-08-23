@@ -21185,3 +21185,77 @@ missing, but consistency is not proof and I did not probe the CDN to find out.
 Also unverified: whether the `:15`-exclusivity holds before 2025-10-20, the
 earliest capture in the corpus - the legacy era certainly starts earlier than my
 evidence does.
+
+## 2026-08-24 - data-engineer - a manifest that published a recipe which would not reproduce it
+
+Found while regenerating after an unrelated docstring edit tripped my own source-
+fingerprint guard. That guard did its job: I changed `merge_stores.py`, and the
+committed manifest's provenance became a claim about a file that no longer
+existed. Regenerating is what exposed everything below, so the guard paid for
+itself on its first firing.
+
+**The recipe did not reproduce the artefact carrying it.** `operator.commands`
+omitted two arguments, both load-bearing and both invisible:
+
+- `DATABASE_URL` was never named. The final step reads whatever store that
+  variable points at. Pointed at the durable ledger it yields an empty cohort -
+  loud and survivable. Pointed at the **report sweep** it yields a manifest whose
+  `cross_source_tipoff_reconciliation` compares `ScheduleLeagueV2` against itself
+  and reports `agreed: true`. That is the single most dangerous failure in this
+  unit, the one I was explicitly warned about and did avoid in the artefact - and
+  the artefact's own printed instructions walked a reader straight into it.
+- `--merge-receipt` was omitted, and it defaults to `None`. Following the recipe
+  verbatim produced a manifest that records it *could not evidence* its store
+  assembly. So the published recipe reproduced something strictly weaker than the
+  thing publishing it, and nothing said so.
+
+Both are now emitted and pinned by `TestTheRecipeNamesEveryArgumentThatChangesTheManifest`,
+including that the merge step's `--out` and the final step's `DATABASE_URL` are
+the same path - the two steps are joined only by a path, and nothing checked it.
+
+**`operational_artifacts` degraded silently.** `--report-dir` is cwd-relative, so
+running the generator from `backend/` rather than the data root emptied the
+section: three files' sizes and hashes left the manifest, with `files: {}` left
+behind. `{}` meant both "the directory holds nothing" and "there was no
+directory", which is the absent-versus-negative collapse this project keeps
+finding. Now `directory_present` distinguishes them. The absence note
+deliberately does **not** record the path - this manifest is committed, and two
+absolute-path leaks were already found in it during this same unit.
+
+I only caught it because I diffed **all 1654 leaves** rather than the fields I
+expected to move. Every cohort number was byte-identical, so any diff scoped to
+the interesting fields would have shown a clean regeneration.
+
+**A docstring of mine was false, and the test that should have caught it could
+not.** `read_only()` claimed "this needs no separate existence check - the
+refusal is the open itself", while the separate existence check sat three lines
+below it. The `is_file()` check is what refuses; `mode=ro` is defence in depth.
+My own test asserting "an absent path is refused and no file is created" passed
+with `mode=ro` deleted, because the existence check refuses first. I found that
+by probing - stripping `mode=ro` and expecting red - and got green.
+
+The first probe was worse: my regex did not match the real source, so it applied
+**nothing**, the suite passed, and I nearly recorded that as evidence the guard
+was load-bearing. **A probe that fails to apply is indistinguishable from a test
+that does not discriminate.** I now check the mutation landed before reading the
+result. `test_read_only_actually_opens_read_only` drives a *write* instead, which
+is the half the existence check cannot cover, and it does go red when `mode=ro`
+is removed - verified, not assumed.
+
+Reproducibility: an independent re-run of `merge_stores` into a fresh output
+produced all three store hashes byte-identically, and regeneration changed
+exactly 4 of 1655 leaves - `directory_present`, the corrected recipe, and two
+source fingerprints. No cohort number moved.
+
+**Could not verify:** whether `--raw-root` deserves the same treatment as
+`--report-dir`. It is equally cwd-relative, but it fails *loudly* when captures
+are missing and `--allow-fetch` is off, so it has no silent-degradation mode -
+with `--allow-fetch` on it would instead silently re-fetch, which I did not
+exercise and which costs real requests to test. I also did not add either path to
+`operator.commands`, because unlike `DATABASE_URL` their defaults are correct for
+a canonical checkout and wrong only for my out-of-tree data layout; encoding my
+layout into a committed recipe would be its own kind of lie. That judgement is
+mine and I am not certain of it. Finally, I did not re-derive the participation
+join from a second independent path - it agrees with the frozen four-week
+manifest where they overlap, but agreement with a subset I also produced is
+weaker evidence than I would like.

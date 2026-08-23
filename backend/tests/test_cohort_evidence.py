@@ -44,11 +44,13 @@ from hoops_gm.ingest.injury_report.cohort_evidence import (
     GameIdentityReconciliation,
     TipoffReconciliation,
     _league_game_finder_ids,
+    _operational_artifacts,
     _player_game_log_ids,
     _reason_evidence,
     _redacted_unresolved_sample,
     _schedule_league_ids,
     content_sha256,
+    operator_commands,
     refusal_reason,
     source_file_sha256,
 )
@@ -1032,6 +1034,111 @@ class TestTheReasonVocabularyIsWatchedAtTheSource:
         from test_live_smoke import KNOWN_REASON_CATEGORIES
 
         assert KNOWN_REASON_CATEGORIES == _KNOWN_REASON_CATEGORIES
+
+
+class TestTheRecipeNamesEveryArgumentThatChangesTheManifest:
+    """The recipe a manifest publishes must reproduce *that* manifest.
+
+    Found by reading emitted output rather than the code emitting it: two
+    arguments were load-bearing but invisible, so following the published recipe
+    verbatim produced a weaker manifest with nothing saying so.
+    """
+
+    @staticmethod
+    def _recipe() -> list[str]:
+        return operator_commands(
+            season="2025-26",
+            start=date(2025, 10, 21),
+            end=date(2026, 4, 12),
+            out_name="whatever.json",
+        )
+
+    @staticmethod
+    def _final(commands: list[str]) -> str:
+        matches = [c for c in commands if "cohort_evidence" in c]
+        assert len(matches) == 1, f"expected exactly one cohort_evidence step, got {matches}"
+        return matches[0]
+
+    def test_the_recipe_names_the_store_to_read(self) -> None:
+        """FAILS IF: the recipe stops saying which store the final step reads.
+
+        This is the one that matters. ``cohort_evidence`` reads whatever
+        ``DATABASE_URL`` names. Pointed at the report sweep it compares
+        ``ScheduleLeagueV2`` against itself and publishes ``agreed: true`` — a
+        vacuous check indistinguishable in the output from a correct one. A
+        recipe silent on that choice invites the exact failure the manifest's
+        own reconciliation section exists to rule out.
+        """
+        final = self._final(self._recipe())
+        assert "DATABASE_URL=" in final, (
+            "the final step reads DATABASE_URL and the recipe does not name it, so "
+            "following the recipe picks a store by accident"
+        )
+        assert "merged store" in final, "DATABASE_URL must name the merged store specifically"
+        assert "HOOPS_GM_DATABASE_URL" not in final, (
+            "the prefixed spelling is silently ignored in favour of the default rather "
+            "than rejected, so publishing it would hand the reader a silent wrong store"
+        )
+
+    def test_the_recipe_passes_the_merge_receipt(self) -> None:
+        """FAILS IF: the recipe drops ``--merge-receipt``.
+
+        It defaults to ``None``, and omitted the manifest records that it could
+        not evidence its store assembly. The recipe would then reproduce
+        something strictly weaker than the artefact carrying it.
+        """
+        assert "--merge-receipt" in self._final(self._recipe())
+
+    def test_the_merge_output_and_the_store_read_are_the_same_path(self) -> None:
+        """FAILS IF: the recipe merges into one store and then reads another.
+
+        The two steps are joined only by a path, and a recipe that writes
+        ``<merged store>`` then reads something else is how a correct-looking
+        sequence produces an empty cohort.
+        """
+        commands = self._recipe()
+        merge = next(c for c in commands if "merge_stores" in c)
+        written = re.search(r"--out (\S+|<[^>]+>)", merge)
+        assert written is not None
+        assert written.group(1) in self._final(commands)
+
+
+class TestAnAbsentArtifactDirectoryIsDistinguishableFromAnEmptyOne:
+    """FAILS IF: the manifest stops recording whether it looked.
+
+    Caught on a regeneration, not by review: run from ``backend/`` instead of the
+    data root, ``operational_artifacts.files`` silently emptied and three files'
+    sizes and hashes left the manifest. Every cohort number was byte-identical,
+    so nothing in the interesting fields moved. ``--report-dir`` is cwd-relative,
+    which is the same anchoring hazard that hid the participation ledger.
+    """
+
+    def test_a_missing_directory_says_so(self, tmp_path: Path) -> None:
+        artifacts = _operational_artifacts(tmp_path / "not-here")
+        assert artifacts["directory_present"] is False
+        assert artifacts["files"] == {}
+        assert "note" in artifacts
+
+    def test_a_real_but_empty_directory_is_the_other_answer(self, tmp_path: Path) -> None:
+        empty = tmp_path / "reports"
+        empty.mkdir()
+        artifacts = _operational_artifacts(empty)
+        assert artifacts["directory_present"] is True
+        assert artifacts["files"] == {}
+
+    def test_the_two_cases_do_not_compare_equal(self, tmp_path: Path) -> None:
+        """The whole point. An identical value for both is the defect."""
+        empty = tmp_path / "reports"
+        empty.mkdir()
+        assert _operational_artifacts(empty) != _operational_artifacts(tmp_path / "not-here")
+
+    def test_the_absence_note_leaks_no_operator_path(self, tmp_path: Path) -> None:
+        """This manifest is committed, and two absolute-path leaks were already
+        found in it by reading the output rather than the schema."""
+        absolute = tmp_path / "some" / "operator" / "path"
+        note = _operational_artifacts(absolute)["note"]
+        assert str(absolute) not in note
+        assert str(tmp_path) not in note
 
 
 class TestSourceFingerprintsAreCheckoutIndependent:

@@ -1298,6 +1298,7 @@
     "UNVERIFIED, NOT ZERO: stages 5-8 (candidate report timestamps attempted, quarantined, forbidden and not-yet-published) are null because the coverage report persisted for this season was computed against a different date range, and range-mismatched evidence is discarded rather than presented as if it answered this question. The numbers that ARE reported here do not depend on it. Populating it requires a backfill run over this exact range, which re-probes every candidate timestamp that previously returned 404 -- those are not cached, so it is not free."
   ],
   "operational_artifacts": {
+    "directory_present": true,
     "files": {
       "injury_backfill_2025-26_regular.json": {
         "bytes": 232200,
@@ -1322,7 +1323,7 @@
       "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 120",
       "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-10-21 --end 2026-04-12",
       "python -m hoops_gm.ingest.injury_report.merge_stores --participation-db <participation ledger> --report-db <injury report sweep> --out <merged store>",
-      "python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 --start 2025-10-21 --end 2026-04-12 --out ../docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json"
+      "DATABASE_URL=sqlite+pysqlite:///<merged store> python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 --start 2025-10-21 --end 2026-04-12 --merge-receipt <merged store>.merge-receipt.json --out ../docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json"
     ],
     "manifest_is_a_pure_function_of_persisted_state": true,
     "source_fingerprint_method": "SHA-256 of each file's bytes with CRLF normalised to LF, which equals the SHA-256 of the committed Git blob for a file Git stores with LF endings and is invariant across checkout newline configuration and operating system.",
@@ -1330,8 +1331,8 @@
       "backend/src/hoops_gm/db/lineage.py": "daf7d90d70e3d106a34f7070ef1faf4340ce7c25dccb52dbe1fa30151d43edf9",
       "backend/src/hoops_gm/ingest/backfill.py": "d98c4398ea3f4749333ff588d4f585d4938822f392960766c596fde30618457e",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "e76efdf339298ed9e8012f6cf799c13acfd120c2be2a62669719490fba606a8c",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "189bbf429e9711edfc5429c3d472dedab0ce33413ce8030ca788076123d3d763",
-      "backend/src/hoops_gm/ingest/injury_report/merge_stores.py": "7db850e214b1c6a7d7614ba88a2f2280f5fc64841e862866c83f0b43442cf387",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "29c4d34329159e8d8917594211efa00764cc4b8cc0df00e8a88c6b718c563417",
+      "backend/src/hoops_gm/ingest/injury_report/merge_stores.py": "07e7edf10a04fdef609da572f61d2db31ccb380d18983bdf56a11ddef8d7d44e",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "721e0238a8d63e8cbfd8c2f058c243d4bbf2aef166015fd137657e0602c1bb49"
     }
   },

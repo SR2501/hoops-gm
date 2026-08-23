@@ -28,6 +28,7 @@ from hoops_gm.ingest.injury_report.merge_stores import (
     OPENS_STORES_OUTSIDE_THE_CENSUS,
     RECEIPT_SUFFIX,
     RECONCILED_GAME_COLUMNS,
+    STORE_RULE_ALLOWLIST_REASON,
     StoreMergeRefused,
     build_receipt,
     check_alignment,
@@ -374,6 +375,88 @@ def test_the_module_declares_that_it_opens_stores_outside_the_census() -> None:
     assert "sqlite3.connect" in OPENS_STORES_OUTSIDE_THE_CENSUS
     assert "test_store_creating_readers" in OPENS_STORES_OUTSIDE_THE_CENSUS
     assert len(OPENS_STORES_OUTSIDE_THE_CENSUS) > 200
+
+
+def test_the_granted_allowlist_reason_survives_until_the_rule_exists() -> None:
+    """The adjudicated reason must not rot while waiting for its mechanism.
+
+    The AST-based store-opening rule that replaces the literal-string census was
+    not on ``main`` when this module landed, so its allowlist entry could not be
+    added. The coordinator granted the entry anyway, on the distinction that
+    creating a store *as a declared purpose* is a different category from
+    opening one to read it and creating it by accident.
+
+    A granted-but-unplaced reason is exactly the kind of thing that quietly
+    disappears in a later refactor and then gets rediscovered as an undisclosed
+    store-opener. This test is what makes it survive the wait: the reason has to
+    keep naming why the output connect cannot be ``mode=ro``, and has to keep
+    saying it was adjudicated rather than assumed.
+    """
+    reason = STORE_RULE_ALLOWLIST_REASON
+
+    assert "declared purpose" in reason
+    assert "mode=ro" in reason
+    # The load-bearing asymmetry: inputs are read-only, the output cannot be.
+    assert "cannot create an absent file" in reason
+    assert "Adjudicated" in reason, "an exemption must record that it was granted, not assumed"
+
+
+def test_the_output_connect_is_the_only_one_that_can_create_a_store(tmp_path: Path) -> None:
+    """Drive the asymmetry the allowlist reason rests on, rather than asserting it.
+
+    The reason claims the input connects cannot create a store and only the
+    output connect can. That is a claim about behaviour, and behaviour claims in
+    prose are how this repository has repeatedly been wrong.
+
+    Note what this test does *not* prove: it passes with ``mode=ro`` removed,
+    because :func:`read_only`'s explicit ``is_file`` check refuses first. That
+    was verified by probe, not assumed. ``mode=ro`` is covered separately by
+    :func:`test_read_only_actually_opens_read_only`, and the two are kept apart
+    so neither can be mistaken for evidence of the other.
+    """
+    missing = tmp_path / "definitely-absent.db"
+    assert not missing.exists()
+
+    with (
+        pytest.raises((sqlite3.OperationalError, StoreMergeRefused, FileNotFoundError)),
+        read_only(missing),
+    ):
+        pass
+
+    assert not missing.exists(), (
+        "read_only() created a store for an absent path, so the allowlist reason's "
+        "claim that only the output connect can create one is false"
+    )
+
+
+def test_read_only_actually_opens_read_only(tmp_path: Path) -> None:
+    """The one test that fails if ``mode=ro`` is dropped.
+
+    Written because the absent-path test above does *not* discriminate it: the
+    explicit existence check refuses first, so removing ``mode=ro`` leaves that
+    test green. A guard whose removal breaks no test is a guard that will be
+    removed by someone tidying up, and the allowlist reason granted to this
+    module names ``mode=ro`` explicitly — so it needs to be true, and needs to
+    stay true, for reasons a reader can check.
+
+    Driving a *write* is the discriminating probe, because that is the half the
+    existence check cannot cover: this module must never mutate an input store.
+    """
+    store = tmp_path / "real.db"
+    with closing(sqlite3.connect(store)) as setup:
+        setup.executescript(SCHEMA)
+        setup.execute("INSERT INTO nba_teams (id, nba_team_id) VALUES (1, '1610612737')")
+        setup.commit()
+
+    with read_only(store) as connection:
+        # Reading is fine.
+        assert connection.execute("SELECT COUNT(*) FROM nba_teams").fetchone()[0] == 1
+        with pytest.raises(sqlite3.OperationalError, match=r"readonly|read-only"):
+            connection.execute("INSERT INTO nba_teams (id, nba_team_id) VALUES (2, '1610612738')")
+
+    # And the refused write left nothing behind.
+    with closing(sqlite3.connect(store)) as after:
+        assert after.execute("SELECT COUNT(*) FROM nba_teams").fetchone()[0] == 1
 
 
 def test_the_declaration_does_not_itself_trip_the_census_scan() -> None:

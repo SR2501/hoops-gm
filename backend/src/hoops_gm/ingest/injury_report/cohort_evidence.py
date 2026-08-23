@@ -448,6 +448,46 @@ def _capture_summary(store: RawPayloadStore) -> dict[str, Any]:
     return dict(sorted(summary.items()))
 
 
+def _operational_artifacts(report_dir: Path) -> dict[str, Any]:
+    """Record whether the artifacts were *looked at*, not just what was found.
+
+    The previous version was ``_artifact_files(...) if report_dir.is_dir() else
+    {}``, which collapses two different facts into one value. ``files: {}`` then
+    meant either "the directory exists and holds no reports" or "the directory
+    was not there at all" — and the second is overwhelmingly the likely one,
+    because ``--report-dir`` defaults to a **cwd-relative** ``data/reports``.
+
+    This bit me on a regeneration: run from ``backend/`` rather than the data
+    root, the section silently emptied and three files' sizes and hashes
+    vanished from the manifest with nothing marking their absence. The cohort
+    numbers were byte-identical, so a diff of the interesting fields showed
+    nothing wrong. Only a whole-leaf diff caught it.
+
+    Absent evidence must be distinguishable from negative evidence. That is the
+    same three-valued discipline the identity crosswalk owes its inputs, and
+    there is no reason a manifest's own provenance deserves less.
+    """
+    if not report_dir.is_dir():
+        return {
+            "directory_present": False,
+            "files": {},
+            "note": (
+                "no directory was found at the configured --report-dir, so no "
+                "operational artifacts were inventoried. This is absence of evidence, "
+                "not evidence that none exist: --report-dir defaults to a path "
+                "relative to the working directory, so running from elsewhere empties "
+                "this section without failing. An empty 'files' with directory_present "
+                "true means the directory was genuinely read and held nothing. The "
+                "path itself is deliberately not recorded here; it is an operator "
+                "path and this manifest is committed."
+            ),
+        }
+    return {
+        "directory_present": True,
+        "files": _artifact_files(list(report_dir.glob("*.json"))),
+    }
+
+
 def _artifact_files(paths: Sequence[Path]) -> dict[str, Any]:
     return {
         path.name: {
@@ -945,11 +985,7 @@ def build_cohort_evidence(
             "different ones.",
             *_unverified_cascade_stages(cascade),
         ],
-        "operational_artifacts": {
-            "files": (
-                _artifact_files(list(report_dir.glob("*.json"))) if report_dir.is_dir() else {}
-            ),
-        },
+        "operational_artifacts": _operational_artifacts(report_dir),
         "operator": {
             "commands": operator_commands(season=season, start=start, end=end, out_name=out_name),
             "manifest_is_a_pure_function_of_persisted_state": True,
@@ -1404,8 +1440,26 @@ def operator_commands(*, season: str, start: date, end: date, out_name: str) -> 
     reports and no participation — so a recipe omitting the merge cannot
     reproduce the ``participation_join`` section at all. It would instead
     produce a confident zero.
+
+    Two later corrections, both found by reading the emitted recipe rather than
+    the code that emits it, and both of the same shape — an argument that is
+    load-bearing but invisible, so its absence degrades the manifest instead of
+    failing:
+
+    * ``DATABASE_URL`` is stated. The final step reads whatever store that names
+      and the recipe said nothing about which one. Pointed at the ledger it
+      yields an empty cohort — annoying, loud, survivable. Pointed at the
+      **sweep** it yields a manifest whose ``cross_source_tipoff_reconciliation``
+      compares ``ScheduleLeagueV2`` with itself and reports ``agreed: true``,
+      which is indistinguishable in the output from a correct run. The recipe
+      was silent on the single most consequential choice in the derivation.
+    * ``--merge-receipt`` is passed. Omitted, it defaults to ``None`` and the
+      manifest records that it *could not evidence* its store assembly. So the
+      recipe as previously published reproduced a strictly weaker manifest than
+      the one carrying it, and nothing said so.
     """
     window = f"--start {start.isoformat()} --end {end.isoformat()}"
+    merged = "<merged store>"
     return [
         "python -m alembic upgrade head",
         f"python -m hoops_gm.ingest.backfill nba-identity --season {season}",
@@ -1416,9 +1470,15 @@ def operator_commands(*, season: str, start: date, end: date, out_name: str) -> 
         f"{window} --max-requests 120",
         f"python -m hoops_gm.ingest.injury_report.backfill observations {season} {window}",
         "python -m hoops_gm.ingest.injury_report.merge_stores "
-        "--participation-db <participation ledger> --report-db <injury report sweep> "
-        "--out <merged store>",
+        f"--participation-db <participation ledger> --report-db <injury report sweep> "
+        f"--out {merged}",
+        # The final step reads DATABASE_URL, so the recipe has to name it: the
+        # merged store is the only one holding both halves. Note the variable is
+        # DATABASE_URL and not a HOOPS_GM_-prefixed spelling, which is silently
+        # ignored in favour of the default rather than rejected.
+        f"DATABASE_URL=sqlite+pysqlite:///{merged} "
         f"python -m hoops_gm.ingest.injury_report.cohort_evidence {season} {window} "
+        f"--merge-receipt {merged}.merge-receipt.json "
         f"--out ../docs/adapters/{out_name}",
     ]
 

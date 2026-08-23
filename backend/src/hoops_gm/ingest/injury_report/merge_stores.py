@@ -151,6 +151,36 @@ OPENS_STORES_OUTSIDE_THE_CENSUS: Final = (
     "them; the output is refused if it already exists."
 )
 
+#: The reason text for this module's entry in the AST-based store-opening rule
+#: that replaces the literal-string census. **Adjudicated by the coordinator on
+#: 2026-08-24, requested rather than discovered** — the rule was not yet on
+#: ``main`` when this landed, so the reason is recorded here, at the site, ready
+#: to be lifted into the rule's allowlist verbatim once the mechanism exists.
+#:
+#: The ruling accepted a distinction this module forced:
+#:
+#:     "creates a store deliberately, as its declared purpose" is a different
+#:     category from "opens a store to read it and might create one by accident."
+#:
+#: The rule's hazard is the second category — a reader that silently conjures an
+#: empty store and then answers every question with a reproducible, meaningless
+#: zero. ``mode=ro`` is the demonstrated remedy for that, and both *inputs* here
+#: use it. But the *output* connect cannot be converted, because a read-only
+#: writer is a contradiction: writing the merged store **is** this module's job.
+#: Refusing it would make the rule mistake its own hazard and stamp a verdict on
+#: a site the question does not fit, which devalues every other verdict in the
+#: register.
+#:
+#: This is therefore a **legitimate entry, not a widening of the rule**.
+STORE_RULE_ALLOWLIST_REASON: Final = (
+    "merge_stores.py creates a store as its declared purpose: it writes the merged "
+    "participation+report store that a single-Session manifest generator requires. "
+    "Its two input connects are sqlite3.connect(mode=ro), which cannot create an "
+    "absent file; only the output connect can, and that is the point of the module "
+    "rather than an accident of it. The output path is refused if it already "
+    "exists. Adjudicated by the coordinator 2026-08-24."
+)
+
 
 class StoreMergeRefused(RuntimeError):
     """The two stores may not be merged, with the reason a reader can act on."""
@@ -207,10 +237,23 @@ class StoreAlignment:
 def read_only(path: str | Path) -> Iterator[sqlite3.Connection]:
     """Open a store read-only, refusing rather than creating an absent file.
 
-    ``mode=ro`` is the guard: SQLite creates a database on connect by default,
-    and a store invented here would answer every later question with a
-    reproducible, meaningless zero. It is also why this needs no separate
-    existence check — the refusal is the open itself.
+    Two independent guards, and it is worth being precise about which does
+    what, because an earlier version of this docstring claimed ``mode=ro`` was
+    the only one *while the explicit check sat three lines below it*:
+
+    1. The :meth:`~pathlib.Path.is_file` check below is what actually refuses an
+       absent path, and it is what produces the actionable
+       :class:`StoreMergeRefused` message rather than a bare
+       ``OperationalError``.
+    2. ``mode=ro`` is defence in depth, and not redundant. It closes the
+       time-of-check/time-of-use window between that check and this connect, and
+       it makes *writes* fail — this module must never mutate an input store,
+       and only ``mode=ro`` enforces that. Demonstrated rather than assumed:
+       a plain connect to a missing path creates the file, a ``mode=ro`` connect
+       raises and creates nothing.
+
+    A store invented here would answer every later question with a reproducible,
+    meaningless zero, which is the failure this whole module exists to avoid.
     """
     resolved = Path(path).resolve()
     if not resolved.is_file():
