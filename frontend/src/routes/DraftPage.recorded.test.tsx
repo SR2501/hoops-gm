@@ -645,6 +645,27 @@ describe('an error code this build has never seen', () => {
 })
 
 describe('the no-decision-numbers rule', () => {
+  /*
+   * Before widening the scope below, read this.
+   *
+   * This guard matches **vocabulary** as a proxy for leaked decision numbers,
+   * so it also catches prose *denying* they exist. That is not a bug in it, and
+   * the cost is real and permanent: **the most natural phrasing of the most
+   * important fact on this screen is unavailable to it.**
+   *
+   * Concretely, the recording panel's lede wanted to read *"it is a record, not
+   * a recommendation"* and cannot, because `recommend` is on the list and the
+   * panel is inside `.draft__panels`. It says *"this panel records; it does not
+   * advise"* instead. The page lede a few lines up the DOM *does* use the
+   * natural wording, and is legal only because it sits outside the two
+   * containers scanned here — an exemption by position, not by intent.
+   *
+   * So the temptation, when a denial sentence trips this, is to widen the scope
+   * or exempt an element. **Move the copy instead.** A guard relaxed to admit
+   * one sentence is a guard that gets relaxed again, and this one is the only
+   * thing standing between a screen that recommends nothing and a screen that
+   * quietly starts to. Losing a phrasing is the cheaper half of that trade.
+   */
   it('renders none of the terms the API deliberately does not publish', async () => {
     stubDraftFetch({ state: auctionState, events: auctionEvents })
     const { container } = renderBoard()
