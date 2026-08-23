@@ -1,0 +1,1743 @@
+{
+  "cohort_dates_are_the_split_denominator": true,
+  "comparability_to_committed_manifest": {
+    "directly_comparable": false,
+    "driven_explanation": "The report store holds 88 distinct report timestamps in that window against the manifest's 35. Denser capture means the latest pre-tip-off row is more often a later, more-resolved report, which moves observations out of the intermediate statuses into out/available -- the exact direction of the drift.",
+    "measured_on": "2026-08-23; not recomputed by this run",
+    "reasoned_not_driven": "That this mechanism accounts for ALL of the difference. The direction and the density are measured; no row-for-row match was made, and none is computable, because the committed manifest publishes aggregates only and an overlap needs both sides' row keys. Held-out doubtful at 83 against a floor of 30 leaves a 2.8x margin and the observed four-week discrepancy moved doubtful by one, so this is not believed to reverse the verdict -- but that is a judgement, not a measurement, and it is recorded as one.",
+    "statement": "THE WIDENED COUNTS ARE COMPUTED ON A DENSER, DIFFERENTLY-COMPOSED REPORT SET THAN THE COMMITTED FOUR-WEEK MANIFEST, AND THE TWO ARE NOT DIRECTLY COMPARABLE. Restricting this pipeline to the manifest's own 2025-12-08..2026-01-04 window does not reproduce it: 1,950 canonical observations against 1,948, with per-status drift of out +3, available +7, questionable -5, probable -2, doubtful -1. Everything structural matches exactly (28 unresolved, 0 without-anchor, 2 without-participation-row, canonical lead time 15..1650, joined 15..540, 173 games, 26 game dates), so this is a difference in the report set rather than in the code.",
+    "v1_veto_independently_confirmed": "The same restricted-window run reproduces the preregistration's own stated holdout share (0.3219 against its stated 32%) and gives held-out doubtful = 3 against v1's recorded 4. So \u00a72's arithmetic veto on the four-week cohort is confirmed by a pipeline that had every opportunity to disagree, on DENSER data. The four-week cohort was correctly refused."
+  },
+  "cross_store_tipoff_agreement": {
+    "agreed": true,
+    "game_date_disagreements": {},
+    "games_compared": 1227,
+    "games_without_both_instants": [
+      "0022500259",
+      "0022500260",
+      "0022500261"
+    ],
+    "method": "nba_games.tipoff_utc in the participation store compared against nba_games.tipoff_utc in the report store, for the same stable nba_game_id. The two stores were populated by separate runs from different endpoints, so unlike a within-store check this cannot degenerate into comparing one endpoint with itself. It remains an operational independence rather than a structural one: nothing records the provenance of a persisted instant, so this check witnesses that the two stores agree, not which endpoint each read.",
+    "tipoff_disagreements": {},
+    "witnessed": true
+  },
+  "direct_outcome_counts_by_game_date": {
+    "2025-10-21": {
+      "out": 13,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2025-10-22": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 46,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2025-10-23": {
+      "available": 1,
+      "out": 13
+    },
+    "2025-10-24": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 49,
+      "probable": 2,
+      "questionable": 11
+    },
+    "2025-10-25": {
+      "available": 3,
+      "out": 33,
+      "questionable": 2
+    },
+    "2025-10-26": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 56,
+      "probable": 3,
+      "questionable": 7
+    },
+    "2025-10-27": {
+      "available": 5,
+      "doubtful": 2,
+      "out": 72,
+      "probable": 1,
+      "questionable": 9
+    },
+    "2025-10-28": {
+      "available": 2,
+      "out": 30,
+      "probable": 4,
+      "questionable": 3
+    },
+    "2025-10-29": {
+      "available": 3,
+      "doubtful": 3,
+      "out": 65,
+      "probable": 4,
+      "questionable": 14
+    },
+    "2025-10-30": {
+      "available": 3,
+      "doubtful": 1,
+      "out": 25,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2025-10-31": {
+      "available": 1,
+      "out": 53,
+      "probable": 6,
+      "questionable": 7
+    },
+    "2025-11-01": {
+      "available": 5,
+      "out": 30,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2025-11-02": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 62,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2025-11-03": {
+      "available": 8,
+      "out": 62,
+      "probable": 5,
+      "questionable": 8
+    },
+    "2025-11-04": {
+      "available": 5,
+      "out": 40,
+      "probable": 1,
+      "questionable": 6
+    },
+    "2025-11-05": {
+      "available": 10,
+      "out": 85,
+      "probable": 4,
+      "questionable": 18
+    },
+    "2025-11-06": {
+      "out": 5,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2025-11-07": {
+      "available": 10,
+      "doubtful": 3,
+      "out": 82,
+      "probable": 2,
+      "questionable": 13
+    },
+    "2025-11-08": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 60,
+      "probable": 5,
+      "questionable": 17
+    },
+    "2025-11-09": {
+      "available": 7,
+      "out": 56,
+      "probable": 1,
+      "questionable": 4
+    },
+    "2025-11-10": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 56,
+      "probable": 5,
+      "questionable": 13
+    },
+    "2025-11-11": {
+      "available": 3,
+      "out": 49,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2025-11-12": {
+      "available": 11,
+      "doubtful": 2,
+      "out": 90,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2025-11-13": {
+      "out": 29,
+      "questionable": 2
+    },
+    "2025-11-14": {
+      "available": 10,
+      "out": 66,
+      "probable": 5,
+      "questionable": 10
+    },
+    "2025-11-15": {
+      "available": 2,
+      "out": 47,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2025-11-16": {
+      "available": 3,
+      "doubtful": 1,
+      "out": 59,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-11-17": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 66,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2025-11-18": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 38,
+      "questionable": 11
+    },
+    "2025-11-19": {
+      "available": 4,
+      "doubtful": 3,
+      "out": 54,
+      "probable": 4,
+      "questionable": 7
+    },
+    "2025-11-20": {
+      "available": 2,
+      "out": 32,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2025-11-21": {
+      "available": 5,
+      "out": 81,
+      "probable": 6,
+      "questionable": 11
+    },
+    "2025-11-22": {
+      "available": 3,
+      "doubtful": 2,
+      "out": 53,
+      "probable": 3,
+      "questionable": 10
+    },
+    "2025-11-23": {
+      "available": 9,
+      "out": 68,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2025-11-24": {
+      "available": 5,
+      "doubtful": 1,
+      "out": 88,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2025-11-25": {
+      "available": 4,
+      "out": 18,
+      "questionable": 2
+    },
+    "2025-11-26": {
+      "available": 5,
+      "out": 68,
+      "probable": 5,
+      "questionable": 10
+    },
+    "2025-11-28": {
+      "available": 8,
+      "doubtful": 4,
+      "out": 89,
+      "probable": 4,
+      "questionable": 12
+    },
+    "2025-11-29": {
+      "available": 6,
+      "out": 68,
+      "probable": 8,
+      "questionable": 17
+    },
+    "2025-11-30": {
+      "available": 7,
+      "out": 69,
+      "questionable": 5
+    },
+    "2025-12-01": {
+      "available": 16,
+      "out": 77,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2025-12-02": {
+      "available": 11,
+      "out": 47,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2025-12-03": {
+      "available": 11,
+      "doubtful": 1,
+      "out": 76,
+      "probable": 8,
+      "questionable": 21
+    },
+    "2025-12-04": {
+      "available": 10,
+      "out": 38,
+      "probable": 1,
+      "questionable": 4
+    },
+    "2025-12-05": {
+      "available": 11,
+      "doubtful": 4,
+      "out": 104,
+      "probable": 6,
+      "questionable": 19
+    },
+    "2025-12-06": {
+      "available": 6,
+      "doubtful": 4,
+      "out": 62,
+      "probable": 4,
+      "questionable": 6
+    },
+    "2025-12-07": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 57,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2025-12-08": {
+      "available": 3,
+      "out": 24,
+      "questionable": 5
+    },
+    "2025-12-09": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 8,
+      "questionable": 3
+    },
+    "2025-12-10": {
+      "out": 10,
+      "questionable": 4
+    },
+    "2025-12-11": {
+      "doubtful": 1,
+      "out": 36,
+      "questionable": 3
+    },
+    "2025-12-12": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 70,
+      "probable": 8,
+      "questionable": 5
+    },
+    "2025-12-13": {
+      "available": 1,
+      "out": 9,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2025-12-14": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 70,
+      "probable": 2,
+      "questionable": 10
+    },
+    "2025-12-15": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 38,
+      "probable": 2,
+      "questionable": 7
+    },
+    "2025-12-17": {
+      "doubtful": 1,
+      "out": 21,
+      "questionable": 3
+    },
+    "2025-12-18": {
+      "available": 7,
+      "doubtful": 2,
+      "out": 102,
+      "probable": 1,
+      "questionable": 18
+    },
+    "2025-12-19": {
+      "available": 7,
+      "out": 40,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-12-20": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 95,
+      "probable": 1,
+      "questionable": 8
+    },
+    "2025-12-21": {
+      "available": 6,
+      "out": 49,
+      "probable": 3,
+      "questionable": 2
+    },
+    "2025-12-22": {
+      "available": 17,
+      "doubtful": 3,
+      "out": 67,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2025-12-23": {
+      "available": 25,
+      "doubtful": 1,
+      "out": 116,
+      "probable": 4,
+      "questionable": 12
+    },
+    "2025-12-25": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 26,
+      "probable": 9,
+      "questionable": 6
+    },
+    "2025-12-26": {
+      "available": 24,
+      "out": 80,
+      "probable": 2,
+      "questionable": 2
+    },
+    "2025-12-27": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 71,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2025-12-28": {
+      "available": 5,
+      "out": 61,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2025-12-29": {
+      "available": 24,
+      "doubtful": 1,
+      "out": 88,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2025-12-30": {
+      "available": 5,
+      "out": 41,
+      "questionable": 1
+    },
+    "2025-12-31": {
+      "available": 8,
+      "out": 69,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-01": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 52,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-01-02": {
+      "available": 9,
+      "out": 99,
+      "probable": 5,
+      "questionable": 3
+    },
+    "2026-01-03": {
+      "available": 7,
+      "out": 69,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-01-04": {
+      "available": 13,
+      "out": 72,
+      "probable": 2,
+      "questionable": 10
+    },
+    "2026-01-05": {
+      "available": 14,
+      "out": 68,
+      "probable": 7,
+      "questionable": 2
+    },
+    "2026-01-06": {
+      "available": 14,
+      "doubtful": 2,
+      "out": 51,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-01-07": {
+      "available": 17,
+      "out": 108,
+      "probable": 1,
+      "questionable": 9
+    },
+    "2026-01-08": {
+      "available": 4,
+      "doubtful": 1,
+      "out": 27,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2026-01-09": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 86,
+      "probable": 4,
+      "questionable": 7
+    },
+    "2026-01-10": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 50,
+      "probable": 1,
+      "questionable": 9
+    },
+    "2026-01-11": {
+      "available": 12,
+      "out": 83,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-12": {
+      "available": 6,
+      "doubtful": 3,
+      "out": 48,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-01-13": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 63,
+      "probable": 3,
+      "questionable": 3
+    },
+    "2026-01-14": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 64,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-01-15": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 76,
+      "probable": 9,
+      "questionable": 8
+    },
+    "2026-01-16": {
+      "available": 12,
+      "out": 56,
+      "questionable": 3
+    },
+    "2026-01-17": {
+      "available": 9,
+      "out": 80,
+      "probable": 10,
+      "questionable": 12
+    },
+    "2026-01-18": {
+      "available": 2,
+      "doubtful": 3,
+      "out": 59,
+      "probable": 4,
+      "questionable": 6
+    },
+    "2026-01-19": {
+      "available": 13,
+      "doubtful": 4,
+      "out": 72,
+      "probable": 7,
+      "questionable": 8
+    },
+    "2026-01-20": {
+      "available": 9,
+      "out": 55,
+      "probable": 3,
+      "questionable": 6
+    },
+    "2026-01-21": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 65,
+      "questionable": 2
+    },
+    "2026-01-22": {
+      "available": 22,
+      "doubtful": 1,
+      "out": 66,
+      "questionable": 9
+    },
+    "2026-01-23": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 72,
+      "probable": 3,
+      "questionable": 12
+    },
+    "2026-01-24": {
+      "available": 12,
+      "doubtful": 3,
+      "out": 50,
+      "probable": 6,
+      "questionable": 4
+    },
+    "2026-01-25": {
+      "available": 6,
+      "doubtful": 1,
+      "out": 45,
+      "probable": 2,
+      "questionable": 12
+    },
+    "2026-01-26": {
+      "available": 6,
+      "out": 59,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2026-01-27": {
+      "available": 9,
+      "out": 62,
+      "probable": 6,
+      "questionable": 6
+    },
+    "2026-01-28": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 71,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-01-29": {
+      "available": 19,
+      "out": 80,
+      "probable": 5,
+      "questionable": 7
+    },
+    "2026-01-30": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 78,
+      "probable": 3,
+      "questionable": 5
+    },
+    "2026-01-31": {
+      "available": 10,
+      "doubtful": 6,
+      "out": 48,
+      "probable": 4,
+      "questionable": 2
+    },
+    "2026-02-01": {
+      "available": 13,
+      "doubtful": 1,
+      "out": 86,
+      "probable": 2,
+      "questionable": 8
+    },
+    "2026-02-02": {
+      "available": 6,
+      "doubtful": 2,
+      "out": 30,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-02-03": {
+      "available": 23,
+      "out": 94,
+      "probable": 1,
+      "questionable": 7
+    },
+    "2026-02-04": {
+      "available": 10,
+      "doubtful": 2,
+      "out": 60,
+      "probable": 2,
+      "questionable": 5
+    },
+    "2026-02-05": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 77,
+      "probable": 3,
+      "questionable": 7
+    },
+    "2026-02-06": {
+      "available": 16,
+      "out": 45,
+      "probable": 1,
+      "questionable": 6
+    },
+    "2026-02-07": {
+      "available": 15,
+      "doubtful": 3,
+      "out": 85,
+      "probable": 2,
+      "questionable": 10
+    },
+    "2026-02-08": {
+      "available": 9,
+      "out": 33,
+      "questionable": 11
+    },
+    "2026-02-09": {
+      "available": 13,
+      "out": 79,
+      "probable": 3,
+      "questionable": 11
+    },
+    "2026-02-10": {
+      "available": 5,
+      "doubtful": 3,
+      "out": 28,
+      "questionable": 2
+    },
+    "2026-02-11": {
+      "available": 24,
+      "doubtful": 2,
+      "out": 120,
+      "probable": 4,
+      "questionable": 10
+    },
+    "2026-02-12": {
+      "available": 1,
+      "doubtful": 4,
+      "out": 24,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-02-19": {
+      "available": 11,
+      "out": 77,
+      "probable": 2,
+      "questionable": 6
+    },
+    "2026-02-20": {
+      "available": 17,
+      "out": 80,
+      "probable": 2,
+      "questionable": 5
+    },
+    "2026-02-21": {
+      "available": 8,
+      "doubtful": 1,
+      "out": 49,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2026-02-22": {
+      "available": 4,
+      "doubtful": 2,
+      "out": 90,
+      "probable": 3,
+      "questionable": 19
+    },
+    "2026-02-23": {
+      "available": 2,
+      "doubtful": 1,
+      "out": 27,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-02-24": {
+      "available": 26,
+      "out": 95,
+      "probable": 1,
+      "questionable": 5
+    },
+    "2026-02-25": {
+      "available": 2,
+      "out": 63,
+      "probable": 2
+    },
+    "2026-02-26": {
+      "available": 19,
+      "doubtful": 2,
+      "out": 88,
+      "probable": 4,
+      "questionable": 3
+    },
+    "2026-02-27": {
+      "available": 1,
+      "doubtful": 5,
+      "out": 43,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2026-02-28": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 44,
+      "probable": 2
+    },
+    "2026-03-01": {
+      "available": 8,
+      "doubtful": 6,
+      "out": 87,
+      "probable": 3,
+      "questionable": 14
+    },
+    "2026-03-02": {
+      "available": 2,
+      "out": 39,
+      "questionable": 1
+    },
+    "2026-03-03": {
+      "available": 14,
+      "out": 92,
+      "questionable": 6
+    },
+    "2026-03-04": {
+      "doubtful": 5,
+      "out": 41,
+      "probable": 1,
+      "questionable": 14
+    },
+    "2026-03-05": {
+      "available": 17,
+      "doubtful": 2,
+      "out": 81,
+      "questionable": 6
+    },
+    "2026-03-06": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 55,
+      "probable": 3,
+      "questionable": 10
+    },
+    "2026-03-07": {
+      "available": 3,
+      "out": 57,
+      "probable": 1,
+      "questionable": 2
+    },
+    "2026-03-08": {
+      "available": 13,
+      "doubtful": 1,
+      "out": 81,
+      "probable": 3,
+      "questionable": 19
+    },
+    "2026-03-09": {
+      "available": 7,
+      "out": 49,
+      "questionable": 1
+    },
+    "2026-03-10": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 97,
+      "probable": 5,
+      "questionable": 14
+    },
+    "2026-03-11": {
+      "available": 7,
+      "doubtful": 1,
+      "out": 50,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2026-03-12": {
+      "available": 20,
+      "doubtful": 6,
+      "out": 78,
+      "probable": 3,
+      "questionable": 11
+    },
+    "2026-03-13": {
+      "available": 19,
+      "doubtful": 3,
+      "out": 74,
+      "questionable": 9
+    },
+    "2026-03-14": {
+      "available": 13,
+      "out": 54,
+      "probable": 5,
+      "questionable": 7
+    },
+    "2026-03-15": {
+      "available": 12,
+      "doubtful": 4,
+      "out": 65,
+      "probable": 5,
+      "questionable": 22
+    },
+    "2026-03-16": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 72,
+      "probable": 2,
+      "questionable": 4
+    },
+    "2026-03-17": {
+      "available": 19,
+      "doubtful": 1,
+      "out": 77,
+      "probable": 1,
+      "questionable": 6
+    },
+    "2026-03-18": {
+      "available": 21,
+      "doubtful": 1,
+      "out": 78,
+      "questionable": 10
+    },
+    "2026-03-19": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 82,
+      "probable": 1,
+      "questionable": 5
+    },
+    "2026-03-20": {
+      "available": 9,
+      "doubtful": 1,
+      "out": 59
+    },
+    "2026-03-21": {
+      "available": 7,
+      "doubtful": 2,
+      "out": 93,
+      "probable": 2,
+      "questionable": 29
+    },
+    "2026-03-22": {
+      "available": 6,
+      "out": 43,
+      "probable": 1,
+      "questionable": 11
+    },
+    "2026-03-23": {
+      "available": 14,
+      "doubtful": 2,
+      "out": 97,
+      "probable": 2,
+      "questionable": 11
+    },
+    "2026-03-24": {
+      "available": 3,
+      "out": 37,
+      "probable": 2,
+      "questionable": 3
+    },
+    "2026-03-25": {
+      "available": 23,
+      "doubtful": 3,
+      "out": 106,
+      "probable": 2,
+      "questionable": 17
+    },
+    "2026-03-26": {
+      "available": 10,
+      "out": 32
+    },
+    "2026-03-27": {
+      "available": 21,
+      "doubtful": 4,
+      "out": 89,
+      "probable": 5,
+      "questionable": 1
+    },
+    "2026-03-28": {
+      "available": 8,
+      "doubtful": 2,
+      "out": 66,
+      "probable": 3,
+      "questionable": 6
+    },
+    "2026-03-29": {
+      "available": 12,
+      "doubtful": 1,
+      "out": 80,
+      "probable": 1,
+      "questionable": 12
+    },
+    "2026-03-30": {
+      "available": 14,
+      "doubtful": 4,
+      "out": 68,
+      "probable": 2,
+      "questionable": 14
+    },
+    "2026-03-31": {
+      "available": 7,
+      "out": 61,
+      "probable": 3,
+      "questionable": 8
+    },
+    "2026-04-01": {
+      "available": 14,
+      "doubtful": 1,
+      "out": 87,
+      "probable": 4,
+      "questionable": 9
+    },
+    "2026-04-02": {
+      "available": 2,
+      "out": 44,
+      "questionable": 7
+    },
+    "2026-04-03": {
+      "available": 16,
+      "doubtful": 6,
+      "out": 77,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-04-04": {
+      "available": 8,
+      "out": 21,
+      "probable": 1,
+      "questionable": 3
+    },
+    "2026-04-05": {
+      "available": 12,
+      "out": 109,
+      "probable": 3,
+      "questionable": 4
+    },
+    "2026-04-06": {
+      "available": 2,
+      "doubtful": 2,
+      "out": 42,
+      "probable": 1,
+      "questionable": 1
+    },
+    "2026-04-07": {
+      "available": 15,
+      "doubtful": 4,
+      "out": 91,
+      "probable": 4,
+      "questionable": 4
+    },
+    "2026-04-08": {
+      "available": 10,
+      "doubtful": 9,
+      "out": 47,
+      "probable": 4,
+      "questionable": 2
+    },
+    "2026-04-09": {
+      "available": 13,
+      "out": 61,
+      "probable": 2,
+      "questionable": 1
+    },
+    "2026-04-10": {
+      "available": 19,
+      "doubtful": 7,
+      "out": 148,
+      "probable": 7,
+      "questionable": 24
+    },
+    "2026-04-12": {
+      "available": 17,
+      "doubtful": 6,
+      "out": 183,
+      "probable": 8,
+      "questionable": 16
+    }
+  },
+  "direct_outcomes_by_lead_time_band": {
+    "181-540": {
+      "available": 123,
+      "doubtful": 60,
+      "out": 2065,
+      "probable": 145,
+      "questionable": 369
+    },
+    "61-180": {
+      "available": 543,
+      "doubtful": 156,
+      "out": 5003,
+      "probable": 277,
+      "questionable": 766
+    },
+    "<=60": {
+      "available": 812,
+      "doubtful": 1,
+      "out": 3183,
+      "probable": 10,
+      "questionable": 42
+    },
+    ">540": {
+      "available": 7,
+      "out": 27,
+      "probable": 2,
+      "questionable": 7
+    }
+  },
+  "direct_outcomes_by_report_era": {
+    "adr_007_replication_note": "ADR-007 (line 62) records 1.596 unresolved `doubtful` per date in the short-lead era against 0.917 legacy, and the era concern rests partly on that. IT DOES NOT REPLICATE HERE, and the gap is too large to be sampling noise: on this season-scale cohort the figures are 2/104 = 0.019 short-lead against 2/60 = 0.033 legacy -- roughly fifty times smaller and in the opposite direction. THE HONEST READING IS THAT THE TWO MEASURE DIFFERENT POPULATIONS, NOT THAT ADR-007 IS WRONG. This counts CANONICAL observations (one latest pre-tip-off row per player-game) whose identity did not resolve; a count over raw report rows would be far larger, because a player carried as doubtful on many successive reports contributes one canonical row and many raw ones. ADR-007 does not state which it used and this lane did not re-derive it. What is measured here, and is checkable from the fields beside this note: era-dependent unresolved exclusion on `doubtful` is 2 rows in each era and does not concentrate on the scarcest status at this scale. The era COMPOSITION concern in section_2_admissibility is unaffected and stands -- it is a different mechanism, confirmed directly.",
+    "by_game_date": {
+      "2025-10-21": {
+        "legacy_hourly": 16
+      },
+      "2025-10-22": {
+        "legacy_hourly": 64
+      },
+      "2025-10-23": {
+        "legacy_hourly": 14
+      },
+      "2025-10-24": {
+        "legacy_hourly": 68
+      },
+      "2025-10-25": {
+        "legacy_hourly": 38
+      },
+      "2025-10-26": {
+        "legacy_hourly": 74
+      },
+      "2025-10-27": {
+        "legacy_hourly": 89
+      },
+      "2025-10-28": {
+        "legacy_hourly": 39
+      },
+      "2025-10-29": {
+        "legacy_hourly": 89
+      },
+      "2025-10-30": {
+        "legacy_hourly": 32
+      },
+      "2025-10-31": {
+        "legacy_hourly": 67
+      },
+      "2025-11-01": {
+        "legacy_hourly": 43
+      },
+      "2025-11-02": {
+        "legacy_hourly": 74
+      },
+      "2025-11-03": {
+        "legacy_hourly": 83
+      },
+      "2025-11-04": {
+        "legacy_hourly": 52
+      },
+      "2025-11-05": {
+        "legacy_hourly": 117
+      },
+      "2025-11-06": {
+        "legacy_hourly": 7
+      },
+      "2025-11-07": {
+        "legacy_hourly": 110
+      },
+      "2025-11-08": {
+        "legacy_hourly": 88
+      },
+      "2025-11-09": {
+        "legacy_hourly": 68
+      },
+      "2025-11-10": {
+        "legacy_hourly": 83
+      },
+      "2025-11-11": {
+        "legacy_hourly": 58
+      },
+      "2025-11-12": {
+        "legacy_hourly": 117
+      },
+      "2025-11-13": {
+        "legacy_hourly": 31
+      },
+      "2025-11-14": {
+        "legacy_hourly": 91
+      },
+      "2025-11-15": {
+        "legacy_hourly": 59
+      },
+      "2025-11-16": {
+        "legacy_hourly": 74
+      },
+      "2025-11-17": {
+        "legacy_hourly": 87
+      },
+      "2025-11-18": {
+        "legacy_hourly": 57
+      },
+      "2025-11-19": {
+        "legacy_hourly": 72
+      },
+      "2025-11-20": {
+        "legacy_hourly": 38
+      },
+      "2025-11-21": {
+        "legacy_hourly": 103
+      },
+      "2025-11-22": {
+        "legacy_hourly": 71
+      },
+      "2025-11-23": {
+        "legacy_hourly": 85
+      },
+      "2025-11-24": {
+        "legacy_hourly": 107
+      },
+      "2025-11-25": {
+        "legacy_hourly": 24
+      },
+      "2025-11-26": {
+        "legacy_hourly": 88
+      },
+      "2025-11-28": {
+        "legacy_hourly": 117
+      },
+      "2025-11-29": {
+        "legacy_hourly": 99
+      },
+      "2025-11-30": {
+        "legacy_hourly": 81
+      },
+      "2025-12-01": {
+        "legacy_hourly": 108
+      },
+      "2025-12-02": {
+        "legacy_hourly": 70
+      },
+      "2025-12-03": {
+        "legacy_hourly": 117
+      },
+      "2025-12-04": {
+        "legacy_hourly": 53
+      },
+      "2025-12-05": {
+        "legacy_hourly": 144
+      },
+      "2025-12-06": {
+        "legacy_hourly": 82
+      },
+      "2025-12-07": {
+        "legacy_hourly": 81
+      },
+      "2025-12-08": {
+        "legacy_hourly": 32
+      },
+      "2025-12-09": {
+        "legacy_hourly": 19
+      },
+      "2025-12-10": {
+        "legacy_hourly": 14
+      },
+      "2025-12-11": {
+        "legacy_hourly": 40
+      },
+      "2025-12-12": {
+        "legacy_hourly": 88
+      },
+      "2025-12-13": {
+        "legacy_hourly": 12
+      },
+      "2025-12-14": {
+        "legacy_hourly": 91
+      },
+      "2025-12-15": {
+        "legacy_hourly": 52
+      },
+      "2025-12-17": {
+        "legacy_hourly": 25
+      },
+      "2025-12-18": {
+        "legacy_hourly": 130
+      },
+      "2025-12-19": {
+        "legacy_hourly": 58
+      },
+      "2025-12-20": {
+        "legacy_hourly": 116
+      },
+      "2025-12-21": {
+        "legacy_hourly": 60
+      },
+      "2025-12-22": {
+        "short_lead_fifteen_minute": 92
+      },
+      "2025-12-23": {
+        "short_lead_fifteen_minute": 158
+      },
+      "2025-12-25": {
+        "short_lead_fifteen_minute": 44
+      },
+      "2025-12-26": {
+        "short_lead_fifteen_minute": 108
+      },
+      "2025-12-27": {
+        "short_lead_fifteen_minute": 94
+      },
+      "2025-12-28": {
+        "short_lead_fifteen_minute": 69
+      },
+      "2025-12-29": {
+        "short_lead_fifteen_minute": 121
+      },
+      "2025-12-30": {
+        "short_lead_fifteen_minute": 47
+      },
+      "2025-12-31": {
+        "short_lead_fifteen_minute": 88
+      },
+      "2026-01-01": {
+        "short_lead_fifteen_minute": 66
+      },
+      "2026-01-02": {
+        "short_lead_fifteen_minute": 116
+      },
+      "2026-01-03": {
+        "short_lead_fifteen_minute": 83
+      },
+      "2026-01-04": {
+        "short_lead_fifteen_minute": 97
+      },
+      "2026-01-05": {
+        "short_lead_fifteen_minute": 91
+      },
+      "2026-01-06": {
+        "short_lead_fifteen_minute": 69
+      },
+      "2026-01-07": {
+        "short_lead_fifteen_minute": 135
+      },
+      "2026-01-08": {
+        "short_lead_fifteen_minute": 37
+      },
+      "2026-01-09": {
+        "short_lead_fifteen_minute": 107
+      },
+      "2026-01-10": {
+        "short_lead_fifteen_minute": 75
+      },
+      "2026-01-11": {
+        "short_lead_fifteen_minute": 106
+      },
+      "2026-01-12": {
+        "short_lead_fifteen_minute": 67
+      },
+      "2026-01-13": {
+        "short_lead_fifteen_minute": 76
+      },
+      "2026-01-14": {
+        "short_lead_fifteen_minute": 81
+      },
+      "2026-01-15": {
+        "short_lead_fifteen_minute": 101
+      },
+      "2026-01-16": {
+        "short_lead_fifteen_minute": 71
+      },
+      "2026-01-17": {
+        "short_lead_fifteen_minute": 111
+      },
+      "2026-01-18": {
+        "short_lead_fifteen_minute": 74
+      },
+      "2026-01-19": {
+        "short_lead_fifteen_minute": 104
+      },
+      "2026-01-20": {
+        "short_lead_fifteen_minute": 73
+      },
+      "2026-01-21": {
+        "short_lead_fifteen_minute": 75
+      },
+      "2026-01-22": {
+        "short_lead_fifteen_minute": 98
+      },
+      "2026-01-23": {
+        "short_lead_fifteen_minute": 97
+      },
+      "2026-01-24": {
+        "short_lead_fifteen_minute": 75
+      },
+      "2026-01-25": {
+        "short_lead_fifteen_minute": 66
+      },
+      "2026-01-26": {
+        "short_lead_fifteen_minute": 77
+      },
+      "2026-01-27": {
+        "short_lead_fifteen_minute": 83
+      },
+      "2026-01-28": {
+        "short_lead_fifteen_minute": 97
+      },
+      "2026-01-29": {
+        "short_lead_fifteen_minute": 111
+      },
+      "2026-01-30": {
+        "short_lead_fifteen_minute": 95
+      },
+      "2026-01-31": {
+        "short_lead_fifteen_minute": 70
+      },
+      "2026-02-01": {
+        "short_lead_fifteen_minute": 110
+      },
+      "2026-02-02": {
+        "short_lead_fifteen_minute": 41
+      },
+      "2026-02-03": {
+        "short_lead_fifteen_minute": 125
+      },
+      "2026-02-04": {
+        "short_lead_fifteen_minute": 79
+      },
+      "2026-02-05": {
+        "short_lead_fifteen_minute": 96
+      },
+      "2026-02-06": {
+        "short_lead_fifteen_minute": 68
+      },
+      "2026-02-07": {
+        "short_lead_fifteen_minute": 115
+      },
+      "2026-02-08": {
+        "short_lead_fifteen_minute": 53
+      },
+      "2026-02-09": {
+        "short_lead_fifteen_minute": 106
+      },
+      "2026-02-10": {
+        "short_lead_fifteen_minute": 38
+      },
+      "2026-02-11": {
+        "short_lead_fifteen_minute": 160
+      },
+      "2026-02-12": {
+        "short_lead_fifteen_minute": 32
+      },
+      "2026-02-19": {
+        "short_lead_fifteen_minute": 96
+      },
+      "2026-02-20": {
+        "short_lead_fifteen_minute": 104
+      },
+      "2026-02-21": {
+        "short_lead_fifteen_minute": 71
+      },
+      "2026-02-22": {
+        "short_lead_fifteen_minute": 118
+      },
+      "2026-02-23": {
+        "short_lead_fifteen_minute": 33
+      },
+      "2026-02-24": {
+        "short_lead_fifteen_minute": 127
+      },
+      "2026-02-25": {
+        "short_lead_fifteen_minute": 67
+      },
+      "2026-02-26": {
+        "short_lead_fifteen_minute": 116
+      },
+      "2026-02-27": {
+        "short_lead_fifteen_minute": 55
+      },
+      "2026-02-28": {
+        "short_lead_fifteen_minute": 59
+      },
+      "2026-03-01": {
+        "short_lead_fifteen_minute": 118
+      },
+      "2026-03-02": {
+        "short_lead_fifteen_minute": 42
+      },
+      "2026-03-03": {
+        "short_lead_fifteen_minute": 112
+      },
+      "2026-03-04": {
+        "short_lead_fifteen_minute": 61
+      },
+      "2026-03-05": {
+        "short_lead_fifteen_minute": 106
+      },
+      "2026-03-06": {
+        "short_lead_fifteen_minute": 78
+      },
+      "2026-03-07": {
+        "short_lead_fifteen_minute": 63
+      },
+      "2026-03-08": {
+        "short_lead_fifteen_minute": 117
+      },
+      "2026-03-09": {
+        "short_lead_fifteen_minute": 57
+      },
+      "2026-03-10": {
+        "short_lead_fifteen_minute": 129
+      },
+      "2026-03-11": {
+        "short_lead_fifteen_minute": 61
+      },
+      "2026-03-12": {
+        "short_lead_fifteen_minute": 118
+      },
+      "2026-03-13": {
+        "short_lead_fifteen_minute": 105
+      },
+      "2026-03-14": {
+        "short_lead_fifteen_minute": 79
+      },
+      "2026-03-15": {
+        "short_lead_fifteen_minute": 108
+      },
+      "2026-03-16": {
+        "short_lead_fifteen_minute": 88
+      },
+      "2026-03-17": {
+        "short_lead_fifteen_minute": 104
+      },
+      "2026-03-18": {
+        "short_lead_fifteen_minute": 110
+      },
+      "2026-03-19": {
+        "short_lead_fifteen_minute": 98
+      },
+      "2026-03-20": {
+        "short_lead_fifteen_minute": 69
+      },
+      "2026-03-21": {
+        "short_lead_fifteen_minute": 133
+      },
+      "2026-03-22": {
+        "short_lead_fifteen_minute": 61
+      },
+      "2026-03-23": {
+        "short_lead_fifteen_minute": 126
+      },
+      "2026-03-24": {
+        "short_lead_fifteen_minute": 45
+      },
+      "2026-03-25": {
+        "short_lead_fifteen_minute": 151
+      },
+      "2026-03-26": {
+        "short_lead_fifteen_minute": 42
+      },
+      "2026-03-27": {
+        "short_lead_fifteen_minute": 120
+      },
+      "2026-03-28": {
+        "short_lead_fifteen_minute": 85
+      },
+      "2026-03-29": {
+        "short_lead_fifteen_minute": 106
+      },
+      "2026-03-30": {
+        "short_lead_fifteen_minute": 102
+      },
+      "2026-03-31": {
+        "short_lead_fifteen_minute": 79
+      },
+      "2026-04-01": {
+        "short_lead_fifteen_minute": 115
+      },
+      "2026-04-02": {
+        "short_lead_fifteen_minute": 53
+      },
+      "2026-04-03": {
+        "short_lead_fifteen_minute": 106
+      },
+      "2026-04-04": {
+        "short_lead_fifteen_minute": 33
+      },
+      "2026-04-05": {
+        "short_lead_fifteen_minute": 128
+      },
+      "2026-04-06": {
+        "short_lead_fifteen_minute": 48
+      },
+      "2026-04-07": {
+        "short_lead_fifteen_minute": 118
+      },
+      "2026-04-08": {
+        "short_lead_fifteen_minute": 72
+      },
+      "2026-04-09": {
+        "short_lead_fifteen_minute": 77
+      },
+      "2026-04-10": {
+        "short_lead_fifteen_minute": 205
+      },
+      "2026-04-12": {
+        "short_lead_fifteen_minute": 230
+      }
+    },
+    "by_status": {
+      "legacy_hourly": {
+        "available": 332,
+        "doubtful": 53,
+        "out": 3158,
+        "probable": 168,
+        "questionable": 455
+      },
+      "short_lead_fifteen_minute": {
+        "available": 1153,
+        "doubtful": 164,
+        "out": 7120,
+        "probable": 266,
+        "questionable": 729
+      }
+    },
+    "classified_by": "each observation's own report_timestamp, not its game date. An evening-before report for a 2025-12-22 game is filed on 2025-12-21 and is legacy; classifying by game date would mislabel exactly the boundary rows this table exists to expose.",
+    "era_boundary": "2025-12-22T00:00:00 America/New_York",
+    "era_boundary_constant": "hoops_gm.ingest.injury_report.client.FIFTEEN_MINUTE_ERA_START",
+    "game_dates_by_era": {
+      "legacy_hourly": 60,
+      "short_lead_fifteen_minute": 104
+    },
+    "unresolved_identity_exclusions_by_era": {
+      "legacy_hourly": 81,
+      "short_lead_fifteen_minute": 54
+    },
+    "unresolved_identity_exclusions_by_era_and_status": {
+      "legacy_hourly": {
+        "doubtful": 2,
+        "out": 74,
+        "questionable": 5
+      },
+      "short_lead_fifteen_minute": {
+        "available": 4,
+        "doubtful": 2,
+        "out": 45,
+        "probable": 1,
+        "questionable": 2
+      }
+    },
+    "why_this_is_published": "The era boundary falls INSIDE any season-scale cohort, and \u00a72's gate is pooled over the held-out range so it cannot see the split's era composition. ADR-007 records the regimes differing at 1.596 unresolved doubtful per date short-lead against 0.917 legacy; unresolved rows are excluded, so the exclusion rate is era-dependent and concentrated on the scarcest status. A cohort can therefore clear the floor BECAUSE of the era it is evaluated in while being fitted substantially on the other one. These are denominators, so publishing them costs no unblind."
+  },
+  "disclosure_surface": {
+    "no_outcome_value_is_published_here": true,
+    "note": "A direct-outcome count says which rows have a usable outcome, not what those outcomes were, which is what makes this gate checkable without spending an unblind. No outcome-keyed field appears in this artifact at any granularity.",
+    "outcome_keyed_fields": []
+  },
+  "exclusion_classes_by_status": {
+    "resolved_observations_without_nba_anchor": {},
+    "resolved_observations_without_participation_row": {
+      "out": 56
+    },
+    "unresolved_player_identity": {
+      "available": 4,
+      "doubtful": 4,
+      "out": 119,
+      "probable": 1,
+      "questionable": 7
+    },
+    "with_non_direct_participation_outcome": {}
+  },
+  "fingerprints": {
+    "sha256_sorted_canonical_identity_records": "8e1986229b3644daa1f7bffa3ce2362e8cfb438da4b1085c0803aebe53f8176e",
+    "sha256_sorted_direct_outcome_membership": "bb67c0d20f1e8b91dd6148b3ce767478a89a88101a5301f2b4a2326c5ee1d12f"
+  },
+  "join": {
+    "is_cross_store": true,
+    "join_key": [
+      "nba_games.nba_game_id",
+      "player_external_ids[source=nba].external_id"
+    ],
+    "local_surrogate_keys_are_not_used": true,
+    "tipoff_source": "participation store only; the report store's own tipoff_utc column is never read, so its provenance cannot reach the pre-tip-off selection or any lead time"
+  },
+  "kind": "nba-injury-report-cohort-admissibility",
+  "lead_time_minutes": {
+    "canonical": {
+      "maximum": 1650,
+      "minimum": 15
+    },
+    "direct": {
+      "maximum": 1515,
+      "minimum": 15
+    }
+  },
+  "scope": {
+    "end_game_date": "2026-04-12",
+    "game_dates": 164,
+    "games_in_scope": 1227,
+    "games_with_canonical_observations": 1227,
+    "season": "2025-26",
+    "season_type": "regular",
+    "start_game_date": "2025-10-21"
+  },
+  "section_2_admissibility": {
+    "admissible": true,
+    "canonical_observations_by_status": {
+      "available": 1489,
+      "doubtful": 221,
+      "out": 10453,
+      "probable": 435,
+      "questionable": 1191
+    },
+    "derived_not_primary": "This block APPLIES quant's \u00a74 split to the partition-agnostic by-date table above; it does not produce it. If the split moves, nothing here needs regenerating \u2014 recompute this block from the same table. Publishing counts by a declared partition as the primary payload would write an availability-layer parameter into an observations-layer artifact, a backward flow under ADR-008.",
+    "direct_outcomes_by_status": {
+      "available": 1485,
+      "doubtful": 217,
+      "out": 10278,
+      "probable": 434,
+      "questionable": 1184
+    },
+    "era_composition_by_partition": {
+      "development": {
+        "legacy_hourly": 4166,
+        "short_lead_fifteen_minute": 1946
+      },
+      "held_out": {
+        "legacy_hourly": 0,
+        "short_lead_fifteen_minute": 3940
+      },
+      "selection": {
+        "legacy_hourly": 0,
+        "short_lead_fifteen_minute": 3546
+      }
+    },
+    "floor": 30,
+    "freeze_id": "injury-status-conversion-v2-20260821T145900Z",
+    "held_out_direct_outcomes_by_status": {
+      "available": 467,
+      "doubtful": 83,
+      "out": 2963,
+      "probable": 92,
+      "questionable": 335
+    },
+    "held_out_end": "2026-04-12",
+    "held_out_start": "2026-03-02",
+    "limitations_that_the_count_cannot_see": [
+      "THE HOLDOUT IS THE END-OF-SEASON SHUTDOWN WINDOW, AND IT IS NOT THE REGIME THE TOOL IS USED IN. \u00a74's chronological rule puts the held-out range at late February to mid-April: eliminated teams shutting players down, seeding races, pre-playoff load management. The tool is used from draft day onward, weighted October-March, and \u00a77 permits ONE evaluation. v1's holdout was late December \u2014 mid-season and unremarkable \u2014 so widening did not merely make the holdout bigger, it silently changed its character. 'Widen the cohort' is satisfied without being met, and no count distinguishes the two outcomes. Declared pre-unblind as a limitation by owner ruling; the split boundaries are deliberately NOT moved, because choosing different proportions BECAUSE these ones are inconvenient is the trap \u00a74 already names. THIS MUST REACH THE MODEL CARD VERBATIM.",
+      "THE REPORTING-ERA BOUNDARY FALLS INSIDE THE COHORT AND THE SPLIT DOES NOT RESPECT IT. See direct_outcomes_by_report_era. Development is mostly legacy; selection and held-out are entirely short-lead. The model would be fitted substantially on a reporting regime the holdout contains none of. Pre-registered as a \u00a77 sensitivity rather than fixed by moving the boundaries."
+    ],
+    "split_game_dates": {
+      "development": 82,
+      "held_out": 41,
+      "selection": 41
+    },
+    "statuses_below_floor": [],
+    "unit": "direct outcomes, matching \u00a78 condition 6"
+  }
+}

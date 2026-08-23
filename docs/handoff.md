@@ -19317,3 +19317,269 @@ distinction is now asserted in the module rather than assumed by its readers.
   have none at all, the rest have between 4 and 33 matches. **That is a grep,
   not a finding**, and reporting it as though it were the second kind is exactly
   the error I withdrew a claim for yesterday. **Reasoned, and weakly.**
+## 2026-08-23 - data-engineer - the widened cohort is admissible, and the join that proves it crosses two databases
+
+**The answer first: every status clears §2's floor of 30 held-out direct
+outcomes. `doubtful` is binding at 83, 2.77x.** Full 2025-26 regular season,
+164 game dates, holdout `2026-03-02..2026-04-12`. Evidence at
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`; method at
+`docs/adapters/nba-injury-report-cohort-admissibility.md`. No fit, no unblind,
+the frozen preregistration untouched, and **zero external requests** - both
+stores were already on disk.
+
+### The contamination question was the real work
+
+**No single store holds both halves**, driven: `hoops_gm.db` has 43,037
+participation rows and **0** injury-report rows; `throwaway-report-sweep.db` has
+69,922 report rows and **0** participation rows. So any status-to-outcome
+question crosses two databases, which is what `hoops-gm-data\README.md` warns
+about - the sweep took its tip-offs from `ScheduleLeagueV2`, and every lead time
+plus the pre-tip-off selection itself rests on `tipoff_utc`.
+
+**The exposure is removed rather than bounded.**
+`select_canonical_pregame_observations` takes a `game_tipoffs` mapping, so the
+generator feeds it the *participation* store's `BoxScoreSummaryV3` instants
+while reading report rows from the sweep. The sweep's own `tipoff_utc` column is
+never read. `test_shifting_the_report_store_tipoff_is_reported_but_changes_no_count`
+moves it four hours and asserts every count is unchanged.
+
+**And the check the README says the sweep destroys is restored by doing it
+across stores** - 1,227 games compared, **0** tip-off disagreements, **0**
+`game_date` disagreements, 3 without both instants and those 3 are exactly the
+documented `0022500259/260/261` gap.
+
+**Driven positive evidence that the two stores really are different endpoints**,
+rather than my trusting the README's attribution: the sweep holds tip-offs for
+**1,230** games *including* those three, and `BoxScoreSummaryV3` has no body for
+them at source, so it cannot have produced them. The ledger's own README proxy
+also holds exactly at 1,227 = 1,227.
+
+The join is on source-stable identity (`nba_game_id` x NBA `external_id`), never
+surrogates. The surrogates do coincide - 1,230/1,230 and 5,206/5,206 - which I
+checked and deliberately did not rely on; the join test builds two stores with
+**disjoint** id bases so a silent fallback fails loudly.
+
+### The reduction nobody had priced, which is the finding under the finding
+
+The owner flagged that full-season `doubtful` at ~100x the floor "says very
+little", and was right for a reason neither of us had named. The chain is
+`2,087 raw -> 221 canonical -> 217 direct -> 83 held-out`. **Canonicalisation
+costs 9.4x on its own** - one latest pre-tip-off row per player-game, so a
+player listed `doubtful` on six successive reports whose last pre-tip status is
+`out` contributes zero `doubtful`. The two steps the brief named cost 1.02x and
+2.6x. A raw status histogram overstates cohort size by an order of magnitude.
+
+### I cannot reproduce the committed manifest, and the reason is data, not code
+
+Restricted to `2025-12-08..2026-01-04` my pipeline gives 1,950 canonical against
+the manifest's 1,948, with per-status drift (`out` +3, `available` +7,
+`questionable` -5, `probable` -2, `doubtful` -1). Everything structural matches
+exactly: 28 unresolved, 0 without-anchor, 2 without-participation-row, canonical
+lead time 15..1650, joined 15..540, 173 games, 26 game dates.
+
+**Driven explanation:** the sweep holds **88** distinct report timestamps in that
+window against the manifest's **35**. Denser capture means the latest pre-tip row
+is more often a later, more-resolved report, which moves observations out of the
+intermediate statuses into `out`/`available` - the exact direction of the drift.
+
+### Three things the count cannot see
+
+Two are declared in the artifact pre-unblind, on the coordinator's ruling. The
+holdout is the **end-of-season shutdown window, which is not the regime the tool
+is used in** - and that must reach the model card verbatim. The
+`FIFTEEN_MINUTE_ERA_START` boundary (2025-12-22 ET, `client.py:81`) falls inside
+the cohort: development is 68% legacy in direct outcomes while selection and
+holdout are **100%** short-lead, so a fit would rest substantially on a regime
+the holdout contains none of. **The 50/25/25 boundaries are deliberately not
+moved**, per §4's own warning about choosing proportions because these are
+inconvenient.
+
+The third is a non-replication. **ADR-007 line 62's 1.596/0.917 unresolved
+`doubtful` era figures do not reproduce here**: 0.019 short-lead against 0.033
+legacy, ~50x smaller and reversed. That gap is too large to be noise, so the two
+are almost certainly counting different populations - canonical rows here,
+plausibly raw report rows there. **I am not claiming ADR-007 is wrong**, and I
+say so in the artifact rather than letting a summariser turn a non-replication
+into a refutation.
+
+### The disclosure guard was scoped wrong and the coordinator caught it
+
+§2's closed set was pinned to *the manifest*; my work emits a second artefact,
+so the guard would have passed while the surface widened. Now scoped to **every
+committed JSON under `docs/`**, keyed by `(filename, path)` with list indices
+normalised so reordering cannot evade it. It found a real gap immediately:
+`participation-ledger-2025-26-coverage.json` publishes `seasons[].outcomes` and
+was outside the old glob. Not a breach in substance - a whole-*ledger* marginal
+is strictly less informative than the cohort-restricted one §2 already permits -
+but listed, because an unlisted field is indistinguishable from an unnoticed one.
+
+**A collision I would not have predicted:** the same file's `seasons[].reasons`
+also trips the detector, because **`not_with_team` is a member of both
+`ParticipationOutcome` and `DnpReason`**. It is `DnpReason`-keyed and is not an
+outcome marginal. Allow-listed with the mechanism stated rather than the
+detector weakened, and the overlap pinned at exactly `{"not_with_team"}`.
+
+**Could not verify.** That the denser-capture mechanism accounts for *all* of
+the manifest drift. I have the direction and the density and did not match
+row-for-row - matching needs both sides' row keys and the manifest publishes only
+aggregates. With `doubtful` at 83 against 30 I do not think any plausible version
+reverses the verdict, but that is a judgement. **Reasoned.**
+
+**Could not verify.** Which endpoint each store's persisted `tipoff_utc`
+actually came from. Nothing records the provenance of a persisted instant - the
+very gap the README exists to flag. I have driven that the two stores *agree* on
+1,227 instants and that the sweep holds three the box-score endpoint cannot
+serve, which is strong circumstantial evidence of independence. It is not the
+same as reading a provenance field, because there is none. **Driven agreement,
+reasoned independence.**
+
+**Could not verify.** ADR-007's original 1.596/0.917 measurement. I state that it
+does not replicate on *my* population; I did not reconstruct its four-week window
+or determine whether it counted raw or canonical rows, so I cannot say which of
+us is measuring the thing the era argument needs. **Reasoned, and someone holding
+that artifact should close it** - filed as `adr-007-era-figure-population` so it
+is a tracked one-line clarification rather than a discrepancy nobody owns. The
+coordinator, who had cited the figure to this lane as established, **withdrew the
+narrower claim it supported** on reading this: era-dependent *exclusion* does not
+concentrate on `doubtful` (2 rows in each era; unresolved lands overwhelmingly on
+`out`, 74 legacy and 45 short-lead). The era **composition** finding is a
+different mechanism and stands unchanged.
+
+**Could not verify.** That the sweep's report coverage is uniform across the
+season. The holdout's per-status counts are measured directly, so admissibility
+does not depend on uniformity - but a thinner-covered stretch inside development
+would shift the fit in ways no count here exposes. I did not profile capture
+density by date beyond the one window I compared against the manifest.
+**Reasoned.**
+
+**Could not verify.** That `docs/` is the whole disclosure surface. The guard
+scans every committed JSON there, which covers all four evidence artifacts today.
+An artefact committed elsewhere - or in a non-JSON format - is outside it, and
+the coordinator's point about second artefacts applies recursively. **Reasoned.**
+
+## 2026-08-23 - data-engineer - the widened cohort, independently reproduced, and the caution that was right for the wrong reason
+
+Addendum to the entry above, recording what a second pair of eyes found and one
+correction the coordinator asked to have written down in their own words.
+
+### Reproduced with a different tool, and it holds
+
+The coordinator did **not** re-run the pipeline. They wrote raw SQL against both
+stores - latest pre-tip-off row per game x player, restricted to the holdout
+`2026-03-02..2026-04-12` - and got canonical `out` 2,979, `available` 469,
+`questionable` 335, `probable` 92, `doubtful` 84 against my **direct-outcome**
+2,963 / 467 / 335 / 92 / 83.
+
+**The relationship is the check, not the equality.** Direct outcomes are a
+subset of canonical observations, so their figures sitting one to sixteen
+*above* mine is the only correct relationship; `questionable` and `probable`
+matching to the row means zero exclusions on those statuses, which is exactly
+what my exclusion table reports. They also independently counted 164 game dates
+and 41 in the holdout, so the §4 split is arithmetic they checked rather than
+took. **Two tools, two people, same answer.**
+
+### The empty-set failure that looks like a clean result
+
+Their first SQL attempt joined `injury_report_entries.game_id` straight to
+`nba_games.nba_game_id` - a local surrogate integer against a source-stable
+string, across two databases - and it returned **zero rows and no error**. That
+would have read as "nothing joins across these stores" rather than "this key is
+wrong". It is the same class as the false zero a mistyped SQLite path
+manufactures, and it is why the join test builds its two fixture stores with
+**disjoint** surrogate id bases. Now recorded in
+`docs/adapters/nba-injury-report-cohort-admissibility.md` so the next person
+meets it before the mistake rather than after.
+
+### The correction, in the coordinator's own framing
+
+They asked for this to be recorded their way, and it is worth more in their
+words than mine: *"I gave you the caution correctly and the mechanism wrongly."*
+
+Their brief warned that full-season `doubtful` at ~100x the floor "says very
+little", and named two reductions - direct outcomes being a subset of canonical
+observations, and a holdout being a subset of the cohort. **Both are real and
+both are minor.** They cost 1.02x and 2.6x. The reduction that actually matters
+is **canonicalisation, at 9.4x**, because a player listed `doubtful` across six
+successive reports whose last pre-tip status is `out` contributes **zero**
+`doubtful`. So the caution was sound and the arithmetic behind it was about the
+wrong quantity: `2,087 raw -> 221 canonical -> 217 direct -> 83 held-out`.
+
+**Had `doubtful` been ten times smaller this would have failed for a reason the
+original framing could not see.** A correct warning derived from a wrong
+mechanism survives only while its conclusion happens to hold, which is precisely
+the "rhetorical convenience" failure `AGENTS.md` says has no CI job.
+
+### v1's veto independently confirmed, which is worth as much as the headline
+
+Restricting my pipeline to the four-week window reproduces the
+preregistration's own stated holdout share - **0.3219 against its stated 32%** -
+and gives held-out `doubtful` = **3** against v1's recorded **4**. So §2's
+arithmetic veto on the `2025-12-08..2026-01-04` cohort is confirmed by a
+pipeline built independently of it, **on denser data**, that had every
+opportunity to disagree. The four-week cohort was correctly refused. That is now
+in the artifact rather than only in a chat.
+
+### Range confirmed by the owner-facing ruling
+
+Full season, `2025-10-21..2026-04-12`, holdout `2026-03-02..2026-04-12`, on the
+stated ground that shrinking the range to chase a cleaner report set would be
+**choosing a cohort by looking at its properties**, which is the thing the
+freeze exists to prevent. The late-season-behaviour limitation the coordinator
+raised alongside it was already declared in the artifact and is unchanged.
+
+**Could not verify.** That the coordinator's SQL and my pipeline are genuinely
+independent implementations rather than two expressions of the same
+misunderstanding. They agree on the numbers and reached them by different
+routes, which is evidence; they also both read the same preregistration and the
+same store, so a shared misreading of what "latest pre-tip-off" means would
+survive both. **Reasoned.** The strongest independent check remains structural -
+their canonical counts bounding my direct counts from above, in the right
+direction, on every status.
+
+**Could not verify.** That `questionable` and `probable` matching to the row is
+confirmation rather than coincidence. It follows from my exclusion table
+reporting zero exclusions on those two statuses, so the two facts are not
+independent of each other - agreement there is entailed, not corroborating.
+The informative agreements are the three statuses that differ. **Driven, and
+deliberately discounted.**
+
+### Addendum, 2026-08-23 rebase onto `74c8ba4`: this module is invisible to the new store-creating-reader census
+
+Not a defect in either lane, and worth writing down before it becomes one.
+
+`backend/tests/test_store_creating_readers.py` (#83) makes the store-creating
+reader audit permanent by scanning the package for **`Database.from_settings(`**
+and requiring every site to carry an explicit classification. Driven against
+this branch: it finds **12** sites, and
+`ingest/injury_report/cohort_admissibility.py` is **not** one of them, because
+`read_only_engine` opens its stores with `create_engine` over a
+`sqlite3.connect(..., mode=ro)` creator instead.
+
+**So a reader with exactly the hazard that census exists to catch sits outside
+it, and passes vacuously.** SQLite's create-on-connect applies to my path
+identically - `sqlite3.connect` on a mistyped path creates an empty database
+just as `Database.from_settings` does. My path is guarded, and
+`TestTheStoreIsNotCreatedByLookingAtIt` asserts it refuses a missing file *and*
+that the probe did not create the file it was checking for. **But that guard is
+mine, in my test file, and the census would not have noticed its absence.**
+
+The census documents a scope limit - `SCOPE_LIMIT`, "classifies creation, not
+destination" - and that is a different limit from this one. **The scan pattern
+itself is a scope limit and is not recorded as one.** This is the audit lane's
+own grep caution turned on the audit: *a search that misses is
+indistinguishable from an absence*, and a census that enumerates one spelling of
+"open a store" reports on that spelling rather than on the hazard.
+
+**Deliberately not fixed here.** Widening the scan to `create_engine` and
+`sqlite3.connect` would re-classify sites whose verdicts are the audit lane's
+judgement, not mine, and a census whose membership rule changes under a
+different lane is worse than one with a recorded gap. Reported to the
+coordinator instead, so it is **requested rather than discovered** - the same
+disposition the participation-ledger lane took toward the cross-store join that
+became this unit.
+
+**Could not verify.** Whether any *other* module opens a store outside the
+census's spelling. I checked my own and counted the census's 12; I did not grep
+the package for every `create_engine` or `sqlite3.connect` call and classify
+them. **Reasoned, and it is the same question the census answers for its own
+spelling.**
