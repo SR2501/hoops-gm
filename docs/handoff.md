@@ -21061,3 +21061,62 @@ this checks every capture I **have**, not every capture there **is** -- the same
 residual the era-boundary window carries, and it is not closeable from cache by
 construction. Also unverified: whether the :45 cadence continued past
 2025-12-21, since the legacy era ends there and the question stops being askable.
+
+
+## 2026-08-24 - data-engineer - a near-miss I caused: `--summary` will happily append into the file it audits
+
+**Changed.** Nothing. This is a finding against my own mistake, recorded because
+the near-miss generalises and the thing that saved me was accidental ordering.
+
+**What I did.** Running the Code gate I invoked
+`python scripts/backlog_graph.py --summary docs/backlog.md`. `--summary` is
+documented as *"also append the report here, e.g. `$GITHUB_STEP_SUMMARY`"* and
+the backlog is a **positional** argument, so that command parses the *default*
+backlog and **appends its own 101-line report into `docs/backlog.md`**. Exit 0,
+no warning. I only noticed because `git status` showed the file modified after I
+had already committed.
+
+**Proportionately: this is my error, not a repo defect.** CI invokes it
+correctly (`ci.yml:142`, `--summary "$GITHUB_STEP_SUMMARY"`), and every prior
+lane in this file invoked it bare. I carried a gate command with a `<path>`
+placeholder in my working notes and filled the placeholder with the wrong path.
+Nobody else has tripped this.
+
+**But three things make it worth a paragraph.**
+
+**(1) What saved me was ordering, and the ordering was luck.** I ran `git add -A`
+*before* the gates rather than after. Staging after running gates - which is the
+more natural order, and which several entries above describe doing - would have
+committed the report into the backlog silently.
+
+**(2) It would have been an absolute-path leak, the third in this unit.** The
+report names the backlog it parsed, and the no-argument default resolves to an
+absolute path, so the appended text contains
+`C:/Users/steverones/copilot-worktrees/...`. Same class as the merge-receipt
+paths and the unresolved-name sample I redacted in the commit before last: a
+value that is *correct* and *well-formed* and still should not be in a tracked
+file. In CI this is harmless (a runner path); locally it is a home directory.
+
+**(3) A self-describing report appended into its own subject is
+self-invalidating.** The report says `**142 items**`; appending it adds `##` and
+`###` headings to the file the count is derived from, so the next parse
+describes a different document. A tool that silently mutates its own input is
+worth knowing about even when the invocation was wrong.
+
+**Deliberately not fixed.** `scripts/` is `backend`'s per
+`docs/governance/ownership.md:26`, my unit is already one PR, and the honest
+remedy - refuse a `--summary` target that is the backlog itself, or emit a
+relative path - is a decision for whoever owns the script. Filed rather than
+taken. Reverted with `git checkout -- docs/backlog.md`, which was safe here only
+because my index was clean; that restores from the **index**, not from `main`.
+
+**Verified.** `git status --porcelain` empty afterwards. Re-ran the correct
+invocation, `python scripts/backlog_graph.py docs/backlog.md`: 142 items, 0
+defects, exit 0, working tree still clean, and the printed path relative.
+
+**Could not verify.** Whether any *already-merged* commit anywhere in this
+repository's history contains an accidentally-appended report of this shape. I
+checked my own branch only. A grep for the report's heading would answer it, but
+that heading is also legitimate prose in several handoff entries, so a naive
+search would return false positives and I did not want to publish a number I had
+not separated by hand.
