@@ -19743,3 +19743,69 @@ by someone else's merge, and nothing reports it.** Fixing it belongs to
   interesting part is how fast it was answered.
 - **That the resolver finding has a second instance.** It does not, that I know
   of. It stays on the prediction footing the bullet above has left. **Reasoned.**
+
+
+---
+
+## 2026-08-23 — `frontend` — why *those* four, in that order: the selection reasoning, which was not committed
+
+**Changed:** this entry only. No code.
+
+Asked at archive time whether anything about the four claims lived outside the
+repository, I grepped merged `main` rather than answering from memory. Two
+things were there and three were not.
+
+**Already committed, so not repeated here:** the *provenance* — "they are the
+coordinator's list" is in my earlier entry, and it is the honest answer to *why
+these four*: **I did not select them.** They arrived specified in the brief,
+from someone who had watched the owner fail to use the screen. And the *tiering*
+— which two are always visible and why — is in `DraftRecorder.tsx`, split by
+cost, the two cheapest and most load-bearing kept out of the disclosure.
+
+Missing, and each one is a lever a copy revision would want:
+
+**1. Nomination and Bid share a single bullet, deliberately.** Giving each its
+own would have made three parallel entries for three modes, and **parallel
+structure is itself a claim of parallel importance** — exactly the claim this
+panel exists to deny. One bullet covering both, next to Sale's own, encodes
+*two of these three are the same kind of thing and it is not the kind Sale is*
+in the shape of the list rather than only in its words. If a revision splits
+them for symmetry it will quietly reintroduce the impression that recording
+bids matters as much as recording sales.
+
+**2. The order is: what fills a slot → what you may skip → how the fields
+behave → where it lands.** Not importance-ordered and not chronological. It is
+ordered by *what a reader who stops early still has*: stop after one and the
+roster is right; stop after two and you can keep up in a fast room; stop after
+three and the form's shape makes sense. **Under a clock, prose is read
+prefix-first, so the ordering is a truncation policy.** Chronological order —
+nomination, bid, sale, as a room actually goes — was the obvious alternative and
+would have put the only load-bearing entry type third.
+
+**3. A fifth point was considered and dropped: the double-submit guard.** Every
+append carries `expected_last_sequence`, so a duplicate submit lands as `409
+draft_sequence_conflict` rather than recording the pick twice — genuinely
+reassuring, and the kind of thing a nervous first-time recorder wants to know.
+Dropped because **it is only legible after it fires, and when it fires the
+refusal already explains itself** (the error block says nothing was recorded and
+what you typed is still above). A fifth bullet costs every reader on every draft
+to pre-empt a message that arrives self-contained. **If the owner bounces
+because he did not trust the form under pressure, this is the point to add** —
+it is the strongest candidate already examined, and the reason it is out is a
+judgement about cost, not a judgement that it is uninteresting.
+
+**Could not verify:**
+
+- **That these three are all of it.** They are what a grep for selection
+  reasoning found missing plus what I could reconstruct as deliberate. A choice
+  I made without noticing I was making it would not appear in either. **Driven**
+  on the grep, **reasoned** on completeness — and this is the fourth time in this
+  session that the honest form of an answer has been *"I checked for the specific
+  thing and cannot certify the general one."*
+- **That the ordering claim is worth anything.** The truncation-policy argument
+  is a theory about how a reader under time pressure behaves. Nobody has watched
+  the owner read this list. **Reasoned.**
+
+**Next:** nothing blocks. If the owner bounces off one of the four, point 3 is
+the pre-examined addition; if he bounces because the list read as four equal
+things, point 1 is the lever and splitting it is the wrong direction.
