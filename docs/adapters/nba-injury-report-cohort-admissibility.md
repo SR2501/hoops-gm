@@ -227,6 +227,58 @@ Direct-outcome counts themselves stay publishable, and §2 says why — they say
 
 ---
 
+## If you are here to regenerate the cohort manifest, read this first
+
+This artifact is **not** a regenerated cohort. It is the admissibility verdict
+and its evidence. Regenerating
+`nba-injury-report-cohort-*.json` for the widened window is separate work, and
+three things about it are non-obvious enough to burn a day each.
+
+**1. `build_cohort_evidence` takes one `Session`, and neither store can serve
+it.** Driven: the clean ledger holds **0** `injury_report_entries`; the sweep
+holds 69,922 but took its tip-offs from `ScheduleLeagueV2`. So pointing the
+generator at the ledger yields an empty cohort, and pointing it at the sweep
+yields a manifest whose `cross_source_tipoff_reconciliation` compares one
+endpoint **with itself** — reporting `agreed: true`, `witnessed: true`, and
+meaning nothing. That is exactly the failure `hoops-gm-data/README.md` was
+written to prevent, and **nothing records the provenance of a persisted instant,
+so no reader could tell from the output.** The cross-store seam this module uses
+is available to a *count*; a manifest needs both halves in one store, which
+means importing the reports into the ledger.
+
+**2. It costs zero requests, but only from the right directory.** All 583
+injury-report captures and 2,462 stats captures are already in
+`hoops-gm-data/data/raw`. `RawPayloadStore` resolves **relative to the current
+working directory** while the database is anchored to the repo root, so an
+ingest launched from anywhere else silently detaches the cache and re-fetches
+everything at ~1.1 s per request with nothing saying why. Run it from
+`C:\Users\steverones\hoops-gm-data`.
+
+**3. The disclosure guard will fire, and that is the point.** A regenerated
+manifest publishes `participation_join.participation_outcome_counts` under a new
+filename, which is a new `(filename, path)` pair outside the frozen allow-list.
+Verified by experiment rather than predicted — dropping a copy of the existing
+manifest under a widened-window name fails
+`test_the_union_over_the_whole_surface_equals_the_frozen_set` and names the
+field.
+
+**Do not reflexively add it to the allow-list.** §2 documents the reason: the
+four-week manifest is already committed, a widened manifest is a **superset**,
+and git makes differencing free — so `M_B[outcome] − M_A[outcome]` yields the
+outcome marginal of the added dates, with the by-date denominators supplying
+their status composition. **The regeneration is the operation that opens that
+attack**, and §2 says so in advance. Whether the widened manifest may carry an
+outcome marginal at all is a `quant` question against the freeze, not an
+allow-list edit.
+
+**What is already done and should be reused, not rebuilt.** §2's two manifest
+requirements — per-status **direct-outcome counts by game date**, and
+**exclusion classes by status** — are both computed and committed here, along
+with the cross-store tip-off agreement, the era composition, the §7 lead-time
+bands and two fingerprints. A regeneration that recomputes them should
+**reconcile against these** rather than replace them silently; a disagreement is
+a finding.
+
 ## Running it
 
 Read-only, no external requests, nothing written to `hoops-gm-data`.

@@ -19889,3 +19889,113 @@ and either alone reads as a bigger or smaller problem than it is.
 `sqlite3.connect(` are the two literals it does not currently scan for, and
 `ingest/injury_report/cohort_admissibility.py` is the site that would newly
 appear.
+## 2026-08-23 - data-engineer - what the cohort lane learned that its PR could not carry
+
+`fa705b5` landed the verdict, the evidence and the guards. This entry is the
+residue: things that happened only in the session, which the diff cannot show.
+
+### The census gap has a commit, and that changes what it argues for
+
+My merged entry says `cohort_admissibility.py` sits outside
+`test_every_engine_call_site_is_classified` and passes vacuously. **True, and I
+filed it as a pre-existing gap. It is not one.** Driven at
+`fa705b5^` = `74c8ba4`:
+
+```
+git grep -nE 'create_engine|sqlite3\.connect' 74c8ba4 -- backend/src/
+  db/session.py:21   from sqlalchemy import ... create_engine ...
+  db/session.py:67   engine = create_engine(settings.database_url, **kwargs)
+```
+
+Two hits, **both inside `db/session.py`, which is the implementation of
+`from_settings`**. `sqlite3.connect` in `backend/src`: zero. So at the moment the
+census was written, scanning for `Database.from_settings(` was not an
+approximation of "every way this package opens a store" - **it was an exact
+enumeration of it.** The same search at `fa705b5` returns two more lines, both
+mine.
+
+**The census was correct, and my merge made it incomplete - at exit 0, with the
+census green.** That is a different failure from "the check was always too
+narrow", and only one of the two argues for **re-running a census after a merge
+rather than writing it once**. A membership rule that is exhaustive when written
+decays silently as the package grows, and nothing in CI observes the decay
+because the check keeps passing over a shrinking share of the domain. Dating it
+is the whole value: this is the only instance in the project that can be pinned
+to a commit.
+
+### The shift experiment nearly proved nothing
+
+`test_shifting_the_report_store_tipoff_is_reported_but_changes_no_count` is the
+artefact the reviewers called the strongest thing in the unit. **Its first
+version was worthless and I only found out because it failed.**
+
+The fixture derived each report row's `report_timestamp` from
+`game.tipoff_utc` - the same column the experiment then shifted. So the reports
+moved with the tip-offs, lead times stayed 90 minutes by construction, and the
+test would have "passed" while demonstrating nothing. It happened to fail on a
+count assertion, which is luck rather than design: **a slightly different
+fixture would have passed vacuously and been quoted as proof.**
+
+The fix is one line - derive the timestamp from the *authoritative* instant,
+never from the store under test - and it is now commented in place. The general
+form is worth more than the fix: **in any experiment that perturbs X to show Y
+does not depend on X, check that the fixture does not derive Y from X.** A
+control that moves with the treatment is not a control.
+
+### A test docstring claimed an experiment the test did not run
+
+I named a test `..._shifted_report_store_tipoff_changes_no_count` when the shift
+was in the *next* test and that one only established the 90-minute baseline. It
+passed, correctly, for a claim it was not making. Caught on re-reading, renamed
+to `test_lead_times_are_measured_against_the_authoritative_instant`. **A green
+test whose name overstates it is worse than no test**, because the name is what
+a later reader greps for and trusts.
+
+### The number that smelled wrong is where the ADR-007 finding came from
+
+Worth recording as method rather than result. The first era cut I computed was a
+single figure - unresolved exclusions **81 legacy against 54 short-lead**. That
+is the whole-cohort total, it is not per-date, and it ran *opposite* to the
+direction ADR-007 had led me to expect. **I only broke it down by era x status
+and divided by `game_dates_by_era` because that total smelled wrong**, and the
+breakdown is what produced the fiftyfold non-replication now filed as
+`adr-007-era-figure-population`.
+
+Had the aggregate happened to point the expected way I would very likely have
+published it as agreement and moved on. **The finding was not the product of a
+plan; it was the product of not letting a convenient number pass.**
+
+### PowerShell and pytest traps this lane actually hit
+
+- **A two-engine fixture without explicit `dispose()` fails *other* tests.**
+  Leaving the SQLAlchemy engines to the garbage collector produced pytest
+  `ExceptionGroup: multiple unraisable exception warnings` at *session teardown*,
+  surfacing as ERRORs on three unrelated tests. The traceback names
+  `unraisableexception.py`, not the fixture. Roll back, close and `dispose()`
+  explicitly in the fixture's `finally`.
+- **`Select-Object -First` really does zero `$LASTEXITCODE`.** The brief warns
+  it; I hit it anyway piping pytest output, read a green exit that was the
+  pipeline's, and had to re-run bare. **Any exit code read through a pipe is the
+  pipe's.**
+- **`python -c` with nested quotes is not usable from PowerShell** for anything
+  non-trivial - backslash-escaped inner quotes are mangled before Python sees
+  them. Scratch `.py` files in the session folder cost less than the third
+  attempt at escaping.
+- **Closed enums reject plausible strings.** `match_method="fixture"` raises on
+  the `MatchMethod` check constraint; fixtures must use real enum members.
+
+### What I nearly wrote and did not
+
+**I nearly widened the census scan to `create_engine` and `sqlite3.connect`
+myself.** It is four lines and it would have re-classified sites whose `writes`
+and `blocked` verdicts are the audit lane's judgement, not mine, inside a PR
+about cohort admissibility. **A census whose membership rule changes under a
+different lane is worse than one with a recorded gap**, because the verdicts
+stop meaning what the lane that wrote them said. Reported instead.
+
+**Could not verify.** Whether the era classification is right for reports filed
+*on* the boundary date itself. `is_fifteen_minute_era` uses `>=` against
+2025-12-22 00:00 Eastern and I tested 12-21 22:30 UTC (legacy) and 01-05
+(short-lead), but no report filed between 00:00 and the first tip-off on
+2025-12-22 - the one window where an off-by-one in either direction is
+invisible in aggregate. **Reasoned.**
