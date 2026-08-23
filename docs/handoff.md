@@ -20705,3 +20705,127 @@ prevention.
   after restoring five tests, which is consistent, but I derived it from my own
   memory of what I had added. A prediction from the same head that made the
   error is weaker evidence than an independent one. **Reasoned.**
+
+## 2026-08-23 - `data-engineer` - The check that a passing suite cannot be, and a guess about why remedies stay narrow
+
+`scripts/test_name_diff.py`. Commissioned after I deleted five tests earlier
+today and every gate reported green.
+
+### Verified against the incident, not only against a fixture
+
+Replaying the real commits - `0609c64` to `fdf43dc`, the tree whose suite
+reported `1733 passed`:
+
+```
+base 0609c64: 1494    fdf43dc: 1505    (backend/tests)
+
+DROPPED (5):
+  - test_an_unreadable_store_is_not_reported_as_an_empty_one
+  - test_coverage_refuses_an_absent_store_without_creating_it
+  - test_every_engine_call_site_is_classified
+  - test_reporting_commands_refuse_and_writers_do_not
+  - test_the_blocked_sites_are_blocked_for_a_recorded_reason
+EXIT=1
+```
+
+**The count rose the entire time - 1494 to 1505 - while five tests were
+missing**, one of which was the census test that was the whole point of the
+preceding unit. That is the number every other check was looking at. A total
+cannot see a deletion that additions outnumber; only the set difference can.
+
+### Why it is a script and not a gate
+
+A CI rule on test-name sets is a claim about CI shape, and it needs an owner who
+can answer *"what happens when a test is legitimately renamed"*. The honest
+answer is **it depends**, which a gate cannot say and a human can. Here a rename
+surfaces as one dropped and one added, side by side, and the operator decides in
+a second. `mutate_aav.py` and `mutate_seed_demo.py` are the precedent for an
+invoked tool that makes no automatic claim.
+
+It exits 1 on a rename **on purpose**. The exit code means *a human should look*,
+not *this is wrong*.
+
+### What it cannot see, in the docstring rather than beside it
+
+`test_*` function names only. A deleted fixture, a deleted assertion **inside**
+a surviving test, a test that keeps its name and has its body gutted - all
+invisible. A clean report means *no test function disappeared by name*, and it
+must not be quoted as though it meant the suite still checks what it used to.
+This project has been bitten more by a false guarantee than by a missing one.
+
+Parsed rather than grepped, for the reason the regeneration lane established at
+its own expense: a literal-string scan counts a docstring that *describes* a
+call as the call itself, so **careful documentation is what corrupts the
+register**. A grep for `def test_` matches the prose in this very entry.
+
+### The unproven guess, recorded as a guess
+
+The coordinator observed that twice today a remedy already existed and was
+scoped to a single instance. It was three times, and the third was mine and the
+worst, because I **had the general form in hand**: I built `predict_union.py` on
+*a recount agrees with itself after a deletion*, applied it to handoff entries
+only, and then deleted five tests in the same session using a tool built on the
+exact insight that would have caught it.
+
+So the diagnosis is not that we fail to generalise, which implies oversight.
+`Could not verify` in one field, the slug diff on one file, the recount on one
+artefact - **every one correct, every one narrower than the thing it
+understood**, and in each case the author had no signal anything was missing.
+
+> **A remedy arrives attached to the instance that hurt, and the attachment is
+> invisible from inside - the fix feels complete because the pain stopped.**
+
+The detector I would guess at, **unproven and named as a guess**:
+
+> **When a check fixes something, ask what else has that shape before asking
+> whether the check works.**
+
+The second question is the satisfying one, and asking it first is why the first
+never gets asked. I cannot evidence that this works. I would rather it be
+recorded as a guess with my name on it than not recorded.
+
+**And the boundary, because someone will reach for the wrong tool here:** the
+grep-the-claim's-own-words rule defends against **propagation** of an
+already-caught claim. It does nothing about **narrowness** of a remedy. Two
+different failures. One has a mechanism; the other has this paragraph.
+
+**Could not verify:**
+
+- **That the tool would have caught the deletion at the moment it happened.**
+  It catches it now, replaying committed history. At the time the deletion was
+  uncommitted working-tree state, which is the `ref`-omitted path - covered by a
+  fixture test, but I did not reconstruct the original uncommitted tree to prove
+  it end to end. **Driven on the committed replay, reasoned on the live case.**
+- **That `test_*` names are the right unit at all.** A suite could lose all its
+  assertions and keep every name. I chose names because that is the failure that
+  actually occurred and because anything richer starts making claims about what
+  a test *means*. **A judgement, not a measurement.**
+- **That 1494 distinct names is the true count of tests at `0609c64`.** It is
+  the size of a *set*, so two tests sharing a name across files collapse to one.
+  Fine for detecting a disappearance, wrong if anyone reads it as a suite size.
+  **Named so nobody quotes it as the latter.**
+
+### Addendum: my own tool's test asserted that nobody was working
+
+The full suite went red on `test_it_counts_the_real_handoff_from_git`, from
+`predict_union.py`'s own test file, which I wrote yesterday. It asserted
+`from_git == from_disk` - the count in `HEAD` equals the count on disk.
+
+That reads like a consistency check. It is really **an assertion that nobody has
+uncommitted handoff edits**, which is the normal state of a lane mid-unit. It
+went red the moment I appended this entry before committing it, and it would go
+red for every future lane at exactly the same point.
+
+The property worth pinning is the **opposite** one: counting a ref must be
+*independent* of the working tree, because that independence is what lets the
+predictor read `base`, `ours` and `theirs` from a single checkout. The
+disk count is now a lower bound rather than an equality - `docs/handoff.md` is
+append-only, so the tree may hold more entries than `HEAD` and never fewer -
+and a new test writes a differing working tree and asserts the ref count does
+not move.
+
+Worth recording because the failure was not a bug in the tool: the tool was
+right, and its test encoded an assumption about the world that its author held
+without noticing. **The same shape as everything else this week** - the check
+was narrower than the thing it claimed, and it took an unrelated lane doing an
+ordinary thing to expose it. Here that lane was me, one day later.

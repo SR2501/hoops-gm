@@ -63,7 +63,20 @@ def test_a_heading_that_is_not_a_dated_entry_is_not_counted(predictor: ModuleTyp
 
 
 def test_it_counts_the_real_handoff_from_git(predictor: ModuleType) -> None:
-    """Reads the blob out of git, so all three sides work from one checkout."""
+    """Reads the blob out of `ref`, so all three sides work from one checkout.
+
+    An earlier version asserted `from_git == from_disk`. That looked like a
+    consistency check and was really an assertion that nobody had uncommitted
+    handoff edits - so it went red the moment this lane appended its own entry
+    before committing, which is the normal state of a lane mid-unit rather than
+    a defect.
+
+    The property actually worth pinning is the opposite one: reading a ref must
+    be **independent** of the working tree, because that independence is what
+    lets the predictor count `base`, `ours` and `theirs` from one checkout. So
+    the disk count is used as a lower bound - `docs/handoff.md` is append-only,
+    so the tree can hold more entries than `HEAD` but never fewer.
+    """
     from_git = predictor.count_entries("HEAD")
     from_disk = len(predictor.DATED_ENTRY.findall(REAL_HANDOFF.read_text(encoding="utf-8")))
 
@@ -71,7 +84,26 @@ def test_it_counts_the_real_handoff_from_git(predictor: ModuleType) -> None:
         "the real handoff holds hundreds of dated entries; a small count here means the "
         "pattern stopped matching, not that entries vanished"
     )
-    assert from_git == from_disk
+    assert from_disk >= from_git, (
+        "the working tree holds fewer dated entries than HEAD, which append-only "
+        "should make impossible - something removed an entry rather than adding one"
+    )
+
+
+def test_counting_a_ref_ignores_the_working_tree(
+    predictor: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The independence the predictor rests on, asserted rather than assumed."""
+    repo = _git_repo_with_handoff(tmp_path, "## 2026-08-23 - one\n")
+    monkeypatch.chdir(repo)
+
+    committed = predictor.count_entries("HEAD")
+    (repo / "docs" / "handoff.md").write_text(
+        "## 2026-08-23 - one\n\n## 2026-08-24 - two\n", encoding="utf-8"
+    )
+
+    assert committed == 1
+    assert predictor.count_entries("HEAD") == 1, "counting a ref must not read the working tree"
 
 
 def test_a_zero_base_is_refused_rather_than_predicted_from(
