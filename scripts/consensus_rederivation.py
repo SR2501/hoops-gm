@@ -570,7 +570,7 @@ def cmd_leak_scan(base: str) -> int:
         "Known benign classes, each seen: a cohort size computed from public\n"
         "logs coinciding with a paid column's maximum, and a paid surname that\n"
         "is an ordinary English word firing on prose. Both are left firing on\n"
-        "purpose — suppressing them would trade a false positive someone can\n"
+        "purpose - suppressing them would trade a false positive someone can\n"
         "see for a false negative nobody can."
     )
     return 1

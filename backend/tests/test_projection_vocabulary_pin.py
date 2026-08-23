@@ -71,7 +71,7 @@ def test_basketball_monster_requires_every_published_rate_field() -> None:
 
     assert canonical - required == set(), (
         "these canonical fields reach the projections wire but are not required by the "
-        "Basketball Monster profile, so they can be NULL in a stored row — the "
+        "Basketball Monster profile, so they can be NULL in a stored row - the "
         "projections screen's key currently tells the reader that cannot happen"
     )
     assert required - canonical == set(), (

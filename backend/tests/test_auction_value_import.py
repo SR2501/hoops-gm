@@ -297,7 +297,7 @@ def test_every_fixture_value_is_generated_by_the_rule_the_metadata_states() -> N
             # rather than widening the set until everything fits.
             assert row.value_dollars in permitted or row.value_dollars + 5 in permitted, (
                 f"{filename} carries {row.value_dollars}, which the stated "
-                f"generation rule does not produce — either the fixture holds a "
+                f"generation rule does not produce - either the fixture holds a "
                 f"real published value or the metadata rule is stale"
             )
     assert checked >= 20, f"only {checked} values checked across three fixtures"
@@ -360,7 +360,7 @@ def test_the_two_hundred_dollar_budget_inference_does_not_survive_the_published_
 
     assert gap > rounding_bound, (
         f"the published pool (${published_pool}) is within rounding of a 12x$200 pool "
-        f"(${assumed_pool}), which would make $200 a defensible inference after all — "
+        f"(${assumed_pool}), which would make $200 a defensible inference after all - "
         "if this ever fails, the source descriptor and the adapter page both need revisiting"
     )
 

@@ -19,7 +19,7 @@ from hoops_gm.api.schemas import ErrorResponse
 from hoops_gm.core.bridge_pairing import BridgePairing
 from hoops_gm.core.config import Settings, get_settings
 from hoops_gm.core.logging import configure_logging, get_logger
-from hoops_gm.db.session import Database
+from hoops_gm.db.session import Database, render_store_url
 
 log = get_logger(__name__)
 
@@ -52,6 +52,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database = Database.from_settings(settings)
         app.state.database = database
 
+        # Name the store, not just its dialect. A server that reports zeros
+        # because it was pointed at an empty database is indistinguishable, from
+        # the outside, from one reporting zeros because the season has not
+        # started — and on 2026-08-22 exactly that ambiguity survived on `main`
+        # for a day, because two files named `hoops_gm.db` in different
+        # checkouts both answered honestly and neither answer named its source.
+        #
+        # This is deliberately a log line and deliberately not a refusal. There
+        # is no content test for "is this the right store": every such guard
+        # keys on a proxy — a row count, a season, a prior import — and a proxy
+        # is what fails when the store is real but wrong. So the remedy is to
+        # make the answer attributable rather than to guess at it.
+        #
+        # `render_store_url` hides the password. It stays out of the HTTP
+        # surface: `api/routes/health.py` deliberately keeps connection-URL
+        # information off responses, and reversing that is a REST-contract
+        # decision rather than an observability one.
+        store_url, store_path = render_store_url(database.engine.url)
+
         log.info(
             "app.startup",
             service=settings.app_name,
@@ -60,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             host=settings.host,
             port=settings.port,
             dialect=database.engine.dialect.name,
+            store=store_path or store_url,
         )
         if not settings.is_loopback_bind:
             # Not fatal — a container has to bind 0.0.0.0 for a published port

@@ -164,9 +164,9 @@ def absent_store_refusal(url: URL | str) -> str | None:
         return None
     return (
         f"ERROR: no database file at {absent}\n"
-        f"  Refusing to create one: this command only reports on data that is "
-        f"already there, and an empty store invented here would answer with a "
-        f"reproducible and meaningless zero.\n"
+        f"  Refusing to create one: SQLite would make an empty, unmigrated database "
+        f"here, and the `no such table` that followed would blame the schema for "
+        f"what is a wrong path.\n"
         f"  Check DATABASE_URL, or run `alembic upgrade head` to build it "
         f"deliberately."
     )

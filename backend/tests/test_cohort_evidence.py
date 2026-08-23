@@ -619,7 +619,7 @@ class TestTheCommittedManifestStillDescribesThisCode:
         assert set(reconciliation["counts"].values()) == {manifest["scope"]["games_in_scope"]}
         for game_id in ("0022501229", "0022501230"):
             assert game_id in reconciliation["game_ids"], (
-                f"{game_id} is missing from the committed cohort — this is the exact "
+                f"{game_id} is missing from the committed cohort - this is the exact "
                 "omission that invalidated the previous one"
             )
 

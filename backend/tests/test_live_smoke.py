@@ -322,7 +322,7 @@ class TestFantraxOfficialIsAlive:
         )
         assert len(result.team_entities) == 30, (
             f"{len(result.team_entities)} non-player entities, expected 30 (one per "
-            "franchise). The payload's row mix has changed — re-check the R24 filter"
+            "franchise). The payload's row mix has changed - re-check the R24 filter"
         )
         assert not result.unclassified, (
             f"{len(result.unclassified)} rows are neither player nor team entity; "
@@ -486,7 +486,7 @@ class TestNbaStatsIsAlive:
 
         assert len(rows) > 400, (
             f"only {len(rows)} players listed. This is row *omission*, which the parser "
-            "cannot see — it validates the rows it is given. A short listing means stored "
+            "cannot see - it validates the rows it is given. A short listing means stored "
             "positions are refreshed for only part of the league"
         )
         stated = sum(1 for row in rows if str(row[column] or "").strip())
@@ -538,7 +538,7 @@ class TestNbaStatsIsAlive:
         assert not fine, (
             f"PlayerIndex now publishes {sorted(fine)}. This changes what the NBA states "
             "about position. Revisit PLAYER_INDEX_POSITIONS, the coarseness caveat in "
-            "docs/adapters/nba-stats.md, and R7 — but not the eligibility conclusion"
+            "docs/adapters/nba-stats.md, and R7 - but not the eligibility conclusion"
         )
         assert stated <= PLAYER_INDEX_POSITIONS, (
             f"unrecorded position values {sorted(stated - PLAYER_INDEX_POSITIONS)}; the "
@@ -712,7 +712,7 @@ class TestNbaStatsIsAlive:
             f"BoxScoreSummaryV3 reported ZERO inactive players for game "
             f"{FIXTURE_MIDSEASON_GAME_ID} ({FIXTURE_MIDSEASON_GAME_DATE}). Every NBA "
             "game has inactive players, so this means V3 has developed the same "
-            "silent rot as V2 — which returned empty lists for the whole 2025-26 "
+            "silent rot as V2 - which returned empty lists for the whole 2025-26 "
             "season without erroring. Treat the availability ledger as suspect"
         )
 
@@ -857,7 +857,7 @@ class TestTheForwardScheduleStillMeansWhatADR013AssumedItMeant:
             return
         assert len(observed) <= 6, (
             f"{len(observed)} games are pending, but the Emirates NBA Cup knockout bracket "
-            "above group play is four quarterfinals and two semifinals — six, and the final "
+            "above group play is four quarterfinals and two semifinals - six, and the final "
             "carries no regular-season id. A correctly labelled set larger than the bracket "
             "means the labels have stopped bounding the class, so structural explicability no "
             f"longer follows from them and ADR-013's premise needs re-checking: {sorted(observed)}"

@@ -352,36 +352,40 @@ def read_only_engine(path: str | Path) -> Engine:
     """Engine over an **existing** SQLite file, opened read-only.
 
     SQLite creates a database on connect rather than refusing, so a mistyped
-    path yields a brand-new empty file and a count against it is an honest,
-    reproducible, meaningless zero — a false zero manufactured by the very
-    check written to settle the question. Assert on the filesystem first, and
-    assert it there rather than inferring from the absence of an error.
+    path yields a brand-new empty file. **Two corrections have landed on this
+    paragraph and both are kept, because they are about different errors.**
 
-    **Two independent barriers, and an earlier version of this docstring
-    overstated the first one's role.** It said create-on-connect "applies to
-    this path identically", which is false: line 367 builds a ``mode=ro`` URI,
-    and a read-only connection *refuses* a missing file rather than creating
-    it — driven, not reasoned (``sqlite3.OperationalError: unable to open
-    database file``, and no file appears). So the explicit ``is_file`` check is
-    belt-and-braces rather than the only thing standing between this module and
-    a meaningless zero.
+    *What the empty file actually does* (withdrawn 2026-08-23, after driving it):
+    it is **unmigrated**, so the first query dies on ``no such table``. That is
+    litter plus a misdiagnosis - the error blames the schema when the fault is
+    the path - and it is **not** a silent wrong number. An earlier rationale
+    written across this repository called it a meaningless zero; that was
+    overstated. The false zero comes from a store that is *migrated and empty*,
+    which answers honestly with zero and exits successfully, and no filesystem
+    check sees that one. Reporting the store alongside the count is what does.
 
-    It is kept, for two reasons that survive the correction. It raises
-    ``FileNotFoundError`` naming the path and *why* the zero would have been
-    meaningless, where the driver raises a bare "unable to open database file"
-    that reads like a permissions problem. And it does not depend on the URI
-    staying ``mode=ro``: a future caller wanting read-write access would delete
-    that flag and silently inherit create-on-connect, with this guard the only
-    remaining refusal. See
-    ``test_mode_ro_is_a_second_independent_barrier``, which pins the
-    belt-and-braces claim so the docstring cannot drift back.
+    *Whether this guard is the only barrier* (corrected in #88, also driven): it
+    is not. Line 367 builds a ``mode=ro`` URI, and a read-only connection
+    **refuses** a missing file rather than creating it - ``sqlite3.OperationalError:
+    unable to open database file``, and no file appears. So the explicit
+    ``is_file`` check is belt-and-braces rather than the only thing standing
+    between this module and a wrong answer.
+
+    It is kept, for two reasons that survive both corrections. It raises
+    ``FileNotFoundError`` naming the path and saying the fault is the path,
+    where the driver raises a bare "unable to open database file" that reads
+    like a permissions problem. And it does not depend on the URI staying
+    ``mode=ro``: a future caller wanting read-write access would delete that
+    flag and silently inherit create-on-connect, with this guard the only
+    remaining refusal. See ``test_mode_ro_is_a_second_independent_barrier``,
+    which pins the belt-and-braces claim so the docstring cannot drift back.
     """
     resolved = Path(path)
     if not resolved.is_file():
         raise FileNotFoundError(
             f"refusing to open {resolved}: not a file on disk. SQLite would have "
-            f"created an empty database here and every count against it would have "
-            f"been a meaningless zero."
+            f"created an empty, unmigrated database here, and the resulting "
+            f"`no such table` would have blamed the schema for what is a wrong path."
         )
     uri = f"file:{resolved.as_posix()}?mode=ro"
     return create_engine("sqlite://", creator=lambda: sqlite3.connect(uri, uri=True))

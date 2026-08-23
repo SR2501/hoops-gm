@@ -109,7 +109,7 @@ class TestTheDisclosureSurfaceIsClosed:
         for path in _committed_evidence_artifacts():
             union |= _surface(path)
         assert union == set(OUTCOME_KEYED_MANIFEST_FIELDS), (
-            "the pre-unblind outcome-keyed disclosure surface changed. §2 of the "
+            "the pre-unblind outcome-keyed disclosure surface changed. Section 2 of the "
             "frozen preregistration forbids adding an outcome-keyed field at any "
             "granularity, in any artifact. If this is deliberate, it needs the "
             "owner and a preregistration amendment, not a constant edit.\n"
@@ -454,9 +454,13 @@ class TestTheCrossStoreTipoffCheck:
 
 class TestTheStoreIsNotCreatedByLookingAtIt:
     def test_a_missing_path_refuses_rather_than_creating_a_database(self, tmp_path: Path) -> None:
-        # SQLite creates on connect. A mistyped path would otherwise yield a
-        # new empty file and an honest, reproducible, meaningless zero -- a
-        # false zero manufactured by the check written to settle the question.
+        # SQLite creates on connect, so a mistyped path yields a new empty
+        # file. That file is *unmigrated*, so the first query dies loudly on
+        # `no such table` -- litter and a misdiagnosis blaming the schema for a
+        # wrong path, rather than a silent wrong number. (An earlier version of
+        # this comment called it a meaningless zero; that claim was withdrawn
+        # on 2026-08-23. The false zero comes from a *migrated and empty*
+        # store, which this guard cannot see and does not claim to.)
         missing = tmp_path / "not-here.db"
         with pytest.raises(FileNotFoundError):
             read_only_engine(missing)
@@ -498,8 +502,18 @@ class TestTheStoreIsNotCreatedByLookingAtIt:
         # The reason the belt-and-braces check earns its keep: the driver's own
         # refusal is a bare "unable to open database file", which reads like a
         # permissions fault. This one names the path and the consequence.
-        with pytest.raises(FileNotFoundError, match="meaningless zero"):
-            read_only_engine(tmp_path / "absent.db")
+        #
+        # This assertion used to match "meaningless zero". That phrasing was
+        # withdrawn on 2026-08-23 - an absent path yields an *unmigrated* file
+        # whose first query dies loudly on `no such table`, so the consequence
+        # is a misdiagnosis rather than a silent wrong number. The test's intent
+        # is unchanged and is what is asserted here: the message must name the
+        # path and say what actually goes wrong, which a bare driver error does
+        # not.
+        absent = tmp_path / "absent.db"
+        with pytest.raises(FileNotFoundError, match="wrong path") as caught:
+            read_only_engine(absent)
+        assert str(absent) in str(caught.value), "the message must name the path it refused"
 
 
 class TestTheCommittedAdmissibilityArtifact:
