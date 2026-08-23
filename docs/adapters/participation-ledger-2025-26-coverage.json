@@ -1,0 +1,52 @@
+{
+  "store": {
+    "url": "sqlite:///C:/Users/steverones/hoops-gm-data/hoops_gm.db",
+    "dialect": "sqlite",
+    "local_path": "C:\\Users\\steverones\\hoops-gm-data\\hoops_gm.db",
+    "alembic_revision": "0016"
+  },
+  "seasons": [
+    {
+      "season": "2025-26",
+      "games_total": 1230,
+      "games_final": 1230,
+      "games_observed": 1227,
+      "games_unobserved": 3,
+      "unobserved_dates": [
+        "2025-11-19",
+        "2025-11-19",
+        "2025-11-19"
+      ],
+      "unobserved_dates_suppressed": 0,
+      "rows": 43037,
+      "distinct_players": 596,
+      "box_score_rows": 26651,
+      "outcomes": {
+        "played": 26590,
+        "inactive": 10937,
+        "did_not_play": 4426,
+        "did_not_dress": 1007,
+        "not_with_team": 77
+      },
+      "reasons": {
+        "none_given": 37527,
+        "coaches_decision": 4302,
+        "injury_or_illness": 1099,
+        "suspension": 36,
+        "rest": 29,
+        "not_with_team": 29,
+        "personal": 11,
+        "conditioning": 4
+      },
+      "rows_with_inactive_list": 43037
+    }
+  ],
+  "totals": {
+    "rows": 43037,
+    "distinct_players": 596,
+    "games_final": 1230,
+    "games_observed": 1227,
+    "games_unobserved": 3,
+    "is_populated": true
+  }
+}

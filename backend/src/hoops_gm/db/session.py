@@ -15,9 +15,11 @@ import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, event, func, select
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql import Executable
@@ -93,6 +95,25 @@ def acquire_transaction_lock(
     digest = hashlib.sha256(scope_key.encode("utf-8")).digest()
     advisory_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
     session.execute(select(func.pg_advisory_xact_lock(advisory_key)))
+
+
+def render_store_url(url: URL) -> tuple[str, str | None]:
+    """Describe a connection URL for display: safe text, plus a local path.
+
+    Lives here rather than at the call site because deciding *whether a store
+    is a local file* is dialect knowledge, and ADR-001 confines that to engine
+    construction. The caller receives a dialect-neutral pair and never asks
+    which database it is talking to.
+
+    The password is hidden because this string is written into logs, CI
+    summaries and handoff entries — naming a store must never become a way to
+    leak a credential.
+    """
+    database = url.database
+    local_path: str | None = None
+    if url.get_backend_name() == "sqlite" and database and database != ":memory:":
+        local_path = str(Path(database).resolve())
+    return url.render_as_string(hide_password=True), local_path
 
 
 @dataclass(slots=True)
