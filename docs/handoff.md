@@ -21455,3 +21455,122 @@ an entry loss: `main`'s `docs/handoff.md` ends **without** a trailing newline, s
 any append necessarily rewrites that final line. The removed line is
 `letting it finish.` and it reappears unchanged in the added set. This file is
 all-CRLF (21,358 CRLF, 0 bare LF) and this append preserves both properties.
+
+## 2026-08-23 - `data-engineer` - A tool this repository already called decisive, and three ways a checked number still lies
+
+Docs-and-tooling window after `#92` merged, granted to preserve what existed only
+in a session window. No behaviour change to any adapter, model or artefact: the
+cohort manifest is byte-identical and I did not regenerate it.
+
+**`scripts/manifest_leaf_diff.py` - the repository asserted this tool mattered
+and did not contain it.** `cohort_evidence.py:465` says *"the cohort numbers were
+byte-identical, so a diff of the interesting fields showed nothing wrong. Only a
+whole-leaf diff caught it."* Grepped: that comment was the **only** occurrence of
+the technique anywhere in the tree. The next reader was told the tool was
+decisive and handed nothing. It is fifteen lines and its value is entirely in the
+word *all* - a diff scoped to the fields you expect to move is exactly how the
+`--report-dir` degradation passed, with every cohort number identical while three
+file hashes left a section nobody was watching. Driven against real history, it
+reproduces the two claims I made from its uncommitted ancestor: `1382817` ->
+`61ea916` is **1 added, 0 removed, 9 changed**, all `operator.commands` plus one
+fingerprint.
+
+**Driving it found that my own uncommitted version had the blind spot it exists
+to catch.** The inline one skipped empty containers, so it saw 1656 leaves where
+the committed one sees 1664. The missing 8 are all *negative evidence* -
+`cross_source_reconciliation.disagreements = {}`,
+`...cross_store_nba_games_reconciliation.game_date.disagreements = []` - the
+places where the manifest records that we looked and found no disagreement.
+Deleting one of those keys is reported by the committed tool as a removal, exit
+1, and was reported by my inline version as **no difference at all**. Verified by
+mutating a copy and running both. A section that says "we checked, nothing wrong"
+disappearing is indistinguishable from that section never existing, which is the
+`--report-dir` failure exactly, one level down, inside the tool built to catch
+it. Empty containers are leaves in the committed version for that reason.
+
+**A second defect of the same family, in the same file, found by driving:** the
+refusal paths exited **1** - the same code as "a leaf was removed". An error that
+shares an exit code with a finding is an error that gets read as a finding. Now
+2, matching `test_name_diff.py`: 0 clean, 1 removal, 2 refused-and-compared-
+nothing.
+
+**A missed count prediction has three explanations and this repository documents
+two.** The known ones are an entry dropped and an entry swapped so the total
+survives. The third is that **the baseline is wrong**, and it is not theoretical:
+on this branch's rebase I predicted 1774 tests and got 1776 because HEAD was
+1772, not the 1770 I was carrying. Set against `#90`, which predicted 1738 and
+got 1733 with a *correct* prediction and a broken change, the two are the same
+shape in opposite locations - and **at the moment of the mismatch they are
+indistinguishable**. A lane that trusts its prediction hunts a deletion that
+never happened; a lane that trusts its baseline ships `#90`'s accident. The
+honest response to both is identical and cheap: build a clean detached worktree
+at the base and re-derive rather than reason about which side moved. Note that
+`scripts/test_name_diff.py` answers a **different** question - no test function
+disappeared *by name* - and cannot tell you your base was wrong.
+
+**Drive it even when you agree, because agreement is when driving feels most
+skippable.** On condition 1 I believed the reviewer's mechanism entirely and
+drove it only because I was told to. That is the sole reason
+`enforce_full_tipoff_coverage` was found firing *before* the budget. The verdict
+was right and the mechanism was wrong, and a fix aimed at the stated mechanism
+would have raised the budget, regenerated, passed every gate, and published a
+recipe that still aborted at step 5 - with a correction commit attached claiming
+the opposite.
+
+**How a redundant scratch tool outlives its replacement.** I offered a scratch
+append-only handoff resolver as worth keeping, checked, and withdrew it:
+`scripts/resolve_doc_conflicts.py`'s `resolve_append_only` already does it, and
+refuses on a begin-marker inside an open block, which mine did not. The part
+worth recording is that I used my scratch copy during this branch's rebase with
+the committed one sitting in the tree - not from a comparison, but because it was
+the one my hand went to. Habit, not judgement, and cheaper to notice than to
+police.
+
+**A near miss where my reason and the real reason happened to coincide.** I
+withheld the ADR-007 correction on scheduling and ownership grounds. The
+load-bearing reason, which I did not have at the time, is that regenerating would
+have invalidated the reviewer's from-scratch reproduction of the cohort and
+forced a full re-run. Same answer, weaker reason - which means next time they
+might not point the same way and I would have had no way to notice.
+
+**Correcting my own record on that debt:** I called `adr_007_replication_note` a
+known-false string. It is not. The quantity ADR-007 *names* - "unresolved
+doubtful per date" - genuinely does not replicate. The defect is one layer down
+and statistical: the note's explanation, that a raw-row count would be larger,
+**cannot produce the reversal it is offered to explain**, because a multiplier
+inflates both eras. And the reversal is n=2 against n=2. The correction owed is
+*"the figures replicate; the word `unresolved` is the error; the 2-vs-2
+comparison supports no directional claim"*, and the pinning test's **name** must
+change with it, because names outlive bodies. Still filed, still blocking the
+fit, still not this PR.
+
+**`docs/backlog.md`: the count parenthetical fired for real.** `fa705b5b` (`#85`)
+re-introduced a prose block restating `142 ### headings and 142 markers` - the
+exact unguarded second copy this file's own header warns about, four paragraphs
+above the warning. Nothing catches it: `scripts/backlog_graph.py` checks line 5
+only. Adding one item is what made it false, so I collapsed to the identical
+paragraph that carries no integers rather than updating them to 143, which would
+just re-arm it.
+
+**And I broke the file while adding to it.** My insert replaced the
+`### injury-report-ingest` heading instead of preceding it, silently absorbing a
+`done` item into my `pending` one - `142` items with a duplicate status marker,
+one `done` short. `backlog_graph.py` named it at the line. Recorded because it is
+`#90`'s accident in miniature: a heading-level edit that deletes a neighbour and
+leaves a file that still parses.
+
+**Could not verify:** I did **not** fix the `plan` budget defect, only filed it -
+a behaviour change to a shared CLI is a unit, and I was explicitly told not to
+smuggle it into a docs window. So `injury-report-plan-budget-inert` is a driven
+observation, not a closed loop. I have **not** established whether `plan` should
+report the budget or the recipe should stop emitting the flag; I argued the first
+is better and did not test that opinion against an operator. `manifest_leaf_diff.py`
+has **no test of its own** - `scripts/` is outside the pytest, ruff and mypy
+scopes, which all run with `working-directory: backend`, so nothing in CI
+executes or lints it, exactly as for its five siblings; my evidence is the driven
+runs recorded above and it will rot silently like the rest of `scripts/`. I
+verified it against the cohort manifest and mutations of it only - not against
+any other committed JSON, and not against a document whose keys contain `.` or
+`[`, where its path syntax is ambiguous by construction. I did not re-examine
+whether the other two near-duplicate header parentheticals in `docs/backlog.md`
+should also collapse; I touched only the one my own edit falsified.
