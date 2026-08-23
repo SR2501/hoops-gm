@@ -20051,3 +20051,168 @@ because what goes unchecked is not the hazard but its applicability.**
 has the same defect. I drove this one and re-read the docstring it came from; I
 did not re-audit every mechanism sentence I wrote today against an experiment.
 **Reasoned**, and the honest expectation is that at least one more is soft.
+
+
+---
+
+## 2026-08-23 — `frontend` — a delete that did not delete, and a cheaper positive control
+
+**Changed:** this entry only. No code.
+
+Asked what happened only in the chat, I found one trap I hit and never recorded,
+one technique I used without naming, and one view I owe on governance. The first
+is the one that matters, because **my probe measurements survived it by luck.**
+
+### A `Remove-Item` that silently did not delete, and a reseed that silently appended
+
+Reproduced just now rather than recalled, backend running on 8012 holding the
+file:
+
+```
+file exists before delete:  True
+Remove-Item rc=False / LASTEXITCODE=0
+file exists AFTER 'delete': True
+
+reseed ->  "auction_draft_id": 3,  "snake_draft_id": 4
+draft 1 => [demo] Auction mock, 12-team $200, last_sequence=15
+draft 3 => [demo] Auction mock, 12-team $200, last_sequence=15
+```
+
+Three failures compose, and none of them is visible on its own:
+
+1. **Windows will not unlink a SQLite file a running `uvicorn` holds open.**
+   `-ErrorAction SilentlyContinue` then eats the error, which is exactly what
+   the flag is for and exactly what makes it dangerous here.
+2. **`$LASTEXITCODE` reads 0.** It only tracks *native* commands, and
+   `Remove-Item` is a cmdlet — so it reports the exit code of whatever ran
+   before. `$?` is `False` and is the thing to read. **This is the truncation
+   trap's twin**: there, a pipeline swallowed a real exit code; here, a variable
+   that looks like the exit code was never about this command at all. Both are
+   *reading an exit code that is not a claim about the thing you care about*.
+3. **The seed then appends rather than refusing.** Its refusal keys on
+   `DEMO_PREFIX` to protect a real recorded mock; a *second demo seed into the
+   same database* is not that case, so it writes happily and every id shifts.
+
+The result is two auction drafts that are **indistinguishable by name and by
+`last_sequence`**, at `/draft/1` and `/draft/3`. I hit this during the recording-
+panel unit, adapted to the new ids, and never wrote it down.
+
+**My measurements survived by luck, and the luck is worth naming.** Both drafts
+had identical shape, so a before/after geometry comparison across them would
+have agreed anyway. Had I recorded probe events into one and measured the other
+— which is one typo away — I would have compared two different drafts and the
+numbers would have looked perfectly reasonable. **A stale-fixture error in a
+browser probe does not announce itself; it produces a plausible reading of the
+wrong object.**
+
+The cheap check, since deleting the file is the part that fails: **assert the
+ids the seed returns, and assert they are the ids you are about to probe.** The
+seed prints them. Nothing was reading them.
+
+### The positive control I actually used was cheaper than the one I described
+
+`browser_probe.mjs --differs-from` is the **two-run** control: measure, change
+the code, measure again, refuse if the readings match. It works, and it cost me
+a stylesheet — reverting to `HEAD` to take a before-measurement destroyed
+uncommitted work in the file I was not thinking about.
+
+There is a **one-run** version, which I used without naming and which is not
+written anywhere. In a single probe of the recording panel:
+
+```
+firstFieldTop:  538 -> 538 -> 538     (guide open, shut, open)
+panelHeight:    759 -> 555            (after the guide recedes)
+```
+
+The first is the claim — expanding the disclosure cannot displace a field. **On
+its own it is worthless**, because a dead probe, a wrong selector, or a page
+that never rendered all report a constant too. The second quantity is what makes
+it evidence: **the probe demonstrably moves when the DOM moves, in the same
+reading, so the constancy is a property of the page rather than of the probe.**
+
+Stated generally: **carry an invariant and a mover in the same payload.** The
+invariant is what you are asserting; the mover is the control. A probe that
+returns only invariants cannot distinguish "nothing changed" from "I am blind",
+and that is precisely the failure that read zero on both broken and fixed code
+earlier in this project.
+
+This is the mirror of *constancy where variation is expected*, and it is cheaper
+than the two-run control in the way that matters: **no second checkout, no
+revert, nothing to lose.** Where a two-run control is available it is stronger,
+because it varies the code rather than the state. Where it is not — or where
+reverting would cost something — one probe carrying both is available and almost
+free.
+
+### On whether anything cheaper than a second reader catches an overstatement
+
+Asked directly, and I think the disclaimer in `gates.md` is **too comfortable in
+one specific way**: it treats the class as undetectable, when the four dated
+instances share a mechanical signature.
+
+Every one of them **upgraded a scoped, dated, counted observation into an
+unscoped present-tense property**:
+
+- *"two `create_engine` hits, both in `db/session.py`, at `74c8ba4`"* → *"the
+  package now has 13 ways in"*
+- *"the smoke test passes against committed fixtures"* → *"passes on a real
+  export"*
+- *"zero `sqlite3.connect`, checked at `74c8ba4`"* → *"zero `sqlite3.connect` in
+  `backend/src`"*
+
+**The tell is not the strength of the claim. It is the disappearance of the
+scope.** And the strength is unbounded to scan for — the `aav-source` lane
+established that, correctly — while the *absence of a commit, a count or a file*
+in a sentence sitting beside one that has all three is a far narrower thing.
+
+I am not proposing that as a gate, because I have not built it and a scanner for
+prose is the thing this repository has already found unmaintainable. I am
+proposing the writing rule it implies, which needs no tooling at all:
+
+> **Never write a conclusion in a sentence that does not carry its own scope.**
+> Not *"the package has 13 ways in"* but *"at `74c8ba4`, 13"*.
+
+What that buys is not catching the overstatement. It is that a scoped claim
+**decays visibly**: the next reader checks the commit and disagrees in seconds,
+without anyone having needed to notice the overstatement when it was written.
+It converts an undetectable error into an expiring one, which is the class this
+project already knows how to handle.
+
+**And the sharp part: this is already the house rule for one field and not for
+prose.** `Could not verify` requires *driven* or *reasoned* against every claim,
+and that discipline is why those fields have held up. **All four overstatements
+were in paragraphs.** So the remedy is not missing — it is applied in exactly
+one place and the defect keeps landing everywhere else.
+
+That is a smaller and more actionable claim than *"there is a defect class we
+have decided not to look for"*, and I think it is the honest one. The class we
+have decided not to look for is real; but a measurable share of it is a
+formatting discipline we already have, not applied to the sentences where the
+errors land.
+
+**Could not verify:**
+
+- **That the scope-in-the-sentence rule would have caught any of the four.** It
+  would have made each *falsifiable in seconds by the next reader*, which is a
+  different and weaker claim than prevention, and it is the one I can defend. I
+  have not tried rewriting the four to see whether their authors would plausibly
+  have written the scoped form. **Reasoned.**
+- **That the seed's append-on-reseed is a defect rather than a design choice.**
+  Its refusal is written to protect a *real* recorded mock and does that
+  correctly. Whether a second demo seed should be refused belongs to whoever
+  owns `dev/seed_draft.py`, not to me. **Driven** on the behaviour, **opinion**
+  on whether it is wrong.
+- **That `$?` is reliable where `$LASTEXITCODE` is not, in general.** Driven for
+  this cmdlet in this shell. I have not checked the interaction with
+  `$ErrorActionPreference` or with cmdlets that write non-terminating errors
+  from inside a pipeline. **Driven narrowly, reasoned broadly.**
+- **That my recording-panel measurements were not affected.** Both drafts had
+  identical shape, and the before/after pairs were each taken against the same
+  URL, so the comparisons hold. **That is an argument, not a re-measurement**;
+  the branch is merged and I did not re-drive the geometry after finding this.
+  **Reasoned.**
+
+**Next:** anyone probing a screen against a seeded database should read the ids
+the seeder prints and assert them, rather than assuming a delete succeeded. And
+anyone writing a probe should put a quantity they expect to *move* beside the
+quantity they expect to *hold* — one reading, no revert, and a blind probe
+becomes visible.
