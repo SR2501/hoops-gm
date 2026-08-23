@@ -78,6 +78,31 @@ EASTERN: Final = ZoneInfo("America/New_York")
 #: module-private) because ``injury_report.backfill`` needs the same
 #: boundary to choose its candidate-generation strategy — see
 #: :func:`is_fifteen_minute_era`.
+#:
+#: The boundary is **midnight Eastern**, which leaves one window where an
+#: off-by-one would be invisible in aggregate: reports filed *on* 2025-12-22
+#: between midnight and that day's first tip-off. Previously reasoned, not
+#: verified. **Settled 2026-08-24 against all 582 cached reports**, and the
+#: window turns out to be not merely non-empty but to contain *every* report
+#: filed that day — all four, at 16:30 / 17:30 / 18:15 / 18:45 Eastern against
+#: a 19:00 Eastern first tip-off. Two independent signatures both classify
+#: them as new-era, neither of which consults this constant:
+#:
+#: 1. **Minute-of-hour.** Across the 121 legacy-era timestamps the minute is
+#:    only ever ``:30`` (116) or ``:45`` (5) — ``:15`` and ``:00`` occur zero
+#:    times. The boundary date's 18:15 report carries a ``:15``, a minute the
+#:    legacy era never once produced.
+#: 2. **Lead-time cadence.** Those four sit at 150 / 90 / 45 / 15 minutes
+#:    before first tip — the new era's converging pre-tip ladder. The legacy
+#:    day before ran 18:45 and 22:45 Eastern against a 15:30 first tip, i.e.
+#:    *after* it, which is a different regime entirely.
+#:
+#: Grouping that evidence by Eastern date rather than UTC date matters and was
+#: checked both ways: 7 timestamps in the corpus have a UTC date one day ahead
+#: of their Eastern date (late reports at ``00:15``/``00:45`` UTC). None fall
+#: near this boundary, so the classification is unaffected — but anything that
+#: buckets reports *by day* should read that as a live hazard rather than a
+#: near miss.
 FIFTEEN_MINUTE_ERA_START: Final = datetime(2025, 12, 22, 0, 0, tzinfo=EASTERN)
 _STRF_LEGACY: Final = "%I%p"
 _STRF_NEW: Final = "%I_%M%p"

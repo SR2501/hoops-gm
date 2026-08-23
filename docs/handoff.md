@@ -21120,3 +21120,68 @@ checked my own branch only. A grep for the report's heading would answer it, but
 that heading is also legitimate prose in several handoff entries, so a naive
 search would return false positives and I did not want to publish a number I had
 not separated by hand.
+
+
+## 2026-08-24 - data-engineer - the era boundary, settled: the ambiguous window contains every report filed that day
+
+**Changed.** One comment in `ingest/injury_report/client.py`, at
+`FIFTEEN_MINUTE_ERA_START`. No behaviour change.
+
+**The inherited caveat.** The cohort-admissibility lane recorded, marked
+*reasoned* rather than *verified*: whether era classification is correct for
+reports filed **on** the boundary date, between midnight and the first tip-off.
+The boundary is `datetime(2025, 12, 22, 0, 0, tzinfo=EASTERN)` - midnight
+Eastern - so that window is the one place an off-by-one is invisible in
+aggregate. The architect flagged it as cheap to settle. It was, and the answer is
+sharper than "no instances".
+
+**The window is not merely non-empty - it holds *every* report filed that day.**
+All four: **16:30, 17:30, 18:15, 18:45 Eastern**, against a **19:00 Eastern**
+first tip-off. So this is not a boundary case that happened not to arise; it is a
+boundary case that applies to 100% of the boundary date, and it was
+unverified.
+
+**Both are classified correctly, by two signatures that never consult the
+constant.**
+
+**(1) Minute-of-hour is era-exclusive.** Across the **121** legacy-era
+timestamps the minute is only ever `:30` (116) or `:45` (5). `:15` and `:00`
+occur **zero times**. The boundary date's 18:15 report carries a `:15` - a
+minute the legacy format never once produced in 121 observations. The 457
+timestamps after the boundary use `{:00 28, :15 103, :30 223, :45 103}`.
+
+**(2) Lead-time cadence is a different regime.** The four boundary-date reports
+sit at **150 / 90 / 45 / 15 minutes before first tip** - the new era's
+converging pre-tip ladder. The legacy day before ran 18:45 and 22:45 Eastern
+against a **15:30** first tip, i.e. *after* it. These are not two settings of one
+schedule; they are different publication behaviours, and the changeover lands
+exactly on the committed constant.
+
+**A trap I set for myself and caught.** My first pass grouped the signature by
+**UTC date**. The era is an NBA-operational concept and therefore Eastern, and
+this corpus contains **7 timestamps whose UTC date is one day ahead of their
+Eastern date** - late reports at `00:15`/`00:45` UTC, e.g.
+`2025-12-31 00:15Z` = `2025-12-30 19:15 ET`. I re-ran grouped by Eastern; the
+signature is identical and the conclusion holds, because none of the 7 fall near
+this boundary. **That is luck, not design.** Anything that buckets injury reports
+*by day* should treat those 7 as a live hazard: it is the same shape as the
+`gameEt` defect in AGENTS.md - a correct instant assigned to the wrong day by a
+grouping that assumed a timezone.
+
+**Consistency with the masthead check two entries up.** That measured
+filename-to-masthead offsets and found legacy `{+30: 116, +45: 5}`. This reads
+the stored minute-of-hour and finds legacy `{:30: 116, :45: 5}`. Same split, two
+derivation paths - offsets from the filename, minutes from the persisted
+instant - which is what makes it a cross-check rather than a restatement.
+
+**Gates.** Comment-only. ruff / ruff format / mypy clean; suites green. Zero
+external requests.
+
+**Could not verify.** Whether a report exists for 2025-12-22 that was never
+fetched and would sit *earlier* in that day - the raw index records only HTTP
+200s, so "every report filed that day" means every report I **have** for it. Four
+is consistent with the new era's per-day cadence, so I do not think one is
+missing, but consistency is not proof and I did not probe the CDN to find out.
+Also unverified: whether the `:15`-exclusivity holds before 2025-10-20, the
+earliest capture in the corpus - the legacy era certainly starts earlier than my
+evidence does.
