@@ -21357,3 +21357,101 @@ where `data/raw` is empty, and made ~255 live requests before I stopped it - the
 cwd-relative raw-root trap, caught and cleaned, but it means I confirmed the
 corrected recipe clears both guards by watching it start fetching rather than by
 letting it finish.
+
+## 2026-08-23 - `architect` - Two documents that existed only in a session panel, and the day's arbitration
+
+Coordination unit. Seventeen PRs merged (#76-#92), `main` at `1912a3d`. This
+entry records only what is mine: two `Proposed` documents now in the repository
+rather than in a chat window, and the rulings behind them.
+
+### ADR-017 - the critical path ran through an externally blocked item
+
+Traced on `ade4fa9`, not estimated. `blind-mocks` is the backlog's only
+**blocked** item and it is blocked **externally** - no site offers live auction
+mocks (owner, 2026-08-17). It is also upstream of the entire auction chain:
+`blind-mocks` -> `aav-empirical` -> `aav-blending` -> `auction-values` ->
+`auction-inflation` and `auction-budget-manager` -> `auction-nomination` ->
+`overlay-auction-panel`.
+
+**The screen the owner uses on draft day sat behind a door that cannot open**,
+and nothing in the milestone table showed it because every edge looks locally
+reasonable.
+
+My first framing was that we should ship on seed AAV instead of empirical. That
+was wrong and I corrected it before proposing: `auction-values` describes its own
+work as converting risk-adjusted G-score to dollars via value over replacement
+scaled to the budget pool. **It does not consume AAV at all.** AAV is a
+cross-check. So dropping `aav-blending` is not a reduced v1 - it restores the
+item to what its own description says it does.
+
+### Preregistration v3 - authored by `quant`, and `quant` refused to bind it
+
+Filed as `Proposed`, owner decision. Two gaps, both found by arithmetic on
+published denominators during the independent review of #92.
+
+**Gap B is the one that matters.** Section 8 conditions 2 and 3 are close to
+unfailable: held-out informative rows (`questionable`/`probable`/`doubtful`) are
+510 of 3,940 = 12.94%, so a model exactly right on the 87% of near-deterministic
+rows and wrong by delta on *every* informative row produces a calibration-in-the-
+large error of 0.1294*delta. **Breaching 0.10 requires delta > 0.773** - wrong by
+77 percentage points on every uncertain player. And that error is a signed mean,
+so errors across statuses cancel. Condition 2's Brier beat is delivered almost
+entirely by separating `out` from the pool, which is the trivial part.
+
+**So the activation gate can be cleared by a model whose pooled reliability
+diagram is beautiful and whose `questionable` cell is garbage** - precisely the
+failure the Model gate exists to prevent, in the project whose house rule is that
+calibration beats accuracy. It had been sitting there since the protocol froze.
+
+`quant` then refused to bind its own proposal: *"I am the agent who will be
+graded by this gate, proposing changes to it."* That is the `bridge`/`safety`
+separation applied without being asked, and it is the right call.
+
+### Rulings I made, and the three I got wrong
+
+- **Declared-purpose creators are a distinct census category.** `merge_stores.py`
+  opens a plain `sqlite3.connect` on its output path because writing the store
+  *is* the job; a `mode=ro` writer is a contradiction. Refusing it would make the
+  import rule mistake its own hazard. Allowlist entry granted, reason recorded.
+- **Wrong, corrected by the probe-traps lane:** I wrote that `fa705b5` gave the
+  package "13 ways in". `cohort_admissibility.py:367` builds `file:...?mode=ro`,
+  so that site is **unclassified, not unguarded** - a latent hole, not an
+  exposure. The distinction decides what the follow-up unit hunts for.
+- **Wrong, corrected by `quant`:** I called the `adr_007_replication_note` a
+  known-false string. It is not. The note claims the quantity ADR-007 *names*
+  does not replicate, which is true. The defect is one layer down: its
+  explanation - that a raw-row count would be larger - **cannot produce the
+  reversal it is offered to explain**, because a multiplier inflates both eras.
+  And the reversal rests on n=2 versus n=2. A plausible wrong explanation is more
+  durable than a visible mistake, because it stops the search.
+- **Wrong, and it cost a lane work:** I told every lane to run
+  `git diff --numstat origin/main -- docs/handoff.md` and confirm zero removed,
+  without qualifying it. Run *before* rebasing it compares against an advanced
+  main and manufactures a phantom alarm - one lane saw 302 removed lines, every
+  one imaginary. It is only meaningful **after** rebasing or against the
+  merge-base. An alarm that cries wolf on a check I instructed people to trust is
+  worse than no check.
+
+### What I could not verify
+
+- **That ADR-017's dependency trace is complete.** I followed `depends-on` edges
+  from `blind-mocks` forward through the backlog. An implicit dependency not
+  recorded as an edge is invisible to that method - the same
+  domain-narrower-than-hazard shape this repository found four times today.
+  *Reasoned.*
+- **That the withheld outcome marginal cannot be recovered by another route.** I
+  matched field *names* against outcome-ish patterns and cleared it; `quant` then
+  did the semantic version and cleared it properly. My own check would not have
+  caught a field encoding an outcome under an unrelated name. *Driven, but by a
+  method I now distrust.*
+- **An uncommitted `docs/handoff.md` edit was permanently lost** when a worktree
+  was archived this morning. Checked: not in the shared stash, and no dangling
+  blob near the right size - the file is 1,250,646 bytes at that tip and an
+  append would be larger. It was never staged, so it never became an object.
+  Unrecoverable, and the only thing genuinely lost today. *Driven.*
+
+**Note on this entry's own numstat.** It will report **1 removed**. That is not
+an entry loss: `main`'s `docs/handoff.md` ends **without** a trailing newline, so
+any append necessarily rewrites that final line. The removed line is
+`letting it finish.` and it reappears unchanged in the added set. This file is
+all-CRLF (21,358 CRLF, 0 bare LF) and this append preserves both properties.
