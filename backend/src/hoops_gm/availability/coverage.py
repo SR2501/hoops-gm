@@ -41,7 +41,8 @@ from datetime import date
 from typing import Any
 
 from sqlalchemy import Column, MetaData, String, Table, func, inspect, select
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.availability import PlayerParticipation
@@ -434,7 +435,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     import argparse
 
     from hoops_gm.core.config import get_settings
-    from hoops_gm.db.session import Database, missing_local_store
+    from hoops_gm.db.session import Database, absent_store_refusal
 
     parser = argparse.ArgumentParser(
         description=(
@@ -449,19 +450,14 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
 
     settings = get_settings()
 
-    # Refuse before connecting. SQLite would otherwise create the file and then
-    # honestly report it as empty, which manufactures exactly the kind of
-    # confident, reproducible, meaningless zero this tool exists to prevent.
-    absent = missing_local_store(settings.database_url)
-    if absent is not None:
-        print(
-            f"ERROR: no database file at {absent}\n"
-            f"  Refusing to create one: this is a read-only report, and an empty "
-            f"store invented here would answer 'is the ledger populated' with a "
-            f"reproducible and meaningless no.\n"
-            f"  Check DATABASE_URL, or run `alembic upgrade head` to build it "
-            f"deliberately."
-        )
+    # Refuse before connecting. Not because an invented store would report a
+    # false zero — driven 2026-08-23, an absent path yields an *unmigrated*
+    # file that fails loudly on the first query — but because the resulting
+    # error blames the schema when the fault is the path, and because a report
+    # should not litter the filesystem with the subject it was asked about.
+    refusal = absent_store_refusal(settings.database_url)
+    if refusal is not None:
+        print(refusal)
         return 2
 
     database = Database.from_settings(settings)
@@ -471,12 +467,22 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - operat
     except LedgerSchemaMissing as exc:
         print(f"ERROR: {exc}")
         return 2
+    except SQLAlchemyError as exc:
+        # Unreachable is *not* empty, and without this they were the same
+        # signal: an uncaught exception exits 1, which is this tool's
+        # documented code for "reachable but empty". Driven against a
+        # nonexistent Postgres database, which refuses rather than creating
+        # one — so a server-backed store cannot invent a false zero, but it
+        # could still report one through the exit code.
+        safe_url, _ = render_store_url(make_url(settings.database_url))
+        print(f"ERROR: could not read {safe_url}: {exc}")
+        return 2
     finally:
         database.dispose()
 
     print(json.dumps(coverage.to_dict(), indent=2) if args.json else coverage.render())
-    # Exit 1 on an empty ledger: this tool is run to answer "is it populated",
-    # and a caller that only checks the exit code should not read empty as yes.
+    # Exit 1 means the store was read and holds nothing — never that it could
+    # not be read. See the SQLAlchemyError branch above.
     return 0 if coverage.is_populated else 1
 
 

@@ -54,15 +54,39 @@ frozen record, and there is no public path to one without the other. Passwords
 are hidden in the rendered URL, so its output is safe to paste into a handoff
 entry or a CI summary.
 
-Exit codes: `0` populated, `1` reachable but empty, `2` unusable — either no
-participation schema in that store, or **no database file at that path at all**.
+Exit codes: `0` populated, `1` **read successfully and holds nothing**, `2`
+unusable — no database file at that path, no participation schema in it, or it
+could not be read at all.
 
-That second case is a refusal, not a failure. SQLite *creates* a database on
-connect rather than refusing, so a mistyped `DATABASE_URL` would otherwise
-produce a brand-new empty file and then report it, honestly and reproducibly, as
-holding zero rows. **A read-only report that manufactures its own subject is how
-you get a fresh false zero from the very check meant to settle one**, so this
-tool checks for the file before it builds an engine and declines to create it.
+The `1` / `2` split matters more than it looks. An uncaught database error exits
+`1` in Python, which would make "the store is empty" and "the store is
+unreachable" the same signal to any caller checking only the status. Driven
+against a nonexistent PostgreSQL database: the server refuses rather than
+creating one, so a server-backed store cannot invent a false zero — but it could
+still *report* one through the exit code, and now does not.
+
+The absent-file case is a refusal, not a failure — but **not for the reason it
+is tempting to give**, and the difference is worth stating because the tempting
+version was published here and had to be withdrawn.
+
+SQLite *creates* a database on connect rather than refusing. Driven 2026-08-23:
+pointed at a mistyped path, a reporting command makes an *unmigrated* file and
+then dies on `no such table`. That is litter plus a misdiagnosis — the error
+blames the schema when the fault is the path — but it is **loud**, and nobody
+reads a traceback as a result. So create-on-connect does **not** manufacture a
+false zero, and an earlier version of this page said it did.
+
+**The real false-zero vector is a store that is migrated and empty**, which is
+what `alembic upgrade head` produces in a fresh worktree and what the main
+checkout's `hoops_gm.db` was at schema `0003`: it answers every query honestly,
+reports zero, and exits successfully. Nothing about opening the file catches
+that. **What catches it is naming the store beside the count**, which is why
+`LedgerCoverage` cannot emit one without the other.
+
+The refusal therefore earns its place on the narrower ground of an accurate
+message and no stray databases. The inventory of which commands refuse, which
+may create, and which are knowingly unguarded is pinned in
+`backend/tests/test_store_creating_readers.py`.
 
 Add `--json` for the machine-readable form. The committed census at
 [`participation-ledger-2025-26-coverage.json`](participation-ledger-2025-26-coverage.json)

@@ -137,6 +137,41 @@ def missing_local_store(url: URL | str) -> str | None:
     return None
 
 
+def absent_store_refusal(url: URL | str) -> str | None:
+    """A ready-to-print refusal when the configured store is an absent local file.
+
+    Returns ``None`` when there is nothing to refuse, so a caller reads as
+    ``if (refusal := absent_store_refusal(...)) is not None: print(refusal)``.
+
+    **What this does and does not buy**, since the tempting claim is wrong and
+    was made in an earlier handoff entry before being driven. Without it, an
+    absent path yields a new *unmigrated* file and the next query dies on
+    ``no such table``: that is loud, so it is not a silent wrong number. What it
+    is, is **litter plus a misdiagnosis** — the error blames the schema when the
+    fault is the path. This turns that into an accurate message naming the file.
+
+    It does **not** close the false-zero hole. A store that is *migrated and
+    empty* answers everything honestly with zero and exits successfully, and
+    that is what actually produced the 2026-08-22 contradiction. The remedy for
+    that one is reporting the store alongside the count, not refusing to open
+    it.
+
+    Commands that *write* deliberately do not use this: creating the database
+    is correct for them.
+    """
+    absent = missing_local_store(url)
+    if absent is None:
+        return None
+    return (
+        f"ERROR: no database file at {absent}\n"
+        f"  Refusing to create one: this command only reports on data that is "
+        f"already there, and an empty store invented here would answer with a "
+        f"reproducible and meaningless zero.\n"
+        f"  Check DATABASE_URL, or run `alembic upgrade head` to build it "
+        f"deliberately."
+    )
+
+
 @dataclass(slots=True)
 class Database:
     """Engine plus session factory for one configured database."""
