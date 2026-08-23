@@ -76,6 +76,7 @@ from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database, absent_store_refusal
 from hoops_gm.ingest.injury_report.backfill import (
     DEFAULT_RAW_ROOT,
+    NEAR_TIP_OFFSETS,
     BackfillGame,
     CanonicalPregameObservation,
     CoverageReport,
@@ -987,7 +988,14 @@ def build_cohort_evidence(
         ],
         "operational_artifacts": _operational_artifacts(report_dir),
         "operator": {
-            "commands": operator_commands(season=season, start=start, end=end, out_name=out_name),
+            "commands": operator_commands(
+                season=season,
+                start=start,
+                end=end,
+                out_name=out_name,
+                game_dates=len({game.game_date for game in in_scope}),
+                games_missing_tipoff=len(missing_tipoff),
+            ),
             "manifest_is_a_pure_function_of_persisted_state": True,
             "source_fingerprint_method": (
                 "SHA-256 of each file's bytes with CRLF normalised to LF, which equals the "
@@ -1424,7 +1432,15 @@ def _selection_basis(start: date, end: date) -> str:
     )
 
 
-def operator_commands(*, season: str, start: date, end: date, out_name: str) -> list[str]:
+def operator_commands(
+    *,
+    season: str,
+    start: date,
+    end: date,
+    out_name: str,
+    game_dates: int,
+    games_missing_tipoff: int,
+) -> list[str]:
     """The exact recipe that reproduces *this* manifest.
 
     Derived from the arguments rather than hardcoded. The previous version
@@ -1457,20 +1473,69 @@ def operator_commands(*, season: str, start: date, end: date, out_name: str) -> 
       manifest records that it *could not evidence* its store assembly. So the
       recipe as previously published reproduced a strictly weaker manifest than
       the one carrying it, and nothing said so.
+
+    Two further corrections, raised by the independent quant review and then
+    **driven** rather than reasoned, because the reviewer's reading named the
+    right verdict via the wrong mechanism and an under-counted number. Both are
+    the same defect as the date literals above: a value inherited from the
+    four-week window, correct there, silently wrong here.
+
+    * ``--max-requests`` is derived, not hardcoded at 120. It is a **hard
+      abort**, not a truncation: :func:`enforce_request_budget` raises
+      ``BackfillBudgetExceeded`` before any network call. Driven on this window
+      the plan is **640 candidates**, so the published recipe aborted at step 5
+      with zero progress for anyone whose cache was cold — which is every
+      reader, since the cache is gitignored operational state. It reproduced
+      only for the author, who is the one person who does not need it. The
+      bound is now ``game_dates * (1 + len(NEAR_TIP_OFFSETS))``, computed from
+      the same constant that generates the candidates, so it cannot drift away
+      from what the planner actually enumerates.
+    * ``--allow-missing-tipoff`` is stated. This one the review did not find,
+      and it fires *first*: three games in this window have no ingested tip-off
+      instant, the default allowance is ``0``, and step 5 exits 1 on the
+      coverage guard before the budget is ever consulted. The three are the
+      same games the manifest already enumerates as
+      ``games_without_both_instants``, so admitting them here is a disclosure
+      the artefact already makes, not a new concession.
+
+    Each command names the store it acts on, because the topology is
+    load-bearing and was previously implicit. Steps 1-3 build the participation
+    ledger, steps 4-6 sweep injury reports into a **separate** store, and step 7
+    merges them. Followed without the store names, every step lands in one
+    database, ``--participation-db`` and ``--report-db`` resolve to the same
+    file, and ``surrogate_identity_agreement`` and
+    ``cross_store_nba_games_reconciliation`` become self-comparisons reporting
+    ``agreed: true`` — the same vacuous-agreement failure as the tip-off check
+    above, relocated to the merge step and equally invisible in the output.
     """
     window = f"--start {start.isoformat()} --end {end.isoformat()}"
+    ledger = "<participation ledger>"
+    sweep = "<injury report sweep>"
     merged = "<merged store>"
+    # Derived from the planner's own constant rather than a literal: one
+    # evening_before candidate per game date, plus at most one per near-tip
+    # offset. An upper bound, since same-grid offsets collapse -- but a bound
+    # that moves with the window instead of being inherited from a smaller one.
+    max_requests = game_dates * (1 + len(NEAR_TIP_OFFSETS))
     return [
-        "python -m alembic upgrade head",
+        # Both stores need the schema; they are separate databases.
+        f"DATABASE_URL=sqlite+pysqlite:///{ledger} python -m alembic upgrade head",
+        f"DATABASE_URL=sqlite+pysqlite:///{sweep} python -m alembic upgrade head",
+        f"DATABASE_URL=sqlite+pysqlite:///{ledger} "
         f"python -m hoops_gm.ingest.backfill nba-identity --season {season}",
+        f"DATABASE_URL=sqlite+pysqlite:///{ledger} "
         f"python -m hoops_gm.ingest.backfill season {season} --with-participation {window}",
+        f"DATABASE_URL=sqlite+pysqlite:///{sweep} "
         f"python -m hoops_gm.ingest.injury_report.backfill plan {season} "
-        f"{window} --max-requests 120",
+        f"{window} --max-requests {max_requests}",
+        f"DATABASE_URL=sqlite+pysqlite:///{sweep} "
         f"python -m hoops_gm.ingest.injury_report.backfill run {season} "
-        f"{window} --max-requests 120",
+        f"{window} --max-requests {max_requests} "
+        f"--allow-missing-tipoff {games_missing_tipoff}",
+        f"DATABASE_URL=sqlite+pysqlite:///{sweep} "
         f"python -m hoops_gm.ingest.injury_report.backfill observations {season} {window}",
         "python -m hoops_gm.ingest.injury_report.merge_stores "
-        f"--participation-db <participation ledger> --report-db <injury report sweep> "
+        f"--participation-db {ledger} --report-db {sweep} "
         f"--out {merged}",
         # The final step reads DATABASE_URL, so the recipe has to name it: the
         # merged store is the only one holding both halves. Note the variable is

@@ -1051,6 +1051,8 @@ class TestTheRecipeNamesEveryArgumentThatChangesTheManifest:
             start=date(2025, 10, 21),
             end=date(2026, 4, 12),
             out_name="whatever.json",
+            game_dates=164,
+            games_missing_tipoff=3,
         )
 
     @staticmethod
@@ -1101,6 +1103,111 @@ class TestTheRecipeNamesEveryArgumentThatChangesTheManifest:
         written = re.search(r"--out (\S+|<[^>]+>)", merge)
         assert written is not None
         assert written.group(1) in self._final(commands)
+
+    #: Driven, not reasoned: ``backfill plan 2025-26 --start 2025-10-21
+    #: --end 2026-04-12 --no-cache`` reports ``candidates=640 to_fetch=640``.
+    #: ``--no-cache`` makes the planner count every candidate regardless of
+    #: local cache state, which is exactly the cold-cache number a reader
+    #: following this recipe faces.
+    DRIVEN_COLD_CACHE_CANDIDATES = 640
+
+    def test_the_request_budget_admits_the_whole_window(self) -> None:
+        """FAILS IF: the recipe publishes a budget that aborts on a cold cache.
+
+        ``enforce_request_budget`` **raises** ``BackfillBudgetExceeded``; it does
+        not truncate, and it fires before any network call. The previous recipe
+        carried ``--max-requests 120`` inherited from the four-week window, where
+        91 candidates fit. Over this window there are 640, so step 5 aborted with
+        zero progress for every reader whose cache was cold -- which is every
+        reader, the cache being gitignored. It reproduced only for the author.
+        """
+        run = next(c for c in self._recipe() if "backfill run" in c)
+        budget = re.search(r"--max-requests (\d+)", run)
+        assert budget is not None, "the run step must state a request budget"
+        assert int(budget.group(1)) >= self.DRIVEN_COLD_CACHE_CANDIDATES, (
+            f"--max-requests={budget.group(1)} is below the {self.DRIVEN_COLD_CACHE_CANDIDATES} "
+            "candidates this window actually plans, so the published recipe aborts at "
+            "step 5 on any cold cache"
+        )
+
+    def test_the_request_budget_moves_with_the_window(self) -> None:
+        """FAILS IF: the budget is hardcoded again.
+
+        The date literals were fixed by derivation and the budget was left
+        behind, one line away. A recipe whose budget does not move with its
+        window is a literal waiting to be inherited by the next regeneration.
+        """
+        wider = operator_commands(
+            season="2025-26",
+            start=date(2025, 10, 21),
+            end=date(2026, 4, 12),
+            out_name="whatever.json",
+            game_dates=328,
+            games_missing_tipoff=3,
+        )
+        narrow = re.search(r"--max-requests (\d+)", next(c for c in self._recipe() if " run " in c))
+        doubled = re.search(r"--max-requests (\d+)", next(c for c in wider if " run " in c))
+        assert narrow is not None and doubled is not None
+        assert int(doubled.group(1)) == 2 * int(narrow.group(1)), (
+            "doubling the game dates must double the budget; a budget that does not "
+            "track the window is a hardcoded literal wearing a derived spelling"
+        )
+
+    def test_the_recipe_admits_the_games_that_have_no_tipoff(self) -> None:
+        """FAILS IF: the recipe omits ``--allow-missing-tipoff``.
+
+        This guard fires *before* the budget. Three games in this window have no
+        ingested tip-off instant and the default allowance is 0, so step 5 exits
+        1 on coverage before the budget is ever consulted. The three are the same
+        games the manifest already enumerates as ``games_without_both_instants``,
+        so stating them here discloses nothing new -- it just stops the recipe
+        aborting on a fact the artefact already publishes.
+        """
+        run = next(c for c in self._recipe() if "backfill run" in c)
+        allowance = re.search(r"--allow-missing-tipoff (\d+)", run)
+        assert allowance is not None, (
+            "the run step must state its tip-off allowance; the default is 0 and this "
+            "window has 3 games without one, so the recipe aborts before it fetches"
+        )
+        assert int(allowance.group(1)) == 3
+
+    def test_every_step_before_the_merge_names_the_store_it_writes(self) -> None:
+        """FAILS IF: the recipe lets the two source stores collapse into one.
+
+        The ``DATABASE_URL`` correction reached the final step only. Steps 1-6
+        named no store, while step 7 named the ledger and the sweep as two
+        distinct things. Followed verbatim everything lands in one database,
+        ``--participation-db`` and ``--report-db`` resolve to the same file, and
+        ``surrogate_identity_agreement`` and ``cross_store_nba_games_reconciliation``
+        become self-comparisons reporting ``agreed: true`` -- the vacuous-agreement
+        failure this artefact exists to rule out, relocated to the merge step.
+        """
+        commands = self._recipe()
+        merge = next(c for c in commands if "merge_stores" in c)
+        participation = re.search(r"--participation-db (\S+|<[^>]+>)", merge)
+        report = re.search(r"--report-db (\S+|<[^>]+>)", merge)
+        assert participation is not None and report is not None
+        assert participation.group(1) != report.group(1), (
+            "the merge reads two stores; if the recipe names the same path twice the "
+            "cross-store checks compare a store with itself and agree vacuously"
+        )
+
+        for command in commands:
+            if "merge_stores" in command:
+                continue
+            assert "DATABASE_URL=" in command, (
+                f"step names no store, so following the recipe picks one by accident: {command}"
+            )
+
+        ingest = [c for c in commands if "ingest.backfill " in c and "injury_report" not in c]
+        sweep = [c for c in commands if "injury_report.backfill" in c]
+        assert ingest and sweep
+        assert all(participation.group(1) in c for c in ingest), (
+            "the participation steps must write the store the merge reads as --participation-db"
+        )
+        assert all(report.group(1) in c for c in sweep), (
+            "the injury report sweep steps must write the store the merge reads as --report-db"
+        )
 
 
 class TestAnAbsentArtifactDirectoryIsDistinguishableFromAnEmptyOne:

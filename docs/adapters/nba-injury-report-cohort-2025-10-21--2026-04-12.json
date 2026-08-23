@@ -1316,12 +1316,13 @@
   },
   "operator": {
     "commands": [
-      "python -m alembic upgrade head",
-      "python -m hoops_gm.ingest.backfill nba-identity --season 2025-26",
-      "python -m hoops_gm.ingest.backfill season 2025-26 --with-participation --start 2025-10-21 --end 2026-04-12",
-      "python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 120",
-      "python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 120",
-      "python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-10-21 --end 2026-04-12",
+      "DATABASE_URL=sqlite+pysqlite:///<participation ledger> python -m alembic upgrade head",
+      "DATABASE_URL=sqlite+pysqlite:///<injury report sweep> python -m alembic upgrade head",
+      "DATABASE_URL=sqlite+pysqlite:///<participation ledger> python -m hoops_gm.ingest.backfill nba-identity --season 2025-26",
+      "DATABASE_URL=sqlite+pysqlite:///<participation ledger> python -m hoops_gm.ingest.backfill season 2025-26 --with-participation --start 2025-10-21 --end 2026-04-12",
+      "DATABASE_URL=sqlite+pysqlite:///<injury report sweep> python -m hoops_gm.ingest.injury_report.backfill plan 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 820",
+      "DATABASE_URL=sqlite+pysqlite:///<injury report sweep> python -m hoops_gm.ingest.injury_report.backfill run 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 820 --allow-missing-tipoff 3",
+      "DATABASE_URL=sqlite+pysqlite:///<injury report sweep> python -m hoops_gm.ingest.injury_report.backfill observations 2025-26 --start 2025-10-21 --end 2026-04-12",
       "python -m hoops_gm.ingest.injury_report.merge_stores --participation-db <participation ledger> --report-db <injury report sweep> --out <merged store>",
       "DATABASE_URL=sqlite+pysqlite:///<merged store> python -m hoops_gm.ingest.injury_report.cohort_evidence 2025-26 --start 2025-10-21 --end 2026-04-12 --merge-receipt <merged store>.merge-receipt.json --out ../docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json"
     ],
@@ -1331,7 +1332,7 @@
       "backend/src/hoops_gm/db/lineage.py": "daf7d90d70e3d106a34f7070ef1faf4340ce7c25dccb52dbe1fa30151d43edf9",
       "backend/src/hoops_gm/ingest/backfill.py": "d98c4398ea3f4749333ff588d4f585d4938822f392960766c596fde30618457e",
       "backend/src/hoops_gm/ingest/injury_report/backfill.py": "e76efdf339298ed9e8012f6cf799c13acfd120c2be2a62669719490fba606a8c",
-      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "29c4d34329159e8d8917594211efa00764cc4b8cc0df00e8a88c6b718c563417",
+      "backend/src/hoops_gm/ingest/injury_report/cohort_evidence.py": "9338478da4cae2fd25332219204c4de5fd6616422f55e32f58b191b76040d91d",
       "backend/src/hoops_gm/ingest/injury_report/merge_stores.py": "075c1b2d396446d9018d7f5f94cd46cea5fa37184685f48eae590faec7198f22",
       "backend/src/hoops_gm/ingest/nba/parsers.py": "721e0238a8d63e8cbfd8c2f058c243d4bbf2aef166015fd137657e0602c1bb49"
     }

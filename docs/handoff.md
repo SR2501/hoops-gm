@@ -21259,3 +21259,101 @@ mine and I am not certain of it. Finally, I did not re-derive the participation
 join from a second independent path - it agrees with the frozen four-week
 manifest where they overlap, but agreement with a subset I also produced is
 weaker evidence than I would like.
+
+## 2026-08-23 - `data-engineer` - Two review conditions: a recipe that aborts for everyone but its author, and a figure that replicated all along
+
+Independent `quant` review of PR #92 returned merge-with-conditions. Both are
+closed here. The review was the most thorough this project has had: it did not
+take my word for anything, it re-implemented the disclosure-surface detector and
+drove it against the blobs rather than running my tests.
+
+**First, a correction to my own last entry, because I understated my evidence.**
+I wrote that the participation join "was not re-derived by a second independent
+path" and that agreement with the four-week subset "shares every upstream
+assumption". That was too pessimistic and it would have cost the next reader a
+day rebuilding a check that already exists. `cohort_admissibility.py` implements
+its **own** join to `PlayerParticipation`, reads the two stores **separately
+rather than the merged store**, and shares only `content_sha256` and the
+observation selector. Its `sha256_sorted_canonical_identity_records` is
+**byte-identical** to `canonical_observations.sha256_sorted_stable_records`
+(`8e19862...`), and the population reconciles status by status:
+`13,789 canonical - 135 unresolved-identity - 56 without-participation-row =
+13,598 = joined_player_games = SUM direct_outcomes_by_status = SUM by_lead_time_band
+= SUM by_report_era`. Different module, different store topology, exact
+agreement - including that the merge perturbed nothing. A residual shared
+assumption is real but far narrower than I declared. **Understating evidence is a
+smaller sin than overstating it, but it is the same defect: a claim that does not
+match what was actually checked.**
+
+**Condition 1 - the recipe did not reproduce, and I drove it rather than
+accepting the reading.** The reviewer marked its finding *reasoned, not driven*.
+Driving it upheld the verdict, corrected the number, and found a second defect
+the reading had missed.
+
+* `--max-requests 120` was inherited from the four-week window, where 91
+  candidates fit. `enforce_request_budget` **raises**; it does not truncate.
+  Driven: `backfill plan --no-cache` over this window reports
+  `candidates=640 to_fetch=640`, not the 582 the review inferred from the
+  manifest's capture count - **582 is captures that succeeded, 640 is what the
+  planner enumerates**, and the budget is checked against the latter. Confirmed
+  the abort: `run ... --max-requests 120` exits 1 in 1.8s having made zero
+  requests. Now derived as `game_dates * (1 + len(NEAR_TIP_OFFSETS))` = 820, from
+  the same constant that generates the candidates.
+* **The review missed the guard that fires first.** Before the budget is ever
+  consulted, `enforce_full_tipoff_coverage` aborts: three games in this window
+  have no ingested tip-off instant and the default allowance is `0`. The verbatim
+  step 5 exits 1 on *coverage*, not on budget. So the recipe had two independent
+  ways to abort and the review had found the second one. The three games are the
+  same ones the artefact already enumerates as `games_without_both_instants`, so
+  `--allow-missing-tipoff 3` discloses nothing new.
+* Every step now names the store it acts on. The `DATABASE_URL` correction had
+  reached step 8 only; steps 1-6 named none while step 7 named the ledger and the
+  sweep as two distinct things. Followed verbatim everything landed in one
+  database, `--participation-db` and `--report-db` resolved to the same file, and
+  `surrogate_identity_agreement` and `cross_store_nba_games_reconciliation`
+  became **self-comparisons reporting `agreed: true`** - the vacuous-agreement
+  failure this unit exists to prevent, relocated from the tip-off check to the
+  merge check and equally invisible in the output.
+
+All three are the same defect as the date literals I fixed one line away: a
+value that is correct for the window it was written in, silently wrong for the
+window it was carried into. **The recipe reproduced for me because my cache is
+warm, and for nobody else - which is exactly who a committed recipe is for.**
+
+Four tests pin it, including one that doubles `game_dates` and asserts the budget
+doubles, so a literal cannot return wearing a derived spelling.
+
+**Condition 2 - ADR-007's figures replicate exactly, and the "non-replication" I
+recorded yesterday was a comparison against a quantity nobody measured.** The
+`1.596`/`0.917` are not unresolved counts. They are the canonical `doubtful` base
+rate per game date, and they fall out of this cohort to four significant figures:
+legacy `53 direct + 2 unresolved = 55 / 60 dates = 0.916667`; short-lead
+`164 + 2 = 166 / 104 = 1.596154`. Verified independently rather than taken from
+the review. **Three things agree at once, which is what makes it safe:** both
+ratios match to 4 s.f. separately, *and* their numerators sum to 221 - the
+whole-cohort canonical `doubtful` total - over 164, the whole-cohort date count.
+My `0.019`/`0.033` divided *exclusions* by dates and compared an exclusion rate
+to a base rate; the "fiftyfold gap" was a definition, not a discrepancy. The
+"reversal" was 2/104 against 2/60 - Poisson counts of **2**, where one row flips
+the sign and the 95% interval runs ~0.24-7.2. It could never have carried a
+direction claim. The mundane mechanism needs no anomaly: the short-lead regime
+files more often and closer to tip, so it catches transient `doubtful`
+designations the hourly regime missed.
+
+**Could not verify:** I did not locate ADR-007's own derivation, so the
+population is near-certain rather than confirmed, and I have left the backlog
+item `pending` on exactly that. I also did **not** correct the two artefacts that
+still carry the withdrawn framing - `cohort_admissibility.py` emits
+`adr_007_replication_note` containing `DOES NOT REPLICATE HERE`, committed into
+`nba-injury-report-cohort-admissibility-2025-26.json` and pinned by
+`test_the_adr_007_figure_does_not_replicate_and_that_is_recorded`
+(`test_cohort_admissibility.py:216`). Correcting them means regenerating the
+section 2 admissibility evidence the unblind decision rests on, in the last hour
+before a freeze, on another lane's artefact. Filed in the backlog with the exact
+strings instead. **A known-false string sitting in a committed artefact is worse
+than the framing that put it there**, so this is a real debt and not a tidy hand-off.
+Separately, an interrupted probe of the corrected step 6 ran from `backend/`,
+where `data/raw` is empty, and made ~255 live requests before I stopped it - the
+cwd-relative raw-root trap, caught and cleaned, but it means I confirmed the
+corrected recipe clears both guards by watching it start fetching rather than by
+letting it finish.

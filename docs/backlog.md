@@ -1265,42 +1265,67 @@ Owner will follow the list, so list reliability is the product. Measure adherenc
 - [ ] **pending**
 - **Depends on:** `injury-conversion-cohort-population`
 
-`docs/decisions/ADR-007-availability-in-spine.md:62` records **1.596 unresolved
-`doubtful` per date in the short-lead era against 0.917 legacy**, and calls the
-direction "the opposite direction from what three of us had jointly predicted".
-That figure is cited when arguing the reporting-era boundary bites hardest on
-the scarcest status. **It does not state which population it counts, and it does
-not replicate at season scale.**
+`docs/decisions/ADR-007-availability-in-spine.md:62` records **1.596 / 0.917
+`doubtful` per date, short-lead against legacy**, and calls the direction "the
+opposite direction from what three of us had jointly predicted". That figure is
+cited when arguing the reporting-era boundary bites hardest on the scarcest
+status. **It does not state which population it counts.** That omission is the
+whole of this item, and it is smaller than it looked for most of 2026-08-23.
 
-Measured 2026-08-23 by `data-engineer` on the widened cohort and published in
-`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`
-(`direct_outcomes_by_report_era.unresolved_identity_exclusions_by_era_and_status`
-over `game_dates_by_era`): **0.019 per date short-lead (2/104) against 0.033
-legacy (2/60)** - roughly **fifty times smaller and reversed**.
+**CORRECTED 2026-08-23, `data-engineer`, after an independent `quant` review:
+the figures replicate exactly, and the earlier "non-replication" recorded here
+was a comparison against a quantity ADR-007 never measured.** They are not
+*unresolved* `doubtful` counts. They are the **canonical `doubtful` base rate
+per game date** - every canonical `doubtful` observation, direct plus
+identity-unresolved, over that era's game dates - and they fall out of the
+widened cohort to four significant figures:
 
-**This is a non-replication, not a contradiction, and the distinction is the
-whole point of the item.** A fiftyfold gap is far too large to be sampling
-noise, so the two are almost certainly counting different populations. The
-reconciling mechanism is specific and checkable: the widened-cohort figure
-counts **canonical** observations - one latest pre-tip-off row per player-game -
-whose identity did not resolve, whereas a count over **raw report rows** would
-be far larger, because a player carried `doubtful` across many successive
-reports contributes one canonical row and many raw ones. If ADR-007's figure is
-a raw-row count, both numbers are right and only the ADR's wording is missing.
+```
+legacy      53 direct + 2 unresolved =  55 /  60 dates = 0.916667   ADR-007: 0.917
+short-lead 164 direct + 2 unresolved = 166 / 104 dates = 1.596154   ADR-007: 1.596
+                                       221 / 164 dates = canonical status_counts.doubtful
+```
 
-**Closing this needs the four-week artifact behind ADR-007's measurement, which
-the cohort lane does not have** - it did not re-derive the original and
-deliberately declined to assert the ADR was wrong. Whoever holds it should
-determine whether the figure is over raw or canonical rows and add that clause
-to line 62. **Agents write `Proposed` only; an ADR edit that changes its
-recorded meaning is an owner decision.**
+Three things agree at once and that is what makes the reading safe: both ratios
+match to 4 s.f. **independently**, and their numerators sum to **221**, the
+whole-cohort canonical `doubtful` total, over **164**, the whole-cohort game
+date count. A mislabelling that reproduced two ratios *and* closed the total
+would be a remarkable coincidence.
 
-Scope is one clarifying clause, not a re-measurement. **A fiftyfold discrepancy
-sitting unremarked in a document this project cites is worse than either number
-being wrong**, because both readings look authoritative and nothing
-distinguishes them. The season-scale side is already pinned by
-`test_the_adr_007_figure_does_not_replicate_and_that_is_recorded`, so it cannot
-quietly revert to the inherited figure; nothing yet pins the ADR side.
+**So the previously recorded 0.019 vs 0.033 was not a rival measurement of the
+same thing.** It divided `unresolved_identity_exclusions_by_era_and_status`
+by `game_dates_by_era` - the *exclusion* rate - and compared it to a base rate.
+The "fiftyfold gap" was the ratio between an exclusion count and a population
+count, which is not a discrepancy but a definition. **And the "reversal" was
+never a reversal:** 2/104 against 2/60 rests on Poisson counts of **2**, where
+one row flips the direction and the 95% interval on a count of 2 runs roughly
+0.24-7.2. It could not have supported a direction claim in either direction.
+
+**What actually remains open is narrow: nobody has located ADR-007's own
+derivation.** The replication is strong enough to make the reading near-certain,
+but "the numbers fall out of a later cohort" is not the same as "here is the
+computation that produced them", and this item stays `pending` for that reason
+alone. Whoever holds the four-week artifact should confirm the population and
+add the clause to line 62. **Agents write `Proposed` only; an ADR edit that
+changes its recorded meaning is an owner decision.**
+
+**The mundane explanation for the era gap needs no anomaly.** The short-lead
+regime files more often and closer to tip, so it captures transient `doubtful`
+designations that the hourly regime resolved or never published. A higher
+`doubtful` base rate per date under more frequent, later filing is the expected
+result, not a surprising one. ADR-007's "opposite direction" alarm is
+empirically spurious.
+
+**Two artifacts still carry the withdrawn framing and are not this lane's to
+edit.** `cohort_admissibility.py` emits
+`direct_outcomes_by_report_era.adr_007_replication_note` containing the string
+`DOES NOT REPLICATE HERE`; that string is committed into
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json` and pinned
+by `test_the_adr_007_figure_does_not_replicate_and_that_is_recorded`
+(`backend/tests/test_cohort_admissibility.py:216`). Correcting them means
+regenerating the section 2 admissibility evidence, which is the artifact the
+unblind decision rests on, so it is filed rather than done here. **The finding
+above is the evidence; the edit is mechanical.**
 
 **What is unaffected.** The era **composition** finding is a different mechanism
 and stands: development is 68% legacy in direct outcomes while selection and
@@ -1944,7 +1969,7 @@ Run the bounded, resumable `injury-report-historical-backfill` operator tool at 
 **2026-08-21, `quant`: this cohort is representative but not large enough to activate the model it was built for, and the shortfall is arithmetic rather than a review finding.** `injury-status-conversion`'s activation rule needs at least 30 held-out **direct outcomes** for every status; whole-cohort canonical `doubtful` is **21** and `probable` is **59**, direct outcomes are a subset of canonical observations, and a chronological holdout is a subset of the cohort, so no split can reach the floor. That does not retract this item - it delivered the representative cohort it was scoped to deliver, and the floor is a downstream requirement nobody had checked against it. It does mean **a re-run of the same four weeks buys a model that cannot activate.** Widening is an owner decision on live-source spend and is not taken here. Two requirements for whoever runs it: the window must be wide enough that every status clears the floor inside the declared holdout (a planning figure of roughly 4.5x the current width follows from v1's 32% holdout share, but it is an estimate and probably an underestimate, since December reporting is not April reporting and late-season shutdowns inflate `out` without inflating `doubtful` - the gate is the measured count, never the multiplier); and the manifest must publish **per-status direct-outcome counts by game date, plus exclusion classes by status**, so any chronological split is checkable before unblinding. That disclosure is deliberately partition-agnostic - publishing counts by a declared partition would write an availability-layer parameter into an observations-layer artifact, a backward flow under ADR-008 - and it carries one invariant: **the pre-unblind disclosure surface adds no outcome-keyed field at any granularity, in any manifest version**, beyond the single whole-cohort `participation_outcome_counts` already present. A granularity rule ("outcome counts stay whole-cohort") was tried first and rejected by both reviewers as necessary but not sufficient: git makes cross-manifest differencing free, and widening the same window produces cohort B superset of cohort A with both committed, so the added dates' outcome marginal falls out by subtraction. `data-engineer` owns a contract test pinning the outcome-keyed field set to a frozen allow-list.
 ### `injury-status-conversion` - Modelling injury status conversion rates
 
-- [ ] **pending** - Protocol frozen 2026-08-21 at `docs/models/injury-status-conversion-preregistration.md`; **no model is fitted and no number is emitted.** Two findings block the fit, both re-derived from the committed cohort manifest rather than from prose. **(1)** The manifest publishes canonical `status_counts` and joined `participation_outcome_counts` as two separate marginals with **no status x outcome contingency**, so no conversion rate is fittable from anything on `main`. (Row-level data for the *invalidated* v1 cohort is reachable on the local-only branch `sr2501-injury-status-conversion`, which is why the freeze carries a contamination disclosure; it is superseded and non-consumable, and the **corrected** cohort has no row-level artifact anywhere.) The corrected row-level outcomes live only in the gitignored database and raw store, which the coordinator searched for across nine worktrees plus the owner's main checkout: the one real database holds **0 rows** in both `player_participation` and `player_game_logs`. **CORRECTED 2026-08-22: that search was exhaustive over the wrong domain and its conclusion is false.** The participation ledger is populated - 43,037 rows over 596 players across 1,227 of 1,230 games - at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, which sits *outside every checkout* and so was in none of the ten places searched. The 0-row reading was a true statement about `C:\Users\steverones\hoops-gm\hoops_gm.db`, a different file with the same basename, because `backend/src/hoops_gm/core/config.py:94` anchors the default relative SQLite path to each checkout's own root. See `participation-ledger-population` and `docs/adapters/participation-ledger-store.md`. **This changes what is reachable, and changes nothing about whether this item can proceed:** finding (2) below is arithmetic on the committed cohort manifest and is untouched by where the rows live. Whether a status x outcome contingency is now derivable is a separate question that has not been driven, and is `quant`'s to answer under the frozen protocol rather than something to assume from a row count. **(2)** More decisively, the activation rule requires at least 30 held-out direct outcomes for every status, and whole-cohort `doubtful` is **21**. Direct outcomes are a subset of canonical observations and a chronological holdout is a subset of the cohort, so **21 < 30 unconditionally** - activation fails on arithmetic before any outcome is examined, and `probable` at 59 would need the holdout to hold more than half the `probable` observations. **The `2025-12-08..2026-01-04` cohort can therefore never activate this model**, so regenerating it as-is would spend a full live archive sweep on a guaranteed veto. The freeze turns this into a pre-unblind admissibility gate: per-status direct-outcome counts are inputs rather than outcome values, so a cohort that cannot activate is refused *before* an unblind is spent. Resuming needs a widened cohort - see `injury-conversion-cohort-population`. **CORRECTED 2026-08-23, `data-engineer`: finding (2) no longer blocks, and this item stays `pending` because clearing a blocker is not the same as doing the work.** The widened cohort exists and passes §2: full 2025-26 regular season, 164 game dates, held-out direct `doubtful` **83** against the floor of 30, every status clear. Evidence at `docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`; the check is `hoops_gm.ingest.injury_report.cohort_admissibility` and counts **inputs only** - no fit, no unblind, and the frozen protocol untouched. Finding (1) is also narrowed but **not** settled: a status x outcome contingency is now *derivable* by whoever holds both stores, and deriving it is the unblind itself, so it remains `quant`'s call under the freeze rather than a step anyone else may take. **Three things `quant` must handle before fitting, none of which any count reveals.** The held-out range is `2026-03-02..2026-04-12`, **the end-of-season shutdown window, which is not the regime the tool is used in** - owner-ruled a stated limitation rather than a reason to move the window, and it must reach the model card **verbatim**. The `FIFTEEN_MINUTE_ERA_START` boundary falls inside the cohort, leaving development 68% legacy against selection and holdout at **100%** short-lead, so the fit would rest substantially on a regime the holdout contains none of; §7 needs era as a pre-registered sensitivity, which only `quant` may add. And ADR-007's `1.596`/`0.917` unresolved-`doubtful` era figures **do not replicate at season scale** - measured here at `0.019` short-lead against `0.033` legacy, ~50x smaller and reversed - which almost certainly means the two count different populations (canonical rows here, plausibly raw report rows there) rather than that ADR-007 is wrong; it is recorded in the artifact and was not re-derived from ADR-007's own window.
+- [ ] **pending** - Protocol frozen 2026-08-21 at `docs/models/injury-status-conversion-preregistration.md`; **no model is fitted and no number is emitted.** Two findings block the fit, both re-derived from the committed cohort manifest rather than from prose. **(1)** The manifest publishes canonical `status_counts` and joined `participation_outcome_counts` as two separate marginals with **no status x outcome contingency**, so no conversion rate is fittable from anything on `main`. (Row-level data for the *invalidated* v1 cohort is reachable on the local-only branch `sr2501-injury-status-conversion`, which is why the freeze carries a contamination disclosure; it is superseded and non-consumable, and the **corrected** cohort has no row-level artifact anywhere.) The corrected row-level outcomes live only in the gitignored database and raw store, which the coordinator searched for across nine worktrees plus the owner's main checkout: the one real database holds **0 rows** in both `player_participation` and `player_game_logs`. **CORRECTED 2026-08-22: that search was exhaustive over the wrong domain and its conclusion is false.** The participation ledger is populated - 43,037 rows over 596 players across 1,227 of 1,230 games - at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, which sits *outside every checkout* and so was in none of the ten places searched. The 0-row reading was a true statement about `C:\Users\steverones\hoops-gm\hoops_gm.db`, a different file with the same basename, because `backend/src/hoops_gm/core/config.py:94` anchors the default relative SQLite path to each checkout's own root. See `participation-ledger-population` and `docs/adapters/participation-ledger-store.md`. **This changes what is reachable, and changes nothing about whether this item can proceed:** finding (2) below is arithmetic on the committed cohort manifest and is untouched by where the rows live. Whether a status x outcome contingency is now derivable is a separate question that has not been driven, and is `quant`'s to answer under the frozen protocol rather than something to assume from a row count. **(2)** More decisively, the activation rule requires at least 30 held-out direct outcomes for every status, and whole-cohort `doubtful` is **21**. Direct outcomes are a subset of canonical observations and a chronological holdout is a subset of the cohort, so **21 < 30 unconditionally** - activation fails on arithmetic before any outcome is examined, and `probable` at 59 would need the holdout to hold more than half the `probable` observations. **The `2025-12-08..2026-01-04` cohort can therefore never activate this model**, so regenerating it as-is would spend a full live archive sweep on a guaranteed veto. The freeze turns this into a pre-unblind admissibility gate: per-status direct-outcome counts are inputs rather than outcome values, so a cohort that cannot activate is refused *before* an unblind is spent. Resuming needs a widened cohort - see `injury-conversion-cohort-population`. **CORRECTED 2026-08-23, `data-engineer`: finding (2) no longer blocks, and this item stays `pending` because clearing a blocker is not the same as doing the work.** The widened cohort exists and passes §2: full 2025-26 regular season, 164 game dates, held-out direct `doubtful` **83** against the floor of 30, every status clear. Evidence at `docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`; the check is `hoops_gm.ingest.injury_report.cohort_admissibility` and counts **inputs only** - no fit, no unblind, and the frozen protocol untouched. Finding (1) is also narrowed but **not** settled: a status x outcome contingency is now *derivable* by whoever holds both stores, and deriving it is the unblind itself, so it remains `quant`'s call under the freeze rather than a step anyone else may take. **Three things `quant` must handle before fitting, none of which any count reveals.** The held-out range is `2026-03-02..2026-04-12`, **the end-of-season shutdown window, which is not the regime the tool is used in** - owner-ruled a stated limitation rather than a reason to move the window, and it must reach the model card **verbatim**. The `FIFTEEN_MINUTE_ERA_START` boundary falls inside the cohort, leaving development 68% legacy against selection and holdout at **100%** short-lead, so the fit would rest substantially on a regime the holdout contains none of; §7 needs era as a pre-registered sensitivity, which only `quant` may add. And ADR-007's `1.596`/`0.917` `doubtful` era figures **replicate exactly on this cohort, and the earlier "does not replicate" reading recorded against them was a comparison against a quantity ADR-007 never measured** - they are the canonical `doubtful` base rate per game date (legacy 55/60 = 0.9167, short-lead 166/104 = 1.5962, summing to the canonical total 221 over 164 dates), not unresolved-identity counts; the `0.019`/`0.033` figures divided exclusions by dates and so compared an exclusion rate to a base rate, and their apparent reversal rests on Poisson counts of 2 where the 95% interval runs ~0.24-7.2. Corrected 2026-08-23 by `data-engineer` after an independent `quant` review. The open end is narrow and stays open: ADR-007's own derivation has not been located, so the population is near-certain rather than confirmed. See `adr-007-era-figure-population`.
 - **Depends on:** `injury-report-ingest`, `injury-report-historical-backfill`, `injury-conversion-cohort-population`, `participation-ledger`
 
 Empirical conversion of report status to actual play rate, segmented by team, player and game context. QUESTIONABLE is not a coin flip and varies meaningfully by source - this rate is itself a modelled quantity.
