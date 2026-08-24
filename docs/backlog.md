@@ -2,13 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**53 done - 1 blocked - 88 pending - 142 total**
-
-(Recomputed from the status markers in this finished file, never
-reconciled from two headers: 142 `###` headings and
-142 markers, 1:1, no duplicate item names. Neither side of a
-rebase conflict is a usable input here, because each was computed before
-the other lane's items landed.)
+**53 done - 1 blocked - 89 pending - 143 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -393,6 +387,49 @@ Bounded, resumable operator tool (`hoops_gm.ingest.injury_report.backfill`) that
 - **Depends on:** `player-identity`
 
 Ingest the NBA official injury report (day-before release plus game-day updates) with full status history per player per game: OUT, DOUBTFUL, QUESTIONABLE, PROBABLE, AVAILABLE.
+
+### `injury-report-plan-budget-inert` - Making `plan` report the request budget it already accepts
+
+- [ ] **pending**
+- **Depends on:** `injury-report-historical-backfill`
+
+**An operator should not have to read `main()` to learn which of two commands
+enforces an argument they both accept.** That is the whole specification.
+
+`hoops_gm.ingest.injury_report.backfill plan` defines `--max-requests`, parses
+it, and never enforces it: `enforce_request_budget` is called on the `run` path
+only. Driven on `1912a3d`, not reasoned —
+
+    plan 2025-26 --start 2025-10-21 --end 2026-04-12 --max-requests 1 --no-cache
+    plan: season=2025-26 candidates=640 to_fetch=640 already_cached=0
+    exit 0
+
+A budget of **1** against **640** candidates exits **0**. `run` with the same
+arguments exits 1. So step 5 of the operator recipe committed in `#92` carries
+`--max-requests 820` into a command that discards it.
+
+This is the exact inverse of the defect `#92` closed, and the inversion is the
+point. There, the arguments were **load-bearing but invisible**, so their
+absence silently degraded the manifest. Here the argument is **visible but
+inert**, so its presence advertises a pre-flight check that did not happen.
+`plan` is precisely the command an operator runs to find out whether a budget is
+survivable *before* spending requests, and it currently answers "yes"
+unconditionally.
+
+The obvious objection is right and does not dissolve the item: `plan` **is** a
+preview and should not abort. That makes the fix smaller rather than
+unnecessary. Either `plan` reports the budget verdict without acting on it — one
+line, naming the limit and whether `to_fetch` exceeds it — or `operator_commands`
+stops emitting the flag on the `plan` step. Not both, and the first is better,
+because a preview that cannot answer the question it is run to answer is not
+much of a preview.
+
+Note the near miss this leaves standing: `enforce_full_tipoff_coverage` is the
+*other* guard on the `run` path, and it fires **before** the budget. Whatever
+`plan` reports must not imply it has cleared coverage too, or this item's fix
+recreates this item's defect one guard along.
+
+`data-engineer` owns it. Disprovable in one command if this reading is wrong.
 
 ### `league-settings-ingest` - Ingesting full league settings and rules
 
