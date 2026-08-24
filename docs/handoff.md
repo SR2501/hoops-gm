@@ -21574,3 +21574,79 @@ any other committed JSON, and not against a document whose keys contain `.` or
 `[`, where its path syntax is ambiguous by construction. I did not re-examine
 whether the other two near-duplicate header parentheticals in `docs/backlog.md`
 should also collapse; I touched only the one my own edit falsified.
+
+## 2026-08-23 - `architect` - Two measurement traps found while closing the day, both driven
+
+Neither is a defect in production code. Both are ways a **check reports a
+comforting answer to a question nobody asked**, which is this repository's
+dominant failure mode, and both bit me personally during closure.
+
+### 1. `-q` on the pytest command line silently deletes the count
+
+`backend/pyproject.toml` already carries `addopts = "-q --strict-markers ..."`.
+Passing `-q` again **stacks to `-qq`**, which suppresses the summary line while
+still exiting 0. Driven on `9df1150`:
+
+```
+python -m pytest tests/test_store_creating_readers.py
+  ...............   [100%]
+  15 passed in 3.20s
+  EXIT=0
+
+python -m pytest -q tests/test_store_creating_readers.py
+  ...............   [100%]
+  (no summary line at all)
+  EXIT=0
+```
+
+**The flag you add in order to read the number is the flag that removes it.**
+And the number is the one quantity every lane was told today not to trust on its
+own - #90 deleted five tests while the suite stayed green and the count *rose*
+from 1,494 to 1,505, so a suite total is already weak evidence. `-qq` converts
+weak evidence into none, while looking identical to success.
+
+Same shape as the truncation trap and the false zero: **an absence that reads as
+an ordinary result.** Do not pass `-q` to pytest in this repository.
+
+Found by the manifest-leaf-diff lane, which hit it reaching for the count and
+spent two runs believing the summary had vanished. Reproduced here rather than
+relayed.
+
+### 2. Squash merges make **both** obvious preservation checks lie
+
+At closure I checked whether any lane's work was unpreserved. Two measurements,
+both plausible, both wrong, and **the second is more dangerous because it looks
+like the careful version of the first.**
+
+`git rev-list --count origin/main..<branch>` reported **48 branches "ahead" of
+main**, which reads exactly like a pile of stranded work. It is not. This
+repository squash-merges, so a merged branch commit is **never** an ancestor of
+`main` and every merged branch reports ahead forever.
+
+The obvious correction is also wrong. `git diff origin/main..origin/<branch>`
+reported most merged branches as *differing* - because they are **behind**
+`main`, so the diff includes reverting everything merged after them. Neither
+number answers *"is this work preserved?"*
+
+**The valid evidence is cheap and direct:** the PR's state is `MERGED`, and the
+branch's distinctive artefact is present on `main` by path. Both checkable in
+seconds.
+
+I nearly reported the 48 as a closure emergency. What stopped me was that the
+number was implausibly large, not that the method was sound - which is the same
+way the regeneration lane caught its `-495..+660` offset nonsense, and the same
+way #90's deleted tests surfaced. **Implausibility is doing more work in this
+project than correctness checking is**, and that is worth knowing, because it
+only catches errors that happen to look wrong.
+
+### What I could not verify
+
+- **That `-qq` is the only flag interaction of this shape in `addopts`.** I drove
+  `-q` because a lane hit it. `--strict-markers` and `-m` are also there and I
+  did not test stacking either. *Reasoned.*
+- **That no lane work is stranded.** I checked GitHub state and artefact presence
+  for today's nineteen. The archived `sr2501-file-qq-suppression` branch exists
+  on the remote at exactly `9df1150` with zero files differing, so its lane was
+  archived before committing - which is how this entry came to be written by me
+  rather than by it. I did not audit the other 40-odd older branches by the same
+  method. *Driven for today, reasoned for the rest.*
