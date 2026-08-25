@@ -258,21 +258,50 @@ until it lands, treat 18.6% as v3's number, not as a verified one. Recall
 uncertainty is real, but it is a **roster mechanic**, and there is no reason for
 its conversion rate to resemble injury-`doubtful`.
 
-**An arithmetic discrepancy in v3 §6, reported rather than copied.** §6 states
-that on health reasons alone `doubtful`'s held-out floor is ~74, giving 2.5x
-headroom over v2 §8 condition 6's ≥30. Applying §6's own 18.6% to the held-out
-`doubtful` count gives 83 x (1 − 41/221) = 14,940/221 = **67.6, so ~68**, and
-67.6/30 = **2.25x** (2.27x if the count is rounded to a whole player first). I
-cannot reconstruct a route from the published figures to 74
-or to 2.5x; an independent reviewer brute-forced `c x (1 - a/b)` over the 23
-published counts and found no expression starting from the held-out 83 that
-reaches 74. The nearest structural explanation is that 74 was derived from the
-**development** partition's `doubtful` count of 75 rather than the held-out 83.
-The
-conclusion — condition 6 still clears comfortably on health rows alone — is
-unaffected either way, which is why this is a note to the architect before the
-owner binds v3 rather than an objection to v3. Driven in
-`test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_eight`.
+**An arithmetic discrepancy in v3 §6, reported rather than copied — and my own
+first answer to it carried the same labelling error it was reporting.** §6
+states that on health reasons alone `doubtful`'s held-out floor is ~74, giving
+2.5x headroom over v2 §8 condition 6's ≥30. Applying §6's own 18.6% to the
+held-out `doubtful` count gives 83 x (1 − 41/221) = 14,940/221 = **67.6, so
+~68**, and 67.6/30 = **2.25x** (2.27x if the count is rounded to a whole player
+first).
+
+**That estimate removes the G League share and nothing else, so ~68 was a
+*non-G-League* figure that I reported against §6's "health reasons alone"
+framing.** `Rest` is a coach's decision on exactly the footing as the Two-Way
+recall whose removal I had just endorsed, and I left it in while adopting the
+label that says it is out. A `data-engineer` lane's reviewer found the same
+defect in §6 itself and that lane reported it against its own number; the defect
+is recorded here because it was equally mine, and because the label resolved in
+the direction that made the figure look more restricted than it was.
+
+**A one-row reconciliation has to happen before the label is corrected, because
+that row is the whole disagreement.** The held-out `doubtful` reason breakdown
+reported to me is `Injury/Illness 68, G League 10, Rest 4, Concussion Protocol
+1, Reconditioning 1`, which sums to **84**, against a published held-out
+`doubtful` count of **83**. Non-G-League is 74 from the breakdown total and 73
+from the published count — and **74 is exactly v3 §6's disputed figure.** An
+independent reviewer had brute-forced `c x (1 - a/b)` over the 23 published
+counts and found no route from 83 to 74; a reason table totalling 84 is a route,
+and it is the first explanation of §6's number that does not require an error.
+So §6 is very likely not wrong in arithmetic, only in *label*, and "correct 74
+to 73" would swap the base silently rather than resolve it. Until the extra row
+is explained — a row carrying two reason categories is the obvious candidate —
+the honest bound is the pair, **73 or 74 non-G-League (2.43x or 2.47x)** and
+**68 or 69 on health reasons (2.27x or 2.30x)**.
+
+**And the 18.6% does not transfer across partitions**, which is a second thing I
+should have flagged when I used it: the direct held-out G League share is
+10/83 = **12.05%**, not 41/221 = 18.55%. Applying a cohort-wide rate to one
+partition was an assumption stated nowhere in my own arithmetic, and it cost
+five rows.
+
+The conclusion — condition 6 clears comfortably on any of these readings — is
+unaffected, which is why this is a note to the architect before the owner binds
+v3 rather than an objection to v3. Driven in
+`test_the_g_league_share_of_doubtful_implies_a_non_g_league_floor_near_sixty_eight`,
+whose name records the estimate and not the direct count, because the direct
+count is not on this branch to assert against.
 
 The recommendation inherited from v3 §6 is to **cut none of them**, because
 excluding rows would change the membership fingerprint that §8 condition 8
@@ -354,6 +383,7 @@ because it survives only as prose and prose is deletable.
 | 0.2 | 2026-08-23 | Revised after the **second** independent review, blind still unbroken. Two payload defects fixed: nested `restrict()` dropped the inherited pairs and under-reported what had been excluded; a `RestrictedCohort` mutated after construction over-claimed, recording an `out`-dominated rate as `doubtful`. Restriction markers are now **verified against the rows** rather than believed. Container copies (slice, `+`, `*`, `.copy()`) re-wrap; the iteration-based strip routes are documented as a residual **class** and pinned by test rather than denied. The 0.1 row's own quantifier error corrected — the Wilson result shows a 0.10 guarantee cannot be *issued* blind for `probable`/`doubtful`, not that protection is absent, and the failing rate windows are now stated. Mutations: 23, all caught, one of which survived its first run and exposed a genuinely untested path. | None — no result exists. |
 | 0.3 | 2026-08-23 | Revised after the **third** independent review, blind still unbroken. Four reviewer mutations survived a suite that had just caught 23, and all four share a shape: **each earlier fix landed on the case that was driven and left the generalisation of that case untested.** Verification checked only the first recorded pair - which the previous fix had just made the abnormal case by teaching `restrict()` to accumulate; `restrict()`'s key-conflict precedence was unpinned, so asking for `out` after `doubtful` could return `doubtful` rows relabelled `out` with a self-consistent marker; `__mul__` could drop its count silently, because the container tests asserted type and marker but never contents; and the per-bin gap's declared sign was unpinned because every consumer takes `abs()` - the second instance of a symmetry class this repository is now collecting. The re-wrap rule was also **too wide** and is narrowed: only a whole-extent slice, `* 1`, `+ []` and `.copy()` keep the marker, because duplication and truncation left it true of every row while the payload's `n` was wrong - and condition 5 is a Wilson half-width going as 1/sqrt(n), so duplicating the 83-row `doubtful` cohort moves its worst case from 0.1052 to 0.0752 and manufactures a guarantee. The module now states plainly what verification does and does not establish: **soundness, not completeness and not multiplicity.** The docstring's claim that Python cannot intercept iteration was refuted by proof-of-concept and is restated as the design choice it actually is. Mutations: 30, all caught. | None — no result exists. |
 | 0.4 | 2026-08-23 | Revised after the **fourth** independent review, blind still unbroken. Seven reviewer mutations survived a suite that had just caught 30; the survivor sequence across four passes is 4, 5, 4, 7 and **is not converging**, which is reported here rather than smoothed. Two findings differ in kind from the earlier ones. First, a **false guarantee** rather than a disclosed residual: both docstrings promised that multiplicity-changing container operations return a plain `list`, and `rc += list(rc)`, `rc.extend(list(rc))`, `rc[0:0] = list(rc)` - plus `append` and `insert` of a row taken from the cohort itself, which the review had recorded as refused because it tried them with a *foreign* row - all returned a `RestrictedCohort` with the marker true of every row and `n` doubled. That inflation is exactly what moves condition 5's Wilson half-width from 0.1052 to 0.0752 and manufactures a guarantee this card says cannot be issued blind. The repair is **not** a longer list of dunders: duplicate `observation_id`s are now refused where the cohort becomes a number, which covers routes nobody enumerated, including direct construction. (The review's headline payload, `rc *= 2`, is **false** - it returns a plain `list`, because defining `__mul__` at Python level makes the in-place operator fall back to it. The route is closed by an accident nothing recorded, which is its own argument for checking at the report.) Second, a **declared convention the code did not implement**: `bootstrap_unit` claimed resampling by observation id while the loop resampled row positions and never read the id - harmless only while ids are unique, and otherwise producing an interval that is **too narrow**, the direction that makes condition 2 easier for the candidate. Duplicate ids are refused there too, so the declaration is now true. `bootstrap_quantile` (Hyndman-Fan type 7) was declared and pinned by nothing; substituting the floor rule left every test green while moving `interval_high`, which `candidate_beats_baseline` reads, and it is now pinned against hand-computed values. A numeral error that four review passes read without recomputing is also corrected: the duplicated `doubtful` half-width is 0.0752, not 0.0745 - the latter is the Wald `1/sqrt(2)` scaling, which a Wilson interval does not obey. Mutations: 40, all caught. | None — no result exists. |
+| 0.5 | 2026-08-23 | **Label correction, arising from a `data-engineer` lane's reviewer and applying equally to this card.** v3 §6 calls its ~74 a health-reasons floor; it removes G League and nothing else, leaving `Rest` - a coach's decision on the same footing as the Two-Way recall whose removal it endorses. This card's own ~68 / 2.25x had the identical defect, adopting §6's label while doing §6's arithmetic, and the test asserting it was named `..._health_only_floor_...` and is renamed to `..._non_g_league_floor_...`. **A one-row reconciliation must happen before the label is corrected**, because that row is the entire disagreement: the reported held-out reason breakdown (`Injury/Illness 68, G League 10, Rest 4, Concussion Protocol 1, Reconditioning 1`) sums to **84** against a published held-out `doubtful` count of **83**, so non-G-League is 74 from the breakdown and 73 from the published count - and **74 is exactly the figure being corrected**. That is the first explanation of §6's number that does not require an error, and it means “correct 74 to 73” would swap the base rather than resolve it. Until the extra row is explained, the honest bound is a pair: 73 or 74 non-G-League, 68 or 69 on health reasons. Separately, **the 18.6% does not transfer across partitions** - the direct held-out G League share is 10/83 = 12.05% - so this card's estimate was five rows low as a non-G-League figure, and the transfer was an assumption it stated nowhere. No verdict moves: condition 6 clears by more than 2x on every reading. Machinery unchanged; mutations still 40, all caught. | None — no result exists. |
 
 **The next entry in this table must state the date the blind was broken and under
 which pre-registration version.** A results row that does not is not admissible.

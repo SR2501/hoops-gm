@@ -1193,7 +1193,7 @@ def test_where_condition_five_actually_stops_protecting_probable_and_doubtful() 
     assert breaching_rates(HELD_OUT_COUNTS["available"]) == []
 
 
-def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_eight() -> None:
+def test_the_g_league_share_of_doubtful_implies_a_non_g_league_floor_near_sixty_eight() -> None:
     """v3 section 6's own share does not reach v3 section 6's own headroom figure.
 
     v3 states that 41 of 221 season-wide `doubtful` observations are G League
@@ -1202,6 +1202,20 @@ def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_e
     condition 6's minimum of 30. Applying the first number to the held-out count
     gives ~68 and 2.25x - 2.27x if the count is rounded to a whole player
     first - not 74 and 2.5x. The card leads with 2.25x; both are asserted below.
+
+    **This test was renamed.** It said `health_only`, and it computes no such
+    thing: removing a G League share removes G League and leaves `Rest`, which
+    is a coach's decision on the same footing as the recall it just excluded.
+    The figure is a **non-G-League** floor, and calling it health-only adopted a
+    label this arithmetic does not establish - the same defect a `data-engineer`
+    lane's reviewer independently found in v3 section 6 itself. The name is the
+    part a later reader quotes, so the name is what had to change.
+
+    **What this asserts is an estimate, not a count**, and the two disagree. A
+    direct held-out reason breakdown reported afterwards puts G League at 10 of
+    83 - 12.05%, not 18.55% - so the cohort-wide share does not transfer to this
+    partition, and the transfer was an assumption this test made silently. The
+    direct counts are not on this branch and are deliberately not asserted here.
 
     Both are predictor-side counts, so this is checkable under the blind. The
     conclusion is unchanged either way - condition 6 clears comfortably - which
