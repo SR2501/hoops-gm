@@ -304,16 +304,49 @@ describe('AVAILABILITY_EVIDENCE', () => {
     }
   })
 
-  it('points every already-computed quantity at a missing route rather than a missing model', () => {
+  it('names both blockers on every already-computed quantity, not the route alone', () => {
     // "computed, not exposed" is a claim about a contract gap specifically, and
     // it is the finding this unit surfaced. An item carrying that status whose
     // blocker is about modelling would mean the status is wrong.
+    //
+    // But naming the route ALONE is the defect this test used to pin. The route
+    // is a real blocker and it is not a sufficient one: compute_reliability_scorecards
+    // raises ReliabilityInputError on a cohort with "no final games", and again on
+    // one lacking exact "team_schedule coverage". The store holding 2025-26
+    // participation trips the second; the store this screen reads trips the
+    // first. A reader told only about the route concludes one unit unblocks these.
+    // Two do. That is a guarantee that is true about one property being read as
+    // true about another, which is the shape this whole screen exists to refuse.
     const notExposed = AVAILABILITY_EVIDENCE.filter((item) => item.status === 'not-exposed')
 
     expect(notExposed.length).toBeGreaterThan(0)
     for (const item of notExposed) {
-      expect(item.blocker.toLowerCase(), item.id).toContain('route')
+      expect(item.blocker.toLowerCase(), `${item.id} names the route`).toContain('route')
+      expect(item.blocker.toLowerCase(), `${item.id} names the store`).toContain('store')
     }
+  })
+
+  it('keeps the back-to-back model-free claim from covering the half it does not cover', () => {
+    // build_schedule_density genuinely needs no model: which nights are
+    // back-to-backs is arithmetic on a calendar. That guarantee is real and it
+    // covers one half of the quantity. Whether a player SAT one is an
+    // observation, and no amount of calendar arithmetic produces it.
+    //
+    // This is read_only_engine's shape at the UI layer: a true guarantee about
+    // one property read as covering another. A reader who takes "no model" as a
+    // property of "back-to-back sit evidence" concludes the row is nearly free.
+    const b2b = AVAILABILITY_EVIDENCE.find((item) => item.id === 'back-to-back')
+    expect(b2b).toBeDefined()
+
+    const prose = `${b2b?.whereItLives ?? ''} ${b2b?.blocker ?? ''}`.toLowerCase()
+
+    // The model-free half is named as a half, not as the quantity.
+    expect(prose).toContain('build_schedule_density')
+    // ...and the half it does not cover is named in the same breath.
+    expect(prose).toContain('participation')
+    expect(prose, 'the sit half must be stated as needing observation').toMatch(
+      /whether he sat|sit half/,
+    )
   })
 
   it('states p(play) as held pending a decision rather than as merely unbuilt', () => {

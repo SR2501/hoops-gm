@@ -204,7 +204,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     whereItLives:
       'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, callable in-process only.',
     blocker:
-      'Blocked on a backend route. reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — so nothing serves it. No unit for that route is filed in docs/backlog.md: the gap is unowned, not queued.',
+      'Blocked twice, and either alone is enough. (1) No route: reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — and no unit for that route is filed in docs/backlog.md, so the gap is unowned rather than queued. (2) No store the computation can run in: compute_reliability_scorecards raises ReliabilityInputError on a cohort with "no final games", and again on one without exact "team_schedule coverage". The store holding 2025-26 participation trips the second; the store this screen reads trips the first. Building the route alone would serve nothing.',
   },
   {
     id: 'back-to-back',
@@ -214,9 +214,9 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     purpose:
       'Whether he sits the second night of a back-to-back, from direct observation rather than reputation.',
     whereItLives:
-      'The same scorecard. Back-to-backs themselves are a pure-calendar computation over the schedule (build_schedule_density) and do not depend on any model.',
+      'The same scorecard, but the quantity has two halves with different footings: which nights are back-to-backs is pure calendar (build_schedule_density, no model), whereas whether he sat one is an observation that needs the participation ledger. The calendar half being model-free says nothing about the half that carries the meaning.',
     blocker:
-      'Blocked on the same route, and additionally on each game being attributable to two dated team calendars. Both limits are counted below: games missing a date, and games whose teams are not yet decided.',
+      'Blocked on the same two — no route, and no store the computation can run in. The calendar half additionally needs each game attributable to two dated team calendars, counted below; but that limit bounds the calendar half only, and the sit half stays blocked by the store regardless.',
   },
   {
     id: 'monthly-trend',
@@ -228,7 +228,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     whereItLives:
       'The same scorecard, grouped by calendar month. No slope, smoothing or direction label is fitted, by design.',
     blocker:
-      'Blocked on the same route, and on a store the computation can run in: the populated participation ledger has no team_schedule or refresh_runs table, and the store this screen is reading has no played games. Neither store is sufficient alone.',
+      'Blocked on the same two — no route, and no store the computation can run in: the populated 2025-26 participation ledger has no team_schedule or refresh_runs table, and the store this screen reads has no played games. Neither is sufficient alone.',
   },
   {
     id: 'minutes-consistency',
@@ -239,7 +239,8 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
       'How stable his minutes are in the games he does play, which is a different question from whether he plays.',
     whereItLives:
       'The same scorecard: sample standard deviation over mean minutes, null below two observations.',
-    blocker: 'Blocked on the same route.',
+    blocker:
+      'Blocked on the same two — no route, and no store the computation can run in. One call produces every quantity on this scorecard, so it refuses as a whole or returns as a whole.',
   },
   {
     id: 'category-dispersion',
@@ -250,7 +251,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
       'Empirical p20/p80 and sample SD per category, so a category line can be read as a range rather than a point.',
     whereItLives:
       'The same scorecard. These are historical lower and upper observations, explicitly not predictive intervals.',
-    blocker: 'Blocked on the same route.',
+    blocker: 'Blocked on the same two — no route, and no store the computation can run in.',
   },
   {
     id: 'composite-grade',

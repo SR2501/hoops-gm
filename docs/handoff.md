@@ -23000,3 +23000,57 @@ surprising.
   entries up.** Still not re-derived from the producer's contract. Unchanged
   across three passes and still the honest residual risk in the payload I
   report. *Not driven.*
+## 2026-08-25 — frontend — `reliability-ui`: a blocker that is true and not sufficient
+
+Prompted by `architect` relaying `data-engineer`'s `read_only_engine` finding —
+that a guarantee about **writes** was read as covering **reads**, and that the
+guarantee was real while its *applicability* went unchecked. Applied that test to
+my own labels rather than assuming they passed it. Two failed.
+
+**1. Four of five `not-exposed` rows named the route as their blocker, alone.**
+The route is a real blocker. It is not a sufficient one:
+`compute_reliability_scorecards` raises `ReliabilityInputError` on a cohort with
+`no final games`, and again on one lacking exact `team_schedule coverage`. The
+store holding 2025-26 participation trips the second; the store this screen reads
+trips the first. **One call produces every quantity on that scorecard**, so it
+refuses whole or returns whole - which is why the same two blockers bind all
+five rows. A reader told only about the route concludes one unit unblocks these.
+Two do, and one of them is unowned.
+
+The test was pinning it: `expect(item.blocker).toContain('route')` asserted the
+incomplete claim as the requirement. Now requires `route` **and** `store`.
+
+**2. `back-to-back` claimed "do not depend on any model" of a two-part quantity.**
+True of *which nights are back-to-backs* (`build_schedule_density`, pure
+calendar). False of *whether he sat one*, which is an observation. That is the
+`read_only_engine` shape exactly: a real guarantee about one half, read as a
+property of the whole, on the row where the model-free half is the half that
+does not carry the meaning. Now states both halves and says which one the
+guarantee covers.
+
+Cited the refusal **messages** rather than line numbers deliberately: a line
+number is a citation that goes silently wrong when the backend file moves, and
+these strings are greppable in seconds. A frontend test reading `backend/src` to
+verify them live would make the citation CI-falsifiable, and I did not add it -
+that is a new cross-module coupling and `architect` owns those.
+
+322 tests (was 321), 20 files, typecheck 0, lint 0, build 0. Both new checks
+driven: mutations confirmed *present in the file* before the run was read, then
+both assertions failed, then reverted.
+
+### Could not verify
+
+- **Whether the other six rows carry the same defect in a form I cannot see.**
+  I found these two by applying one specific test to eight rows. That test
+  catches "guarantee about one property read as another". It does not catch a
+  claim that is simply false, and nothing here re-derives each row's `purpose`
+  against its source. *Reasoned per row, driven for two.*
+- **That "no store the computation can run in" stays true.** It is true of both
+  stores *today*. It is a claim about the world rather than about code, so no
+  test on this screen can hold it - if `data-engineer` lands a store with both
+  tables and played games, this label goes stale silently and green. *Not
+  driven, and not drivable from here.*
+- **Anything at all in a browser.** These are prose changes to eight strings;
+  the probe reads a rendered page and would move, but I did not re-probe, so my
+  reported payload is from `ab8452f` and the wording it shows is one commit
+  stale. The rendered *structure* is unchanged. *Stated rather than measured.*
