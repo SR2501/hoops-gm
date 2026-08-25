@@ -37,7 +37,11 @@ import { AsyncBoundary } from '../components/AsyncBoundary'
 import { AvailabilityAssumptionPanel } from '../components/AvailabilityAssumptionPanel'
 import { EvidenceInventory } from '../components/EvidenceInventory'
 import { buildProjectionsModel } from '../components/projectionsModel'
-import { buildAvailabilitySummary, EVIDENCE_SEASON } from '../components/reliabilityModel'
+import {
+  buildAvailabilitySummary,
+  describePendingLabels,
+  EVIDENCE_SEASON,
+} from '../components/reliabilityModel'
 import { SeasonNote } from '../components/SeasonNote'
 
 /** ADR-001: one owner, one local league. A picker arrives with a second one. */
@@ -169,26 +173,9 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
   const teamsUndecided = schedule.pending_game_ids.length
   const undated = schedule.pending_games.filter((game) => game.game_date === null).length
 
-  // Read from the payload rather than asserted. ADR-013 makes "pending means an
-  // undrawn knockout bracket" a *falsifiable* reading, not a definition, which
-  // is why ScheduleLineage renders the label per game so an operator can check
-  // it. An earlier version of this row hard-coded "knockout fixtures whose
-  // brackets are undrawn" and would have kept asserting it after it stopped
-  // being true — the one thing ADR-013 asks a consumer to watch for.
-  //
-  // The quantifier is derived too. "All labelled X" is a claim about every
-  // counted game, so it is only said when every counted game carries a label;
-  // a mixed cohort says how many, and an unlabelled one says nothing. Writing
-  // "all" unconditionally would be the same failure as the prose this replaced.
-  const labelled = schedule.pending_games.filter((game) => game.game_label !== '')
-  const distinctLabels = [...new Set(labelled.map((game) => game.game_label))]
-  const labelList = distinctLabels.join(', ')
-  const pendingLabels =
-    distinctLabels.length === 0
-      ? ''
-      : labelled.length === schedule.pending_games.length
-        ? `, all labelled ${labelList}`
-        : `, ${labelled.length} of them labelled ${labelList}`
+  // Read from the payload rather than asserted, including the quantifier.
+  // See describePendingLabels for why each part of that sentence is derived.
+  const pendingLabels = describePendingLabels(schedule.pending_games)
 
   return (
     <section className="assumptions" data-testid="schedule-evidence">

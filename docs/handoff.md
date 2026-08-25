@@ -22915,3 +22915,88 @@ remaining occurrences of the word are in comments.
 - **Whether the remaining agreement flags in my probe share the defect the
   second entry describes.** Still not re-derived from the producer's contract.
   Unchanged and still the honest residual risk. *Not driven.*
+
+## 2026-08-25 - `frontend` - Third pass on one sentence, and the `null` that `!== ''` lets through
+
+Fourth and final entry on `reliability-ui`. Base `f3e2c53`.
+
+### `!== ''` is not an emptiness check when the field is nullable
+
+`game_label` is `string | null` in `api/types.ts`, and the boundary admits the
+`null` **on purpose** - the rationale is written into `endpoints.ts`: a null
+label is "a gap this screen can describe", so tolerate it. My filter tested only
+`game.game_label !== ''`, which is `true` for `null`. An unlabelled game was
+therefore counted as labelled, the "all labelled" branch fired on a cohort where
+nothing was labelled, and `String(null)` put the word **"null"** on the screen:
+
+    6 published games have no teams assigned yet, all labelled null.
+
+Driven, not reasoned: reverting the guard fails two tests with exactly that
+string. The mixed case is worse than the all-null case, because the count stays
+plausible while the quantifier goes false.
+
+The sibling consumer of the identical field gets this right -
+`ScheduleLineage.tsx`'s `describePendingGame` filters `part !== null && part !==
+''`. **This screen was the one consumer that diverged**, which is the argument
+for having looked at the other consumer before writing the second one.
+
+### Two quantifiers, both false in a way the count hides
+
+- **"All labelled X" when only some are labelled.** Coverage.
+- **"All labelled X, Y" when the cohort carries two labels.** Reads as though
+  every game carries both. Now ", labelled X and Y" - dropping the "all",
+  because no game is labelled both.
+
+Together with the `null` case that is **three** ways for one sentence to be
+false while its number is right. Each was found by someone asking what the
+sentence claims rather than whether the figure is correct, and none of them
+would have been caught by any check that looks at values.
+
+### Moved into the model, because a sentence with four branches is a function
+
+`describePendingLabels` now lives in `reliabilityModel.ts` and is unit-tested
+directly across six cases (none, all-null, null-beside-real, single label,
+two labels, partial coverage). Inside the route it was reachable only by
+constructing a whole `ScheduleGrid` and rendering a page, which is why the first
+two versions shipped with untested branches.
+
+### The tally of this unit, which is the finding
+
+The screen went to review three times. Every round found a real defect, and
+**none of them was in a number** - all three were in prose asserting a property
+of a quantity that was true of the cohort in front of me:
+
+1. A count labelled as a quantity it was not (`pending_game_ids` as "undated").
+2. Two nested sets presented as alternatives, so they could be summed.
+3. A quantifier that outran its evidence, three separate ways.
+
+The code gate cannot see any of these. Lint, types and 321 green tests were
+true at every one of those heads. **The only thing that caught them was a
+reader outside the lane checking claims against the producer's contract** - and
+in each case the correction came from a file that already existed and already
+said the right thing.
+
+If there is a generalisable rule: *a number you derive gets checked; a sentence
+you write about it does not.* This screen is almost entirely sentences about
+numbers, which is what an evidence screen is, so it carried an unusually high
+share of that risk and the review load should have been expected rather than
+surprising.
+
+### What I could not verify
+
+- **That `null` labels can arrive from today's producer.** They cannot:
+  `_optional_text` normalises to `""` and the response model types it `str`. But
+  the frontend contract declares it nullable, the boundary was closed around it
+  deliberately, and `SchedulePage.test.tsx` already drives `game_label: null`,
+  so the frontend treats it as live. Fixed as a live case. *Reasoned about
+  reachability, driven as behaviour.*
+- **That the pending-row assertion cannot be outrun again.** `toHaveTextContent`
+  is a substring check, so a newly appended trailing clause would still pass -
+  which is exactly how defect 2 survived. An exact `textContent` equality would
+  close it. Not done: the reviewer raised it as a residual limitation rather
+  than a defect, and I judged the change riskier than the risk. *Known and
+  accepted, not fixed.*
+- **Whether the remaining probe agreement flags share the defect described two
+  entries up.** Still not re-derived from the producer's contract. Unchanged
+  across three passes and still the honest residual risk in the payload I
+  report. *Not driven.*

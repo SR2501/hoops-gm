@@ -34,11 +34,13 @@ import {
   AVAILABILITY_EVIDENCE,
   barPercent,
   buildAvailabilitySummary,
+  describePendingLabels,
   describeSeasonSplit,
   EVIDENCE_SEASON,
   EVIDENCE_STATUS_LABELS,
   tallyEvidence,
 } from './reliabilityModel'
+import type { SchedulePendingGame } from '../api/types'
 import type { AvailabilitySummary, EvidenceItem, EvidenceStatus } from './reliabilityModel'
 
 function rates(playerId: number): ProjectionRates {
@@ -333,6 +335,54 @@ describe('AVAILABILITY_EVIDENCE', () => {
     expect(ids).toContain('back-to-back')
     expect(ids).toContain('monthly-trend')
     expect(ids).toContain('roster-fragility')
+  })
+})
+
+describe('describePendingLabels', () => {
+  const game = (label: string | null): SchedulePendingGame => ({
+    nba_game_id: `g${String(label)}`,
+    game_date: '2026-12-04',
+    game_label: label,
+    game_sub_label: '',
+    game_subtype: '',
+    date_absence_reason: '',
+  })
+
+  it('says nothing when no game carries a label', () => {
+    expect(describePendingLabels([game(''), game('')])).toBe('')
+  })
+
+  it('treats a null label as unlabelled, not as a label that renders empty', () => {
+    // game_label is `string | null` and the boundary admits null deliberately.
+    // A filter testing only `!== ''` counts these as labelled and then lets
+    // `join` coerce them away, rendering ", all labelled ." — a false
+    // quantifier with a hole where the evidence should be.
+    expect(describePendingLabels([game(null), game(null)])).toBe('')
+  })
+
+  it('does not claim "all" when a null sits beside a real label', () => {
+    const described = describePendingLabels([game('Emirates NBA Cup'), game(null)])
+
+    expect(described).toBe(', 1 of them labelled Emirates NBA Cup')
+    expect(described).not.toContain('all')
+  })
+
+  it('says "all labelled X" only when every game carries the same single label', () => {
+    expect(describePendingLabels([game('Emirates NBA Cup'), game('Emirates NBA Cup')])).toBe(
+      ', all labelled Emirates NBA Cup',
+    )
+  })
+
+  it('drops "all" when the games carry different labels, which no game carries both of', () => {
+    expect(describePendingLabels([game('Emirates NBA Cup'), game('Play-In Tournament')])).toBe(
+      ', labelled Emirates NBA Cup and Play-In Tournament',
+    )
+  })
+
+  it('reports the labelled count when only some games carry one', () => {
+    expect(describePendingLabels([game('Emirates NBA Cup'), game(''), game('')])).toBe(
+      ', 1 of them labelled Emirates NBA Cup',
+    )
   })
 })
 

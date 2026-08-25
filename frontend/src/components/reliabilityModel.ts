@@ -45,7 +45,7 @@
  * further from anyone who could catch it.
  */
 
-import type { ProjectionPlayer } from '../api/types'
+import type { ProjectionPlayer, SchedulePendingGame } from '../api/types'
 import type { AssumptionState, ProjectionsModel } from './projectionsModel'
 
 /**
@@ -464,6 +464,40 @@ export function buildAvailabilitySummary(model: ProjectionsModel): AvailabilityS
  *
  * Returns 0 rather than dividing when the maximum is absent or non-positive.
  */
+/**
+ * How the pending games describe themselves, read from the payload.
+ *
+ * ADR-013 makes "pending means an undrawn knockout bracket" a **falsifiable**
+ * reading rather than a definition, which is why `ScheduleLineage` renders the
+ * label per game so an operator can check it. This screen counts rather than
+ * lists, so it states the labels and the quantifier — and both are derived,
+ * because a hard-coded characterisation keeps asserting itself after it stops
+ * being true, which is precisely what ADR-013 asks a consumer to watch for.
+ *
+ * Three things here are deliberate, and each replaced a sentence that was true
+ * of the cohort in front of me and false as a property of the quantity:
+ *
+ * - **`null` is unlabelled, not labelled.** `game_label` is `string | null` and
+ *   the boundary admits `null` on purpose ("tolerate a gap you can describe").
+ *   Filtering only on `''` counts a `null`-labelled game as labelled and then
+ *   lets `join` coerce it to nothing, rendering "all labelled ." — a false
+ *   quantifier with a hole where the evidence should be. `ScheduleLineage`
+ *   filters both; this is the consumer that diverged.
+ * - **"All" is only said when it is true of every counted game.** A mixed
+ *   cohort reports how many.
+ * - **"All labelled X" is only said for a single distinct label.** With several,
+ *   "all labelled X, Y" reads as though every game carries both.
+ */
+export function describePendingLabels(games: readonly SchedulePendingGame[]): string {
+  const labelled = games.filter((game) => game.game_label !== null && game.game_label !== '')
+  const distinct = [...new Set(labelled.map((game) => game.game_label))]
+  if (distinct.length === 0) return ''
+
+  const list = distinct.length === 1 ? String(distinct[0]) : distinct.join(' and ')
+  if (labelled.length < games.length) return `, ${labelled.length} of them labelled ${list}`
+  return distinct.length === 1 ? `, all labelled ${list}` : `, labelled ${list}`
+}
+
 export function barPercent(games: number, maximum: number | null): number {
   if (maximum === null || maximum <= 0) return 0
   return (games / maximum) * 100
