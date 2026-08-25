@@ -22192,3 +22192,149 @@ neither. Stated in the docstring for the same reason.
   not check whether any of the small categories (`Rest` 97, `Trade Pending` 37)
   has a conversion profile of its own; that is `quant`'s question and needs the
   join. *Out of lane, deliberately.*
+
+## 2026-08-24 - data-engineer - independent review response on the predictor crosses
+
+**Unit:** amendment to `sr2501-cohort-predictor-crosses` after independent
+review at exact head `2f498d0`. Base `f3e2c53`, not rebased, merge freeze
+respected.
+
+The review confirmed the blind is intact by a method I had not used and should
+have: it installed a **SQLite authorizer** and observed at runtime which tables
+were actually read. Only `injury_report_entries` and `nba_games`. That is a
+better answer than my static reading of the call graph, because it cannot be
+fooled by a lazy relationship loading something on attribute access. It also
+confirmed the arithmetic of every published figure. Three findings, all real.
+
+### 1. My CI claim was false, in an instructive way
+
+I wrote, in the module docstring, the adapter doc and the commit message, that
+`scripts/` sits outside the pytest, ruff **and mypy** scopes so *"nothing in CI
+executes or lints this file."* **mypy checks it, in strict mode.**
+`backend/pyproject.toml:134` is `files = ["src", "tests", "../scripts"]`, and the
+comment three lines above it says `../scripts` was added deliberately because
+*"a script that is checked while its tests are not is the gap that shipped a
+broken harness today."* I asserted the opposite of a decision the repository had
+written down, in the same file I was reading other configuration out of.
+
+The mechanism is the part worth keeping. I did measure - and got a true answer
+to a different question. Running `python -m mypy scripts/consensus_rederivation.py`
+**by path** resolves `hoops_gm` from site-packages, which ships no `py.typed`,
+so it reports `import-untyped` errors; the *configured* run resolves the same
+package from `src` and passes clean. Two invocations of one tool, two answers,
+and I generalised from the one that agreed with what I already expected. This is
+the "validation of form cannot catch errors of meaning" rule with the tool in
+the role of the mislabelled field: `mypy` reported something perfectly true
+about the invocation I gave it and nothing about the invocation CI gives it.
+
+Settled by experiment rather than argument: I inserted a deliberate
+`return "str"` from an `-> int` function and re-ran the configured `mypy`. It
+went red, naming `../scripts/cohort_predictor_crosses.py`. Reverted, re-ran,
+clean over 192 files. So the script **does** pass strict type-checking in CI,
+which is lucky rather than earned - I had not been aiming at that bar.
+
+Corrected in all three places. What survives of the original point is narrower
+and still true: type-checking sees signatures, not selection semantics, so
+whoever changes `select_canonical_pregame_observations` underneath this script
+still will not be told.
+
+### 2. The bound brackets non-G-League, and I called it health-reason
+
+`health = total - g_league` subtracts G League and nothing else. The held-out
+`doubtful` rows are `Injury/Illness` 68, `G League` 10, `Rest` 4, `Concussion
+Protocol` 1, `Return to Competition Reconditioning` 1. So `[73, 74]` is exactly
+right for **non-G-League** and is an **upper bound** on health-reason.
+
+The reviewer's example is the sharp one: `Rest` is a coach's decision on the
+same footing as the Two-Way recall that justified excluding `G League` in the
+first place. I excluded one roster mechanic and kept another, then labelled the
+result by the property I had not established. And `AGENTS.md` says plainly that
+stated reasons launder rest as ailment - so this is not a tidy-up, it is
+contested, and my label quietly resolved a contested classification in the
+direction that made my number bigger.
+
+I inherited the label from v3 §6, which is where the quantity is called
+"health-reason". Inheriting a label while deriving a number is how a derived
+figure acquires an undeserved claim: the arithmetic is mine and checkable, the
+noun is `quant`'s and was not. Renamed throughout to non-G-League, with the
+residual categories printed beside it and the classification named as `quant`'s
+to make. Excluding `Rest` and `Reconditioning` as well would give roughly
+[68, 69], so the >=30 activation floor clears by more than 2x either way and the
+verdict does not turn on it. **Flagging to `quant`**: v3's "health-reason ~74"
+should read "non-G-League", or the health classification should be stated.
+
+### 3. Two marginals are necessary, not sufficient
+
+Correct, with a concrete counterexample I should have generated myself: swap the
+reason labels of an `out` row and a `doubtful` row and both marginals are
+preserved while cells of the reason cross move. I had described this validation
+as the load-bearing part in three places without ever asking what it does not
+catch.
+
+The sufficient check exists and is published - `_observation_records` keys each
+row by its **NBA player id**, and both artifacts carry the sha256 over the
+sorted records. Recomputing it needs a player identity table: a **third** table,
+where the hazard rule I put in my own docstring says two, and that rule exists
+because `player_participation` is in the same file. So I have not closed it, and
+the trade is now stated in `_assert_marginals` rather than left for the next
+reader to discover behind the words "asserts the published marginals".
+
+Two cheaper checks added, both mutation-tested:
+
+- `_assert_artifacts_agree` - the manifest and the admissibility artifact
+  publish the **same** canonical fingerprint (`8e198622...`) under **different
+  key names**, `canonical_observations.sha256_sorted_stable_records` and
+  `fingerprints.sha256_sorted_canonical_identity_records`. Different names is
+  exactly what makes such a check easy to skip; it does not look like the same
+  field. Refuses at exit 2 if they diverge. This one matters beyond tidiness:
+  the held-out bound takes a canonical count from one artifact and a direct
+  count from the other, and until now nothing established they described the
+  same population.
+- `_assert_partition_interiors` - compares distinct-game-date counts for all
+  three partitions against `split_game_dates` (82/41/41), because the endpoint
+  check I already had cannot see an interior that changed while the first and
+  last dates stayed put. Withholds the bound rather than refusing, since the
+  three crosses are unaffected.
+
+The reviewer also noted the interior weakness independently of the swap
+counterexample; both fixes come from the same observation, that I had been
+checking the shape of the population instead of its identity.
+
+### A bug the mutation harness found, that the review did not
+
+Pointing `--manifest` at a copy outside the repository crashed with an
+unhandled `ValueError` from `Path.relative_to` on the *display* line - after all
+validation had passed. So the flags that exist to make the refusal paths
+testable were themselves untestable against out-of-tree copies, and the only way
+to exercise them was to edit committed artifacts in place, which is precisely
+what nobody should do. Found because the new mutation harness passed both flags;
+my earlier harness only ever passed `--admissibility`. Fixed with a fallback to
+the absolute path, and the reason is in a comment so it does not look like
+defensive noise.
+
+### Verification
+
+- Full mutation suite, all five fire, control passes: M1 `status_counts`
+  doubtful +1 -> refuse exit 2, naming `221 vs 222`; M2 `stated_reason_categories`
+  `G League` -1 -> refuse exit 2; M3 scope end date pulled back six weeks ->
+  refuse exit 2, five statuses differing; M7 fingerprint divergence -> refuse
+  exit 2; M8 `split_game_dates` shifted -> bound withheld with reason, crosses
+  still printed, exit 0.
+- Live run over the merged store: all three crosses unchanged, totals 13,789.
+- `ruff check`, `ruff format --check` clean. Configured `mypy` clean over 192
+  files - and now known to actually include this file.
+
+### Could not verify
+
+- **That the printed crosses are correct rather than merely reproducible.**
+  Unchanged and structural: this reproduces `select_canonical_pregame_observations`.
+  If that function is wrong, this script reproduces the error perfectly and
+  reports success. The fingerprint check would not help - both artifacts were
+  built by the same code.
+- **That the population is the manifest's population**, as opposed to one with
+  the same two marginals. Named above; needs the identity table.
+- **Whether `Rest` should count as a health event.** Deliberately not decided
+  in-lane. `AGENTS.md` says stated reasons are unreliable in both directions,
+  which means the classification cannot be settled from the reason text alone
+  and settling it properly would need the observed pattern - which is under the
+  blind.

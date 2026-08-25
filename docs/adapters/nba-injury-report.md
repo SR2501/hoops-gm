@@ -1389,6 +1389,28 @@ by one, or moving the scope window by six weeks, each makes it refuse. A cross
 computed by a selection that does not reproduce is worse than no cross, because
 it looks like evidence.
 
+**Two marginals are necessary and not sufficient, and the gap is named rather
+than papered over.** Independent review supplied the counterexample: swap the
+reason labels of an `out` row and a `doubtful` row and both marginals survive
+untouched while cells of the reason cross move. The sufficient check is the
+canonical identity fingerprint the artifacts already publish, and recomputing it
+from the store needs each row's **NBA player id** - which lives in a player
+identity table, a third table, where this script's hazard rule says two. That
+rule exists because `player_participation` sits in the same SQLite file, so the
+weaker validation is a deliberate trade and not an oversight. Two cheaper checks
+close what they can: `nba-injury-report-cohort-2025-10-21--2026-04-12.json` and
+`nba-injury-report-cohort-admissibility-2025-26.json` publish the **same**
+canonical fingerprint under two different key names
+(`canonical_observations.sha256_sorted_stable_records` and
+`fingerprints.sha256_sorted_canonical_identity_records`, both
+`8e198622...`), and the script refuses if they diverge - which is what makes it
+legitimate for the held-out bound to combine a count from one with a count from
+the other; and it compares the distinct-game-date sizes of all three partitions
+against `split_game_dates` (82/41/41), because a partition can keep its
+endpoints and change its interior. Both were mutation-tested: a forced
+fingerprint divergence refuses at exit 2, and a shifted `split_game_dates`
+withholds the bound with the reason printed while the three crosses still print.
+
 Both reviewer tables reproduce exactly. `Injury/Illness` splits
 6938/171/1044/390/1123 across out/doubtful/questionable/probable/available;
 `G League` splits 2960/41/134/43/207. Era against band gives legacy
@@ -1403,15 +1425,32 @@ reasoned rather than derived. It is now bounded: held-out **canonical**
 `doubtful` is 84, of which 10 are `G League`, so 74 are not; the committed
 admissibility artifact publishes held-out **direct** `doubtful` as 83, and
 direct observations are a subset of canonical ones, so exactly one canonical row
-is not direct and health-reason direct `doubtful` lies in **[73, 74]** - between
-2.43x and 2.47x the floor of 30, against the 2.77x the unsplit count suggests.
-The conclusion is unchanged and the number now has arithmetic behind it. It is
-derived from two already-committed integers and a subset relation: **no join, no
-outcome, nothing under the blind.** The bound is withheld rather than printed if
-the artifact's held-out range is not the one computed here - the subset relation
-needs both halves to describe the same partition, and §4's boundaries are
-`quant`'s parameter, free to move while every individual number stays perfectly
-valid.
+is not direct and **non-G-League** direct `doubtful` lies in **[73, 74]** -
+between 2.43x and 2.47x the floor of 30, against the 2.77x the unsplit count
+suggests. The conclusion is unchanged and the number now has arithmetic behind
+it. It is derived from two already-committed integers and a subset relation:
+**no join, no outcome, nothing under the blind.** The bound is withheld rather
+than printed if the artifact's held-out range is not the one computed here, or
+if its `split_game_dates` sizes are not the ones this selection partitions into
+- the subset relation needs both halves to describe the same partition, §4's
+boundaries are `quant`'s parameter and free to move while every individual
+number stays perfectly valid, and matching endpoints do not prove matching
+interiors.
+
+**It bounds non-G-League, which is not the same thing as health-reason, and v3
+calls it health-reason.** Independent review caught this and it is worth
+stating precisely, because the two numbers coincide only if every remaining
+category is a health event. The held-out `doubtful` rows are `Injury/Illness`
+68, `G League` 10, `Rest` 4, `Concussion Protocol` 1, `Return to Competition
+Reconditioning` 1. `Rest` is a coach's decision on the same footing as the
+Two-Way recall that justified excluding `G League` in the first place - and
+`AGENTS.md` warns that stated reasons launder rest as ailment in both
+directions, so the classification is genuinely contested rather than merely
+unmade. So **[73, 74] is an upper bound on the health-reason count**, not the
+count. Excluding `Rest` and `Reconditioning` too would give roughly [68, 69],
+which still clears the >=30 floor by more than 2x, so the activation verdict
+does not turn on the choice. The choice is `quant`'s; the arithmetic is
+published either way.
 
 **Why it is a script and not an artifact, stated explicitly rather than left to
 a detector.** `outcome_keyed_field_paths` in
@@ -1427,11 +1466,23 @@ recorded here because a thing that passes by non-recognition has not been
 cleared by anybody. Markdown is outside the guard's scope entirely, so the
 paragraph above is a deliberate, classified placement and not an evasion of it.
 
-**What it will not tell you when it breaks.** `scripts/` sits outside the
-pytest, ruff and mypy scopes - all three run with `working-directory: backend` -
-so nothing in CI executes or lints this file, and whoever changes
+**What it will not tell you when it breaks - corrected.** An earlier version of
+this section said `scripts/` sits outside the pytest, ruff and mypy scopes and
+that nothing in CI lints the file. **That is false for mypy.**
+`backend/pyproject.toml` sets `files = ["src", "tests", "../scripts"]` in strict
+mode, and its own comment records why: *"a script that is checked while its
+tests are not is the gap that shipped a broken harness today."* So the file is
+type-checked in CI. It is not executed there and ruff does not reach it. The
+wrong claim came from running `mypy` on the file **by path**, which resolves
+`hoops_gm` from site-packages and reports `import-untyped`, where the configured
+run resolves it from `src` and passes clean - two invocations of the same tool
+giving different answers, and the convenient one believed. Settled by inserting
+a deliberate type error and watching the configured run go red.
+
+What remains true is the part that mattered: whoever changes
 `select_canonical_pregame_observations` or `games_to_backfill` underneath it will
-not be told. It is deliberately not wired into the test suite: the merged store
+not be told, because type-checking sees signatures and not selection semantics.
+It is deliberately not wired into the test suite: the merged store
 is out-of-tree gitignored operational state and is absent in CI, so a test over
 it would either fail permanently or be made to skip, and **a skipping test is a
 green light nobody is holding.** The mitigation is that its first act is to
