@@ -22468,3 +22468,107 @@ denied.
 * **Whether `Rest` is a health event** — still `quant`'s classification, still
   undecided in-lane, and settling it properly needs observed patterns, which are
   under the blind.
+
+## 2026-08-25 — data-engineer — Read-only is not outcome-free: a real guarantee inherited into a context it did not cover
+
+**Branch:** `sr2501-cohort-predictor-crosses`, rebased onto `27131fc` after #96 merged. Recorded here at the architect's request, because the transferable part is not about SQLite and belongs where a stranger will meet it rather than in a review thread.
+
+### The sentence that stops the next person
+
+**Read-only and outcome-free are different properties, and the docstring on
+`read_only_engine` only ever claimed the first.** Someone will read `mode=ro`
+next month and make the same inference. That sentence is the whole entry; the
+rest is why it was needed.
+
+### The chain
+
+Nobody lied and nobody was careless. Each step was true.
+
+1. A lane described its module as *"read-only by construction"*. **True.**
+2. The `quant` reviewer ruled an escaped census site **unclassified, not
+   unguarded**, because *"it can neither create a store nor write into one."*
+   **True — and about writes.**
+3. The architect repeated that ruling twice, including in the brief that
+   commissioned this script, as though read-only implied outcome-free.
+4. I wrote a module docstring asserting the two-table boundary and cited the
+   read-only engine as part of why it held.
+
+Then it was measured rather than argued: the exact read the guarded engine now
+refuses returns **43,037 rows** through a plain `read_only_engine`.
+
+Reading the docstring on `main` afterwards settles it. Every word is about
+**file creation and missing paths** — the withdrawn meaningless-zero claim, and
+#88's correction that `mode=ro` refuses a missing file rather than creating one.
+**Not one word is about which tables you may read.** The guarantee was sound.
+Its *applicability* was what nobody checked.
+
+### Why this shape and not "someone was sloppy"
+
+This is **unexamined inheritance where the hazard is real** — the harder variant,
+because there is nothing false to find. A wrong claim can be falsified by
+checking it. A true claim carried into the wrong context cannot: checking it
+returns *true*, and the check feels like diligence. What has to be checked is
+not the claim but its **domain**, and that is a question nobody thinks to ask
+about a guarantee that has already been verified once.
+
+It is the same sentence the cohort lane wrote about itself two days ago,
+recurring inside the same week through three agents including one who had
+recorded it. Recording it again is not redundancy — the previous record did not
+prevent this, and the reason is that it was filed as an instance rather than as
+a shape.
+
+### The remedy, and the half of it usually left unrecorded
+
+`_guarded_engine` installs a SQLite authorizer vetoing reads outside
+`{injury_report_entries, nba_games}` before SQLite executes the statement. It
+beats the call-graph reading I originally did, because **a call graph cannot see
+a lazily loaded relationship firing on attribute access and an authorizer does
+not care how the read was spelled.**
+
+Most guards are reported by their refusals. That is the weaker half. Stated
+prominently because it is the half that usually goes unwritten:
+
+> **The unmutated run is byte-identical — `Compare-Object` returns 0 lines.**
+> That establishes that a permission set of **exactly those two tables is
+> *sufficient*** to compute every number the script prints.
+
+Not "no forbidden read was observed", which is a statement about what I looked
+for. A **fact about the run**, which is what makes the guard's silence mean
+something. A guard proven only by its refusals has never been shown to be
+compatible with the work actually succeeding.
+
+### Rebase and verification on the new base
+
+* Base: **`27131fc`** (= `origin/main` after #96). Rebased in the window given.
+* Union **predicted before resolving**: 263 base + 3 ours + 2 theirs = **268**.
+  Resolved file counts **268**. The intermediate counts were 266 and 267, one
+  per commit, which is why a mid-rebase count must not be compared against a
+  whole-rebase prediction — I checked each commit's contribution (1, 1, 1)
+  rather than reading 266 as two lost entries.
+* `git diff --numstat origin/main -- docs/handoff.md` → **461 added, 1 removed**;
+  the removed line reappears verbatim and only the *no newline at end of file*
+  marker moved. The two checks answer different questions: the count cannot see
+  a swapped entry, the numstat can.
+* `docs/adapters/nba-injury-report.md` **auto-merged** — disjoint sections, as
+  predicted. No duplicated `##` headings; both #96's third-era section and this
+  branch's predictor-crosses section present.
+
+### The blind
+
+**No contact.** No participation outcome read, published or differenced. The
+43,037 above is a whole-ledger row count, already committed in several
+documents, not an outcome value; the probe that attempted `SELECT outcome` was
+denied by the authorizer.
+
+### Could not verify
+
+* **That this is the last inherited guarantee of its kind in the package.** I
+  found this one because I was writing a safety claim that depended on it. There
+  is no census of *"guarantees cited outside the context they were established
+  in"*, and I do not know how one would be written — the defect is in the
+  citation, not the guarantee, so a scan of guarantees finds nothing.
+* **That the authorizer covers connections this file does not open.** It is
+  installed per-engine; anything constructing its own engine is outside it.
+  True of this file today, not a guarantee about the package.
+* **That the crosses are correct rather than reproducible** — unchanged and
+  structural, restated so it is not lost in a rebase entry.
