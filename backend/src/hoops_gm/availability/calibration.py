@@ -37,6 +37,18 @@ report may never claim `PREREGISTERED_V2`, because v2 pre-registers no such
 analysis; that is true whatever the owner decides about v3, so the guard does not
 depend on a fact that can change underneath it.
 
+**The guard keys on the data, not on which argument the caller used.** An earlier
+version keyed only on the `restriction` parameter, and an independent review
+defeated it in one line: narrow the rows with this module's own `restrict()`
+first, then pass them in as though they were the whole cohort, and the payload
+claimed `PREREGISTERED_V2` over an 83-row subgroup. `restrict()` therefore
+returns a `RestrictedCohort` that carries what it filtered on, and
+`build_calibration_report` inherits that provenance rather than trusting the call
+site. **The residual, stated rather than papered over:** `list(restrict(...))`
+strips the marker. Python cannot prevent that and this module does not pretend
+to. The difference that matters is that laundering is now a deliberate act
+instead of the obvious way to use the primitive.
+
 ## What this module cannot see
 
 It sees a probability and a boolean. It cannot see whether the probability came
@@ -317,10 +329,29 @@ def wilson_interval(
     return max(0.0, centre - spread), min(1.0, centre + spread)
 
 
+class RestrictedCohort(list[CalibrationObservation]):
+    """Observations that have already been narrowed to a labelled subgroup.
+
+    It exists so the provenance guard can key on **what the data is** rather than
+    on which parameter the caller happened to use. Pre-filtering with `restrict()`
+    and then presenting the result as a whole cohort was a one-line defeat of the
+    parameter-keyed guard, and it is the ordinary way a caller would reach for a
+    restriction primitive, not an exotic bypass.
+    """
+
+    def __init__(
+        self,
+        rows: Iterable[CalibrationObservation],
+        restriction: tuple[tuple[str, str], ...],
+    ) -> None:
+        super().__init__(rows)
+        self.restriction = restriction
+
+
 def restrict(
     observations: Iterable[CalibrationObservation],
     **labels: str,
-) -> list[CalibrationObservation]:
+) -> RestrictedCohort:
     """Return the observations whose labels match every supplied key.
 
     Subgroup restriction is a first-class operation here rather than something a
@@ -328,14 +359,32 @@ def restrict(
     exactly that a pooled figure can be excellent while the subgroup the model is
     actually asked about is worthless. A capability that is awkward to reach for
     is a capability that does not get used under time pressure.
+
+    A row **missing** a restricted key is excluded, not kept. That is the whole
+    difference between a restriction and a no-op, and it is the reason
+    `row.labels.get(key)` is compared to `value` rather than tested for
+    truthiness.
     """
 
     wanted = tuple(sorted(labels.items()))
-    return [
-        row
-        for row in observations
-        if all(row.labels.get(key) == value for key, value in wanted)
-    ]
+    return RestrictedCohort(
+        (
+            row
+            for row in observations
+            if all(row.labels.get(key) == value for key, value in wanted)
+        ),
+        wanted,
+    )
+
+
+def _inherited_restriction(
+    observations: Sequence[CalibrationObservation],
+) -> tuple[tuple[str, str], ...]:
+    """What `observations` was already filtered on, if anything."""
+
+    if isinstance(observations, RestrictedCohort):
+        return observations.restriction
+    return ()
 
 
 def build_calibration_report(
@@ -355,14 +404,17 @@ def build_calibration_report(
     choice stops being visible.
     """
 
+    inherited = _inherited_restriction(observations)
+    rows: list[CalibrationObservation]
     if restriction is not None:
         rows = restrict(observations, **dict(restriction))
-        recorded_restriction: tuple[tuple[str, str], ...] | None = tuple(
-            sorted(restriction.items())
-        )
+        merged = dict(inherited) | dict(restriction)
     else:
         rows = list(observations)
-        recorded_restriction = None
+        merged = dict(inherited)
+    recorded_restriction: tuple[tuple[str, str], ...] | None = (
+        tuple(sorted(merged.items())) if merged else None
+    )
     if not rows:
         raise ValueError("calibration requires at least one observation after restriction")
 
@@ -544,6 +596,20 @@ class BrierComparison:
     interval_high: float
     resamples: int
     seed: int
+
+    def __post_init__(self) -> None:
+        # An independent review swapped the 2.5% and 97.5% quantiles and the
+        # suite stayed green, while `candidate_beats_baseline` flipped to True on
+        # a candidate that does not beat its baseline - a loosening of v2 §8
+        # condition 2 that no test saw. Endpoint order is an invariant of the
+        # object, so it is enforced here rather than left to a caller to notice.
+        if self.interval_low > self.interval_high:
+            raise ValueError(
+                "bootstrap interval endpoints are inverted: "
+                f"low {self.interval_low!r} exceeds high {self.interval_high!r}. "
+                "v2 §8 condition 2 reads the UPPER endpoint, so an inverted pair "
+                "silently converts a straddling interval into a pass."
+            )
 
     @property
     def candidate_beats_baseline(self) -> bool:

@@ -13,7 +13,9 @@ evidence. Each detector below is driven against a cohort built to break it.
 from __future__ import annotations
 
 import math
+import statistics
 from collections.abc import Callable
+from fractions import Fraction
 
 import pytest
 
@@ -23,6 +25,7 @@ from hoops_gm.availability.calibration import (
     WILSON_Z_95,
     Band,
     BinningScheme,
+    BrierComparison,
     CalibrationObservation,
     PairedPrediction,
     Provenance,
@@ -384,8 +387,9 @@ def test_the_dilution_identity_ignores_the_fictional_rates() -> None:
 # --- Masking: the case the pooled table cannot see at all --------------------
 
 
-def _masked_band_cohort() -> list[CalibrationObservation]:
+def _masked_band_cohort(*, offset: float = 0.0) -> list[CalibrationObservation]:
     return pooled_band_cohort(
+        band_probability_offset=offset,
         counts_by_status=HELD_OUT_COUNTS,
         fictional_rate_by_status={
             "out": 0.02,
@@ -404,7 +408,7 @@ def _masked_band_cohort() -> list[CalibrationObservation]:
     )
 
 
-def test_a_band_model_right_in_aggregate_clears_every_computable_pooled_condition() -> None:
+def test_a_band_model_emitting_each_realised_band_rate_clears_the_pooled_conditions() -> None:
     """A three-band model can pass v2 §8's pooled checks while one status is 86 points out.
 
     Every emitted probability is its own band's realised rate, so each bin gap is
@@ -412,6 +416,15 @@ def test_a_band_model_right_in_aggregate_clears_every_computable_pooled_conditio
     passes, condition 7 finds no reversal. The `doubtful` rows inside the
     `unlikely` band are predicted at the band rate, which `out` dominates
     2,963 to 83.
+
+    Read the scope in the name. This is the **zero-displacement** case, and its
+    exact zeros are definitional - see
+    `test_the_pooled_zeros_are_definitional_and_this_test_says_so`. A real fit
+    takes its band rate from a different partition, and
+    `test_a_band_probability_displaced_by_one_point_starts_failing_condition_five`
+    shows condition 5 firing about 0.7pp away. An earlier name for this test said
+    "clears every computable pooled condition", which read as a claim about band
+    models generally rather than about this one.
 
     Synthetic. It shows the condition set is *satisfiable* by such a model, not
     that the real fit will be one.
@@ -853,3 +866,306 @@ def test_an_error_pushing_a_prediction_out_of_range_is_refused_not_clipped() -> 
             informative_statuses=INFORMATIVE,
             informative_error=0.5,
         )
+
+
+# --- Findings from the independent review at 5032bf1 -------------------------
+#
+# Four mutations written by a reviewer who was not the author survived the suite
+# above. Every one is pinned here, and two of them were closed in the module
+# rather than only in a test, because a survivor that is merely tested can be
+# reintroduced by the next person who reads the test as optional.
+
+
+def test_the_pooled_zeros_are_definitional_and_this_test_says_so() -> None:
+    """The masked band's exact zeros are a restatement of the construction.
+
+    An independent review was right that reporting `CITL == 0.0` and `ECE == 0.0`
+    as though they were measurements invites a reader to treat a construction as
+    a result. At offset zero every emitted probability **is** its bin's realised
+    rate, so a zero gap is arithmetic, not evidence. This test exists to make
+    that explicit in the suite rather than only in a docstring, and the honest
+    version of the finding is driven by the two tests after it.
+    """
+
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    for row in report.bins:
+        assert row.predicted_mean == pytest.approx(row.observed_rate, abs=1e-12)
+        assert row.gap == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_band_probability_displaced_by_one_point_starts_failing_condition_five() -> None:
+    """The non-circular form: a real fit's band rate comes from another partition.
+
+    A model fitted on development emits a band probability that is *not* the
+    held-out band rate, so the interesting question is how far it may drift
+    before a pooled condition notices. The `unlikely` band's 3,046 observations
+    make condition 5 tight at band level, which is a real defence and one the
+    first write-up of this finding did not mention.
+
+    What does **not** move with the offset is the `doubtful` error: it stays
+    around 86 points at every displacement, because condition 5 is protecting the
+    band, not the status inside it.
+    """
+
+    tolerated = build_calibration_report(
+        _masked_band_cohort(offset=0.005),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert tolerated.bins_outside_wilson_interval == ()
+
+    caught = build_calibration_report(
+        _masked_band_cohort(offset=0.02),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    unlikely = next(row for row in caught.bins if row.observations == 3046)
+    assert unlikely.label in caught.bins_outside_wilson_interval
+
+    for offset in (0.0, 0.005, 0.02):
+        restricted = build_calibration_report(
+            _masked_band_cohort(offset=offset),
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+            restriction={"status": "doubtful"},
+        )
+        assert restricted.calibration_in_the_large < -0.8
+
+
+def test_pooling_puts_the_two_statuses_in_one_bin_whatever_the_invented_rates() -> None:
+    """The part of the masking finding that is a theorem, not a construction.
+
+    Distinct-emitted-probability binning partitions rows by *predicted value*.
+    Statuses sharing a band share a predicted value. So no statistic computed on
+    that partition can separate them - at any offset, at any rates. Driven across
+    three unrelated rate assignments so the claim cannot be an artefact of the
+    numbers chosen, which is the guarantee the dilution identity already had and
+    this finding did not.
+    """
+
+    for doubtful_rate in (0.10, 0.50, 0.90):
+        rows = pooled_band_cohort(
+            counts_by_status=HELD_OUT_COUNTS,
+            fictional_rate_by_status={
+                "out": 0.02,
+                "doubtful": doubtful_rate,
+                "questionable": 0.55,
+                "probable": 0.85,
+                "available": 0.95,
+            },
+            band_by_status={
+                "out": "unlikely",
+                "doubtful": "unlikely",
+                "questionable": "uncertain",
+                "probable": "likely",
+                "available": "likely",
+            },
+        )
+        report = build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+        assert len(report.bins) == 3
+        assert report.bins_outside_wilson_interval == ()
+        unlikely = next(row for row in report.bins if row.observations == 3046)
+        assert unlikely.observations == HELD_OUT_COUNTS["out"] + HELD_OUT_COUNTS["doubtful"]
+
+
+def test_restriction_excludes_a_row_that_lacks_the_restricted_key() -> None:
+    """Reviewer mutation N02: treating a missing key as a match, and surviving.
+
+    A restriction that keeps unlabelled rows is not a restriction. The mutation
+    turned `restrict()` into a near-no-op and every test above stayed green,
+    which means nothing was checking the one property that makes the operation
+    worth having.
+    """
+
+    labelled = perfectly_calibrated_cohort({"a": 30}, {"a": 0.5})
+    unlabelled = [
+        CalibrationObservation(
+            observation_id=f"bare-{index}",
+            predicted=0.5,
+            played=index % 2 == 0,
+            labels={},
+        )
+        for index in range(30)
+    ]
+    kept = restrict([*labelled, *unlabelled], group="a")
+    assert len(kept) == 30
+    assert all(row.labels.get("group") == "a" for row in kept)
+    assert not any(row.observation_id.startswith("bare-") for row in kept)
+
+
+def test_wilson_z_is_the_standard_normal_upper_975th_percentile() -> None:
+    """Reviewer mutation N01: swap the 95% constant for the 90% one, and survive.
+
+    Everything else derived the interval from `WILSON_Z_95`, so the constant was
+    self-referential: it could be any number and the suite would agree with
+    itself. Pinned against an independent source rather than against a literal I
+    typed twice.
+    """
+
+    assert pytest.approx(statistics.NormalDist().inv_cdf(0.975), abs=1e-12) == WILSON_Z_95
+
+
+def test_an_inverted_bootstrap_interval_is_refused_rather_than_reported() -> None:
+    """Reviewer mutation N05: swap the 2.5% and 97.5% quantiles, and survive.
+
+    v2 §8 condition 2 reads the **upper** endpoint, so an inverted pair converts
+    a straddling interval into a pass - a loosening, in the direction that
+    flatters the candidate. Closed in `BrierComparison.__post_init__` rather than
+    only here, because an invariant of the object belongs on the object.
+    """
+
+    with pytest.raises(ValueError, match="inverted"):
+        BrierComparison(
+            candidate_brier=0.2,
+            baseline_brier=0.2,
+            mean_difference=0.0,
+            interval_low=0.05,
+            interval_high=-0.05,
+            resamples=10,
+            seed=1,
+        )
+
+
+def test_a_straddling_interval_does_not_claim_the_candidate_wins() -> None:
+    comparison = BrierComparison(
+        candidate_brier=0.2,
+        baseline_brier=0.2,
+        mean_difference=-0.001,
+        interval_low=-0.05,
+        interval_high=0.05,
+        resamples=10,
+        seed=1,
+    )
+    assert comparison.interval_low < 0.0
+    assert comparison.candidate_beats_baseline is False
+
+
+def test_pre_filtered_rows_cannot_be_presented_as_a_pooled_v2_report() -> None:
+    """The review's highest-severity finding, closed.
+
+    The guard used to key on the `restriction` **parameter**, so narrowing the
+    rows first with this module's own `restrict()` produced an 83-row
+    `doubtful`-only table stamped `preregistered_v2` and `restriction: None` -
+    indistinguishable from a legitimate pooled report. Not an exotic bypass: it
+    is the obvious way to use the primitive this module deliberately promotes.
+    """
+
+    rows = _masked_band_cohort()
+    only_doubtful = restrict(rows, status="doubtful")
+    with pytest.raises(ValueError, match="PREREGISTERED_V2"):
+        build_calibration_report(
+            only_doubtful,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_pre_filtered_report_records_what_it_was_filtered_on() -> None:
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        restrict(rows, status="doubtful"),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction == (("status", "doubtful"),)
+    assert report.observations == 83
+
+
+def test_a_pre_filter_and_a_parameter_restriction_are_both_recorded() -> None:
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        restrict(rows, band="unlikely"),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"status": "doubtful"},
+    )
+    assert report.restriction == (("band", "unlikely"), ("status", "doubtful"))
+    assert report.observations == 83
+
+
+def test_an_unlabelled_restrict_call_is_not_treated_as_a_restriction() -> None:
+    """`restrict(rows)` narrows nothing, so it must not block a pooled claim."""
+
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    report = build_calibration_report(
+        restrict(rows),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction is None
+    assert report.observations == 40
+
+
+def test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_rate() -> None:
+    """What condition 5 can promise per status, stated in a blind-safe form.
+
+    The model card claims per-bin Wilson coverage gives real protection where a
+    status gets its own bin. The reviewer computed ~0.053 at `questionable`'s
+    *realised* rate - but that rate is an outcome nobody here may know, so the
+    claim has to be made at the worst case, `p_hat = 0.5`, which maximises the
+    half-width and depends on nothing but the count.
+    """
+
+    worst_case = {
+        status: (lambda bounds: (bounds[1] - bounds[0]) / 2.0)(
+            wilson_interval(HELD_OUT_COUNTS[status] // 2, HELD_OUT_COUNTS[status])
+        )
+        for status in ("questionable", "probable", "doubtful", "available")
+    }
+    assert worst_case["questionable"] == pytest.approx(0.0533, abs=5e-4)
+    assert worst_case["questionable"] < 0.10
+    assert worst_case["available"] == pytest.approx(0.0452, abs=5e-4)
+    assert worst_case["available"] < 0.10
+    # The smaller informative statuses are NOT protected by a 0.10 threshold.
+    assert worst_case["probable"] > 0.10
+    assert worst_case["doubtful"] > 0.10
+
+
+def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_eight() -> None:
+    """v3 section 6's own share does not reach v3 section 6's own headroom figure.
+
+    v3 states that 41 of 221 season-wide `doubtful` observations are G League
+    recall cases (18.6%), and separately that on health reasons alone the
+    held-out `doubtful` floor is "~74", giving "2.5x" headroom over v2 section 8
+    condition 6's minimum of 30. Applying the first number to the held-out count
+    gives ~68 and 2.27x, not 74 and 2.5x.
+
+    Both are predictor-side counts, so this is checkable under the blind. The
+    conclusion is unchanged either way - condition 6 clears comfortably - which
+    is why the model card reports this to the architect rather than treating it
+    as an objection. It is here so the discrepancy cannot be quietly re-copied.
+
+    The 41/221 itself is NOT independently derivable from anything committed on
+    `main`: the cohort manifest publishes status counts and stated-reason
+    categories as separate marginals with no cross. It is quoted from v3.
+    """
+
+    g_league_doubtful_share = Fraction(41, 221)
+    assert float(g_league_doubtful_share) == pytest.approx(0.186, abs=5e-4)
+
+    held_out_doubtful = HELD_OUT_COUNTS["doubtful"]
+    assert held_out_doubtful == 83
+
+    health_only = held_out_doubtful * (1 - g_league_doubtful_share)
+    assert health_only == Fraction(14940, 221)
+    assert float(health_only) == pytest.approx(67.6, abs=0.05)
+    assert round(float(health_only)) == 68
+
+    condition_six_floor = 30
+    headroom = float(health_only) / condition_six_floor
+    assert headroom == pytest.approx(2.2534, abs=5e-4)
+    # Rounding the count to a whole player first moves it barely.
+    assert round(float(health_only)) / condition_six_floor == pytest.approx(2.2667, abs=5e-4)
+
+    # v3's stated pair is not reproducible from v3's stated share.
+    assert round(float(health_only)) != 74
+    assert headroom < 2.5

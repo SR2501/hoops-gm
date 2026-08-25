@@ -83,14 +83,38 @@ cannot be made after seeing which choice wins:
 predictor-side and will be unarguable later.** `three_band_jeffreys` pools `out`
 with `doubtful`. In the held-out partition those are **2,963** and **83**
 observations respectively — a 35.7-to-1 ratio — so the band rate is set almost
-entirely by `out`, and `doubtful` is predicted at whatever `out` does. A pooled
-calibration table cannot see this: if each band emits its own realised rate, every
-bin gap is *exactly* zero and calibration-in-the-large, ECE, per-bin Wilson
-coverage and monotonic ordering all pass, while the `doubtful` cell can be wrong
-by an arbitrary amount. This is demonstrated on synthetic data with an ~86
-percentage-point hidden error in
-`test_a_band_model_right_in_aggregate_clears_every_computable_pooled_condition`
-and `test_subgroup_restriction_exposes_the_status_the_pooled_table_masked`.
+entirely by `out`, and `doubtful` is predicted at whatever `out` does.
+
+The part of this that is a **theorem** rather than a demonstration:
+distinct-emitted-probability binning partitions rows **by predicted value**;
+statuses sharing a band share a predicted value; therefore no statistic computed
+on that partition — conditions 3, 4, 5 and 7 all read off it — can separate them,
+at any rates. `test_pooling_puts_the_two_statuses_in_one_bin_whatever_the_invented_rates`
+drives it across three unrelated rate assignments so it cannot be an artefact of
+the numbers chosen.
+
+**Two boundaries on that claim, added after an independent review and stated
+because the first write-up of this finding did not state them.**
+
+1. **The exact zeros are definitional, not measured.** A model emitting each
+   bin's own realised rate *on the evaluation set* has zero gap by construction.
+   Quoting "CITL exactly 0.0, ECE exactly 0.0" as a result invites reading a
+   construction as a measurement. `test_the_pooled_zeros_are_definitional_and_this_test_says_so`
+   records that in the suite.
+2. **Condition 5 does defend the band, though not the status inside it.** A real
+   fit takes its band rate from the development partition, so its held-out band
+   rate is displaced. The `unlikely` band's 3,046 observations make its Wilson
+   half-width ≈0.0073, so the emitted band probability must land within about
+   0.7 percentage points or condition 5 fires. The honest statement is therefore
+   *a three-band model whose emitted band probability lands within ~0.7pp of the
+   held-out band rate clears every pooled condition while `doubtful` is ~86
+   points wrong* — narrower than "a band model right in aggregate clears
+   everything", and driven at displacements of 0, 0.005 and 0.02 in
+   `test_a_band_probability_displaced_by_one_point_starts_failing_condition_five`,
+   where the `doubtful` error stays past 80 points at every one.
+
+Demonstrated on synthetic data throughout; see also
+`test_subgroup_restriction_exposes_the_status_the_pooled_table_masked`.
 
 That is a statement about what the **condition set** can detect, not a prediction
 about what the fit will do. It is also the reason this card requires the
@@ -167,10 +191,22 @@ significant figures. Driven in
 **One correction to how that finding is usually stated.** v3 §4 argues from
 calibration-in-the-large alone. Under distinct-emitted-probability binning, §8
 condition 5 (per-bin Wilson coverage) *does* supply per-status protection where a
-status gets its own bin: the Wilson half-width on `questionable` at n=335 is
-≈0.054, tighter than 0.10. The dilution argument is therefore not the whole
-story, and the sharper hole is the pooled-band masking described under Method —
-which condition 5 does **not** catch, because the pooled band is a single bin.
+status gets its own bin. How much protection is bounded without seeing any
+outcome, because the Wilson half-width is widest at `p̂ = 0.5`: evaluating each
+held-out status count at `plays = n // 2` gives `questionable` (n=335)
+**0.053238**, `available` (n=467) **0.045163**, `probable` (n=92) **0.100102**
+and `doubtful` (n=83) **0.105154**.
+
+So only `questionable` and `available` are protected below the 0.10 threshold at
+any realised rate; `probable` and `doubtful` are **not**, and `probable` misses by
+a tenth of a percentage point. An earlier draft of this card cited ≈0.054 for
+`questionable`, which came from a *synthetic* realised rate — a number this lane
+must not use for a real status. These four are blind-safe upper bounds and are
+driven in `test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_rate`.
+
+The dilution argument is therefore not the whole story, and the sharper hole is
+the pooled-band masking described under Method — which condition 5 does **not**
+catch, because the pooled band is a single bin.
 
 ## What this model cannot see
 
@@ -202,12 +238,27 @@ is not a health event: `G League` 3,385 (`Two-Way` 2,828, `On Assignment` 557),
 `Not With Team` 247, `Personal Reasons` 82, suspensions 56 (55 league, 1 team),
 `Trade Pending` 37, `Coach's Decision` 15.
 
-`G League` `doubtful` is the sharp case: **41 of 221 season-wide `doubtful`
-observations — 18.6%** — are a Two-Way player who might be recalled. That is real
-uncertainty, but it is a **roster mechanic**, and there is no reason for its
-conversion rate to resemble injury-`doubtful`. On health reasons alone
-`doubtful`'s held-out floor is ~74 rather than 83, against v2 §8 condition 6's
-≥30 — 2.5× headroom, not 2.8×.
+`G League` `doubtful` is the sharp case. **v3 §6 reports 41 of 221 season-wide
+`doubtful` observations — 18.6% — as Two-Way players who might be recalled.** That
+figure is quoted from v3 and is **not** independently derivable from any artefact
+committed on `main`: the cohort manifest publishes `status_counts` and
+`stated_reason_categories` as separate marginals with no status-by-reason cross,
+so this lane cannot check it. A `data-engineer` lane is committing that cross;
+until it lands, treat 18.6% as v3's number, not as a verified one. Recall
+uncertainty is real, but it is a **roster mechanic**, and there is no reason for
+its conversion rate to resemble injury-`doubtful`.
+
+**An arithmetic discrepancy in v3 §6, reported rather than copied.** §6 states
+that on health reasons alone `doubtful`'s held-out floor is ~74, giving 2.5x
+headroom over v2 §8 condition 6's ≥30. Applying §6's own 18.6% to the held-out
+`doubtful` count gives 83 x (1 − 41/221) = 14,940/221 = **67.6, so ~68**, and
+67.6/30 = **2.25x** (2.27x if you round the count to a whole player first).
+I cannot reconstruct a route from the published figures to 74 or to 2.5x;
+the nearest plausible one is applying the share to a different denominator. The
+conclusion — condition 6 still clears comfortably on health rows alone — is
+unaffected either way, which is why this is a note to the architect before the
+owner binds v3 rather than an objection to v3. Driven in
+`test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_eight`.
 
 The recommendation inherited from v3 §6 is to **cut none of them**, because
 excluding rows would change the membership fingerprint that §8 condition 8
@@ -234,11 +285,42 @@ Anticipated, not yet observed — nothing has been fitted.
   Calibration is necessary, not sufficient; this is why §6 selects on Brier and
   §7 reports the calibration table rather than a single number.
 
+## Gate status of the machinery this card depends on
+
+The calibration machinery (`hoops_gm.availability.calibration`, plus the
+synthetic generators and 18 driven mutations) was first filed under the **Code
+gate only**, on the argument that it fits nothing and therefore emits no number a
+decision rests on. An independent non-`quant` reviewer rejected that, and the
+rejection is accepted here.
+
+The reviewer's argument, recorded because it should bind the next lane too:
+`gates.md` says the Model gate applies to *"anything producing a number a
+decision rests on — `p(play)`, reliability metrics, projections, blending"*. The
+em-dash introduces examples; the **leading clause is the test**. CITL, ECE, the
+Wilson endpoints and the bootstrapped Brier interval are precisely the numbers v2
+§8's conditions 2, 3, 4, 5 and 7 are evaluated from, so the activation decision
+rests on them whether or not this lane fits anything. `docs/backlog.md`
+(lines 1588-1595) already ruled an identically-shaped Code-gate-only argument
+wrong, and **no gate may be waived by the agent it applies to.**
+
+Filed as **Code + Model**:
+
+| Model gate requirement | Status |
+|---|---|
+| Backtest against held-out data | **Inapplicable** — nothing is fitted, and reaching the held-out partition would break the blind. Not *skipped*: there is no estimate to back-test. |
+| Report calibration, not just accuracy | **Inapplicable in the reporting sense — this module *is* the reporting apparatus.** Its own correctness is evidenced by 18 driven mutations rather than by a calibration curve. |
+| Model card in `docs/models/` | **Met** — this file. |
+| State what the model cannot see | **Met** — two sections above, plus the module docstring's own "what this module cannot see". |
+| Version the output | **Met** — `CALIBRATION_MACHINERY_VERSION` and `DECLARED_CONVENTIONS` ride on every report, driven in `test_every_report_carries_its_provenance_version_and_conventions`. |
+
+Relabelling costs nothing and removes a precedent worth not setting.
+
 ## Change log
 
 | Version | Date | Change | Effect on results |
 |---|---|---|---|
 | 0 | 2026-08-23 | Skeleton created **before** any fit, under an unbroken blind. Reporting structure, subgroup requirements, disclosure of the non-health share, and the δ = 197/255 dilution arithmetic fixed in advance. Machinery: `hoops_gm.availability.calibration`, developed and verified entirely on synthetic cohorts. | None — no result exists. |
+| 0.1 | 2026-08-23 | Revised after independent non-`quant` review, blind still unbroken. Four reviewer mutations that had survived are now caught (18 total). Corrections: the pooled-masking claim narrowed to its rate-independent theorem plus the ~0.7pp condition-5 boundary, with the exact zeros marked definitional; per-status Wilson half-widths restated at the blind-safe `p_hat = 0.5` worst case, which shows `probable` and `doubtful` are **not** protected by a 0.10 threshold; v3 §6's 18.6% attributed rather than asserted; v3 §6's ~74 / 2.5x recomputed as ~68 / 2.25x and flagged to the architect; gate relabelled Code + **Model**. | None — no result exists. |
 
 **The next entry in this table must state the date the blind was broken and under
 which pre-registration version.** A results row that does not is not admissible.
