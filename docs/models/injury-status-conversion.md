@@ -312,7 +312,7 @@ Anticipated, not yet observed — nothing has been fitted.
 ## Gate status of the machinery this card depends on
 
 The calibration machinery (`hoops_gm.availability.calibration`, plus the
-synthetic generators and 18 driven mutations) is filed under the **Code gate**.
+synthetic generators and 23 driven mutations) is filed under the **Code gate**.
 That is the architect's ruling; the reasoning matters more than the verdict.
 
 **Why Code and not Model.** You cannot hold data out from a formula. The Model
@@ -320,7 +320,7 @@ gate's central requirement is a backtest against held-out data, and there is no
 estimate here to back-test — the module is a deterministic scorer, not an
 estimator. The honest discharge for such a thing is verification against
 analytically known values plus deliberate corruption, which is what the tests and
-`scripts/mutate_calibration.py` do: 18 mutations, each driven red.
+`scripts/mutate_calibration.py` do: 23 mutations, each driven red.
 
 **The argument on the other side, recorded because a reader will otherwise
 re-derive it.** An independent non-`quant` reviewer argued Code + Model, reading
