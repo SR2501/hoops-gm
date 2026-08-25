@@ -608,6 +608,21 @@ def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
     # cause, so it has to explain that rather than just naming the tables.
     assert "census" in messages["stale entry"]
 
+    # A refusal is only a user interface if it arrives legible. These reach
+    # their reader through stderr on a Windows console during a rebase, and
+    # cp1252 renders a non-ASCII character as mojibake. The repository already
+    # has a guard for this in test_console_encoding.py, but its domain is
+    # assert messages, print and sys.exit - it does not walk `raise`, so it
+    # saw none of these three. That gap is reported rather than widened here:
+    # broadening a shared scan would fail other lanes' code mid-freeze.
+    for label, message in messages.items():
+        outside_ascii = sorted({character for character in message if ord(character) > 127})
+        assert outside_ascii == [], (
+            f"the {label} refusal contains {[hex(ord(c)) for c in outside_ascii]}, "
+            f"which a cp1252 console garbles. This message is the whole interface "
+            f"for a lane meeting the rule mid-rebase; use ASCII in it."
+        )
+
 
 def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path) -> None:
     """One constraint, written twice on purpose, so it has to be compared.
@@ -737,7 +752,7 @@ def test_importing_the_package_is_what_refuses_a_violation() -> None:
 
     assert completed.returncode != 0, (
         f"importing db.models with an unassigned table succeeded. The package "
-        f"is not enforcing ADR-008 at import, whatever its call site says — "
+        f"is not enforcing ADR-008 at import, whatever its call site says - "
         f"check that db/models/__init__.py calls the real "
         f"hoops_gm.db.layers.validate_layers and has not shadowed it.\n"
         f"stdout={completed.stdout!r}"

@@ -465,7 +465,7 @@ def validate_layer_assignment(metadata: MetaData) -> None:
             f"rather than being reported later. See docs/decisions/ADR-008-layer-purity.md.\n"
             f"\n"
             f"If your table genuinely has no layer, that is a finding worth raising "
-            f"rather than an exemption to add — say so instead of deleting the call."
+            f"rather than an exemption to add - say so instead of deleting the call."
         )
 
     vanished = sorted(assigned - mapped)
@@ -479,7 +479,7 @@ def validate_layer_assignment(metadata: MetaData) -> None:
             f"\n"
             f"Why a stale entry fails rather than being ignored: a register that has "
             f"stopped describing the schema cannot be trusted as a whole, and this "
-            f"repository has already lost a store-opening census exactly that way — it "
+            f"repository has already lost a store-opening census exactly that way - it "
             f"was complete when written and quietly wrong afterwards, at exit 0. An "
             f"exemption must not outlive its cause."
         )
@@ -537,7 +537,7 @@ def validate_layer_flow(metadata: MetaData) -> None:
             "ADR-008 forbids these flows:\n  " + "\n  ".join(sorted(violations)) + "\n\n"
             "A later layer may not be an input to an earlier one at any weight. "
             "A foreign key from T to S means a row of T is defined partly by a row "
-            "of S, so S is an input to T — check the direction before assuming the "
+            "of S, so S is an input to T - check the direction before assuming the "
             "layer assignment is wrong.\n"
             "\n"
             "Why this is an ImportError and not a failing test: the defect is "
@@ -558,7 +558,7 @@ def validate_layer_flow(metadata: MetaData) -> None:
             "\n"
             "Deleting validate_layers(Base.metadata) from db/models/__init__.py "
             "silences this. So does replacing it with a local no-op of the same "
-            "name, which review showed left every gate green — both are caught by "
+            "name, which review showed left every gate green - both are caught by "
             "test_layer_purity.py, the second by importing the package in a "
             "subprocess rather than by reading the call site. See "
             "docs/decisions/ADR-008-layer-purity.md."
