@@ -23503,6 +23503,74 @@ against my own earlier framing: `projection_id -> projections` records that the
 assumption was stripped from that specific row, and deleting true lineage to make
 a check pass is the failure mode this repository already names.
 
+### The third review, and why I stopped predicting the rate would fall
+
+I commissioned a third review specifically *because* the finding rate had not
+fallen between the first two. It returned **ten more findings, two blocking**,
+and they are the same class again: guards that pass while doing nothing.
+
+**The two blocking ones are worth naming precisely.**
+
+**Half of the import-time enforcement was never driven through the import.**
+`validate_layers` calls two functions, and the test that proved "a violation is
+an `ImportError`" only ever drove the *assignment* half. Rebinding
+`validate_layers = validate_layer_assignment` - identical signature, so `mypy`
+stays clean and `ruff` will even format the change for you - silently disables
+the entire flow check while **62 tests stay green**. The test is now
+parametrised over both halves. I also renamed
+`test_a_backwards_foreign_key_makes_the_package_fail_to_import` to
+`test_validate_layers_refuses_a_backwards_foreign_key`, because it drives the
+function and never touched the import, and a name that overstates what a test
+covers is how the gap survived three readings including two of mine.
+
+**The stale-identity branch had no test at all.** I wrote it to close a second-
+review finding, mutation-proved that *branch's positive case*, and never checked
+that the branch was reachable. Replacing its generator with `[]` left everything
+green. There is now a test, parametrised over both disjuncts.
+
+The reviewer's suggested injection for the flow test was itself wrong in an
+instructive way, and I want it recorded: `TABLE_LAYERS["players"] = TERMINAL`
+does not isolate the flow path, because `players` is in
+`MARKET_IDENTITY_SOURCES`, so the *assignment* check's stale-identity branch
+fires first and the test passes while proving the very half it was written to
+stop proving. `team_schedule` is in no exemption set and
+`opponent_context.team_schedule_id` makes it a projection input, so that is what
+the test uses.
+
+**The other eight.** `MARKET_IDENTITY_SOURCES` was policed by a two-name
+denylist and three hand-picked probes, so adding `player_season_stats` reopened
+R38 with green tests - the probes are now derived from *every* observations
+table outside the set, and each member carries a written reason with key-set
+equality, the `SANCTIONED_STORE_OPENERS` shape. `_pinned_data_layer_columns`
+keyed on the CHECK *spelling* and `data_layer_registry` had already escaped it;
+it now closes over columns. `test_a_migrated_store_refuses_an_unknown_layer` was
+satisfied by the rank CHECK rather than the enum CHECK, and **no row can
+separate them** - every unknown layer also fails the rank CHECK - so the enum
+CHECK's existence is now asserted structurally off `sa.inspect`. A `startswith`
+skip meant to exclude private modules matched **every** `__init__.py`, because
+the stem is `__init__`. A comment said "sixteen" where the constant said "Ten".
+`_clean_database` was `autouse`, wiping the database before ~50 tests that never
+connect. And the assignment comparison used schema-qualified keys, contradicting
+the validator's deliberate `.name` keying.
+
+**Finding 6 changed the schema, and it is the one I would defend hardest.** The
+registry stored `layer_rank` and nothing else, which leaves only a *rank
+comparison* expressible in SQL - and this unit rejected the rank rule precisely
+because it permits `valuation -> market`, `availability -> market` and
+`projections -> market`, each of them R38. The caveat lived in a Python
+docstring, which is exactly what somebody interrogating the store at 11:59pm
+does not have; `market` and `terminal` also share rank 4, so even ordering by
+rank is ambiguous. `0019` now also creates and seeds **`data_layer_flows`**: the
+17 permitted edges as a literal snapshot, a CHECK refusing self-edges, and a
+composite primary key. Two tests compare the stored set against
+`PERMITTED_FLOWS` - one against the migration literal, one against the *migrated
+store* - so dropping the bulk insert while keeping the literal goes red. That
+distinction is not hypothetical; it is mutation 1 below.
+
+I also closed the refusal-message test against `ast.Raise` sites in `layers.py`
+after the reviewer noted it covered three of five paths, so a new refusal cannot
+be added without being driven.
+
 ### Whether `main` was already violating this
 
 **It was not, and the precise size matters more than the verdict.** At `f3e2c53`:
@@ -23558,6 +23626,35 @@ Mutation 5 exiting 4 rather than 1 is the point: a stale identity exemption fail
 at *import*, so it takes the whole suite down rather than one file. Restored
 `models/__init__.py` `185E8689ACBC3733`, `layers.py` `511367FF1F28AB7E`.
 
+A third round, after the third review:
+
+| | Mutation | Result |
+|---|---|---|
+| i | An em dash reinserted into a refusal message | CAUGHT |
+| ii | `validate_layers` rebound to `validate_layer_assignment` | CAUGHT by the new flow arm |
+| iii | The stale-identity generator replaced with `[]` | CAUGHT (3 failures) |
+| iv | The flow bulk insert seeded `[]` instead of `_FLOW_SEED` | CAUGHT - **store-reading test only** |
+| v | One permitted edge deleted from `_FLOW_SEED` | CAUGHT (3 failures) |
+| vi | The self-edge CHECK weakened to `IS NOT NULL` | CAUGHT |
+
+**Mutation iv is the one that earned its test.** Only
+`test_a_migrated_store_records_the_permitted_edges` went red; the literal-
+snapshot test stayed green, because the literal was untouched. That is the
+`a test that calls the helper instead of reading the artefact` failure in its
+schema form, and it is why there are two tests rather than one.
+
+Restored `0019_layer_registry.py` `24D2AA5876D84207`, `layers.py` `C1A1D91E`.
+
+**A pre-existing repository guard caught my work, and then I found what it could
+not see.** `test_console_encoding` failed on an em dash in one of my assert
+messages - a real defect, since the owner runs this on a Windows console. Fixing
+it, I checked my own files and found em dashes in **all three `LayerViolation`
+raise sites** as well. The shared guard walks `ast.Assert`, `print` and
+`sys.exit`; it does **not** walk `raise`, so it saw none of them. I pinned the
+ASCII property for my own module rather than widening a shared scan under the
+freeze - **that widening is a real gap in a repository-wide guard and it is
+still open**, and it is `architect`'s call whether it is worth a lane.
+
 **The first run of the first round was the useful one: B and F were NOT CAUGHT.** Both were
 guards I had written specifically to close review findings, and both were inert:
 
@@ -23595,10 +23692,12 @@ a stale one, so an exemption cannot outlive its cause.
   Full suite green on both dialects at the head recorded below - SQLite, and
   Postgres 16.9 via `TEST_DATABASE_URL` against an isolated database, because
   the shared one would collide with the lanes running concurrently.
-- **Independent review.** Two, both from non-`backend` agents. The first was
+- **Independent review.** Three, all from non-`backend` agents. The first was
   against `261499a` and returned ten findings; the second against the reworked
-  `5d7c677` and returned nine, three blocking. All twelve closed, one escalated.
-  A third has not been taken against the current head.
+  `5d7c677` returned nine, three blocking; the third against `0991752` returned
+  ten, two blocking. **Twenty-nine findings, all closed but one, which is
+  escalated.** The exact-head review the brief asks for has not been taken
+  against the final head.
 - Not a Model gate: this unit computes no quantity. Not an Adapter or Automation
   gate: it touches no external source and nothing in the write path.
 
@@ -23676,12 +23775,17 @@ a stale one, so an exemption cannot outlive its cause.
   up-and-down from empty and from a store already at `0018`, but not against the
   owner's live store, which I do not have. F7 exists because the first version
   of the drift test hid exactly this gap. *Partially driven.*
-- **That the guards are now sufficient.** This is the honest one. Two
-  independent reviews found thirteen findings between them, six of the first
-  ten and three of the second nine being *guards that passed while doing
-  nothing*. The rate did not fall much between rounds. I have no reason to
-  believe a third review would find zero, and I would rather that were said out
-  loud than discovered later. *Known, unmitigated.*
+- **That the guards are now sufficient. This is the honest one, and it got worse
+  rather than better.** Three independent reviews found **twenty-nine** findings
+  between them - six of the first ten, three of the second nine, and **all ten**
+  of the third being guards that passed while doing nothing. The rate did not
+  fall across three rounds. Two of the third round's findings were in code I had
+  written *specifically to close a second-round finding* and had mutation-proved
+  in one direction only. I do not believe a fourth review would find zero, and
+  the pattern says the remaining defects are the same class: a guard whose
+  positive case I drove and whose reachability I never checked. **My
+  recommendation to `architect` is that the exact-head review be taken as a
+  fourth, not treated as a formality.** *Known, unmitigated.*
 - **That no concurrent lane introduces a table this rejects.** The freeze means
   I verified against `f3e2c53` and have not rebased. Three lanes are in flight;
   if one of them adds a table, it meets an `ImportError` at rebase rather than a
