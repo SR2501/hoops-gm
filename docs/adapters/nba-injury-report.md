@@ -149,6 +149,47 @@ The NBA changed this format once already, without any announcement found.
 It may again for 2026-27. Nothing in `report_url()` can protect against
 that in advance — the live smoke test exists specifically to catch it.
 
+### There is a third era, older than both, and this parser cannot read it
+
+Established by live probe on 2026-08-21 (30 live requests across four passes, of
+which the final 13 are recorded as observations; see the artifact's
+`request_accounting`. Evidence and per-response
+SHA-256s in
+[`nba-injury-report-archive-reach-probe.json`](nba-injury-report-archive-reach-probe.json)).
+
+The archive holds reports back to at least **2019-20** — the URL convention
+above resolves for 2019-20, 2020-21, 2021-22 and 2022-23, returning HTTP 200
+with valid PDF magic and five pages of genuine injury data: real players, real
+matchups, real designations. **They are complete reports, not placeholders.**
+
+What changed is the *layout*. Pre-2023 reports print words separated by spaces
+(`Ball, Lonzo Out Injury/Illness - Left Knee; Surgery`); from 2023-24 onward
+they do not (`Conley,Mike Out Rest`). This parser's column-bounds detection
+does not survive the difference, and raises `SourceContractError` rather than
+returning anything. The boundary is bracketed between **2023-04-05** (refused)
+and **2023-10-25** (parsed), so it falls in the 2023 offseason.
+
+**The refusal is the desired behaviour, not a limitation to fix.** This is the
+worst shape a bad input can take: it fetches cleanly, so nothing in transport
+notices, and only the parser stands between that layout and a cohort full of
+plausible nonsense. `nba_injury_report_2023-01-11_0530pm_unsupported_layout.pdf`
+is committed for exactly that reason, with a contract test asserting both that
+it is refused *and* that it is a complete report — a parser declining a stub
+would prove nothing.
+
+Consequence for the historical sweep: **three seasons (2023-24, 2024-25,
+2025-26) are readable today.** A fourth is an archive that already has the data
+and a parser that cannot read it, which is bounded work rather than a hard
+limit. See `injury-conversion-cohort-population` in `docs/backlog.md`.
+
+This also settles a vocabulary question that was blocking that sweep. Secondary
+sources state the NBA designations are Out / Doubtful / Questionable / Available
+with **no `PROBABLE`**. Live bytes disagree: `PROBABLE` and `DOUBTFUL` both
+appear throughout 2023-24 and 2024-25 (13 `probable` and 5 `doubtful` in the
+2025-01-15 report alone). Had the sources been right, widening the cohort would
+have cleared the activation floor for `doubtful` and left the conversion model
+unactivatable on `probable` instead.
+
 ### A missing report is 403, not always 404
 
 Verified live 2026-08-17: an in-season historical timestamp that has no

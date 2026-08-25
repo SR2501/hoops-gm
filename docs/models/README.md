@@ -97,3 +97,17 @@ presented as pre-registered.
 - [`injury-status-conversion-preregistration.md`](injury-status-conversion-preregistration.md)
   — v2, frozen 2026-08-21. No model fitted; records that the committed
   2025-12-08..2026-01-04 cohort cannot satisfy the activation rule on arithmetic.
+
+## Prior-work reviews
+
+Not model cards and not pre-registrations. A prior-work review records what has
+already been measured outside this project, what the sources actually say when
+retrieved rather than recalled, and what a planned data collection can and cannot
+deliver — so a sweep is committed to on evidence rather than on assumption.
+
+- [`injury-status-conversion-literature.md`](injury-status-conversion-literature.md)
+  — no peer-reviewed measurement of report-label → play conversion exists, and
+  the widely repeated base rates have no traceable primary source. Records a live
+  archive-reach probe (2026-08-21) establishing that the archive holds reports
+  back to 2019-20 while this project's parser reads 2023-24 onward, and that
+  `PROBABLE` is present in every season the sweep will cover.

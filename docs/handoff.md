@@ -21650,3 +21650,361 @@ only catches errors that happen to look wrong.
   archived before committing - which is how this entry came to be written by me
   rather than by it. I did not audit the other 40-odd older branches by the same
   method. *Driven for today, reasoned for the rest.*
+
+## 2026-08-24 - data-engineer - recovering a stranded branch, and finding most of it had already been superseded better
+
+Branch `sr2501-injury-report-history` (tip `dbad3b3`, 2026-08-22) never had a PR
+and sat 188 commits behind `main`. The coordinator's brief was *assess before
+porting* - recover what is still true, not what is still there. That was the
+right framing and it changed the outcome: of six artefacts missing from `main`,
+**four land, one is dropped as a weaker duplicate, one is held as an unresolved
+disagreement.** Base verified as `f3e2c53`; not rebased, merge freeze respected.
+
+### The branch was preserved, not lost - and the inventory was short by two
+
+`git merge-base` put the fork at `b0aff5e`. Diffing there rather than against
+`main` gave 14 files / 3,608 insertions. Checking each path against
+`origin/main` with `git cat-file -e` found **six** missing paths, not the four
+the brief listed. The two extra ones matter:
+
+- `docs/adapters/nba-injury-report-archive-reach-probe.json` - a **hard
+  dependency**, loaded at `test_injury_report_archive_reach.py:41` as
+  `PROBE_EVIDENCE`; two tests assert every committed fixture's SHA-256 against
+  it. Without it the recovered test file does not import.
+- `docs/models/injury-status-conversion-literature.md` - the target of the
+  `docs/models/README.md` hunk that was on the list. Landing the hunk without
+  the document creates a dangling link.
+
+The coordinator traced their own gap to `Select-Object -First 8`, in the same
+message where they warned me that flag zeroes `$LASTEXITCODE`. Recorded because
+the interesting part is not the slip, it is that **an inventory handed down as
+fact was checkable in two minutes and was wrong**, which is the same shape as
+everything else in this entry.
+
+`git grep` over `origin/main` found no reference to any of the six paths, so the
+strand was invisible rather than damaging - nothing on `main` had a dangling
+pointer into it.
+
+### The decisive move was running it, not reading it
+
+Applied the stranded files onto `f3e2c53` and ran them: **2 failed, 20 passed**.
+`test_injury_report_archive_reach.py` passed **15/15 completely unmodified**
+after 188 commits. `test_disclosure_surface.py` failed 2 of 7, naming
+`participation-ledger-2025-26-coverage.json` publishing `seasons[].outcomes.*`
+and `seasons[].reasons.not_with_team`.
+
+A red here is ambiguous by construction - either the test is wrong or the thing
+it tests changed, and those need opposite responses. **I got that call wrong the
+first time and escalated a §2 violation that does not exist.** The correction is
+below, because how I got there is more useful than the answer.
+
+### Why `test_disclosure_surface.py` is dropped: it is a weaker duplicate on six measurable axes
+
+`main` already implements §2's disclosure guard, and implements it better, under
+a name containing no `disclosure` anywhere:
+`OUTCOME_KEYED_MANIFEST_FIELDS` at `cohort_admissibility.py:190`, enforced by
+`test_cohort_admissibility.py::TestTheDisclosureSurfaceIsClosed`.
+
+| axis | committed guard (`cohort_admissibility.py:190`) | stranded `test_disclosure_surface.py` |
+|---|---|---|
+| scope | `docs/**/*.json`, whole tree, recursive | `docs/adapters/*.json`, one directory, non-recursive |
+| detection | intersection at the **mapping**, list indices normalised to `[]` | token match on flattened leaf paths, list position discarded |
+| allow-list | **(filename, path)** pairs - catches a field moving between artefacts | paths only, plus a `len(carrying) == 1` proxy |
+| enum collision | handled, mechanism written into the comment, pinned by `test_the_two_enums_collide_on_exactly_one_token` | flags `seasons.reasons.not_with_team` with no explanation |
+| assertion | equality **and** presence - the set may not grow *or shrink* | added-only, plus the weaker proxy |
+| new artefacts | `_committed_evidence_artifacts` globs `rglob("*.json")`, so anything landing under `docs/` is covered the day it lands | fixed directory; a new artefact elsewhere is invisible |
+
+The two reds were the committed allow-list's contents being *absent* from the
+stranded one, not a violation. `not_with_team` is a member of both
+`ParticipationOutcome` and `DnpReason` - the only colliding token in either enum
+- and the committed detector is intersection-based **on purpose**, because a
+subset test is evadable. So it flags `seasons[].reasons` correctly and the right
+response is allow-listing with the mechanism stated, which `main` already does.
+
+**Landing it anyway would have been actively worse than landing nothing.** Two
+guards with disagreeing frozen allow-lists means the next person to hit a red
+satisfies whichever is easier. That, not staleness, is the reason it is dropped -
+the coordinator's ruling and I agree with it over my own first reason.
+
+**The substance was ported without the file.** Its one assertion with no
+equivalent on `main` was a non-vacuity check: a clean disclosure scan is
+meaningless if the scanned file has nothing in it, which is the false-zero shape
+this repository keeps finding. That is now
+`test_the_probe_evidence_publishes_designations_and_no_participation_outcome`,
+placed where the artefact lives, using the **committed**
+`outcome_keyed_field_paths` rather than a second scanner. Both halves are
+asserted in one test deliberately: split apart, the negative half survives a
+change that empties the file and reads as reassurance. Mutation-tested by
+injecting `{"played": 3, "did_not_play": 1}` into the probe artefact - fails
+correctly naming `observations[].sneaky` - then reverted and confirmed
+byte-identical to the branch original.
+
+### How I got it wrong: two inherited claims, neither checked
+
+Recorded at the coordinator's request and in my own words, because the failure
+is reusable and the fix is not a test.
+
+**The red was real. The explanation was not. A plausible wrong explanation stops
+the search.** I had a genuine failing test and I produced a story that accounted
+for it, and the story being sufficient is exactly what made me stop looking.
+
+Two claims did the damage, neither of them mine, neither of them checked:
+
+1. **The coordinator wrote "the §2 guard" and I read it as the stranded test.**
+   It is `outcome_keyed_field_paths` on `main`. Their observation - that the
+   guard fires on outcome-**keyed** fields while §2's prose forbids
+   outcome-**valued** ones - is still true, but it describes a known, deliberate
+   limitation of a **landed** thing, not a gap where nothing exists.
+2. **`preregistration.md:247` describes an owed contract test**, and I searched
+   for a file matching that description **under the name I expected it to have**.
+   I found the stranded `test_disclosure_surface.py`, it matched the description,
+   and I stopped. The committed implementation carries no `disclosure` in its
+   filename. `git grep OUTCOME_KEYED` was four minutes away and I did not run it.
+
+I found it accidentally, reading `cohort_admissibility.py` for unrelated Part 2
+reconnaissance. **Nothing in the gates would have caught this** - the escalation
+was prose, and prose has no CI job. It propagated through the coordinator to the
+`quant` reviewer inside an hour before I caught it, which is the actual cost: a
+search exhaustive over the wrong domain, arriving by relay. This repository has
+now recorded that shape five times.
+
+Verification after the correction: `test_cohort_admissibility.py -k
+"DisclosureSurface or collide"` runs **6 passed** with all recovered artefacts
+staged. There is no violation and nothing owed.
+
+### The census is held, not landed, and the disagreement is now dated
+
+`docs/adapters/nba-injury-report-2025-26-status-census.json` is an independent
+count of the same population as the committed
+`nba-injury-report-cohort-2025-10-21--2026-04-12.json`. **They disagree.**
+
+| | census (2026-08-22) | committed cohort manifest |
+|---|---:|---:|
+| canonical observations | 13,819 | **13,789** |
+| resolved | 13,684 | **13,654** |
+| unresolved | 135 | 135 |
+| games | 1,230 | **1,227** |
+| available / doubtful / out / probable / questionable | 1491 / 221 / 10478 / 435 / 1194 | 1489 / **221** / 10453 / **435** / 1191 |
+
+Gap is **30**, entirely in resolved rows, and entirely **legacy era** (census
+legacy 4,280 against 4,250; short-lead identical). `doubtful` and `probable` -
+the two statuses §2's activation floor binds on - agree exactly, so this does not
+block `injury-status-conversion`.
+
+It is held rather than landed because **a second contradictory 2025-26 canonical
+count in `docs/adapters/` with no reconciliation is worse than none.** Landing it
+makes the disagreement permanent and undated; a backlog item makes it dated with
+the exact numbers attached. It is now
+`cohort-canonical-count-reconciliation` in `docs/backlog.md`, and §4.2 of the
+recovered literature review records it inline where a reader will meet it.
+
+**Both halves of the mechanism, because the first one was wrong.** 1,230 - 1,227
+= 3 games at roughly ten observations each is about 30. Tidy, fits the
+arithmetic, and wrong: the manifest's `unresolved_game_id_sample` games are
+2026-01-08 `MIA@CHI`, which is *short-lead*, while the gap is entirely legacy.
+The better mechanism is a **difference in selection basis**, not a data defect:
+`cohort_evidence.py:915` selects over `ready` only, while `in_scope` is
+`[*ready, *missing_tipoff]`, so the manifest drops games with no resolved
+tip-off and the census counted `games_with_tipoff: 1230`. **I have not proven
+that accounts for all 30**, and the all-legacy localisation still does not fit
+cleanly under it. Both halves stand.
+
+What killed the first mechanism was **implausibility, not verification** - the
+era did not fit - which is the same detector that caught the `-495..+660`
+tip-off offset and the 48 phantom stranded branches. It only catches errors that
+happen to look wrong, and this one did.
+
+Separately, and in the other direction: the census and
+`nba-injury-report-cohort-admissibility-2025-26.json` are **consistent, not
+contradictory.** The census's held-out figures are *canonical* and the
+admissibility artefact's are *direct*, and direct is a subset of canonical, so
+canonical is an upper bound. `doubtful` 83 <= 84, `out` 2,963 <= 2,979,
+`available` 467 <= 469, `probable` 92 = 92, `questionable` 335 = 335. Agreement
+in exactly that direction on all five is what a consistent pair looks like.
+
+### The live blind was not touched
+
+No participation outcome was read, published or differenced at any point. Worth
+stating positively: the widened manifest's `participation_outcome_counts` is a
+**782-character withholding note**, not a mapping, so the "commit both cohorts
+and subtract" attack is closed by construction rather than by policy. I checked
+its type before doing anything else and did not difference the two cohorts.
+
+### What landed
+
+Four artefacts, one appended test, two documents amended:
+
+- `backend/tests/test_injury_report_archive_reach.py` - 15 recovered tests
+  verbatim plus the ported non-vacuity assertion. Adapter-gate contract test
+  pinning that all three sweepable seasons parse and that the pre-2023
+  word-spacing layout is **refused, not silently misparsed**.
+- Three PDF fixtures plus their `manifest.json` entries.
+- `docs/adapters/nba-injury-report-archive-reach-probe.json`.
+- `docs/models/injury-status-conversion-literature.md`, with §4.2 rewritten to
+  drop the link to the held census and carry the disagreement inline instead.
+- `docs/adapters/nba-injury-report.md` - the "third era" section, plus a
+  corrected backlog reference (`injury-conversion-cohort-widening` does not
+  exist; the work folded into `injury-conversion-cohort-population`).
+- `backend/tests/test_live_smoke.py` - 4 `live_smoke` tests. Import conflict
+  resolved by keeping both sides.
+
+The branch's `docs/backlog.md` diff was **not** applied: its derived header
+(`116 total`) is 188 commits stale and its items are superseded by #85 and #92.
+
+Test count moved **1,787 -> 1,803 selected** and **32 -> 36 deselected**, both
+exactly as predicted, derived from a detached worktree pinned at `f3e2c53`
+rather than by reasoning about which side moved.
+
+### What I could not verify
+
+- **That the `ready`/`missing_tipoff` selection basis accounts for all 30
+  observations.** It is the best mechanism I have and it explains the direction,
+  but I did not do the per-game arithmetic, and the all-legacy localisation is
+  not obviously implied by it. *Reasoned, not driven.* This is the open half of
+  the backlog item and it is written into the item rather than only here.
+- **That `injury-status-conversion-literature.md` holds no other claim that went
+  stale in 188 commits.** I reviewed and amended §4.2 because it pointed at the
+  held census. The remaining ~700 lines are a prior-work review of external
+  literature, which ages differently from repository claims, but I read them for
+  dangling references only - not for whether their characterisations still match
+  what this project has since found. *Not driven.*
+- **Why `test_injury_report_archive_reach.py` survived 188 commits completely
+  unmodified.** It did, and I confirmed it by running it, but I did not establish
+  whether that is because the adapter surface genuinely did not move or because
+  the test binds loosely enough not to notice. The second would make its green a
+  weaker signal than it appears. *Driven that it passes; not driven why.*
+- **That the coordinator's `Select-Object -First 8` is the only place the
+  inventory was truncated.** I enumerated the branch diff myself and found two
+  extra paths. I did not re-derive the *contents* of the four they did list from
+  scratch - I took the paths and checked those paths. A file present on the
+  branch under a name I never enumerated would still be invisible to me, though
+  `git diff --name-status` against the merge-base should have caught it.
+  *Driven for paths, reasoned for completeness.*
+
+## 2026-08-24 - data-engineer - independent review response on the recovered adapter work
+
+**Unit:** amendment to `sr2501-recover-stranded-work` after independent review at
+exact head `cf27d79`. Base still `f3e2c53`, still not rebased, merge freeze
+respected.
+
+**The review found nothing significant.** It re-derived rather than accepted:
+it diffed the dropped `test_disclosure_surface.py` assertion-by-assertion
+against the committed guard and confirmed every one is covered or strictly
+subsumed; it mutation-tested the ported non-vacuity test eight ways and all
+eight fired; it re-ran the suite subsets, `mypy`, `ruff`, `backlog_graph.py`;
+and it grepped the whole non-binary diff for outcome tokens and confirmed every
+hit is a test name, the enum-collision explanation, or a pre-existing context
+line. It independently reproduced the finding that
+`participation_join.participation_outcome_counts` in the committed cohort
+artifact is a **string of length 782, not a mapping**, so the "commit both
+cohorts and subtract" attack is closed by construction rather than by policy.
+
+It also confirmed something I had asserted but not proven: the dropped test's
+`len(carrying) == 1` proxy is **factually false on today's `main`** - two files
+in `docs/adapters/` carry outcome-keyed fields. So the file I dropped would not
+merely have been a weaker duplicate, it would have been **red on arrival**. My
+six-axis comparison was right about the direction and understated the case.
+
+### What it found, and what I did about it
+
+One low-severity observation, and it is the shape this repository keeps
+recording: **a checkable claim that is literally false.**
+`TestInjuryReportArchiveStillReachesTheSweepSeasons` opens *"The historical
+sweep plans to read three seasons"* and its `_SWEEP_SEASON_PROBES` comment
+said *"one per season the sweep will cover ... all three"* - while the dict
+holds **two**. The third season's liveness is genuinely covered, by
+`TestInjuryReportCurrentSeasonIsAlive`, which probes *today* rather than a
+frozen instant, because a frozen instant is the wrong probe for a season still
+being written. So the coverage was real and only the description was wrong,
+which is the least alarming and most corrosive version: nothing fails, and the
+next reader budgets a three-season sweep against a two-season probe.
+
+Corrected both the docstring and the comment to say what is there and where the
+third lives.
+
+The reviewer's second half was sharper. The parametrised test iterates that
+dict, so an emptied dict collects **zero cases**, and zero cases passing is
+indistinguishable from all cases passing - the same false-zero shape as the
+non-vacuity gap I ported in from the dropped file, one file over. Its offline
+sibling already has `test_the_parametrised_sets_are_not_empty` for exactly this
+reason; the live one had nothing.
+
+Added `test_the_probe_set_is_not_empty`, deliberately **not** parametrised so it
+survives the emptying that silences everything around it. **Mutation-tested it
+rather than asserting it works:** emptying `_SWEEP_SEASON_PROBES` produces
+`2 failed, 1 passed, 1 skipped` - and the parametrised test is *not among the
+four outcomes at all*. It did not fail. It ceased to exist. That is the
+reviewer's point demonstrated rather than described, and it is why the pin
+cannot itself be parametrised.
+
+The pin is `live_smoke`-marked, so it never runs in CI. That is honest rather
+than a hidden skip: it runs on exactly the deliberate `-m live_smoke` run where
+the test it protects runs, and it claims nothing about a pull request. A pin
+that guarded CI while the thing it guards does not would be the green light
+nobody is holding.
+
+### A number in my own backlog item that nobody can check
+
+The most useful thing in the review is in its "could not verify" section, and it
+is about my work, not the recovered work.
+
+The `cohort-canonical-count-reconciliation` backlog item localises the
+30-observation census disagreement as **entirely legacy era**, on the strength
+of committed canonical legacy being **4,250**. The reviewer could not reproduce
+4,250 from the repository, and is right that it cannot be: no committed artifact
+publishes a **canonical** by-era split. The admissibility artifact publishes
+**direct** by-era (legacy 4,166, short-lead 9,432), which is a different
+quantity. The reviewer got as far as showing 4,166 + 81 unresolved-legacy =
+4,247 is *consistent* with 4,250, and internally coherent if short-lead
+canonical is 9,539 - but consistent-and-coherent is not reproduced.
+
+So I shipped, in a backlog item whose whole purpose is to date a disagreement
+with exact numbers attached, **a number that reproduces only for the person
+holding the operational store.** That is the `--max-requests 120` trap in the
+one place I was congratulating myself for avoiding it, and I did not notice
+because the figure came out of a query I had run myself an hour earlier - which
+is precisely the unexamined-inheritance failure with me as my own upstream.
+
+It is an input-side count, so there is no blind concern; the defect is
+reproducibility, not disclosure.
+
+**The fix already exists and is in the other lane.**
+`scripts/cohort_predictor_crosses.py` (branch `sr2501-cohort-predictor-crosses`,
+Part 2 of this unit) prints `era x band` over the canonical selection and
+derives `legacy 4250` as a row total, behind the marginal validation. So the
+number becomes reproducible-by-anyone-with-the-store the moment Part 2 lands,
+which is the strongest available form here given the store is out-of-tree by
+design. **Until then, treat 4,250 in that backlog item as operator-local.** I
+have not edited the backlog item to say so, because editing it to describe a
+weakness that Part 2 removes would leave a stale caveat behind; this entry dates
+the gap and names its closure instead.
+
+### Verification
+
+- `pytest --collect-only`: **1803 selected, 37 deselected** - collected count
+  unchanged, deselected +1, which is the new pin and nothing else. The
+  1803-passed full-suite result at `cf27d79` therefore still stands; I did not
+  re-run 17 minutes for a comment and a deselected test.
+- New pin passes on a deliberate run in 0.07s and touches no network.
+- Mutation fires as described above; mutation reverted and re-confirmed green.
+- `ruff check`, `ruff format --check` clean. Diff is `34 added, 4 removed`, one
+  file.
+
+### Could not verify
+
+- **Why the 15 recovered tests survived 188 commits unmodified.** Unchanged from
+  my previous entry, and the reviewer independently reached the same wall: it
+  confirmed they pass and that the file is a pure append against the stranded
+  original, but neither of us established whether the adapter surface genuinely
+  did not move or whether the tests bind loosely enough not to notice. A test
+  that cannot notice is worth less than its green suggests, and I still do not
+  know which of the two this is.
+- **The rest of `injury-status-conversion-literature.md`.** The reviewer checked
+  every backticked reference and markdown link (all resolve) and re-derived
+  every figure in §3 and §4.2 against the committed artifacts (all correct). The
+  external-literature characterisations in §2, §5 and §6 remain unchecked by
+  either of us after 188 commits.
+- **Whether `4,250` is right at all.** Everything above establishes that it is
+  unreproducible from the repository and consistent with what is. It does not
+  establish that it is correct. Part 2's script will settle it; this entry does
+  not.

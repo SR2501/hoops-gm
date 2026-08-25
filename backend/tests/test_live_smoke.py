@@ -35,13 +35,14 @@ from typing import ClassVar
 
 import pytest
 
+from hoops_gm.db.models.enums import InjuryReportStatus
 from hoops_gm.identity import IdentityResolver, ResolvableRecord
 from hoops_gm.ingest.auction_values import (
     AuctionValueProfileError,
     parse_auction_value_csv,
     profile_for,
 )
-from hoops_gm.ingest.errors import SourceRejected
+from hoops_gm.ingest.errors import SourceContractError, SourceRejected
 from hoops_gm.ingest.fantrax_official import FantraxOfficialClient, parse_league_info
 from hoops_gm.ingest.injury_report import (
     InjuryReportClient,
@@ -1283,6 +1284,125 @@ class TestInjuryReportIsAlive:
         off_season = datetime(2025, 8, 15, 17, 0, tzinfo=_EASTERN)
         with pytest.raises(ReportNotAvailable):
             injury_report.fetch(off_season, max_age=NO_CACHE)
+
+
+class TestInjuryReportArchiveStillReachesTheSweepSeasons:
+    """The historical sweep plans to read three seasons. Are they still there?
+
+    Two of the three are archived and probed here at frozen instants; the
+    third is the current season, whose liveness is
+    ``TestInjuryReportCurrentSeasonIsAlive`` because a frozen instant is the
+    wrong probe for a season still being written.
+
+    The offline contract test (``test_injury_report_archive_reach.py``) pins
+    committed bytes and therefore cannot notice the archive *retiring* an
+    older season - the fixture keeps parsing long after the URL stops
+    resolving. This is the only check that would see that, and it is the one
+    that matters before committing to a multi-hour sweep of 2023-24.
+
+    Marked ``live_smoke`` like everything in this module: it must fail loudly
+    on a deliberate run, never block a pull request.
+    """
+
+    #: One mid-season evening-before report for each of the two *archived*
+    #: seasons the sweep will cover. The third, current season is not here:
+    #: its liveness is ``TestInjuryReportCurrentSeasonIsAlive``, which probes
+    #: today rather than a frozen instant. Both of these sit in the legacy
+    #: hourly filename era, so ``report_url`` truncates each to the hour.
+    #: Verified live 2026-08-21.
+    _SWEEP_SEASON_PROBES: ClassVar[dict[str, datetime]] = {
+        "2023-24": datetime(2024, 1, 10, 17, 30, tzinfo=_EASTERN),
+        "2024-25": datetime(2025, 1, 15, 17, 30, tzinfo=_EASTERN),
+    }
+
+    #: A real, complete 2022-23 report in the pre-2023 word-spacing layout.
+    #: It fetches cleanly and this parser cannot read it — see the offline
+    #: contract test for why that refusal is the desired behaviour.
+    _PRE_2023_LAYOUT_PROBE = datetime(2023, 1, 11, 17, 30, tzinfo=_EASTERN)
+
+    def test_the_probe_set_is_not_empty(self) -> None:
+        """FAILS IF: the parametrised sweep test above has quietly stopped existing.
+
+        An emptied ``_SWEEP_SEASON_PROBES`` collects **zero** parametrised
+        cases, and zero cases is indistinguishable from all cases passing.
+        This method is not parametrised, so it survives that emptying and is
+        the thing that notices. Its offline sibling
+        (``test_injury_report_archive_reach.py::test_the_parametrised_sets_are_not_empty``)
+        exists for exactly the same reason.
+
+        It runs only on a deliberate ``-m live_smoke`` run, which is also the
+        only run where the test it protects executes - it guards that run, and
+        claims nothing about a pull request.
+        """
+        assert self._SWEEP_SEASON_PROBES, "no archived sweep season is being probed at all"
+        assert len(self._SWEEP_SEASON_PROBES) == 2, (
+            "the sweep covers three seasons: two archived ones probed here at "
+            "frozen instants, plus the current season probed by "
+            "TestInjuryReportCurrentSeasonIsAlive. If that split changed, this "
+            "class's docstring is now describing a plan nobody is running."
+        )
+
+    @pytest.mark.parametrize("season", sorted(_SWEEP_SEASON_PROBES))
+    def test_each_sweep_season_is_still_reachable_and_parses(
+        self, injury_report: InjuryReportClient, season: str
+    ) -> None:
+        """FAILS IF: the archive retired this season, or its layout drifted.
+
+        A red here before the sweep starts is cheap. The same discovery three
+        hours into a 1,230-game season ingest is not.
+        """
+        instant = self._SWEEP_SEASON_PROBES[season]
+        body = injury_report.fetch(instant, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body, report_timestamp=instant, source_url=report_url(instant)
+        )
+        assert len(result.player_entries) > 0, f"{season}: a real report had zero player entries"
+
+    def test_probable_is_still_present_in_the_older_sweep_seasons(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: our reason for believing three seasons is worth sweeping is wrong.
+
+        Secondary sources state the NBA vocabulary carries no ``PROBABLE`` at
+        all. Live bytes from 2024-25 say otherwise, and the whole three-season
+        plan depends on that: if ``PROBABLE`` were absent from the older
+        seasons, widening the cohort would clear the activation floor for
+        ``doubtful`` and leave the model unactivatable on ``probable``
+        instead.
+
+        Deliberately probing **2024-25 rather than the newest season**, since
+        the newest is the one nobody doubts.
+        """
+        instant = self._SWEEP_SEASON_PROBES["2024-25"]
+        body = injury_report.fetch(instant, max_age=NO_CACHE)
+        result = parse_injury_report_pdf(
+            body, report_timestamp=instant, source_url=report_url(instant)
+        )
+        statuses = {entry.status for entry in result.entries}
+        assert InjuryReportStatus.PROBABLE in statuses, (
+            "no PROBABLE designation in a 2024-25 report. Either the NBA changed its "
+            "vocabulary, or this specific report genuinely has none - re-probe another "
+            "date before concluding, then record the finding in docs/handoff.md."
+        )
+
+    def test_the_pre_2023_layout_still_fetches_and_is_still_refused(
+        self, injury_report: InjuryReportClient
+    ) -> None:
+        """FAILS IF: the pre-2023 era became readable, or stopped fetching.
+
+        Both directions are news worth a loud failure. If the parser starts
+        accepting this layout, a fourth season may have become available and
+        somebody should check what it is actually producing before trusting
+        it. If the fetch itself breaks, the archive's reach has changed.
+        """
+        body = injury_report.fetch(self._PRE_2023_LAYOUT_PROBE, max_age=NO_CACHE)
+        assert body.startswith(b"%PDF-"), "the pre-2023 probe stopped returning a PDF"
+        with pytest.raises(SourceContractError):
+            parse_injury_report_pdf(
+                body,
+                report_timestamp=self._PRE_2023_LAYOUT_PROBE,
+                source_url=report_url(self._PRE_2023_LAYOUT_PROBE),
+            )
 
 
 class TestInjuryReportCurrentSeasonIsAlive:
