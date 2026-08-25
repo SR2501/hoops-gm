@@ -1710,3 +1710,32 @@ a:focus-visible {
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
+
+.season-band {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.season-split {
+  margin: 0 0 var(--space-4);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.season-split[data-season-kind='differs'] strong {
+  color: var(--warn);
+}
+
+.evidence__season {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}

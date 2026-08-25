@@ -32,11 +32,20 @@ import {
   type AssumptionPoint,
   type AvailabilitySummary,
 } from './reliabilityModel'
+import { SeasonNote } from './SeasonNote'
 
 interface AvailabilityAssumptionPanelProps {
   summary: AvailabilitySummary
   /** The source string the endpoint reported, shown rather than assumed. */
   source: string
+  /**
+   * The season the cohort was imported for, from the payload.
+   *
+   * Required rather than optional: the whole point of showing it is that a
+   * caller cannot render this panel's numbers without saying what season they
+   * are about, and an optional prop is one a caller forgets.
+   */
+  season: string
 }
 
 function describePoint(point: AssumptionPoint): string {
@@ -46,6 +55,7 @@ function describePoint(point: AssumptionPoint): string {
 export function AvailabilityAssumptionPanel({
   summary,
   source,
+  season,
 }: AvailabilityAssumptionPanelProps) {
   const { stated, minimum, maximum } = summary
   const lowest = stated[0] ?? null
@@ -66,6 +76,8 @@ export function AvailabilityAssumptionPanel({
         It is shown here because it is what the availability model will eventually replace,
         so it is worth knowing what is currently standing in for one.
       </p>
+
+      <SeasonNote season={season} testId="assumptions-split" />
 
       <dl className="facts assumptions__facts">
         <div className="facts__row">

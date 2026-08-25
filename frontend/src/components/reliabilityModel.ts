@@ -70,18 +70,84 @@ export interface EvidenceItem {
   /** The quantity, named the way the model card names it. */
   quantity: string
   status: EvidenceStatus
+  /**
+   * Which season this quantity would describe.
+   *
+   * **Mandatory, and on the screen rather than in a tooltip.** Availability
+   * evidence reads **2025-26**, because 2026-27 has no played games until late
+   * October and draft day is 18 October — so any durability figure that means
+   * anything before the draft is about last season. The cohorts this screen
+   * loads from the API are 2026-27. Two seasons on one page, and a durability
+   * figure whose season is ambiguous is the `gameEt` shape exactly: well-formed,
+   * plausible, and silently about a different thing than the reader assumes.
+   *
+   * Ruled by `architect`; the season belongs in the endpoint contract rather
+   * than in a picker on this screen, so this field states it rather than
+   * offering to change it.
+   */
+  season: string
   /** What the quantity would tell the owner, in one line. */
   purpose: string
   /** Where it already exists, or why it does not exist at all. */
   whereItLives: string
-  /** The specific thing that would put it on this screen. */
-  whatWouldFillIt: string
+  /**
+   * What is **blocking** it — named as a blocker, not as an absence.
+   *
+   * A reader who sees "not built yet" concludes someone is slow. One who sees
+   * "blocked pending a protocol decision the owner has to make" concludes
+   * something different and more accurate, and it is the difference between a
+   * screen that reports status and one that reports a queue.
+   */
+  blocker: string
 }
 
 export const EVIDENCE_STATUS_LABELS: Record<EvidenceStatus, string> = {
   'not-exposed': 'computed, not exposed',
   'not-defined': 'not defined',
   blocked: 'deliberately blocked',
+}
+
+/**
+ * The season availability evidence would be read from. **A ruling, not a datum.**
+ *
+ * Ruled by `architect` on 2026-08-25: reliability evidence reads **2025-26**,
+ * because a 2026-27 cohort is empty until late October and draft day is 18
+ * October, so any reliability figure that means anything before the draft is
+ * about last season. It belongs in the endpoint contract rather than in a
+ * toggle on this screen, so this constant states it and offers no way to change
+ * it.
+ *
+ * It is written here as a literal because it is a governance decision rather
+ * than something on the wire. That is exactly the kind of constant that goes
+ * stale silently, so `describeSeasonSplit` compares it against the season the
+ * API actually returned instead of letting both sit on screen unrelated.
+ */
+export const EVIDENCE_SEASON = '2025-26'
+
+/**
+ * How the season the API returned relates to the season evidence would read.
+ *
+ * **This is the `gameEt` lesson applied to a season label.** Two seasons appear
+ * on this page — the cohort loaded from the API, and the season durability
+ * evidence would be measured over — and a reader who conflates them concludes
+ * something false about every number on screen. A well-formed, plausible season
+ * string is not self-explaining, so the relationship between the two is
+ * computed and rendered rather than left to be inferred from two labels sitting
+ * near each other.
+ *
+ * Returning a discriminated union rather than a boolean is deliberate: the
+ * `same` case is not merely "no warning needed", it is a *different world* —
+ * one where the season has rolled over and this constant needs revisiting — and
+ * a boolean would let a caller render nothing for it.
+ */
+export type SeasonSplit =
+  | { kind: 'differs'; loaded: string; evidence: string }
+  | { kind: 'same'; season: string }
+
+export function describeSeasonSplit(loadedSeason: string): SeasonSplit {
+  const loaded = loadedSeason.trim()
+  if (loaded === EVIDENCE_SEASON) return { kind: 'same', season: EVIDENCE_SEASON }
+  return { kind: 'differs', loaded, evidence: EVIDENCE_SEASON }
 }
 
 /**
@@ -97,86 +163,94 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     id: 'observed-play-rate',
     quantity: 'Observed play / non-play rate',
     status: 'not-exposed',
+    season: '2025-26',
     purpose:
       'Of the games we directly observed, how often he suited up. Not a complete availability rate: missing rows are never counted as absences.',
     whereItLives:
       'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, callable in-process only.',
-    whatWouldFillIt:
-      'A backend route serving the scorecard. reliability-metrics shipped with "no schema, API, or UI"; that route is a separate unit and is not this screen\'s to add.',
+    blocker:
+      'Blocked on a backend route. reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — so nothing serves it. That route is a filed unit and is not this screen\'s to add.',
   },
   {
     id: 'back-to-back',
     quantity: 'Back-to-back sit evidence',
     status: 'not-exposed',
+    season: '2025-26',
     purpose:
       'Whether he sits the second night of a back-to-back, from direct observation rather than reputation.',
     whereItLives:
       'The same scorecard. Back-to-backs themselves are a pure-calendar computation over the schedule (build_schedule_density) and do not depend on any model.',
-    whatWouldFillIt:
-      'The same missing route. Note that this one also needs every game to carry a date, because a back-to-back is a statement about two dates.',
+    blocker:
+      'Blocked on the same route, and additionally on every game carrying a date: a back-to-back is a statement about two dates, so an undated game cannot be classified either way. The live count of undated games is shown below.',
   },
   {
     id: 'monthly-trend',
     quantity: 'Availability trend by month',
     status: 'not-exposed',
+    season: '2025-26',
     purpose:
       'Whether the missed games cluster — a bad November and a clean spring is a different asset from steady attrition.',
     whereItLives:
       'The same scorecard, grouped by calendar month. No slope, smoothing or direction label is fitted, by design.',
-    whatWouldFillIt:
-      'The same missing route, plus a decision about which season it reads. As of today the 2026-27 season has not started, so the only season with observations is the previous one.',
+    blocker:
+      'Blocked on the same route, and on a store the computation can run in: the populated participation ledger has no team_schedule or refresh_runs table, and the store this screen is reading has no played games. Neither store is sufficient alone.',
   },
   {
     id: 'minutes-consistency',
     quantity: 'Minutes consistency',
     status: 'not-exposed',
+    season: '2025-26',
     purpose:
       'How stable his minutes are in the games he does play, which is a different question from whether he plays.',
     whereItLives:
       'The same scorecard: sample standard deviation over mean minutes, null below two observations.',
-    whatWouldFillIt: 'The same missing route.',
+    blocker: 'Blocked on the same route.',
   },
   {
     id: 'category-dispersion',
     quantity: 'Per-category dispersion',
     status: 'not-exposed',
+    season: '2025-26',
     purpose:
       'Empirical p20/p80 and sample SD per category, so a category line can be read as a range rather than a point.',
     whereItLives:
       'The same scorecard. These are historical lower and upper observations, explicitly not predictive intervals.',
-    whatWouldFillIt: 'The same missing route.',
+    blocker: 'Blocked on the same route.',
   },
   {
     id: 'composite-grade',
     quantity: 'A single durability grade',
     status: 'not-defined',
+    season: 'None — the quantity does not exist, so it has no season.',
     purpose:
       'The one letter or number most tools put beside a player. This project does not have one.',
     whereItLives:
       'Nowhere. docs/models/reliability-metrics.md states that no composite reliability grade is defined, because no composite has a defensible target to be calibrated against.',
-    whatWouldFillIt:
-      'An argued definition and something to validate it against. Until then a grade here would be a number invented by the dashboard, which is the failure mode this screen exists to avoid.',
+    blocker:
+      'Blocked on an argued definition, not on engineering. There is nothing to build until someone states what the grade predicts and what would falsify it; a grade shipped before that is a number invented by the dashboard.',
   },
   {
     id: 'roster-fragility',
     quantity: 'Roster-level fragility summary',
     status: 'not-defined',
+    season: '2026-27 rosters read through 2025-26 evidence — two seasons in one number.',
     purpose: 'How much of your own roster is carrying availability risk at once.',
     whereItLives:
       'Nowhere, and it needs two things this build has neither of: a roster, and a per-player durability measure to sum over one.',
-    whatWouldFillIt:
-      'A route carrying league rosters, plus whichever durability quantity above lands first. No endpoint on this backend serves a roster today.',
+    blocker:
+      'Blocked on both inputs at once: no endpoint on this backend serves a league roster, and no durability quantity above has landed to sum. Either alone leaves it unbuildable.',
   },
   {
     id: 'p-play',
     quantity: 'p(play) — the availability model',
     status: 'blocked',
+    season: 'Would predict 2026-27 games from 2025-26 and earlier evidence.',
     purpose:
       'The per-game probability that he suits up. The quantity the whole project is built around.',
     whereItLives:
-      'Not built. It is blocked on two independent routes at once, both recorded in docs/backlog.md.',
-    whatWouldFillIt:
-      'Direct non-play labels at scale from player_participation, and the injury-status conversion it depends on. Under R35 a missing row is never an absence, so the labels cannot be manufactured from silence — and no heuristic stands in for them here.',
+      'Not built, and not merely unstarted — deliberately held. Recorded in docs/backlog.md under availability-model and injury-status-conversion.',
+    blocker:
+      'Blocked pending an owner decision on the preregistered protocol, which is a governance hold rather than a queue position: injury-status-conversion is frozen at docs/models/injury-status-conversion-preregistration.md with no model fitted and no number emitted, and the v3 successor is marked Proposed and binds only when the owner binds it. Separately it needs direct non-play labels at scale — under R35 a missing row is never an absence, so they cannot be manufactured from silence.',
   },
 ] as const
 

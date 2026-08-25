@@ -37,7 +37,8 @@ import { AsyncBoundary } from '../components/AsyncBoundary'
 import { AvailabilityAssumptionPanel } from '../components/AvailabilityAssumptionPanel'
 import { EvidenceInventory } from '../components/EvidenceInventory'
 import { buildProjectionsModel } from '../components/projectionsModel'
-import { buildAvailabilitySummary } from '../components/reliabilityModel'
+import { buildAvailabilitySummary, EVIDENCE_SEASON } from '../components/reliabilityModel'
+import { SeasonNote } from '../components/SeasonNote'
 
 /** ADR-001: one owner, one local league. A picker arrives with a second one. */
 const LEAGUE_ID = 1
@@ -68,6 +69,15 @@ export function ReliabilityPage() {
           The durability evidence is computed by the backend and carried by no route, so nothing
           below is a placeholder waiting for a number to be dropped into it — where a quantity
           is missing, the reason is the content.
+        </p>
+        <p className="season-band" data-testid="season-band">
+          <strong>Which season this is about.</strong> Availability evidence reads{' '}
+          <strong data-testid="season-band-evidence">{EVIDENCE_SEASON}</strong> — the last
+          completed season — because 2026-27 has no played games until late October and draft day
+          is 18 October, so any durability figure that means anything before the draft is about
+          last season. That is an endpoint-contract decision, not a toggle here. Each panel below
+          names the season its own cohort was loaded for, and states how that relates to this one
+          rather than leaving two labels sitting near each other to be conflated.
         </p>
       </header>
 
@@ -114,8 +124,21 @@ function AssumptionsView({ payload }: { payload: CurrentProjections }) {
     [payload],
   )
 
-  return <AvailabilityAssumptionPanel summary={summary} source={payload.source} />
+  return (
+    <AvailabilityAssumptionPanel
+      summary={summary}
+      source={payload.source}
+      season={payload.season}
+    />
+  )
 }
+
+/**
+ * The season a cohort was loaded for, stated against the season evidence reads.
+ *
+ * Lives in `components/SeasonNote.tsx` — see there for why the relationship is
+ * computed rather than left as two labels near each other.
+ */
 
 /**
  * The schedule cohort, framed as an availability question rather than a
@@ -141,6 +164,8 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
         can be observed at all. This is the cohort currently loaded, read from the same lineage
         block the Schedule screen renders.
       </p>
+
+      <SeasonNote season={payload.season} testId="schedule-evidence-split" />
 
       <dl className="facts assumptions__facts">
         <div className="facts__row">

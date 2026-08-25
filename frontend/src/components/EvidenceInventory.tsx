@@ -34,10 +34,10 @@ export function EvidenceInventory({
       <thead>
         <tr>
           <th scope="col">Quantity</th>
-          <th scope="col">State</th>
+          <th scope="col">State, and which season it would describe</th>
           <th scope="col">What it would tell you</th>
           <th scope="col">Where it is now</th>
-          <th scope="col">What would put it here</th>
+          <th scope="col">What is blocking it</th>
         </tr>
       </thead>
       <tbody>
@@ -54,10 +54,13 @@ export function EvidenceInventory({
               >
                 {EVIDENCE_STATUS_LABELS[item.status]}
               </span>
+              <span className="evidence__season" data-testid={`evidence-season-${item.id}`}>
+                {item.season}
+              </span>
             </td>
             <td>{item.purpose}</td>
             <td>{item.whereItLives}</td>
-            <td>{item.whatWouldFillIt}</td>
+            <td>{item.blocker}</td>
           </tr>
         ))}
       </tbody>
