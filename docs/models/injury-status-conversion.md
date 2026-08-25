@@ -198,11 +198,21 @@ held-out status count at `plays = n // 2` gives `questionable` (n=335)
 and `doubtful` (n=83) **0.105154**.
 
 So only `questionable` and `available` are protected below the 0.10 threshold at
-any realised rate; `probable` and `doubtful` are **not**, and `probable` misses by
-a tenth of a percentage point. An earlier draft of this card cited ≈0.054 for
-`questionable`, which came from a *synthetic* realised rate — a number this lane
-must not use for a real status. These four are blind-safe upper bounds and are
-driven in `test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_rate`.
+any realised rate. For `probable` and `doubtful` the supremum exceeds 0.10, which
+establishes that **a guarantee cannot be issued without knowing the rate** — not,
+as an earlier draft of this card's change log said, that protection is absent.
+That distinction is a quantifier, and the corrected form is strictly more useful
+because the failing region is also derivable from counts alone: condition 5's
+half-width reaches 0.10 only for `probable` at `p̂ ∈ [0.478, 0.522]` (5 of its 93
+possible counts) and for `doubtful` at `p̂ ∈ [0.349, 0.651]`. Both windows are
+centred on a coin flip, which is where a status meaning *likely to play* or
+*unlikely to play* is least expected to sit.
+
+An earlier draft also cited ≈0.054 for `questionable`, which came from a
+*synthetic* realised rate — a number this lane must not use for a real status.
+These bounds and ranges are blind-safe and are driven in
+`test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_rate`
+and `test_where_condition_five_actually_stops_protecting_probable_and_doubtful`.
 
 The dilution argument is therefore not the whole story, and the sharper hole is
 the pooled-band masking described under Method — which condition 5 does **not**
@@ -252,9 +262,13 @@ its conversion rate to resemble injury-`doubtful`.
 that on health reasons alone `doubtful`'s held-out floor is ~74, giving 2.5x
 headroom over v2 §8 condition 6's ≥30. Applying §6's own 18.6% to the held-out
 `doubtful` count gives 83 x (1 − 41/221) = 14,940/221 = **67.6, so ~68**, and
-67.6/30 = **2.25x** (2.27x if you round the count to a whole player first).
-I cannot reconstruct a route from the published figures to 74 or to 2.5x;
-the nearest plausible one is applying the share to a different denominator. The
+67.6/30 = **2.25x** (2.27x if the count is rounded to a whole player first). I
+cannot reconstruct a route from the published figures to 74
+or to 2.5x; an independent reviewer brute-forced `c x (1 - a/b)` over the 23
+published counts and found no expression starting from the held-out 83 that
+reaches 74. The nearest structural explanation is that 74 was derived from the
+**development** partition's `doubtful` count of 75 rather than the held-out 83.
+The
 conclusion — condition 6 still clears comfortably on health rows alone — is
 unaffected either way, which is why this is a note to the architect before the
 owner binds v3 rather than an objection to v3. Driven in
@@ -264,6 +278,16 @@ The recommendation inherited from v3 §6 is to **cut none of them**, because
 excluding rows would change the membership fingerprint that §8 condition 8
 requires to reproduce. They are disclosed instead, and the health-restricted
 table above is how they are held to account.
+
+**And the health/non-health split is itself a stated-reason artefact, so treat
+every figure derived from it as approximate in *both* directions.** `AGENTS.md`
+says rest is routinely laundered as a minor ailment; this cohort shows the same
+corruption running the other way, with 7 of the 97 `Rest` rows naming a specific
+knee and "Injury Management". A reason string is a team's choice of words, so a
+health-restricted count is not a count of injuries — it is a count of rows a team
+chose to describe as injuries. Everything above that rests on the split (the ~68
+health-only held-out `doubtful`, and v3 §6's informative-row figures) inherits
+that looseness, and should be read as an estimate rather than a measurement.
 
 ## Known failure modes
 
@@ -288,39 +312,46 @@ Anticipated, not yet observed — nothing has been fitted.
 ## Gate status of the machinery this card depends on
 
 The calibration machinery (`hoops_gm.availability.calibration`, plus the
-synthetic generators and 18 driven mutations) was first filed under the **Code
-gate only**, on the argument that it fits nothing and therefore emits no number a
-decision rests on. An independent non-`quant` reviewer rejected that, and the
-rejection is accepted here.
+synthetic generators and 18 driven mutations) is filed under the **Code gate**.
+That is the architect's ruling; the reasoning matters more than the verdict.
 
-The reviewer's argument, recorded because it should bind the next lane too:
-`gates.md` says the Model gate applies to *"anything producing a number a
-decision rests on — `p(play)`, reliability metrics, projections, blending"*. The
-em-dash introduces examples; the **leading clause is the test**. CITL, ECE, the
-Wilson endpoints and the bootstrapped Brier interval are precisely the numbers v2
-§8's conditions 2, 3, 4, 5 and 7 are evaluated from, so the activation decision
-rests on them whether or not this lane fits anything. `docs/backlog.md`
-(lines 1588-1595) already ruled an identically-shaped Code-gate-only argument
-wrong, and **no gate may be waived by the agent it applies to.**
+**Why Code and not Model.** You cannot hold data out from a formula. The Model
+gate's central requirement is a backtest against held-out data, and there is no
+estimate here to back-test — the module is a deterministic scorer, not an
+estimator. The honest discharge for such a thing is verification against
+analytically known values plus deliberate corruption, which is what the tests and
+`scripts/mutate_calibration.py` do: 18 mutations, each driven red.
 
-Filed as **Code + Model**:
+**The argument on the other side, recorded because a reader will otherwise
+re-derive it.** An independent non-`quant` reviewer argued Code + Model, reading
+`gates.md`'s *"anything producing a number a decision rests on — `p(play)`,
+reliability metrics, projections, blending"* as a leading-clause test with the
+em-dash list as examples, and noting that CITL, ECE, the Wilson endpoints and the
+bootstrapped Brier interval are the numbers v2 §8's conditions 2-5 and 7 are read
+from. I accepted that correction before learning the fact that undercuts its
+strongest step: **"reliability metrics" in `gates.md` is a word collision.** It
+names the player-consistency model in `docs/models/reliability-metrics.md`, not a
+*reliability diagram*, which is a calibration plot. Two senses of one word inside
+the document that decides which gate applies. The architect has filed the
+ambiguity as a defect in `gates.md` in its own right.
 
-| Model gate requirement | Status |
-|---|---|
-| Backtest against held-out data | **Inapplicable** — nothing is fitted, and reaching the held-out partition would break the blind. Not *skipped*: there is no estimate to back-test. |
-| Report calibration, not just accuracy | **Inapplicable in the reporting sense — this module *is* the reporting apparatus.** Its own correctness is evidenced by 18 driven mutations rather than by a calibration curve. |
-| Model card in `docs/models/` | **Met** — this file. |
-| State what the model cannot see | **Met** — two sections above, plus the module docstring's own "what this module cannot see". |
-| Version the output | **Met** — `CALIBRATION_MACHINERY_VERSION` and `DECLARED_CONVENTIONS` ride on every report, driven in `test_every_report_carries_its_provenance_version_and_conventions`. |
-
-Relabelling costs nothing and removes a precedent worth not setting.
+**The half of this that binds forward, and the reason the section exists.** When
+this machinery is later used to produce v2 §7's held-out calibration table,
+**that report is Model-gated**, and this module is load-bearing inside it.
+**Nothing verified here pre-discharges any part of that gate.** A green suite in
+this module says its arithmetic is right; it says nothing about whether a model
+scored by it is any good. That sentence is also in the module docstring and is
+pinned by
+`test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate`,
+because it survives only as prose and prose is deletable.
 
 ## Change log
 
 | Version | Date | Change | Effect on results |
 |---|---|---|---|
 | 0 | 2026-08-23 | Skeleton created **before** any fit, under an unbroken blind. Reporting structure, subgroup requirements, disclosure of the non-health share, and the δ = 197/255 dilution arithmetic fixed in advance. Machinery: `hoops_gm.availability.calibration`, developed and verified entirely on synthetic cohorts. | None — no result exists. |
-| 0.1 | 2026-08-23 | Revised after independent non-`quant` review, blind still unbroken. Four reviewer mutations that had survived are now caught (18 total). Corrections: the pooled-masking claim narrowed to its rate-independent theorem plus the ~0.7pp condition-5 boundary, with the exact zeros marked definitional; per-status Wilson half-widths restated at the blind-safe `p_hat = 0.5` worst case, which shows `probable` and `doubtful` are **not** protected by a 0.10 threshold; v3 §6's 18.6% attributed rather than asserted; v3 §6's ~74 / 2.5x recomputed as ~68 / 2.25x and flagged to the architect; gate relabelled Code + **Model**. | None — no result exists. |
+| 0.1 | 2026-08-23 | Revised after independent non-`quant` review, blind still unbroken. Four reviewer mutations that had survived are now caught (18 total). Corrections: the pooled-masking claim narrowed to its rate-independent theorem plus the ~0.7pp condition-5 boundary, with the exact zeros marked definitional; per-status Wilson half-widths restated at the blind-safe `p_hat = 0.5` worst case, which shows a 0.10 guarantee **can** be issued for `questionable` and `available` at any rate but **cannot** be issued for `probable` or `doubtful` without knowing theirs; v3 §6's 18.6% attributed rather than asserted; v3 §6's ~74 / 2.5x recomputed as ~68 / 2.25x and flagged to the architect; gate relabelled Code + **Model**, then **reverted to Code** by the architect's ruling once the `gates.md` "reliability metrics" word collision came to light, with the forward-binding caveat pinned by test instead. | None — no result exists. |
+| 0.2 | 2026-08-23 | Revised after the **second** independent review, blind still unbroken. Two payload defects fixed: nested `restrict()` dropped the inherited pairs and under-reported what had been excluded; a `RestrictedCohort` mutated after construction over-claimed, recording an `out`-dominated rate as `doubtful`. Restriction markers are now **verified against the rows** rather than believed. Container copies (slice, `+`, `*`, `.copy()`) re-wrap; the iteration-based strip routes are documented as a residual **class** and pinned by test rather than denied. The 0.1 row's own quantifier error corrected — the Wilson result shows a 0.10 guarantee cannot be *issued* blind for `probable`/`doubtful`, not that protection is absent, and the failing rate windows are now stated. Mutations: 23, all caught, one of which survived its first run and exposed a genuinely untested path. | None — no result exists. |
 
 **The next entry in this table must state the date the blind was broken and under
 which pre-registration version.** A results row that does not is not admissible.

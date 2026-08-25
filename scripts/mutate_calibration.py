@@ -72,6 +72,28 @@ you what I thought to check, and his tell you what I did not.
 * **M18** swaps the bootstrap's 2.5% and 97.5% quantiles. v2 §8 condition 2
   reads the **upper** endpoint, so this converts a straddling interval into a
   pass - miscalibration in the direction that flatters the candidate.
+
+**M19-M23 came from the same reviewer's second pass**, against the fixes for the
+first. Two of the four fixes were incomplete in ways the fix's own tests could
+not see, which is the argument for re-reviewing a fix rather than only the thing
+it fixed.
+
+* **M19** un-nests `restrict()` so an inner restriction is dropped, and a
+  doubly-narrowed cohort reports only its outer pair - a payload that
+  **under-reports** what was excluded.
+* **M20** trusts the restriction marker instead of verifying it against the rows.
+  A `RestrictedCohort` is a mutable list, so `extend` moves the data while the
+  marker stands still, and the payload then **over-claims**: an `out`-dominated
+  rate recorded as `doubtful`.
+* **M21** returns a bare `list` from a slice again. `rc[:]` is a defensive-copy
+  idiom rather than a laundering act, and it silently disarmed the guard.
+* **M22** is the reviewer's P11 and **survived his own pass**: dropping the sort
+  from `recorded_restriction` left every test green, because the one test that
+  looked like it pinned the order applied its keys in an order where insertion
+  and sorted order coincide. The test now filters on the later key.
+* **M23** makes the verification treat a missing label key as satisfying the
+  claim, which would let a partly-unlabelled cohort assert a restriction it does
+  not meet - the same missing-key trap as M16, one layer up.
 """
 
 from __future__ import annotations
@@ -225,6 +247,45 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
             "        interval_low=type7_quantile(estimates, 0.975),\n"
             "        interval_high=type7_quantile(estimates, 0.025),"
         ),
+    ),
+    # M19-M23 are the second review's findings, at 471c061. P11 is the one that
+    # survived his own 11-mutation pass and is now M22; the rest pin the fixes
+    # for the two payload lies and the container hardening.
+    (
+        "M19 nested restrict() drops the inherited pairs again (review P2-2)",
+        CAL,
+        (
+            "    inherited = dict(_inherited_restriction(observations))\n"
+            "    wanted = tuple(sorted((inherited | labels).items()))"
+        ),
+        "    wanted = tuple(sorted(labels.items()))",
+    ),
+    (
+        "M20 a marker is trusted rather than verified against the rows (review P2-3)",
+        CAL,
+        "    _verify_restriction_holds(rows, merged)",
+        "    pass",
+    ),
+    (
+        "M21 slicing a restricted cohort returns a bare list again (review P2-1)",
+        CAL,
+        (
+            "        if isinstance(index, slice):\n"
+            "            return RestrictedCohort(super().__getitem__(index), self.restriction)"
+        ),
+        "        if False:\n            pass",
+    ),
+    (
+        "M22 recorded_restriction left in insertion order (review P11, survived his pass)",
+        CAL,
+        "        tuple(sorted(merged.items())) if merged else None",
+        "        tuple(merged.items()) if merged else None",
+    ),
+    (
+        "M23 verification counts a missing key as satisfying the claim",
+        CAL,
+        "        offenders = sum(1 for row in rows if row.labels.get(key) != value)",
+        "        offenders = sum(1 for row in rows if row.labels.get(key, value) != value)",
     ),
 ]
 

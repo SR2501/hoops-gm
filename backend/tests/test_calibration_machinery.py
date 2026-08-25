@@ -12,7 +12,10 @@ evidence. Each detector below is driven against a cohort built to break it.
 
 from __future__ import annotations
 
+import copy
+import itertools
 import math
+import pickle
 import statistics
 from collections.abc import Callable
 from fractions import Fraction
@@ -29,6 +32,7 @@ from hoops_gm.availability.calibration import (
     CalibrationObservation,
     PairedPrediction,
     Provenance,
+    RestrictedCohort,
     bands_from_labels,
     build_calibration_report,
     detect_monotonic_reversals,
@@ -1081,12 +1085,22 @@ def test_a_pre_filtered_report_records_what_it_was_filtered_on() -> None:
 
 
 def test_a_pre_filter_and_a_parameter_restriction_are_both_recorded() -> None:
+    """Pre-filter on the LATER key so insertion order and sorted order differ.
+
+    A reviewer's mutation dropped the `sorted()` from the recorded restriction
+    and all 61 tests stayed green, because this test used to pre-filter on
+    `band` and pass `status` as the parameter - insertion order was already
+    sorted order, so the assertion could not tell the two apart. Filtering on
+    `status` first makes insertion order `(status, band)` and sorted order
+    `(band, status)`, so the assertion now fails if the sort is removed.
+    """
+
     rows = _masked_band_cohort()
     report = build_calibration_report(
-        restrict(rows, band="unlikely"),
+        restrict(rows, status="doubtful"),
         provenance=Provenance.POST_HOC_DIAGNOSTIC,
         binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
-        restriction={"status": "doubtful"},
+        restriction={"band": "unlikely"},
     )
     assert report.restriction == (("band", "unlikely"), ("status", "doubtful"))
     assert report.observations == 83
@@ -1125,9 +1139,53 @@ def test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_ra
     assert worst_case["questionable"] < 0.10
     assert worst_case["available"] == pytest.approx(0.0452, abs=5e-4)
     assert worst_case["available"] < 0.10
-    # The smaller informative statuses are NOT protected by a 0.10 threshold.
+    # Mind the quantifier. For the two smaller statuses the supremum exceeds
+    # 0.10, which establishes that no guarantee can be ISSUED without knowing
+    # the rate - not that protection is absent. See the test below for the
+    # narrow band of rates where it actually fails.
     assert worst_case["probable"] > 0.10
     assert worst_case["doubtful"] > 0.10
+
+
+def test_where_condition_five_actually_stops_protecting_probable_and_doubtful() -> None:
+    """The existential arm of the previous test, made specific.
+
+    Saying `probable` and `doubtful` are "not protected by a 0.10 threshold" is
+    a quantifier error: their worst case exceeds 0.10, so a guarantee cannot be
+    issued blind, but the region where protection genuinely fails is narrow and
+    is derivable from the counts alone. A reviewer caught the unqualified form
+    in the model card's change log; this pins the corrected version.
+
+    Blind-safe: it enumerates every arithmetically possible play count and
+    reports which ones would breach. It reads no outcome and asserts nothing
+    about which count is real.
+    """
+
+    def breaching_rates(observations: int) -> list[float]:
+        breaching = []
+        for plays in range(observations + 1):
+            low, high = wilson_interval(plays, observations)
+            if (high - low) / 2.0 >= 0.10:
+                breaching.append(plays / observations)
+        return breaching
+
+    probable = breaching_rates(HELD_OUT_COUNTS["probable"])
+    doubtful = breaching_rates(HELD_OUT_COUNTS["doubtful"])
+
+    # `probable` fails only in a ~4-point window centred on a coin flip - for a
+    # status whose label means "likely to play".
+    assert len(probable) == 5
+    assert min(probable) == pytest.approx(0.478, abs=5e-4)
+    assert max(probable) == pytest.approx(0.522, abs=5e-4)
+
+    # `doubtful` is wider, and likewise centred where a status meaning
+    # "unlikely to play" is least expected to sit.
+    assert min(doubtful) == pytest.approx(0.349, abs=5e-4)
+    assert max(doubtful) == pytest.approx(0.651, abs=5e-4)
+
+    # And the statuses with a sub-0.10 supremum have no breaching rate at all.
+    assert breaching_rates(HELD_OUT_COUNTS["questionable"]) == []
+    assert breaching_rates(HELD_OUT_COUNTS["available"]) == []
 
 
 def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_eight() -> None:
@@ -1137,7 +1195,8 @@ def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_e
     recall cases (18.6%), and separately that on health reasons alone the
     held-out `doubtful` floor is "~74", giving "2.5x" headroom over v2 section 8
     condition 6's minimum of 30. Applying the first number to the held-out count
-    gives ~68 and 2.27x, not 74 and 2.5x.
+    gives ~68 and 2.25x - 2.27x if the count is rounded to a whole player
+    first - not 74 and 2.5x. The card leads with 2.25x; both are asserted below.
 
     Both are predictor-side counts, so this is checkable under the blind. The
     conclusion is unchanged either way - condition 6 clears comfortably - which
@@ -1169,3 +1228,209 @@ def test_the_g_league_share_of_doubtful_implies_a_health_only_floor_near_sixty_e
     # v3's stated pair is not reproducible from v3's stated share.
     assert round(float(health_only)) != 74
     assert headroom < 2.5
+
+def test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate() -> None:
+    """The one sentence in the docstring that a later lane is most likely to need.
+
+    The architect ruled this unit Code-gated and pinned the caveat that carries
+    the weight: when this machinery is later used to produce v2 section 7's
+    held-out table, *that* report is Model-gated and this module is load-bearing
+    inside it. Nothing verified here discharges any part of it.
+
+    That is a claim about governance, so nothing in the arithmetic protects it -
+    it survives only as prose, and prose is deletable. This test is the only
+    thing standing between that paragraph and someone citing "the calibration
+    machinery passed its gate" as though it settled the model's.
+    """
+
+    import hoops_gm.availability.calibration as module
+
+    docstring = module.__doc__
+    assert docstring is not None
+    assert "does not pre-discharge" in docstring
+    assert "Model-gated" in docstring
+    assert "Nothing verified here discharges any part of that" in docstring
+    # And the reason the reviewer's reading was available at all, so it is not
+    # silently re-derived by the next lane to read gates.md.
+    assert "word collision" in docstring
+    assert "reliability-metrics.md" in docstring
+
+# ---------------------------------------------------------------------------
+# Findings from the second independent review, at 471c061
+# ---------------------------------------------------------------------------
+
+
+def test_nested_restriction_accumulates_rather_than_replacing() -> None:
+    """P2-2: the inner filter used to vanish, and the payload under-reported.
+
+    `restrict(restrict(rows, status="doubtful"), band="unlikely")` narrows twice
+    but used to record only the outer pair. The reviewer drove the analogous
+    case: a 60-row payload labelled as the whole `era=legacy` cohort when 200
+    legacy rows had been dropped. Under-reporting is not obviously dangerous
+    until you notice it is the same shape as the pooled-versus-restricted
+    confusion this module exists to prevent, one level down.
+    """
+
+    rows = _masked_band_cohort()
+    nested = restrict(restrict(rows, status="doubtful"), band="unlikely")
+
+    assert nested.restriction == (("band", "unlikely"), ("status", "doubtful"))
+
+    report = build_calibration_report(
+        nested,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction == (("band", "unlikely"), ("status", "doubtful"))
+    assert report.observations == 83
+
+    # The outer key alone selects far more than the nested pair does, which is
+    # exactly what the old payload concealed.
+    assert len(restrict(rows, band="unlikely")) == 3046
+
+
+def test_a_cohort_mutated_after_restriction_is_refused_rather_than_mislabelled() -> None:
+    """P2-3: `extend` moved the rows and left the marker behind.
+
+    The reviewer took an 83-row `doubtful` cohort, extended it with `out` rows,
+    and got a 520-row report still recording `status=doubtful` - an
+    `out`-dominated rate attributed to `doubtful`, through an ordinary list
+    method. That is this project's headline failure mode arriving by the back
+    door, so the marker is now re-verified against the rows instead of trusted.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    assert len(cohort) == 83
+    cohort.extend(restrict(rows, status="out"))
+    assert len(cohort) > 83
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            cohort,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_forged_marker_is_refused() -> None:
+    """The same verification, reached by constructing the claim directly."""
+
+    rows = _masked_band_cohort()
+    forged = RestrictedCohort(rows, (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "transform"),
+    [
+        ("copy", lambda rc: copy.copy(rc)),
+        ("deepcopy", lambda rc: copy.deepcopy(rc)),
+        ("pickle", lambda rc: pickle.loads(pickle.dumps(rc))),
+        ("slice", lambda rc: rc[:]),
+        ("method_copy", lambda rc: rc.copy()),
+        ("concat", lambda rc: rc + []),  # noqa: RUF005 - concatenation is the construct under test
+        ("repeat", lambda rc: rc * 1),
+    ],
+)
+def test_copying_a_restricted_cohort_keeps_it_restricted(
+    name: str,
+    transform: Callable[[RestrictedCohort], RestrictedCohort],
+) -> None:
+    """Defensive copying must not disarm the guard.
+
+    Slicing and concatenation are how anyone copies a sequence; they are not
+    laundering. A reviewer's enumeration found `rc[:]`, `rc + []` and `rc * 1`
+    silently returning plain lists, which stripped the marker through an idiom
+    nobody would think twice about. `copy`, `deepcopy` and `pickle` already
+    held, because they restore `__dict__` without calling `__init__`.
+    """
+
+    rows = _masked_band_cohort()
+    copied = transform(restrict(rows, status="doubtful"))
+
+    assert isinstance(copied, RestrictedCohort), name
+    assert copied.restriction == (("status", "doubtful"),), name
+    with pytest.raises(ValueError, match="restricted"):
+        build_calibration_report(
+            copied,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "transform"),
+    [
+        ("list", lambda rc: list(rc)),
+        ("tuple", lambda rc: list(tuple(rc))),  # noqa: C414 - the tuple round-trip is the point
+        ("star", lambda rc: [*rc]),
+        ("chain", lambda rc: list(itertools.chain(rc))),
+    ],
+)
+def test_the_iteration_routes_that_strip_the_marker_are_named_not_denied(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+) -> None:
+    """The residual, pinned as a fact so the docstring cannot drift from it.
+
+    Python cannot intercept "somebody iterated me", so any route that builds a
+    fresh container by iterating discards the marker and the guard cannot fire.
+    This test asserts the hole is still exactly where the docstring says it is.
+    If a future change closes one of these, this test fails and the docstring
+    gets corrected - which is the point. A claim of closure that nothing checks
+    is how the first version of this guard came to be believed.
+    """
+
+    rows = _masked_band_cohort()
+    stripped = transform(restrict(rows, status="doubtful"))
+
+    assert not isinstance(stripped, RestrictedCohort), name
+    report = build_calibration_report(
+        stripped,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction is None, name
+    assert report.observations == 83, name
+
+def test_verification_refuses_a_claim_the_rows_are_merely_silent_about() -> None:
+    """M23, which I wrote and which then survived my own suite.
+
+    `_verify_restriction_holds` compares `row.labels.get(key)` to the value, so
+    an unlabelled row fails the claim. Defaulting the lookup to the claimed
+    value instead - the same missing-key trap the reviewer found one layer down
+    in `restrict()` - would let a cohort that says nothing about `status` assert
+    `status=doubtful` and be believed.
+
+    Nothing exercised that path, so the mutation lived. It is the second time
+    this exact shape has bitten in this module: a key that is absent is not a
+    key that matches, and a suite whose fixtures are all fully labelled cannot
+    tell the difference.
+    """
+
+    silent = RestrictedCohort(
+        [
+            CalibrationObservation(
+                observation_id=f"silent-{index}",
+                predicted=0.5,
+                played=index % 2 == 0,
+                labels={"era": "legacy"},
+            )
+            for index in range(30)
+        ],
+        (("status", "doubtful"),),
+    )
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            silent,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
