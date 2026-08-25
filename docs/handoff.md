@@ -24421,3 +24421,122 @@ Now closed. **23 mutations, 23 caught, 0 survived.** 78 tests in the module.
   found 5 including 2 inside my fixes. The sequence does not look exhausted, and
   the honest reading is about my hit rate rather than his thoroughness. I stopped
   because the unit is bounded, not because it converged. *Not driven.*
+
+## 2026-08-23 - `quant`: a third review pass, and the shape all three share
+
+Fourth and last entry for this unit. Four of the reviewer's mutations survived a
+suite that had just caught twenty-three, and the interesting thing is not the
+four - it is that they rhyme with the four from pass 1 and the five from pass 2.
+
+### The shape, which is the useful output of this pass
+
+**Each fix landed correctly on the case that was driven, and left the
+generalisation of that case untested.** Every time.
+
+- Pass 2 taught `restrict()` to accumulate pairs, which made a **two-key marker
+  the normal case**. Pass 3 then mutated the verification loop to check only the
+  first pair and all 78 tests stayed green, because every test that reached
+  verification used a single-key restriction. The fix enlarged the surface the
+  next defect hid in.
+- Pass 2 added four container overrides. Pass 3 mutated `__mul__` to ignore its
+  count and it survived, because the tests asserted the **type** and the
+  **marker** and never the **contents**.
+
+The reviewer's rule, which I am adopting: **when a fix introduces a new dimension
+- a second pair, a count, a precedence - write the test at n=2, not n=1.** It is
+cheaper than another round of mutations of the same shape.
+
+### The re-wrap rule I wrote in pass 2 was wrong in the other direction
+
+Pass 2 found that `rc[:]`, `rc + []` and `rc * 1` stripped the restriction
+marker, and I fixed it by re-wrapping in `__getitem__`, `__add__`, `__mul__` and
+`__rmul__`. That was too wide, and pass 3 drove why: the marker then survived
+`rc * 3` and `rc[:10]` too. **Every row still satisfied every recorded pair, so
+verification passed - the marker was true and the payload was false about the
+cohort.** 249 rows recorded as the 83-row `doubtful` subgroup.
+
+It is not academic. v2 §8 condition 5 is a Wilson half-width and goes as
+`1/sqrt(n)`. At the held-out `doubtful` count of 83 the worst case is **0.1052**,
+outside 0.10, which is exactly the basis of the card's claim that no 0.10
+guarantee can be issued for `doubtful` blind. Duplicate the cohort and `n=166`
+gives **0.0752** - inside. **Duplication manufactures the guarantee**, with a
+marker that is true in every particular. Condition 6's population floor reads the
+same inflated `n`. Re-wrapping is now restricted to operations that provably
+preserve the row multiset, and everything else returns a plain `list`, which
+asserts nothing.
+
+### The bounded guarantee, now stated instead of implied
+
+`_verify_restriction_holds` establishes **soundness** - every row present
+satisfies every recorded pair. It cannot establish **completeness**, because a
+cohort does not carry the population it was drawn from, so `pop` and `del
+rc[40:]` leave a marker that is still true and no longer describes the subgroup.
+It cannot establish **multiplicity**, because a duplicated row satisfies a pair
+as happily as the original. Both are in the module docstring and the completeness
+residual is pinned by a test that drives it, rather than being a sentence.
+
+### I asked him to rule against me and he did
+
+I claimed the iteration-based strip routes were irreducible because "Python
+offers no way to intercept 'somebody iterated me'". **That is false.** `__iter__`
+is an ordinary dunder; `list()`, `tuple()`, unpacking and `itertools` all route
+through it. His proof-of-concept - a subclass yielding rows that carry provenance
+in `labels` - **refused all five routes I had called impossible**, with the
+module unmodified on disk.
+
+My conclusion was safe and my premise was false, which is the worse of the two
+ways to be right. The premise was doing load-bearing work: it presented a design
+choice as a limit of the language, and nothing in the gates would have caught it,
+because it is a claim about Python rather than about a number. It now reads as a
+choice, with the reasons row-level provenance was not taken - it mutates row
+labels, allocates a frozen dataclass per row per iteration, breaks row identity,
+and is itself strippable, so it **moves** the residual rather than removing it.
+
+### A second instance of the M12 symmetry class
+
+Pass 1 found that `detect_monotonic_reversals` is invariant under reversing band
+order, because both sign products flip. Pass 3 found the same shape in
+`CalibrationBin.gap`: reversing its declared sign survived the whole suite,
+because every internal consumer takes `abs()` and the only two tests that touched
+it either wrapped it in `abs()` or asserted it equal to zero. The sign is emitted
+in `to_dict()`, so it is load-bearing for any reader of the per-bin table.
+
+**The generalisation, which is worth more than the fix:** a declared convention is
+pinned only if some test observes it through a path that does not symmetrise it.
+`abs`, a square, and a product of two sign-flipping factors all destroy exactly
+the information the convention asserts. That is mechanically auditable - for each
+entry in `DECLARED_CONVENTIONS`, name the test that fails if it is reversed - and
+it generalises past this module.
+
+### State at this commit
+
+30 mutations, **30 caught, 0 survived**. 96 tests in the module, full suite 1883
+passed, 32 deselected - predicted 1883 before running it, from 1865 plus the 18
+tests this pass added. ruff and mypy clean. The blind is intact: the reviewer
+re-ran his AST and
+string-literal audit at `57e370d` and found no database driver, no network, no
+filesystem read, and no play-rate literal in the generators - every rate is still
+a caller-supplied argument.
+
+### What I could not verify
+
+- **That a fourth pass would find nothing.** Three passes found 4, 5 and 4
+  survivors. That sequence is not converging, and the honest reading is about my
+  hit rate rather than his thoroughness. I am stopping because the unit is
+  bounded, not because it is exhausted. *Not driven.*
+- **That the multiplicity rule has no legitimate victim.** Anyone concatenating
+  two disjoint halves of the same subgroup now loses the marker, which is safe
+  but inconvenient, and I have not looked for a caller who wants that. *Not
+  driven.*
+- **That the completeness residual is the last one of its kind.** It is the one I
+  can name. Soundness, completeness and multiplicity are the three properties I
+  thought to check for; there may be a fourth. *Not driven.*
+- **That the `__iter__` interception the reviewer demonstrated would survive
+  contact with the rest of the module.** He proved the routes can be refused. I
+  did not build it, and my reasons for not building it are design judgement
+  rather than measurement - the per-row allocation cost in particular is asserted
+  and unmeasured. *Argued, not driven.*
+- **That the four Wilson figures transfer.** They are exact for the published
+  held-out counts, which are predictor-side. Whether any real rate lands in a
+  breach window is an outcome question I still must not look at. *Driven as a
+  range, unknown as a fact.*

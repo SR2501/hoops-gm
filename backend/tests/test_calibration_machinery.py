@@ -24,11 +24,13 @@ import pytest
 
 from hoops_gm.availability.calibration import (
     CALIBRATION_MACHINERY_VERSION,
+    DECLARED_CONVENTIONS,
     DEFAULT_PROBABILITY_DECIMALS,
     WILSON_Z_95,
     Band,
     BinningScheme,
     BrierComparison,
+    CalibrationBin,
     CalibrationObservation,
     PairedPrediction,
     Provenance,
@@ -1380,8 +1382,15 @@ def test_the_iteration_routes_that_strip_the_marker_are_named_not_denied(
 ) -> None:
     """The residual, pinned as a fact so the docstring cannot drift from it.
 
-    Python cannot intercept "somebody iterated me", so any route that builds a
-    fresh container by iterating discards the marker and the guard cannot fire.
+    Any route that builds a fresh container by iterating discards the marker and
+    the guard cannot fire. A third review refuted the *reason* an earlier version
+    of this docstring gave - it said Python cannot intercept iteration, and it
+    can: `__iter__` is an ordinary dunder, and a proof-of-concept that yields
+    rows carrying provenance in `labels` refused all four of these routes. So
+    the hole is a design choice, not a limit of the language, and the choice is
+    argued in the module docstring rather than hidden behind a false
+    impossibility claim.
+
     This test asserts the hole is still exactly where the docstring says it is.
     If a future change closes one of these, this test fails and the docstring
     gets corrected - which is the point. A claim of closure that nothing checks
@@ -1434,3 +1443,241 @@ def test_verification_refuses_a_claim_the_rows_are_merely_silent_about() -> None
             provenance=Provenance.POST_HOC_DIAGNOSTIC,
             binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
         )
+
+# ---------------------------------------------------------------------------
+# Findings from the third independent review, at 57e370d
+# ---------------------------------------------------------------------------
+
+
+def test_verification_checks_every_recorded_pair_not_merely_the_first() -> None:
+    """3-A: a survivor, and the clearest case yet of a fix enlarging its own blind spot.
+
+    Mutating the verification loop to `list(restriction.items())[:1]` survived
+    all 78 tests. Every test that reached verification used a single-key
+    restriction, so the loop body was never entered twice with a failing second
+    pair - and the P2-2 fix, which made `restrict()` accumulate, had just made
+    two-key markers the normal case rather than an exotic one.
+
+    Sorted order puts `band` before `status`, so this cohort satisfies the first
+    pair completely and the second not at all: exactly the shape a first-pair-only
+    check cannot see. Under the mutant, 3,046 rows that `out` dominates 2,963 to
+    83 are recorded as `status=doubtful` - the P2-3 lie, reached again through
+    the door the P2-3 fix left open.
+    """
+
+    rows = _masked_band_cohort()
+    band = restrict(rows, band="unlikely")
+    assert len(band) == 3046
+    assert all(row.labels["band"] == "unlikely" for row in band)
+
+    forged = RestrictedCohort(band, (("band", "unlikely"), ("status", "doubtful")))
+    with pytest.raises(ValueError, match="claims restriction status='doubtful'"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_restrict_lets_the_outer_call_win_a_key_conflict() -> None:
+    """3-D: a survivor. Reversing the merge returns rows under the wrong label.
+
+    `restrict(restrict(rows, status="doubtful"), status="out")` must be empty:
+    no row is both. Under `labels | inherited` it returns 83 `doubtful` rows
+    marked `status=out`, and nothing downstream can tell, because the marker is
+    self-consistent - every row present satisfies the recorded pair, so
+    `_verify_restriction_holds` passes. Soundness is not identity.
+    """
+
+    rows = _masked_band_cohort()
+    conflicting = restrict(restrict(rows, status="doubtful"), status="out")
+
+    assert conflicting.restriction == (("status", "out"),)
+    assert len(conflicting) == 0
+
+    same_key_same_value = restrict(restrict(rows, status="doubtful"), status="doubtful")
+    assert len(same_key_same_value) == 83
+
+
+@pytest.mark.parametrize(
+    ("name", "transform", "expected"),
+    [
+        ("double", lambda rc: rc * 2, 166),
+        ("triple", lambda rc: rc * 3, 249),
+        ("rdouble", lambda rc: 2 * rc, 166),
+        ("head", lambda rc: rc[:10], 10),
+        ("stride", lambda rc: rc[::2], 42),
+        ("reverse", lambda rc: rc[::-1], 83),
+        ("concat_self", lambda rc: rc + rc, 166),
+    ],
+)
+def test_operations_that_change_multiplicity_or_extent_drop_the_marker(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+    expected: int,
+) -> None:
+    """3-B and 3-C: the P2-1 fix over-applied, and its contents were never asserted.
+
+    Re-wrapping made the marker survive duplication and truncation. Every row
+    still satisfied every recorded pair, so verification passed - the marker was
+    true and the payload was false about the cohort. `rc * 3` recorded 249 rows
+    as the 83-row `doubtful` subgroup.
+
+    The count is asserted here as well as the type, because a separate survivor
+    (`super().__mul__(1)` in place of `count`) showed that a container override
+    can lose rows silently while every type and marker assertion still passes.
+    """
+
+    rows = _masked_band_cohort()
+    result = transform(restrict(rows, status="doubtful"))
+
+    assert len(result) == expected, name
+    assert not isinstance(result, RestrictedCohort), name
+
+
+@pytest.mark.parametrize(
+    ("name", "transform", "expected"),
+    [
+        ("whole_slice", lambda rc: rc[:], 83),
+        ("explicit_whole_slice", lambda rc: rc[0:83:1], 83),
+        ("repeat_once", lambda rc: rc * 1, 83),
+        ("concat_empty", lambda rc: rc + [], 83),  # noqa: RUF005 - concatenation is the construct under test
+        ("method_copy", lambda rc: rc.copy(), 83),
+    ],
+)
+def test_the_defensive_copy_idioms_still_preserve_the_marker_and_the_rows(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+    expected: int,
+) -> None:
+    """The other half of 3-B: narrowing the rule must not re-open the P2-1 hole.
+
+    A whole-extent slice, `* 1`, `+ []` and `.copy()` provably preserve the row
+    multiset, so they keep the marker. Anything that does not is above.
+    """
+
+    rows = _masked_band_cohort()
+    result = transform(restrict(rows, status="doubtful"))
+
+    assert len(result) == expected, name
+    assert isinstance(result, RestrictedCohort), name
+    assert result.restriction == (("status", "doubtful"),), name
+
+
+def test_why_multiplicity_matters_condition_five_is_a_function_of_n() -> None:
+    """3-B's motivation, as arithmetic rather than as principle.
+
+    v2 §8 condition 5 is a Wilson half-width and goes as 1/sqrt(n), so
+    duplicating a cohort tightens it. At the held-out `doubtful` count of 83 the
+    worst case is outside 0.10 and a 0.10 guarantee cannot be issued; at 166 it
+    is inside, and the same marker would still read `status=doubtful` with every
+    recorded pair true. That is why the multiplicity rule exists, and it is
+    computed from counts alone at the worst-case rate - no outcome is read.
+    """
+
+    def half_width(observations: int) -> float:
+        low, high = wilson_interval(observations // 2, observations)
+        return (high - low) / 2.0
+
+    assert half_width(83) > 0.10
+    assert half_width(166) < 0.10
+    assert half_width(83) == pytest.approx(0.105154, abs=5e-6)
+    assert half_width(166) == pytest.approx(0.075196, abs=5e-6)
+
+
+def test_the_per_bin_gap_sign_is_observed_through_a_path_that_does_not_take_abs() -> None:
+    """3-E: the second instance of the M12 symmetry class, and the general rule.
+
+    `Band.gap` declares "positive over-predicts play", and reversing it survived
+    the whole suite: every internal consumer takes `abs()` (ECE, MCE), and the
+    only two tests that touched it wrapped it in `abs()` or asserted it equal to
+    zero. So the sign was never observed at a nonzero value.
+
+    The generalisation, which is worth more than this fix: a declared convention
+    is pinned only if some test observes it through a path that does not
+    symmetrise it. `abs`, a square, and a product of two sign-flipping factors
+    all destroy exactly the information the convention asserts.
+
+    `to_dict()` emits the signed gap, so this is load-bearing for any reader of
+    the per-bin table, not merely internal bookkeeping.
+    """
+
+    over = CalibrationBin(
+        label="over",
+        predicted_mean=0.80,
+        observed_rate=0.50,
+        observations=100,
+        plays=50,
+        wilson_low=0.404,
+        wilson_high=0.596,
+    )
+    under = CalibrationBin(
+        label="under",
+        predicted_mean=0.20,
+        observed_rate=0.50,
+        observations=100,
+        plays=50,
+        wilson_low=0.404,
+        wilson_high=0.596,
+    )
+
+    assert over.gap == pytest.approx(0.30)
+    assert under.gap == pytest.approx(-0.30)
+    assert over.to_dict()["gap"] == pytest.approx(0.30)
+    assert under.to_dict()["gap"] == pytest.approx(-0.30)
+    assert "positive over-predicts play" in DECLARED_CONVENTIONS["bin_gap_sign"]
+
+
+def test_a_tampered_cohort_is_repaired_rather_than_refused_when_a_restriction_is_passed() -> None:
+    """The reviewer's informational asymmetry, pinned so it cannot drift silently.
+
+    The same tampered object is refused on one call shape and silently repaired
+    on the other: with a `restriction` parameter, `restrict()` re-filters the
+    offending rows away before verification sees them. It fails safe - the
+    payload that results is true of the rows it reports - but half the call
+    surface never surfaces the tampering, which is worth knowing if you are
+    relying on the error to tell you something went wrong.
+    """
+
+    rows = _masked_band_cohort()
+    tampered = RestrictedCohort(rows, (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            tampered,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+    repaired = build_calibration_report(
+        tampered,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"band": "unlikely"},
+    )
+    assert repaired.observations == 83
+    assert repaired.restriction == (("band", "unlikely"), ("status", "doubtful"))
+
+
+def test_removal_leaves_a_marker_that_is_true_and_no_longer_complete() -> None:
+    """The completeness residual, driven rather than asserted in prose.
+
+    Verification establishes soundness - every row present satisfies every
+    recorded pair. It cannot establish completeness, because a cohort does not
+    carry the population it was drawn from. `pop` leaves a marker that is still
+    true of all 82 remaining rows and no longer describes the subgroup, and no
+    check in this module can tell. Stated in the docstring, pinned here.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    cohort.pop()
+    cohort.pop()
+
+    report = build_calibration_report(
+        cohort,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 81
+    assert report.restriction == (("status", "doubtful"),)
