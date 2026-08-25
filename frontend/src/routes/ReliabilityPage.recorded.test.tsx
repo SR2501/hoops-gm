@@ -221,8 +221,35 @@ describe('the reliability screen, against the recorded cohorts', () => {
     expect(within(evidence).getByTestId('schedule-evidence-undated')).toHaveTextContent(
       'No scheduled game is missing a date',
     )
+    // Asserted in full, not by leading substring. The previous version checked
+    // only '2 published games have no teams assigned yet' and sailed past a
+    // trailing clause ("These are dated") that a later payload makes false.
     expect(within(evidence).getByTestId('schedule-evidence-pending')).toHaveTextContent(
-      '2 published games have no teams assigned yet',
+      '2 published games have no teams assigned yet, all labelled Emirates NBA Cup. A game with no ' +
+        'teams cannot be attributed to any team’s calendar, so none of them can be classified as a ' +
+        'back-to-back in either direction.',
+    )
+  })
+
+  it('derives the pending-game label from the payload rather than asserting it', async () => {
+    // ADR-013 makes "pending means an undrawn knockout bracket" falsifiable
+    // rather than definitional. A hard-coded characterisation would keep
+    // asserting it after it stopped being true, so this drives a payload where
+    // it has.
+    const grid = structuredClone(schedulePayload)
+    for (const game of grid.lineage.schedule.pending_games) {
+      game.game_label = 'Play-In Tournament'
+    }
+
+    serveRecorded({ 'schedule-grid/current': { body: grid } })
+    renderWithRouter(<ReliabilityPage />)
+    const evidence = await screen.findByTestId('schedule-evidence')
+
+    expect(within(evidence).getByTestId('schedule-evidence-pending')).toHaveTextContent(
+      'all labelled Play-In Tournament',
+    )
+    expect(within(evidence).getByTestId('schedule-evidence-pending')).not.toHaveTextContent(
+      /knockout/i,
     )
   })
 
@@ -245,7 +272,7 @@ describe('the reliability screen, against the recorded cohorts', () => {
     const evidence = await screen.findByTestId('schedule-evidence')
 
     expect(within(evidence).getByTestId('schedule-evidence-undated')).toHaveTextContent(
-      '1 scheduled game carries no date yet',
+      '1 of those 2 also carries no date. This is a subset of the row above, not a further count',
     )
     expect(within(evidence).getByTestId('schedule-evidence-pending')).toHaveTextContent(
       '2 published games have no teams assigned yet',

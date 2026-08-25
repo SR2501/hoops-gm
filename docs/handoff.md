@@ -22847,3 +22847,71 @@ down why, and it stopped a fabricated fixture from producing a plausible screen.
   is available to every one of them. I have not re-derived each from the
   producer's contract. *Not driven - and this is the honest residual risk in the
   probe payload I reported.*
+
+## 2026-08-25 - `frontend` - The same error one level in: prose asserting properties of a quantity
+
+Third entry on `reliability-ui`, after a second review pass on the fix in the
+entry above. Base `f3e2c53`.
+
+### Fixing a misread field, and then asserting things about the right one
+
+My correction split the pending games into two rows - teams-undecided and
+undated - and then wrote prose around them that repeated the original mistake in
+a smaller way. Three claims, none derived from the payload:
+
+**"These are dated"** was false the moment any pending game lacked a date, and
+**my own new test constructed exactly that payload.** The test asserted only the
+leading substring, so it walked straight past the false clause it had created.
+A leading-substring assertion on a sentence is a test of the number and not of
+the sentence.
+
+**"for a different reason than a missing date would"** implied the two rows were
+disjoint. They are **strictly nested**: `undated` is a filter over
+`pending_games`, and `isPendingBlock` forces `pending_game_ids` to name exactly
+those same games, so `undated` is always a subset. In the mutated payload the
+screen showed 1 undated and 2 teams-undecided over a pending set of **2** - the
+undated game counted under both headings, presented as alternatives, so a reader
+adding them gets three blocked games out of two. Now stated as "**1** of those
+**2** also carries no date. This is a subset of the row above, not a further
+count."
+
+**"knockout fixtures whose brackets are undrawn"** was hard-coded. ADR-013 makes
+that a *falsifiable* reading rather than a definition - which is why
+`ScheduleLineage` renders `game_label` per game so an operator can check it. A
+hard-coded characterisation keeps asserting itself after it stops being true,
+which is the one thing ADR-013 asks a consumer to watch for. Now derived from
+the distinct `game_label` values on the wire, with a test that relabels the
+cohort `Play-In Tournament` and asserts the word "knockout" does **not** appear.
+
+The generalisation: **it is easier to fix a wrong number than to stop making
+claims about a right one.** Both rounds of this bug were sentences that were
+true of the cohort in front of me, written as properties of the quantity.
+
+### A control that passed because the mutation never happened
+
+While proving the label test could fail, I mutated the source with PowerShell
+`.Replace()` against a string containing a JS template literal. The backticks
+did not survive, **the replacement matched nothing, the file was unchanged, and
+the suite reported 23 passed** - which I could have read as "the test cannot
+detect this" or, worse, not read at all.
+
+This is the vacuous-control shape a second time in one unit, in a different
+disguise: the first planted a value that stringified to `NaN`, this one planted
+nothing at all. **A mutation-based control needs the mutation confirmed present
+before the result means anything.** Redone with a real edit and
+`Select-String` proving the mutated text was on line 220 first; both tests then
+failed, and both pass again on restore, with a further check that the only
+remaining occurrences of the word are in comments.
+
+### What I could not verify
+
+- **That `undated` can be non-zero on real data before draft day.** It is zero
+  in the live cohort and every non-zero rendering is driven by a mutated
+  fixture. *Driven in test only.*
+- **That the derived label list stays short enough to read.** It joins distinct
+  `game_label` values with no cap. Today that is one value across six games; a
+  cohort with many distinct labels would render a long sentence. Not defended.
+  *Reasoned.*
+- **Whether the remaining agreement flags in my probe share the defect the
+  second entry describes.** Still not re-derived from the producer's contract.
+  Unchanged and still the honest residual risk. *Not driven.*

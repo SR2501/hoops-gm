@@ -169,6 +169,18 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
   const teamsUndecided = schedule.pending_game_ids.length
   const undated = schedule.pending_games.filter((game) => game.game_date === null).length
 
+  // Read from the payload rather than asserted. ADR-013 makes "pending means an
+  // undrawn knockout bracket" a *falsifiable* reading, not a definition, which
+  // is why ScheduleLineage renders the label per game so an operator can check
+  // it. An earlier version of this row hard-coded "knockout fixtures whose
+  // brackets are undrawn" and would have kept asserting it after it stopped
+  // being true — the one thing ADR-013 asks a consumer to watch for.
+  const pendingLabels = [
+    ...new Set(
+      schedule.pending_games.map((game) => game.game_label).filter((label) => label !== ''),
+    ),
+  ].join(', ')
+
   return (
     <section className="assumptions" data-testid="schedule-evidence">
       <h2>The season this would be measured against</h2>
@@ -197,21 +209,6 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
           </dd>
         </div>
         <div className="facts__row">
-          <dt>Undated games</dt>
-          <dd data-testid="schedule-evidence-undated">
-            {undated === 0 ? (
-              'No scheduled game is missing a date, so no game is excluded from back-to-back classification for want of one.'
-            ) : (
-              <>
-                <strong>{undated}</strong> scheduled game{undated === 1 ? ' carries' : 's carry'} no
-                date yet. A back-to-back is a claim about two dates, so these cannot be classified
-                in either direction — they are neither back-to-backs nor confirmed not to be, and
-                counting them as either would be inventing the answer.
-              </>
-            )}
-          </dd>
-        </div>
-        <div className="facts__row">
           <dt>Teams not yet decided</dt>
           <dd data-testid="schedule-evidence-pending">
             {teamsUndecided === 0 ? (
@@ -219,10 +216,25 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
             ) : (
               <>
                 <strong>{teamsUndecided}</strong> published game
-                {teamsUndecided === 1 ? ' has' : 's have'} no teams assigned yet — knockout fixtures
-                whose brackets are undrawn. These are dated, but a game with no teams cannot be
-                attributed to any team&rsquo;s calendar, so it blocks back-to-back classification
-                for a different reason than a missing date would.
+                {teamsUndecided === 1 ? ' has' : 's have'} no teams assigned yet
+                {pendingLabels === '' ? '' : `, all labelled ${pendingLabels}`}. A game with no
+                teams cannot be attributed to any team&rsquo;s calendar, so none of them can be
+                classified as a back-to-back in either direction.
+              </>
+            )}
+          </dd>
+        </div>
+        <div className="facts__row">
+          <dt>Undated games</dt>
+          <dd data-testid="schedule-evidence-undated">
+            {undated === 0 ? (
+              'No scheduled game is missing a date, so no game is excluded from back-to-back classification for want of one.'
+            ) : (
+              <>
+                <strong>{undated}</strong> of those {teamsUndecided} also
+                {undated === 1 ? ' carries' : ' carry'} no date. This is a subset of the row above,
+                not a further count — a back-to-back is a claim about two dates, so these are
+                blocked twice over rather than blocking two different games.
               </>
             )}
           </dd>
