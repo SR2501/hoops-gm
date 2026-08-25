@@ -213,8 +213,42 @@ describe('the reliability screen, against the recorded cohorts', () => {
     expect(within(evidence).getByTestId('schedule-evidence-games')).toHaveTextContent(
       '12 published by the source · 10 resolved into this cohort · 20 team-rows',
     )
+    // The two pending quantities, which an earlier version of this screen
+    // conflated. This fixture's two pending games BOTH carry a date
+    // (2026-12-04), so the undated count is 0 and the teams-undecided count
+    // is 2. The previous assertion here read "2 scheduled games carry no date
+    // yet" and passed — it pinned the error in place rather than catching it.
     expect(within(evidence).getByTestId('schedule-evidence-undated')).toHaveTextContent(
-      '2 scheduled games carry no date yet',
+      'No scheduled game is missing a date',
+    )
+    expect(within(evidence).getByTestId('schedule-evidence-pending')).toHaveTextContent(
+      '2 published games have no teams assigned yet',
+    )
+  })
+
+  it('separates a missing date from undecided teams when only one of them applies', async () => {
+    // The control for the pair above, and the test that would have caught the
+    // original bug. Both games are pending, but only one lacks a date, so a
+    // screen reading `pending_game_ids.length` for both rows reports 2 and 2
+    // and fails here.
+    const grid = structuredClone(schedulePayload)
+    const pending = grid.lineage.schedule.pending_games
+    pending[0]!.game_date = null
+    // `not_offered` is one of the closed set in DATE_ABSENCE_REASONS. An
+    // invented string is rejected by the endpoint validator, which
+    // cross-checks the reason against `game_date` in both directions — the
+    // first version of this test used free text and never rendered at all.
+    pending[0]!.date_absence_reason = 'not_offered'
+
+    serveRecorded({ 'schedule-grid/current': { body: grid } })
+    renderWithRouter(<ReliabilityPage />)
+    const evidence = await screen.findByTestId('schedule-evidence')
+
+    expect(within(evidence).getByTestId('schedule-evidence-undated')).toHaveTextContent(
+      '1 scheduled game carries no date yet',
+    )
+    expect(within(evidence).getByTestId('schedule-evidence-pending')).toHaveTextContent(
+      '2 published games have no teams assigned yet',
     )
   })
 

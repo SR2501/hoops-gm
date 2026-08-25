@@ -153,7 +153,21 @@ function AssumptionsView({ payload }: { payload: CurrentProjections }) {
  */
 function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
   const { schedule } = payload.lineage
-  const undated = schedule.pending_game_ids.length
+  // Two different facts that a review caught this screen conflating.
+  //
+  // `pending_game_ids` is **teams not yet decided** (ADR-013, and the route's
+  // own docstring). It does *not* mean undated: in this cohort all six pending
+  // games carry a date. The undated count is a separate quantity, carried per
+  // game as `game_date === null` with a `date_absence_reason` beside it.
+  //
+  // The first version of this rendered `pending_game_ids.length` under the
+  // label "Undated games" — a well-formed, plausible integer silently about a
+  // different thing than the reader was told, which is the `gameEt` shape on
+  // the one screen built to refuse it. Worse, the browser probe *agreed*: it
+  // checked that the number on screen matched the number from the API, which
+  // it did. Agreement on a value says nothing about agreement on its meaning.
+  const teamsUndecided = schedule.pending_game_ids.length
+  const undated = schedule.pending_games.filter((game) => game.game_date === null).length
 
   return (
     <section className="assumptions" data-testid="schedule-evidence">
@@ -186,13 +200,29 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
           <dt>Undated games</dt>
           <dd data-testid="schedule-evidence-undated">
             {undated === 0 ? (
-              'Every resolved game carries a date, so every one of them can be classified as a back-to-back or not.'
+              'No scheduled game is missing a date, so no game is excluded from back-to-back classification for want of one.'
             ) : (
               <>
-                <strong>{undated}</strong> scheduled game{undated === 1 ? '' : 's'} carry no date
-                yet. A back-to-back is a claim about two dates, so these cannot be classified in
-                either direction — they are neither back-to-backs nor confirmed not to be, and
+                <strong>{undated}</strong> scheduled game{undated === 1 ? ' carries' : 's carry'} no
+                date yet. A back-to-back is a claim about two dates, so these cannot be classified
+                in either direction — they are neither back-to-backs nor confirmed not to be, and
                 counting them as either would be inventing the answer.
+              </>
+            )}
+          </dd>
+        </div>
+        <div className="facts__row">
+          <dt>Teams not yet decided</dt>
+          <dd data-testid="schedule-evidence-pending">
+            {teamsUndecided === 0 ? (
+              'Every published game has both teams assigned.'
+            ) : (
+              <>
+                <strong>{teamsUndecided}</strong> published game
+                {teamsUndecided === 1 ? ' has' : 's have'} no teams assigned yet — knockout fixtures
+                whose brackets are undrawn. These are dated, but a game with no teams cannot be
+                attributed to any team&rsquo;s calendar, so it blocks back-to-back classification
+                for a different reason than a missing date would.
               </>
             )}
           </dd>

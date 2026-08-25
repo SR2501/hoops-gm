@@ -22572,7 +22572,7 @@ denied by the authorizer.
   True of this file today, not a guarantee about the package.
 * **That the crosses are correct rather than reproducible** — unchanged and
   structural, restated so it is not lost in a rebase entry.
-## 2026-08-23 - `frontend` - A dependency satisfied as a computation and unsatisfied as a contract, and a control that proved nothing while passing
+## 2026-08-25 - `frontend` - A dependency satisfied as a computation and unsatisfied as a contract, and a control that proved nothing while passing
 
 Unit `reliability-ui`, on base `f3e2c53`. Head `55b6334`.
 
@@ -22738,3 +22738,112 @@ upheld this and recorded it against his own brief.
 - **That headless Edge renders this identically to the owner's real browser.**
   Probed at `Edg/151.0.4129.101`, `--headless=new`. Never opened headed.
   *Reasoned.*
+
+## 2026-08-25 - `frontend` - A probe that agreed on the number and was wrong about the thing
+
+Follow-up on the `reliability-ui` entry above, after independent review. Base
+`f3e2c53`. This one is worth more than anything in that entry.
+
+### An agreeing probe is not a checking probe
+
+I rendered `lineage.schedule.pending_game_ids.length` under the label **"Undated
+games"**, with prose explaining that a back-to-back is a claim about two dates
+so these games cannot be classified. Every word of that reasoning is sound. The
+number is not that quantity.
+
+`pending_game_ids` means **games the source published with teams not yet
+decided** - ADR-013, and the route's own docstring at
+`backend/src/hoops_gm/api/routes/schedule_grid.py:109`. The seeder serialises the
+same set as `games_pending_no_teams_assigned`. Undated games are a *separate*
+quantity, carried per game as `game_date === null` with a `date_absence_reason`
+beside it.
+
+**In this cohort all six pending games carry a date.** Checked against the live
+demo: `pending_game_ids` 6, `pending_games` 6, `game_date is null` **0**, every
+`date_absence_reason` empty. The true undated count is zero. The screen said
+six.
+
+This is the `gameEt` shape - a well-formed, plausible integer silently about a
+different thing than the reader is told - **on the screen whose entire stated
+purpose is to refuse that.** It is also the exact hazard `AGENTS.md` names:
+validation of form cannot catch errors of meaning. The field is a `number`, the
+count is correct for what it counts, and every type is right.
+
+### The part that generalises
+
+**My browser probe passed on this.** It carried an `undatedOnScreen: true`
+agreement flag that compared the number on the screen against the number from
+the API. They agreed, because I had read the same field into both sides.
+
+The invariant-and-mover discipline works one level down from where this failed.
+It catches *"I am blind"* and *"nothing moved"*. It cannot catch *"both ends of
+my comparison inherit the same misreading"*, because a probe written by whoever
+wrote the screen shares its assumptions by construction. **Agreement on a value
+says nothing about agreement on its meaning**, and a self-written probe can only
+ever check the former.
+
+What actually caught it was an independent reviewer reading the producer's
+docstring - a source outside both the screen and the probe. The reviewer also
+noted the repository *already* models this correctly:
+`buildScheduleGridModel(...).pending` splits `awaitingSource` / `dateFaulted` /
+`unreadableDate` / `placedCount`, and `ScheduleAbsenceReasons.recorded.test.tsx`
+asserts precisely that a null date and a pending game are different facts. I
+built a second, wrong reading of a field the codebase had already got right,
+which is its own lesson about reaching for a lineage counter instead of the
+model beside it.
+
+### My test pinned the error rather than catching it
+
+`ReliabilityPage.recorded.test.tsx` asserted `'2 scheduled games carry no date
+yet'` **verbatim** against a fixture whose two pending games both carry
+`2026-12-04`. The test was green, specific, and defending the bug. A test
+asserting the rendered string of a mislabelled quantity is indistinguishable
+from a test asserting the right thing, which is why "the tests are green" was
+never evidence here.
+
+The replacement drives a case the bug cannot survive: one pending game with a
+date, one without. A screen reading `pending_game_ids.length` for both rows
+reports 2 and 2 and fails. Confirmed by reverting the fix - **both** new
+assertions fail against the original line and pass against the corrected one.
+
+### The boundary caught my invented enum value, which is the system working
+
+My first version of that test set `date_absence_reason` to free text. The screen
+never rendered: `isSchedulePendingGame` enforces a **closed set**
+(`DATE_ABSENCE_REASONS` in `api/types.ts:139`) and cross-checks the reason
+against `game_date` in **both** directions, so a reason without an absence and
+an absence without a reason are both rejected. I had written the second. The
+correct value is `not_offered`.
+
+Worth recording as a success: someone deliberately closed that boundary, wrote
+down why, and it stopped a fabricated fixture from producing a plausible screen.
+
+### Two other claims that did not survive review
+
+- The `observed-play-rate` blocker asserted the backend route was **"a filed
+  unit"**. No such unit exists anywhere in `docs/backlog.md`. That converts an
+  *unowned* gap into a *queued* one, which is the precise distinction the
+  `blocker` field was added to preserve - and it fails the file's own header
+  promise that every claim is disprovable in ninety seconds. Corrected to state
+  that the gap is unowned and unfiled, which is the stronger finding.
+- The handoff entry above was originally dated **2026-08-23**. Every commit in
+  it is `2026-08-25`, and the code it describes records the architect's ruling
+  as 2026-08-25. In an append-only log ordered by date and cited by later
+  entries, a wrong date misplaces the record permanently. Corrected before
+  merge.
+
+### What I could not verify
+
+- **That no other screen reads `pending_game_ids` as an undated count.** I fixed
+  mine. `ScheduleAbsenceReasons` demonstrably gets it right. I did not audit
+  every consumer of the lineage block. *Partially driven.*
+- **That the corrected undated row has ever rendered non-zero against real
+  data.** It cannot today: the live cohort has zero undated games, so the
+  non-zero branch is driven only by a mutated fixture. The zero branch is what
+  the owner will actually see. *Driven in test, not in the browser.*
+- **Whether my other agreement flags share the same defect.** I checked this one
+  because review pointed at it. The remaining six compare screen values against
+  API values I selected, and the same "both ends inherit one misreading" failure
+  is available to every one of them. I have not re-derived each from the
+  producer's contract. *Not driven - and this is the honest residual risk in the
+  probe payload I reported.*

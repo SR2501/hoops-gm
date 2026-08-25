@@ -204,7 +204,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     whereItLives:
       'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, callable in-process only.',
     blocker:
-      'Blocked on a backend route. reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — so nothing serves it. That route is a filed unit and is not this screen\'s to add.',
+      'Blocked on a backend route. reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — so nothing serves it. No unit for that route is filed in docs/backlog.md: the gap is unowned, not queued.',
   },
   {
     id: 'back-to-back',
@@ -216,7 +216,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     whereItLives:
       'The same scorecard. Back-to-backs themselves are a pure-calendar computation over the schedule (build_schedule_density) and do not depend on any model.',
     blocker:
-      'Blocked on the same route, and additionally on every game carrying a date: a back-to-back is a statement about two dates, so an undated game cannot be classified either way. The live count of undated games is shown below.',
+      'Blocked on the same route, and additionally on each game being attributable to two dated team calendars. Both limits are counted below: games missing a date, and games whose teams are not yet decided.',
   },
   {
     id: 'monthly-trend',
