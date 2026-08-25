@@ -1365,3 +1365,76 @@ must consume this cohort preserving the unresolved identities and the two R35
 unknowns as missing evidence rather than as negative outcomes, and treating
 positional composition as unestablished rather than as the withdrawn G/F/C
 figures.
+
+## Predictor crosses: recomputing what existed only in a chat window
+
+`scripts/cohort_predictor_crosses.py` prints three crosses over the committed
+2025-26 cohort: `reason x status`, `era x lead-time band`, and
+`partition x status`. It exists because two of them were computed during the
+review of PR #92 and were never written down anywhere a second person could
+reach. One underpins a claim in
+`docs/models/injury-status-conversion-preregistration-v3-PROPOSED.md` that its
+own author flagged as *"a number I will be graded against, asserted on my
+authority, with no table behind it"*. §6 of that document explicitly asks the
+ingestion lane to supply `reason_category x status`; this is that supply.
+
+**What it reproduces, and what that proves.** Before printing anything it
+re-derives the manifest's canonical selection and asserts **two** published
+marginals against `nba-injury-report-cohort-2025-10-21--2026-04-12.json`:
+`canonical_observations.status_counts` and
+`reason_evidence.stated_reason_categories`. A mismatch prints both sides and
+exits non-zero. That validation is the load-bearing part and it is proved
+load-bearing by experiment rather than by assertion - perturbing either marginal
+by one, or moving the scope window by six weeks, each makes it refuse. A cross
+computed by a selection that does not reproduce is worse than no cross, because
+it looks like evidence.
+
+Both reviewer tables reproduce exactly. `Injury/Illness` splits
+6938/171/1044/390/1123 across out/doubtful/questionable/probable/available;
+`G League` splits 2960/41/134/43/207. Era against band gives legacy
+308/2789/1119/34 and short-lead 3783/4048/1676/32, so the share of reports filed
+inside the final hour goes from **7.2% to 39.7%** across the era boundary - the
+5.5x that is the sharpest committed evidence that the two eras are not one
+population.
+
+**One figure is corrected, and the correction is `quant`'s to accept.** v3
+reads `doubtful`'s health-reason held-out floor as *"~74 ... 2.5x headroom"*,
+reasoned rather than derived. It is now bounded: held-out **canonical**
+`doubtful` is 84, of which 10 are `G League`, so 74 are not; the committed
+admissibility artifact publishes held-out **direct** `doubtful` as 83, and
+direct observations are a subset of canonical ones, so exactly one canonical row
+is not direct and health-reason direct `doubtful` lies in **[73, 74]** - between
+2.43x and 2.47x the floor of 30, against the 2.77x the unsplit count suggests.
+The conclusion is unchanged and the number now has arithmetic behind it. It is
+derived from two already-committed integers and a subset relation: **no join, no
+outcome, nothing under the blind.** The bound is withheld rather than printed if
+the artifact's held-out range is not the one computed here - the subset relation
+needs both halves to describe the same partition, and §4's boundaries are
+`quant`'s parameter, free to move while every individual number stays perfectly
+valid.
+
+**Why it is a script and not an artifact, stated explicitly rather than left to
+a detector.** `outcome_keyed_field_paths` in
+`hoops_gm.ingest.injury_report.cohort_admissibility` guards the committed
+disclosure surface by finding fields *keyed* by a `ParticipationOutcome` token.
+`reason x status` is keyed by `InjuryReportStatus`. If it were committed as JSON
+under `docs/` it would pass that guard **silently** - not because it is
+admissible, but because the guard does not recognise the shape. These crosses
+are in fact admissible: they are report designations, computed pre-join, and the
+reason categories sum to exactly 13,789, the canonical total, which is itself
+the evidence that they are not outcome-conditioned. That classification is
+recorded here because a thing that passes by non-recognition has not been
+cleared by anybody. Markdown is outside the guard's scope entirely, so the
+paragraph above is a deliberate, classified placement and not an evasion of it.
+
+**What it will not tell you when it breaks.** `scripts/` sits outside the
+pytest, ruff and mypy scopes - all three run with `working-directory: backend` -
+so nothing in CI executes or lints this file, and whoever changes
+`select_canonical_pregame_observations` or `games_to_backfill` underneath it will
+not be told. It is deliberately not wired into the test suite: the merged store
+is out-of-tree gitignored operational state and is absent in CI, so a test over
+it would either fail permanently or be made to skip, and **a skipping test is a
+green light nobody is holding.** The mitigation is that its first act is to
+refuse loudly - an absent store names the path it wanted, and a selection that
+stops reproducing refuses before printing - so it fails as a red rather than as a
+quietly wrong table.

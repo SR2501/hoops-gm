@@ -22008,3 +22008,187 @@ the gap and names its closure instead.
   unreproducible from the repository and consistent with what is. It does not
   establish that it is correct. Part 2's script will settle it; this entry does
   not.
+## 2026-08-24 - data-engineer - committing two crosses that existed only in a chat window, and bounding a number that was asserted
+
+`scripts/cohort_predictor_crosses.py` recomputes three crosses over the
+committed 2025-26 cohort. Two of them were computed by the `quant` reviewer
+during PR #92 and written down nowhere. One underpins a claim in
+`docs/models/injury-status-conversion-preregistration-v3-PROPOSED.md` that its
+own author flagged: *"the weakest link in v3 - a number I will be graded
+against, asserted on my authority, with no table behind it."* §6 of that
+document asks the ingestion lane for exactly this cross, so this is a
+commissioned supply rather than a volunteered one.
+
+Base `f3e2c53`, not rebased, merge freeze respected. Separate branch and PR from
+the stranded-work recovery: they share no file, and a reviewer of a `scripts/`
+module should not have to hold four adapter artefacts in their head.
+
+### The validation is the deliverable; the tables are the output
+
+Before printing anything the script re-derives the manifest's canonical
+selection and asserts **two** published marginals -
+`canonical_observations.status_counts` and
+`reason_evidence.stated_reason_categories` - against the committed cohort
+manifest. Mismatch prints both sides, keyed, with the differing rows flagged,
+and exits 2.
+
+**Two marginals, not one, and the second is what makes it work.**
+`status_counts` alone passes a selection that has the right rows with mangled
+reason text, and the reason cross is the table the script exists for.
+
+Proved load-bearing by experiment rather than by assertion, because a validation
+nobody has seen fail is a validation nobody has tested:
+
+| mutation | result |
+|---|---|
+| `status_counts.doubtful` 221 -> 222 | refuses, exit 2, names `doubtful 221 vs 222` |
+| `stated_reason_categories["G League"]` 3385 -> 3386 | refuses, exit 2 - the second check fires independently |
+| `scope.end_game_date` -> `2026-03-01` | refuses, exit 2, `available 1020 vs 1489` |
+| `held_out_start` moved a week (admissibility artefact) | **withholds the bound**, prints why, tables still print |
+| held-out direct `doubtful` 83 -> 99, above canonical 84 | **withholds the bound** - direct cannot exceed canonical |
+
+The third matters most. It moves the *selection* rather than the expectation, so
+it proves the script genuinely re-derives the population instead of asserting a
+number against itself. Without it the first two only show that two constants can
+be compared.
+
+The window, season and season type are read from the manifest's own `scope`
+rather than passed in, so a mismatch cannot be caused by the script being
+pointed at a different window than the artefact it checks.
+
+### Both reviewer tables reproduce exactly
+
+`reason x status`: `Injury/Illness` 6938/171/1044/390/1123, `G League`
+2960/41/134/43/207, `Not With Team` 246/1/0/0/0, over
+out/doubtful/questionable/probable/available. Column sums equal
+`status_counts` exactly; row sums equal `stated_reason_categories` exactly;
+grand total 13,789.
+
+`era x band`: legacy 308/2789/1119/34 = 4,250; short-lead 3783/4048/1676/32 =
+9,539. Reports filed inside the final hour go from **7.2% to 39.7%** across the
+boundary - **5.5x**, with the holdout 100% short-lead.
+
+**One correction to the reviewer's abbreviation.** Their table labelled the
+remainder `(9 further) 491`. There are **10** further categories, and they do sum
+to 491 (138 + 15 + 25 + 55 + 82 + 1 + 97 + 40 + 1 + 37). The total is right and
+the row count is off by one. Trivial in itself, and worth naming because it is
+the class of error a chat-window table cannot be checked for and a script can -
+the script prints all thirteen rows and needs no abbreviation.
+
+### The number that was asserted now has arithmetic behind it
+
+v3 reads `doubtful`'s health-reason held-out floor as *"~74 ... 2.5x headroom,
+not 2.8x"*, reasoned rather than derived. It is now **bounded**, and the bound
+needed nothing under the blind:
+
+- Held-out **canonical** `doubtful` is **84**, of which **10** carry the stated
+  reason `G League`, so **74** do not. Report designations only, no join.
+- The committed admissibility artefact publishes held-out **direct** `doubtful`
+  as **83**.
+- Direct observations are a subset of canonical ones, so exactly **one**
+  canonical held-out `doubtful` row is not direct. That row is either `G League`
+  or it is not.
+- Therefore health-reason direct `doubtful` is in **[73, 74]** - between 2.43x
+  and 2.47x the floor of 30, against the 2.77x the unsplit count suggests.
+
+Two already-committed integers and a subset relation. **No join, no outcome.**
+The reviewer's conclusion is unchanged and their `~74` was right; what changed is
+that it is now checkable. The bound is withheld rather than printed if the
+artefact's held-out range is not the one computed here, because the subset
+relation needs both halves to describe the same partition and `quant` may move
+the split. This is `quant`'s figure in `quant`'s PROPOSED protocol, so I have
+recorded it in `docs/adapters/nba-injury-report.md` and left their document
+alone - a data-engineer editing a preregistration is exactly the boundary v3
+exists to protect.
+
+### The §2 blind spot, classified rather than passed
+
+`outcome_keyed_field_paths` detects fields **keyed** by a `ParticipationOutcome`
+token. `reason x status` is keyed by `InjuryReportStatus`. **Committed as JSON
+under `docs/`, it would pass the guard silently** - not because it is
+admissible, but because the guard does not recognise the shape.
+
+It *is* admissible: report designations, computed pre-join, and the reason
+categories sum to exactly 13,789, the canonical total, which is itself the
+evidence they are not outcome-conditioned. That is written down because a thing
+that passes by non-recognition has not been cleared by anyone.
+
+**And the placement has the same problem one level up.** I put the classification
+in `docs/adapters/nba-injury-report.md`, and the guard globs `docs/**/*.json` -
+markdown is outside its scope entirely. So a number in prose is *never* checked,
+which makes markdown the softer target of the two. Naming that here is the whole
+mitigation available; there is no test for it and I am not proposing one, because
+a scanner over prose would be a guard with a worse false-positive rate than the
+thing it guards.
+
+### What this script will not tell you when it breaks
+
+`scripts/` sits outside the pytest, ruff and mypy scopes - all three run with
+`working-directory: backend` - so **nothing in CI executes or lints this file.**
+Measured, not assumed: `python -m ruff check scripts/` reports 12 errors across
+the directory, and `mypy` on a sibling reports the same `import-untyped` class
+mine does. My file is clean under both because I ran them by hand; its siblings
+are not, which is the demonstration.
+
+It is deliberately not wired into the suite. The merged store is out-of-tree
+gitignored operational state, absent in CI, so a test over it would either fail
+permanently or be made to skip - and **a skipping test is a green light nobody is
+holding.** The mitigation is that the script's first act is to refuse:
+
+- No `DATABASE_URL` and no `--store`: refuses, exit 2, naming the merged store's
+  path, saying which store is the right one, and warning that
+  `HOOPS_GM_DATABASE_URL` is silently swallowed.
+- A path that is not a file: refuses through `read_only_engine`, exit 2, saying
+  the fault is the path rather than the schema.
+- A selection that stops reproducing: refuses before printing.
+
+So it fails as a red, not as a quietly wrong table. That is the honest
+mitigation, and it is weaker than a test.
+
+### The boundary it holds
+
+**Only `injury_report_entries` and `nba_games` are queried**, both through the
+committed `games_to_backfill` and `select_canonical_pregame_observations`;
+nothing opens a table directly. The merged store holds `player_participation` -
+43,037 rows - **in the same file**, one line from every query in the script. v3's
+legality argument rests on that boundary having been held, so it is stated in the
+module docstring rather than only in the brief that asked for it. A committed
+script that makes crossing it easy is a standing invitation.
+
+All three crosses are over the **canonical** selection (13,789), not the
+**direct** one (13,598) that `direct_outcomes_by_lead_time_band` uses. They
+differ by the participation join and mixing them yields a table reconciling with
+neither. Stated in the docstring for the same reason.
+
+### What I could not verify
+
+- **That the crosses are correct, as opposed to reproducible.** Everything here
+  is checked against the committed manifest, which was produced by the same
+  selection functions. If `select_canonical_pregame_observations` is wrong, this
+  script reproduces the error perfectly and reports success. It is a
+  reproduction, not an independent measurement, and the marginal assertion
+  cannot tell those apart. *Structural, not fixable from here.*
+- **That the `[73, 74]` bound survives a change to the split** - now checked,
+  after I nearly shipped it as a named gap instead. It reads
+  `held_out_direct_outcomes_by_status` from the committed admissibility artefact
+  and the canonical count from the store; both currently use the same §4
+  50/25/25 boundaries, but nothing forced that, and if `quant` moves the split
+  the two halves come from different partitions while every individual number
+  stays perfectly valid. The script now compares the artefact's
+  `held_out_start`/`held_out_end` against the range it computed and **withholds
+  the bound** on a mismatch, and it refuses if the direct count exceeds the
+  canonical one, which the subset relation forbids. Both mutation-tested: moving
+  `held_out_start` by a week, and setting direct `doubtful` to 99 against a
+  canonical 84, each withhold with the reason printed while the three
+  commissioned tables still print. **What I could not verify is the general
+  case**: I checked the one partition boundary the bound depends on, not that
+  every other cross-artefact comparison in this script is similarly pinned.
+- **Whether `reason x status` should also be published as a committed
+  artefact.** v3 §6 recommends publication; the brief specified a script that
+  prints. Both are satisfied by what landed, but the publication question is a
+  §2 classification decision and is open. Not decided here.
+- **That the ten non-`G League`, non-`Injury/Illness` categories behave as one
+  group.** The script prints all thirteen rows so nobody has to assume it. I did
+  not check whether any of the small categories (`Rest` 97, `Trade Pending` 37)
+  has a conversion profile of its own; that is `quant`'s question and needs the
+  join. *Out of lane, deliberately.*
