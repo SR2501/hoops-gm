@@ -1344,7 +1344,9 @@ def test_the_0019_seed_is_a_frozen_snapshot(backend_dir: Path) -> None:
         )
 
 
-def test_the_stored_edges_are_the_flow_rule_the_code_uses(backend_dir: Path) -> None:
+def test_a_migrated_store_records_the_permitted_edges(
+    alembic_config: Config, migration_url: str
+) -> None:
     """The store's answer and the code's answer to "was this allowed?", compared.
 
     The registry alone leaves only a rank comparison expressible in SQL, and
@@ -1353,37 +1355,21 @@ def test_the_stored_edges_are_the_flow_rule_the_code_uses(backend_dir: Path) -> 
     ``projections -> market`` - each of them R38. A third review pointed out
     that the caveat lived in a Python docstring, which is exactly what somebody
     querying the store at 11:59pm does not have; ``market`` and ``terminal``
-    also share rank 4, so even ordering by rank is ambiguous.
+    also share rank 4, so even ordering by rank is ambiguous. So the edges are
+    stored, and this is what holds them to the rule.
 
-    Compared as a literal snapshot against :data:`PERMITTED_FLOWS`, the same
-    duplication-as-review-gate the seed rows use.
-    """
-    flows = {
-        (DataLayer(source), DataLayer(target))
-        for source, target in _load_0019(backend_dir)._FLOW_SEED
-    }
+    **Read against the migrated store, not against 0019's literal.** An earlier
+    draft of this compared ``_FLOW_SEED`` to :data:`PERMITTED_FLOWS` directly,
+    and I caught it before it landed: that version forbids a future ``0020``
+    from ever adding or retiring an edge, because 0019's literal is frozen
+    history and would then disagree with the code forever. It would have fired
+    with a message instructing the reader to add the migration they had just
+    added. Reading the store is both the correct check under drift and the
+    stricter one - dropping the bulk insert while keeping the literal is
+    invisible to a test that reads the literal.
 
-    stored_only = sorted((s.value, t.value) for s, t in flows - set(PERMITTED_FLOWS))
-    permitted_only = sorted((s.value, t.value) for s, t in set(PERMITTED_FLOWS) - flows)
-    assert flows == set(PERMITTED_FLOWS), (
-        f"0019's stored edges and PERMITTED_FLOWS disagree.\n"
-        f"  stored but not permitted: {stored_only}\n"
-        f"  permitted but not stored: {permitted_only}\n"
-        f"\n"
-        f"A store whose edge set disagrees with the code answers 'was this "
-        f"number allowed to depend on that one?' differently depending on where "
-        f"you ask, which is worse than not storing it. If you changed the rule, "
-        f"add a migration; 0019 will not run again."
-    )
-
-
-def test_a_migrated_store_records_the_permitted_edges(
-    alembic_config: Config, migration_url: str
-) -> None:
-    """The edges reach the database, and a self-edge is refused there.
-
-    Reads the migrated store rather than the migration module, so this fails if
-    the bulk insert is dropped while the literal stays.
+    :func:`test_the_0019_seed_is_a_frozen_snapshot` pins 0019's shape as
+    history; agreement with the rule lives here.
     """
     command.upgrade(alembic_config, "head")
 
@@ -1394,9 +1380,20 @@ def test_a_migrated_store_records_the_permitted_edges(
                 (row.source_layer, row.target_layer) for row in session.query(DataLayerFlow).all()
             }
 
+        stored_only = sorted((s.value, t.value) for s, t in stored - set(PERMITTED_FLOWS))
+        permitted_only = sorted((s.value, t.value) for s, t in set(PERMITTED_FLOWS) - stored)
         assert stored == set(PERMITTED_FLOWS), (
-            f"the migrated store's edges differ from PERMITTED_FLOWS: "
-            f"{sorted((s.value, t.value) for s, t in stored ^ set(PERMITTED_FLOWS))}"
+            f"the migrated store's edge set and PERMITTED_FLOWS disagree.\n"
+            f"  stored but not permitted: {stored_only}\n"
+            f"  permitted but not stored: {permitted_only}\n"
+            f"\n"
+            f"A store whose edge set disagrees with the code answers 'was this "
+            f"number allowed to depend on that one?' differently depending on "
+            f"where you ask, which is worse than not storing it at all. If you "
+            f"changed PERMITTED_FLOWS in backend/src/hoops_gm/db/layers.py, add "
+            f"a migration inserting or deleting the row - do not edit 0019, "
+            f"which is already stamped on the owner's store and will not run "
+            f"again. See ADR-008."
         )
 
         with engine.connect() as connection, pytest.raises(IntegrityError):
