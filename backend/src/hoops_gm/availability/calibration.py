@@ -50,8 +50,21 @@ site.
 A second review enumerated fifteen routes. `copy.copy`, `copy.deepcopy` and
 `pickle` round-trips preserve the marker, because they restore `__dict__` without
 calling `__init__`. A whole-extent slice, `* 1`, `+ []` and `.copy()` re-wrap,
-because those are defensive-copy idioms; operations that change multiplicity or
-cardinality return a plain `list` and so assert nothing. What survives is any
+because those are defensive-copy idioms; the other forms of those operators
+return a plain `list` and so assert nothing. A **fourth** review then defeated
+the sentence that used to stand here, which claimed that operations changing
+multiplicity return a plain list: `rc += list(rc)`, `rc[0:0] = list(rc)`,
+`rc.extend(list(rc))`, and `append`/`insert`/`rc[1] = rc[0]` with a row taken
+from the cohort itself, all return a `RestrictedCohort` with the marker intact
+and `n` inflated, because `__iadd__` and the mutating methods were never
+overridden. (Its headline example, `rc *= 2`, was **wrong** - that one returns a
+plain `list`, but only because defining `__mul__` at Python level makes the
+in-place operator fall back to it, an accident nothing here relies on. See
+`test_the_one_in_place_route_that_does_drop_the_marker_drops_it_by_accident`.)
+Every dunder overridden here has an in-place twin that was not. That was a
+**false guarantee** rather than a disclosed residual, and the repair is not a
+longer list of dunders - see
+`_verify_no_duplicate_observations`. What survives is any
 route that builds a fresh container by iterating - `list(rc)`, `tuple(rc)`,
 `[*rc]`, `itertools` round-trips. A third review **refuted the reason an earlier
 version of this paragraph gave for that**: it claimed Python offers no way to
@@ -84,9 +97,13 @@ present - because a cohort does not carry the population it was drawn from, so
 `pop`, `remove` and `del rc[40:]` leave a marker that is still true and no longer
 describes the subgroup. And it cannot establish **multiplicity** - that no row is
 present twice - because a duplicated row satisfies the pair as happily as the
-original. Multiplicity is why the container operations above were narrowed;
-completeness is a genuine residual and is stated here so that a later lane reads
-a bounded guarantee rather than a general one.
+original. Multiplicity is not left to the container guards, which a fourth
+review walked around in one character (`rc * 2` refused, `rc *= 2` allowed): it
+is enforced at the point the cohort becomes a number, by
+`_verify_no_duplicate_observations`, which refuses a repeated
+`observation_id` however the repetition was produced. Completeness remains a
+genuine residual and is stated here so that a later lane reads a bounded
+guarantee rather than a general one.
 
 ## What this module cannot see
 
@@ -126,6 +143,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -179,7 +197,10 @@ DECLARED_CONVENTIONS: Final[Mapping[str, str]] = {
     "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
     "expected_calibration_error": "observation-weighted mean absolute bin gap",
     "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
-    "bootstrap_unit": "one observation id, resampled with replacement",
+    "bootstrap_unit": (
+        "one observation id, resampled with replacement; duplicate ids are refused"
+    ),
+    "duplicate_observations": "refused; the same forecast may not be counted twice",
 }
 
 
@@ -425,10 +446,21 @@ class RestrictedCohort(list[CalibrationObservation]):
     so the marker stayed true of every row present while the payload's `n` was
     doubled or truncated. That is not academic here. v2 §8 condition 5 is a
     Wilson half-width, which goes as `1/sqrt(n)`: duplicating an 83-row
-    `doubtful` cohort takes its worst case from 0.1052 to 0.0745 and converts
+    `doubtful` cohort takes its worst case from 0.1052 to 0.0752 and converts
     "a 0.10 guarantee cannot be issued" into "protected", with every recorded
-    pair still true. Operations that change multiplicity or cardinality
-    therefore return a plain `list`, which asserts nothing.
+    pair still true.
+
+    **These guards are one layer and are not the multiplicity guarantee.** A
+    fourth review walked around them by moving a single character: `rc + other`
+    is refused, `rc += other` is not, because `__iadd__` has no override - and
+    neither have `extend`, `append`, `insert`, slice-assignment, or any other
+    route that builds a cohort without going through these methods. The
+    sentence that used to end this docstring, promising that
+    multiplicity-changing operations return a plain `list`, was therefore a
+    false guarantee. Duplication is now refused where the cohort becomes a
+    number, by `_verify_no_duplicate_observations`; these methods remain because
+    failing early at the operation is friendlier than failing late at the
+    report, not because they are sufficient.
     """
 
     def __init__(
@@ -531,6 +563,46 @@ def _inherited_restriction(
     return ()
 
 
+def _verify_no_duplicate_observations(
+    rows: Sequence[CalibrationObservation],
+) -> None:
+    """Refuse a cohort that counts the same forecast twice.
+
+    Verification of the restriction marker establishes soundness only: a
+    duplicated row satisfies every recorded pair as happily as the original, so
+    multiplicity has to be checked separately or not at all. A fourth review
+    showed why "not at all" is untenable. `rc += list(rc)`,
+    `rc[0:0] = list(rc)`, `rc.extend(list(rc))` and a directly constructed
+    subclass all produce a
+    cohort whose marker is true of every row present and whose `n` is wrong -
+    and `n` is not decoration. v2 §8 condition 5 is a Wilson half-width going as
+    `1/sqrt(n)`: duplicating the 83-row `doubtful` cohort moves its worst case
+    from 0.1052 to 0.0752 and **manufactures** the 0.10 guarantee this model
+    card says cannot be issued blind. Condition 6's population floor reads the
+    same inflated count.
+
+    The reviewer's own suggestion was to enumerate the in-place twin of every
+    dunder already overridden - `__iadd__` for `__add__`, `__imul__` for
+    `__mul__`, `__setitem__` for `__getitem__`. That is a good rule and a closed
+    list, but it is the weaker fix: it guards the routes someone thought of, and
+    `list` is not the only way to build a cohort. It also would not have covered
+    `append` or `insert`, which have no non-mutating twin to have prompted them,
+    and which duplicate a row just as effectively. Checking the invariant
+    **where the claim becomes a number** covers every route at once, including
+    direct construction and the adversarial `__index__` that the container
+    guards cannot see. It is the same principle as verifying the marker rather
+    than believing it.
+    """
+
+    counts = Counter(row.observation_id for row in rows)
+    repeated = sorted(identifier for identifier, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"{len(repeated)} observation id(s) appear more than once, starting with "
+            f"{repeated[0]!r}; duplication inflates n and narrows every interval"
+        )
+
+
 def _verify_restriction_holds(
     rows: Sequence[CalibrationObservation],
     restriction: Mapping[str, str],
@@ -589,6 +661,7 @@ def build_calibration_report(
         rows = list(observations)
         merged = dict(inherited)
     _verify_restriction_holds(rows, merged)
+    _verify_no_duplicate_observations(rows)
     recorded_restriction: tuple[tuple[str, str], ...] | None = (
         tuple(sorted(merged.items())) if merged else None
     )
@@ -820,12 +893,34 @@ def paired_bootstrap_brier(
     The interval is **not** valid against within-player or within-game
     correlation. That limitation is v2 §7's own wording and is reported beside
     the number rather than fixed by asserting independence.
+
+    **The declared unit is enforced, not assumed.** `DECLARED_CONVENTIONS`
+    records the resampling unit as one observation id, and a fourth review
+    found the loop resampling *row positions* while `observation_id` was never
+    read - true only for as long as ids happen to be unique, and silently
+    producing an interval that is too narrow the moment they are not. Too
+    narrow is the direction that makes v2 §8 condition 2 easier to pass, so the
+    error flattered the candidate. A declared convention the code does not
+    implement is worse than an undeclared one, because a later reader has a
+    written assurance to rely on. Duplicate ids are therefore refused here, and
+    with ids unique the positional draw *is* the id draw.
     """
 
     if not pairs:
         raise ValueError("paired bootstrap requires at least one observation")
     if resamples < 1:
         raise ValueError("paired bootstrap requires at least one resample")
+    repeated_ids = sorted(
+        identifier
+        for identifier, count in Counter(pair.observation_id for pair in pairs).items()
+        if count > 1
+    )
+    if repeated_ids:
+        raise ValueError(
+            f"{len(repeated_ids)} observation id(s) appear more than once, starting "
+            f"with {repeated_ids[0]!r}; the declared resampling unit is one "
+            "observation id, and repeated ids would narrow the interval"
+        )
 
     differences = [
         (pair.candidate_predicted - float(pair.played)) ** 2

@@ -126,6 +126,52 @@ than n=1** - is the useful output of this pass.
   going as 1/sqrt(n), so duplicating the 83-row `doubtful` cohort takes its worst
   case from 0.1052 to 0.0752 and converts "no 0.10 guarantee can be issued" into
   "protected".
+
+**M31-M40 came from the reviewer's fourth pass**, which found **seven**
+survivors against a suite that had just caught thirty - the sequence is
+4, 5, 4, 7, and it is not converging. The pass produced two findings of a kind
+the earlier ones did not.
+
+The first is a **false guarantee** rather than a disclosed residual. Both
+docstrings promised that multiplicity-changing operations return a plain `list`;
+`rc += list(rc)`, `rc.extend(list(rc))` and `rc[0:0] = list(rc)` all returned a
+`RestrictedCohort` with the marker intact and `n` doubled, because `__iadd__`
+and the mutating methods have no override. Checking his payloads found two more
+routes he had not listed - `append` and `insert` of a row taken *from the cohort
+itself*, which he had recorded as "correctly refused" because he tried them with
+a **foreign** row - and one payload of his that is simply **false**: `rc *= 2`
+returns a plain `list`, because defining `__mul__` at Python level makes
+`PyNumber_InPlaceMultiply` fall back to it. That route is closed by accident,
+and an accident nothing records is not a guard.
+
+So the repair is not a longer list of dunders. Duplication is refused where the
+cohort becomes a number, by `_verify_no_duplicate_observations`, which does not
+care how the rows arrived - covering direct construction and the adversarial
+`__index__` that no container guard can see.
+
+The second is a **declared convention the code did not implement**:
+`DECLARED_CONVENTIONS["bootstrap_unit"]` said "one observation id, resampled
+with replacement" while the loop resampled row *positions* and never read
+`observation_id`. That is worse than an undeclared convention, because a later
+reader has a written assurance and no reason to check it. `bootstrap_quantile`
+was declared and pinned by nothing at all.
+
+* **M31 and M32** remove the duplicate-observation check, and then relax it to
+  ignore a single repeated id - the n=1 boundary of the *count*, applying the
+  rule the third pass produced to the fix the fourth pass forced.
+* **M33** lets verification tolerate exactly one violating row. Every cohort
+  that reached verification carried dozens, so the boundary was never driven.
+* **M34** compares label values by identity. It survives on a suite built from
+  literals, because every literal is interned, and would spuriously refuse a
+  correct cohort whose labels came from a database row.
+* **M35, M36 and M37** are the third pass's re-wrap rule attacked at its
+  untested edges: an operand that is neither empty nor `self`, an explicit
+  step-1 *partial* slice, and a zero or negative repeat count.
+* **M38, M39 and M40** cover the bootstrap. M38 accepts repeated ids again, M39
+  swaps Hyndman-Fan type 7 for the floor rule - which is not an equivalent
+  mutant, because it moves `interval_high` downward and `candidate_beats_baseline`
+  reads `interval_high` - and M40 reverts the declaration while leaving the
+  behaviour, which is the defect that started this group.
 """
 
 from __future__ import annotations
@@ -382,6 +428,84 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
             "        combined: list[CalibrationObservation] = super().__add__(other)\n"
             "        if True:"
         ),
+    ),
+    (
+        "M31 the duplicate-observation check is removed entirely (review P4-1)",
+        CAL,
+        "    _verify_no_duplicate_observations(rows)",
+        "    pass  # mutation: multiplicity unchecked",
+    ),
+    (
+        "M32 the duplicate check ignores a single repeated id (review P4-1, n=1 boundary)",
+        CAL,
+        "if count > 1)",
+        "if count > 2)",
+    ),
+    (
+        "M33 verification tolerates exactly one violating row (review P4-4)",
+        CAL,
+        "        if offenders:",
+        "        if offenders > 1:",
+    ),
+    (
+        "M34 label values are compared by identity, not equality (review P4-8)",
+        CAL,
+        "row.labels.get(key) != value",
+        "row.labels.get(key) is not value",
+    ),
+    (
+        "M35 __add__ re-wraps unless other IS self, so concatenation keeps it (review P4-5)",
+        CAL,
+        (
+            "        combined: list[CalibrationObservation] = super().__add__(other)\n"
+            "        if not other:"
+        ),
+        (
+            "        combined: list[CalibrationObservation] = super().__add__(other)\n"
+            "        if other is not self:"
+        ),
+    ),
+    (
+        "M36 an explicit step-1 partial slice re-wraps, so truncation keeps it (review P4-6)",
+        CAL,
+        "            if index.indices(len(self)) == (0, len(self), 1):",
+        "            if index.indices(len(self)) == (0, len(self), 1) or index.step == 1:",
+    ),
+    (
+        "M37 __mul__ re-wraps at count <= 1, so an empty cohort keeps the marker (review P4-7)",
+        CAL,
+        (
+            "        repeated: list[CalibrationObservation] = super().__mul__(count)\n"
+            "        if count.__index__() == 1:"
+        ),
+        (
+            "        repeated: list[CalibrationObservation] = super().__mul__(count)\n"
+            "        if count.__index__() <= 1:"
+        ),
+    ),
+    (
+        "M38 the bootstrap accepts repeated observation ids again (review P4-2)",
+        CAL,
+        "    if repeated_ids:",
+        "    if False:",
+    ),
+    (
+        "M39 the bootstrap quantile becomes the floor rule, moving interval_high (review P4-3)",
+        CAL,
+        (
+            "        interval_low=type7_quantile(estimates, 0.025),\n"
+            "        interval_high=type7_quantile(estimates, 0.975),"
+        ),
+        (
+            "        interval_low=sorted(estimates)[math.floor(0.025 * (len(estimates) - 1))],\n"
+            "        interval_high=sorted(estimates)[math.floor(0.975 * (len(estimates) - 1))],"
+        ),
+    ),
+    (
+        "M40 the declared bootstrap unit stops mentioning the enforcement (review P4-2)",
+        CAL,
+        '        "one observation id, resampled with replacement; duplicate ids are refused"',
+        '        "one observation id, resampled with replacement"',
     ),
 ]
 
