@@ -21880,3 +21880,131 @@ rather than by reasoning about which side moved.
   branch under a name I never enumerated would still be invisible to me, though
   `git diff --name-status` against the merge-base should have caught it.
   *Driven for paths, reasoned for completeness.*
+
+## 2026-08-24 - data-engineer - independent review response on the recovered adapter work
+
+**Unit:** amendment to `sr2501-recover-stranded-work` after independent review at
+exact head `cf27d79`. Base still `f3e2c53`, still not rebased, merge freeze
+respected.
+
+**The review found nothing significant.** It re-derived rather than accepted:
+it diffed the dropped `test_disclosure_surface.py` assertion-by-assertion
+against the committed guard and confirmed every one is covered or strictly
+subsumed; it mutation-tested the ported non-vacuity test eight ways and all
+eight fired; it re-ran the suite subsets, `mypy`, `ruff`, `backlog_graph.py`;
+and it grepped the whole non-binary diff for outcome tokens and confirmed every
+hit is a test name, the enum-collision explanation, or a pre-existing context
+line. It independently reproduced the finding that
+`participation_join.participation_outcome_counts` in the committed cohort
+artifact is a **string of length 782, not a mapping**, so the "commit both
+cohorts and subtract" attack is closed by construction rather than by policy.
+
+It also confirmed something I had asserted but not proven: the dropped test's
+`len(carrying) == 1` proxy is **factually false on today's `main`** - two files
+in `docs/adapters/` carry outcome-keyed fields. So the file I dropped would not
+merely have been a weaker duplicate, it would have been **red on arrival**. My
+six-axis comparison was right about the direction and understated the case.
+
+### What it found, and what I did about it
+
+One low-severity observation, and it is the shape this repository keeps
+recording: **a checkable claim that is literally false.**
+`TestInjuryReportArchiveStillReachesTheSweepSeasons` opens *"The historical
+sweep plans to read three seasons"* and its `_SWEEP_SEASON_PROBES` comment
+said *"one per season the sweep will cover ... all three"* - while the dict
+holds **two**. The third season's liveness is genuinely covered, by
+`TestInjuryReportCurrentSeasonIsAlive`, which probes *today* rather than a
+frozen instant, because a frozen instant is the wrong probe for a season still
+being written. So the coverage was real and only the description was wrong,
+which is the least alarming and most corrosive version: nothing fails, and the
+next reader budgets a three-season sweep against a two-season probe.
+
+Corrected both the docstring and the comment to say what is there and where the
+third lives.
+
+The reviewer's second half was sharper. The parametrised test iterates that
+dict, so an emptied dict collects **zero cases**, and zero cases passing is
+indistinguishable from all cases passing - the same false-zero shape as the
+non-vacuity gap I ported in from the dropped file, one file over. Its offline
+sibling already has `test_the_parametrised_sets_are_not_empty` for exactly this
+reason; the live one had nothing.
+
+Added `test_the_probe_set_is_not_empty`, deliberately **not** parametrised so it
+survives the emptying that silences everything around it. **Mutation-tested it
+rather than asserting it works:** emptying `_SWEEP_SEASON_PROBES` produces
+`2 failed, 1 passed, 1 skipped` - and the parametrised test is *not among the
+four outcomes at all*. It did not fail. It ceased to exist. That is the
+reviewer's point demonstrated rather than described, and it is why the pin
+cannot itself be parametrised.
+
+The pin is `live_smoke`-marked, so it never runs in CI. That is honest rather
+than a hidden skip: it runs on exactly the deliberate `-m live_smoke` run where
+the test it protects runs, and it claims nothing about a pull request. A pin
+that guarded CI while the thing it guards does not would be the green light
+nobody is holding.
+
+### A number in my own backlog item that nobody can check
+
+The most useful thing in the review is in its "could not verify" section, and it
+is about my work, not the recovered work.
+
+The `cohort-canonical-count-reconciliation` backlog item localises the
+30-observation census disagreement as **entirely legacy era**, on the strength
+of committed canonical legacy being **4,250**. The reviewer could not reproduce
+4,250 from the repository, and is right that it cannot be: no committed artifact
+publishes a **canonical** by-era split. The admissibility artifact publishes
+**direct** by-era (legacy 4,166, short-lead 9,432), which is a different
+quantity. The reviewer got as far as showing 4,166 + 81 unresolved-legacy =
+4,247 is *consistent* with 4,250, and internally coherent if short-lead
+canonical is 9,539 - but consistent-and-coherent is not reproduced.
+
+So I shipped, in a backlog item whose whole purpose is to date a disagreement
+with exact numbers attached, **a number that reproduces only for the person
+holding the operational store.** That is the `--max-requests 120` trap in the
+one place I was congratulating myself for avoiding it, and I did not notice
+because the figure came out of a query I had run myself an hour earlier - which
+is precisely the unexamined-inheritance failure with me as my own upstream.
+
+It is an input-side count, so there is no blind concern; the defect is
+reproducibility, not disclosure.
+
+**The fix already exists and is in the other lane.**
+`scripts/cohort_predictor_crosses.py` (branch `sr2501-cohort-predictor-crosses`,
+Part 2 of this unit) prints `era x band` over the canonical selection and
+derives `legacy 4250` as a row total, behind the marginal validation. So the
+number becomes reproducible-by-anyone-with-the-store the moment Part 2 lands,
+which is the strongest available form here given the store is out-of-tree by
+design. **Until then, treat 4,250 in that backlog item as operator-local.** I
+have not edited the backlog item to say so, because editing it to describe a
+weakness that Part 2 removes would leave a stale caveat behind; this entry dates
+the gap and names its closure instead.
+
+### Verification
+
+- `pytest --collect-only`: **1803 selected, 37 deselected** - collected count
+  unchanged, deselected +1, which is the new pin and nothing else. The
+  1803-passed full-suite result at `cf27d79` therefore still stands; I did not
+  re-run 17 minutes for a comment and a deselected test.
+- New pin passes on a deliberate run in 0.07s and touches no network.
+- Mutation fires as described above; mutation reverted and re-confirmed green.
+- `ruff check`, `ruff format --check` clean. Diff is `34 added, 4 removed`, one
+  file.
+
+### Could not verify
+
+- **Why the 15 recovered tests survived 188 commits unmodified.** Unchanged from
+  my previous entry, and the reviewer independently reached the same wall: it
+  confirmed they pass and that the file is a pure append against the stranded
+  original, but neither of us established whether the adapter surface genuinely
+  did not move or whether the tests bind loosely enough not to notice. A test
+  that cannot notice is worth less than its green suggests, and I still do not
+  know which of the two this is.
+- **The rest of `injury-status-conversion-literature.md`.** The reviewer checked
+  every backticked reference and markdown link (all resolve) and re-derived
+  every figure in §3 and §4.2 against the committed artifacts (all correct). The
+  external-literature characterisations in §2, §5 and §6 remain unchecked by
+  either of us after 188 commits.
+- **Whether `4,250` is right at all.** Everything above establishes that it is
+  unreproducible from the repository and consistent with what is. It does not
+  establish that it is correct. Part 2's script will settle it; this entry does
+  not.

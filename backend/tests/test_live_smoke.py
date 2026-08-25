@@ -1289,9 +1289,14 @@ class TestInjuryReportIsAlive:
 class TestInjuryReportArchiveStillReachesTheSweepSeasons:
     """The historical sweep plans to read three seasons. Are they still there?
 
+    Two of the three are archived and probed here at frozen instants; the
+    third is the current season, whose liveness is
+    ``TestInjuryReportCurrentSeasonIsAlive`` because a frozen instant is the
+    wrong probe for a season still being written.
+
     The offline contract test (``test_injury_report_archive_reach.py``) pins
     committed bytes and therefore cannot notice the archive *retiring* an
-    older season — the fixture keeps parsing long after the URL stops
+    older season - the fixture keeps parsing long after the URL stops
     resolving. This is the only check that would see that, and it is the one
     that matters before committing to a multi-hour sweep of 2023-24.
 
@@ -1299,9 +1304,12 @@ class TestInjuryReportArchiveStillReachesTheSweepSeasons:
     on a deliberate run, never block a pull request.
     """
 
-    #: One mid-season evening-before report per season the sweep will cover.
-    #: All three sit in the legacy hourly filename era, so ``report_url``
-    #: truncates each to the hour. Verified live 2026-08-21.
+    #: One mid-season evening-before report for each of the two *archived*
+    #: seasons the sweep will cover. The third, current season is not here:
+    #: its liveness is ``TestInjuryReportCurrentSeasonIsAlive``, which probes
+    #: today rather than a frozen instant. Both of these sit in the legacy
+    #: hourly filename era, so ``report_url`` truncates each to the hour.
+    #: Verified live 2026-08-21.
     _SWEEP_SEASON_PROBES: ClassVar[dict[str, datetime]] = {
         "2023-24": datetime(2024, 1, 10, 17, 30, tzinfo=_EASTERN),
         "2024-25": datetime(2025, 1, 15, 17, 30, tzinfo=_EASTERN),
@@ -1311,6 +1319,28 @@ class TestInjuryReportArchiveStillReachesTheSweepSeasons:
     #: It fetches cleanly and this parser cannot read it — see the offline
     #: contract test for why that refusal is the desired behaviour.
     _PRE_2023_LAYOUT_PROBE = datetime(2023, 1, 11, 17, 30, tzinfo=_EASTERN)
+
+    def test_the_probe_set_is_not_empty(self) -> None:
+        """FAILS IF: the parametrised sweep test above has quietly stopped existing.
+
+        An emptied ``_SWEEP_SEASON_PROBES`` collects **zero** parametrised
+        cases, and zero cases is indistinguishable from all cases passing.
+        This method is not parametrised, so it survives that emptying and is
+        the thing that notices. Its offline sibling
+        (``test_injury_report_archive_reach.py::test_the_parametrised_sets_are_not_empty``)
+        exists for exactly the same reason.
+
+        It runs only on a deliberate ``-m live_smoke`` run, which is also the
+        only run where the test it protects executes - it guards that run, and
+        claims nothing about a pull request.
+        """
+        assert self._SWEEP_SEASON_PROBES, "no archived sweep season is being probed at all"
+        assert len(self._SWEEP_SEASON_PROBES) == 2, (
+            "the sweep covers three seasons: two archived ones probed here at "
+            "frozen instants, plus the current season probed by "
+            "TestInjuryReportCurrentSeasonIsAlive. If that split changed, this "
+            "class's docstring is now describing a plan nobody is running."
+        )
 
     @pytest.mark.parametrize("season", sorted(_SWEEP_SEASON_PROBES))
     def test_each_sweep_season_is_still_reachable_and_parses(
