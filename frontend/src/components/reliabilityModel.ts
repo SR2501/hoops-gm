@@ -151,6 +151,41 @@ export function describeSeasonSplit(loadedSeason: string): SeasonSplit {
 }
 
 /**
+ * The inventory's own shape, counted rather than asserted in prose.
+ *
+ * A browser probe measured this screen at **4.01 laptop screens** of scroll at
+ * 1440x900, and the finding a reader most needs — *how much of this is
+ * missing* — was at the bottom of an eight-row table of paragraphs. That is the
+ * five-second rule failing: the answer existed and could not be read quickly.
+ *
+ * Derived from the array rather than written out, so it cannot drift from the
+ * table beneath it. `onScreen` is `0` and is stated: it is the one number on
+ * this screen that a reader might otherwise assume rather than check.
+ */
+export interface EvidenceTally {
+  total: number
+  notExposed: number
+  notDefined: number
+  blocked: number
+  onScreen: number
+}
+
+export function tallyEvidence(items: readonly EvidenceItem[] = AVAILABILITY_EVIDENCE): EvidenceTally {
+  return {
+    total: items.length,
+    notExposed: items.filter((item) => item.status === 'not-exposed').length,
+    notDefined: items.filter((item) => item.status === 'not-defined').length,
+    blocked: items.filter((item) => item.status === 'blocked').length,
+    // Every status in the closed set means "not here". If a fourth status is
+    // ever added for a quantity that *has* arrived, this stops being zero by
+    // construction rather than by editing a sentence.
+    onScreen: items.filter(
+      (item) => !['not-exposed', 'not-defined', 'blocked'].includes(item.status),
+    ).length,
+  }
+}
+
+/**
  * The inventory. Ordered by how directly each answers "will he play?".
  *
  * Every claim in here names a file, a route, or a backlog item, so that a

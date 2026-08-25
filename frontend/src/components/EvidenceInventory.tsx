@@ -16,6 +16,7 @@
 import {
   AVAILABILITY_EVIDENCE,
   EVIDENCE_STATUS_LABELS,
+  tallyEvidence,
   type EvidenceItem,
 } from './reliabilityModel'
 
@@ -24,8 +25,18 @@ export function EvidenceInventory({
 }: {
   items?: readonly EvidenceItem[]
 }) {
+  const tally = tallyEvidence(items)
+
   return (
-    <table className="table evidence" data-testid="evidence-inventory">
+    <>
+      <p className="evidence__tally" data-testid="evidence-tally">
+        <strong data-testid="evidence-tally-onscreen">{tally.onScreen}</strong> of{' '}
+        <strong>{tally.total}</strong> availability quantities are on this screen.{' '}
+        {tally.notExposed} are computed by the backend and carried by no route, {tally.notDefined}{' '}
+        have never been defined, and {tally.blocked} is deliberately held. The table says which is
+        which, and what is blocking each.
+      </p>
+      <table className="table evidence" data-testid="evidence-inventory">
       <caption className="evidence__caption">
         Every quantity a reliability screen is supposed to carry, and where each one
         actually is. <strong>Nothing in this table is a placeholder for a number</strong> —
@@ -65,5 +76,6 @@ export function EvidenceInventory({
         ))}
       </tbody>
     </table>
+    </>
   )
 }

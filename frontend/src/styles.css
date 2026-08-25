@@ -1739,3 +1739,16 @@ a:focus-visible {
   line-height: 1.4;
   color: var(--text-muted);
 }
+.evidence__tally {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.evidence__tally strong {
+  color: var(--accent);
+}

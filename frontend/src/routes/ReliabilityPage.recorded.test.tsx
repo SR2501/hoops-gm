@@ -83,6 +83,21 @@ describe('the reliability screen, against the recorded cohorts', () => {
     }
   })
 
+  it('states how many quantities reached the screen, above the table', async () => {
+    // A probe measured this page at 4.01 laptop screens of scroll, with the
+    // headline finding — how much is missing — only readable by working through
+    // eight rows of paragraphs. The tally is that finding in one line, derived
+    // from the same array the table renders so the two cannot disagree.
+    serveRecorded()
+    renderWithRouter(<ReliabilityPage />)
+    await screen.findByTestId('availability-assumptions')
+
+    const tally = screen.getByTestId('evidence-tally')
+    expect(tally).toHaveTextContent('0 of 8 availability quantities are on this screen')
+    expect(tally).toHaveTextContent('5 are computed by the backend and carried by no route')
+    expect(tally).toHaveTextContent('1 is deliberately held')
+  })
+
   it('states the evidence season on the screen rather than in a tooltip', async () => {
     // The architect's ruling, and the `gameEt` shape it guards against: a
     // durability figure whose season is ambiguous is well-formed, plausible and

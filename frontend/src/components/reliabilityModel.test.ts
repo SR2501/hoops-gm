@@ -37,8 +37,9 @@ import {
   describeSeasonSplit,
   EVIDENCE_SEASON,
   EVIDENCE_STATUS_LABELS,
+  tallyEvidence,
 } from './reliabilityModel'
-import type { AvailabilitySummary } from './reliabilityModel'
+import type { AvailabilitySummary, EvidenceItem, EvidenceStatus } from './reliabilityModel'
 
 function rates(playerId: number): ProjectionRates {
   const row = { player_id: playerId } as ProjectionRates
@@ -332,5 +333,35 @@ describe('AVAILABILITY_EVIDENCE', () => {
     expect(ids).toContain('back-to-back')
     expect(ids).toContain('monthly-trend')
     expect(ids).toContain('roster-fragility')
+  })
+})
+
+describe('tallyEvidence', () => {
+  it('counts each status and reports how many quantities reached the screen', () => {
+    const tally = tallyEvidence()
+
+    expect(tally.total).toBe(AVAILABILITY_EVIDENCE.length)
+    expect(tally.notExposed + tally.notDefined + tally.blocked).toBe(tally.total)
+    // The number the whole screen exists to state honestly. It is zero, and it
+    // is derived rather than written, so it stops being zero the moment a
+    // quantity actually arrives.
+    expect(tally.onScreen).toBe(0)
+  })
+
+  it('counts a status outside the missing set as having reached the screen', () => {
+    // The control for the assertion above. `onScreen: 0` computed by a function
+    // that can only ever return zero would be a sentence wearing a function's
+    // clothes, so this drives the case where it must not be zero.
+    const arrived: EvidenceItem = {
+      id: 'arrived',
+      quantity: 'A quantity that has arrived',
+      status: 'served' as unknown as EvidenceStatus,
+      season: EVIDENCE_SEASON,
+      purpose: 'Drives the non-zero branch.',
+      whereItLives: 'Nowhere; this item exists only in this test.',
+      blocker: 'None.',
+    }
+
+    expect(tallyEvidence([...AVAILABILITY_EVIDENCE, arrived]).onScreen).toBe(1)
   })
 })
