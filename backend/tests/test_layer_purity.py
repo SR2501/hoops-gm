@@ -59,6 +59,7 @@ from hoops_gm.db.layers import (
     IMPORT_TIME_LIMIT,
     LAYER_RANK,
     LAYERS_WITHOUT_TABLES,
+    MARKET_IDENTITY_SOURCES,
     PERMITTED_FLOWS,
     TABLE_LAYERS,
     DataLayer,
@@ -192,6 +193,11 @@ def test_the_market_consumes_nothing_we_derived() -> None:
     ours, at any weight. This is the finding an independent review raised
     against the rank construction, and the assertion is written over *every*
     layer rather than the four that exist today so a new one cannot slip in.
+
+    The layer edge alone is not enough to say "identity", which a second review
+    demonstrated: ``OBSERVATIONS`` is 29 tables, and permitting the layer
+    permits ``draft_events`` — prices our own recommendations can have moved —
+    and ``absence_splits``, which we compute. So the tables are asserted too.
     """
     inbound = {source for source, target in PERMITTED_FLOWS if target is DataLayer.MARKET}
 
@@ -199,6 +205,36 @@ def test_the_market_consumes_nothing_we_derived() -> None:
         f"the market layer accepts {sorted(inbound)}. Anything beyond observations "
         f"destroys the independence ADR-008 clause 3 relies on."
     )
+
+    observations = {name for name, layer in TABLE_LAYERS.items() if layer is DataLayer.OBSERVATIONS}
+    assert observations > MARKET_IDENTITY_SOURCES, (
+        "MARKET_IDENTITY_SOURCES must be a strict subset of the observations "
+        "tables; if it ever equals them the narrowing has stopped narrowing."
+    )
+    assert not (MARKET_IDENTITY_SOURCES & {"draft_events", "absence_splits"}), (
+        "draft_events holds prices our own recommendations can have caused and "
+        "absence_splits is an aggregate we compute. Neither is identity, and "
+        "letting the market reference either is R38 through a side door."
+    )
+
+
+@pytest.mark.parametrize("referenced", ["draft_events", "absence_splits", "player_game_logs"])
+def test_the_market_may_not_reference_an_observation_that_is_not_identity(
+    referenced: str,
+) -> None:
+    """The narrowing, driven rather than asserted about the constant.
+
+    Seeding an auction value table from observed clearing prices is a plausible
+    future feature and type-checks today. Under the layer edge alone it was
+    accepted; each of these is now refused.
+    """
+    with pytest.raises(LayerViolation, match="identity only"):
+        validate_layer_flow(_two_table_metadata("published_auction_values", referenced))
+
+
+def test_the_market_may_still_say_which_player_it_is_about() -> None:
+    """The narrowing must not break the case the edge exists for."""
+    validate_layer_flow(_two_table_metadata("published_auction_values", "players"))
 
 
 def test_comparison_feeds_nothing() -> None:
@@ -256,7 +292,16 @@ def test_the_live_schema_is_fully_assigned_and_flows_forward() -> None:
 
 
 def test_the_assignment_covers_a_schema_worth_covering() -> None:
-    """A clean report over an empty metadata is the defect, not a pass."""
+    """A clean report over an empty metadata is the defect, not a pass.
+
+    Read this as a floor on the *scan*, not on the enforcement. Review counted
+    how many of those foreign keys are actually cross-layer: **5 of 62** at
+    ``f3e2c53``, four of them identity references. The other 57 are within-layer
+    and permitted unconditionally by ADR-008 clause 1. So this asserts that the
+    check is looking at a real schema, not that sixty relationships are being
+    constrained — the guard constrains almost nothing that exists today and is
+    here to fail on arrival when ``expected-games`` and the valuation chain land.
+    """
     assert len(TABLE_LAYERS) >= 40
     assert sum(len(table.foreign_keys) for table in Base.metadata.tables.values()) >= 60
 
@@ -471,7 +516,8 @@ def test_the_scope_limits_are_stated() -> None:
     assert "foreign keys" in FLOW_SCAN_LIMIT
     assert "undeclared identifier column" in FLOW_SCAN_LIMIT
     assert "Python" in FLOW_SCAN_LIMIT
-    assert "outside db/models/" in IMPORT_TIME_LIMIT
+    assert "when db.models finishes importing" in IMPORT_TIME_LIMIT
+    assert "not by reading how the imports are spelled" in IMPORT_TIME_LIMIT
     assert "one layer per table" in GRAIN_LIMIT
 
 
@@ -652,8 +698,60 @@ def test_a_backwards_foreign_key_makes_the_package_fail_to_import() -> None:
     assert "published_auction_values" in completed.stderr
 
 
-def test_every_model_module_is_imported_by_the_package() -> None:
-    """Close the set over the filesystem, not over the import list.
+def test_importing_the_package_is_what_refuses_a_violation() -> None:
+    """The headline claim, driven against the package rather than the function.
+
+    :func:`test_a_backwards_foreign_key_makes_the_package_fail_to_import`
+    imports the package and then calls ``validate_layers`` itself, so it proves
+    the *function* refuses. That is not the claim. The claim is that **importing
+    the package** refuses, and review showed those come apart: replacing the
+    import of ``validate_layers`` in ``db/models/__init__.py`` with a local
+    no-op of the same name left every gate green — 57 tests, ruff and mypy —
+    while the package imported a violating schema without complaint. The AST
+    test could not see it, because the call site still reads exactly right.
+
+    So this asks the package. It injects the violation by removing an entry
+    from ``TABLE_LAYERS`` **before** ``db.models`` is imported, which is the
+    cheapest violation that needs no schema of its own, and then imports the
+    package and nothing else. Whatever the call site is spelled as, either the
+    import raises or this fails.
+    """
+    program = textwrap.dedent(
+        """
+        import hoops_gm.db.layers as layers
+
+        del layers.TABLE_LAYERS["players"]
+
+        import hoops_gm.db.models  # noqa: E402
+
+        print("NO VIOLATION RAISED")
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0, (
+        f"importing db.models with an unassigned table succeeded. The package "
+        f"is not enforcing ADR-008 at import, whatever its call site says — "
+        f"check that db/models/__init__.py calls the real "
+        f"hoops_gm.db.layers.validate_layers and has not shadowed it.\n"
+        f"stdout={completed.stdout!r}"
+    )
+    assert "NO VIOLATION RAISED" not in completed.stdout
+    assert "LayerViolation" in completed.stderr, (
+        f"the import failed for some reason other than a layer violation, so "
+        f"this test is no longer evidence of anything.\nstderr={completed.stderr!r}"
+    )
+    assert "players" in completed.stderr
+
+
+def test_every_model_module_is_reached_by_importing_the_package() -> None:
+    """Close the set over the filesystem, and read the artefact not the spelling.
 
     :func:`validate_layers` sees whatever is mapped when the package finishes
     importing, so a model module missing from ``__init__.py`` is a table the
@@ -661,27 +759,83 @@ def test_every_model_module_is_imported_by_the_package() -> None:
     package first, validating incomplete metadata, then maps the table with
     nothing left to check it.
 
-    Enumerating the modules somebody remembered to import would be the census
-    mistake again. This walks ``db/models/`` on disk, so a new file is covered
-    on arrival. See :data:`IMPORT_TIME_LIMIT` for what still is not.
+    Two earlier versions of this test were defeated in review, both by asking
+    about the *spelling* of the import rather than its *effect*:
+
+    - A substring test for ``from hoops_gm.db.models.<name> import`` is
+      satisfied by that line commented out. This is the same defect the AST
+      test for the call site exists to fix, and it survived here.
+    - A non-recursive ``glob("*.py")`` cannot see ``db/models/valuation/``, a
+      very likely real directory given the layers this ADR is about, while
+      :data:`IMPORT_TIME_LIMIT` claimed the residual gap was modules *outside*
+      ``db/models/``. A false limit statement is worse than a missing one.
+
+    So this asks the only question that cannot be worded around: after
+    importing the package and nothing else, is there any module on disk that
+    still has tables left to map? Importing an already-imported module is a
+    no-op via ``sys.modules``, so a module the package reached contributes
+    nothing here and one it missed contributes its tables. Comments, aliases,
+    re-exports, star imports and subpackages all come out in the wash.
+
+    Runs in a subprocess because it deliberately maps stray tables onto
+    ``Base.metadata``, which would leak into every later test in the session.
     """
-    package_dir = Path(models.__file__).resolve().parent
-    on_disk = {
-        path.stem
-        for path in package_dir.glob("*.py")
-        if path.stem != "__init__" and not path.stem.startswith("_")
-    }
-    source = _models_package_source()
-    missing = sorted(
-        name for name in on_disk if f"from hoops_gm.db.models.{name} import" not in source
+    program = textwrap.dedent(
+        """
+        import importlib
+        import pathlib
+
+        import hoops_gm.db.models
+        from hoops_gm.db.base import Base
+
+        package_dir = pathlib.Path(hoops_gm.db.models.__file__).resolve().parent
+        reached = set(Base.metadata.tables)
+        scanned = 0
+
+        for path in sorted(package_dir.rglob("*.py")):
+            if path == package_dir / "__init__.py" or path.stem.startswith("_"):
+                continue
+            relative = path.relative_to(package_dir)
+            parts = relative.parts[:-1] if path.name == "__init__.py" else (
+                *relative.parts[:-1],
+                path.stem,
+            )
+            if not parts:
+                continue
+            scanned += 1
+            importlib.import_module("hoops_gm.db.models." + ".".join(parts))
+            stray = sorted(set(Base.metadata.tables) - reached)
+            if stray:
+                print("STRAY " + ".".join(parts) + " " + ",".join(stray))
+                reached |= set(stray)
+
+        print("SCANNED", scanned)
+        """
     )
 
-    assert on_disk, "no model modules found; this scan is broken, not clean"
-    assert missing == [], (
-        f"model modules not imported by db/models/__init__.py: {missing}. Their "
-        f"tables are mapped onto Base.metadata only if something else imports "
-        f"them, so validate_layers never sees them and they silently never get "
-        f"a migration either."
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        f"scanning db/models/ for unreached modules failed outright.\n"
+        f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}"
+    )
+
+    stray = [line for line in completed.stdout.splitlines() if line.startswith("STRAY ")]
+    scanned = [line for line in completed.stdout.splitlines() if line.startswith("SCANNED ")]
+
+    assert scanned and int(scanned[0].split()[1]) > 0, (
+        f"no model modules found; this scan is broken, not clean. stdout={completed.stdout!r}"
+    )
+    assert stray == [], (
+        f"model modules whose tables importing the package does not map: {stray}. "
+        f"Import each from db/models/__init__.py. Until then validate_layers "
+        f"never sees those tables, so they are outside ADR-008 entirely, and "
+        f"they silently never get a migration either."
     )
 
 
@@ -728,8 +882,15 @@ def alembic_config(backend_dir: Path, migration_url: str) -> Config:
 
 @pytest.fixture(autouse=True)
 def _clean_database(migration_url: str) -> Iterator[None]:
-    """Leave no tables behind. A Postgres test database is reused across tests."""
-    yield
+    """Start from an empty store. A Postgres test database is reused across tests.
+
+    Drops *before* rather than after, matching ``conftest.py``'s established
+    convention. The difference matters when ``TEST_DATABASE_URL`` points at a
+    database another lane is also using: a teardown drop is the operation that
+    reaches into somebody else's run, and it also leaves nothing to inspect when
+    a test fails. Dropping on the way in gives the same isolation without
+    either.
+    """
     engine = create_engine(migration_url)
     try:
         Base.metadata.drop_all(engine)
@@ -738,6 +899,7 @@ def _clean_database(migration_url: str) -> Iterator[None]:
             connection.commit()
     finally:
         engine.dispose()
+    yield
 
 
 def test_a_migrated_store_records_every_table_at_its_assigned_layer(

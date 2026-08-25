@@ -155,6 +155,10 @@ PERMITTED_FLOWS: Final[frozenset[tuple[DataLayer, DataLayer]]] = frozenset(
         (DataLayer.AVAILABILITY, DataLayer.TERMINAL),
         (DataLayer.VALUATION, DataLayer.TERMINAL),
         # Into the market: which player it is about, and nothing else of ours.
+        # Layer granularity is too coarse to say that on its own — OBSERVATIONS
+        # is 29 tables and includes ``draft_events``, whose prices our own
+        # recommendations can have moved. Narrowed per-table by
+        # :data:`MARKET_IDENTITY_SOURCES`.
         (DataLayer.OBSERVATIONS, DataLayer.MARKET),
         # Everything may be compared. Comparison feeds nothing.
         (DataLayer.OBSERVATIONS, DataLayer.COMPARISON),
@@ -326,7 +330,9 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #: fixing it is cheap.
 FLOW_SCAN_LIMIT: Final = (
     "declared foreign keys only; an undeclared identifier column or a value copied "
-    "between layers in Python leaves no key"
+    "between layers in Python leaves no key. Ten columns ending _id carry no foreign "
+    "key today (count reproducible from Base.metadata; an earlier note said sixteen "
+    "on an unstated heuristic and review could not reproduce it)"
 )
 
 #: What the import-time call does **not** see.
@@ -338,17 +344,46 @@ FLOW_SCAN_LIMIT: Final = (
 #: submodule directly runs the parent package *first*, validating incomplete
 #: metadata, then maps the new table with nothing left to check it.
 #:
-#: Found by review, and closed rather than merely declared:
-#: ``test_every_model_module_is_imported_by_the_package`` walks
-#: ``db/models/`` on the filesystem and fails if any module is missing from the
-#: import list. That turns the closed set from "the list somebody enumerated"
-#: into "what is on disk", which is the distinction the module docstring claims
-#: and did not previously earn. The limit stated here is what remains: a table
-#: mapped from outside ``db/models/`` entirely — a test fixture, a plugin, a
-#: REPL — is still invisible.
+#: Found by review, closed, defeated again by a second review, closed again:
+#: ``test_every_model_module_is_reached_by_importing_the_package`` imports the
+#: package and then walks ``db/models/`` recursively looking for a module that
+#: still has tables left to map. The two earlier versions asked how the import
+#: was *spelled* — a substring, satisfied by a commented-out line; then a
+#: non-recursive glob, blind to ``db/models/valuation/`` while this very
+#: constant claimed subpackages were covered. Asking what importing the package
+#: actually mapped is the form that cannot be worded around. The limit stated
+#: here is what remains: a table mapped from outside ``db/models/`` entirely —
+#: a test fixture, a plugin, a REPL — is still invisible.
 IMPORT_TIME_LIMIT: Final = (
     "validates what is mapped when db.models finishes importing; a table mapped onto "
-    "Base.metadata from outside db/models/ afterwards is never seen"
+    "Base.metadata afterwards, by anything the package's import does not reach, is "
+    "never seen. Reachability is checked by importing the package and looking for "
+    "tables still unmapped, not by reading how the imports are spelled: review "
+    "defeated a substring check with a commented-out import, and a non-recursive "
+    "glob with a subpackage this very constant then wrongly claimed was covered"
+)
+
+#: Tables the market layer may reference, despite the layer edge being wider.
+#:
+#: ``(OBSERVATIONS, MARKET)`` exists so a published auction value can say which
+#: player it is about. Read at layer granularity it says much more than that:
+#: ``OBSERVATIONS`` holds 29 tables including ``draft_events`` — prices a human
+#: paid, which our own recommendations can have caused, which is why
+#: ``DraftToolUsage`` exists — and ``absence_splits``, an aggregate we compute.
+#: Seeding an AAV table from observed clearing prices is a tempting future
+#: feature and it is R38 through a side door: our output returning as somebody
+#: else's evidence.
+#:
+#: So the edge is narrowed to identity. These tables answer "which player, which
+#: team" and carry no quantity anyone could blend. Every member must be a mapped
+#: table at ``OBSERVATIONS``; a stale entry fails, so an exemption cannot outlive
+#: its cause. Only ``players`` is referenced today.
+MARKET_IDENTITY_SOURCES: Final[frozenset[str]] = frozenset(
+    {
+        "players",
+        "nba_teams",
+        "player_external_ids",
+    }
 )
 
 #: The grain of an assignment: one layer per table, not per column.
@@ -404,7 +439,12 @@ def validate_layer_assignment(metadata: MetaData) -> None:
     is a registry rotting into fiction, which is how the store-opening census
     went from exactly complete to quietly wrong.
     """
-    mapped = set(metadata.tables)
+    # ``metadata.tables`` is keyed "schema.name" when a schema is set, while
+    # ``layer_of`` and the flow check both use bare ``table.name``. Nothing sets
+    # a schema today, so the two coincide — but keying on ``.name`` here keeps
+    # them from diverging the day someone adds a Postgres schema, which would
+    # otherwise raise "has no layer" for a table that is in TABLE_LAYERS.
+    mapped = {table.name for table in metadata.tables.values()}
     assigned = set(TABLE_LAYERS)
 
     unassigned = sorted(mapped - assigned)
@@ -444,6 +484,25 @@ def validate_layer_assignment(metadata: MetaData) -> None:
             f"exemption must not outlive its cause."
         )
 
+    stale_identity = sorted(
+        name
+        for name in MARKET_IDENTITY_SOURCES
+        if name not in mapped or TABLE_LAYERS[name] is not DataLayer.OBSERVATIONS
+    )
+    if stale_identity:
+        raise LayerViolation(
+            f"MARKET_IDENTITY_SOURCES names tables that are no longer mapped "
+            f"observations tables: {stale_identity}.\n"
+            f"\n"
+            f"What to do: remove each entry from MARKET_IDENTITY_SOURCES in "
+            f"backend/src/hoops_gm/db/layers.py.\n"
+            f"\n"
+            f"Why a stale exemption fails rather than being ignored: this set is the "
+            f"only thing narrowing the observations-to-market edge to identity, and "
+            f"an entry that has stopped meaning what it meant silently widens it. "
+            f"An exemption must not outlive its cause."
+        )
+
 
 def validate_layer_flow(metadata: MetaData) -> None:
     """No declared foreign key points from a later layer into an earlier one.
@@ -462,6 +521,15 @@ def validate_layer_flow(metadata: MetaData) -> None:
                 violations.append(
                     f"{table.name}.{key.parent.name} -> {referenced} "
                     f"({source_layer} into {target_layer})"
+                )
+            elif (
+                source_layer is DataLayer.OBSERVATIONS
+                and target_layer is DataLayer.MARKET
+                and referenced not in MARKET_IDENTITY_SOURCES
+            ):
+                violations.append(
+                    f"{table.name}.{key.parent.name} -> {referenced} "
+                    f"(market may reference identity only, not {referenced})"
                 )
 
     if violations:
@@ -489,7 +557,10 @@ def validate_layer_flow(metadata: MetaData) -> None:
             "exist. That is the case this check was written for.\n"
             "\n"
             "Deleting validate_layers(Base.metadata) from db/models/__init__.py "
-            "silences this and is caught separately by test_layer_purity.py. See "
+            "silences this. So does replacing it with a local no-op of the same "
+            "name, which review showed left every gate green — both are caught by "
+            "test_layer_purity.py, the second by importing the package in a "
+            "subprocess rather than by reading the call site. See "
             "docs/decisions/ADR-008-layer-purity.md."
         )
 
