@@ -22572,3 +22572,169 @@ denied by the authorizer.
   True of this file today, not a guarantee about the package.
 * **That the crosses are correct rather than reproducible** — unchanged and
   structural, restated so it is not lost in a rebase entry.
+## 2026-08-23 - `frontend` - A dependency satisfied as a computation and unsatisfied as a contract, and a control that proved nothing while passing
+
+Unit `reliability-ui`, on base `f3e2c53`. Head `55b6334`.
+
+### 1. The backlog graph cannot distinguish *computed* from *reachable*
+
+`reliability-ui` depends on `reliability-metrics`, which is `done`. The
+dependency is real and the computation exists. **No route carries any of it**,
+so a frontend lane consuming that edge has nothing to consume.
+
+Three checks, each cheap and each independent of the others:
+
+- `docs/backlog.md:548`, the item's own done-text, ends *"no schema, API, or UI
+  was added."*
+- `docs/models/reliability-metrics.md` describes the metrics and names no
+  endpoint.
+- Live `GET /openapi.json` on the running demo returns **16 paths, zero matching
+  `reliability`**. This one is against a running process rather than a file,
+  which is why it is worth running even though the first two already answered.
+
+`architect` upheld this and filed it as a property of **every edge in
+`docs/backlog.md`**, not of mine: `backlog_graph.py` resolves names and reports
+readiness with no notion of *ready to be consumed by whom, across what
+boundary*. Its own output already disclaims being a statement that the backlog
+is accurate; this is the first concrete instance of what that covered.
+
+### 2. The evidence is not in the store the demo serves
+
+Found while looking for somewhere the metrics could be computed from. There are
+two stores and **neither is sufficient**:
+
+- The populated ledger at `C:\Users\steverones\hoops-gm-data\hoops_gm.db` holds
+  **43,037 participation rows for 2025-26** and has no `team_schedule` and no
+  `refresh_runs` table, so `compute_reliability_scorecards` cannot run there.
+- The demo serves **2026-27**, which has **zero played games** as of today.
+
+The gap is invisible from either side: each store looks fine on its own terms.
+
+This produced an owner-level ruling from `architect`, recorded because it now
+binds the endpoint rather than this screen: **reliability evidence reads
+2025-26**, because a 2026-27 cohort stays empty until late October, after draft
+day. It belongs in the endpoint contract, not a UI toggle - and **the season
+must be stated on the screen**, not in a tooltip. A durability figure whose
+season is ambiguous is the `gameEt` shape: well-formed, plausible, and silently
+about a different thing than the reader assumes.
+
+`EVIDENCE_SEASON` is therefore a literal in the frontend - it is a governance
+decision, not something on the wire - and `describeSeasonSplit` compares it
+against the season the payload actually returned, so a stale constant cannot sit
+silently beside a cohort that disagrees. Its return is a discriminated union
+rather than a boolean, because the `same` case means the season rolled over and
+the ruling needs revisiting, and a boolean would let a caller render nothing
+for it.
+
+### 3. A shared ADR-002 detector fired six times, all false, on prose
+
+`detectForbiddenProducts` run over the whole page reported **six** rate x games
+products. Every one was false. `renderedNumbers` walks text nodes, so digits
+inside *sentences* become rendered quantities: the lede's "a **70**-game player"
+supplies 70, and the inventory's "empirical p20/**p80**" supplies 80. Six
+genuine low-rate season totals - free throws made, offensive rebounds, threes,
+steals - land inside the 0.5 tolerance of those, because **a low per-game rate
+times a games count occupies the same 60-85 band this screen legitimately fills
+with games counts.**
+
+This is the second recorded instance of the same failure mode; `adr002.ts`'s own
+docstring already carries one (cell-boundary substrings).
+
+I did **not** loosen the tolerance, which would weaken it everywhere for a
+problem local to here. I scoped the detector to the assumptions panel and added
+an **exhaustive whitelist** over that region: every number in it must be
+accounted for by the payload. That is strictly stronger than the check it
+replaces, because it rejects any unaccounted number rather than only the product
+a test knew to look for.
+
+### 4. The control for that check passed while planting nothing
+
+The planted-product control read `firstRow.rates.points`. That field does not
+exist - it is `points_per_game`. The expression evaluated to `NaN`, stringified
+to `"NaN"`, planted **no digits at all**, and the control therefore proved the
+detector could fire on nothing. It looked green.
+
+`ProjectionRates` is `{ player_id: number } & Record<ProjectionRateField, number
+| null>`, so a bad key is a type error - but **the typecheck that would have
+caught it ran before these test files existed**. The ordering, not the type
+system, is what let it through. A control that cannot fail is worth less than no
+control, because it is counted as evidence.
+
+### 5. `scripts/test_name_diff.py` does not cover this suite
+
+It parses Python `test_*` functions. The frontend is vitest, so it is silent
+here - not wrong, just inapplicable, and a lane trusting it on a frontend PR
+would get a confident zero delta. I predicted the count by hand instead:
+263 -> 311, delta +48 (24 + 20 + 1 nav, then +3 in a later commit), matched
+exactly at each step.
+
+### 6. A probe field that read 0 beside eight correct readings
+
+My probe's row-count selector was `[data-testid^="evidence-"][data-testid$=""]`.
+A `$=""` suffix match matches **nothing**, so `inventoryRowCount` reported **0**
+in a payload where `statuses` correctly listed all eight rows and
+`seasonsStatedPerRow` correctly read 8. The blind field sat between two
+sighted ones and looked like a finding. Fixed to filter by `tagName === "TR"`;
+it now reads 8.
+
+The invariant-and-mover rule is what made this survivable: the same payload
+carried the eight statuses, so the zero was contradicted from inside its own
+reading rather than believed.
+
+### What the screen shows, and what it deliberately does not
+
+The one availability quantity genuinely on the wire is
+`source_games_played_assumptions` on `projections/current` - **60 players, all
+stated, 59 to 79 games, 11 distinct values**. It is *Basketball Monster's*
+assumption, and it is labelled as an assumption hoops-gm has neither measured
+nor validated, with the parsed value beside `assumed_games_played_raw` so a
+parse divergence would show. It is not multiplied by any rate: that would derive
+a season total, and derivation was scoped out.
+
+No median, mean or percentile - each needs an interpolation convention, and for
+an even cohort the usual one yields a value **no player was assigned**. A test
+asserts on the summary's *keys*, because adding one is a two-line change that
+looks like an improvement. No buckets: a bucket boundary is a threshold.
+
+Bars scale zero-based to the cohort's own maximum, not to 82 and not min-to-max.
+Min-to-max would render a 25% spread as a 100% one - the chart overstating data
+that is itself correct.
+
+Eight quantities are inventoried with the **blocker** named, not merely the
+missing unit. `p(play)` is not unbuilt-and-someone-is-slow; it is **deliberately
+held pending an owner decision on the preregistration**
+(`docs/backlog.md:2007`; `injury-status-conversion-preregistration-v3-PROPOSED.md`
+is `Proposed` and binds only when the owner binds it). A reader who sees "not
+built yet" concludes something different and less accurate than one who sees
+why.
+
+### On the framing
+
+I registered a disagreement with my own brief, which called this the most
+important screen in the project. It is not: **the unit that matters is the
+endpoint, and it is `backend`'s.** A screen that is mostly an honest gap report
+is worth shipping once; calling it the centrepiece after handing it over would
+be the rhetorical-convenience failure `AGENTS.md` warns about. `architect`
+upheld this and recorded it against his own brief.
+
+### What I could not verify
+
+- **That the 2025-26 ledger would actually satisfy `compute_reliability_scorecards`
+  if the two missing tables were added.** I confirmed the tables are absent and
+  that the function reads them. I did not construct them and run it. *Reasoned.*
+- **That the exhaustive whitelist covers a payload shape other than this
+  cohort's.** It is driven against the recorded 60-player fixture and the live
+  60-player demo, which happen to agree on cohort size. A cohort with a null
+  assumption mid-strip is covered by a unit test on the model but not through
+  the rendered region. *Partially driven.*
+- **Anything about how this reads on a second surface.** `surface-parity-tests`
+  is pending and blocked on three unbuilt items, so there is no second surface
+  to compare against and the convention is currently unenforced by anything but
+  me saying so. *Not driven.*
+- **That the page is usable at its measured height.** The probe reads
+  **3690px at 1440x900 - 4.1 screens**. The tally line puts the headline finding
+  in the first screen, but it does not reduce the total, and I have not watched
+  anyone try to read it under time pressure. *Measured, not validated.*
+- **That headless Edge renders this identically to the owner's real browser.**
+  Probed at `Edg/151.0.4129.101`, `--headless=new`. Never opened headed.
+  *Reasoned.*
