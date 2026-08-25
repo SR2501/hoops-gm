@@ -24698,3 +24698,60 @@ readings (73, 74, 68, 69).
   `Rest` rows in this cohort carry "Left Knee - Injury Management", so the split
   is a stated-reason artefact in both directions. Any health-reason bound is
   approximate for that reason and not only for the one-row reason.
+
+## 2026-08-23 - `quant` - the 84th row was explained on `main` before I guessed at it
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken: this entry
+reads a **docstring** on `origin/main`, no data, and runs nothing.
+
+The previous entry reported that the held-out `doubtful` reason breakdown sums
+to 84 against a published 83, and offered a double-categorised row as "a guess
+with a mechanism, which is better than a guess without one". **It was a guess
+against an answer that was already committed.**
+
+`scripts/cohort_predictor_crosses.py`, merged to `main` in #97 before I wrote
+that, says in its own module docstring that its crosses are over the
+**canonical** selection - 13,789 observations - and explicitly **not** over the
+**direct** selection of 13,598 that the admissibility artifact uses, the two
+differing by the participation join. The same distinction at the `doubtful`
+cell is the entire 84-vs-83 gap: **one canonical held-out `doubtful` row has no
+participation outcome attached.** Not a double-count.
+
+**The numbers I published were right and my account of why was wrong**, which is
+the more embarrassing way round, because a correct number with a wrong mechanism
+survives review. The pair is now *derived* rather than hedged: exactly one
+canonical row is non-direct, it is G League or it is not, so direct
+non-G-League is in **[73, 74]** from two committed integers and a subset
+relation - no join, no outcome. `_held_out_doubtful_note` computes precisely
+that bracket and refuses to print one if the direct count exceeds the canonical.
+
+**It also sharpens the v3 §6 defect rather than softening it.** 74 is not a
+rival base for the direct count; it is the **canonical** non-G-League count
+reported as though it were the direct one. So §6's sentence carries *two*
+population errors - canonical-for-direct and non-G-League-for-health - and only
+the second was under correction. Two well-formed quantities that are not about
+the same thing, which is the shape this repository keeps finding.
+
+**How I got there is the part worth keeping.** I was handed a breakdown and a
+published count in one message and treated them as one population without
+checking, then reasoned carefully *inside* that frame. That is the failure the
+previous entry exists to record, committed a day later by the person recording
+it. The lesson I actually take is narrower than "check your frame": **before
+guessing at a discrepancy, look for the lane that owns the quantity.** A
+`data-engineer` lane had committed the answer and I did not look.
+
+### What I could not verify
+
+- **That the coordinator's breakdown is this script's canonical table.** It sums
+  to 84 and the script's own bracket lands on [73, 74], which is strong
+  agreement, but I have not run it - the store is gitignored and running it
+  needs a rebase I do not have a window for.
+- **That exactly one row is non-direct at the `doubtful` cell specifically.** I
+  am inferring it from `84 - 83`, which is the script's arithmetic, not a count
+  I have seen. If the coordinator's table were over a different window the
+  subtraction is meaningless - which is why the script checks the partition
+  endpoints before bounding, and I cannot.
+- **Whether `Rest` and `Reconditioning` belong outside a health set.** Unchanged
+  and unresolvable from stated reasons; 7 of 97 `Rest` rows carry "Left Knee -
+  Injury Management". The script's docstring reaches the same conclusion
+  independently and calls the result an upper bound on the health-reason count.
