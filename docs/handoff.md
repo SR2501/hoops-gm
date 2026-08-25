@@ -23314,7 +23314,7 @@ one a reader meets first. If the architect would rather have the archaeology,
 ADR-008 / R41 asked that layer purity be **inexpressible rather than merely
 documented**. What landed is `backend/src/hoops_gm/db/layers.py`, a
 `data_layer_registry` table seeded by migration `0019`, and
-`backend/tests/test_layer_purity.py` - 32 functions, 57 collected cases, each of
+`backend/tests/test_layer_purity.py` - 35 functions, 62 collected cases, each of
 which drives a rejection rather than asserting that a rule exists.
 
 The defect is circularity, and circularity does not crash. A ranking or composite
@@ -23369,6 +23369,68 @@ every governance failure this repository has already paid for.
 | F9 | `layer_rank` had only a `>= 0` CHECK, so `('expected_games', 'terminal', 0)` was accepted | `ck_data_layer_registry_layer_rank_matches_layer` enumerating all seven pairs, in both model and migration |
 | F10 | "COMPARISON feeds nothing" was an accident of it holding the top rank | Asserted as a property of the edge set |
 
+### The second review, and the lesson it repeated back to me
+
+I took a second independent review at `5d7c677`, because the rework above had
+changed enough that the first no longer described the code. It returned nine
+findings, **three blocking**, and all three were the *same defect class I had
+just written two fixes for*: asserting the spelling instead of the artefact.
+
+| # | Defect | How it was demonstrated |
+|---|---|---|
+| 1 | The validator could be **shadowed** - drop `validate_layers` from the import line, define a local no-op of the same name, leave the call site untouched. The package then imported a violating schema without complaint while **57 tests, ruff and mypy were all green**. My AST test could not see it, because the call site still reads exactly right | An import probe: `del TABLE_LAYERS["players"]`, then `import hoops_gm.db.models` |
+| 2 | `test_every_model_module_is_imported_by_the_package` - the test added to close the *first* review's F2 - decided membership with `f"from hoops_gm.db.models.{name} import" in source`. **A commented-out import satisfies it.** That is my own mutation B, unfixed, in a different guard | Wrote a violating `expected_games.py`, commented its import out, got 57 passed |
+| 3 | `IMPORT_TIME_LIMIT` claimed the residual gap was a table mapped *"from outside `db/models/`"*. The scan was `glob("*.py")`, **non-recursive**, so `db/models/valuation/` is inside `db/models/` and completely invisible - a **false** limit statement, which by this repository's own reasoning is worse than a missing one | Created `db/models/valuation/expected_games.py`; 57 passed, rc=0 |
+
+Findings 1 and 2 are now closed by asking the only question that cannot be
+worded around. `test_importing_the_package_is_what_refuses_a_violation` imports
+the package in a subprocess with a violation injected beforehand: whatever the
+call site is spelled as, either the import raises or the test fails.
+`test_every_model_module_is_reached_by_importing_the_package` imports the
+package, then walks `db/models/` **recursively** looking for any module that
+still has tables left to map - importing an already-imported module is a no-op
+via `sys.modules`, so a module the package reached contributes nothing and one
+it missed contributes its tables. Comments, aliases, re-exports, star imports
+and subpackages all come out in the wash. That closes finding 3 as well, and
+`IMPORT_TIME_LIMIT` now states the real gap.
+
+**Finding 4 is the one I would have missed indefinitely.** `PERMITTED_FLOWS`
+carries `observations -> market`, commented "identity only: a published value has
+to say which player it is about". But the edge is *layer*-granular and
+`OBSERVATIONS` is **29 tables**, including `draft_events` - prices a human paid,
+which our own recommendations can have caused, which is exactly why
+`DraftToolUsage` exists - and `absence_splits`, an aggregate we compute. So
+`published_auction_values.ref_id -> draft_events` was **accepted**. Seeding an
+AAV table from observed clearing prices is a tempting, plausible feature and it
+is R38 through a side door, reached from a different corridor than the one the
+first review closed. The edge is now narrowed per-table by
+`MARKET_IDENTITY_SOURCES`, which fails on a stale entry the way
+`SANCTIONED_STORE_OPENERS` does.
+
+The remaining findings were smaller and are all closed: an assertion implying
+sixty foreign keys were constrained when only **5 of 62 are cross-layer**; a
+schema-qualified-name asymmetry that would produce a confusing `has no layer` the
+day someone adds a Postgres schema; and `_clean_database` dropping the schema on
+*teardown* rather than setup, which is the version that reaches into a
+concurrently running lane's database.
+
+**Two of my own factual claims were wrong** and are corrected here. The
+"16 undeclared identifier columns" figure came from an unstated heuristic and is
+not reproducible; the reproducible count is **10** columns ending `_id` with no
+declared foreign key, and `FLOW_SCAN_LIMIT` now says so and says how to count
+them. And the restored-hash line below was taken at `71ec2e6`, before `layers.py`
+changed again - the reviewer re-drove all of those mutations at head rather than
+trusting the table, and they still hold.
+
+What survived: the reviewer confirmed 40 tables, 40 seed rows, 62 foreign keys,
+0 violations, 17 edges independently; verified `LAYER_RANK` is genuinely
+descriptive by exhaustive grep; drove migration `0019` up and down on **both**
+dialects and confirmed all four CHECKs on the real Postgres table; confirmed all
+three scope-limit constants are load-bearing rather than decorative; confirmed
+`FLOW_MATRIX_SIZE = 42` does force an eighth layer through review; and confirmed
+that a migration-created but never-mapped table, though invisible to `layers.py`,
+is caught by `test_models_and_migrations_agree`.
+
 ### The correction that matters: rank cannot express independence
 
 My first version ordered the layers and permitted a flow when
@@ -23409,11 +23471,37 @@ availability model overrides this; it never blends with it" - an invariant its
 I agree with the diagnosis and cannot apply the remedy. Under F3's strict market
 rule, `MARKET` accepts nothing derived from us, and this table carries a
 `projection_id -> projections` foreign key that would become a violation the
-moment it moved. **F3 and F6 conflict and the reviewer did not reconcile them.**
-I have left it at `PROJECTIONS` with the conflict, the reasoning, and the honest
-limit - *"never blends" is a convention here, not something the schema enforces* -
-written into the `TABLE_LAYERS` comment. This needs `quant` or the architect, and
-it is the one place where the unit's promise is weaker than it reads.
+moment it moved. **F3 and F6 conflict and the first reviewer did not reconcile
+them.** I have left it at `PROJECTIONS` with the conflict, the reasoning, and the
+honest limit - *"never blends" is a convention here, not something the schema
+enforces* - written into the `TABLE_LAYERS` comment.
+
+**The second reviewer proposed a resolution neither of us had considered, and I
+think it is right.** The conflict is an artefact of a conflation nobody had
+named: `PROJECTIONS` currently holds *two different kinds of thing*.
+`projection_sources`, `projection_imports`, `projections` and
+`source_games_played_assumptions` are all somebody else's per-game rates,
+imported; `opponent_context` and `off_night_slates` are **our** modelling output.
+The strict market rule says the market consumes nothing *we* derived - and
+`projections` today is not something we derived. So the FK is a reference from
+one half of an imported product to the other half, which ADR-008's "What would
+flip this" explicitly blesses.
+
+The proposal is to split the vocabulary rather than move the table: add
+`SOURCE_PROJECTIONS` (external, decomposed, imported) distinct from `PROJECTIONS`
+(ours). The import chain sits there with the FK intact, `MARKET`'s strict rule is
+untouched, and `SOURCE_PROJECTIONS -> AVAILABILITY` can be **refused** - which
+turns "the availability model overrides this and never blends it" from the
+convention I flagged into a mechanism. That is the actual complaint in F6, and
+`MARKET` was never the right instrument for it.
+
+I have **not** implemented it. It adds an eighth layer, which `FLOW_MATRIX_SIZE`
+correctly forces through review, and it reclassifies tables `quant` owns the
+meaning of. It is a `quant` + architect call and both reviewers agree it should
+not block this merge. On the foreign key itself I agree with the second reviewer
+against my own earlier framing: `projection_id -> projections` records that the
+assumption was stripped from that specific row, and deleting true lineage to make
+a check pass is the failure mode this repository already names.
 
 ### Whether `main` was already violating this
 
@@ -23448,10 +23536,29 @@ by SHA-256 before the next:
 | G | A model module on disk left out of the import list | CAUGHT |
 | H | The migration's layer/rank CHECK weakened | CAUGHT |
 
-Restored hashes: `layers.py` `611C2EF7...`, `models/__init__.py` `185E8689...`,
-`models/layers.py` `2D38148D...`, `0019_layer_registry.py` `F2DFD9B4...`.
+Restored hashes, **taken at `71ec2e6`**: `layers.py` `611C2EF7...`,
+`models/__init__.py` `185E8689...`, `models/layers.py` `2D38148D...`,
+`0019_layer_registry.py` `F2DFD9B4...`. `layers.py` has changed twice since, so
+that first hash no longer describes the branch - the second reviewer caught the
+staleness and re-drove A, C and D at head rather than trusting the table. They
+still hold.
 
-**The first run of this was the useful one: B and F were NOT CAUGHT.** Both were
+A second round of five mutations was driven after the second review, against the
+guards written to close it:
+
+| | Mutation | Result |
+|---|---|---|
+| 1 | `validate_layers` shadowed by a local no-op | CAUGHT |
+| 2 | Model module present, its import commented out | CAUGHT |
+| 3 | Model module inside `db/models/valuation/` | CAUGHT |
+| 4 | `draft_events` added to `MARKET_IDENTITY_SOURCES` | CAUGHT |
+| 5 | An identity source renamed to a stale entry | CAUGHT - **pytest exit 4** |
+
+Mutation 5 exiting 4 rather than 1 is the point: a stale identity exemption fails
+at *import*, so it takes the whole suite down rather than one file. Restored
+`models/__init__.py` `185E8689ACBC3733`, `layers.py` `511367FF1F28AB7E`.
+
+**The first run of the first round was the useful one: B and F were NOT CAUGHT.** Both were
 guards I had written specifically to close review findings, and both were inert:
 
 - **B** asserted `"validate_layers(Base.metadata)" in source`. A substring
@@ -23464,7 +23571,9 @@ guards I had written specifically to close review findings, and both were inert:
 
 Both lessons are in the test docstrings rather than here, because that is where
 the next person meets them. The general form: **a test that calls the helper
-instead of reading the artefact is testing the helper.**
+instead of reading the artefact is testing the helper.** I wrote that sentence,
+and then the second review found three more places where I had done exactly it.
+It is not a lesson you learn once; it is a question to ask of every guard.
 
 ### The failure message is the user interface
 
@@ -23486,9 +23595,10 @@ a stale one, so an exemption cannot outlive its cause.
   Full suite green on both dialects at the head recorded below - SQLite, and
   Postgres 16.9 via `TEST_DATABASE_URL` against an isolated database, because
   the shared one would collide with the lanes running concurrently.
-- **Independent review.** Obtained from a non-`backend` agent. The first was
-  against `261499a`; a second was taken against the reworked head, since the
-  rework changed enough that the first no longer described the code.
+- **Independent review.** Two, both from non-`backend` agents. The first was
+  against `261499a` and returned ten findings; the second against the reworked
+  `5d7c677` and returned nine, three blocking. All twelve closed, one escalated.
+  A third has not been taken against the current head.
 - Not a Model gate: this unit computes no quantity. Not an Adapter or Automation
   gate: it touches no external source and nothing in the write path.
 
@@ -23528,9 +23638,10 @@ a stale one, so an exemption cannot outlive its cause.
 - **That the closed set is closed under Python.** The check reads *declared
   foreign keys*. A value copied from one layer to another in application code
   leaves no key and is invisible to it, as is an undeclared identifier column -
-  there are **16** such columns in the schema today. `FLOW_SCAN_LIMIT` states
-  this as an asserted constant rather than a comment, so deleting the limitation
-  breaks a test, but the limitation is real and it is the largest one.
+  there are **10** columns ending `_id` with no declared foreign key today, a
+  figure now reproducible from `Base.metadata` rather than the unstated 16 I
+  first reported. `FLOW_SCAN_LIMIT` states this as an asserted constant rather
+  than a comment, but the limitation is real and it is the largest one.
   *Reasoned, not driven.*
 - **That table granularity is sufficient.** `draft_events.amount` is a live R38
   case - a market quantity on a table that is not a market table - and this unit
@@ -23540,21 +23651,37 @@ a stale one, so an exemption cannot outlive its cause.
 - **That `PERMITTED_FLOWS` is the right 17 edges.** I derived them from ADR-008
   and from what the schema already does. Each has a written reason, and the
   matrix is asserted complete, so no pair is undecided by accident - but
-  "completely decided" is not "correctly decided", and only the architect can
-  say the second. *Reasoned.*
-- **F6, entirely.** See above. I could not resolve it and did not want to pick a
-  side quietly.
+  "completely decided" is not "correctly decided". The second review checked all
+  25 refused cross-layer pairs against ADR-008 and called them correct, and
+  found the one permitted edge that was too wide (finding 4). That is two
+  readings agreeing, not a proof. *Reasoned.*
+- **That `MARKET_IDENTITY_SOURCES` is the right three tables.** Only `players`
+  is referenced today; `nba_teams` and `player_external_ids` are there because
+  they are identity by the same argument, and neither is exercised. A member
+  that stopped being an observations table would fail, but a member that is
+  simply *wrong to include* would not. *Reasoned.*
+- **F6, entirely.** See above. Two reviewers and I reached three different
+  answers, and the third - splitting `SOURCE_PROJECTIONS` out of `PROJECTIONS` -
+  is the one I now think is right and the one I did not build.
 - **That the seven-member vocabulary is stable.** `COMPARISON` exists so that
   clause 3's permitted model-versus-market comparison remains expressible. No
   table sits there yet, which means the edges into it have never been exercised
-  by real data. *Reasoned.*
+  by real data. If F6 is resolved as proposed there will be eight. *Reasoned.*
 - **Postgres CI specifically.** I ran Postgres 16.9 locally against an isolated
-  database. I did not run the CI job itself, and a local Postgres pass is not the
-  same evidence as a CI Postgres pass. *Driven locally, not in CI.*
+  database, and the second reviewer independently drove `0019` up and down on
+  its own isolated database. Neither of us ran the CI job itself, and a local
+  Postgres pass is not the same evidence as a CI Postgres pass. *Driven
+  locally, not in CI.*
 - **Behaviour under a real migration history.** `0019` was exercised
   up-and-down from empty and from a store already at `0018`, but not against the
   owner's live store, which I do not have. F7 exists because the first version
   of the drift test hid exactly this gap. *Partially driven.*
+- **That the guards are now sufficient.** This is the honest one. Two
+  independent reviews found thirteen findings between them, six of the first
+  ten and three of the second nine being *guards that passed while doing
+  nothing*. The rate did not fall much between rounds. I have no reason to
+  believe a third review would find zero, and I would rather that were said out
+  loud than discovered later. *Known, unmitigated.*
 - **That no concurrent lane introduces a table this rejects.** The freeze means
   I verified against `f3e2c53` and have not rebased. Three lanes are in flight;
   if one of them adds a table, it meets an `ImportError` at rebase rather than a
