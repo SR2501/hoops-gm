@@ -23899,3 +23899,273 @@ here so the option is refusable again rather than rediscovered.
   review comment. That is the intended behaviour and it is also, for whoever
   hits it, an unpleasant surprise. The message is written for that person.
   *Known, unmitigated.*
+## 2026-08-23 - `quant` - Calibration machinery built with the answers still sealed, and the hole the pooled table cannot see
+
+Base verified: `f3e2c53c11501ece45f9eff4cc09b2f29bfb4c1e`, matching `origin/main`
+at start. **Merge freeze respected — not rebased.** Code gate only; I fitted
+nothing and read no outcome.
+
+### 1. The blind held, and here is what "held" means concretely
+
+No file in this unit opens `player_participation`, a cohort database, or any
+conversion rate. §5 selection and §6 model selection were not run. The only real
+numbers used are **predictor-side published counts** from
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json` and
+`docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json`, both of
+which state that no outcome *value* is published in them
+(`disclosure_surface.no_outcome_value_is_published_here`). Every play rate
+appearing anywhere in the tests is an **argument I chose**, deliberately
+fictional, and the test module says so in its docstring so no later reader
+mistakes a synthetic outcome for a measured one.
+
+The reason this matters is not the held-out blind. v3 §5 — the section arguing
+the amendment is legal — asserts its author knows no status's conversion rate.
+Running the fit while v3 is unbound would not spend a blind, it would
+**retroactively remove the property that makes v3 bindable**, and no later
+evidence could restore it. So the machinery was written first, by someone who
+cannot be steered by the answer, which is the only window in which that is
+true.
+
+### 2. The dilution arithmetic, re-derived rather than accepted
+
+From `section_2_admissibility.held_out_direct_outcomes_by_status` —
+`out` 2,963, `available` 467, `questionable` 335, `probable` 92, `doubtful` 83.
+
+- Held-out total **3,940**; informative (`questionable` + `probable` +
+  `doubtful`) **510**.
+- Informative share = 510/3,940 = **51/394 = 0.1294416243654822…**
+- A model exactly right on the other 87.06% and wrong by δ on *every*
+  informative row shows a pooled calibration-in-the-large error of `0.129441·δ`.
+- Breaching 0.10 therefore needs **δ > 197/255 = 0.7725490196…**
+
+Computed with `fractions.Fraction`, so those are exact and not float artefacts.
+v3's "0.773" is that to three significant figures. Driven in
+`test_v2_condition_three_survives_a_seventy_seven_point_error_and_fails_at_seventy_eight`,
+which asserts the condition survives at δ = 0.77 and fails at δ = 0.78.
+
+### 3. The dilution argument is not the strongest form of the finding
+
+v3 §4 argues conditions 2 and 3 are near-unfailable from dilution alone. That is
+right, but **it understates one thing and overstates another**, and both matter
+for what the owner is being asked to bind.
+
+**It overstates, because §4 does not analyse condition 5.** Under
+distinct-emitted-probability binning, per-bin Wilson coverage supplies real
+per-status protection wherever a status gets its own bin: the Wilson half-width
+on `questionable` at n = 335 is ≈0.054, comfortably tighter than 0.10. So a
+five-status model is not nearly as unconstrained as the calibration-in-the-large
+argument alone suggests.
+
+**It understates, because the actual hole is masking under a pooled band, and
+condition 5 does not touch it.** v2 §5 pre-registers `three_band_jeffreys`, which
+pools `out` with `doubtful`. Held out those are **2,963 and 83** — 35.7 to 1 — so
+the band rate is set by `out` and `doubtful` is predicted at whatever `out` does.
+If each band emits its own realised rate, every bin gap is **exactly zero**:
+calibration-in-the-large 0.0, ECE 0.0, condition 4 passes, condition 5 passes
+because the band is one bin and that bin is exactly right, and no monotonic
+reversal appears. Meanwhile the `doubtful` cell can be wrong by any amount at
+all.
+
+I built that model on synthetic data and drove it:
+`test_a_band_model_right_in_aggregate_clears_every_computable_pooled_condition`
+clears every computable pooled condition while `doubtful` (n = 83, fictional rate
+0.90) is predicted at the band's 134/3046 ≈ 0.0440 — **about 86 percentage points
+wrong**. `test_subgroup_restriction_exposes_the_status_the_pooled_table_masked`
+then shows restriction is what sees it.
+
+That is a claim about what the **condition set can detect**, not a prediction
+about the real fit, which I have not seen and will not. But it means the case for
+a restricted table does not depend on the dilution bound at all, and it survives
+even if someone disputes the 0.7725.
+
+### 4. Subgroup restriction is a first-class operation in the tool regardless of v3
+
+`restrict()` filters a cohort by exact label match on every requested key and
+**refuses an empty result rather than returning an empty report** — a restriction
+that silently matches nothing is the failure mode that would make this whole
+apparatus decorative. Whether the *gate* may use a restricted table is the
+owner's v3 call and nothing here presumes it. Whether the *tool* can is settled:
+it can, and the post-hoc diagnostic is worth having even if v3 is declined.
+
+The guard that keeps those separate is a `Provenance` enum required on every
+report — `PREREGISTERED_V2` / `PROPOSED_V3_NOT_BOUND` / `POST_HOC_DIAGNOSTIC` —
+and **a restricted report may never claim `PREREGISTERED_V2`**, because v2 §7
+pre-registers a pooled table only. That guard keys on *the presence of a
+restriction*, not on a mutable "is v3 bound yet?" flag, so it stays sound
+whichever way the owner rules and cannot drift if someone later flips a config.
+
+### 5. Conventions pinned now, one of them deliberately against my own interest
+
+Every estimator carries convention choices that change a verdict. Fixed before
+an unblind they are conventions; fixed after, they are choices made knowing which
+way they push. All are pinned in `DECLARED_CONVENTIONS` and copied into every
+report payload, so a later reader can check they were not tuned to a result.
+
+- **Wilson, no continuity correction.** The corrected interval is strictly
+  *wider*, which makes v2 §8 condition 5 strictly *easier* to pass. I took the
+  narrower, stricter arm. `test_wilson_interval_is_narrower_than_its_continuity_corrected_form`
+  proves the direction rather than asserting it.
+- **`round(p, 12)` before grouping distinct probabilities.** v2 §7 wants one row
+  per distinct emitted probability; raw float grouping splits `0.1 + 0.2` from
+  `0.3` into two half-population bins and could fail condition 4 for a purely
+  numerical reason. **A wrong veto is as bad as a wrong pass.**
+- **ECE weighted by observations, not by bin.** Bin-weighting is the same defect
+  family as scoring a 90% FT shooter on one attempt.
+- **Log loss clipped to `[1e-15, 1-1e-15]` with the clipped-row count reported**,
+  so a finite log loss can never quietly be finite only by convention.
+- **CITL sign is `mean(predicted) − observed`**; positive over-predicts play.
+- Wilson is verified against **its defining inequality solved by bisection**, not
+  against a second copy of the closed form — an independent derivation, so a
+  transcription error in the closed form cannot pass by agreeing with itself.
+
+### 6. Fourteen pathologies, each driven red
+
+Green tests prove nothing about a machine nobody has shown a broken input to. I
+wrote `scripts/mutate_calibration.py` on the `mutate_seed_demo.py` pattern —
+anchor must match exactly once, mutation must change the file, only `rc 1` with a
+parsed `N failed` counts as caught, files asserted byte-identical afterwards,
+SKIP and harness failure both count as failure.
+
+```
+baseline: 48 passed, rc=0
+[M01 provenance guard disabled (a restricted report may claim v2)]      CAUGHT(1 failed)
+[M02 Wilson interval loses its z^2/4n^2 term]                           CAUGHT(2 failed)
+[M03 expected calibration error unweighted over bins]                   CAUGHT(1 failed)
+[M04 calibration-in-the-large sign flipped]                             CAUGHT(6 failed)
+[M05 monotonic reversal comparison flipped]                             CAUGHT(4 failed)
+[M06 subgroup restriction widened from all to any]                      CAUGHT(1 failed)
+[M07 distinct-probability grouping without the ulp rounding]            CAUGHT(1 failed)
+[M08 log-loss clips stop being counted]                                 CAUGHT(1 failed)
+[M09 population floor check never fires]                                CAUGHT(1 failed)
+[M10 emitted probability always declared inside its Wilson interval]    CAUGHT(4 failed)
+[M11 exact_plays returns to banker's rounding]                          CAUGHT(1 failed)
+[M12 band order inferred rather than declared]                          CAUGHT(2 failed)
+[M13 an out-of-range injected error is clipped instead of refused]      CAUGHT(1 failed)
+[M14 final equal-width bin left half-open]                              CAUGHT(1 failed)
+
+=== 14 mutations: 14 caught, 0 survived, 0 harness failures ===
+```
+
+**Scope, attached:** against the tree committed with this entry, on base
+`f3e2c53`, those fourteen specific corruptions of
+`backend/src/hoops_gm/availability/calibration.py` and
+`calibration_synthetic.py` are each detected by at least one test, and I drove
+every one. It says nothing about a fifteenth.
+
+M12 is the one that taught me something. `detect_monotonic_reversals` is
+**invariant under reversing the band order** — the sign products of consecutive
+steps both flip — so a naive "read the order backwards" mutation survives. The
+mutation that catches it replaces the declared order with `sorted(order)` against
+a deliberately non-alphabetical declared order `("beta","alpha","gamma")`, where
+a reversal exists only alphabetically. A detector can be correct and still have a
+symmetry that makes a whole class of mutation invisible.
+
+### 7. `scripts/test_name_diff.py main` compared against the wrong base and manufactured a phantom deletion
+
+Predicted before running: 48 added, 0 dropped. What `python scripts/test_name_diff.py main`
+actually reported was hundreds added — including `test_yahoo_stores_both_kinds_for_the_same_player_and_date`
+and `test_vitest_paths_are_made_relative`, which are plainly not mine — and
+**`DROPPED (1): test_schedule_import_refuses_a_cohort_with_unresolved_games`**,
+which I never touched. Read at face value that is a lane having silently deleted
+another lane's test.
+
+It is nothing of the kind. **The local `main` ref in this worktree is
+`9d7e791`, and `origin/main` is `f3e2c53`** — local `main` is *behind*, because
+nothing in a worktree fast-forwards it. `git rev-list f3e2c53..main` is empty and
+`git merge-base HEAD main` returns `main` itself, which is how I confirmed the
+direction rather than guessing it. The diff was against a five-PR-stale base, and
+the "dropped" test was renamed or removed by a PR that landed *before* my base.
+
+Against `origin/main` the answer is what I predicted: **1,557 → 1,605 test
+function names in `backend/tests`, ADDED (48), nothing dropped.**
+
+The trap is that `main` is the obvious argument, it is spelled the way the
+docstring spells it, and **a stale base produces a report that looks exactly like
+a real deletion** — the same "absence that reads as an ordinary result" shape as
+the `-qq` finding two entries above. **Pass `origin/main`, or fetch and
+fast-forward `main` first.** Full suite: **1,835 passed, 32 deselected** — 1,787
+baseline + 48, predicted before the run and matched.
+
+### 8. Gate judgement, stated as a judgement so it can be overruled
+
+I claimed **Code gate only** and I want that read as an argument, not a
+disposal. `docs/backlog.md:1588-1595` is binding precedent that no gate may be
+waived by the agent it applies to, so this is for the architect.
+
+The Model gate applies to work "producing a number a decision rests on". This
+module produces no such number: it is a deterministic **estimator of a report**,
+it fits nothing, it has no training window and no held-out partition. You cannot
+hold data out from a formula, so the honest discharge of "backtest against
+held-out data" for a deterministic estimator is **verification against
+analytically known values**, which is precisely what the synthetic suite does —
+a perfectly calibrated generator, an overconfident one, an underconfident one,
+and one well-calibrated in aggregate but badly calibrated in a subgroup.
+
+**One word-collision worth flagging explicitly**, because it is exactly the kind
+of thing that makes a gate argument look wrong later: `gates.md` names
+"reliability metrics" in the Model gate's applies-to list. That means the
+existing player-consistency model in `docs/models/reliability-metrics.md`. It
+does **not** mean a *reliability diagram*, which is a calibration plot. Different
+senses of "reliability", and I would rather name the ambiguity than quietly rely
+on my reading of it.
+
+Two Model-gate bullets bite regardless and are satisfied anyway: the output is
+**versioned** (`CALIBRATION_MACHINERY_VERSION` plus `declared_conventions` in
+every payload), and **what it cannot see** is stated in the module docstring.
+
+**The caveat that actually matters:** when this machinery later produces the §7
+held-out table, *that report* is Model-gated, and this module is load-bearing
+inside it. Nothing here is a pre-emptive discharge of that gate.
+
+### 9. Model card skeleton, written before the fit on purpose
+
+`docs/models/injury-status-conversion.md`, per the `docs/models/README.md`
+normative minimum, with **every results field reading `NOT YET COMPUTED — blind
+in force`** and a change-log rule that the next entry must state the date the
+blind was broken and under which pre-registration version.
+
+The point is not tidiness. A card written after a fit records whatever metrics
+happened to flatter it; written before, it stops the fit defining its own success
+criteria afterwards. It also carries the disclosure v3 §6 asks for: **3,822 of
+13,789 observations — 27.72% — carry a stated reason that is not a health
+event** (`G League` 3,385 = Two-Way 2,828 + On Assignment 557, `Not With Team`
+247, `Personal Reasons` 82, suspensions 56, `Trade Pending` 37, `Coach's
+Decision` 15), and **41 of 221 `doubtful` are `G League`, 18.6%** — a roster
+mechanic with no reason to share injury-`doubtful`'s conversion rate.
+
+A small thing I noticed while counting those, which cuts against the house rule
+in an instructive direction: 7 of the 97 `Rest` rows carry the subcategories
+`Left Knee - Injury Management` and `Left Knee Injury Management`. The rule is
+that rest is laundered as a minor ailment; here the ailment is filed under rest.
+The reasons are unreliable in **both** directions, so a health/non-health split
+built on the stated category is itself a stated-reason artefact, not ground
+truth.
+
+### What I could not verify
+
+- **That the machinery is right on real data.** It has never been shown a real
+  outcome and by design cannot be until the owner rules on v3. Everything
+  asserted is asserted about synthetic cohorts whose properties I chose.
+  *Driven on synthetic, unverifiable on real by construction.*
+- **That the fourteen mutations exhaust the ways this code can be wrong.** They
+  are fourteen I thought of. M12 exists only because a first attempt survived a
+  symmetry I had not noticed, which is direct evidence that my imagination is the
+  binding constraint here. *Driven for fourteen, reasoned for the rest.*
+- **The full-scale bootstrap.** Defaults are 5,000 resamples at the v2 §7 seed
+  250119; tests exercise 200-400 for runtime. I have not run 5,000 × 3,940 in
+  pure Python and my estimate of 10-20 s is arithmetic, not a measurement.
+  *Reasoned.*
+- **That `origin/main` was still `f3e2c53` when this was committed.** I verified
+  it at the start and again before the name diff. Three lanes are running and I
+  did not re-fetch immediately before committing, because the freeze says not to
+  move. *Driven at two points in time, not at the third.*
+- **Whether the ~86-point masking gap is anywhere near what the real fit would
+  do.** I constructed it to be extreme so the detector had something unambiguous
+  to catch. The real `doubtful`/`out` gap could be small enough that pooling is
+  harmless — I have no way to know and did not look. The finding is that the
+  condition set **cannot tell the difference**, not that a difference exists.
+  *Driven as a possibility, unknown as a fact.*
+- **That local `main` being stale is a worktree-wide fact rather than mine
+  alone.** I verified it in this worktree. Other lanes may have fetched. If it is
+  general, every lane running `test_name_diff.py main` today got a phantom
+  dropped test. *Driven here, reasoned for the others.*

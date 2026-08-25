@@ -62,7 +62,10 @@ A model that says 70% and is right 70% of the time is more useful for a lineup d
 
 - [`schedule-context.md`](schedule-context.md) — opponent context and blowout probability
 - `availability.md` — per-game `p(play)`
-- `injury-status-conversion.md` — report status → actual play rate
+- [`injury-status-conversion.md`](injury-status-conversion.md) — report status →
+  actual play rate. **Skeleton only**: written before the fit, under an unbroken
+  blind, so the fit cannot afterwards define its own success criteria. Every
+  results field reads `NOT YET COMPUTED`
 - `shutdown-risk.md` — late-season shutdown probability
 - `baseline-production.md` — in-house per-game production model. **Deferred:**
   [`projection-strategy.md`](projection-strategy.md) recommends not building this
