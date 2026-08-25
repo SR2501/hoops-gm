@@ -1365,3 +1365,171 @@ must consume this cohort preserving the unresolved identities and the two R35
 unknowns as missing evidence rather than as negative outcomes, and treating
 positional composition as unestablished rather than as the withdrawn G/F/C
 figures.
+
+## Predictor crosses: recomputing what existed only in a chat window
+
+`scripts/cohort_predictor_crosses.py` prints three crosses over the committed
+2025-26 cohort: `reason x status`, `era x lead-time band`, and
+`partition x status`. It exists because two of them were computed during the
+review of PR #92 and were never written down anywhere a second person could
+reach. One underpins a claim in
+`docs/models/injury-status-conversion-preregistration-v3-PROPOSED.md` that its
+own author flagged as *"a number I will be graded against, asserted on my
+authority, with no table behind it"*. §6 of that document explicitly asks the
+ingestion lane to supply `reason_category x status`; this is that supply.
+
+**What it reproduces, and what that proves.** Before printing anything it
+re-derives the manifest's canonical selection and asserts **two** published
+marginals against `nba-injury-report-cohort-2025-10-21--2026-04-12.json`:
+`canonical_observations.status_counts` and
+`reason_evidence.stated_reason_categories`. A mismatch prints both sides and
+exits non-zero. That validation is the load-bearing part and it is proved
+load-bearing by experiment rather than by assertion - perturbing either marginal
+by one, or moving the scope window by six weeks, each makes it refuse. A cross
+computed by a selection that does not reproduce is worse than no cross, because
+it looks like evidence.
+
+**Two marginals are necessary and not sufficient, and the gap is named rather
+than papered over.** Independent review supplied the counterexample: swap the
+reason labels of an `out` row and a `doubtful` row and both marginals survive
+untouched while cells of the reason cross move. The sufficient check is the
+canonical identity fingerprint the artifacts already publish, and recomputing it
+from the store needs each row's **NBA player id** - which lives in a player
+identity table, a third table, where this script's hazard rule says two. That
+rule exists because `player_participation` sits in the same SQLite file, so the
+weaker validation is a deliberate trade and not an oversight. Two cheaper checks
+close what they can: `nba-injury-report-cohort-2025-10-21--2026-04-12.json` and
+`nba-injury-report-cohort-admissibility-2025-26.json` publish the **same**
+canonical fingerprint under two different key names
+(`canonical_observations.sha256_sorted_stable_records` and
+`fingerprints.sha256_sorted_canonical_identity_records`, both
+`8e198622...`), and the script refuses if they diverge - which is what makes it
+legitimate for the held-out bound to combine a count from one with a count from
+the other; and it compares the distinct-game-date sizes of all three partitions
+against `split_game_dates` (82/41/41), because a partition can keep its
+endpoints and change its interior. Both were mutation-tested: a forced
+fingerprint divergence refuses at exit 2, and a shifted `split_game_dates`
+withholds the bound with the reason printed while the three crosses still print.
+
+Both reviewer tables reproduce exactly. `Injury/Illness` splits
+6938/171/1044/390/1123 across out/doubtful/questionable/probable/available;
+`G League` splits 2960/41/134/43/207. Era against band gives legacy
+308/2789/1119/34 and short-lead 3783/4048/1676/32, so the share of reports filed
+inside the final hour goes from **7.2% to 39.7%** across the era boundary - the
+5.5x that is the sharpest committed evidence that the two eras are not one
+population.
+
+**One figure is corrected, and the correction is `quant`'s to accept.** v3
+reads `doubtful`'s health-reason held-out floor as *"~74 ... 2.5x headroom"*,
+reasoned rather than derived. It is now bounded: held-out **canonical**
+`doubtful` is 84, of which 10 are `G League`, so 74 are not; the committed
+admissibility artifact publishes held-out **direct** `doubtful` as 83, and
+direct observations are a subset of canonical ones, so exactly one canonical row
+is not direct and **non-G-League** direct `doubtful` lies in **[73, 74]** -
+between 2.43x and 2.47x the floor of 30, against the 2.77x the unsplit count
+suggests. The conclusion is unchanged and the number now has arithmetic behind
+it. It is derived from two already-committed integers and a subset relation:
+**no join, no outcome, nothing under the blind.** The bound is withheld rather
+than printed if the artifact's held-out range is not the one computed here, or
+if its `split_game_dates` sizes are not the ones this selection partitions into
+- the subset relation needs both halves to describe the same partition, §4's
+boundaries are `quant`'s parameter and free to move while every individual
+number stays perfectly valid, and matching endpoints do not prove matching
+interiors.
+
+**It bounds non-G-League, which is not the same thing as health-reason, and v3
+calls it health-reason.** Independent review caught this and it is worth
+stating precisely, because the two numbers coincide only if every remaining
+category is a health event. The held-out `doubtful` rows are `Injury/Illness`
+68, `G League` 10, `Rest` 4, `Concussion Protocol` 1, `Return to Competition
+Reconditioning` 1. `Rest` is a coach's decision on the same footing as the
+Two-Way recall that justified excluding `G League` in the first place - and
+`AGENTS.md` warns that stated reasons launder rest as ailment in both
+directions, so the classification is genuinely contested rather than merely
+unmade. So **[73, 74] is an upper bound on the health-reason count**, not the
+count. Excluding `Rest` and `Reconditioning` too would give roughly [68, 69],
+which still clears the >=30 floor by more than 2x, so the activation verdict
+does not turn on the choice. The choice is `quant`'s; the arithmetic is
+published either way.
+
+**Why it is a script and not an artifact, stated explicitly rather than left to
+a detector.** `outcome_keyed_field_paths` in
+`hoops_gm.ingest.injury_report.cohort_admissibility` guards the committed
+disclosure surface by finding fields *keyed* by a `ParticipationOutcome` token.
+`reason x status` is keyed by `InjuryReportStatus`. If it were committed as JSON
+under `docs/` it would pass that guard **silently** - not because it is
+admissible, but because the guard does not recognise the shape. These crosses
+are in fact admissible: they are report designations, computed pre-join, and the
+reason categories sum to exactly 13,789, the canonical total, which is itself
+the evidence that they are not outcome-conditioned. That classification is
+recorded here because a thing that passes by non-recognition has not been
+cleared by anybody. Markdown is outside the guard's scope entirely, so the
+paragraph above is a deliberate, classified placement and not an evasion of it.
+
+**The two-table boundary is enforced by the process, not asserted by the
+author.** The script may read `injury_report_entries` and `nba_games` and
+nothing else - `player_participation` is one join away in the same file, and
+v3's legality argument rests on that boundary having been held. `read_only_engine`
+does not hold it: `mode=ro` stops writes and leaves every table in the store
+readable. Read-only and outcome-free are different properties and only the first
+was enforced. `_guarded_engine` installs a **SQLite authorizer** that vetoes any
+read of any other table before SQLite executes the statement. Independent review
+used exactly this technique to check the claim from outside - which is better
+than reading the call graph, since a call graph cannot see a lazily loaded
+relationship firing on attribute access - and having been checked that way once,
+the check belongs in the file.
+
+Both halves were exercised, because a guard that never fires is
+indistinguishable from a guard that is inert. Removing `nba_games` from the
+allow-list makes the run refuse with exit 2 naming the refused table; a control
+read of `player_participation` through the guarded engine is denied while the
+same read on a plain `read_only_engine` returns 43,037 rows, so the denial is
+the authorizer and not an unreadable file. The unmutated run then completes with
+byte-identical output. That last part is the positive claim and the one usually
+skipped: **a permission set of exactly these two tables is *sufficient* to
+compute every number the script prints**, which is a fact about the run rather
+than about anyone's reading of it.
+
+The allow-list is keyed on **table names**, and any outcome vocabulary on the
+`ParticipationOutcome` **type** - never on the word `outcome`. That word is
+overloaded inside this package and the two meanings are *disjoint*:
+`backfill.py` carries eleven `.outcome` attribute reads and not one is a
+participation outcome. They are fetch-coverage outcomes with their own
+vocabulary - `fetched`, `observed`, `legacy_excluded`, `unresolved_evidence`,
+`forbidden`, `not_available` - which intersects `ParticipationOutcome`
+(`played`, `did_not_play`, `did_not_dress`, `inactive`, `not_with_team`,
+`unknown`) in **exactly nothing**. Verified by enumeration, not assumed. A
+safety census keyed on the name would report a dozen crossings in a module that
+performs none, and a reader trusting it would price a three-site fix as a
+package-wide refactor. This is the `gameEt` shape at package scope: a
+self-describing name meaning two unrelated things, where the parse succeeds and
+the meaning is wrong.
+
+**What it will not tell you when it breaks - corrected.** An earlier version of
+this section said `scripts/` sits outside the pytest, ruff and mypy scopes and
+that nothing in CI lints the file. **That is false for mypy.**
+`backend/pyproject.toml` sets `files = ["src", "tests", "../scripts"]` in strict
+mode, and its own comment records why: *"a script that is checked while its
+tests are not is the gap that shipped a broken harness today."* So the file is
+type-checked in CI. It is not executed there and ruff does not reach it. The
+wrong claim came from running `mypy` on the file **by path**, which resolves
+`hoops_gm` from site-packages and reports `import-untyped`, where the configured
+run resolves it from `src` and passes clean - two invocations of the same tool
+giving different answers, and the convenient one believed. Settled by inserting
+a deliberate type error and watching the configured run go red.
+
+What remains true is the part that mattered, though the authorizer narrows it.
+Whoever changes `select_canonical_pregame_observations` or `games_to_backfill`
+underneath it will be told **only if the change reaches a third table**; a
+change to the selection *semantics* within the same two tables - a different
+`WHERE`, a different join key, a different notion of "ready" - is invisible to
+both mypy and the authorizer, because type-checking sees signatures and an
+authorizer sees table names. Neither sees meaning. That residue is what the two
+marginal assertions are for, and they are necessary rather than sufficient.
+It is deliberately not wired into the test suite: the merged store
+is out-of-tree gitignored operational state and is absent in CI, so a test over
+it would either fail permanently or be made to skip, and **a skipping test is a
+green light nobody is holding.** The mitigation is that its first act is to
+refuse loudly - an absent store names the path it wanted, and a selection that
+stops reproducing refuses before printing - so it fails as a red rather than as a
+quietly wrong table.

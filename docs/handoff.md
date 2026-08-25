@@ -22008,3 +22008,567 @@ the gap and names its closure instead.
   unreproducible from the repository and consistent with what is. It does not
   establish that it is correct. Part 2's script will settle it; this entry does
   not.
+## 2026-08-24 - data-engineer - committing two crosses that existed only in a chat window, and bounding a number that was asserted
+
+`scripts/cohort_predictor_crosses.py` recomputes three crosses over the
+committed 2025-26 cohort. Two of them were computed by the `quant` reviewer
+during PR #92 and written down nowhere. One underpins a claim in
+`docs/models/injury-status-conversion-preregistration-v3-PROPOSED.md` that its
+own author flagged: *"the weakest link in v3 - a number I will be graded
+against, asserted on my authority, with no table behind it."* §6 of that
+document asks the ingestion lane for exactly this cross, so this is a
+commissioned supply rather than a volunteered one.
+
+Base `f3e2c53`, not rebased, merge freeze respected. Separate branch and PR from
+the stranded-work recovery: they share no file, and a reviewer of a `scripts/`
+module should not have to hold four adapter artefacts in their head.
+
+### The validation is the deliverable; the tables are the output
+
+Before printing anything the script re-derives the manifest's canonical
+selection and asserts **two** published marginals -
+`canonical_observations.status_counts` and
+`reason_evidence.stated_reason_categories` - against the committed cohort
+manifest. Mismatch prints both sides, keyed, with the differing rows flagged,
+and exits 2.
+
+**Two marginals, not one, and the second is what makes it work.**
+`status_counts` alone passes a selection that has the right rows with mangled
+reason text, and the reason cross is the table the script exists for.
+
+Proved load-bearing by experiment rather than by assertion, because a validation
+nobody has seen fail is a validation nobody has tested:
+
+| mutation | result |
+|---|---|
+| `status_counts.doubtful` 221 -> 222 | refuses, exit 2, names `doubtful 221 vs 222` |
+| `stated_reason_categories["G League"]` 3385 -> 3386 | refuses, exit 2 - the second check fires independently |
+| `scope.end_game_date` -> `2026-03-01` | refuses, exit 2, `available 1020 vs 1489` |
+| `held_out_start` moved a week (admissibility artefact) | **withholds the bound**, prints why, tables still print |
+| held-out direct `doubtful` 83 -> 99, above canonical 84 | **withholds the bound** - direct cannot exceed canonical |
+
+The third matters most. It moves the *selection* rather than the expectation, so
+it proves the script genuinely re-derives the population instead of asserting a
+number against itself. Without it the first two only show that two constants can
+be compared.
+
+The window, season and season type are read from the manifest's own `scope`
+rather than passed in, so a mismatch cannot be caused by the script being
+pointed at a different window than the artefact it checks.
+
+### Both reviewer tables reproduce exactly
+
+`reason x status`: `Injury/Illness` 6938/171/1044/390/1123, `G League`
+2960/41/134/43/207, `Not With Team` 246/1/0/0/0, over
+out/doubtful/questionable/probable/available. Column sums equal
+`status_counts` exactly; row sums equal `stated_reason_categories` exactly;
+grand total 13,789.
+
+`era x band`: legacy 308/2789/1119/34 = 4,250; short-lead 3783/4048/1676/32 =
+9,539. Reports filed inside the final hour go from **7.2% to 39.7%** across the
+boundary - **5.5x**, with the holdout 100% short-lead.
+
+**One correction to the reviewer's abbreviation.** Their table labelled the
+remainder `(9 further) 491`. There are **10** further categories, and they do sum
+to 491 (138 + 15 + 25 + 55 + 82 + 1 + 97 + 40 + 1 + 37). The total is right and
+the row count is off by one. Trivial in itself, and worth naming because it is
+the class of error a chat-window table cannot be checked for and a script can -
+the script prints all thirteen rows and needs no abbreviation.
+
+### The number that was asserted now has arithmetic behind it
+
+v3 reads `doubtful`'s health-reason held-out floor as *"~74 ... 2.5x headroom,
+not 2.8x"*, reasoned rather than derived. It is now **bounded**, and the bound
+needed nothing under the blind:
+
+- Held-out **canonical** `doubtful` is **84**, of which **10** carry the stated
+  reason `G League`, so **74** do not. Report designations only, no join.
+- The committed admissibility artefact publishes held-out **direct** `doubtful`
+  as **83**.
+- Direct observations are a subset of canonical ones, so exactly **one**
+  canonical held-out `doubtful` row is not direct. That row is either `G League`
+  or it is not.
+- Therefore health-reason direct `doubtful` is in **[73, 74]** - between 2.43x
+  and 2.47x the floor of 30, against the 2.77x the unsplit count suggests.
+
+Two already-committed integers and a subset relation. **No join, no outcome.**
+The reviewer's conclusion is unchanged and their `~74` was right; what changed is
+that it is now checkable. The bound is withheld rather than printed if the
+artefact's held-out range is not the one computed here, because the subset
+relation needs both halves to describe the same partition and `quant` may move
+the split. This is `quant`'s figure in `quant`'s PROPOSED protocol, so I have
+recorded it in `docs/adapters/nba-injury-report.md` and left their document
+alone - a data-engineer editing a preregistration is exactly the boundary v3
+exists to protect.
+
+### The §2 blind spot, classified rather than passed
+
+`outcome_keyed_field_paths` detects fields **keyed** by a `ParticipationOutcome`
+token. `reason x status` is keyed by `InjuryReportStatus`. **Committed as JSON
+under `docs/`, it would pass the guard silently** - not because it is
+admissible, but because the guard does not recognise the shape.
+
+It *is* admissible: report designations, computed pre-join, and the reason
+categories sum to exactly 13,789, the canonical total, which is itself the
+evidence they are not outcome-conditioned. That is written down because a thing
+that passes by non-recognition has not been cleared by anyone.
+
+**And the placement has the same problem one level up.** I put the classification
+in `docs/adapters/nba-injury-report.md`, and the guard globs `docs/**/*.json` -
+markdown is outside its scope entirely. So a number in prose is *never* checked,
+which makes markdown the softer target of the two. Naming that here is the whole
+mitigation available; there is no test for it and I am not proposing one, because
+a scanner over prose would be a guard with a worse false-positive rate than the
+thing it guards.
+
+### What this script will not tell you when it breaks
+
+`scripts/` sits outside the pytest, ruff and mypy scopes - all three run with
+`working-directory: backend` - so **nothing in CI executes or lints this file.**
+Measured, not assumed: `python -m ruff check scripts/` reports 12 errors across
+the directory, and `mypy` on a sibling reports the same `import-untyped` class
+mine does. My file is clean under both because I ran them by hand; its siblings
+are not, which is the demonstration.
+
+It is deliberately not wired into the suite. The merged store is out-of-tree
+gitignored operational state, absent in CI, so a test over it would either fail
+permanently or be made to skip - and **a skipping test is a green light nobody is
+holding.** The mitigation is that the script's first act is to refuse:
+
+- No `DATABASE_URL` and no `--store`: refuses, exit 2, naming the merged store's
+  path, saying which store is the right one, and warning that
+  `HOOPS_GM_DATABASE_URL` is silently swallowed.
+- A path that is not a file: refuses through `read_only_engine`, exit 2, saying
+  the fault is the path rather than the schema.
+- A selection that stops reproducing: refuses before printing.
+
+So it fails as a red, not as a quietly wrong table. That is the honest
+mitigation, and it is weaker than a test.
+
+### The boundary it holds
+
+**Only `injury_report_entries` and `nba_games` are queried**, both through the
+committed `games_to_backfill` and `select_canonical_pregame_observations`;
+nothing opens a table directly. The merged store holds `player_participation` -
+43,037 rows - **in the same file**, one line from every query in the script. v3's
+legality argument rests on that boundary having been held, so it is stated in the
+module docstring rather than only in the brief that asked for it. A committed
+script that makes crossing it easy is a standing invitation.
+
+All three crosses are over the **canonical** selection (13,789), not the
+**direct** one (13,598) that `direct_outcomes_by_lead_time_band` uses. They
+differ by the participation join and mixing them yields a table reconciling with
+neither. Stated in the docstring for the same reason.
+
+### What I could not verify
+
+- **That the crosses are correct, as opposed to reproducible.** Everything here
+  is checked against the committed manifest, which was produced by the same
+  selection functions. If `select_canonical_pregame_observations` is wrong, this
+  script reproduces the error perfectly and reports success. It is a
+  reproduction, not an independent measurement, and the marginal assertion
+  cannot tell those apart. *Structural, not fixable from here.*
+- **That the `[73, 74]` bound survives a change to the split** - now checked,
+  after I nearly shipped it as a named gap instead. It reads
+  `held_out_direct_outcomes_by_status` from the committed admissibility artefact
+  and the canonical count from the store; both currently use the same §4
+  50/25/25 boundaries, but nothing forced that, and if `quant` moves the split
+  the two halves come from different partitions while every individual number
+  stays perfectly valid. The script now compares the artefact's
+  `held_out_start`/`held_out_end` against the range it computed and **withholds
+  the bound** on a mismatch, and it refuses if the direct count exceeds the
+  canonical one, which the subset relation forbids. Both mutation-tested: moving
+  `held_out_start` by a week, and setting direct `doubtful` to 99 against a
+  canonical 84, each withhold with the reason printed while the three
+  commissioned tables still print. **What I could not verify is the general
+  case**: I checked the one partition boundary the bound depends on, not that
+  every other cross-artefact comparison in this script is similarly pinned.
+- **Whether `reason x status` should also be published as a committed
+  artefact.** v3 §6 recommends publication; the brief specified a script that
+  prints. Both are satisfied by what landed, but the publication question is a
+  §2 classification decision and is open. Not decided here.
+- **That the ten non-`G League`, non-`Injury/Illness` categories behave as one
+  group.** The script prints all thirteen rows so nobody has to assume it. I did
+  not check whether any of the small categories (`Rest` 97, `Trade Pending` 37)
+  has a conversion profile of its own; that is `quant`'s question and needs the
+  join. *Out of lane, deliberately.*
+
+## 2026-08-24 - data-engineer - independent review response on the predictor crosses
+
+**Unit:** amendment to `sr2501-cohort-predictor-crosses` after independent
+review at exact head `2f498d0`. Base `f3e2c53`, not rebased, merge freeze
+respected.
+
+The review confirmed the blind is intact by a method I had not used and should
+have: it installed a **SQLite authorizer** and observed at runtime which tables
+were actually read. Only `injury_report_entries` and `nba_games`. That is a
+better answer than my static reading of the call graph, because it cannot be
+fooled by a lazy relationship loading something on attribute access. It also
+confirmed the arithmetic of every published figure. Three findings, all real.
+
+### 1. My CI claim was false, in an instructive way
+
+I wrote, in the module docstring, the adapter doc and the commit message, that
+`scripts/` sits outside the pytest, ruff **and mypy** scopes so *"nothing in CI
+executes or lints this file."* **mypy checks it, in strict mode.**
+`backend/pyproject.toml:134` is `files = ["src", "tests", "../scripts"]`, and the
+comment three lines above it says `../scripts` was added deliberately because
+*"a script that is checked while its tests are not is the gap that shipped a
+broken harness today."* I asserted the opposite of a decision the repository had
+written down, in the same file I was reading other configuration out of.
+
+The mechanism is the part worth keeping. I did measure - and got a true answer
+to a different question. Running `python -m mypy scripts/consensus_rederivation.py`
+**by path** resolves `hoops_gm` from site-packages, which ships no `py.typed`,
+so it reports `import-untyped` errors; the *configured* run resolves the same
+package from `src` and passes clean. Two invocations of one tool, two answers,
+and I generalised from the one that agreed with what I already expected. This is
+the "validation of form cannot catch errors of meaning" rule with the tool in
+the role of the mislabelled field: `mypy` reported something perfectly true
+about the invocation I gave it and nothing about the invocation CI gives it.
+
+Settled by experiment rather than argument: I inserted a deliberate
+`return "str"` from an `-> int` function and re-ran the configured `mypy`. It
+went red, naming `../scripts/cohort_predictor_crosses.py`. Reverted, re-ran,
+clean over 192 files. So the script **does** pass strict type-checking in CI,
+which is lucky rather than earned - I had not been aiming at that bar.
+
+Corrected in all three places. What survives of the original point is narrower
+and still true: type-checking sees signatures, not selection semantics, so
+whoever changes `select_canonical_pregame_observations` underneath this script
+still will not be told.
+
+### 2. The bound brackets non-G-League, and I called it health-reason
+
+`health = total - g_league` subtracts G League and nothing else. The held-out
+`doubtful` rows are `Injury/Illness` 68, `G League` 10, `Rest` 4, `Concussion
+Protocol` 1, `Return to Competition Reconditioning` 1. So `[73, 74]` is exactly
+right for **non-G-League** and is an **upper bound** on health-reason.
+
+The reviewer's example is the sharp one: `Rest` is a coach's decision on the
+same footing as the Two-Way recall that justified excluding `G League` in the
+first place. I excluded one roster mechanic and kept another, then labelled the
+result by the property I had not established. And `AGENTS.md` says plainly that
+stated reasons launder rest as ailment - so this is not a tidy-up, it is
+contested, and my label quietly resolved a contested classification in the
+direction that made my number bigger.
+
+I inherited the label from v3 §6, which is where the quantity is called
+"health-reason". Inheriting a label while deriving a number is how a derived
+figure acquires an undeserved claim: the arithmetic is mine and checkable, the
+noun is `quant`'s and was not. Renamed throughout to non-G-League, with the
+residual categories printed beside it and the classification named as `quant`'s
+to make. Excluding `Rest` and `Reconditioning` as well would give roughly
+[68, 69], so the >=30 activation floor clears by more than 2x either way and the
+verdict does not turn on it. **Flagging to `quant`**: v3's "health-reason ~74"
+should read "non-G-League", or the health classification should be stated.
+
+### 3. Two marginals are necessary, not sufficient
+
+Correct, with a concrete counterexample I should have generated myself: swap the
+reason labels of an `out` row and a `doubtful` row and both marginals are
+preserved while cells of the reason cross move. I had described this validation
+as the load-bearing part in three places without ever asking what it does not
+catch.
+
+The sufficient check exists and is published - `_observation_records` keys each
+row by its **NBA player id**, and both artifacts carry the sha256 over the
+sorted records. Recomputing it needs a player identity table: a **third** table,
+where the hazard rule I put in my own docstring says two, and that rule exists
+because `player_participation` is in the same file. So I have not closed it, and
+the trade is now stated in `_assert_marginals` rather than left for the next
+reader to discover behind the words "asserts the published marginals".
+
+Two cheaper checks added, both mutation-tested:
+
+- `_assert_artifacts_agree` - the manifest and the admissibility artifact
+  publish the **same** canonical fingerprint (`8e198622...`) under **different
+  key names**, `canonical_observations.sha256_sorted_stable_records` and
+  `fingerprints.sha256_sorted_canonical_identity_records`. Different names is
+  exactly what makes such a check easy to skip; it does not look like the same
+  field. Refuses at exit 2 if they diverge. This one matters beyond tidiness:
+  the held-out bound takes a canonical count from one artifact and a direct
+  count from the other, and until now nothing established they described the
+  same population.
+- `_assert_partition_interiors` - compares distinct-game-date counts for all
+  three partitions against `split_game_dates` (82/41/41), because the endpoint
+  check I already had cannot see an interior that changed while the first and
+  last dates stayed put. Withholds the bound rather than refusing, since the
+  three crosses are unaffected.
+
+The reviewer also noted the interior weakness independently of the swap
+counterexample; both fixes come from the same observation, that I had been
+checking the shape of the population instead of its identity.
+
+### A bug the mutation harness found, that the review did not
+
+Pointing `--manifest` at a copy outside the repository crashed with an
+unhandled `ValueError` from `Path.relative_to` on the *display* line - after all
+validation had passed. So the flags that exist to make the refusal paths
+testable were themselves untestable against out-of-tree copies, and the only way
+to exercise them was to edit committed artifacts in place, which is precisely
+what nobody should do. Found because the new mutation harness passed both flags;
+my earlier harness only ever passed `--admissibility`. Fixed with a fallback to
+the absolute path, and the reason is in a comment so it does not look like
+defensive noise.
+
+### Verification
+
+- Full mutation suite, all five fire, control passes: M1 `status_counts`
+  doubtful +1 -> refuse exit 2, naming `221 vs 222`; M2 `stated_reason_categories`
+  `G League` -1 -> refuse exit 2; M3 scope end date pulled back six weeks ->
+  refuse exit 2, five statuses differing; M7 fingerprint divergence -> refuse
+  exit 2; M8 `split_game_dates` shifted -> bound withheld with reason, crosses
+  still printed, exit 0.
+- Live run over the merged store: all three crosses unchanged, totals 13,789.
+- `ruff check`, `ruff format --check` clean. Configured `mypy` clean over 192
+  files - and now known to actually include this file.
+
+### Could not verify
+
+- **That the printed crosses are correct rather than merely reproducible.**
+  Unchanged and structural: this reproduces `select_canonical_pregame_observations`.
+  If that function is wrong, this script reproduces the error perfectly and
+  reports success. The fingerprint check would not help - both artifacts were
+  built by the same code.
+- **That the population is the manifest's population**, as opposed to one with
+  the same two marginals. Named above; needs the identity table.
+- **Whether `Rest` should count as a health event.** Deliberately not decided
+  in-lane. `AGENTS.md` says stated reasons are unreliable in both directions,
+  which means the classification cannot be settled from the reason text alone
+  and settling it properly would need the observed pattern - which is under the
+  blind.
+
+## 2026-08-23 — data-engineer — Enforcing the two-table boundary in `cohort_predictor_crosses.py`
+
+**Branch:** `sr2501-cohort-predictor-crosses`. **Base verified:** `f3e2c53` (= `origin/main`), not rebased — merge freeze in force.
+
+Follow-up to the predictor-crosses unit. The script's whole safety claim is *"it
+reads only `injury_report_entries` and `nba_games`"*. That claim was true, and it
+was **asserted rather than enforced**. It now holds by construction.
+
+### `read_only_engine` does not do what the safety argument needed
+
+`read_only_engine` (`cohort_admissibility.py:351`) opens the file `mode=ro`. That
+stops writes. It stops nothing else — every table in the merged store stays
+readable, including `player_participation`. **Read-only and outcome-free are
+different properties and only the first was enforced.** Measured, not reasoned:
+the same `SELECT COUNT(*) FROM player_participation` that the guarded engine
+refuses returns 43,037 rows on a plain `read_only_engine`.
+
+`_guarded_engine` now installs a **SQLite authorizer** on connect that vetoes
+`SQLITE_READ` for any table outside the allow-list before SQLite executes the
+statement. Non-read actions pass through, because vetoing them breaks query
+planning for the reads that *are* permitted.
+
+The technique is borrowed rather than invented: independent review used an
+authorizer to check the claim from *outside* the file. It is a better check than
+the one I originally ran, which was reading the call graph — a call graph cannot
+see a lazily loaded ORM relationship that fires on attribute access, and an
+authorizer does not care how the read was spelled. Having been checked that way
+once by someone else, the check belongs **in the file**, where the next person to
+widen `select_canonical_pregame_observations` will meet it.
+
+### Both halves of the proof, because one half is the false-zero shape
+
+A guard that never fires and a guard that is inert produce identical evidence.
+
+* **Negative half.** Removing `nba_games` from the allow-list: the run refuses,
+  exit 2, naming `nba_games` as refused and `injury_report_entries` as allowed.
+  So the veto path is reachable and the message is actionable — SQLite's own
+  error is the bare string `not authorized`, which tells a reader nothing about
+  *what* was refused, so the denied names are captured in a list the caller
+  reports.
+* **Control.** `player_participation` denied through the guarded engine; the same
+  read succeeds unguarded at 43,037 rows. The denial is the authorizer, not an
+  unreadable file.
+* **Positive half, the one usually skipped.** The unmutated run completes with
+  **byte-identical output** — 0 differing lines against the pre-authorizer
+  capture; 9,666 / 3,385 / 4,250 / 9,539 / 13,789 / 84 all unchanged. This is
+  the stronger claim: not *"no forbidden read was observed"* but **"a permission
+  set of exactly these two tables is sufficient to compute every number
+  printed"**. That is a fact about the run, not about anyone's reading of it.
+
+### The `outcome` name is overloaded and I keyed on the type instead
+
+The architect's warning, which I verified by enumeration rather than inheriting.
+`backfill.py` carries **eleven** `.outcome` attribute reads (1264, 2321, 2446,
+2458, 2463, 2599, 2600, 2602, 2630, 2632, 2638) and **not one** is a
+participation outcome. Two vocabularies:
+
+* fetch-coverage: `fetched`, `observed`, `legacy_excluded`, `unresolved_evidence`,
+  `forbidden`, `not_available`
+* `ParticipationOutcome`: `played`, `did_not_play`, `did_not_dress`, `inactive`,
+  `not_with_team`, `unknown`
+
+**Intersection: empty.** A safety census keyed on the attribute name reports a
+dozen crossings in a module that performs none, and a reader trusting it prices a
+three-site fix as a package-wide refactor. This is the `gameEt` shape at package
+scope — a self-describing name meaning two unrelated things, where the parse
+succeeds and the meaning is wrong. So the allow-list is keyed on **table names**
+and the vocabulary on the **`ParticipationOutcome` type**, and the docstring says
+why, because the next reader will meet the same overloaded word.
+
+I also made the allow-list an allow-list rather than a `player_participation`
+deny-list. A deny-list has to predict what it is forbidding; the store carries
+more tables than the two, several of which reach participation under names that
+do not say so.
+
+### A claim in the adapter doc that the authorizer falsified
+
+`docs/adapters/nba-injury-report.md` said whoever changes the selection functions
+underneath this script *"will not be told"*. That is now too pessimistic and was
+worth correcting rather than leaving as harmless overcaution, since it is the
+sentence a future reader would rely on. Corrected scope: they **will** be told if
+the change reaches a third table; they will **not** be told if the change is to
+selection *semantics* within the same two tables — a different `WHERE`, join key,
+or notion of "ready". Type-checking sees signatures, an authorizer sees table
+names, **neither sees meaning**. That residue is what the two marginal assertions
+are for, and they remain necessary rather than sufficient.
+
+### The blind
+
+**No contact.** Stating that positively rather than by silence: no participation
+outcome was read, published or differenced by this work, and it is now
+mechanically impossible for this script to read one. The one participation figure
+that appears above — 43,037 — is a **row count of the whole ledger**, already
+committed in six documents, and is not an outcome value; the control probe that
+produced it read `COUNT(*)`, and the probe that attempted `SELECT outcome` was
+denied.
+
+### Verification
+
+* Live run, guarded: exit 0, output byte-identical to the pre-authorizer run
+  (`Compare-Object` → 0 lines).
+* Mutation M9 (allow-list shrunk): exit 2, table named. Script restored verbatim.
+* Control probes P1–P4 as above.
+* `python -m ruff format` / `ruff check`: clean.
+* Configured `python -m mypy` from `backend`: **192 source files, clean** — the
+  script is in scope via `files = ["src", "tests", "../scripts"]`, which I
+  previously got wrong and settled with a deliberate type-error canary.
+* `python scripts/test_name_diff.py origin/main HEAD`: nothing dropped. Noting
+  the trap the architect flagged — local `main` in a worktree is `9d7e791`, five
+  PRs behind `origin/main` = `f3e2c53`, and nothing fast-forwards it; a bare
+  `main` manufactures phantom DROPPED names that read as *someone else's* error.
+
+### Could not verify
+
+* **That the crosses are *correct* rather than merely *reproducible*.** Structural
+  and unchanged by this work: the script re-derives the same selection the
+  manifest published, so if `select_canonical_pregame_observations` is wrong, this
+  reproduces the error perfectly and both marginals still match.
+* **That the population is the manifest's population** rather than a different one
+  sharing both marginals. The sufficient check is the record-level fingerprint,
+  which needs NBA player ids — a third table, which my own allow-list now forbids.
+  The two marginals plus the artifact-fingerprint agreement and the partition
+  interior check narrow it; they do not close it.
+* **That the authorizer covers connections this script does not open.** It is
+  installed per-engine, so anything constructing its own engine is outside it. In
+  this file nothing does; that is a property of the file today, not a guarantee.
+* **Whether `Rest` is a health event** — still `quant`'s classification, still
+  undecided in-lane, and settling it properly needs observed patterns, which are
+  under the blind.
+
+## 2026-08-25 — data-engineer — Read-only is not outcome-free: a real guarantee inherited into a context it did not cover
+
+**Branch:** `sr2501-cohort-predictor-crosses`, rebased onto `27131fc` after #96 merged. Recorded here at the architect's request, because the transferable part is not about SQLite and belongs where a stranger will meet it rather than in a review thread.
+
+### The sentence that stops the next person
+
+**Read-only and outcome-free are different properties, and the docstring on
+`read_only_engine` only ever claimed the first.** Someone will read `mode=ro`
+next month and make the same inference. That sentence is the whole entry; the
+rest is why it was needed.
+
+### The chain
+
+Nobody lied and nobody was careless. Each step was true.
+
+1. A lane described its module as *"read-only by construction"*. **True.**
+2. The `quant` reviewer ruled an escaped census site **unclassified, not
+   unguarded**, because *"it can neither create a store nor write into one."*
+   **True — and about writes.**
+3. The architect repeated that ruling twice, including in the brief that
+   commissioned this script, as though read-only implied outcome-free.
+4. I wrote a module docstring asserting the two-table boundary and cited the
+   read-only engine as part of why it held.
+
+Then it was measured rather than argued: the exact read the guarded engine now
+refuses returns **43,037 rows** through a plain `read_only_engine`.
+
+Reading the docstring on `main` afterwards settles it. Every word is about
+**file creation and missing paths** — the withdrawn meaningless-zero claim, and
+#88's correction that `mode=ro` refuses a missing file rather than creating one.
+**Not one word is about which tables you may read.** The guarantee was sound.
+Its *applicability* was what nobody checked.
+
+### Why this shape and not "someone was sloppy"
+
+This is **unexamined inheritance where the hazard is real** — the harder variant,
+because there is nothing false to find. A wrong claim can be falsified by
+checking it. A true claim carried into the wrong context cannot: checking it
+returns *true*, and the check feels like diligence. What has to be checked is
+not the claim but its **domain**, and that is a question nobody thinks to ask
+about a guarantee that has already been verified once.
+
+It is the same sentence the cohort lane wrote about itself two days ago,
+recurring inside the same week through three agents including one who had
+recorded it. Recording it again is not redundancy — the previous record did not
+prevent this, and the reason is that it was filed as an instance rather than as
+a shape.
+
+### The remedy, and the half of it usually left unrecorded
+
+`_guarded_engine` installs a SQLite authorizer vetoing reads outside
+`{injury_report_entries, nba_games}` before SQLite executes the statement. It
+beats the call-graph reading I originally did, because **a call graph cannot see
+a lazily loaded relationship firing on attribute access and an authorizer does
+not care how the read was spelled.**
+
+Most guards are reported by their refusals. That is the weaker half. Stated
+prominently because it is the half that usually goes unwritten:
+
+> **The unmutated run is byte-identical — `Compare-Object` returns 0 lines.**
+> That establishes that a permission set of **exactly those two tables is
+> *sufficient*** to compute every number the script prints.
+
+Not "no forbidden read was observed", which is a statement about what I looked
+for. A **fact about the run**, which is what makes the guard's silence mean
+something. A guard proven only by its refusals has never been shown to be
+compatible with the work actually succeeding.
+
+### Rebase and verification on the new base
+
+* Base: **`27131fc`** (= `origin/main` after #96). Rebased in the window given.
+* Union **predicted before resolving**: 263 base + 3 ours + 2 theirs = **268**.
+  Resolved file counts **268**. The intermediate counts were 266 and 267, one
+  per commit, which is why a mid-rebase count must not be compared against a
+  whole-rebase prediction — I checked each commit's contribution (1, 1, 1)
+  rather than reading 266 as two lost entries.
+* `git diff --numstat origin/main -- docs/handoff.md` → **461 added, 1 removed**;
+  the removed line reappears verbatim and only the *no newline at end of file*
+  marker moved. The two checks answer different questions: the count cannot see
+  a swapped entry, the numstat can.
+* `docs/adapters/nba-injury-report.md` **auto-merged** — disjoint sections, as
+  predicted. No duplicated `##` headings; both #96's third-era section and this
+  branch's predictor-crosses section present.
+
+### The blind
+
+**No contact.** No participation outcome read, published or differenced. The
+43,037 above is a whole-ledger row count, already committed in several
+documents, not an outcome value; the probe that attempted `SELECT outcome` was
+denied by the authorizer.
+
+### Could not verify
+
+* **That this is the last inherited guarantee of its kind in the package.** I
+  found this one because I was writing a safety claim that depended on it. There
+  is no census of *"guarantees cited outside the context they were established
+  in"*, and I do not know how one would be written — the defect is in the
+  citation, not the guarantee, so a scan of guarantees finds nothing.
+* **That the authorizer covers connections this file does not open.** It is
+  installed per-engine; anything constructing its own engine is outside it.
+  True of this file today, not a guarantee about the package.
+* **That the crosses are correct rather than reproducible** — unchanged and
+  structural, restated so it is not lost in a rebase entry.
