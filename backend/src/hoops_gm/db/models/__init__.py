@@ -73,7 +73,7 @@ from hoops_gm.db.models.enums import (
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.injury_report import InjuryReportEntry
-from hoops_gm.db.models.layers import DataLayerRegistry
+from hoops_gm.db.models.layers import DataLayerFlow, DataLayerRegistry
 from hoops_gm.db.models.league import (
     FantasyTeam,
     League,
@@ -121,6 +121,7 @@ __all__ = [
     "CategoryOutcome",
     "Conference",
     "DataLayer",
+    "DataLayerFlow",
     "DataLayerRegistry",
     "DnpReason",
     "Draft",

@@ -4,7 +4,10 @@ ADR-008 requires that every stored quantity records which layer it belongs to.
 :data:`hoops_gm.db.layers.TABLE_LAYERS` is where that decision lives and where
 it is enforced; this table is the same fact **in the database**, so the
 question "what layer is this number?" is answerable from a store alone, without
-the source tree that produced it.
+the source tree that produced it. :class:`DataLayerFlow` stores the companion
+fact - which flows are permitted - because the registry alone leaves only a
+rank comparison expressible in SQL, and this unit found a rank comparison to be
+wrong.
 
 That is not a redundancy for its own sake. The first move when a figure looks
 wrong at 11:59pm is to open the store, and a fact that only exists in Python is
@@ -46,7 +49,7 @@ class DataLayerRegistry(TimestampMixin, Base):
     """One row per mapped table: which ADR-008 layer its rows belong to.
 
     The primary key is the table name rather than a surrogate integer. Unlike
-    every other table here there is no upstream identifier to disagree with —
+    every other table here there is no upstream identifier to disagree with -
     the table name *is* the identity, and a surrogate key would permit two rows
     claiming different layers for one table.
     """
@@ -75,3 +78,45 @@ class DataLayerRegistry(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<DataLayerRegistry {self.table_name}={self.data_layer}>"
+
+
+class DataLayerFlow(TimestampMixin, Base):
+    """One row per permitted ``(source, target)`` edge: the flow rule, stored.
+
+    :class:`DataLayerRegistry` answers "what layer is this number?". Without
+    this table the store cannot answer the question that actually matters -
+    "was this number allowed to depend on that one?" - and a third review
+    showed the consequence is worse than a gap. The only rule expressible in
+    SQL from the registry alone is a rank comparison, and a rank comparison is
+    exactly what this unit rejected: it permits ``valuation -> market``,
+    ``availability -> market`` and ``projections -> market``, each of them R38.
+    Somebody at 11:59pm with the store and no source tree, writing
+    ``WHERE src.layer_rank < tgt.layer_rank``, got the discredited answer, and
+    the warning against doing so lived in a Python docstring - which is
+    precisely what that person does not have. ``market`` and ``terminal`` also
+    share rank 4, so even ``ORDER BY layer_rank`` is ambiguous.
+
+    So the edges are stored. A same-layer flow is always permitted and has no
+    row; the CHECK forbids one, so the table cannot be read as though a missing
+    self-edge meant a refusal.
+
+    Seeded by migration as a literal snapshot, for the same reason the registry
+    is: importing :data:`PERMITTED_FLOWS` would make two representations into
+    one wearing two hats, and remove the only thing that forces a new edge
+    through review.
+    """
+
+    __tablename__ = "data_layer_flows"
+    __table_args__ = (
+        CheckConstraint("source_layer <> target_layer", name="flow_is_between_two_layers"),
+    )
+
+    source_layer: Mapped[DataLayer] = mapped_column(
+        portable_enum(DataLayer, "source_layer"), primary_key=True
+    )
+    target_layer: Mapped[DataLayer] = mapped_column(
+        portable_enum(DataLayer, "target_layer"), primary_key=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<DataLayerFlow {self.source_layer}->{self.target_layer}>"

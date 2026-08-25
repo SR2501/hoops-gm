@@ -258,6 +258,7 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     # Facts about the schema itself. Rank 0 is the honest answer twice over:
     # any layer may read it, and nothing higher may write into it.
     "data_layer_registry": DataLayer.OBSERVATIONS,
+    "data_layer_flows": DataLayer.OBSERVATIONS,
     # --- projections: per-game rates, games-played assumption stripped -------
     "projection_sources": DataLayer.PROJECTIONS,
     "projection_profile_versions": DataLayer.PROJECTIONS,
@@ -310,8 +311,8 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #:   row leaves no foreign key behind.
 #: * An identifier column that holds another table's key *without declaring a
 #:   foreign key* is structural, stored, and still invisible. This is not
-#:   hypothetical here — ``published_auction_values.source_player_id`` and
-#:   ``auction_value_imports.profile_id`` are among sixteen such columns in the
+#:   hypothetical here - ``published_auction_values.source_player_id`` and
+#:   ``auction_value_imports.profile_id`` are two of the ten such columns in the
 #:   schema today. An ``expected_games.seed_published_auction_value_id INTEGER``
 #:   with no foreign key would be exactly the defect ADR-008 forbids and would
 #:   pass.
@@ -335,6 +336,16 @@ FLOW_SCAN_LIMIT: Final = (
     "on an unstated heuristic and review could not reproduce it)"
 )
 
+#: The size of the gap :data:`FLOW_SCAN_LIMIT` describes, pinned so it is checked.
+#:
+#: A scope limit that states a number has to have the number checked, or it is
+#: prose with a figure in it. This one has already gone stale once: an earlier
+#: note claimed sixteen on a heuristic nobody wrote down, and review could not
+#: reproduce it. ``test_the_scope_limits_are_stated`` recomputes this from
+#: ``Base.metadata``, so adding or removing an undeclared identifier column
+#: fails a test rather than quietly widening the gap the constant describes.
+NAKED_IDENTIFIER_COLUMNS: Final = 10
+
 #: What the import-time call does **not** see.
 #:
 #: :func:`validate_layers` reads whatever is mapped onto ``Base.metadata`` at
@@ -352,12 +363,18 @@ FLOW_SCAN_LIMIT: Final = (
 #: non-recursive glob, blind to ``db/models/valuation/`` while this very
 #: constant claimed subpackages were covered. Asking what importing the package
 #: actually mapped is the form that cannot be worded around. The limit stated
-#: here is what remains: a table mapped from outside ``db/models/`` entirely —
-#: a test fixture, a plugin, a REPL — is still invisible.
+#: here is what remains. A table mapped from outside ``db/models/`` entirely -
+#: a test fixture, a plugin, a REPL - is invisible. So is a module that declares
+#: its own ``DeclarativeBase``: its tables land on a different ``MetaData``,
+#: which neither this check nor Alembic autogenerate reads. Both are named
+#: because a third review found the previous wording stated one residual as
+#: though it were the only one, which is the same false-limit shape as the
+#: non-recursive glob it had just replaced.
 IMPORT_TIME_LIMIT: Final = (
     "validates what is mapped when db.models finishes importing; a table mapped onto "
     "Base.metadata afterwards, by anything the package's import does not reach, is "
-    "never seen. Reachability is checked by importing the package and looking for "
+    "never seen, and a module declaring its own DeclarativeBase is never seen at all. "
+    "Reachability is checked by importing the package and looking for "
     "tables still unmapped, not by reading how the imports are spelled: review "
     "defeated a substring check with a commented-out import, and a non-recursive "
     "glob with a subpackage this very constant then wrongly claimed was covered"
@@ -378,6 +395,16 @@ IMPORT_TIME_LIMIT: Final = (
 #: team" and carry no quantity anyone could blend. Every member must be a mapped
 #: table at ``OBSERVATIONS``; a stale entry fails, so an exemption cannot outlive
 #: its cause. Only ``players`` is referenced today.
+#:
+#: Each member carries a written reason, the way ``SANCTIONED_STORE_OPENERS``
+#: does, and the keys of :data:`MARKET_IDENTITY_REASONS` must equal this set
+#: exactly. A third review pointed out that the enforcement was an allowlist
+#: guarded by a denylist of two names: nothing stopped ``player_season_stats``
+#: from being added, after which a market row could be seeded from observed
+#: season totals with every test green. A denylist enumerates the doors it
+#: knows. Requiring a reason per member does not make a bad addition
+#: impossible, but it makes it something somebody had to write a sentence to
+#: justify, which is the reviewable moment.
 MARKET_IDENTITY_SOURCES: Final[frozenset[str]] = frozenset(
     {
         "players",
@@ -385,6 +412,29 @@ MARKET_IDENTITY_SOURCES: Final[frozenset[str]] = frozenset(
         "player_external_ids",
     }
 )
+
+#: Why each :data:`MARKET_IDENTITY_SOURCES` member is identity and not evidence.
+#:
+#: Keys must equal ``MARKET_IDENTITY_SOURCES``. The test that pins this also
+#: drives the narrowing against *every* observations table that is not a
+#: member, rather than three hand-picked ones, so the guard is closed over the
+#: layer rather than over a list of names somebody remembered.
+MARKET_IDENTITY_REASONS: Final[dict[str, str]] = {
+    "players": (
+        "the player roster. Names, positions and team membership; the primary key "
+        "is the identity itself. Nothing here is a measurement, so a market row "
+        "keyed to it learns who the price is about and nothing more."
+    ),
+    "nba_teams": (
+        "the thirty franchises. A fixed enumeration with no per-season quantity; "
+        "the same reasoning as players, one level up."
+    ),
+    "player_external_ids": (
+        "the crosswalk between our player key and each source's. It is purely a "
+        "mapping between identifiers, which is why it is the one table whose "
+        "whole purpose is identity."
+    ),
+}
 
 #: The grain of an assignment: one layer per table, not per column.
 #:

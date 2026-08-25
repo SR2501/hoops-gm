@@ -38,7 +38,7 @@ import itertools
 import subprocess
 import sys
 import textwrap
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -50,7 +50,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from hoops_gm.db import models
+from hoops_gm.db import layers, models
 from hoops_gm.db.base import Base
 from hoops_gm.db.layers import (
     FLOW_MATRIX_SIZE,
@@ -59,7 +59,9 @@ from hoops_gm.db.layers import (
     IMPORT_TIME_LIMIT,
     LAYER_RANK,
     LAYERS_WITHOUT_TABLES,
+    MARKET_IDENTITY_REASONS,
     MARKET_IDENTITY_SOURCES,
+    NAKED_IDENTIFIER_COLUMNS,
     PERMITTED_FLOWS,
     TABLE_LAYERS,
     DataLayer,
@@ -70,7 +72,7 @@ from hoops_gm.db.layers import (
     validate_layer_flow,
     validate_layers,
 )
-from hoops_gm.db.models import DataLayerRegistry
+from hoops_gm.db.models import DataLayerFlow, DataLayerRegistry
 
 # --- the ordering itself ----------------------------------------------------
 
@@ -218,7 +220,90 @@ def test_the_market_consumes_nothing_we_derived() -> None:
     )
 
 
-@pytest.mark.parametrize("referenced", ["draft_events", "absence_splits", "player_game_logs"])
+def _metadata_for(names: Iterable[str]) -> sa.MetaData:
+    """A metadata carrying exactly ``names``, one trivial table each."""
+    metadata = sa.MetaData()
+    for name in names:
+        sa.Table(name, metadata, sa.Column("id", sa.Integer, primary_key=True))
+    return metadata
+
+
+def _with_table_layers(replacement: dict[str, DataLayer], call: Callable[[], None]) -> None:
+    """Run ``call`` with ``TABLE_LAYERS`` temporarily holding ``replacement``.
+
+    Restores in a ``finally`` and by mutation rather than rebinding, because
+    every other module holds the same dict object by reference.
+    """
+    original = dict(TABLE_LAYERS)
+    TABLE_LAYERS.clear()
+    TABLE_LAYERS.update(replacement)
+    try:
+        call()
+    finally:
+        TABLE_LAYERS.clear()
+        TABLE_LAYERS.update(original)
+
+
+@pytest.mark.parametrize("how", ["unmapped", "moved to another layer"])
+def test_a_stale_market_identity_exemption_is_refused(
+    how: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exemption set may not outlive its cause, driven on both disjuncts.
+
+    :data:`MARKET_IDENTITY_SOURCES` is the only thing narrowing the
+    observations-to-market edge from 29 tables to identity. Its docstring
+    claimed a stale entry fails at import, and a third review found **no test
+    drove that branch at all**: the constant appeared in this file only in set
+    assertions about its contents. Replacing the generator with an empty list
+    left all 62 tests, ruff and mypy green. That is the exact defect class this
+    unit exists to prevent, written into the unit itself.
+
+    Both arms, because the two disjuncts at the raise site are independently
+    deletable. An entry can go stale by the table disappearing, or by the table
+    surviving and being reclassified - the second is the quieter one, because
+    the schema still contains the name and only its meaning has moved.
+
+    The unmapped arm has to remove the entry from ``TABLE_LAYERS`` as well.
+    Otherwise the *vanished* check fires first and this passes while proving a
+    different branch.
+    """
+    if how == "unmapped":
+        monkeypatch.delitem(TABLE_LAYERS, "players")
+        metadata = _metadata_for(TABLE_LAYERS)
+    else:
+        monkeypatch.setitem(TABLE_LAYERS, "players", DataLayer.VALUATION)
+        metadata = _metadata_for(TABLE_LAYERS)
+
+    with pytest.raises(LayerViolation, match="no longer mapped observations tables") as caught:
+        validate_layer_assignment(metadata)
+
+    message = str(caught.value)
+    assert "players" in message
+    assert "MARKET_IDENTITY_SOURCES" in message
+    assert "db/layers.py" in message
+
+
+_NON_IDENTITY_OBSERVATIONS = sorted(
+    name
+    for name, layer in TABLE_LAYERS.items()
+    if layer is DataLayer.OBSERVATIONS and name not in MARKET_IDENTITY_SOURCES
+)
+
+
+def test_the_non_identity_probe_set_is_worth_probing() -> None:
+    """A clean sweep over an empty domain is not a pass.
+
+    The parametrisation below is derived, so if the derivation ever yields
+    nothing - a renamed layer, an emptied ``TABLE_LAYERS`` - pytest reports
+    zero cases and stays green. Count the domain before believing the sweep.
+    """
+    assert len(_NON_IDENTITY_OBSERVATIONS) > 20, (
+        f"only {len(_NON_IDENTITY_OBSERVATIONS)} non-identity observations tables "
+        f"found; the derivation is wrong and the sweep below proves nothing"
+    )
+
+
+@pytest.mark.parametrize("referenced", _NON_IDENTITY_OBSERVATIONS)
 def test_the_market_may_not_reference_an_observation_that_is_not_identity(
     referenced: str,
 ) -> None:
@@ -227,9 +312,45 @@ def test_the_market_may_not_reference_an_observation_that_is_not_identity(
     Seeding an auction value table from observed clearing prices is a plausible
     future feature and type-checks today. Under the layer edge alone it was
     accepted; each of these is now refused.
+
+    Parametrised over **every** observations table outside
+    :data:`MARKET_IDENTITY_SOURCES`, not over a hand-picked three. A third
+    review defeated the hand-picked version by adding ``player_season_stats``
+    to the allowlist: 62 tests, ruff and mypy stayed green while a market row
+    became seedable from observed season totals. Three probes plus a two-name
+    denylist is exactly the "enumerate the doors you currently know" shape this
+    repository keeps getting caught by. Deriving the probes from the layer
+    closes the set: a new observations table is probed the day it is added, and
+    moving one into the allowlist deletes its own probe, which is visible in
+    the collected test count.
     """
     with pytest.raises(LayerViolation, match="identity only"):
         validate_layer_flow(_two_table_metadata("published_auction_values", referenced))
+
+
+def test_every_market_identity_exemption_carries_a_written_reason() -> None:
+    """An exemption nobody had to justify is an exemption nobody reviewed.
+
+    The pattern is ``SANCTIONED_STORE_OPENERS``: a reason per entry, and the
+    key sets must match exactly, so an entry cannot be added without writing
+    why and cannot be removed while leaving its justification behind. This does
+    not make a wrong addition impossible - nothing in a test can read whether a
+    sentence is true - but it makes it a thing somebody wrote a claim to
+    support, which is the moment review has something to disagree with.
+    """
+    assert set(MARKET_IDENTITY_REASONS) == set(MARKET_IDENTITY_SOURCES), (
+        f"MARKET_IDENTITY_REASONS and MARKET_IDENTITY_SOURCES disagree: "
+        f"{sorted(set(MARKET_IDENTITY_REASONS) ^ set(MARKET_IDENTITY_SOURCES))}. "
+        f"Every exemption from the observations-to-market narrowing needs a "
+        f"written reason in backend/src/hoops_gm/db/layers.py, and a reason "
+        f"must not outlive the exemption it justified."
+    )
+    for name, reason in MARKET_IDENTITY_REASONS.items():
+        assert len(reason) > 60, (
+            f"the reason given for exempting {name!r} is too short to be a "
+            f"reason. Say what the table holds and why none of it is a "
+            f"quantity a market row could be seeded from."
+        )
 
 
 def test_the_market_may_still_say_which_player_it_is_about() -> None:
@@ -288,7 +409,13 @@ def test_the_live_schema_is_fully_assigned_and_flows_forward() -> None:
     """
     validate_layers(Base.metadata)
 
-    assert set(TABLE_LAYERS) == set(Base.metadata.tables)
+    # Bare names, not the ``metadata.tables`` keys. Those are "schema.name"
+    # when a schema is set, and ``validate_layer_assignment`` deliberately
+    # keys on ``.name`` for that reason. Comparing the qualified keys here
+    # would undo that care one line below the call that takes it: the day
+    # someone sets a Postgres schema the validator keeps working exactly as
+    # designed and this fails for a reason unrelated to layer purity.
+    assert set(TABLE_LAYERS) == {table.name for table in Base.metadata.tables.values()}
 
 
 def test_the_assignment_covers_a_schema_worth_covering() -> None:
@@ -450,14 +577,27 @@ def test_an_unassigned_table_is_refused_by_the_flow_check_too() -> None:
 # --- the two representations of a layer, kept in agreement ------------------
 
 
+def _tables_with_a_data_layer_column() -> set[str]:
+    """Every table carrying a ``data_layer`` column, by column not by CHECK."""
+    return {table.name for table in Base.metadata.tables.values() if "data_layer" in table.c}
+
+
 def _pinned_data_layer_columns() -> dict[str, str]:
     """Tables that also record their layer per row, and the literal each pins.
 
     Read out of ``Base.metadata`` rather than listed, so a fourth table adopting
     the pattern is covered without anybody widening this. The literal is taken
     from the table's own CHECK constraint, which is what the database actually
-    enforces — reading the Python-side column default instead would compare the
+    enforces - reading the Python-side column default instead would compare the
     ORM against the ORM.
+
+    Recognition is a *spelling*: ``data_layer = '<value>'``. That is a real
+    limit and it is why :func:`test_the_pinned_data_layer_columns_were_found_at_all`
+    closes the set over columns instead. A third review found the divergence
+    was already live - ``data_layer_registry`` has a ``data_layer`` column and
+    is silently outside this scan - and that a future table pinning its layer
+    with ``data_layer IN ('terminal')`` would be invisible to the agreement
+    check that exists to catch exactly that drift.
     """
     found: dict[str, str] = {}
     for table in Base.metadata.tables.values():
@@ -472,9 +612,49 @@ def _pinned_data_layer_columns() -> dict[str, str]:
     return found
 
 
+#: The one table with a ``data_layer`` column that pins no single literal.
+#:
+#: ``data_layer_registry`` stores one row *per* layer, so its column is the
+#: subject of the table rather than a constant pinned by a CHECK. It is named
+#: here so the closed-set assertion below has to account for it explicitly
+#: rather than the scan quietly not seeing it.
+_DATA_LAYER_COLUMN_WITHOUT_A_PINNED_LITERAL = "data_layer_registry"
+
+
 def test_the_pinned_data_layer_columns_were_found_at_all() -> None:
-    """Three tables carry one today; a scan finding none is broken, not clean."""
+    """Closed over columns, so a CHECK this parser cannot read is a failure.
+
+    The previous version hard-coded the three table names and asked the CHECK
+    parser for the same three, which is a scan agreeing with a list. A third
+    review showed the two had already diverged: ``data_layer_registry`` carries
+    a ``data_layer`` column and the parser does not see it, so the "a fourth
+    table adopting the pattern is covered without anybody widening this" claim
+    in the helper's docstring was false when written.
+
+    The membership rule is now the closed set - *every* table with a
+    ``data_layer`` column - and anything the parser cannot read has to be named
+    as a deliberate exclusion. A table pinning its layer as
+    ``data_layer IN ('terminal')`` now fails here instead of silently sitting
+    outside :func:`test_data_layer_columns_agree_with_the_registry`.
+    """
     pinned = _pinned_data_layer_columns()
+    have_column = _tables_with_a_data_layer_column()
+
+    assert have_column, "no table has a data_layer column; the scan is broken, not clean"
+
+    unreadable = sorted(have_column - set(pinned) - {_DATA_LAYER_COLUMN_WITHOUT_A_PINNED_LITERAL})
+    assert set(pinned) | {_DATA_LAYER_COLUMN_WITHOUT_A_PINNED_LITERAL} == have_column, (
+        f"these tables have a data_layer column that the CHECK parser could not "
+        f"read: {unreadable}.\n"
+        f"\n"
+        f"The parser recognises only `data_layer = '<value>'`. A table pinning "
+        f"its layer some other way - `IN ('terminal')`, or an enum - stores a "
+        f"per-row layer that test_data_layer_columns_agree_with_the_registry "
+        f"never compares against TABLE_LAYERS, so the per-row and per-table "
+        f"answers can drift apart silently. Either write the CHECK in the form "
+        f"the parser reads, or widen _pinned_data_layer_columns in "
+        f"backend/tests/test_layer_purity.py deliberately."
+    )
 
     assert set(pinned) == {
         "absence_splits",
@@ -509,16 +689,40 @@ def test_the_scope_limits_are_stated() -> None:
     the check runs. :data:`GRAIN_LIMIT` is the gap in what an assignment
     covers: one layer per table.
 
-    These pin documentation rather than behaviour — widening a scan to close a
+    These pin documentation rather than behaviour - widening a scan to close a
     gap would leave the assertion untouched. That is inherent to the pattern,
     and it is why each constant names what remains uncovered.
+
+    The one number any of them states is checked rather than read, because a
+    scope limit carrying a stale figure is worse than one carrying none: an
+    earlier version of :data:`FLOW_SCAN_LIMIT` said sixteen on a heuristic
+    nobody wrote down and review could not reproduce it.
     """
     assert "foreign keys" in FLOW_SCAN_LIMIT
     assert "undeclared identifier column" in FLOW_SCAN_LIMIT
     assert "Python" in FLOW_SCAN_LIMIT
     assert "when db.models finishes importing" in IMPORT_TIME_LIMIT
     assert "not by reading how the imports are spelled" in IMPORT_TIME_LIMIT
+    assert "DeclarativeBase" in IMPORT_TIME_LIMIT
     assert "one layer per table" in GRAIN_LIMIT
+
+    naked = sorted(
+        f"{table.name}.{column.name}"
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if column.name.endswith("_id") and not column.foreign_keys
+    )
+
+    assert len(naked) == NAKED_IDENTIFIER_COLUMNS, (
+        f"FLOW_SCAN_LIMIT describes a gap of {NAKED_IDENTIFIER_COLUMNS} undeclared "
+        f"identifier columns and the schema now has {len(naked)}:\n  "
+        + "\n  ".join(naked)
+        + "\n\nUpdate NAKED_IDENTIFIER_COLUMNS and the wording of FLOW_SCAN_LIMIT "
+        "in backend/src/hoops_gm/db/layers.py together. If you added one, check "
+        "first whether it should be a real foreign key: a column holding another "
+        "table's key without declaring it is a cross-layer reference this whole "
+        "unit cannot see, which is the gap the constant exists to admit to."
+    )
 
 
 # --- the enforcement point itself -------------------------------------------
@@ -570,8 +774,10 @@ def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
     refusal has to name the file to edit, the ADR, and the reason the rule is
     an ImportError rather than a lint.
 
-    This asserts the property over all three refusal paths rather than spot-
-    checking one, because the one that goes stale is the one nobody read.
+    This asserts the property over every refusal path rather than spot-
+    checking one, because the one that goes stale is the one nobody read - and
+    the count is closed against the ``raise`` sites in ``layers.py``, so a new
+    refusal cannot be added without being driven here.
     """
     unassigned = sa.MetaData()
     sa.Table("expected_games", unassigned, sa.Column("id", sa.Integer, primary_key=True))
@@ -581,24 +787,56 @@ def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
         sa.Table(name, stale, sa.Column("id", sa.Integer, primary_key=True))
     stale.remove(stale.tables["players"])
 
+    stale_identity_layers = dict(TABLE_LAYERS)
+    stale_identity_layers["players"] = DataLayer.VALUATION
+
     messages: dict[str, str] = {}
-    refusals: tuple[tuple[str, Callable[[], None]], ...] = (
+    refusals: tuple[tuple[str, Callable[[], object]], ...] = (
         ("unassigned table", lambda: validate_layer_assignment(unassigned)),
         ("stale entry", lambda: validate_layer_assignment(stale)),
+        (
+            "stale identity exemption",
+            lambda: _with_table_layers(
+                stale_identity_layers,
+                lambda: validate_layer_assignment(_metadata_for(TABLE_LAYERS)),
+            ),
+        ),
         (
             "backwards flow",
             lambda: validate_layer_flow(
                 _two_table_metadata("projections", "published_auction_values")
             ),
         ),
+        ("unknown table", lambda: layer_of("expected_games")),
     )
     for label, call in refusals:
         with pytest.raises(LayerViolation) as caught:
             call()
         messages[label] = str(caught.value)
 
+    # Closed over the raise sites, not over the ones somebody remembered.
+    # Review found this test covering three of five, which is the shape where
+    # a message goes stale precisely because it was the one nobody drove.
+    raise_sites = sum(
+        isinstance(node, ast.Raise)
+        for node in ast.walk(ast.parse(Path(layers.__file__).read_text(encoding="utf-8")))
+    )
+    assert len(refusals) == raise_sites, (
+        f"layers.py has {raise_sites} raise sites and this test drives "
+        f"{len(refusals)}. Add the new refusal to `refusals` above. The point of "
+        f"this test is that the message a lane actually meets has been read by "
+        f"somebody, and an undriven refusal is the one that will not have been."
+    )
+
     for label, message in messages.items():
         assert "db/layers.py" in message, f"{label} does not say which file to edit"
+
+    for label, message in messages.items():
+        if label == "unknown table":
+            # layer_of is called by the flow check, so its message is a
+            # diagnostic inside a larger refusal rather than an instruction of
+            # its own; it names the file and stops there.
+            continue
         assert "What to do" in message, f"{label} does not say what to do"
 
     assert "ADR-008" in messages["backwards flow"]
@@ -613,7 +851,7 @@ def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
     # cp1252 renders a non-ASCII character as mojibake. The repository already
     # has a guard for this in test_console_encoding.py, but its domain is
     # assert messages, print and sys.exit - it does not walk `raise`, so it
-    # saw none of these three. That gap is reported rather than widened here:
+    # saw none of these. That gap is reported rather than widened here:
     # broadening a shared scan would fail other lanes' code mid-freeze.
     for label, message in messages.items():
         outside_ascii = sorted({character for character in message if ord(character) > 127})
@@ -667,8 +905,18 @@ def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path
         assert f"data_layer = '{layer.value}' AND layer_rank = {rank}" in checks[name]
 
 
-def test_a_backwards_foreign_key_makes_the_package_fail_to_import() -> None:
-    """The claim "you cannot write it and still have a program", driven.
+def test_validate_layers_refuses_a_backwards_foreign_key() -> None:
+    """A market table seeded into an availability table, refused by the function.
+
+    Named for what it drives. An earlier name said "makes the package fail to
+    import", which was the claim this repository actually cares about and not
+    the claim this test establishes: the child imports the package (which
+    succeeds - the shipped schema is clean), *then* maps a violating table and
+    calls ``validate_layers`` explicitly. The non-zero exit comes from that
+    call. Review pointed out that the name was doing the work the test was not,
+    which is how a suite ends up looking like it covers something it does not.
+    :func:`test_importing_the_package_is_what_refuses_a_violation` is the one
+    that drives the import, on both halves.
 
     Runs in a subprocess because the failure being asserted is an ImportError
     for a module this test session has already imported successfully; in-process
@@ -713,29 +961,61 @@ def test_a_backwards_foreign_key_makes_the_package_fail_to_import() -> None:
     assert "published_auction_values" in completed.stderr
 
 
-def test_importing_the_package_is_what_refuses_a_violation() -> None:
+@pytest.mark.parametrize(
+    ("label", "injection", "needles"),
+    [
+        (
+            "assignment",
+            'del layers.TABLE_LAYERS["players"]',
+            ("players",),
+        ),
+        (
+            "flow",
+            'layers.TABLE_LAYERS["team_schedule"] = layers.DataLayer.TERMINAL',
+            ("team_schedule", "opponent_context"),
+        ),
+    ],
+)
+def test_importing_the_package_is_what_refuses_a_violation(
+    label: str, injection: str, needles: tuple[str, ...]
+) -> None:
     """The headline claim, driven against the package rather than the function.
 
-    :func:`test_a_backwards_foreign_key_makes_the_package_fail_to_import`
+    :func:`test_validate_layers_refuses_a_backwards_foreign_key`
     imports the package and then calls ``validate_layers`` itself, so it proves
     the *function* refuses. That is not the claim. The claim is that **importing
     the package** refuses, and review showed those come apart: replacing the
     import of ``validate_layers`` in ``db/models/__init__.py`` with a local
-    no-op of the same name left every gate green — 57 tests, ruff and mypy —
+    no-op of the same name left every gate green - 57 tests, ruff and mypy -
     while the package imported a violating schema without complaint. The AST
     test could not see it, because the call site still reads exactly right.
 
-    So this asks the package. It injects the violation by removing an entry
-    from ``TABLE_LAYERS`` **before** ``db.models`` is imported, which is the
-    cheapest violation that needs no schema of its own, and then imports the
-    package and nothing else. Whatever the call site is spelled as, either the
-    import raises or this fails.
+    So this asks the package. It injects the violation into ``TABLE_LAYERS``
+    **before** ``db.models`` is imported, then imports the package and nothing
+    else. Whatever the call site is spelled as, either the import raises or
+    this fails.
+
+    Parametrised over **both halves** because a third review defeated the
+    single-arm version. ``validate_layers`` calls assignment then flow, and
+    rebinding the name to ``validate_layer_assignment`` alone - which mypy
+    accepts, the signatures being identical, and which ruff's own autofix will
+    format for you - left the flow check never running at import with all 62
+    tests green. An assignment-only injection cannot see that; the flow arm
+    can.
+
+    The flow arm reassigns ``team_schedule`` rather than ``players``. Sending
+    ``players`` to a later layer looks like the obvious injection and is the
+    wrong one: ``players`` is in :data:`MARKET_IDENTITY_SOURCES`, so the stale-
+    identity branch of the *assignment* check fires first and the test would
+    pass while proving the half it was written to stop proving.
+    ``team_schedule`` is in no exemption set, and ``opponent_context
+    .team_schedule_id`` makes it an input to a projection.
     """
     program = textwrap.dedent(
-        """
+        f"""
         import hoops_gm.db.layers as layers
 
-        del layers.TABLE_LAYERS["players"]
+        {injection}
 
         import hoops_gm.db.models  # noqa: E402
 
@@ -751,10 +1031,11 @@ def test_importing_the_package_is_what_refuses_a_violation() -> None:
     )
 
     assert completed.returncode != 0, (
-        f"importing db.models with an unassigned table succeeded. The package "
+        f"importing db.models with a {label} violation succeeded. The package "
         f"is not enforcing ADR-008 at import, whatever its call site says - "
         f"check that db/models/__init__.py calls the real "
-        f"hoops_gm.db.layers.validate_layers and has not shadowed it.\n"
+        f"hoops_gm.db.layers.validate_layers, has not shadowed it, and has not "
+        f"rebound the name to only one of the two halves.\n"
         f"stdout={completed.stdout!r}"
     )
     assert "NO VIOLATION RAISED" not in completed.stdout
@@ -762,7 +1043,11 @@ def test_importing_the_package_is_what_refuses_a_violation() -> None:
         f"the import failed for some reason other than a layer violation, so "
         f"this test is no longer evidence of anything.\nstderr={completed.stderr!r}"
     )
-    assert "players" in completed.stderr
+    for needle in needles:
+        assert needle in completed.stderr, (
+            f"the {label} refusal does not name {needle!r}, so it fired for "
+            f"some other reason.\nstderr={completed.stderr!r}"
+        )
 
 
 def test_every_model_module_is_reached_by_importing_the_package() -> None:
@@ -808,7 +1093,14 @@ def test_every_model_module_is_reached_by_importing_the_package() -> None:
         scanned = 0
 
         for path in sorted(package_dir.rglob("*.py")):
-            if path == package_dir / "__init__.py" or path.stem.startswith("_"):
+            # Skip only the package's own __init__.py - importing it is the
+            # thing under test. An earlier version skipped every path whose
+            # stem started with "_", and Path("valuation/__init__.py").stem is
+            # "__init__", so it skipped every subpackage __init__ (making the
+            # branch just below dead code) and every _-prefixed module. Both
+            # are places a table can be defined, which is the same false-limit
+            # shape as the non-recursive glob this scan replaced.
+            if path == package_dir / "__init__.py" or path.stem == "__main__":
                 continue
             relative = path.relative_to(package_dir)
             parts = relative.parts[:-1] if path.name == "__init__.py" else (
@@ -862,7 +1154,10 @@ def test_every_model_module_is_reached_by_importing_the_package() -> None:
 #: allowed to diverge the moment a ``0020`` adds a table: the code tracks the
 #: schema, the seed records what ``0019`` did. See
 #: :func:`test_the_0019_seed_is_a_frozen_snapshot`.
-_SEED_ROWS_AT_0019 = 40
+_SEED_ROWS_AT_0019 = 41
+
+#: Edges migration ``0019`` seeded, pinned for the same reason as the rows.
+_FLOW_ROWS_AT_0019 = 17
 
 
 def _load_0019(backend_dir: Path) -> ModuleType:
@@ -886,7 +1181,7 @@ def migration_url(tmp_path: Path, test_database_url: str | None) -> str:
 
 
 @pytest.fixture
-def alembic_config(backend_dir: Path, migration_url: str) -> Config:
+def alembic_config(backend_dir: Path, migration_url: str, _clean_database: None) -> Config:
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     # config.attributes, not set_main_option: a URL containing '%' raises on
@@ -895,7 +1190,7 @@ def alembic_config(backend_dir: Path, migration_url: str) -> Config:
     return config
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _clean_database(migration_url: str) -> Iterator[None]:
     """Start from an empty store. A Postgres test database is reused across tests.
 
@@ -905,6 +1200,15 @@ def _clean_database(migration_url: str) -> Iterator[None]:
     reaches into somebody else's run, and it also leaves nothing to inspect when
     a test fails. Dropping on the way in gives the same isolation without
     either.
+
+    Requested through :func:`alembic_config` rather than ``autouse``. As an
+    autouse fixture it ran before all 65 tests in this module, including the
+    fifty-odd that are pure set arithmetic and open no connection - sixty-five
+    connect-and-drop cycles for five tests that need one, and, worse, running
+    any single test from this file with ``TEST_DATABASE_URL`` set wiped that
+    database even when the test never touched it. Every database test here
+    takes ``alembic_config``, and
+    :func:`test_no_database_test_escapes_the_clean_fixture` closes that set.
     """
     engine = create_engine(migration_url)
     try:
@@ -915,6 +1219,37 @@ def _clean_database(migration_url: str) -> Iterator[None]:
     finally:
         engine.dispose()
     yield
+
+
+def test_no_database_test_escapes_the_clean_fixture() -> None:
+    """``_clean_database`` is reached through ``alembic_config``, so pin that.
+
+    The fixture stopped being ``autouse`` so it would not wipe a shared
+    Postgres database on behalf of fifty tests that never connect. The cost of
+    that is a way to get it wrong: a new test taking ``migration_url`` alone
+    would talk to the store without the clean, and would pass or fail
+    depending on what ran before it. Reading the signatures closes the set -
+    it is the same closed-set-over-a-derived-domain shape as the rest of this
+    file, applied to the fixtures rather than to the schema.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    offenders = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("test_")
+        and "migration_url" in {argument.arg for argument in node.args.args}
+        and "alembic_config" not in {argument.arg for argument in node.args.args}
+    ]
+
+    assert offenders == [], (
+        f"these tests take migration_url without alembic_config: {offenders}.\n"
+        f"\n"
+        f"_clean_database is reached through alembic_config, so they touch the "
+        f"store without it being emptied first and their result depends on "
+        f"what ran before. Add alembic_config to the signature, or request "
+        f"_clean_database explicitly."
+    )
 
 
 def test_a_migrated_store_records_every_table_at_its_assigned_layer(
@@ -994,6 +1329,87 @@ def test_the_0019_seed_is_a_frozen_snapshot(backend_dir: Path) -> None:
             f"layer's rank. The CHECK added in 0019 would reject this row."
         )
 
+    flows = _load_0019(backend_dir)._FLOW_SEED
+
+    assert len(flows) == _FLOW_ROWS_AT_0019, (
+        f"migration 0019's flow seed has {len(flows)} edges, not {_FLOW_ROWS_AT_0019}. "
+        f"The same reasoning as the rows above: 0019 will not run again on the "
+        f"owner's store, so a permitted edge added here never reaches it."
+    )
+    assert len(set(flows)) == len(flows), "0019 seeds an edge twice"
+    for source, target in flows:
+        assert source != target, (
+            f"0019 seeds the self-edge {source!r}, which the CHECK rejects. "
+            f"Same-layer flow is always permitted and needs no row."
+        )
+
+
+def test_the_stored_edges_are_the_flow_rule_the_code_uses(backend_dir: Path) -> None:
+    """The store's answer and the code's answer to "was this allowed?", compared.
+
+    The registry alone leaves only a rank comparison expressible in SQL, and
+    this unit rejected the rank comparison precisely because it permits
+    ``valuation -> market``, ``availability -> market`` and
+    ``projections -> market`` - each of them R38. A third review pointed out
+    that the caveat lived in a Python docstring, which is exactly what somebody
+    querying the store at 11:59pm does not have; ``market`` and ``terminal``
+    also share rank 4, so even ordering by rank is ambiguous.
+
+    Compared as a literal snapshot against :data:`PERMITTED_FLOWS`, the same
+    duplication-as-review-gate the seed rows use.
+    """
+    flows = {
+        (DataLayer(source), DataLayer(target))
+        for source, target in _load_0019(backend_dir)._FLOW_SEED
+    }
+
+    stored_only = sorted((s.value, t.value) for s, t in flows - set(PERMITTED_FLOWS))
+    permitted_only = sorted((s.value, t.value) for s, t in set(PERMITTED_FLOWS) - flows)
+    assert flows == set(PERMITTED_FLOWS), (
+        f"0019's stored edges and PERMITTED_FLOWS disagree.\n"
+        f"  stored but not permitted: {stored_only}\n"
+        f"  permitted but not stored: {permitted_only}\n"
+        f"\n"
+        f"A store whose edge set disagrees with the code answers 'was this "
+        f"number allowed to depend on that one?' differently depending on where "
+        f"you ask, which is worse than not storing it. If you changed the rule, "
+        f"add a migration; 0019 will not run again."
+    )
+
+
+def test_a_migrated_store_records_the_permitted_edges(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The edges reach the database, and a self-edge is refused there.
+
+    Reads the migrated store rather than the migration module, so this fails if
+    the bulk insert is dropped while the literal stays.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with Session(engine) as session:
+            stored = {
+                (row.source_layer, row.target_layer) for row in session.query(DataLayerFlow).all()
+            }
+
+        assert stored == set(PERMITTED_FLOWS), (
+            f"the migrated store's edges differ from PERMITTED_FLOWS: "
+            f"{sorted((s.value, t.value) for s, t in stored ^ set(PERMITTED_FLOWS))}"
+        )
+
+        with engine.connect() as connection, pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO data_layer_flows (source_layer, target_layer) "
+                    "VALUES ('projections', 'projections')"
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
+
 
 def test_a_migrated_store_refuses_a_rank_that_disagrees_with_its_layer(
     alembic_config: Config, migration_url: str
@@ -1029,14 +1445,36 @@ def test_a_migrated_store_refuses_an_unknown_layer(
 
     ``portable_enum`` emits a VARCHAR plus a CHECK precisely so a bad value
     fails in the database. The ORM's own ``validate_strings`` covers the ORM
-    path and nothing else — not ``text()``, not a data migration, not a bulk
-    load — so the constraint is exercised the way a bad write would actually
+    path and nothing else - not ``text()``, not a data migration, not a bulk
+    load - so the constraint is exercised the way a bad write would actually
     arrive.
+
+    Two assertions, because the behavioural one alone was not evidence for the
+    claim in this test's name. A third review pointed out that
+    ``('expected_games', 'vibes', 2)`` is *also* rejected by
+    ``ck_data_layer_registry_layer_rank_matches_layer`` - no disjunct matches
+    ``'vibes'`` - and ``pytest.raises(IntegrityError)`` cannot say which CHECK
+    fired, so dropping ``create_constraint=True`` from the enum left this
+    green. No row can separate them either: every unknown layer value fails
+    the rank CHECK by construction. So the existence of the enum CHECK is
+    asserted structurally, against the store the migration actually built,
+    which is the thing that disappears when the flag is dropped.
     """
     command.upgrade(alembic_config, "head")
 
     engine = create_engine(migration_url)
     try:
+        names = {
+            constraint["name"]
+            for constraint in sa.inspect(engine).get_check_constraints("data_layer_registry")
+            if constraint["name"] is not None
+        }
+        assert "ck_data_layer_registry_data_layer" in names, (
+            f"the migrated store has no enum CHECK on data_layer; found {sorted(names)}. "
+            f"Without it any string is a layer, and the only thing rejecting 'vibes' "
+            f"is the rank CHECK, which is a different guarantee."
+        )
+
         with engine.connect() as connection, pytest.raises(IntegrityError):
             connection.execute(
                 text(

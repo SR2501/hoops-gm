@@ -62,6 +62,7 @@ _SEED: Sequence[tuple[str, str, int]] = (
     ("auction_value_source_inputs", "market", 4),
     ("auction_value_sources", "market", 4),
     ("bridge_payloads", "observations", 0),
+    ("data_layer_flows", "observations", 0),
     ("data_layer_registry", "observations", 0),
     ("draft_events", "observations", 0),
     ("draft_participants", "observations", 0),
@@ -118,28 +119,65 @@ _LAYER_RANK_PAIRS = (
     "(data_layer = 'comparison' AND layer_rank = 5)"
 )
 
+#: The permitted ``(source, target)`` edges **as of this revision**, and frozen.
+#:
+#: The same snapshot discipline as ``_SEED`` and for the same reason. This is
+#: the rule the store needs and the registry cannot express: ``layer_rank`` can
+#: only support a rank comparison, and a rank comparison permits
+#: ``valuation -> market``, ``availability -> market`` and
+#: ``projections -> market`` - all three R38. Storing the edges means a query
+#: run against the database alone gets the rule this unit actually adopted
+#: rather than the one it rejected.
+#:
+#: Same-layer flow is always permitted and is deliberately absent; the CHECK
+#: forbids a self-edge so the table cannot be misread as refusing one.
+_FLOW_SEED: Sequence[tuple[str, str]] = (
+    ("availability", "comparison"),
+    ("availability", "terminal"),
+    ("availability", "valuation"),
+    ("market", "comparison"),
+    ("observations", "availability"),
+    ("observations", "comparison"),
+    ("observations", "market"),
+    ("observations", "projections"),
+    ("observations", "terminal"),
+    ("observations", "valuation"),
+    ("projections", "availability"),
+    ("projections", "comparison"),
+    ("projections", "terminal"),
+    ("projections", "valuation"),
+    ("terminal", "comparison"),
+    ("valuation", "comparison"),
+    ("valuation", "terminal"),
+)
+
+
+def _layer_enum(name: str) -> sa.Enum:
+    """The layer vocabulary, spelled out per column.
+
+    Written out rather than shared so this migration stays a record of the
+    vocabulary at revision 0019. A later revision adding a layer writes its own.
+    """
+    return sa.Enum(
+        "observations",
+        "projections",
+        "availability",
+        "valuation",
+        "terminal",
+        "market",
+        "comparison",
+        name=name,
+        native_enum=False,
+        create_constraint=True,
+        length=48,
+    )
+
 
 def upgrade() -> None:
     registry = op.create_table(
         "data_layer_registry",
         sa.Column("table_name", sa.String(length=64), nullable=False),
-        sa.Column(
-            "data_layer",
-            sa.Enum(
-                "observations",
-                "projections",
-                "availability",
-                "valuation",
-                "terminal",
-                "market",
-                "comparison",
-                name="data_layer",
-                native_enum=False,
-                create_constraint=True,
-                length=48,
-            ),
-            nullable=False,
-        ),
+        sa.Column("data_layer", _layer_enum("data_layer"), nullable=False),
         sa.Column("layer_rank", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
@@ -175,6 +213,35 @@ def upgrade() -> None:
         ],
     )
 
+    flows = op.create_table(
+        "data_layer_flows",
+        sa.Column("source_layer", _layer_enum("source_layer"), nullable=False),
+        sa.Column("target_layer", _layer_enum("target_layer"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "source_layer <> target_layer",
+            name=op.f("ck_data_layer_flows_flow_is_between_two_layers"),
+        ),
+        sa.PrimaryKeyConstraint("source_layer", "target_layer", name=op.f("pk_data_layer_flows")),
+    )
+
+    op.bulk_insert(
+        flows,
+        [{"source_layer": source, "target_layer": target} for source, target in _FLOW_SEED],
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("data_layer_flows")
     op.drop_table("data_layer_registry")
