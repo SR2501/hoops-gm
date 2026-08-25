@@ -1577,3 +1577,136 @@ a:focus-visible {
   color: var(--text);
   font-weight: 650;
 }
+
+/* --- Reliability ---------------------------------------------------------- */
+
+/*
+ * A screen that is mostly an inventory of what is missing, so the visual system
+ * has one job: make "which kind of missing is this?" readable at a glance,
+ * without making absence look like failure.
+ *
+ * No red anywhere in the status vocabulary below. `--error` means something
+ * broke; none of these did. A quantity that is computed but unrouted, one that
+ * nobody has defined, and one that is deliberately blocked are three ordinary
+ * project states, and colouring them as faults would train the reader to ignore
+ * the colour that does mean a fault.
+ */
+
+.reliability__section {
+  margin-top: var(--space-8);
+}
+
+.reliability__section > h2 {
+  margin-bottom: var(--space-3);
+}
+
+.evidence {
+  font-size: 0.875rem;
+}
+
+.evidence__caption {
+  caption-side: top;
+  text-align: left;
+  padding-bottom: var(--space-3);
+  color: var(--text-muted);
+}
+
+.evidence__quantity {
+  /* Overrides `.table th`, which uppercases: these are sentences, not headers. */
+  font-size: 0.875rem;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  font-weight: 650;
+  width: 14rem;
+}
+
+.evidence td {
+  color: var(--text-muted);
+  vertical-align: top;
+}
+
+.evidence__status {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 650;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  border: 1px solid currentcolor;
+}
+
+/* Built and current, just not reachable from a browser. The same hue ADR-013
+   uses for "not decided yet", for the same reason: nothing is wrong. */
+.evidence__status--not-exposed {
+  color: var(--pending);
+}
+
+/* Nobody has defined the quantity. Muted, because there is nothing to chase. */
+.evidence__status--not-defined {
+  color: var(--text-muted);
+}
+
+/* Blocked on purpose. Amber: worth knowing about, not worth alarm. */
+.evidence__status--blocked {
+  color: var(--warn);
+}
+
+.assumptions {
+  margin-top: var(--space-6);
+}
+
+.assumptions__facts {
+  margin-top: var(--space-3);
+}
+
+.assumptions__divergence {
+  color: var(--warn);
+}
+
+.strip {
+  margin: var(--space-6) 0 0;
+}
+
+.strip__caption {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-bottom: var(--space-2);
+}
+
+/*
+ * Fixed height, because the bars are sized as a percentage of it.
+ *
+ * `align-items: flex-end` so the bars grow from a common baseline: a strip
+ * whose bars floated would encode nothing, and the whole claim this figure
+ * makes is that the heights are comparable to each other.
+ */
+.strip__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 7rem;
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.strip__bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  background: var(--accent);
+  border-radius: 1px 1px 0 0;
+}
+
+.strip__extremes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: var(--space-2) 0 0;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
