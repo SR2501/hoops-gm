@@ -24640,3 +24640,61 @@ and nothing about the forty-first.
   stateful `__index__` route Low and would not fix it. The duplicate check now
   covers its duplicating form; its *truncating* form still keeps a marker, which
   is the completeness residual and stays disclosed rather than closed.
+
+## 2026-08-23 - `quant` - v3 §6 label correction, and the same error in my own card
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken - everything
+here is status counts and stated-reason counts, both predictor-side.
+
+A `data-engineer` lane's reviewer found that v3 §6's "~74 on health reasons"
+subtracts G League and nothing else, leaving `Rest`, which is a coach's decision
+on the same footing as the Two-Way recall whose removal §6 endorses. The lane
+reported it against its own number.
+
+**The same defect was in this card and I did not see it when I wrote it.** My
+~68 / 2.25x applied §6's G League share and then reported the result against
+§6's "health reasons alone" framing. I inherited the label from the document I
+was correcting, which is the failure mode `AGENTS.md` calls unexamined
+inheritance, reached while doing the opposite. The test asserting it was named
+`..._health_only_floor_...`; it is renamed to `..._non_g_league_floor_...`,
+because the name is the part a later reader quotes.
+
+**I declined to make the correction in v3 itself, and told the architect why.**
+The edit is two sentences and blocks an owner decision; my branch is behind
+`origin/main` under a merge freeze and is gated on a fifth review pass whose
+survivor sequence is not converging. Coupling an owner-blocking correction to
+that is a scheduling error, not a thoroughness one. I supplied the replacement
+wording instead.
+
+**And I did not paste the correction as given, because checking it found a
+one-row problem that changes what the correction should say.** The reported
+held-out `doubtful` breakdown - `Injury/Illness 68, G League 10, Rest 4,
+Concussion Protocol 1, Reconditioning 1` - sums to **84**, against a published
+held-out `doubtful` count of **83**. Non-G-League is therefore 74 from the
+breakdown and 73 from the published count, and **74 is exactly the figure the
+correction proposes to replace**. An earlier reviewer brute-forced 23 published
+counts and found no route from 83 to 74; a reason table totalling 84 is one, and
+it is the first account of §6's number that does not require an arithmetic
+error. So "correct 74 to 73" would swap the base silently. The extra row has to
+be explained first - a row carrying two reason categories is the obvious
+candidate.
+
+**A second thing I should have flagged when I used it:** the 18.6% G League
+share is cohort-wide and does not transfer to the held-out partition, where the
+direct share is 10/83 = 12.05%. My estimate was five rows low as a non-G-League
+figure, and the transfer was an assumption stated nowhere in my own arithmetic.
+
+No verdict moves. Condition 6's floor of 30 clears by more than 2x on all four
+readings (73, 74, 68, 69).
+
+### What I could not verify
+
+- **The breakdown itself.** It is not on this branch; I have it only as reported.
+  Every figure derived from it here is conditional on it, and the one-row gap is
+  the reason to treat it as unsettled rather than to pick the convenient base.
+- **Whether the 84th row is a double-categorised row.** That is a guess with a
+  mechanism, which is better than a guess without one, and it is still a guess.
+- **That `Rest` and `Reconditioning` belong outside a health set.** 7 of 97
+  `Rest` rows in this cohort carry "Left Knee - Injury Management", so the split
+  is a stated-reason artefact in both directions. Any health-reason bound is
+  approximate for that reason and not only for the one-row reason.
