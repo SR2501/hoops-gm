@@ -15,7 +15,9 @@ from __future__ import annotations
 import copy
 import itertools
 import math
+import operator
 import pickle
+import random
 import statistics
 from collections.abc import Callable
 from fractions import Fraction
@@ -40,6 +42,7 @@ from hoops_gm.availability.calibration import (
     detect_monotonic_reversals,
     paired_bootstrap_brier,
     restrict,
+    type7_quantile,
     wilson_interval,
 )
 from hoops_gm.availability.calibration_synthetic import (
@@ -1681,3 +1684,462 @@ def test_removal_leaves_a_marker_that_is_true_and_no_longer_complete() -> None:
     )
     assert report.observations == 81
     assert report.restriction == (("status", "doubtful"),)
+
+# --- Fourth review: multiplicity is enforced where the cohort becomes a number ---
+#
+# Every test below drives a survivor of the fourth independent review. The
+# generalisation the reviewer drew, and it is the right one: when a dunder is
+# overridden to enforce an invariant, its in-place twin and its reflected form
+# have to be enumerated in the same breath. `__add__`/`__iadd__`/`__radd__`,
+# `__mul__`/`__imul__`/`__rmul__`, `__getitem__`/`__setitem__`/`__delitem__`.
+# That is a closed, checkable list, unlike "routes a caller might take" - which
+# is exactly why the repair for P4-1 is not a longer list of dunders.
+
+
+def _duplicate_in_place_by_iadd(cohort: RestrictedCohort) -> RestrictedCohort:
+    """Exactly `cohort += list(cohort)`, spelled so the return type is inspectable."""
+
+    duplicated = operator.iadd(cohort, list(cohort))
+    assert isinstance(duplicated, RestrictedCohort)
+    assert duplicated is cohort
+    return duplicated
+
+
+def _duplicate_in_place_by_extend(cohort: RestrictedCohort) -> RestrictedCohort:
+    cohort.extend(list(cohort))
+    return cohort
+
+
+def _duplicate_in_place_by_slice_assignment(cohort: RestrictedCohort) -> RestrictedCohort:
+    cohort[0:0] = list(cohort)
+    return cohort
+
+
+def _duplicate_by_direct_construction(cohort: RestrictedCohort) -> RestrictedCohort:
+    """No overridden dunder is touched at all - which is the point."""
+
+    return RestrictedCohort([*cohort, *cohort], cohort.restriction)
+
+
+@pytest.mark.parametrize(
+    ("name", "mutate"),
+    [
+        ("iadd", _duplicate_in_place_by_iadd),
+        ("extend", _duplicate_in_place_by_extend),
+        ("slice_assignment", _duplicate_in_place_by_slice_assignment),
+        ("direct_construction", _duplicate_by_direct_construction),
+    ],
+)
+def test_a_duplicated_cohort_is_refused_however_the_duplication_was_reached(
+    name: str,
+    mutate: Callable[[RestrictedCohort], RestrictedCohort],
+) -> None:
+    """P4-1: a false guarantee, reached one character from the route that was closed.
+
+    `rc + other` is refused and `rc += other` was not, because `__iadd__` and
+    slice-assignment were never overridden. Each of these returns a
+    `RestrictedCohort` with the marker intact and `n` doubled, and both
+    docstrings promised the opposite - a written assurance that was false, not a
+    disclosed residual.
+
+    The harm is condition 5. A Wilson half-width shrinks with `n`, so doubling
+    the 83-row `doubtful` cohort moves its worst case from 0.1052 to 0.0752:
+    outside the 0.10 bound to inside it, with every recorded pair still true and
+    every duplicated row satisfying the marker as happily as the original.
+    Soundness cannot see it, which is why multiplicity is checked separately.
+
+    Note the last case. `direct_construction` never touches an overridden dunder
+    at all, so no enumeration of in-place twins would have caught it. That is
+    the argument for enforcing the invariant where the cohort becomes a number
+    rather than at each route into it.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    assert len(cohort) == 83
+
+    duplicated = mutate(cohort)
+    assert len(duplicated) == 166
+    assert duplicated.restriction == (("status", "doubtful"),)
+    assert all(row.labels["status"] == "doubtful" for row in duplicated)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            duplicated,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_one_in_place_route_that_does_drop_the_marker_drops_it_by_accident() -> None:
+    """The fourth review's headline payload is **false**, and the reason matters.
+
+    It reported `rc *= 2` returning a `RestrictedCohort` with `n` doubled. It
+    does not: it returns a plain `list`. `PyNumber_InPlaceMultiply` looks for
+    `nb_inplace_multiply` first, and `list`'s in-place repeat lives in the
+    *sequence* slot, so defining `__mul__` at Python level fills `nb_multiply`
+    and the in-place operator falls back to it - to the guard, which refuses to
+    re-wrap at `count != 1`.
+
+    So the route is closed, and it is closed **by accident**. Nothing was
+    written to close it, no comment records it, and deleting the `__mul__`
+    override - which a later reader could reasonably think redundant once
+    duplication is refused at report time - would silently reopen it. A guard
+    that holds for a reason nobody wrote down is not a guard you may rely on,
+    which is the argument for the check that does not care how the rows arrived.
+
+    `rc += list(rc)` has no such accident: `list` *does* expose
+    `nb_inplace_add`-equivalent behaviour through `sq_inplace_concat`, and
+    `__add__` is not consulted.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    doubled = operator.imul(cohort, 2)
+
+    assert len(doubled) == 166
+    assert type(doubled) is list
+    assert not isinstance(doubled, RestrictedCohort)
+    assert not hasattr(doubled, "restriction")
+
+    added = operator.iadd(
+        restrict(_masked_band_cohort(), status="doubtful"),
+        list(restrict(_masked_band_cohort(), status="doubtful")),
+    )
+    assert type(added) is RestrictedCohort
+
+
+@pytest.mark.parametrize(
+    ("name", "mutate", "expected_length"),
+    [
+        ("append", lambda rc: rc.append(rc[0]), 84),
+        ("insert", lambda rc: rc.insert(0, rc[0]), 84),
+        ("setitem_scalar", lambda rc: rc.__setitem__(1, rc[0]), 83),
+    ],
+)
+def test_duplicating_a_single_row_in_place_is_refused_too(
+    name: str,
+    mutate: Callable[[RestrictedCohort], None],
+    expected_length: int,
+) -> None:
+    """Routes the fourth review did not list, found while checking the ones it did.
+
+    It reported `insert` and `__setitem__` as "correctly refused", which is true
+    only of a **foreign** row: verification catches a row that fails the marker.
+    A row copied from the cohort itself is not foreign - it satisfies every
+    recorded pair - so before the duplicate check these three passed
+    verification and quietly inflated `n` by one.
+
+    Note `setitem_scalar`, which leaves the length **unchanged** at 83 while
+    counting one row twice and dropping another entirely. Any check written
+    against `len` rather than against the ids would miss it, and it is the
+    closest thing here to a silent corruption of the cohort's composition.
+
+    One row is a small lie. It is also the one that arrives by accident, and it
+    is the shape a fix aimed at whole-cohort duplication would miss.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    mutate(cohort)
+
+    assert len(cohort) == expected_length
+    assert all(row.labels["status"] == "doubtful" for row in cohort)
+
+    with pytest.raises(ValueError, match="1 observation id\\(s\\) appear more than once"):
+        build_calibration_report(
+            cohort,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_why_duplication_would_have_manufactured_the_condition_five_guarantee() -> None:
+    """The arithmetic that makes P4-1 a finding rather than a tidiness complaint.
+
+    And a caveat worth pinning, because getting it wrong is how the wrong figure
+    entered this repository in the first place. A Wilson half-width is **not**
+    exactly proportional to `1/sqrt(n)`: the score interval carries a `z^2/n`
+    term that the Wald interval does not. Scaling 0.105154 by `1/sqrt(2)` gives
+    0.074355, and an earlier version of `RestrictedCohort`'s docstring recorded
+    exactly that as the duplicated half-width. The true value is 0.075196. Four
+    independent review passes read that number without recomputing it.
+
+    Nothing here reads an outcome: both half-widths are functions of two
+    integers, at the worst-case rate of one half.
+    """
+
+    honest = wilson_interval(83 // 2, 83)
+    duplicated = wilson_interval(166 // 2, 166)
+    honest_half_width = (honest[1] - honest[0]) / 2
+    duplicated_half_width = (duplicated[1] - duplicated[0]) / 2
+
+    assert honest_half_width == pytest.approx(0.105154, abs=5e-7)
+    assert duplicated_half_width == pytest.approx(0.075196, abs=5e-7)
+    assert honest_half_width > 0.10 > duplicated_half_width
+
+    naive_wald_scaling = honest_half_width / math.sqrt(2)
+    assert naive_wald_scaling == pytest.approx(0.074355, abs=5e-7)
+    assert duplicated_half_width > naive_wald_scaling
+
+
+def test_an_unduplicated_cohort_still_reports() -> None:
+    """The refusal has to be specific to duplication, or it is just a broken module."""
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    report = build_calibration_report(
+        cohort,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 83
+
+
+def test_the_duplicate_check_fires_at_exactly_one_repeated_id() -> None:
+    """The n=1 boundary of the *count*, applying the rule the last round produced.
+
+    A check written as `if len(repeated) > 1` would pass every test that
+    duplicates a whole cohort, because those repeat 83 ids at once. One repeated
+    row is the smallest lie and the likeliest accident.
+    """
+
+    rows = list(restrict(_masked_band_cohort(), status="doubtful"))
+    with pytest.raises(ValueError, match="1 observation id\\(s\\) appear more than once"):
+        build_calibration_report(
+            [*rows, rows[0]],
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_verification_fires_at_exactly_one_violating_row() -> None:
+    """P4-4: a survivor. `if offenders > 1` passed the whole suite.
+
+    Every cohort that reached verification carried dozens of foreign rows, so
+    the boundary the check actually has to hold at - one - was never driven. A
+    single `out` row smuggled into a `doubtful` cohort is both the smallest
+    version of the P2-3 masking lie and the one most likely to arrive by
+    accident.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    intruder = next(row for row in rows if row.labels["status"] == "out")
+    forged = RestrictedCohort([*cohort, intruder], (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="1 of 84 rows do not satisfy it"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_verification_compares_label_values_by_equality_not_identity() -> None:
+    """P4-8: a survivor, and the reason it survived is that every literal is interned.
+
+    `!=` mutated to `is not` passed all 96 tests, because every label value in
+    the suite is a compile-time constant and therefore the same object. A value
+    arriving from a CSV row or a database column is not, so the mutant would
+    refuse a cohort that is perfectly correct. The direction is fail-closed,
+    which is why this is Low and not a lie - but a spurious refusal on real data
+    is still a defect, and it is invisible to a suite built from literals.
+    """
+
+    runtime_built = "doubt" + "".join("ful")
+    interned = "doubtful"
+    assert runtime_built == interned
+    assert runtime_built is not interned
+
+    rows = [
+        CalibrationObservation(
+            f"row#{index:03d}",
+            0.9,
+            index % 2 == 0,
+            labels={"status": runtime_built},
+        )
+        for index in range(40)
+    ]
+    report = build_calibration_report(
+        RestrictedCohort(rows, (("status", "doubtful"),)),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 40
+    assert report.restriction == (("status", "doubtful"),)
+
+def test_the_bootstrap_refuses_a_duplicate_observation_id() -> None:
+    """P4-2: a **declared convention the code did not implement**.
+
+    `DECLARED_CONVENTIONS["bootstrap_unit"]` says "one observation id, resampled
+    with replacement". The loop resampled row *positions* and never read
+    `observation_id` at all. That is indistinguishable from the declaration for
+    as long as ids happen to be unique, and wrong the moment they are not: the
+    same observation entering twice makes the draws less variable than the data,
+    and the interval comes out **too narrow**.
+
+    Too narrow is the direction that makes v2 §8 condition 2 - the interval
+    clearing zero - *easier* for the candidate to pass. A declared convention
+    that the code does not implement is worse than an undeclared one, because a
+    later reader has a written assurance to rely on and no reason to check.
+    """
+
+    rows = perfectly_calibrated_cohort({"only": 40}, {"only": 0.5})
+    pairs = _paired(rows, 0.5)
+
+    honest = paired_bootstrap_brier(pairs, resamples=200, seed=41)
+    assert honest.resamples == 200
+
+    with pytest.raises(ValueError, match="declared resampling unit is one observation id"):
+        paired_bootstrap_brier([*pairs, pairs[0]], resamples=200, seed=41)
+
+
+def test_the_bootstrap_names_how_many_ids_repeated_and_which() -> None:
+    """One repeated id, the n=1 boundary of the count, and the message has to name it."""
+
+    rows = perfectly_calibrated_cohort({"only": 40}, {"only": 0.5})
+    pairs = _paired(rows, 0.5)
+
+    with pytest.raises(ValueError, match=r"1 observation id\(s\) appear more than once"):
+        paired_bootstrap_brier([*pairs, pairs[0]], resamples=50, seed=41)
+
+
+def test_the_declared_bootstrap_unit_says_duplicates_are_refused() -> None:
+    """The declaration and the behaviour are pinned to each other, not merely both present."""
+
+    assert "duplicate ids are refused" in DECLARED_CONVENTIONS["bootstrap_unit"]
+    assert DECLARED_CONVENTIONS["duplicate_observations"].startswith("refused")
+
+
+def test_type_seven_quantile_is_pinned_against_hand_computed_values() -> None:
+    """P4-3: a convention declared and pinned by nothing.
+
+    `DECLARED_CONVENTIONS["bootstrap_quantile"]` names Hyndman-Fan type 7, and
+    substituting the floor rule - take `x[floor(p*(n-1))]` and interpolate
+    nothing - left every test green. That is not an equivalent mutant: it moves
+    `interval_high`, and `candidate_beats_baseline` reads `interval_high`. A
+    lower `interval_high` makes condition 2 easier to pass, so the unpinned
+    convention had a direction, and the direction favoured the candidate.
+
+    Type 7 on `0..9`: `h = (n - 1) * p`, then linear interpolation between
+    `x[floor(h)]` and `x[floor(h) + 1]`. At p=0.025, `h = 0.225`, so the answer
+    is `0.225`; the floor rule gives `0`. At p=0.975, `h = 8.775` gives `8.775`
+    against the floor rule's `8`. Computed by hand here rather than by calling a
+    second implementation of the same thing.
+    """
+
+    data = [float(value) for value in range(10)]
+
+    assert type7_quantile(data, 0.025) == pytest.approx(0.225, abs=1e-12)
+    assert type7_quantile(data, 0.975) == pytest.approx(8.775, abs=1e-12)
+    assert type7_quantile(data, 0.5) == pytest.approx(4.5, abs=1e-12)
+    assert type7_quantile(data, 0.0) == pytest.approx(0.0, abs=1e-12)
+    assert type7_quantile(data, 1.0) == pytest.approx(9.0, abs=1e-12)
+
+    # `statistics.quantiles(..., method="inclusive")` is type 7 by another
+    # implementation. Agreement is a cross-check, not the pin: the pin is the
+    # hand arithmetic above, which does not depend on the standard library
+    # meaning what this comment says it means.
+    deciles = statistics.quantiles(data, n=10, method="inclusive")
+    assert type7_quantile(data, 0.1) == pytest.approx(deciles[0], abs=1e-12)
+    assert type7_quantile(data, 0.9) == pytest.approx(deciles[-1], abs=1e-12)
+
+
+def test_the_bootstrap_endpoints_use_type_seven_and_not_the_floor_rule() -> None:
+    """Pins the call site, not just the helper.
+
+    The mutation that survived replaced the *use* of `type7_quantile`, so a test
+    of `type7_quantile` alone would not have caught it. The resampled
+    distribution is reconstructed here from the declared seed, and the two rules
+    are shown to disagree on it - so a report whose endpoints match the floor
+    rule fails this test whatever the helper does.
+    """
+
+    rows = perfectly_calibrated_cohort({"low": 60, "high": 60}, {"low": 0.1, "high": 0.9})
+    pairs = _paired(rows, 0.5)
+    comparison = paired_bootstrap_brier(pairs, resamples=250, seed=90210)
+
+    differences = [
+        (pair.candidate_predicted - float(pair.played)) ** 2
+        - (pair.baseline_predicted - float(pair.played)) ** 2
+        for pair in pairs
+    ]
+    generator = random.Random(90210)
+    size = len(differences)
+    estimates = sorted(
+        sum(differences[generator.randrange(size)] for _ in range(size)) / size
+        for _resample in range(250)
+    )
+
+    def floor_rule(sorted_values: list[float], probability: float) -> float:
+        return sorted_values[math.floor(probability * (len(sorted_values) - 1))]
+
+    assert comparison.interval_low == pytest.approx(
+        type7_quantile(estimates, 0.025), abs=1e-12
+    )
+    assert comparison.interval_high == pytest.approx(
+        type7_quantile(estimates, 0.975), abs=1e-12
+    )
+    assert comparison.interval_high != pytest.approx(floor_rule(estimates, 0.975), abs=1e-12)
+    assert floor_rule(estimates, 0.975) < comparison.interval_high
+
+
+def test_add_drops_the_marker_for_a_distinct_non_empty_operand() -> None:
+    """P4-5: a survivor, because every recorded case had `other is self`.
+
+    The drop list contained `rc + rc`, which drops under the live rule (`other`
+    is truthy) *and* under the mutant "re-wrap unless `other` is literally this
+    same object". One operand that is neither empty nor `self` separates them.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    combined = cohort + cohort.copy()
+
+    assert type(combined) is list
+    assert not isinstance(combined, RestrictedCohort)
+    assert len(combined) == 166
+
+    same_object = cohort + cohort
+    assert type(same_object) is list
+
+    empty_operand = cohort + []  # noqa: RUF005 - the `+ []` idiom is the thing under test
+    assert type(empty_operand) is RestrictedCohort
+    assert empty_operand.restriction == (("status", "doubtful"),)
+
+
+def test_a_partial_slice_with_an_explicit_step_of_one_drops_the_marker() -> None:
+    """P4-6: a survivor. The twelve routes sampled the slice space rather than partitioning it.
+
+    Every recorded slice had `step` `None`, `2` or `-1`, so "whole extent" and
+    "step is 1" were never separated. `rc[0:10:1]` is a truncation with an
+    explicit unit step: the marker stays true of all ten rows and `n` is wrong
+    by a factor of eight.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+
+    truncated = cohort[0:10:1]
+    assert type(truncated) is list
+    assert len(truncated) == 10
+
+    whole_extent = cohort[0:83:1]
+    assert type(whole_extent) is RestrictedCohort
+    assert len(whole_extent) == 83
+    assert whole_extent.restriction == (("status", "doubtful"),)
+
+
+@pytest.mark.parametrize("count", [0, -1, -5])
+def test_multiplying_by_zero_or_a_negative_count_drops_the_marker(count: int) -> None:
+    """P4-7: a survivor. The drop list had `*2`, `*3`, `2*rc` and no `*0`.
+
+    An empty cohort carrying `status=doubtful` is a claim about no rows at all.
+    `build_calibration_report` raises on empty rows, so the harm is bounded -
+    but "another check happens to catch it" is the argument that made the
+    original guard too wide, and the guard is `count == 1`, not `count <= 1`.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+
+    assert type(cohort * count) is list
+    assert len(cohort * count) == 0
+    assert type(count * cohort) is list
+
+    assert type(cohort * 1) is RestrictedCohort
+    assert (cohort * 1).restriction == (("status", "doubtful"),)

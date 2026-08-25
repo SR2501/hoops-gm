@@ -24540,3 +24540,103 @@ a caller-supplied argument.
   held-out counts, which are predictor-side. Whether any real rate lands in a
   breach window is an outcome question I still must not look at. *Driven as a
   range, unknown as a fact.*
+
+## 2026-08-23 - `quant` - calibration machinery, fourth review pass closed
+
+**Base:** `f3e2c53` (`main` at brief time). Branch `sr2501-calibration-machinery`,
+not rebased - merge freeze still in force. `origin/main` has since moved to
+`193aa1e`.
+
+**Blind: unbroken.** No participation outcome, no conversion rate, no v2 §5/§6
+selection was read. The reviewer re-ran the AST and string-literal audits on
+this head and found no banned import, no `open()`, no DB or network reach, and
+no play-rate literal in either source module.
+
+**What changed.** Seven mutations survived the fourth independent non-`quant`
+review against a suite that had just caught thirty. Two of them are a kind the
+first three passes did not produce.
+
+- **A false guarantee, not a disclosed residual.** Both docstrings promised that
+  multiplicity-changing container operations return a plain `list`. They do not:
+  `rc += list(rc)`, `rc.extend(list(rc))`, `rc[0:0] = list(rc)`, and `append` or
+  `insert` of a row taken from the cohort itself, all return a
+  `RestrictedCohort` whose marker is true of every row present and whose `n` is
+  doubled. `n` is not decoration - condition 5 is a Wilson half-width, and
+  doubling the 83-row `doubtful` cohort moves its worst case from 0.1052 to
+  0.0752, which manufactures the 0.10 guarantee this model card says cannot be
+  issued blind.
+- **A declared convention the code did not implement.**
+  `DECLARED_CONVENTIONS["bootstrap_unit"]` said "one observation id, resampled
+  with replacement"; the loop resampled row *positions* and never read
+  `observation_id`. Harmless while ids are unique, and otherwise an interval
+  that is **too narrow** - the direction that makes condition 2 easier for the
+  candidate. That is worse than an undeclared convention, because a later reader
+  has a written assurance and no reason to check it.
+
+**The repair for the first is deliberately not a longer list of dunders.** The
+reviewer's rule - when you override a dunder to enforce an invariant, enumerate
+its in-place twin and its reflected form in the same breath - is a good rule and
+a closed list, and it is still the weaker fix. It guards the routes someone
+thought of; `append` and `insert` have no non-mutating twin to have prompted
+them, and direct construction touches no dunder at all. Duplicate
+`observation_id`s are now refused in `build_calibration_report` and in
+`paired_bootstrap_brier`, where the cohort becomes a number, which covers every
+route at once including the adversarial stateful `__index__`.
+
+`bootstrap_quantile` (Hyndman-Fan type 7) was declared and pinned by nothing;
+the floor-rule substitute left every test green while moving `interval_high`,
+which `candidate_beats_baseline` reads. It is now pinned against hand arithmetic
+at both endpoints, and the call site is pinned separately from the helper.
+
+**Two things I found by checking the reviewer's payloads rather than accepting
+them.**
+
+- **His headline payload is false.** `rc *= 2` does *not* keep the marker; it
+  returns a plain `list`, because defining `__mul__` at Python level fills
+  `nb_multiply` and `PyNumber_InPlaceMultiply` falls back to it before reaching
+  `list`'s sequence-repeat slot. The route is closed **by accident**. Nothing
+  was written to close it and no comment recorded it, so deleting the `__mul__`
+  override - which a later reader could reasonably think redundant once
+  duplication is refused at the report - would silently reopen it. Pinned by
+  test, with the mechanism, so it is now closed on purpose.
+- **A numeral error four passes read without recomputing.**
+  `RestrictedCohort`'s docstring gave the duplicated half-width as 0.0745. It is
+  0.0752. 0.0745 is the Wald `1/sqrt(2)` scaling, and a Wilson interval does not
+  obey it, because of the `z^2/n` term. Found by my own numeral sweep, not by
+  review. Both values are now asserted, and the wrong one is asserted *as* the
+  naive scaling so the trap is recorded rather than merely removed.
+
+**Verified at this head:** module tests 119 passed (was 96); mutation suite
+**40 mutations, 40 caught, 0 survived**; full backend suite 1906 passed, 32
+deselected, against a pre-registered prediction of 1906; `ruff check` and `mypy`
+clean; `scripts/resolve_doc_conflicts.py` leaves the backlog header unchanged.
+
+**The survivor sequence is 4, 5, 4, 7 and is not converging.** I am reporting
+that rather than smoothing it. Three readings are available and I cannot
+distinguish them from inside: the reviewer is getting better at attacking this
+module; the module's surface grows with each fix; or four passes is simply not
+enough for a module whose failure mode is a confident wrong number. The honest
+statement is that forty driven mutations say what forty specific corruptions do,
+and nothing about the forty-first.
+
+### What I could not verify
+
+- **That the module is correct**, as opposed to correct on every corruption I or
+  four review passes thought to drive. Every pass so far has found survivors,
+  and nothing in the trend suggests the next would not.
+- **That refusing duplicate `observation_id`s is the right rule for real data.**
+  It is right for a held-out cohort where a row is one status entry for one
+  player-game. If a later lane has a legitimate reason to feed the same id
+  twice, this refuses correct input. I chose the fail-closed direction because
+  an inflated `n` is invisible and a raised error is not, but I am asserting a
+  property of data I have not seen.
+- **That `rc *= 2`'s fallback holds on other Python implementations.** The
+  mechanism is CPython's; the test would fail loudly elsewhere, which is the
+  behaviour I want, but I have run it on one interpreter.
+- **Whether pinning the bootstrap quantile changes any figure.** It cannot
+  change one that exists, because none exists. Whether type 7 versus the floor
+  rule would move a real `interval_high` past zero is an outcome question.
+- **That the fourth pass's remaining adjudications are right.** He rated the
+  stateful `__index__` route Low and would not fix it. The duplicate check now
+  covers its duplicating form; its *truncating* form still keeps a marker, which
+  is the completeness residual and stays disclosed rather than closed.
