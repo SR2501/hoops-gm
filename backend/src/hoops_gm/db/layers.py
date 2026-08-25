@@ -383,10 +383,16 @@ def layer_of(table_name: str) -> DataLayer:
         return TABLE_LAYERS[table_name]
     except KeyError:
         raise LayerViolation(
-            f"table {table_name!r} has no layer. Every stored quantity records which "
-            f"layer it belongs to (ADR-008); add it to TABLE_LAYERS in db/layers.py "
-            f"with the reason it sits where it does, and seed its row in "
-            f"data_layer_registry with a migration."
+            f"table {table_name!r} has no layer.\n"
+            f"\n"
+            f"ADR-008 requires every stored quantity to record which layer it belongs "
+            f"to, because a number whose layer is unknown cannot be checked for the "
+            f"one defect that matters here: a later layer feeding an earlier one, "
+            f"which makes the model agree with itself without ever failing.\n"
+            f"\n"
+            f"What to do: add {table_name!r} to TABLE_LAYERS in "
+            f"backend/src/hoops_gm/db/layers.py with the reason it sits where it does, "
+            f"and seed its row in data_layer_registry with a new migration."
         ) from None
 
 
@@ -404,15 +410,38 @@ def validate_layer_assignment(metadata: MetaData) -> None:
     unassigned = sorted(mapped - assigned)
     if unassigned:
         raise LayerViolation(
-            f"tables with no ADR-008 layer: {unassigned}. Add each to TABLE_LAYERS "
-            f"in db/layers.py, then seed its row in data_layer_registry."
+            f"tables with no ADR-008 layer: {unassigned}.\n"
+            f"\n"
+            f"What to do: add each to TABLE_LAYERS in backend/src/hoops_gm/db/layers.py "
+            f"with a comment saying why it sits where it does, then seed its row in "
+            f"data_layer_registry with a new migration.\n"
+            f"\n"
+            f"Why this is an ImportError and not a lint: the defect it prevents is "
+            f"circularity, and circularity does not crash. A ranking or a composite "
+            f"value that feeds back into a projection or availability input makes the "
+            f"model agree with itself, so every downstream figure gets more confident "
+            f"and less true with the suite green throughout. An unclassified table is "
+            f"the state in which that becomes possible, which is why it fails here "
+            f"rather than being reported later. See docs/decisions/ADR-008-layer-purity.md.\n"
+            f"\n"
+            f"If your table genuinely has no layer, that is a finding worth raising "
+            f"rather than an exemption to add — say so instead of deleting the call."
         )
 
     vanished = sorted(assigned - mapped)
     if vanished:
         raise LayerViolation(
-            f"TABLE_LAYERS names tables that are not mapped: {vanished}. "
-            f"Remove them, and drop their data_layer_registry rows in a migration."
+            f"TABLE_LAYERS names tables that are not mapped: {vanished}.\n"
+            f"\n"
+            f"What to do: remove each entry from TABLE_LAYERS in "
+            f"backend/src/hoops_gm/db/layers.py, and drop its data_layer_registry "
+            f"rows in a new migration.\n"
+            f"\n"
+            f"Why a stale entry fails rather than being ignored: a register that has "
+            f"stopped describing the schema cannot be trusted as a whole, and this "
+            f"repository has already lost a store-opening census exactly that way — it "
+            f"was complete when written and quietly wrong afterwards, at exit 0. An "
+            f"exemption must not outlive its cause."
         )
 
 
@@ -437,11 +466,31 @@ def validate_layer_flow(metadata: MetaData) -> None:
 
     if violations:
         raise LayerViolation(
-            "ADR-008 forbids these flows: "
-            + "; ".join(sorted(violations))
-            + ". A later layer may not be an input to an earlier one at any weight. "
-            "If the intent is to compare rather than to blend, the comparison belongs "
-            "at DataLayer.COMPARISON, which consumes both sides and feeds nothing."
+            "ADR-008 forbids these flows:\n  " + "\n  ".join(sorted(violations)) + "\n\n"
+            "A later layer may not be an input to an earlier one at any weight. "
+            "A foreign key from T to S means a row of T is defined partly by a row "
+            "of S, so S is an input to T — check the direction before assuming the "
+            "layer assignment is wrong.\n"
+            "\n"
+            "Why this is an ImportError and not a failing test: the defect is "
+            "circularity, which produces confident, plausible, wrong numbers rather "
+            "than a crash. A published ranking or an AAV reaching back into a "
+            "projection or a p(play) input is the exact failure ADR-008 exists to "
+            "prevent, and there is no green-test signal for it.\n"
+            "\n"
+            "What to do, in the order worth trying:\n"
+            "  1. If the intent is to *compare* rather than to blend, the comparison "
+            "belongs at DataLayer.COMPARISON, which consumes both sides and feeds "
+            "nothing.\n"
+            "  2. If the referenced table is misclassified, change its entry in "
+            "TABLE_LAYERS in backend/src/hoops_gm/db/layers.py and seed the "
+            "correction in a new migration.\n"
+            "  3. If neither, the lineage is the problem and the key should not "
+            "exist. That is the case this check was written for.\n"
+            "\n"
+            "Deleting validate_layers(Base.metadata) from db/models/__init__.py "
+            "silences this and is caught separately by test_layer_purity.py. See "
+            "docs/decisions/ADR-008-layer-purity.md."
         )
 
 

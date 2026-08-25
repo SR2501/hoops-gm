@@ -32,12 +32,13 @@ Where a test below says what review drove, that is why it is there.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import itertools
 import subprocess
 import sys
 import textwrap
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -485,17 +486,124 @@ def test_the_package_still_calls_the_validator_at_import() -> None:
     """The one line whose deletion disarms everything, pinned.
 
     ``validate_layers`` is what the enforcement point calls, and review drove
-    the two ways that goes quiet: gut the function and all 44 tests pass, or
-    delete the call and nothing fails at all. The subprocess test below closes
-    the first. This closes the second, and it is deliberately a source-text
-    assertion — the call runs at import, so by the time any test observes the
-    module it has already either happened or not, with no trace either way.
+    the two ways that goes quiet: gut the function and all tests pass, or delete
+    the call and nothing fails at all. The subprocess test below closes the
+    first. This closes the second, and it has to be a source assertion — the
+    call runs at import, so by the time any test observes the module it has
+    already either happened or not, with no trace either way.
+
+    Parsed rather than grepped. The first version of this test asked whether
+    ``"validate_layers(Base.metadata)"`` appeared in the file, and a mutation
+    that commented the line out passed it: the substring was still there, inside
+    a ``#``. Asking the AST for a module-level call is the closed-set version of
+    the same question, and it cannot be satisfied by text that does not run.
     """
-    assert "validate_layers(Base.metadata)" in _models_package_source(), (
-        "db/models/__init__.py no longer validates layers at import. ADR-008 "
-        "asks for this to be inexpressible rather than documented; without this "
-        "call a backwards foreign key is merely a failing test somebody can skip."
+    tree = ast.parse(_models_package_source())
+    called = {
+        node.value.func.id
+        for node in tree.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+    }
+
+    assert "validate_layers" in called, (
+        "db/models/__init__.py no longer calls validate_layers at module level. "
+        "ADR-008 asks for this to be inexpressible rather than documented; "
+        "without the call a backwards foreign key is merely a failing test "
+        "somebody can skip, and a commented-out call is not a call."
     )
+
+
+def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
+    """The failure message is the entire user interface for this guard.
+
+    Three other lanes will meet this check on their next rebase, mid-conflict,
+    having read none of the reasoning. A rule whose purpose is invisible at the
+    moment it fires gets deleted by somebody acting reasonably — so every
+    refusal has to name the file to edit, the ADR, and the reason the rule is
+    an ImportError rather than a lint.
+
+    This asserts the property over all three refusal paths rather than spot-
+    checking one, because the one that goes stale is the one nobody read.
+    """
+    unassigned = sa.MetaData()
+    sa.Table("expected_games", unassigned, sa.Column("id", sa.Integer, primary_key=True))
+
+    stale = sa.MetaData()
+    for name in TABLE_LAYERS:
+        sa.Table(name, stale, sa.Column("id", sa.Integer, primary_key=True))
+    stale.remove(stale.tables["players"])
+
+    messages: dict[str, str] = {}
+    refusals: tuple[tuple[str, Callable[[], None]], ...] = (
+        ("unassigned table", lambda: validate_layer_assignment(unassigned)),
+        ("stale entry", lambda: validate_layer_assignment(stale)),
+        (
+            "backwards flow",
+            lambda: validate_layer_flow(
+                _two_table_metadata("projections", "published_auction_values")
+            ),
+        ),
+    )
+    for label, call in refusals:
+        with pytest.raises(LayerViolation) as caught:
+            call()
+        messages[label] = str(caught.value)
+
+    for label, message in messages.items():
+        assert "db/layers.py" in message, f"{label} does not say which file to edit"
+        assert "What to do" in message, f"{label} does not say what to do"
+
+    assert "ADR-008" in messages["backwards flow"]
+    assert "circularity" in messages["backwards flow"]
+    assert "circularity" in messages["unassigned table"]
+    # The stale-entry path is the one that fails an exemption outliving its
+    # cause, so it has to explain that rather than just naming the tables.
+    assert "census" in messages["stale entry"]
+
+
+def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path) -> None:
+    """One constraint, written twice on purpose, so it has to be compared.
+
+    ``models/layers.py`` builds the expression from ``LAYER_RANK``; ``0019``
+    carries it as a literal. That duplication is the review gate — the same
+    reasoning that keeps the seed rows literal — but a gate nobody checks is
+    just drift with extra steps.
+
+    It needs its own test because neither existing test sees a divergence:
+    Alembic does not compare CHECK constraints, so ``test_models_and_migrations
+    _agree`` is silent, and the migrated-store tests exercise the migration's
+    copy only. Review drove exactly this: weakening the model's constraint to
+    ``layer_rank >= 0`` left every test green, which means a store built from
+    ``Base.metadata.create_all`` would accept rows the migrated one refuses.
+
+    Read off ``__table__`` rather than from :func:`_layer_rank_pairs`. A first
+    version called the helper and compared *that* to the migration, which still
+    passed when the constraint stopped using the helper — it was checking that
+    two strings agreed, not that the table carried either of them.
+    """
+    table = Base.metadata.tables["data_layer_registry"]
+    checks = {
+        str(constraint.name): str(constraint.sqltext)
+        for constraint in table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    }
+    name = "ck_data_layer_registry_layer_rank_matches_layer"
+
+    assert name in checks, (
+        f"the mapped table has no {name} constraint. Its constraints are "
+        f"{sorted(checks)}. Without it a models-created store accepts a row whose "
+        f"rank contradicts its layer."
+    )
+    assert checks[name] == _load_0019(backend_dir)._LAYER_RANK_PAIRS, (
+        "the layer/rank CHECK on the mapped table and in migration 0019 have "
+        "diverged. A database created from the models would then accept rows a "
+        "migrated database refuses, and the registry's whole promise is that the "
+        "store answers correctly without the source tree."
+    )
+    for layer, rank in LAYER_RANK.items():
+        assert f"data_layer = '{layer.value}' AND layer_rank = {rank}" in checks[name]
 
 
 def test_a_backwards_foreign_key_makes_the_package_fail_to_import() -> None:
