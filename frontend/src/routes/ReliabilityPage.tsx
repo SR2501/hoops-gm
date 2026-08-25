@@ -175,11 +175,20 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
   // it. An earlier version of this row hard-coded "knockout fixtures whose
   // brackets are undrawn" and would have kept asserting it after it stopped
   // being true — the one thing ADR-013 asks a consumer to watch for.
-  const pendingLabels = [
-    ...new Set(
-      schedule.pending_games.map((game) => game.game_label).filter((label) => label !== ''),
-    ),
-  ].join(', ')
+  //
+  // The quantifier is derived too. "All labelled X" is a claim about every
+  // counted game, so it is only said when every counted game carries a label;
+  // a mixed cohort says how many, and an unlabelled one says nothing. Writing
+  // "all" unconditionally would be the same failure as the prose this replaced.
+  const labelled = schedule.pending_games.filter((game) => game.game_label !== '')
+  const distinctLabels = [...new Set(labelled.map((game) => game.game_label))]
+  const labelList = distinctLabels.join(', ')
+  const pendingLabels =
+    distinctLabels.length === 0
+      ? ''
+      : labelled.length === schedule.pending_games.length
+        ? `, all labelled ${labelList}`
+        : `, ${labelled.length} of them labelled ${labelList}`
 
   return (
     <section className="assumptions" data-testid="schedule-evidence">
@@ -217,7 +226,7 @@ function ScheduleEvidenceView({ payload }: { payload: ScheduleGrid }) {
               <>
                 <strong>{teamsUndecided}</strong> published game
                 {teamsUndecided === 1 ? ' has' : 's have'} no teams assigned yet
-                {pendingLabels === '' ? '' : `, all labelled ${pendingLabels}`}. A game with no
+                {pendingLabels}. A game with no
                 teams cannot be attributed to any team&rsquo;s calendar, so none of them can be
                 classified as a back-to-back in either direction.
               </>

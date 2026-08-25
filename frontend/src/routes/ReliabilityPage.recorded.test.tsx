@@ -253,6 +253,39 @@ describe('the reliability screen, against the recorded cohorts', () => {
     )
   })
 
+  it('does not say "all labelled" when only some pending games carry a label', async () => {
+    // "All labelled X" is a claim about every counted game. A cohort where one
+    // game has a label and another does not makes it false while leaving the
+    // count correct — the same shape as the prose this row replaced.
+    const grid = structuredClone(schedulePayload)
+    const pending = grid.lineage.schedule.pending_games
+    pending[0]!.game_label = 'Emirates NBA Cup'
+    pending[1]!.game_label = ''
+
+    serveRecorded({ 'schedule-grid/current': { body: grid } })
+    renderWithRouter(<ReliabilityPage />)
+    const evidence = await screen.findByTestId('schedule-evidence')
+    const row = within(evidence).getByTestId('schedule-evidence-pending')
+
+    expect(row).toHaveTextContent('2 published games have no teams assigned yet, 1 of them labelled')
+    expect(row).not.toHaveTextContent('all labelled')
+  })
+
+  it('says nothing about labels when no pending game carries one', async () => {
+    const grid = structuredClone(schedulePayload)
+    for (const game of grid.lineage.schedule.pending_games) {
+      game.game_label = ''
+    }
+
+    serveRecorded({ 'schedule-grid/current': { body: grid } })
+    renderWithRouter(<ReliabilityPage />)
+    const evidence = await screen.findByTestId('schedule-evidence')
+    const row = within(evidence).getByTestId('schedule-evidence-pending')
+
+    expect(row).toHaveTextContent('2 published games have no teams assigned yet. A game with no')
+    expect(row).not.toHaveTextContent(/labelled/i)
+  })
+
   it('separates a missing date from undecided teams when only one of them applies', async () => {
     // The control for the pair above, and the test that would have caught the
     // original bug. Both games are pending, but only one lacks a date, so a
