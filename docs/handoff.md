@@ -24315,3 +24315,109 @@ labelled as quoted. A `data-engineer` lane is committing that cross.
 - **The full suite count for this second entry.** Predicted 1,848 and driven; the
   first entry's 1,835 plus the 13 tests added since. Any lane seeing a different
   number should suspect its local `main` is stale before suspecting this branch.
+
+## 2026-08-23 - `quant`: a second review pass, and the two fixes that were themselves wrong
+
+Third and final entry for this unit. The gate ruling landed while the second
+review was running, so both are here.
+
+### The architect ruled Code only, and I had flipped the wrong way
+
+I filed this Code-gate-only. A reviewer argued Code + Model from `gates.md`'s
+leading clause and I accepted the correction, on the principle that **no gate may
+be waived by the agent it applies to** - which I still hold. The architect then
+upheld Code only on two grounds, one of which I did not have: **"reliability
+metrics" in `gates.md` is a word collision.** It names the player-consistency
+model in `docs/models/reliability-metrics.md`, not a *reliability diagram*, which
+is a calibration plot. Two senses of one word inside the file that decides which
+gate applies. And on the merits: **you cannot hold data out from a formula**, so
+the honest discharge for a deterministic scorer is verification against
+analytically known values plus deliberate corruption.
+
+So I argued one position, accepted its opposite, and ended on the first - which
+looks like drift and is worth being precise about. **I flagged the vocabulary
+coincidence myself before the reviewer's argument existed, then failed to weight
+it when the argument arrived.** Being handed a well-argued objection made me
+discount a doubt I had already raised. That is the actual lesson and it is not a
+lesson about gates.
+
+The half that binds forward is now in the module docstring and pinned by
+`test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate`: when
+this machinery later produces v2 §7's held-out table, **that report is
+Model-gated and this module is load-bearing inside it. Nothing here
+pre-discharges any part of it.** It is governance prose, so no arithmetic
+protects it; the test is the only thing between that paragraph and someone citing
+"the calibration machinery passed its gate" as though it settled the model's.
+
+### Two of my four fixes were incomplete, in ways their own tests could not see
+
+The reviewer re-attacked the fixed head. Findings, all now closed:
+
+- **Nested `restrict()` dropped the inherited pairs.** `restrict(restrict(rows,
+  status="doubtful"), era="legacy")` recorded only `era=legacy`, so a 60-row
+  payload claimed to be the legacy cohort while 200 legacy rows had been silently
+  excluded. Only `build_calibration_report` merged, and by then the inner pair
+  was gone. **This is the pooled-versus-restricted confusion this module exists
+  to prevent, one level down.**
+- **The marker was an unvalidated assertion on a mutable list.** `rc.extend(...)`
+  moved the rows and left the claim behind: 83 `doubtful` rows extended to 520
+  still recorded `status=doubtful`, attributing an `out`-dominated rate to
+  `doubtful`. That is this project's headline failure mode reached through an
+  ordinary list method. Markers are now **verified against the rows** before they
+  are recorded.
+- **Nine of fifteen strip routes, not one.** I had documented `list(restrict(...))`
+  as *the* residual and called laundering "a deliberate act". `rc[:]`, `tuple(rc)`,
+  `[*rc]`, `rc + []` and `rc * 1` also stripped it, and slicing a sequence is not
+  a laundering act - it is how anyone copies one. Slice, `+`, `*` and `.copy()`
+  now re-wrap. `copy`, `deepcopy` and `pickle` already held, via `__reduce_ex__`.
+  The iteration routes cannot be closed in Python and are now documented as a
+  **class** and pinned by a test that asserts the hole is where the docstring says
+  it is - so a future fix cannot silently make the docstring false.
+- **A test that looked like it pinned ordering could not.** Dropping `sorted()`
+  from the recorded restriction left all 61 tests green, because the test applied
+  `band` then `status` - insertion order was already sorted order. Filtering on
+  the later key first makes the two differ. **A green that passes for a reason
+  other than the one claimed**, which is exactly what the mutation discipline is
+  for, and my mutation set had not covered it.
+- **I made a quantifier error and the reviewer caught it.** I wrote that
+  `probable` and `doubtful` are "NOT protected by a 0.10 threshold". The worst
+  case exceeding 0.10 shows only that **a guarantee cannot be issued without the
+  rate** - existential, not universal. The failing region is narrow and derivable
+  from counts alone: `probable` breaches only at `p_hat` in [0.478, 0.522], 5 of
+  93 possible counts; `doubtful` at [0.349, 0.651]. Both centred on a coin flip.
+  My independent enumeration reproduced his four bounds exactly.
+
+He also confirmed, by brute-forcing `c x (1 - a/b)` over 23 published counts, that
+**no expression starting from the held-out 83 reaches v3 §6's 74**; the 43 near
+misses are all anchored on the *development* partition's 75. So the likeliest
+explanation of v3's figure is a partition mix-up, and my ~68 / 2.25x stands.
+
+### One mutation I wrote survived my own suite
+
+M23 - making the new verification treat a missing label key as satisfying the
+claim - survived on its first run. Nothing exercised verification against a
+cohort that is merely *silent* about the restricted key. It is the **second** time
+this exact shape has bitten here: a key that is absent is not a key that matches,
+and a suite whose fixtures are all fully labelled cannot tell the difference.
+Now closed. **23 mutations, 23 caught, 0 survived.** 78 tests in the module.
+
+### What I could not verify
+
+- **That the residual strip-route list is complete.** The reviewer enumerated 15;
+  I closed 4 and pinned 4 as permanent. Neither of us proved 15 is all of them,
+  and metaclass or C-level routes were not considered. *Partially driven.*
+- **That verifying markers costs nothing at real scale.** `_verify_restriction_holds`
+  is O(rows x pairs) and was only ever run on cohorts of a few thousand. Fine
+  here; unmeasured beyond here. *Not driven.*
+- **That the failing-rate windows transfer to a real fit.** They are exact for the
+  held-out counts, which are predictor-side. Whether a real `probable` rate lands
+  in [0.478, 0.522] is an outcome question I must not look at. *Driven as a range,
+  unknown as a fact.*
+- **That my judgement on the gate is now right rather than merely deferred.** I
+  hold the architect's ruling because his facts were better, not because I
+  re-derived it. If `gates.md`'s ambiguity is fixed, the reasoning here should be
+  re-read rather than cited. *Deference, recorded as such.*
+- **Whether a third review would find a third layer.** Pass 1 found 4, pass 2
+  found 5 including 2 inside my fixes. The sequence does not look exhausted, and
+  the honest reading is about my hit rate rather than his thoroughness. I stopped
+  because the unit is bounded, not because it converged. *Not driven.*

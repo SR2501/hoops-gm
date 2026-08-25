@@ -44,10 +44,30 @@ first, then pass them in as though they were the whole cohort, and the payload
 claimed `PREREGISTERED_V2` over an 83-row subgroup. `restrict()` therefore
 returns a `RestrictedCohort` that carries what it filtered on, and
 `build_calibration_report` inherits that provenance rather than trusting the call
-site. **The residual, stated rather than papered over:** `list(restrict(...))`
-strips the marker. Python cannot prevent that and this module does not pretend
-to. The difference that matters is that laundering is now a deliberate act
-instead of the obvious way to use the primitive.
+site.
+
+**The residual, stated as a class rather than by naming one convenient example.**
+A second review enumerated fifteen routes. `copy.copy`, `copy.deepcopy` and
+`pickle` round-trips preserve the marker, because they restore `__dict__` without
+calling `__init__`. Slicing, `+`, `*` and `.copy()` now re-wrap, because those
+are defensive-copy idioms rather than laundering and should not disarm anything.
+**What cannot be prevented is any route that builds a fresh container by
+iterating** — `list(rc)`, `tuple(rc)`, `[*rc]`, `itertools` round-trips. Python
+offers no way to intercept "somebody iterated me", so a caller who wants a
+subgroup to look pooled can always have it. The honest claim is therefore not
+that laundering is impossible, but that **it takes a step whose only effect is to
+discard provenance** — and that the guard is one layer, not the mechanism. The
+mechanism is that `restriction` is recorded in the payload and re-verified
+against the rows.
+
+**And the marker is verified, not believed.** `RestrictedCohort` is a mutable
+list, so `rc.extend(...)` changes the contents while the marker stands still. The
+same review drove an 83-row `doubtful` cohort extended to 520 rows still
+reporting `status=doubtful` — an `out`-dominated rate attributed to `doubtful`,
+which is precisely the masking failure the model card warns about, reached
+through a list method rather than an exotic bypass. `_verify_restriction_holds`
+now re-checks every row against every recorded pair, so a marker that has stopped
+being true raises instead of being printed.
 
 ## What this module cannot see
 
@@ -56,6 +76,31 @@ from a model that was fit on the rows it is now being scored against, whether th
 observations are independent, whether the outcome labels are correct, or whether
 a "did not play" is a healthy scratch, a trade, or a G League assignment. A
 report from this module is a statement about arithmetic, not about a season.
+
+## This module's own gate does not pre-discharge the model's
+
+**Read this before citing "the calibration machinery passed its gate" for
+anything.** This module was written under the **Code gate**. That is the
+architect's ruling, and the reasoning is worth carrying rather than just the
+verdict: you cannot hold data out from a formula, so the honest discharge for a
+deterministic estimator is verification against analytically known values and
+deliberate corruption — which is what the tests and `scripts/mutate_calibration.py`
+do. There is no estimate here to back-test.
+
+An independent reviewer argued for Code + Model, reading `gates.md`'s *"anything
+producing a number a decision rests on — `p(play)`, reliability metrics, …"* as a
+leading-clause test with the em-dash list as examples, and taking "reliability
+metrics" to name this apparatus. **That last step is a word collision**: the
+entry means the player-consistency model in `docs/models/reliability-metrics.md`,
+not a *reliability diagram*, which is a calibration plot. Two senses of one word
+inside the file that decides which gate applies. The argument was put, considered
+and ruled on; it is recorded here because a reader will otherwise re-derive it.
+
+**The half that binds forward:** when this machinery is later used to produce v2
+§7's held-out calibration table, **that report is Model-gated**, and this module
+is load-bearing inside it. Nothing verified here discharges any part of that
+gate. A green suite in this module says its arithmetic is right; it says nothing
+whatever about whether a model scored by it is any good.
 """
 
 from __future__ import annotations
@@ -66,7 +111,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import pairwise
-from typing import Final
+from typing import Final, SupportsIndex, overload
 
 from hoops_gm.availability.reliability import type7_quantile
 
@@ -337,6 +382,19 @@ class RestrictedCohort(list[CalibrationObservation]):
     and then presenting the result as a whole cohort was a one-line defeat of the
     parameter-keyed guard, and it is the ordinary way a caller would reach for a
     restriction primitive, not an exotic bypass.
+
+    **The marker is an assertion, so it is verified rather than believed.** This
+    is a mutable `list`, and `rc.extend(...)` is an ordinary method call that
+    leaves the marker untouched while changing what the marker describes. A
+    second review drove exactly that: 83 `doubtful` rows extended with 437 `out`
+    rows still recorded `status=doubtful`, which is the pooling failure this
+    module's own model card warns about, reached through a list method. So
+    `build_calibration_report` re-checks every row against every recorded pair
+    before it will record it - see `_verify_restriction_holds`.
+
+    Container operations that return a **new** cohort re-wrap, because slicing or
+    concatenating is a defensive-copy idiom rather than a laundering act and
+    should not silently disarm the guard.
     """
 
     def __init__(
@@ -346,6 +404,31 @@ class RestrictedCohort(list[CalibrationObservation]):
     ) -> None:
         super().__init__(rows)
         self.restriction = restriction
+
+    @overload
+    def __getitem__(self, index: SupportsIndex) -> CalibrationObservation: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> RestrictedCohort: ...
+
+    def __getitem__(
+        self, index: SupportsIndex | slice
+    ) -> CalibrationObservation | RestrictedCohort:
+        if isinstance(index, slice):
+            return RestrictedCohort(super().__getitem__(index), self.restriction)
+        return super().__getitem__(index)
+
+    def __add__(self, other: list[CalibrationObservation]) -> RestrictedCohort:  # type: ignore[override]
+        return RestrictedCohort(super().__add__(other), self.restriction)
+
+    def __mul__(self, count: SupportsIndex) -> RestrictedCohort:
+        return RestrictedCohort(super().__mul__(count), self.restriction)
+
+    def __rmul__(self, count: SupportsIndex) -> RestrictedCohort:
+        return RestrictedCohort(super().__rmul__(count), self.restriction)
+
+    def copy(self) -> RestrictedCohort:
+        return RestrictedCohort(self, self.restriction)
 
 
 def restrict(
@@ -364,9 +447,17 @@ def restrict(
     difference between a restriction and a no-op, and it is the reason
     `row.labels.get(key)` is compared to `value` rather than tested for
     truthiness.
+
+    **Nesting accumulates.** `restrict(restrict(rows, status="doubtful"),
+    era="legacy")` records both pairs, not just the outer one. An earlier version
+    recorded only `era=legacy`, so a 60-row payload claimed to be the legacy
+    cohort while 200 legacy rows had been silently dropped - an under-report of
+    the same kind the pooled-versus-restricted distinction exists to prevent, one
+    level down.
     """
 
-    wanted = tuple(sorted(labels.items()))
+    inherited = dict(_inherited_restriction(observations))
+    wanted = tuple(sorted((inherited | labels).items()))
     return RestrictedCohort(
         (
             row
@@ -378,13 +469,34 @@ def restrict(
 
 
 def _inherited_restriction(
-    observations: Sequence[CalibrationObservation],
+    observations: Iterable[CalibrationObservation],
 ) -> tuple[tuple[str, str], ...]:
     """What `observations` was already filtered on, if anything."""
 
     if isinstance(observations, RestrictedCohort):
         return observations.restriction
     return ()
+
+
+def _verify_restriction_holds(
+    rows: Sequence[CalibrationObservation],
+    restriction: Mapping[str, str],
+) -> None:
+    """Refuse to record a restriction that the rows do not actually satisfy.
+
+    A `RestrictedCohort`'s marker is an assertion made when it was built, and a
+    `list` stays mutable afterwards. Checking is cheap and the alternative is a
+    payload that misdescribes its own contents, which is worse than an error
+    because nothing downstream can detect it.
+    """
+
+    for key, value in restriction.items():
+        offenders = sum(1 for row in rows if row.labels.get(key) != value)
+        if offenders:
+            raise ValueError(
+                f"cohort claims restriction {key}={value!r} but "
+                f"{offenders} of {len(rows)} rows do not satisfy it"
+            )
 
 
 def build_calibration_report(
@@ -408,10 +520,15 @@ def build_calibration_report(
     rows: list[CalibrationObservation]
     if restriction is not None:
         rows = restrict(observations, **dict(restriction))
+        # Precedence on a key conflict is unobservable by construction: the two
+        # values cannot both match a row, so `rows` goes empty and the call
+        # raises below before `merged` is ever recorded. An independent reviewer
+        # confirmed reversing this `|` is an equivalent mutant, not a gap.
         merged = dict(inherited) | dict(restriction)
     else:
         rows = list(observations)
         merged = dict(inherited)
+    _verify_restriction_holds(rows, merged)
     recorded_restriction: tuple[tuple[str, str], ...] | None = (
         tuple(sorted(merged.items())) if merged else None
     )
