@@ -371,5 +371,38 @@
     "params": {},
     "source": "nba_stats",
     "trimmed": false
+  },
+  "nba_injury_report_2024-01-10_0530pm.pdf": {
+    "byte_size": 82623,
+    "captured_at": "2026-08-21T13:20:00-05:00",
+    "endpoint": "InjuryReportPdf",
+    "note": "Real captured 2023-24 report, committed whole. One of three season fixtures pinning that the historical sweep's planned seasons still parse; this is the oldest season this project's parser can read. Carries both scarce designations (3 probable, 3 doubtful), which is the point: secondary sources claim the NBA vocabulary has no PROBABLE at all, and if that were true a multi-season sweep would leave injury-status-conversion unactivatable on probable. Retrieval evidence, including this response's SHA-256, is in docs/adapters/nba-injury-report-archive-reach-probe.json.",
+    "params": {
+      "url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2024-01-10_05PM.pdf"
+    },
+    "source": "nba_injury_report",
+    "trimmed": false
+  },
+  "nba_injury_report_2025-01-15_0530pm.pdf": {
+    "byte_size": 89571,
+    "captured_at": "2026-08-21T13:20:00-05:00",
+    "endpoint": "InjuryReportPdf",
+    "note": "Real captured 2024-25 report, committed whole. Second of three season fixtures for the historical sweep. Carries 13 probable and 5 doubtful designations - the densest rare-status capture of the probe, and the direct falsification of the claim that PROBABLE is absent from the pre-2025-26 vocabulary. Retrieval evidence in docs/adapters/nba-injury-report-archive-reach-probe.json.",
+    "params": {
+      "url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2025-01-15_05PM.pdf"
+    },
+    "source": "nba_injury_report",
+    "trimmed": false
+  },
+  "nba_injury_report_2023-01-11_0530pm_unsupported_layout.pdf": {
+    "byte_size": 35726,
+    "captured_at": "2026-08-21T13:20:00-05:00",
+    "endpoint": "InjuryReportPdf",
+    "note": "Real captured 2022-23 report in the pre-2023 word-spacing layout, committed whole and committed deliberately as a fixture the parser MUST REFUSE. It fetches cleanly - HTTP 200, valid PDF magic, five pages of genuine injury data with real players, matchups and designations - so nothing in transport notices anything wrong, and only the parser stands between this layout and a cohort of plausible nonsense. The archive reaches back to at least 2019-20 in this layout; the boundary at which this project's parser stops working is bracketed between 2023-04-05 (refused) and 2023-10-25 (parsed). Retrieval evidence in docs/adapters/nba-injury-report-archive-reach-probe.json.",
+    "params": {
+      "url": "https://ak-static.cms.nba.com/referee/injury/Injury-Report_2023-01-11_05PM.pdf"
+    },
+    "source": "nba_injury_report",
+    "trimmed": false
   }
 }
