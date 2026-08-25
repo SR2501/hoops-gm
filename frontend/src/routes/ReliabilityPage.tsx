@@ -86,7 +86,7 @@ export function ReliabilityPage() {
         <EvidenceInventory />
       </section>
 
-      <section className="reliability__section">
+      <section className="reliability__section" data-testid="section-assumptions">
         <AsyncBoundary
           state={projections}
           label="the imported cohort's games-played assumptions"
@@ -99,7 +99,7 @@ export function ReliabilityPage() {
         </AsyncBoundary>
       </section>
 
-      <section className="reliability__section">
+      <section className="reliability__section" data-testid="section-schedule">
         <AsyncBoundary
           state={schedule}
           label="the schedule this evidence would be measured against"
