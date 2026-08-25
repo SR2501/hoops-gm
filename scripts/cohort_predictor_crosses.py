@@ -42,6 +42,40 @@ and v3's entire legality argument rests on that boundary having been held. A
 committed script that makes crossing it easy is a standing invitation, so the
 boundary is stated here rather than only in the brief that asked for it.
 
+**That claim is enforced rather than asserted.** :func:`_guarded_engine`
+installs a SQLite **authorizer** on the connection, which vetoes any read of any
+table outside the two named above before SQLite executes it. Independent review
+used exactly this technique to check the claim from outside, which is a better
+check than reading the call graph - a call graph cannot see a lazily loaded
+relationship that fires on attribute access. Having been checked that way once
+by someone else, the check belongs in the file, so that the next person to
+change :func:`select_canonical_pregame_observations` underneath this script gets
+a refusal instead of a silently wider query.
+
+The proof has two halves and the second is the one usually skipped. A guard that
+never fires is indistinguishable from a guard that is inert, so both were
+exercised: removing ``nba_games`` from the allow-list makes the run refuse with
+exit 2 naming the table, and the unmutated run then completes normally. That
+second half is the positive claim - **a permission set of exactly these two
+tables is *sufficient* to compute every number below** - which is stronger than
+"no forbidden read was observed", and it is a fact about the run rather than
+about anybody's reading of it.
+
+**The allow-list is keyed on table names and the outcome vocabulary on the
+``ParticipationOutcome`` type - never on the word "outcome".** That word is
+overloaded inside this very package and the two meanings are *completely
+disjoint*: ``backfill.py`` carries eleven ``.outcome`` attribute reads, and not
+one of them is a participation outcome. They are fetch-coverage outcomes with
+their own vocabulary - ``fetched``, ``observed``, ``legacy_excluded``,
+``unresolved_evidence``, ``forbidden``, ``not_available`` - which intersects
+``ParticipationOutcome`` (``played``, ``did_not_play``, ``did_not_dress``,
+``inactive``, ``not_with_team``, ``unknown``) in **exactly nothing**. Verified,
+not assumed. So a safety check keyed on the *name* would report a dozen
+crossings in a module that performs none, and a reader who trusted it would
+price a three-site fix as a package-wide refactor. This is the ``gameEt`` shape
+at package scope: a self-describing name meaning two unrelated things, where
+the parse succeeds and the meaning is wrong. Key on the type or the column.
+
 **It emits no outcome, and it must not learn to.** Every quantity printed is a
 *report designation* - what the NBA said before tip-off - never what the player
 then did.
@@ -137,6 +171,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Sequence
@@ -147,6 +182,9 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "backend" / "src"))
 
+from sqlalchemy import event  # noqa: E402
+from sqlalchemy.engine import Engine  # noqa: E402
+from sqlalchemy.exc import DatabaseError  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from hoops_gm.db.models.enums import SeasonType  # noqa: E402
@@ -180,6 +218,77 @@ PARTITIONS = ("development", "selection", "held_out")
 
 class Refusal(Exception):
     """A stop with a reason a reader can act on, not a traceback."""
+
+
+#: The only *data* tables this script is permitted to read. Deliberately an
+#: allow-list rather than a ``player_participation`` deny-list: a deny-list has
+#: to predict what it is forbidding, and the store carries far more tables than
+#: these, several of which reach participation under names that do not say so.
+READABLE_DATA_TABLES = frozenset({"injury_report_entries", "nba_games"})
+
+#: The allow-list actually handed to the authorizer: the data tables plus the
+#: catalogue SQLite needs to plan any query at all.
+READABLE_TABLES = READABLE_DATA_TABLES | {
+    "sqlite_master",
+    "sqlite_temp_master",
+    "sqlite_schema",
+    "sqlite_temp_schema",
+}
+
+
+def _guarded_engine(store: Path) -> tuple[Engine, list[str]]:
+    """A read-only engine that *cannot* read a table outside ``READABLE_TABLES``.
+
+    Returns the engine and a list that accumulates the names of any tables the
+    authorizer refused, so the caller can name them. SQLite's own error for a
+    vetoed read is the bare string ``not authorized``, which tells a reader
+    nothing about *what* was refused - and this guard exists precisely for
+    someone who does not yet know they widened a query.
+
+    ``read_only_engine`` already opens the file ``mode=ro``, which stops writes
+    and nothing else - every table in the store is still readable, including
+    ``player_participation``, which is the one thing the blind forbids. Read-only
+    and outcome-free are different properties and only the first was enforced.
+
+    A SQLite authorizer closes that. It is consulted by the engine *before* a
+    statement runs, so an unexpected read fails as a refusal at the boundary
+    rather than as a number in a table nobody questions. This is stronger than
+    reading the call graph, which is how I checked it originally: a call graph
+    cannot see a lazily loaded ORM relationship that fires on attribute access,
+    and an authorizer does not care how the read was spelled.
+
+    The failure mode this exists for is not a mistake in this file - it is
+    someone widening :func:`select_canonical_pregame_observations` a year from
+    now for a perfectly good reason, with no idea that a script in another
+    directory depends on it staying narrow. They will get a loud refusal naming
+    the table. Nothing else in CI would tell them.
+    """
+    engine = read_only_engine(store)
+    denied: list[str] = []
+
+    @event.listens_for(engine, "connect")
+    def _install_authorizer(dbapi_connection: Any, _record: Any) -> None:
+        def authorize(
+            action: int,
+            arg1: str | None,
+            _arg2: str | None,
+            _db_name: str | None,
+            _trigger: str | None,
+        ) -> int:
+            # Only reads are policed. Writes are already impossible on a
+            # `mode=ro` connection, and vetoing SELECT/FUNCTION/etc. here would
+            # break query planning for the reads that *are* allowed.
+            if action != sqlite3.SQLITE_READ:
+                return sqlite3.SQLITE_OK
+            if arg1 is None or arg1 in READABLE_TABLES:
+                return sqlite3.SQLITE_OK
+            if arg1 not in denied:
+                denied.append(arg1)
+            return sqlite3.SQLITE_DENY
+
+        dbapi_connection.set_authorizer(authorize)
+
+    return engine, denied
 
 
 def _store_path(args: argparse.Namespace) -> Path:
@@ -646,9 +755,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest = _load_manifest(Path(args.manifest))
         _assert_artifacts_agree(manifest, Path(args.admissibility))
         store = _store_path(args)
-        engine = read_only_engine(store)
-        with Session(engine) as session:
-            observations, game_dates = _select(session, manifest["scope"])
+        engine, denied = _guarded_engine(store)
+        try:
+            with Session(engine) as session:
+                observations, game_dates = _select(session, manifest["scope"])
+        except DatabaseError as database_error:
+            if not denied:
+                raise
+            raise Refusal(
+                "the selection tried to read a table this script is not permitted "
+                "to read, and the\n"
+                "authorizer stopped it before SQLite executed the statement.\n\n"
+                f"  refused: {', '.join(sorted(denied))}\n"
+                f"  allowed: {', '.join(sorted(READABLE_DATA_TABLES))}\n\n"
+                "  This is very unlikely to be a bug in this script. It almost certainly\n"
+                "  means a committed selection function was widened underneath it - which\n"
+                "  is exactly the change nothing else would have told anyone about.\n"
+                "  If the wider read is correct, the crosses printed here are no longer\n"
+                "  outcome-free and section 2's legality argument needs re-examining\n"
+                "  before the allow-list is edited to match."
+            ) from database_error
         _assert_marginals(observations, manifest)
     except Refusal as refusal:
         print(f"REFUSED: {refusal}", file=sys.stderr)

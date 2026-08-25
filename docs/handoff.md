@@ -22338,3 +22338,133 @@ defensive noise.
   which means the classification cannot be settled from the reason text alone
   and settling it properly would need the observed pattern - which is under the
   blind.
+
+## 2026-08-23 — data-engineer — Enforcing the two-table boundary in `cohort_predictor_crosses.py`
+
+**Branch:** `sr2501-cohort-predictor-crosses`. **Base verified:** `f3e2c53` (= `origin/main`), not rebased — merge freeze in force.
+
+Follow-up to the predictor-crosses unit. The script's whole safety claim is *"it
+reads only `injury_report_entries` and `nba_games`"*. That claim was true, and it
+was **asserted rather than enforced**. It now holds by construction.
+
+### `read_only_engine` does not do what the safety argument needed
+
+`read_only_engine` (`cohort_admissibility.py:351`) opens the file `mode=ro`. That
+stops writes. It stops nothing else — every table in the merged store stays
+readable, including `player_participation`. **Read-only and outcome-free are
+different properties and only the first was enforced.** Measured, not reasoned:
+the same `SELECT COUNT(*) FROM player_participation` that the guarded engine
+refuses returns 43,037 rows on a plain `read_only_engine`.
+
+`_guarded_engine` now installs a **SQLite authorizer** on connect that vetoes
+`SQLITE_READ` for any table outside the allow-list before SQLite executes the
+statement. Non-read actions pass through, because vetoing them breaks query
+planning for the reads that *are* permitted.
+
+The technique is borrowed rather than invented: independent review used an
+authorizer to check the claim from *outside* the file. It is a better check than
+the one I originally ran, which was reading the call graph — a call graph cannot
+see a lazily loaded ORM relationship that fires on attribute access, and an
+authorizer does not care how the read was spelled. Having been checked that way
+once by someone else, the check belongs **in the file**, where the next person to
+widen `select_canonical_pregame_observations` will meet it.
+
+### Both halves of the proof, because one half is the false-zero shape
+
+A guard that never fires and a guard that is inert produce identical evidence.
+
+* **Negative half.** Removing `nba_games` from the allow-list: the run refuses,
+  exit 2, naming `nba_games` as refused and `injury_report_entries` as allowed.
+  So the veto path is reachable and the message is actionable — SQLite's own
+  error is the bare string `not authorized`, which tells a reader nothing about
+  *what* was refused, so the denied names are captured in a list the caller
+  reports.
+* **Control.** `player_participation` denied through the guarded engine; the same
+  read succeeds unguarded at 43,037 rows. The denial is the authorizer, not an
+  unreadable file.
+* **Positive half, the one usually skipped.** The unmutated run completes with
+  **byte-identical output** — 0 differing lines against the pre-authorizer
+  capture; 9,666 / 3,385 / 4,250 / 9,539 / 13,789 / 84 all unchanged. This is
+  the stronger claim: not *"no forbidden read was observed"* but **"a permission
+  set of exactly these two tables is sufficient to compute every number
+  printed"**. That is a fact about the run, not about anyone's reading of it.
+
+### The `outcome` name is overloaded and I keyed on the type instead
+
+The architect's warning, which I verified by enumeration rather than inheriting.
+`backfill.py` carries **eleven** `.outcome` attribute reads (1264, 2321, 2446,
+2458, 2463, 2599, 2600, 2602, 2630, 2632, 2638) and **not one** is a
+participation outcome. Two vocabularies:
+
+* fetch-coverage: `fetched`, `observed`, `legacy_excluded`, `unresolved_evidence`,
+  `forbidden`, `not_available`
+* `ParticipationOutcome`: `played`, `did_not_play`, `did_not_dress`, `inactive`,
+  `not_with_team`, `unknown`
+
+**Intersection: empty.** A safety census keyed on the attribute name reports a
+dozen crossings in a module that performs none, and a reader trusting it prices a
+three-site fix as a package-wide refactor. This is the `gameEt` shape at package
+scope — a self-describing name meaning two unrelated things, where the parse
+succeeds and the meaning is wrong. So the allow-list is keyed on **table names**
+and the vocabulary on the **`ParticipationOutcome` type**, and the docstring says
+why, because the next reader will meet the same overloaded word.
+
+I also made the allow-list an allow-list rather than a `player_participation`
+deny-list. A deny-list has to predict what it is forbidding; the store carries
+more tables than the two, several of which reach participation under names that
+do not say so.
+
+### A claim in the adapter doc that the authorizer falsified
+
+`docs/adapters/nba-injury-report.md` said whoever changes the selection functions
+underneath this script *"will not be told"*. That is now too pessimistic and was
+worth correcting rather than leaving as harmless overcaution, since it is the
+sentence a future reader would rely on. Corrected scope: they **will** be told if
+the change reaches a third table; they will **not** be told if the change is to
+selection *semantics* within the same two tables — a different `WHERE`, join key,
+or notion of "ready". Type-checking sees signatures, an authorizer sees table
+names, **neither sees meaning**. That residue is what the two marginal assertions
+are for, and they remain necessary rather than sufficient.
+
+### The blind
+
+**No contact.** Stating that positively rather than by silence: no participation
+outcome was read, published or differenced by this work, and it is now
+mechanically impossible for this script to read one. The one participation figure
+that appears above — 43,037 — is a **row count of the whole ledger**, already
+committed in six documents, and is not an outcome value; the control probe that
+produced it read `COUNT(*)`, and the probe that attempted `SELECT outcome` was
+denied.
+
+### Verification
+
+* Live run, guarded: exit 0, output byte-identical to the pre-authorizer run
+  (`Compare-Object` → 0 lines).
+* Mutation M9 (allow-list shrunk): exit 2, table named. Script restored verbatim.
+* Control probes P1–P4 as above.
+* `python -m ruff format` / `ruff check`: clean.
+* Configured `python -m mypy` from `backend`: **192 source files, clean** — the
+  script is in scope via `files = ["src", "tests", "../scripts"]`, which I
+  previously got wrong and settled with a deliberate type-error canary.
+* `python scripts/test_name_diff.py origin/main HEAD`: nothing dropped. Noting
+  the trap the architect flagged — local `main` in a worktree is `9d7e791`, five
+  PRs behind `origin/main` = `f3e2c53`, and nothing fast-forwards it; a bare
+  `main` manufactures phantom DROPPED names that read as *someone else's* error.
+
+### Could not verify
+
+* **That the crosses are *correct* rather than merely *reproducible*.** Structural
+  and unchanged by this work: the script re-derives the same selection the
+  manifest published, so if `select_canonical_pregame_observations` is wrong, this
+  reproduces the error perfectly and both marginals still match.
+* **That the population is the manifest's population** rather than a different one
+  sharing both marginals. The sufficient check is the record-level fingerprint,
+  which needs NBA player ids — a third table, which my own allow-list now forbids.
+  The two marginals plus the artifact-fingerprint agreement and the partition
+  interior check narrow it; they do not close it.
+* **That the authorizer covers connections this script does not open.** It is
+  installed per-engine, so anything constructing its own engine is outside it. In
+  this file nothing does; that is a property of the file today, not a guarantee.
+* **Whether `Rest` is a health event** — still `quant`'s classification, still
+  undecided in-lane, and settling it properly needs observed patterns, which are
+  under the blind.

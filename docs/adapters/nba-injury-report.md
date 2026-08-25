@@ -1466,6 +1466,45 @@ recorded here because a thing that passes by non-recognition has not been
 cleared by anybody. Markdown is outside the guard's scope entirely, so the
 paragraph above is a deliberate, classified placement and not an evasion of it.
 
+**The two-table boundary is enforced by the process, not asserted by the
+author.** The script may read `injury_report_entries` and `nba_games` and
+nothing else - `player_participation` is one join away in the same file, and
+v3's legality argument rests on that boundary having been held. `read_only_engine`
+does not hold it: `mode=ro` stops writes and leaves every table in the store
+readable. Read-only and outcome-free are different properties and only the first
+was enforced. `_guarded_engine` installs a **SQLite authorizer** that vetoes any
+read of any other table before SQLite executes the statement. Independent review
+used exactly this technique to check the claim from outside - which is better
+than reading the call graph, since a call graph cannot see a lazily loaded
+relationship firing on attribute access - and having been checked that way once,
+the check belongs in the file.
+
+Both halves were exercised, because a guard that never fires is
+indistinguishable from a guard that is inert. Removing `nba_games` from the
+allow-list makes the run refuse with exit 2 naming the refused table; a control
+read of `player_participation` through the guarded engine is denied while the
+same read on a plain `read_only_engine` returns 43,037 rows, so the denial is
+the authorizer and not an unreadable file. The unmutated run then completes with
+byte-identical output. That last part is the positive claim and the one usually
+skipped: **a permission set of exactly these two tables is *sufficient* to
+compute every number the script prints**, which is a fact about the run rather
+than about anyone's reading of it.
+
+The allow-list is keyed on **table names**, and any outcome vocabulary on the
+`ParticipationOutcome` **type** - never on the word `outcome`. That word is
+overloaded inside this package and the two meanings are *disjoint*:
+`backfill.py` carries eleven `.outcome` attribute reads and not one is a
+participation outcome. They are fetch-coverage outcomes with their own
+vocabulary - `fetched`, `observed`, `legacy_excluded`, `unresolved_evidence`,
+`forbidden`, `not_available` - which intersects `ParticipationOutcome`
+(`played`, `did_not_play`, `did_not_dress`, `inactive`, `not_with_team`,
+`unknown`) in **exactly nothing**. Verified by enumeration, not assumed. A
+safety census keyed on the name would report a dozen crossings in a module that
+performs none, and a reader trusting it would price a three-site fix as a
+package-wide refactor. This is the `gameEt` shape at package scope: a
+self-describing name meaning two unrelated things, where the parse succeeds and
+the meaning is wrong.
+
 **What it will not tell you when it breaks - corrected.** An earlier version of
 this section said `scripts/` sits outside the pytest, ruff and mypy scopes and
 that nothing in CI lints the file. **That is false for mypy.**
@@ -1479,9 +1518,14 @@ run resolves it from `src` and passes clean - two invocations of the same tool
 giving different answers, and the convenient one believed. Settled by inserting
 a deliberate type error and watching the configured run go red.
 
-What remains true is the part that mattered: whoever changes
-`select_canonical_pregame_observations` or `games_to_backfill` underneath it will
-not be told, because type-checking sees signatures and not selection semantics.
+What remains true is the part that mattered, though the authorizer narrows it.
+Whoever changes `select_canonical_pregame_observations` or `games_to_backfill`
+underneath it will be told **only if the change reaches a third table**; a
+change to the selection *semantics* within the same two tables - a different
+`WHERE`, a different join key, a different notion of "ready" - is invisible to
+both mypy and the authorizer, because type-checking sees signatures and an
+authorizer sees table names. Neither sees meaning. That residue is what the two
+marginal assertions are for, and they are necessary rather than sufficient.
 It is deliberately not wired into the test suite: the merged store
 is out-of-tree gitignored operational state and is absent in CI, so a test over
 it would either fail permanently or be made to skip, and **a skipping test is a
