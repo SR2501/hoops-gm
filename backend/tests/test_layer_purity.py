@@ -17,16 +17,29 @@ widen a pattern. The store-opening census learned this the expensive way, going
 from exactly complete to quietly incomplete at exit 0 because its search
 pattern was one call spelling.
 
-**Scope limits are asserted, not narrated.** ``FLOW_SCAN_LIMIT`` and
-``GRAIN_LIMIT`` are pinned by :func:`test_the_scope_limits_are_stated`, because
-a limitation in a docstring gets summarised away and a limitation behind an
-assertion breaks a test when someone deletes it.
+**Scope limits are asserted, not narrated.** ``FLOW_SCAN_LIMIT``,
+``IMPORT_TIME_LIMIT`` and ``GRAIN_LIMIT`` are pinned by
+:func:`test_the_scope_limits_are_stated`, because a limitation in a docstring
+gets summarised away and a limitation behind an assertion breaks a test when
+someone deletes it.
+
+**Several of these exist because an independent review broke the first
+version.** It gutted ``validate_layers`` to a no-op and watched all 44 tests
+pass; it emptied ``LAYERS_WITHOUT_TABLES`` and watched all 44 pass; and it found
+that the rank-based flow rule permitted ``valuation -> market``, which is R38.
+Where a test below says what review drove, that is why it is there.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import itertools
+import subprocess
+import sys
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import sqlalchemy as sa
@@ -36,12 +49,16 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from hoops_gm.db import models
 from hoops_gm.db.base import Base
 from hoops_gm.db.layers import (
+    FLOW_MATRIX_SIZE,
     FLOW_SCAN_LIMIT,
     GRAIN_LIMIT,
+    IMPORT_TIME_LIMIT,
     LAYER_RANK,
     LAYERS_WITHOUT_TABLES,
+    PERMITTED_FLOWS,
     TABLE_LAYERS,
     DataLayer,
     LayerViolation,
@@ -62,7 +79,14 @@ def test_every_layer_is_ranked() -> None:
 
 
 def test_the_pipeline_order_is_the_one_adr_008_states() -> None:
-    """observations -> projections -> availability -> valuation -> terminal."""
+    """observations -> projections -> availability -> valuation -> terminal.
+
+    :data:`LAYER_RANK` is descriptive — :func:`flow_permitted` does not consult
+    it — so this pins the *label*, and the flow tests below pin the rule. Both
+    are worth having: a rank that disagreed with the edges would mislead
+    anybody reading ``data_layer_registry.layer_rank`` in a raw query, which is
+    the one thing that column exists for.
+    """
     pipeline = [
         DataLayer.OBSERVATIONS,
         DataLayer.PROJECTIONS,
@@ -74,6 +98,10 @@ def test_the_pipeline_order_is_the_one_adr_008_states() -> None:
 
     assert ranks == sorted(ranks)
     assert len(set(ranks)) == len(ranks), "two pipeline layers share a rank"
+
+    for earlier, later in itertools.pairwise(pipeline):
+        assert flow_permitted(earlier, later)
+        assert not flow_permitted(later, earlier)
 
 
 @pytest.mark.parametrize(
@@ -111,6 +139,24 @@ def test_forward_and_within_layer_flow_is_permitted(source: DataLayer, target: D
             DataLayer.MARKET,
             "R38: our own output laundered back in as market evidence",
         ),
+        # The three review found open under the old rank rule. Each is R38
+        # through a different door, and each type-checked when the rule was
+        # `rank[source] < rank[target]` — the market's rank really is higher.
+        (
+            DataLayer.VALUATION,
+            DataLayer.MARKET,
+            "R38: a fused value of ours recorded as market evidence",
+        ),
+        (
+            DataLayer.AVAILABILITY,
+            DataLayer.MARKET,
+            "clause 3: divergence is only a signal if the sides are independent",
+        ),
+        (
+            DataLayer.PROJECTIONS,
+            DataLayer.MARKET,
+            "clause 3: our projection is not part of what somebody else published",
+        ),
         (DataLayer.TERMINAL, DataLayer.VALUATION, "a composite value re-entering the fusion"),
         (DataLayer.VALUATION, DataLayer.AVAILABILITY, "a fused value re-entering p(play)"),
         (DataLayer.AVAILABILITY, DataLayer.PROJECTIONS, "ADR-002: never conflate the two"),
@@ -123,15 +169,72 @@ def test_backward_flow_is_refused(source: DataLayer, target: DataLayer, why: str
 
 
 def test_market_and_terminal_are_mutually_unreachable() -> None:
-    """Equal rank is doing the work here, and it has to work in both directions.
+    """Refused in both directions, for different reasons.
 
-    They are refused for different reasons — clause 5 one way, R38 the other —
-    and a single total order can express at most one of them. This is the test
-    that goes red if somebody "tidies" the two onto distinct ranks.
+    ``market -> terminal`` is clause 5, the draft-day rankings are ours alone;
+    ``terminal -> market`` is R38. An earlier revision achieved this by giving
+    the two an equal rank and refusing cross-layer flow at equal rank, which
+    worked for this pair and quietly permitted ``valuation -> market``. The
+    edge set states both refusals without implying anything about the rest.
     """
-    assert LAYER_RANK[DataLayer.MARKET] == LAYER_RANK[DataLayer.TERMINAL]
     assert not flow_permitted(DataLayer.MARKET, DataLayer.TERMINAL)
     assert not flow_permitted(DataLayer.TERMINAL, DataLayer.MARKET)
+
+
+def test_the_market_consumes_nothing_we_derived() -> None:
+    """ADR-008 clause 3, stated as the closed set it actually is.
+
+    "Compared against, never blended in" is a claim about independence: our
+    number and the market's mean something together only because neither was
+    computed from the other. So the market side may consume identity — a
+    published value has to say which player it is about — and nothing else of
+    ours, at any weight. This is the finding an independent review raised
+    against the rank construction, and the assertion is written over *every*
+    layer rather than the four that exist today so a new one cannot slip in.
+    """
+    inbound = {source for source, target in PERMITTED_FLOWS if target is DataLayer.MARKET}
+
+    assert inbound == {DataLayer.OBSERVATIONS}, (
+        f"the market layer accepts {sorted(inbound)}. Anything beyond observations "
+        f"destroys the independence ADR-008 clause 3 relies on."
+    )
+
+
+def test_comparison_feeds_nothing() -> None:
+    """A property of the edge set, not a side effect of holding the top rank.
+
+    Under the old rank rule this held only because ``comparison`` was the
+    highest number; an eighth layer above it would have silently opened
+    ``comparison -> <new>``. Here it is stated, so it survives a new member.
+    """
+    outbound = {target for source, target in PERMITTED_FLOWS if source is DataLayer.COMPARISON}
+
+    assert outbound == set()
+
+
+def test_the_flow_matrix_is_completely_decided() -> None:
+    """Every ordered pair of distinct layers has a verdict, and the size is pinned.
+
+    ``FLOW_MATRIX_SIZE`` is the ``SCAN_LIMIT`` pattern applied to the rule
+    itself: an eighth layer changes the count and turns this red, so nobody can
+    add one without deciding its fourteen new edges. An unlisted pair is
+    refused, which is the safe default — the pin is what makes it a *reviewed*
+    default rather than an unnoticed one.
+    """
+    pairs = [(a, b) for a in DataLayer for b in DataLayer if a is not b]
+
+    assert len(pairs) == FLOW_MATRIX_SIZE, (
+        f"the layer vocabulary changed: {len(pairs)} ordered pairs, not "
+        f"{FLOW_MATRIX_SIZE}. Decide each new edge in PERMITTED_FLOWS, then "
+        f"update FLOW_MATRIX_SIZE."
+    )
+    assert set(pairs) >= PERMITTED_FLOWS, "PERMITTED_FLOWS lists a same-layer pair"
+
+    permitted = {pair for pair in pairs if flow_permitted(*pair)}
+    assert permitted == set(PERMITTED_FLOWS)
+
+    for layer in DataLayer:
+        assert flow_permitted(layer, layer), "ADR-008 clause 1: aggregate within a layer"
 
 
 # --- the assignment registry ------------------------------------------------
@@ -202,6 +305,18 @@ def test_empty_layers_are_still_empty() -> None:
         f"ADR-008, then remove it from LAYERS_WITHOUT_TABLES."
     )
     assert populated == {DataLayer.OBSERVATIONS, DataLayer.PROJECTIONS, DataLayer.MARKET}
+
+    # The invariant that makes the constant load-bearing rather than decorative.
+    # Without it, review gutted LAYERS_WITHOUT_TABLES to frozenset() and all 44
+    # tests still passed: the two assertions above are both satisfied by an
+    # empty set. This one is not, and it also forces an eighth DataLayer member
+    # to be classified as populated or empty rather than described by neither.
+    assert populated | LAYERS_WITHOUT_TABLES == set(DataLayer), (
+        f"LAYERS_WITHOUT_TABLES has stopped describing which layers are empty: "
+        f"{sorted(set(DataLayer) - (populated | LAYERS_WITHOUT_TABLES))} is in "
+        f"neither set."
+    )
+    assert populated & LAYERS_WITHOUT_TABLES == set()
 
 
 # --- the flow check, driven against synthetic schemas -----------------------
@@ -342,16 +457,150 @@ def test_data_layer_columns_agree_with_the_registry() -> None:
 def test_the_scope_limits_are_stated() -> None:
     """Asserted, not narrated, so deleting one breaks a test.
 
-    :data:`FLOW_SCAN_LIMIT` is the honest gap: this reads declared foreign
-    keys, and a value copied between layers in Python leaves no key behind.
-    :data:`GRAIN_LIMIT` is the other: a layer is assigned per table.
+    :data:`FLOW_SCAN_LIMIT` is the honest gap in the flow check: declared
+    foreign keys only, so an undeclared identifier column or a value copied in
+    Python leaves no key behind. :data:`IMPORT_TIME_LIMIT` is the gap in *when*
+    the check runs. :data:`GRAIN_LIMIT` is the gap in what an assignment
+    covers: one layer per table.
+
+    These pin documentation rather than behaviour — widening a scan to close a
+    gap would leave the assertion untouched. That is inherent to the pattern,
+    and it is why each constant names what remains uncovered.
     """
     assert "foreign keys" in FLOW_SCAN_LIMIT
+    assert "undeclared identifier column" in FLOW_SCAN_LIMIT
     assert "Python" in FLOW_SCAN_LIMIT
+    assert "outside db/models/" in IMPORT_TIME_LIMIT
     assert "one layer per table" in GRAIN_LIMIT
 
 
+# --- the enforcement point itself -------------------------------------------
+
+
+def _models_package_source() -> str:
+    return (Path(models.__file__).resolve()).read_text(encoding="utf-8")
+
+
+def test_the_package_still_calls_the_validator_at_import() -> None:
+    """The one line whose deletion disarms everything, pinned.
+
+    ``validate_layers`` is what the enforcement point calls, and review drove
+    the two ways that goes quiet: gut the function and all 44 tests pass, or
+    delete the call and nothing fails at all. The subprocess test below closes
+    the first. This closes the second, and it is deliberately a source-text
+    assertion — the call runs at import, so by the time any test observes the
+    module it has already either happened or not, with no trace either way.
+    """
+    assert "validate_layers(Base.metadata)" in _models_package_source(), (
+        "db/models/__init__.py no longer validates layers at import. ADR-008 "
+        "asks for this to be inexpressible rather than documented; without this "
+        "call a backwards foreign key is merely a failing test somebody can skip."
+    )
+
+
+def test_a_backwards_foreign_key_makes_the_package_fail_to_import() -> None:
+    """The claim "you cannot write it and still have a program", driven.
+
+    Runs in a subprocess because the failure being asserted is an ImportError
+    for a module this test session has already imported successfully; in-process
+    there is nothing left to fail. The child maps a violating table onto
+    ``Base.metadata`` and re-runs the validator the package runs, which is the
+    same call on the same metadata the real import path uses.
+    """
+    program = textwrap.dedent(
+        """
+        import sqlalchemy as sa
+        from sqlalchemy.orm import Mapped, mapped_column
+
+        from hoops_gm.db.base import Base
+        from hoops_gm.db.layers import TABLE_LAYERS, DataLayer, validate_layers
+
+        class ExpectedGames(Base):
+            __tablename__ = "expected_games"
+            id: Mapped[int] = mapped_column(primary_key=True)
+            seed_aav_id: Mapped[int] = mapped_column(
+                sa.ForeignKey("published_auction_values.id")
+            )
+
+        TABLE_LAYERS["expected_games"] = DataLayer.AVAILABILITY
+        validate_layers(Base.metadata)
+        print("NO VIOLATION RAISED")
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", f"import hoops_gm.db.models\n{program}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0, (
+        f"a market table seeded into an availability table was accepted. "
+        f"stdout={completed.stdout!r}"
+    )
+    assert "NO VIOLATION RAISED" not in completed.stdout
+    assert "LayerViolation" in completed.stderr
+    assert "published_auction_values" in completed.stderr
+
+
+def test_every_model_module_is_imported_by_the_package() -> None:
+    """Close the set over the filesystem, not over the import list.
+
+    :func:`validate_layers` sees whatever is mapped when the package finishes
+    importing, so a model module missing from ``__init__.py`` is a table the
+    check never meets — and importing that submodule directly runs the parent
+    package first, validating incomplete metadata, then maps the table with
+    nothing left to check it.
+
+    Enumerating the modules somebody remembered to import would be the census
+    mistake again. This walks ``db/models/`` on disk, so a new file is covered
+    on arrival. See :data:`IMPORT_TIME_LIMIT` for what still is not.
+    """
+    package_dir = Path(models.__file__).resolve().parent
+    on_disk = {
+        path.stem
+        for path in package_dir.glob("*.py")
+        if path.stem != "__init__" and not path.stem.startswith("_")
+    }
+    source = _models_package_source()
+    missing = sorted(
+        name for name in on_disk if f"from hoops_gm.db.models.{name} import" not in source
+    )
+
+    assert on_disk, "no model modules found; this scan is broken, not clean"
+    assert missing == [], (
+        f"model modules not imported by db/models/__init__.py: {missing}. Their "
+        f"tables are mapped onto Base.metadata only if something else imports "
+        f"them, so validate_layers never sees them and they silently never get "
+        f"a migration either."
+    )
+
+
 # --- the stored registry ----------------------------------------------------
+
+#: Rows migration ``0019`` seeded, as a historical fact rather than a mirror.
+#:
+#: Pinned here rather than derived from ``TABLE_LAYERS`` because the two are
+#: allowed to diverge the moment a ``0020`` adds a table: the code tracks the
+#: schema, the seed records what ``0019`` did. See
+#: :func:`test_the_0019_seed_is_a_frozen_snapshot`.
+_SEED_ROWS_AT_0019 = 40
+
+
+def _load_0019(backend_dir: Path) -> ModuleType:
+    """Import migration ``0019`` by path.
+
+    ``alembic/versions`` is not an importable package and ``0019_layer_registry``
+    is not a valid identifier, so this goes through the loader directly rather
+    than ``import_module``.
+    """
+    path = backend_dir / "alembic" / "versions" / "0019_layer_registry.py"
+    spec = importlib.util.spec_from_file_location("migration_0019", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -428,6 +677,64 @@ def test_the_registry_records_itself(alembic_config: Config, migration_url: str)
 
     assert row is not None
     assert row.data_layer == DataLayer.OBSERVATIONS
+
+
+def test_the_0019_seed_is_a_frozen_snapshot(backend_dir: Path) -> None:
+    """The count is pinned so the tempting fix to a drift failure goes red.
+
+    Found by review. When a new table lands,
+    ``test_a_migrated_store_records_every_table_at_its_assigned_layer`` fails,
+    and there are two ways to make it pass: add a new migration inserting the
+    row, or add a line to ``0019``'s seed. Both are green **from an empty
+    database**, which is the only place that test looks — but the owner's store
+    is stamped at ``0019`` and will never run it again, so only the first fixes
+    the store the registry exists to be interrogated from.
+
+    So the seed's shape is pinned here as a historical fact. Editing it breaks
+    this test and the failure says which route to take.
+    """
+    seed = _load_0019(backend_dir)._SEED
+
+    assert len(seed) == _SEED_ROWS_AT_0019, (
+        f"migration 0019's seed has {len(seed)} rows, not {_SEED_ROWS_AT_0019}. "
+        f"0019 is already applied on the owner's store and will not run again, "
+        f"so a row added here never reaches it. Add a new migration instead, and "
+        f"only change this number if you are correcting the historical record."
+    )
+    assert len({name for name, _, _ in seed}) == len(seed), "0019 seeds a table twice"
+    for name, layer, rank in seed:
+        assert layer in set(DataLayer), f"0019 seeds {name} at unknown layer {layer!r}"
+        assert LAYER_RANK[DataLayer(layer)] == rank, (
+            f"0019 seeds {name} at {layer!r} with rank {rank}, which is not that "
+            f"layer's rank. The CHECK added in 0019 would reject this row."
+        )
+
+
+def test_a_migrated_store_refuses_a_rank_that_disagrees_with_its_layer(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The layer and the rank are one fact stored twice, pinned by CHECK.
+
+    Raised by review: ``layer_rank`` exists so a raw query can order layers
+    without importing Python, and before this constraint the only rule was
+    ``>= 0`` — so ``('expected_games', 'terminal', 0)`` was accepted. A store
+    that can disagree with itself is no use at the moment it is being consulted,
+    which is the moment this table exists for.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.connect() as connection, pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO data_layer_registry (table_name, data_layer, layer_rank) "
+                    "VALUES ('expected_games', 'terminal', 0)"
+                )
+            )
+            connection.commit()
+    finally:
+        engine.dispose()
 
 
 def test_a_migrated_store_refuses_an_unknown_layer(

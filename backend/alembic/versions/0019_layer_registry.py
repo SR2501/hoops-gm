@@ -37,12 +37,24 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-#: ``(table_name, data_layer, layer_rank)`` as of this revision.
+#: ``(table_name, data_layer, layer_rank)`` **as of this revision**, and frozen.
 #:
-#: ``market`` shares rank 4 with ``terminal`` on purpose: the flow rule refuses
-#: cross-layer flow at equal rank, which is what makes an external aggregate
-#: and our own rankings mutually unreachable in both directions. See the note
-#: on ``LAYER_RANK`` in ``db/layers.py``.
+#: This is a historical snapshot, not a mirror of ``TABLE_LAYERS``. Once the
+#: owner's store is stamped at ``0019`` this migration never runs again, so
+#: editing these rows changes what a *fresh* database gets and leaves the live
+#: one untouched — which is the wrong half. When a new table arrives, the
+#: drift test goes red and the fix is a **new migration**, not a line here.
+#:
+#: ``test_the_0019_seed_is_a_frozen_snapshot`` pins the row count so that
+#: taking the tempting route breaks a test rather than passing quietly. That
+#: matters because the drift test upgrades from empty, where both routes look
+#: identical.
+#:
+#: ``layer_rank`` is descriptive: it labels pipeline position so a raw query can
+#: order layers, and ``market`` shares rank 4 with ``terminal`` because it is
+#: terminal-grade on arrival. The flow rule itself is an explicit edge set in
+#: ``db/layers.py`` — the market layer consumes nothing we derived, and no
+#: single integer can express that.
 _SEED: Sequence[tuple[str, str, int]] = (
     ("absence_split_runs", "observations", 0),
     ("absence_splits", "observations", 0),
@@ -65,8 +77,12 @@ _SEED: Sequence[tuple[str, str, int]] = (
     ("matchups", "observations", 0),
     ("nba_games", "observations", 0),
     ("nba_teams", "observations", 0),
-    ("off_night_slates", "observations", 0),
-    ("opponent_context", "observations", 0),
+    # Schedule context is modelling output, not fact: `blowout_probability`
+    # carries a model version and a training cutoff, and `schedule_context.py`
+    # says so in its first paragraph. Recording it as an observation would
+    # launder a model output into apparent evidence.
+    ("off_night_slates", "projections", 1),
+    ("opponent_context", "projections", 1),
     ("player_external_ids", "observations", 0),
     ("player_game_logs", "observations", 0),
     ("player_participation", "observations", 0),
@@ -84,6 +100,22 @@ _SEED: Sequence[tuple[str, str, int]] = (
     ("source_games_played_assumptions", "projections", 1),
     ("team_schedule", "observations", 0),
     ("transactions", "observations", 0),
+)
+
+#: The ``(data_layer, layer_rank)`` pairing, as a literal.
+#:
+#: ``models/layers.py`` builds the identical expression from ``LAYER_RANK``.
+#: Duplicating it here rather than importing keeps the migration a record of
+#: what was decided at this revision — and makes a change to the vocabulary
+#: visible in a diff twice, which is the review gate.
+_LAYER_RANK_PAIRS = (
+    "(data_layer = 'observations' AND layer_rank = 0) OR "
+    "(data_layer = 'projections' AND layer_rank = 1) OR "
+    "(data_layer = 'availability' AND layer_rank = 2) OR "
+    "(data_layer = 'valuation' AND layer_rank = 3) OR "
+    "(data_layer = 'market' AND layer_rank = 4) OR "
+    "(data_layer = 'terminal' AND layer_rank = 4) OR "
+    "(data_layer = 'comparison' AND layer_rank = 5)"
 )
 
 
@@ -123,6 +155,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "layer_rank >= 0", name=op.f("ck_data_layer_registry_layer_rank_non_negative")
+        ),
+        sa.CheckConstraint(
+            _LAYER_RANK_PAIRS, name=op.f("ck_data_layer_registry_layer_rank_matches_layer")
         ),
         sa.CheckConstraint(
             "length(table_name) > 0", name=op.f("ck_data_layer_registry_table_name_not_empty")

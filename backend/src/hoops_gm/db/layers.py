@@ -35,10 +35,13 @@ run. That is the same shape as ``test_portability.py``'s
 
 ## Read the scope limits before treating this as coverage
 
-:data:`FLOW_SCAN_LIMIT` and :data:`GRAIN_LIMIT` are asserted constants, not
-comments, for the reason ``test_store_creating_readers.SCAN_LIMIT`` is: a
-limitation in a docstring gets summarised away, and a limitation pinned by an
-assertion breaks a test when someone deletes it.
+:data:`FLOW_SCAN_LIMIT`, :data:`IMPORT_TIME_LIMIT` and :data:`GRAIN_LIMIT` are
+asserted constants, not comments, for the reason
+``test_store_creating_readers.SCAN_LIMIT`` is: a limitation in a docstring gets
+summarised away, and a limitation pinned by an assertion breaks a test when
+someone deletes it. Note that they pin *documentation* — widening a scan to
+close a gap leaves the assertion untouched — which is inherent to the pattern
+and is why each says what remains uncovered rather than what is covered.
 """
 
 from __future__ import annotations
@@ -78,23 +81,29 @@ class DataLayer(enum.StrEnum):
     COMPARISON = "comparison"
 
 
-#: How far down the pipeline each layer sits. Lower may flow into higher.
+#: How far down the pipeline each layer sits. **Descriptive, not the rule.**
+#:
+#: This exists so the store can order layers in a raw query, and for nothing
+#: else. :func:`flow_permitted` does *not* consult it. An earlier revision of
+#: this module made rank the flow rule — ``source is target or rank[source] <
+#: rank[target]`` — and an independent review found the hole that construction
+#: cannot avoid: it permitted ``valuation -> market``, ``availability ->
+#: market`` and ``projections -> market``, because those ranks really are lower
+#: than the market's. Every one of those is R38. A ``published_auction_values``
+#: row taking a foreign key from our own fused value is our output laundered
+#: back in as somebody else's evidence, and it type-checked.
+#:
+#: The rule ADR-008 clause 3 actually states is about **independence**:
+#: divergence between our number and the market's is only a signal if the two
+#: sides were computed separately. That is not "market is late in the
+#: pipeline", it is "the market side consumes nothing we derived" — a statement
+#: about a *set of edges*, which no single integer can encode. So the edges are
+#: enumerated in :data:`PERMITTED_FLOWS` and the rank is demoted to a label.
 #:
 #: :attr:`DataLayer.MARKET` shares rank 4 with :attr:`DataLayer.TERMINAL`
-#: rather than sitting above or below it, and the equal rank is load-bearing
-#: because :func:`flow_permitted` rejects *cross-layer* flow at equal rank.
-#: Both directions have to be impossible and they are impossible for different
-#: reasons:
-#:
-#: * ``market -> terminal`` is ADR-008 clause 5 — "the draft-day rankings are
-#:   ours alone", computed end-to-end with no external ranking in the lineage.
-#: * ``terminal -> market`` is R38 — writing our own values into the market
-#:   tables launders our output back in as somebody else's evidence, which is
-#:   the failure ``DraftToolUsage`` exists to record and ``market.independence``
-#:   exists to detect.
-#:
-#: A single total order cannot express "mutually unreachable"; a rank plus the
-#: same-layer exception can, without inventing a partial-order framework.
+#: because it is terminal-grade on arrival, not because the number does any
+#: work. ``data_layer_registry`` pins the pairing with a CHECK so a stored rank
+#: cannot disagree with its stored layer.
 LAYER_RANK: Final[dict[DataLayer, int]] = {
     DataLayer.OBSERVATIONS: 0,
     DataLayer.PROJECTIONS: 1,
@@ -106,6 +115,68 @@ LAYER_RANK: Final[dict[DataLayer, int]] = {
 }
 
 
+#: Every cross-layer flow ADR-008 permits, enumerated. Same-layer flow is
+#: permitted separately by :func:`flow_permitted` (clause 1, "aggregate only
+#: within a layer") and is deliberately not listed here.
+#:
+#: Read ``(source, target)`` as "a quantity at ``source`` may be an input to
+#: one at ``target``". Anything absent is refused; there is no default and no
+#: arithmetic, which is the whole reason this is a set rather than a rank.
+#:
+#: Three groups, and the second and third are the ones that matter:
+#:
+#: * **Our pipeline** flows one way. Every earlier layer may feed every later
+#:   one, so ADR-008's arrow diagram is reproduced exactly.
+#: * **Into the market: identity only.** ``observations -> market`` is here
+#:   because a published value is about a player and has to say which one.
+#:   ``projections``, ``availability``, ``valuation`` and ``terminal`` are all
+#:   absent, and that absence is R38 made inexpressible: nothing we derived can
+#:   become part of a market row at any weight.
+#: * **Out of the market: comparison only.** ``market -> comparison`` is the
+#:   single outbound edge, which is ADR-008 clause 3 — compared against, never
+#:   blended. ``market -> terminal`` is absent, which is clause 5: the
+#:   draft-day rankings are ours alone.
+#:
+#: :attr:`DataLayer.COMPARISON` appears only ever as a target. That it "feeds
+#: nothing" used to be an accident of it holding the highest rank; here it is a
+#: property of the set, and ``test_comparison_feeds_nothing`` asserts it
+#: directly rather than inferring it from an ordering.
+PERMITTED_FLOWS: Final[frozenset[tuple[DataLayer, DataLayer]]] = frozenset(
+    {
+        # Our pipeline, in ADR-008's order.
+        (DataLayer.OBSERVATIONS, DataLayer.PROJECTIONS),
+        (DataLayer.OBSERVATIONS, DataLayer.AVAILABILITY),
+        (DataLayer.OBSERVATIONS, DataLayer.VALUATION),
+        (DataLayer.OBSERVATIONS, DataLayer.TERMINAL),
+        (DataLayer.PROJECTIONS, DataLayer.AVAILABILITY),
+        (DataLayer.PROJECTIONS, DataLayer.VALUATION),
+        (DataLayer.PROJECTIONS, DataLayer.TERMINAL),
+        (DataLayer.AVAILABILITY, DataLayer.VALUATION),
+        (DataLayer.AVAILABILITY, DataLayer.TERMINAL),
+        (DataLayer.VALUATION, DataLayer.TERMINAL),
+        # Into the market: which player it is about, and nothing else of ours.
+        (DataLayer.OBSERVATIONS, DataLayer.MARKET),
+        # Everything may be compared. Comparison feeds nothing.
+        (DataLayer.OBSERVATIONS, DataLayer.COMPARISON),
+        (DataLayer.PROJECTIONS, DataLayer.COMPARISON),
+        (DataLayer.AVAILABILITY, DataLayer.COMPARISON),
+        (DataLayer.VALUATION, DataLayer.COMPARISON),
+        (DataLayer.TERMINAL, DataLayer.COMPARISON),
+        (DataLayer.MARKET, DataLayer.COMPARISON),
+    }
+)
+
+
+#: The number of ordered distinct layer pairs the rule has to decide.
+#:
+#: Pinned, and asserted against ``len(DataLayer)``, so an eighth layer cannot
+#: be added without someone deciding all fourteen of its new edges. Under the
+#: old rank rule a new member silently inherited a verdict for every pair from
+#: its integer; here an unlisted pair is refused, which is safe, but the pin
+#: makes it *reviewed* rather than merely safe.
+FLOW_MATRIX_SIZE: Final[int] = 42
+
+
 #: Layers with no table yet, pinned so the first one to arrive is reviewed.
 #:
 #: An empty layer is not dead vocabulary — it is the half of ADR-008 this
@@ -113,6 +184,12 @@ LAYER_RANK: Final[dict[DataLayer, int]] = {
 #: valuation table lands, ``test_empty_layers_are_still_empty`` goes red and
 #: somebody looks at the flow rule with a real table in front of them, instead
 #: of the layer quietly acquiring members nobody classified against the ADR.
+#:
+#: The invariant that makes this load-bearing rather than decorative is that
+#: this set and the populated layers **partition** :class:`DataLayer`, asserted
+#: in that same test. Without it the constant was inert: review gutted it to
+#: ``frozenset()`` and all 44 tests still passed, because the assertion beside
+#: it never mentioned the constant at all.
 LAYERS_WITHOUT_TABLES: Final[frozenset[DataLayer]] = frozenset(
     {
         DataLayer.AVAILABILITY,
@@ -152,11 +229,7 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     # database is enforcing rather than adding a new claim.
     "absence_split_runs": DataLayer.OBSERVATIONS,
     "absence_splits": DataLayer.OBSERVATIONS,
-    # Schedule context. Derived, but derived from the schedule and from
-    # completed games only — no projection, no p(play). ADR-008 clause 1
-    # permits aggregating within a layer, and that is what these are.
-    "opponent_context": DataLayer.OBSERVATIONS,
-    "off_night_slates": DataLayer.OBSERVATIONS,
+    # Schedule context now sits at PROJECTIONS — see that section for why.
     # Observed league state and configuration.
     "leagues": DataLayer.OBSERVATIONS,
     "fantasy_teams": DataLayer.OBSERVATIONS,
@@ -189,7 +262,32 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     # The source's own durability guess, kept one-to-one with the projection it
     # was stripped from. Projection-layer provenance, deliberately *not*
     # availability: the availability model overrides it and never blends it.
+    #
+    # Open question, raised by review and escalated rather than settled here:
+    # this is somebody else's availability estimate, and the argument that put
+    # the auction tables at MARKET applies to it too. It stays at PROJECTIONS
+    # because MARKET now accepts nothing derived from us, and this table's
+    # `projection_id` foreign key would become a violation — so the two
+    # findings genuinely conflict and `quant` owns which one wins. Until then,
+    # note the honest limit: "never blends" is a convention here, because
+    # PROJECTIONS -> AVAILABILITY is a permitted flow and an availability table
+    # taking a foreign key to this one would be accepted.
     "source_games_played_assumptions": DataLayer.PROJECTIONS,
+    # Schedule context. Not facts: `opponent_context.blowout_probability` is a
+    # fitted probability carrying `blowout_model_version` and `training_cutoff`,
+    # and `schedule_context.py` says so in its first paragraph — "the context
+    # here is modelling output", "used to condition p(play) and reliability".
+    # Recording that as an observation would launder a model output into
+    # apparent evidence, which is the exact pattern in ADR-008's Context.
+    #
+    # PROJECTIONS rather than AVAILABILITY because they *condition* p(play):
+    # they have to sit earlier than the thing they are an input to. This also
+    # leaves the legitimate improvement expressible — conditioning blowout risk
+    # on availability would be AVAILABILITY -> PROJECTIONS and correctly
+    # refused, but conditioning it on projections is permitted, and at rank 0
+    # neither was.
+    "opponent_context": DataLayer.PROJECTIONS,
+    "off_night_slates": DataLayer.PROJECTIONS,
     # --- market: what somebody else published -------------------------------
     "auction_value_sources": DataLayer.MARKET,
     "auction_value_source_inputs": DataLayer.MARKET,
@@ -201,18 +299,56 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #: What the flow check does **not** see, stated because the gap is easy to
 #: mistake for coverage.
 #:
-#: It reads declared foreign keys. A value read out of a market row in Python
-#: and written into a projection row leaves no foreign key behind and is
-#: invisible here. That is a real exposure and naming it is the point: this
-#: closes the *structural* door, where a table's shape says it consumes another
-#: table, and it is silent about arithmetic.
+#: It reads **declared foreign keys**, and there are two ways a stored
+#: cross-layer reference escapes that, not one:
+#:
+#: * A value read out of a market row in Python and written into a projection
+#:   row leaves no foreign key behind.
+#: * An identifier column that holds another table's key *without declaring a
+#:   foreign key* is structural, stored, and still invisible. This is not
+#:   hypothetical here — ``published_auction_values.source_player_id`` and
+#:   ``auction_value_imports.profile_id`` are among sixteen such columns in the
+#:   schema today. An ``expected_games.seed_published_auction_value_id INTEGER``
+#:   with no foreign key would be exactly the defect ADR-008 forbids and would
+#:   pass.
+#:
+#: A third case belongs to :data:`GRAIN_LIMIT` rather than here, and is worth
+#: naming because it is live: ``draft_events`` sits at ``observations`` and
+#: ``draft_events.amount`` is "a price a human saw clear". If you bid your own
+#: recommended number and it clears, an observations table now holds a figure
+#: that came from our terminal layer, with this check's full blessing. That is
+#: R38 arriving through the grain rather than through an edge, and
+#: ``DraftToolUsage`` exists because the repository already knows it.
 #:
 #: The reason to close the structural door anyway is that it fails on arrival.
 #: A new table declares its foreign keys at definition time, so the wrong
 #: lineage is rejected before a single row exists — which is the only moment
 #: fixing it is cheap.
 FLOW_SCAN_LIMIT: Final = (
-    "checks declared foreign keys; a value copied between layers in Python leaves no key"
+    "declared foreign keys only; an undeclared identifier column or a value copied "
+    "between layers in Python leaves no key"
+)
+
+#: What the import-time call does **not** see.
+#:
+#: :func:`validate_layers` reads whatever is mapped onto ``Base.metadata`` at
+#: the moment ``hoops_gm.db.models`` finishes executing. ``Base.metadata`` is
+#: global and stays mutable afterwards, so a model module that ``__init__.py``
+#: does not import is a table the validation never meets — and importing that
+#: submodule directly runs the parent package *first*, validating incomplete
+#: metadata, then maps the new table with nothing left to check it.
+#:
+#: Found by review, and closed rather than merely declared:
+#: ``test_every_model_module_is_imported_by_the_package`` walks
+#: ``db/models/`` on the filesystem and fails if any module is missing from the
+#: import list. That turns the closed set from "the list somebody enumerated"
+#: into "what is on disk", which is the distinction the module docstring claims
+#: and did not previously earn. The limit stated here is what remains: a table
+#: mapped from outside ``db/models/`` entirely — a test fixture, a plugin, a
+#: REPL — is still invisible.
+IMPORT_TIME_LIMIT: Final = (
+    "validates what is mapped when db.models finishes importing; a table mapped onto "
+    "Base.metadata from outside db/models/ afterwards is never seen"
 )
 
 #: The grain of an assignment: one layer per table, not per column.
@@ -233,12 +369,12 @@ def flow_permitted(source: DataLayer, target: DataLayer) -> bool:
     """May a quantity at ``source`` be an input to one at ``target``?
 
     Permitted when the two are the same layer — ADR-008 clause 1, "aggregate
-    only within a layer" — or when ``source`` is strictly earlier in the
-    pipeline. Cross-layer flow at equal rank is refused, which is what keeps
-    :attr:`DataLayer.MARKET` and :attr:`DataLayer.TERMINAL` mutually
-    unreachable in both directions.
+    only within a layer" — or when the ordered pair is listed in
+    :data:`PERMITTED_FLOWS`. There is no fallback: an unlisted cross-layer pair
+    is refused, so a new layer starts fully isolated rather than inheriting a
+    verdict from an ordering.
     """
-    return source is target or LAYER_RANK[source] < LAYER_RANK[target]
+    return source is target or (source, target) in PERMITTED_FLOWS
 
 
 def layer_of(table_name: str) -> DataLayer:

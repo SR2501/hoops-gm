@@ -25,7 +25,21 @@ from sqlalchemy import CheckConstraint, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hoops_gm.db.base import Base, TimestampMixin, portable_enum
-from hoops_gm.db.layers import DataLayer
+from hoops_gm.db.layers import LAYER_RANK, DataLayer
+
+
+def _layer_rank_pairs() -> str:
+    """The seven ``(layer, rank)`` pairs, as a CHECK expression.
+
+    Built from :data:`LAYER_RANK` rather than typed out, so the constraint
+    cannot fall behind the vocabulary it constrains. Migration ``0019`` carries
+    the same expression as a literal — that duplication is the review gate, and
+    it is the same reasoning that keeps the seed rows literal.
+    """
+    return " OR ".join(
+        f"(data_layer = '{layer.value}' AND layer_rank = {rank})"
+        for layer, rank in sorted(LAYER_RANK.items(), key=lambda item: (item[1], item[0].value))
+    )
 
 
 class DataLayerRegistry(TimestampMixin, Base):
@@ -41,15 +55,22 @@ class DataLayerRegistry(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("layer_rank >= 0", name="layer_rank_non_negative"),
         CheckConstraint("length(table_name) > 0", name="table_name_not_empty"),
+        CheckConstraint(_layer_rank_pairs(), name="layer_rank_matches_layer"),
     )
 
     table_name: Mapped[str] = mapped_column(String(64), primary_key=True)
     data_layer: Mapped[DataLayer] = mapped_column(portable_enum(DataLayer, "data_layer"))
     #: How far down the pipeline the layer sits, denormalised from
-    #: ``LAYER_RANK`` so that ordering — the thing the rule is actually about —
-    #: is expressible in a raw query rather than only in Python. Pinned against
-    #: ``LAYER_RANK`` by ``test_layer_purity.py``; equal ranks are meaningful,
-    #: see the note on ``LAYER_RANK`` for why ``market`` shares one.
+    #: ``LAYER_RANK`` so a raw query can order layers without importing Python.
+    #:
+    #: Descriptive only. The flow rule is ``PERMITTED_FLOWS``, an explicit edge
+    #: set, because the market layer consumes nothing we derived and no single
+    #: integer can say that. Read this column as a label, not as the rule.
+    #:
+    #: ``ck_..._layer_rank_matches_layer`` pins the pairing, so a row cannot
+    #: store a layer and a rank that disagree — previously the only constraint
+    #: was ``>= 0``, and ``('expected_games', 'terminal', 0)`` was accepted by
+    #: the database, which undermines the one guarantee this table exists for.
     layer_rank: Mapped[int] = mapped_column()
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
