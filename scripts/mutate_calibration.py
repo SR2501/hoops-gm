@@ -94,6 +94,38 @@ it fixed.
 * **M23** makes the verification treat a missing label key as satisfying the
   claim, which would let a partly-unlabelled cohort assert a restriction it does
   not meet - the same missing-key trap as M16, one layer up.
+
+**M24-M30 came from the reviewer's third pass.** Four of them (M24, M25, M26,
+M27) are mutations he wrote that **survived** a suite which had just caught
+twenty-three, and they share a shape worth naming: *each fix landed correctly on
+the case that was driven and left the generalisation of that case untested.*
+M19's fix made two-pair markers the normal case, and M24 shows the two-pair
+verification path had never been exercised. M21's fix added four container
+overrides, and M26 shows their **contents** were never asserted, only their type
+and their marker. The rule he drew from it - **when a fix introduces a new
+dimension, a second pair, a count, a precedence, write the test at n=2 rather
+than n=1** - is the useful output of this pass.
+
+* **M24** checks only the first recorded pair. Sorted order puts `band` before
+  `status`, so a cohort that satisfies the first completely and the second not at
+  all records 3,046 rows that `out` dominates 2,963 to 83 as `status=doubtful`.
+* **M25** reverses `restrict()`'s key-conflict precedence, so asking for `out`
+  after `doubtful` returns 83 `doubtful` rows labelled `out`. The marker stays
+  self-consistent, so verification passes: **soundness is not identity.**
+* **M26** drops the repeat count, losing rows silently while every type and
+  marker assertion still holds.
+* **M27** reverses the per-bin gap's declared sign. It survived because every
+  consumer takes `abs()` - the second instance of the M12 symmetry class, and
+  the general rule is that a declared convention is pinned only if some test
+  observes it through a path that does not symmetrise it.
+* **M28, M29 and M30** restore the over-wide re-wrap rule that the same pass
+  showed was wrong: they let duplication, truncation and concatenation carry the
+  marker forward. Verification cannot see it, because every row present still
+  satisfies every recorded pair - the marker is true and the payload is false
+  about the cohort. It bites arithmetically: condition 5 is a Wilson half-width
+  going as 1/sqrt(n), so duplicating the 83-row `doubtful` cohort takes its worst
+  case from 0.1052 to 0.0752 and converts "no 0.10 guarantee can be issued" into
+  "protected".
 """
 
 from __future__ import annotations
@@ -270,10 +302,10 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "M21 slicing a restricted cohort returns a bare list again (review P2-1)",
         CAL,
         (
-            "        if isinstance(index, slice):\n"
-            "            return RestrictedCohort(super().__getitem__(index), self.restriction)"
+            "            if index.indices(len(self)) == (0, len(self), 1):\n"
+            "                return RestrictedCohort(rows, self.restriction)"
         ),
-        "        if False:\n            pass",
+        "            if False:\n                pass",
     ),
     (
         "M22 recorded_restriction left in insertion order (review P11, survived his pass)",
@@ -286,6 +318,70 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         CAL,
         "        offenders = sum(1 for row in rows if row.labels.get(key) != value)",
         "        offenders = sum(1 for row in rows if row.labels.get(key, value) != value)",
+    ),
+    (
+        "M24 verification checks only the first recorded pair (review 3-A, survived)",
+        CAL,
+        "    for key, value in restriction.items():",
+        "    for key, value in list(restriction.items())[:1]:",
+    ),
+    (
+        "M25 restrict() lets the inherited pair win a key conflict (review 3-D, survived)",
+        CAL,
+        "    wanted = tuple(sorted((inherited | labels).items()))",
+        "    wanted = tuple(sorted((labels | inherited).items()))",
+    ),
+    (
+        "M26 __mul__ silently drops the repeat count (review 3-C, survived)",
+        CAL,
+        "        repeated: list[CalibrationObservation] = super().__mul__(count)",
+        "        repeated: list[CalibrationObservation] = super().__mul__(1)",
+    ),
+    (
+        "M27 per-bin gap sign reversed (review 3-E, survived: every consumer takes abs)",
+        CAL,
+        (
+            "        through a path that does not symmetrise it.\n"
+            '        """\n'
+            "\n"
+            "        return self.predicted_mean - self.observed_rate"
+        ),
+        (
+            "        through a path that does not symmetrise it.\n"
+            '        """\n'
+            "\n"
+            "        return self.observed_rate - self.predicted_mean"
+        ),
+    ),
+    (
+        "M28 __mul__ re-wraps at any count, so duplication keeps the marker (review 3-B)",
+        CAL,
+        (
+            "        repeated: list[CalibrationObservation] = super().__mul__(count)\n"
+            "        if count.__index__() == 1:"
+        ),
+        (
+            "        repeated: list[CalibrationObservation] = super().__mul__(count)\n"
+            "        if True:"
+        ),
+    ),
+    (
+        "M29 a partial slice re-wraps, so truncation keeps the marker (review 3-B)",
+        CAL,
+        "            if index.indices(len(self)) == (0, len(self), 1):",
+        "            if True:",
+    ),
+    (
+        "M30 __add__ re-wraps against a non-empty other, so concatenation keeps it (review 3-B)",
+        CAL,
+        (
+            "        combined: list[CalibrationObservation] = super().__add__(other)\n"
+            "        if not other:"
+        ),
+        (
+            "        combined: list[CalibrationObservation] = super().__add__(other)\n"
+            "        if True:"
+        ),
     ),
 ]
 

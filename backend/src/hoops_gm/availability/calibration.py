@@ -49,25 +49,44 @@ site.
 **The residual, stated as a class rather than by naming one convenient example.**
 A second review enumerated fifteen routes. `copy.copy`, `copy.deepcopy` and
 `pickle` round-trips preserve the marker, because they restore `__dict__` without
-calling `__init__`. Slicing, `+`, `*` and `.copy()` now re-wrap, because those
-are defensive-copy idioms rather than laundering and should not disarm anything.
-**What cannot be prevented is any route that builds a fresh container by
-iterating** — `list(rc)`, `tuple(rc)`, `[*rc]`, `itertools` round-trips. Python
-offers no way to intercept "somebody iterated me", so a caller who wants a
-subgroup to look pooled can always have it. The honest claim is therefore not
-that laundering is impossible, but that **it takes a step whose only effect is to
-discard provenance** — and that the guard is one layer, not the mechanism. The
-mechanism is that `restriction` is recorded in the payload and re-verified
-against the rows.
+calling `__init__`. A whole-extent slice, `* 1`, `+ []` and `.copy()` re-wrap,
+because those are defensive-copy idioms; operations that change multiplicity or
+cardinality return a plain `list` and so assert nothing. What survives is any
+route that builds a fresh container by iterating - `list(rc)`, `tuple(rc)`,
+`[*rc]`, `itertools` round-trips. A third review **refuted the reason an earlier
+version of this paragraph gave for that**: it claimed Python offers no way to
+intercept iteration, and it does - `__iter__` is an ordinary dunder, and a
+proof-of-concept that yields rows carrying a provenance label in `labels`
+refused all five named routes. So the residual is a **design choice, not a
+limit of the language**: row-level provenance was not taken because it mutates
+row labels, allocates a fresh frozen dataclass per row per iteration, breaks row
+identity and equality, and is itself strippable by a caller who wants it - it
+moves the residual rather than removing it. What is unarguably true is the
+narrower statement: Python cannot stop a caller obtaining a plain `list` of the
+rows. The honest claim is therefore not that laundering is impossible, but that
+**it takes a step whose only effect is to discard provenance** - and that the
+guard is one layer, not the mechanism. The mechanism is that `restriction` is
+recorded in the payload and re-verified against the rows.
 
 **And the marker is verified, not believed.** `RestrictedCohort` is a mutable
 list, so `rc.extend(...)` changes the contents while the marker stands still. The
 same review drove an 83-row `doubtful` cohort extended to 520 rows still
-reporting `status=doubtful` — an `out`-dominated rate attributed to `doubtful`,
+reporting `status=doubtful` - an `out`-dominated rate attributed to `doubtful`,
 which is precisely the masking failure the model card warns about, reached
 through a list method rather than an exotic bypass. `_verify_restriction_holds`
 now re-checks every row against every recorded pair, so a marker that has stopped
 being true raises instead of being printed.
+
+**What that verification establishes, and the two things it does not.** It
+establishes **soundness**: every row present satisfies every recorded pair. It
+cannot establish **completeness** - that every row satisfying the restriction is
+present - because a cohort does not carry the population it was drawn from, so
+`pop`, `remove` and `del rc[40:]` leave a marker that is still true and no longer
+describes the subgroup. And it cannot establish **multiplicity** - that no row is
+present twice - because a duplicated row satisfies the pair as happily as the
+original. Multiplicity is why the container operations above were narrowed;
+completeness is a genuine residual and is stated here so that a later lane reads
+a bounded guarantee rather than a general one.
 
 ## What this module cannot see
 
@@ -157,6 +176,7 @@ DECLARED_CONVENTIONS: Final[Mapping[str, str]] = {
     ),
     "log_loss_clip": f"predictions clipped into [{LOG_LOSS_CLIP}, 1 - {LOG_LOSS_CLIP}]",
     "calibration_in_the_large_sign": "mean(predicted) - observed rate; positive over-predicts play",
+    "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
     "expected_calibration_error": "observation-weighted mean absolute bin gap",
     "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
     "bootstrap_unit": "one observation id, resampled with replacement",
@@ -240,7 +260,14 @@ class CalibrationBin:
 
     @property
     def gap(self) -> float:
-        """Signed calibration gap. Positive over-predicts play."""
+        """Signed calibration gap. Positive over-predicts play.
+
+        The sign is emitted in `to_dict()`, so it is load-bearing for any reader
+        of the per-bin table - but every internal consumer takes `abs()`, which
+        is exactly the symmetry that let a reversed-sign mutant survive a whole
+        suite. A declared convention is only pinned if some test observes it
+        through a path that does not symmetrise it.
+        """
 
         return self.predicted_mean - self.observed_rate
 
@@ -392,9 +419,16 @@ class RestrictedCohort(list[CalibrationObservation]):
     `build_calibration_report` re-checks every row against every recorded pair
     before it will record it - see `_verify_restriction_holds`.
 
-    Container operations that return a **new** cohort re-wrap, because slicing or
-    concatenating is a defensive-copy idiom rather than a laundering act and
-    should not silently disarm the guard.
+    Container operations re-wrap **only when they provably preserve the row
+    multiset** - a whole-extent slice, `* 1`, `+ []`, `.copy()`. A third review
+    showed why the wider rule was wrong: `rc * 2` and `rc[:10]` re-wrapped too,
+    so the marker stayed true of every row present while the payload's `n` was
+    doubled or truncated. That is not academic here. v2 §8 condition 5 is a
+    Wilson half-width, which goes as `1/sqrt(n)`: duplicating an 83-row
+    `doubtful` cohort takes its worst case from 0.1052 to 0.0745 and converts
+    "a 0.10 guarantee cannot be issued" into "protected", with every recorded
+    pair still true. Operations that change multiplicity or cardinality
+    therefore return a plain `list`, which asserts nothing.
     """
 
     def __init__(
@@ -409,23 +443,37 @@ class RestrictedCohort(list[CalibrationObservation]):
     def __getitem__(self, index: SupportsIndex) -> CalibrationObservation: ...
 
     @overload
-    def __getitem__(self, index: slice) -> RestrictedCohort: ...
+    def __getitem__(self, index: slice) -> list[CalibrationObservation]: ...
 
     def __getitem__(
         self, index: SupportsIndex | slice
-    ) -> CalibrationObservation | RestrictedCohort:
+    ) -> CalibrationObservation | list[CalibrationObservation]:
         if isinstance(index, slice):
-            return RestrictedCohort(super().__getitem__(index), self.restriction)
+            rows: list[CalibrationObservation] = super().__getitem__(index)
+            if index.indices(len(self)) == (0, len(self), 1):
+                return RestrictedCohort(rows, self.restriction)
+            return rows
         return super().__getitem__(index)
 
-    def __add__(self, other: list[CalibrationObservation]) -> RestrictedCohort:  # type: ignore[override]
-        return RestrictedCohort(super().__add__(other), self.restriction)
+    def __add__(  # type: ignore[override]
+        self, other: list[CalibrationObservation]
+    ) -> list[CalibrationObservation]:
+        combined: list[CalibrationObservation] = super().__add__(other)
+        if not other:
+            return RestrictedCohort(combined, self.restriction)
+        return combined
 
-    def __mul__(self, count: SupportsIndex) -> RestrictedCohort:
-        return RestrictedCohort(super().__mul__(count), self.restriction)
+    def __mul__(self, count: SupportsIndex) -> list[CalibrationObservation]:
+        repeated: list[CalibrationObservation] = super().__mul__(count)
+        if count.__index__() == 1:
+            return RestrictedCohort(repeated, self.restriction)
+        return repeated
 
-    def __rmul__(self, count: SupportsIndex) -> RestrictedCohort:
-        return RestrictedCohort(super().__rmul__(count), self.restriction)
+    def __rmul__(self, count: SupportsIndex) -> list[CalibrationObservation]:
+        repeated: list[CalibrationObservation] = super().__rmul__(count)
+        if count.__index__() == 1:
+            return RestrictedCohort(repeated, self.restriction)
+        return repeated
 
     def copy(self) -> RestrictedCohort:
         return RestrictedCohort(self, self.restriction)
@@ -448,12 +496,17 @@ def restrict(
     `row.labels.get(key)` is compared to `value` rather than tested for
     truthiness.
 
-    **Nesting accumulates.** `restrict(restrict(rows, status="doubtful"),
-    era="legacy")` records both pairs, not just the outer one. An earlier version
-    recorded only `era=legacy`, so a 60-row payload claimed to be the legacy
-    cohort while 200 legacy rows had been silently dropped - an under-report of
-    the same kind the pooled-versus-restricted distinction exists to prevent, one
-    level down.
+    **Nesting accumulates, and the outer call wins a key conflict.**
+    `restrict(restrict(rows, status="doubtful"), era="legacy")` records both
+    pairs, not just the outer one. An earlier version recorded only
+    `era=legacy`, so a 60-row payload claimed to be the legacy cohort while 200
+    legacy rows had been silently dropped - an under-report of the same kind the
+    pooled-versus-restricted distinction exists to prevent, one level down. When
+    the same key appears twice, `labels` overrides `inherited`, so
+    `restrict(restrict(rows, status="doubtful"), status="out")` is empty rather
+    than 83 `doubtful` rows relabelled `out`. That precedence is load-bearing
+    and unobservable from the payload - both orders produce a self-consistent
+    marker that `_verify_restriction_holds` accepts - so it is pinned by test.
     """
 
     inherited = dict(_inherited_restriction(observations))
@@ -488,6 +541,13 @@ def _verify_restriction_holds(
     `list` stays mutable afterwards. Checking is cheap and the alternative is a
     payload that misdescribes its own contents, which is worse than an error
     because nothing downstream can detect it.
+
+    **Every pair, not the first.** `restrict()` accumulates, so a two-key marker
+    is the normal case and not an edge one; a version of this loop that checked
+    only the first pair survived a whole suite, because every test that reached
+    here used a single-key restriction. Fixing one defect enlarged the surface
+    the next one hides in, which is why the multi-pair path is now driven at
+    n=2 rather than n=1.
     """
 
     for key, value in restriction.items():
