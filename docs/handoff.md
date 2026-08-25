@@ -23301,4 +23301,189 @@ read. 323 tests, 20 files, typecheck 0, lint 0, build 0.
   to explain the first.** Duplicate deleted; `scripts/reliability_probe.js` is
   now the only copy and is committed so a reviewer can re-run it.
 
+## 2026-08-25 - `backend` - Layer purity as an ImportError: two closed sets from the metadata, and a rank collision that is load-bearing
 
+ADR-008 / R41 asked that layer purity be **inexpressible rather than merely
+documented**. What landed is `backend/src/hoops_gm/db/layers.py`, a
+`data_layer_registry` table seeded by migration `0019`, and
+`backend/tests/test_layer_purity.py` - 22 functions, 44 collected cases, each of
+which drives a rejection rather than asserting that a rule exists.
+
+The defect is circularity, and circularity does not crash. A ranking or composite
+value that reaches back into a projection or availability input makes the model
+agree with itself; every downstream number then gets more confident and less
+true, and nothing in the suite goes red. This is the structural defence against
+that.
+
+### The mechanism, and why it is not a scan over names
+
+Two closed sets, both derived from `Base.metadata` rather than from anything a
+person types twice:
+
+1. **Every mapped table must appear in `TABLE_LAYERS`** - checked in both
+   directions. An unassigned table fails; so does a stale entry naming a table
+   that is no longer mapped.
+2. **Every declared foreign key is a flow.** An FK from `T` to `S` means `S` is an
+   input to `T`, so `flow_permitted(layer_of(S), layer_of(T))` must hold.
+
+Neither set is a list I assembled by reading the repository. That is the lesson
+of `test_store_creating_readers.py`: the census that was *exactly complete when
+written*, then made incomplete by an unrelated merge at exit 0 with the check
+still green. `Base.metadata` is the closed set here, so a new table is a new door
+that **fails on arrival** rather than one the check must be told about.
+
+`validate_layers(Base.metadata)` runs at the foot of
+`backend/src/hoops_gm/db/models/__init__.py` - the one point where the metadata is
+complete. **A violation is therefore an `ImportError`**, not a test result: the
+app will not start, and pytest exits **4** for the entire suite rather than 1 for
+one file. You cannot write the offending relationship and still have a program.
+That was the instruction taken literally.
+
+The one way to disarm it silently is to delete that call, so
+`test_the_live_schema_is_fully_assigned_and_flows_forward` re-runs the same
+validation from the test suite. Deleting the call leaves the guard standing as an
+ordinary test; deleting both is a visible act.
+
+### The rank collision is the part worth arguing with
+
+`DataLayer` has **seven** members, not the five ADR-008 names.
+
+`MARKET` was not a design choice - the schema already stored it. Three tables on
+`main` carried an ad-hoc `data_layer` string column pinned to one literal by a
+CHECK: `absence_splits` at `'observations'`, `auction_value_sources` and
+`published_auction_values` at `'market'`. The vocabulary had already been
+extended by whoever wrote those; I adopted it rather than inventing a second
+spelling beside it. `_pinned_data_layer_columns()` reads those CHECK literals out
+of the metadata, so a fourth table adopting the pattern is covered without anyone
+remembering to add it.
+
+`COMPARISON` I added, and it is a departure from ADR-008's five-name list that
+the architect should rule on. ADR-008 clause 3 explicitly *permits* comparing our
+numbers against an external aggregate. Without a layer for the comparison itself,
+the guard would forbid a permitted thing - and an over-strict rule is not safe,
+it is a rule that gets weakened the first time it blocks legitimate work under
+time pressure. No table sits there yet.
+
+The load-bearing detail: **`MARKET` shares rank 4 with `TERMINAL`**, and
+`flow_permitted` refuses cross-layer flow at equal rank:
+
+```python
+return source is target or LAYER_RANK[source] < LAYER_RANK[target]
+```
+
+So `market -> terminal` is impossible (clause 5: draft-day rankings are ours
+alone, never a repackaged consensus) *and* `terminal -> market` is impossible
+(R38: our own output laundered back as market evidence). **A single total order
+can express only one of those two.** If someone later "tidies" the ranks into a
+strict 0..6 sequence, one of the two prohibitions disappears silently - which is
+exactly the failure mode this unit exists to prevent, so it is written down here
+as well as in the module.
+
+### Scope limits are asserted, not commented
+
+Following `SCAN_LIMIT` in `test_store_creating_readers.py`: a limitation in a
+docstring gets summarised away, a limitation pinned by an assertion breaks a test
+when someone deletes it.
+
+- `FLOW_SCAN_LIMIT` - this checks **declared foreign keys**. A value copied
+  between layers in Python leaves no key and is not seen.
+- `GRAIN_LIMIT` - one layer per table. A table needing two layers is two tables.
+- `LAYERS_WITHOUT_TABLES` pins `{availability, valuation, terminal, comparison}`
+  as currently empty, so the first table to land in one turns
+  `test_empty_layers_are_still_empty` red and forces a look.
+
+All three are asserted by `test_the_scope_limits_are_stated`.
+
+### The stored register, and why the seed is a literal
+
+`data_layer_registry` answers "which layer is this quantity?" from SQL alone,
+without importing Python. Migration `0019` seeds all 40 rows as a **literal
+snapshot**, deliberately *not* by importing `TABLE_LAYERS`. Importing would make
+the two representations one representation wearing two hats, and would remove the
+review gate: a layer reassignment could then land without anyone writing it twice
+and noticing. `test_a_migrated_store_records_every_table_at_its_assigned_layer`
+compares the migrated store against `TABLE_LAYERS` and fails on drift, so the
+duplication is checked rather than merely tolerated.
+
+The registry **registers itself**, at `observations`, rank 0 - honest twice over,
+since any layer may read it and nothing higher may write into it. A register that
+omits itself has one unaudited member. Pinned by
+`test_the_registry_records_itself`.
+
+### Both dialects, and the numbers reconcile
+
+- **SQLite**, full suite: `1831 passed, 32 deselected in 1101.55s`.
+- **PostgreSQL 16.9**, full suite on a dedicated `layer_purity_test` database:
+  `1825 passed, 6 skipped, 32 deselected in 1424.69s`.
+
+1825 + 6 = 1831, so the two runs cover the same set and the difference is
+sqlite-only markers rather than anything silently not running - the reconciliation
+is the point, since a Postgres run that quietly collected fewer tests would look
+identical to a passing one. Migration `0019` uses only portable constructs
+(`op.bulk_insert`, `portable_enum`, a `CURRENT_TIMESTAMP` server default) and no
+`batch_alter_table`, so it applies on both.
+
+I created a **separate** Postgres database rather than using the shared
+`qimember_test`: the suite drops and creates tables, and three other lanes are
+running concurrently. `psql` is not on PATH; the database was created through
+SQLAlchemy with `isolation_level="AUTOCOMMIT"`.
+
+### The finding the architect asked for: nothing is currently violating
+
+At **`f3e2c53`**, this rejects backwards flow across **40 tables and 62 declared
+foreign-key edges, of which 0 are violations**. Stated in the form asked for: the
+guard **assigns every table and forbids nothing that exists today**. It changes no
+current behaviour and required no fix under this unit.
+
+That is not an argument that it was unnecessary. Its value is entirely
+prospective: it fails on arrival when `expected-games` and the valuation chain
+land, which is when the first `availability` and `valuation` tables appear and
+the first plausible-looking backward edge becomes writable. Forty backlog items
+sit behind it for that reason.
+
+### Proving the guard can fail
+
+Three mutations, each restored byte-identically and confirmed by SHA-256:
+
+| Mutation | Observed failure | Restored SHA-256 |
+|---|---|---|
+| Added FK `projections.seed_aav_id` -> `published_auction_values` | `LayerViolation: ... projections.seed_aav_id -> published_auction_values (market into projections)` at **import**; pytest exit **4** | `FDF1CC86C02789A20AA8ACAFE8C00535ED7433A72A134202C4EFDFCC953A2A94` |
+| Removed `"refresh_runs"` from `TABLE_LAYERS` | `LayerViolation: tables with no ADR-008 layer: ['refresh_runs']` | `9EC89496D385F02AE3FAEB469E7791F5E267718A23D84D692D2BCBE6ED063CB3` |
+| Changed one `_SEED` row in `0019` to a wrong layer | `test_a_migrated_store_records_every_table_at_its_assigned_layer` FAILED | `C277B4EB1509435CD704D75802C27C834F4C638A9501F087E74A4FC1BABA8042` |
+
+Green re-confirmed after each restore. The first mutation is the one that matters:
+it is the exact defect ADR-008 describes - a market quantity seeded into a
+projection - and the program refuses to import.
+
+### What I could not verify
+
+- **That foreign keys capture every real flow.** They capture every flow the
+  *database* knows about. A value read in one layer and written into another by
+  Python arithmetic leaves no key and is invisible to this check. This is
+  `FLOW_SCAN_LIMIT`, asserted rather than commented, and it is the honest ceiling
+  on the claim: what is now inexpressible is a **stored** backward reference, not
+  a backward *influence*. Closing the remainder needs a value-provenance column,
+  which is a different unit. *Reasoned.*
+- **That `opponent_context` and `off_night_slates` belong at `observations`.** I
+  placed them there because they derive only from the schedule and completed
+  games, making them aggregates *within* the observation layer under ADR-008
+  clause 1. That is my reading, not `quant`'s adjudication, and `quant` owns what
+  those quantities mean. If either later takes a projected input it must move, and
+  the FK check will not catch the move because the inputs are already
+  observation-layer. *Reasoned.*
+- **That `COMPARISON` is the right seventh name.** It is unused, and an unused
+  layer is a guess about future shape. I argued above why omitting it is worse,
+  but the architect should overrule me if ADR-008's five names are meant to be
+  exhaustive. *Reasoned.*
+- **That the `main` baseline is 1787.** I ran the full suite on this branch
+  (1831 passed) and subtracted my 44. I did not check out `f3e2c53` and measure
+  it. `scripts/test_name_diff.py origin/main HEAD` reports 22 added and **nothing
+  dropped**, which is the check that matters for #90's silent-deletion failure,
+  but the baseline figure itself is arithmetic. *Reasoned; the added/dropped
+  delta is driven.*
+- **That the rank-4 collision survives contact with a tidier.** Nothing enforces
+  that `MARKET` and `TERMINAL` stay equal - `test_market_and_terminal_are_mutually_unreachable`
+  fails if they are separated, which is the protection, but I did not test that a
+  reviewer reads the failure as *intended* rather than as a test to update.
+  Structural guards can be argued away by whoever is in a hurry. *Driven for the
+  test, unverifiable for the human.*

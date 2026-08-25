@@ -2024,10 +2024,12 @@ Empirical conversion of report status to actual play rate, segmented by team, pl
 
 ### `layer-purity` - Enforcing layer purity in the schema and tests
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `db-foundation`, `projection-blending`
 
 ADR-008 / R41. Every stored quantity records which layer it belongs to (observation, projection, availability, valuation, terminal). A test rejects any flow from a higher layer into a lower one - make it inexpressible rather than merely documented, the same pattern used for the Postgres seam. Specifically: no ranking, AAV or composite value may be an input to any earlier layer at any weight. External aggregates may only appear on the comparison side of model-vs-market, never in a blend.
+
+DONE. `backend/src/hoops_gm/db/layers.py` holds the ordering, the per-table assignment and the flow rule; `db/models/__init__.py` calls `validate_layers` at the one point `Base.metadata` is complete, so an unlayered table or a backwards foreign key is an **ImportError**, not a test somebody might skip. Membership comes from two closed sets rather than a pattern over spellings: every mapped table must be assigned, and every declared foreign key is a flow. `data_layer_registry` (migration 0019) stores the same fact in the database, seeded from a literal snapshot so a new table's layer goes through review rather than following the code silently. `market` shares rank 4 with `terminal` because the flow rule refuses *cross-layer* flow at equal rank, which is what makes clause 5 (our rankings are ours alone) and R38 (our values laundered back as market evidence) both impossible; a single total order can express only one of them. **Scope, stated: at `f3e2c53` this rejects backwards flow among 40 tables and 62 declared foreign keys, of which 0 were violations - the guard constrains nothing that exists today and exists to fail on arrival when `expected-games` and the valuation chain land.** It reads declared foreign keys only: a value copied between layers in Python leaves no key and is invisible to it, which is pinned as `FLOW_SCAN_LIMIT`.
 
 ### `lineup-autoset` - Implementing scheduled lineup auto-set
 
