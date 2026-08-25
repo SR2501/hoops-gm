@@ -71,7 +71,7 @@ export function EvidenceInventory({
             </td>
             <td>{item.purpose}</td>
             <td>{item.whereItLives}</td>
-            <td>{item.blocker}</td>
+            <td data-testid={`evidence-blocker-${item.id}`}>{item.blocker}</td>
           </tr>
         ))}
       </tbody>

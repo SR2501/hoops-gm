@@ -23054,3 +23054,46 @@ both assertions failed, then reverted.
   the probe reads a rendered page and would move, but I did not re-probe, so my
   reported payload is from `ab8452f` and the wording it shows is one commit
   stale. The rendered *structure* is unchanged. *Stated rather than measured.*
+## 2026-08-25 — frontend — a control that fired for the wrong reason
+
+Follow-up to the entry above, and the more useful half of it.
+
+After rewriting eight blocker strings I re-ran the browser probe against the
+previous reading. **It reported `control passed: differs`.** It was not evidence.
+The only fields that moved were `documentHeight` (3686 to 3785) and
+`screensToScroll` - the page got taller because the prose got longer. **Nothing
+in the probe read the blocker column at all.** Had the rewrite happened to be the
+same length, the reading would have been byte-identical and the control would
+have correctly reported blindness; instead it reported success, for a reason
+unrelated to the thing I changed.
+
+This is the third vacuous control in this unit and the worst of the three,
+because the first two *failed to fire* and this one *fired*. A control that
+cannot fail is recognisable once you look at it. A control that fires on a
+side-effect is indistinguishable from a working one at the point you read it.
+
+`--differs-from` answers *did any number move*. That is the right question for
+"am I blind", and it is the wrong question for "did the claim I edited change",
+because a page has many numbers and only some of them are the claim.
+
+Fixed by making the probe read the claim: `data-testid="evidence-blocker-<id>"`
+on the blocker cell, and two derived fields taken from the **rendered DOM**
+rather than re-imported from the model, so they can disagree with it -
+`notExposedBlockersNameRouteAndStore` (5 of 5 rows, route and store both true)
+and `backToBackNamesBothHalves` (calendar, observed, qualified). Driven:
+reverting one blocker to route-only flips `category-dispersion` to
+`store: false` in the browser reading, with the mutation confirmed present in
+the file before the run was read.
+
+322 tests, 20 files, typecheck 0, lint 0, build 0.
+
+### Could not verify
+
+- **How many of the remaining probe fields are decorative in the same way.** I
+  audited the two I had just edited. The others were written at the same time,
+  by me, under the same assumption that reading a value proves you can see it.
+  *Not audited.*
+- **That a length-preserving edit would now be caught.** I proved the new fields
+  flip on a semantic change; I did not construct a same-length rewrite to prove
+  the old failure mode is closed rather than merely papered over. *Reasoned, not
+  driven.*
