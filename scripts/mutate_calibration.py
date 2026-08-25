@@ -54,6 +54,24 @@ detector, and the test that must go red is named beside it.
   would quietly stop holding.
 * **M14** leaves the final equal-width bin half-open, so a prediction of exactly
   1.0 falls outside every bin boundary the report prints.
+
+**M15-M18 came from an independent reviewer, not from me.** He wrote nine
+mutations of his own against `5032bf1` and four survived a suite that had just
+caught fourteen. That is the useful number in this file: my own mutations tell
+you what I thought to check, and his tell you what I did not.
+
+* **M15** makes `build_calibration_report` ignore a cohort's inherited
+  restriction, restoring the parameter-keyed guard the reviewer defeated in one
+  line - pre-filter with `restrict()`, pass the result in as a whole cohort, and
+  an 83-row subgroup claims `PREREGISTERED_V2` with `restriction: None`.
+* **M16** makes a *missing* label key count as a match, which turns a
+  restriction into a near-no-op while every subgroup assertion still passes,
+  because the fixtures all happened to be fully labelled.
+* **M17** swaps the 95% Wilson constant for the 90% one. Every interval was
+  derived from that constant, so the suite agreed with itself at any value.
+* **M18** swaps the bootstrap's 2.5% and 97.5% quantiles. v2 §8 condition 2
+  reads the **upper** endpoint, so this converts a straddling interval into a
+  pass - miscalibration in the direction that flatters the candidate.
 """
 
 from __future__ import annotations
@@ -103,12 +121,16 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M04 calibration-in-the-large sign flipped",
         CAL,
-        "        return self.predicted_mean - self.observed_rate\n\n"
-        "    @property\n"
-        "    def bins_below_population_floor(self) -> tuple[str, ...]:",
-        "        return self.observed_rate - self.predicted_mean\n\n"
-        "    @property\n"
-        "    def bins_below_population_floor(self) -> tuple[str, ...]:",
+        (
+            "        return self.predicted_mean - self.observed_rate\n\n"
+            "    @property\n"
+            "    def bins_below_population_floor(self) -> tuple[str, ...]:"
+        ),
+        (
+            "        return self.observed_rate - self.predicted_mean\n\n"
+            "    @property\n"
+            "    def bins_below_population_floor(self) -> tuple[str, ...]:"
+        ),
     ),
     (
         "M05 monotonic reversal comparison flipped",
@@ -169,6 +191,40 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         CAL,
         "            f\"{']' if index == bin_count - 1 else ')'}\",",
         '            ")",',
+    ),
+    # M15-M18 are the four survivors from the independent review at 5032bf1.
+    # They are here rather than only in the test file because a survivor that is
+    # merely tested can be reintroduced by the next reader who treats the test as
+    # optional; a mutation that goes red is a standing demonstration.
+    (
+        "M15 pre-filtered rows launder a restricted report as pooled v2 (review 3d)",
+        CAL,
+        "    inherited = _inherited_restriction(observations)",
+        "    inherited: tuple[tuple[str, str], ...] = ()",
+    ),
+    (
+        "M16 restrict() treats a missing label key as a match (review N02)",
+        CAL,
+        "        if all(row.labels.get(key) == value for key, value in wanted)",
+        "        if all(row.labels.get(key, value) == value for key, value in wanted)",
+    ),
+    (
+        "M17 Wilson z silently becomes the 90% constant (review N01)",
+        CAL,
+        "WILSON_Z_95: Final = 1.959963984540054",
+        "WILSON_Z_95: Final = 1.6448536269514722",
+    ),
+    (
+        "M18 bootstrap interval endpoints swapped (review N05)",
+        CAL,
+        (
+            "        interval_low=type7_quantile(estimates, 0.025),\n"
+            "        interval_high=type7_quantile(estimates, 0.975),"
+        ),
+        (
+            "        interval_low=type7_quantile(estimates, 0.975),\n"
+            "        interval_high=type7_quantile(estimates, 0.025),"
+        ),
     ),
 ]
 

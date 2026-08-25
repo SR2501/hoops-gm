@@ -247,19 +247,29 @@ def pooled_band_cohort(
     counts_by_status: Mapping[str, int],
     fictional_rate_by_status: Mapping[str, float],
     band_by_status: Mapping[str, str],
+    band_probability_offset: float = 0.0,
 ) -> list[CalibrationObservation]:
     """A band model emitting each band's own pooled rate — right in aggregate.
 
     Each band's emitted probability is that band's realised play rate over its
-    whole population, so under one-row-per-distinct-emitted-probability binning
-    **every bin gap is exactly zero** and the pooled table looks perfect.
+    whole population, **displaced by `band_probability_offset`**.
 
-    Where a band pools a large status with a small one, the band's rate is the
-    large status's rate, and the small status can be arbitrarily miscalibrated
-    without moving a single pooled figure. That masking is invisible to a pooled
-    calibration table and to a pooled Wilson check, and visible only under
-    subgroup restriction — which is why restriction is a first-class operation in
-    `calibration.py` rather than a convenience.
+    At offset zero every bin gap is exactly zero under
+    one-row-per-distinct-emitted-probability binning. **Those zeros are
+    definitional, not measured** — a model that emits each bin's own realised rate
+    on the evaluation set has zero gap by construction, and an independent review
+    was right to say that reporting them as a result invites reading a
+    construction as a measurement. The offset exists so the interesting claim can
+    be driven without that crutch: a real fit takes its band rate from the
+    development partition, so its held-out band rate is displaced, and the
+    question is how far it can drift before a pooled condition notices.
+
+    What survives the offset is the part that is a theorem rather than a
+    construction. Distinct-emitted-probability binning partitions rows **by
+    predicted value**; statuses sharing a band share a predicted value; so no
+    statistic computed on that partition can separate them, at any offset and at
+    any rates. Where a band pools a large status with a small one, the small one
+    can be arbitrarily miscalibrated and only subgroup restriction sees it.
     """
 
     missing = set(counts_by_status) - set(band_by_status)
@@ -272,14 +282,23 @@ def pooled_band_cohort(
         band = band_by_status[cell.label]
         band_observations[band] = band_observations.get(band, 0) + cell.observations
         band_plays[band] = band_plays.get(band, 0) + cell.plays
+    emitted: dict[str, float] = {}
+    for band, observations in band_observations.items():
+        moved = band_plays[band] / observations + band_probability_offset
+        if not 0.0 <= moved <= 1.0:
+            raise ValueError(
+                f"band {band!r} offset to {moved!r}, outside [0, 1]; "
+                "refused rather than clipped, because a clipped band rate would "
+                "quietly stop being the quantity the caller asked for"
+            )
+        emitted[band] = moved
     return materialise(
         [
             SyntheticCell(
                 label=cell.label,
                 observations=cell.observations,
                 plays=cell.plays,
-                predicted=band_plays[band_by_status[cell.label]]
-                / band_observations[band_by_status[cell.label]],
+                predicted=emitted[band_by_status[cell.label]],
                 labels={"status": cell.label, "band": band_by_status[cell.label]},
             )
             for cell in cells

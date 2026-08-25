@@ -24169,3 +24169,149 @@ truth.
   alone.** I verified it in this worktree. Other lanes may have fetched. If it is
   general, every lane running `test_name_diff.py main` today got a phantom
   dropped test. *Driven here, reasoned for the others.*
+
+## 2026-08-23 - `quant`: an independent review broke four things in the calibration machinery, and one of them was the guard I was proudest of
+
+Second entry for the same unit. The first (above, at `5032bf1`) reported 14
+driven mutations and a Code-gate-only claim. A non-`quant` `code-review` agent
+was pointed at `5032bf1` in a detached worktree with an adversarial brief. It
+wrote nine mutations of its own; **four survived the suite that had just caught
+fourteen.** All four are now caught, and the harness stands at **18/18 caught, 0
+survived**, baseline 61 passed. The blind is unbroken: no outcome was read at any
+point in this entry, and nothing was fitted.
+
+### The one that mattered: the provenance guard was one line from useless
+
+A restricted report is structurally forbidden from claiming `PREREGISTERED_V2`,
+because v2 §7 pre-registers a **pooled** table only. My guard read the
+`restriction` **parameter**. The reviewer bypassed it without touching the
+module:
+
+    rows = list(restrict(cohort, status="doubtful"))
+    build_calibration_report(rows, provenance=Provenance.PREREGISTERED_V2, ...)
+
+An 83-row single-status subgroup, reported as a pooled v2 table, `restriction:
+None` in the payload. The guard was checking *how you asked*, not *what you had*.
+Fixed by making `restrict()` return a `RestrictedCohort` that carries its own
+filter, and having `build_calibration_report` merge the inherited restriction with
+the parameter one before the guard runs. **The residual is real and is now in the
+module docstring rather than glossed:** `list(restrict(...))` strips the marker, so
+a caller who deliberately launders the cohort through a plain `list` still gets a
+pooled label. A type cannot stop that; only the audit trail can, which is why the
+recorded restriction is part of the payload rather than a runtime check alone.
+That is M15.
+
+The other three, each now a mutation:
+
+- **M16** - `restrict()`'s behaviour on a **missing** label key was untested. Every
+  fixture happened to be fully labelled, so a mutation making a missing key count
+  as a match turned restriction into a near-no-op with the suite still green.
+- **M17** - `WILSON_Z_95` was self-referential: every interval derived from it, so
+  the suite agreed with itself at any value. Now pinned against
+  `statistics.NormalDist().inv_cdf(0.975)`.
+- **M18** - the bootstrap interval's endpoint ordering was unpinned. v2 §8
+  condition 2 reads the **upper** endpoint, so swapping them converts a
+  straddling interval into a pass - miscalibration in the direction that flatters
+  the candidate. `BrierComparison.__post_init__` now refuses an inverted interval.
+
+### I withdraw the Code-gate-only claim
+
+I filed this unit as Code gate only, reasoning that a lane which fits nothing
+emits no number a decision rests on. The reviewer's reading is better and I am
+taking it. `gates.md` says the Model gate applies to *"anything producing a number
+a decision rests on — `p(play)`, reliability metrics, projections, blending"*: the
+em-dash introduces examples and **the leading clause is the test**. CITL, ECE, the
+Wilson endpoints and the bootstrapped Brier interval are exactly the numbers v2
+§8's conditions 2-5 and 7 are evaluated from. `docs/backlog.md:1588-1595` already
+ruled an identically-shaped argument wrong with identically true premises, and
+**no gate may be waived by the agent it applies to** - which is the part that
+should have stopped me, independent of whether my reading was defensible.
+
+Filed **Code + Model**, with backtest and calibration-reporting recorded
+*inapplicable* rather than skipped - there is no estimate to back-test, and this
+module **is** the calibration-reporting apparatus. The table is in the card. The
+cost of relabelling was about twenty minutes; the cost of the precedent was not.
+
+### I also overstated the headline finding, in a way worth naming
+
+I wrote that a three-band model emitting each band's realised rate "clears
+**every** computable pooled condition" while `doubtful` is ~86 points wrong. Two
+things were wrong with that.
+
+1. **The exact zeros are definitional.** A model emitting its own evaluation-set
+   band rates has CITL and ECE of exactly zero *by construction*. Quoting them as
+   results reads a construction as a measurement. There is now a test whose name
+   says so.
+2. **Condition 5 does bite, just not at zero displacement.** A real fit takes its
+   band rate from the development partition, so its held-out band rate is
+   displaced. The `unlikely` band's 3,046 observations give a Wilson half-width of
+   ~0.0073. Driven: displacement 0.005 passes condition 5; 0.010 and 0.020 fail
+   it - and `doubtful` is still ~85 points out at all three.
+
+The part that survives intact, and is a **theorem** rather than a demonstration:
+distinct-emitted-probability binning partitions rows **by predicted value**, so
+statuses sharing a band share a bin, and no statistic on that partition can
+separate them **at any rates**. Conditions 3, 4, 5 and 7 all read that partition.
+The reviewer noted a structural asymmetry worth recording: I had protected the
+*dilution* finding with an explicit rate-independence test but not the *masking*
+one, which is exactly the finding where an invented rate could have been doing the
+work. Now closed by
+`test_pooling_puts_the_two_statuses_in_one_bin_whatever_the_invented_rates`,
+driven across three unrelated rate assignments.
+
+Corrected statement, with its scope attached: **at `5032bf1`+, a three-band model
+whose emitted band probability lands within ~0.7pp of the held-out band rate
+clears every pooled condition while `doubtful` is ~86 points wrong.**
+
+### Two numbers in the card were wrong, and one of them is v3's
+
+- **The Wilson half-width I cited for `questionable` (~0.054) came from a
+  synthetic realised rate.** That is a number this lane must not attach to a real
+  status. Restated at the blind-safe worst case `p_hat = 0.5`, which maximises the
+  half-width and depends on nothing but the count: `questionable` (n=335)
+  **0.053238**, `available` (n=467) **0.045163**, `probable` (n=92) **0.100102**,
+  `doubtful` (n=83) **0.105154**. So condition 5 protects `questionable` and
+  `available` below 0.10 at any rate, and **does not protect `probable` or
+  `doubtful`** - `probable` misses by a tenth of a point.
+- **v3 §6's own arithmetic does not close, and I am reporting it rather than
+  copying it.** §6 says 41 of 221 season-wide `doubtful` (18.6%) are G League
+  recalls, and separately that health-only held-out `doubtful` is "~74", giving
+  "2.5x" headroom over condition 6's floor of 30. Applying §6's share to the
+  held-out 83 gives `83 x (1 - 41/221) = 14940/221 = 67.6`, so **~68**, and
+  **2.25x**. I cannot find a route to 74. The conclusion is unaffected - condition
+  6 clears comfortably either way - which is why this is a note to the architect
+  before the owner binds v3, not an objection to v3.
+
+Separately: **41/221 is not derivable from anything committed on `main`.** The
+cohort manifest publishes `status_counts` and `stated_reason_categories` as
+separate marginals with no status-by-reason cross. It is quoted from v3 and
+labelled as quoted. A `data-engineer` lane is committing that cross.
+
+### What I could not verify
+
+- **That the reviewer found everything.** Four survivors out of nine attempts on a
+  suite I believed complete is the useful measurement here, and the honest
+  inference is about my hit rate, not his exhaustiveness. A second reviewer would
+  probably find more. *Reasoned, not driven.*
+- **That `RestrictedCohort` survives every laundering route.** I closed the one
+  the reviewer drove and documented the one I know remains (`list(...)`). I did
+  not enumerate the space - `copy.copy`, slicing, `itertools` round-trips and
+  pickling all plausibly strip it, and I checked none of them. *Not driven.*
+- **That the ~0.7pp condition-5 boundary transfers to the real fit.** It is
+  computed from the held-out band **count** (3,046), which is predictor-side and
+  legal, at the widest point of the interval. Where a real fit's band probability
+  actually lands is an outcome question I did not and may not look at. *Driven as
+  a bound, unknown as a fact.*
+- **That v3 §6's "~74" is an error rather than a figure derived from something I
+  cannot see.** I can only say it does not follow from the two numbers §6 itself
+  publishes. If it came from a row-level cross, it may be right and 18.6% may be
+  the loose figure. Only the architect or the `data-engineer` lane holding the
+  cross can settle it. *Not driven - by construction I cannot drive it.*
+- **That the Code+Model relabel is where the line actually sits.** I argued one
+  side, was corrected, and took the correction; that is not the same as knowing
+  the boundary. If `architect` thinks a lane that fits nothing should be
+  Code-gate-only, the precedent matters more than this unit and I would rather it
+  were settled in `gates.md` than re-argued per lane. *Judgement, not a finding.*
+- **The full suite count for this second entry.** Predicted 1,848 and driven; the
+  first entry's 1,835 plus the 13 tests added since. Any lane seeing a different
+  number should suspect its local `main` is stale before suspecting this branch.
