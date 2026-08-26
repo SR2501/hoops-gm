@@ -27118,3 +27118,151 @@ and this feed's bridge path cannot work as built - which would be a finding
 that changes the plan for the draft board, and is better known in October than
 on the 18th.
 
+
+## 2026-08-26 - backend - draft feed: a fix that made things worse, and what caught it
+
+Second independent review round on `draft-tracker-bridge-feed`, read at exact
+head `2e06c89`. Four findings, all real, all closed in `eb31a7a`. The review is
+posted as a comment on PR #104 rather than left in the lane's session, because a
+review only this lane can read is not one anyone can audit.
+
+**The one worth remembering: I made the tracker worse while fixing a Low.**
+
+Round one's lowest-severity finding was that `silent` was judged on the newest
+*pick*, so a bridge capturing perfectly reported silent through every four-minute
+deliberation - an indicator that cries wolf. I fixed it by judging `silent`
+against proof-of-life instead. That converted a false alarm into a **false
+all-clear**: a bridge capturing page HTML from a service-worker-served draft room
+lands captures continuously while the recogniser reads nothing, so a feed that
+had read **zero picks, ever** reported `silent: false`. Reproduced by the
+reviewer verbatim.
+
+A board frozen at pick 4 under a green light is worse than no board, because the
+indicator is the thing that tells him whether to look. And I had written two
+docstrings in `reconcile.py` asserting the opposite property - "there is no
+reading of this object in which a source looks current because it has never been
+heard from" - and left them unchanged while making them false.
+
+The rule now: **contact may suppress silence only for a source that has been read
+successfully at least once.** Zero instants means silent, always, whatever the
+transport is doing. Contact is still published, because "the userscript is alive
+but reading nothing" is a real and separately actionable state.
+
+The general lesson, which is not about this field: *a fix aimed at a
+false-positive should be checked for whether it can produce a false-negative,
+because they are rarely symmetric in cost.* Nothing in the gates asks that
+question.
+
+**`_transport_contact` was proof of the wrong thing.** It matched
+`request_url.contains(league_id)`. That accepted a neighbouring league whose id
+merely has ours as a prefix, our id appearing in any unrelated query parameter,
+and (unescaped LIKE) an id containing `_` or `%` as a wildcard. The threat was
+never a forged row - nothing but `POST /bridge/payloads` writes that table - it
+was a **genuine row that is not evidence of the property being claimed**. It now
+re-parses the URL with `league_id_in` and counts only RPC capture sources.
+
+**Seat-plus-player is a shape, and four lists in a draft room have it.** The
+reviewer got a keeper roster, an auction bid history, a waiver claim list and an
+on-the-clock block all read as the pick log. Keepers are not picks and would have
+become real `draft_events`; a bid history would have credited the *opening* bid
+as the clearing price. Acceptance now additionally requires the coordinate the
+record's kind is defined by - an ordinal for a snake selection, an amount for an
+auction sale - refuses a list containing the same player twice, and refuses a
+record whose player id equals its own seat id.
+
+**This is the sharpest live risk in the unit and I want it recorded as such.** If
+a real Fantrax pick log does not carry an ordinal under any of our guessed
+aliases, that rule refuses the entire board and the unit delivers nothing on
+draft night. I chose it deliberately, on the same trade the whole module makes: a
+blank board with the refused list's key names on the status endpoint is a
+five-minute fix; a populated board built from a roster block is a season. But it
+is a guess defended by an argument, not by evidence, and one recorded capture
+would settle it.
+
+**Two of my own tests had pinned the defect as the specification.** Both were
+written in round one to close F5, and both asserted the behaviour F6 says is
+wrong. A future reader fixing F6 would have broken them and concluded the fix was
+wrong. This is the same failure as the round-one team-block test that asserted
+refusal using a payload which did not defeat the guard: *the test encoded the
+same assumption the code did.* Naming the defect is necessary and not sufficient
+- the reading that must also be constructed is the one where the flag is true and
+the defect is present.
+
+**A halt was invisible to anything that only polls.** Leaving the halting row
+pending (round one's fix) was right, but `halted` is returned on the ingest
+response only and a live board polls `GET`. An unresolvable ordering problem
+re-halted every run while the status endpoint showed `pending_count: 1`,
+indistinguishable from an ordinary queue. `blocked_reason` now carries it,
+cleared at the start of every run so it can never become sticky - which would
+have been the round-one defect wearing a new name.
+
+**`coerced_to_kind` was answering two questions with one number.** Sporadic
+coercion means Fantrax sent a stray field. *Total* coercion means **our** draft
+format snapshot is wrong - the league is an auction, we recorded it as snake, and
+every price is being stripped on the way in while the board shows a priceless
+snake draft. `kind` comes from our snapshot, so the dangerous reading is the one
+where the authoritative side is the broken side. The rate separates them where
+the count cannot; `format_snapshot_suspect` publishes it.
+
+**A test fixture had been lying about the capture layer.** `_capture` labelled
+every stored payload `source="fantrax"` - a value `userscript/src/capture.js`
+never emits. It emits `fetch`, `xhr`, `cache-storage`, `rendered-view`,
+`manual-export`. Nothing depended on it until the F6 filter did, at which point
+it failed loudly. Worth noting because the fixture had been read by three rounds
+of tests as if it represented the real thing.
+
+**One of my own worries was disproved.** I had flagged that `begin_nested()`
+might be a no-op under pysqlite and that the round-one mutation might have died
+for a reason other than the one I assumed. The reviewer verified directly,
+outside my fixture on a freshly-committed database: SQLAlchemy emits a real
+`SAVEPOINT`, only the offending row is discarded, the session stays usable, and
+without it the run dies of `PendingRollbackError` - which is precisely the
+failure it exists to stop.
+
+**`getDraftPicks` remains not disproved, unestablished.** No change: no league
+id, no `FANTRAX_*` variables, both `.env` files absent. Neither feed source has
+ever seen a real draft payload.
+
+### Could not verify
+
+- **Whether any of this fires on a real Fantrax draft room.** Unchanged and still
+  the largest gap. Every key alias, the envelope shape, and now the coordinate
+  rule are guesses. The recogniser is built to yield zero records rather than
+  wrong ones, and to publish the key names it refused, but "fails safe" is not
+  "works".
+- **Whether the coordinate rule refuses a legitimate board.** Specifically: a
+  pick log where only some records carry an ordinal, and whether a player can be
+  drafted, dropped and re-drafted within one auction - which `duplicate_player_
+  in_list` would treat as grounds to refuse the whole list. I could not construct
+  either case from evidence. Both are all-or-nothing refusals, so the cost of
+  being wrong is the entire board, not one row.
+- **`begin_nested()` on Postgres.** Verified on SQLite by two parties now.
+  Postgres has first-class savepoints and the direction of risk runs the other
+  way, but I have run no Postgres test of that path and claim nothing about it.
+- **Whether `_CONTACT_SCAN_LIMIT = 50` is enough.** A user with more than fifty
+  non-matching captures newer than the matching one loses contact. I believe that
+  degrades safely to the instant clock rather than to a false all-clear, but I
+  have not constructed the case.
+- **Whether the third review round is clean.** Requested at `eb31a7a`, not
+  returned at the time of writing.
+
+### Append-only check, corrected
+
+The coordinator's earlier rule - confirm `0 removed` on this file - is wrong, by
+its own author's finding: an append onto a file whose last line lacked a trailing
+newline correctly reports `1 removed`. The property is a **byte-prefix**: the
+base blob must be a byte prefix of the committed one. Verified here against the
+base this branch was cut from:
+
+    28d0d88   bytes=1655587  byte-prefix=True  appended=19976
+    HEAD      committed blob contains 0 CRLF
+
+The normalisation caveat (a whole-file CRLF->LF rewrite would pass a normalised
+comparison) has nothing to hide in this case, because the raw and normalised
+results agree and the committed blob contains no CRLF at all. The working copy
+does, from the Windows checkout; comparing working files rather than committed
+blobs reports a spurious failure.
+
+Against `origin/main` the prefix is **False**, which is the merge freeze and not
+a violation: main has gained other lanes' entries this branch has not rebased
+onto. Stated so the next person running the check is not alarmed by it.
