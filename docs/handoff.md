@@ -23097,3 +23097,112 @@ the file before the run was read.
   flip on a semantic change; I did not construct a same-length rewrite to prove
   the old failure mode is closed rather than merely papered over. *Reasoned, not
   driven.*
+
+## 2026-08-25 — frontend — agreement on a value says nothing about agreement on its meaning
+
+The entry above left two things unverified: how many of the remaining probe
+fields were decorative, and whether a semantic change that preserved *shape*
+would be caught. This closes both. Rebased onto `193aa1e`; head `0fda7c0`
+plus this entry.
+
+### The shape
+
+**Agreement on a value says nothing about agreement on its meaning.** Two
+readings can match to the digit and still be about different quantities, and
+when they do, every check built on their agreement passes. This is not a story
+about one field. It is the reason a whole class of verification is weaker than
+it reads, and the class is large: an evidence screen is almost entirely
+sentences about numbers, and *a number you derive gets checked; a sentence you
+write about it does not.*
+
+The illustration was `pending_game_ids`, rendered under the label "Undated
+games" when the field means *teams not yet decided* — six pending, all six
+dated, zero undated. The probe agreed with the screen because I had read the
+same field into both ends of the comparison. But the illustration is not the
+finding, and filing it as one is how the previous record of this class failed
+to prevent its own recurrence.
+
+### Why invariant-and-mover does not close it
+
+Carrying an invariant and a mover distinguishes *nothing changed* from *I am
+blind*. Both are failures of **liveness**. A shared misreading is a failure of
+**reference** — the probe is live, the values move, and both ends are wrong
+together. The technique is structurally blind to it, and the blindness is worst
+exactly where the technique is cheapest: when the probe author is the screen
+author, the two ends share assumptions by construction.
+
+### The proposed rule, and why I would amend it
+
+`architect` proposed: *a probe's flags must be re-derived from the producer's
+contract, not from the consumer's reading of it.* Directionally right, and it
+would have caught the `pending_game_ids` case. It would have missed two of the
+three defects I then found, because it constrains **where you read** rather
+than **whether the two ends can disagree** — and one of my worst flags read the
+producer's contract correctly at both ends and never read the screen at all.
+
+The amendment I would make it, because it is checkable at write time by the
+person least able to see their own assumption:
+
+> **Name the defect the flag excludes. Then name a reading in which the flag is
+> false and that defect is present. If you cannot construct that reading, the
+> flag does not exclude the defect.**
+
+This is the falsifiability rule in `AGENTS.md` applied to a check rather than a
+claim. It subsumes the provenance rule — a flag reading one source at both ends
+has no falsifying reading — and it catches every failure this unit produced:
+three weak flags, one control that fired on a side-effect, and two controls that
+never applied.
+
+### What the audit found
+
+Nine agreement flags, each put to that test. Three failed.
+
+- **`undatedAndPendingAreDistinct` — the worst, and the most instructive.** It
+  compared two *API fields against each other* and never read the screen. It
+  asserted `0 !== 6`, a property of the payload, which is true whatever the page
+  renders. **The guard added against the founding defect was itself an instance
+  of the founding defect.** Rewritten to read both DOM rows, and to return
+  `null` rather than `true` when the two quantities coincide, because a flag
+  that cannot discriminate should say so instead of reporting success.
+- **`distinctMatchesApi` compared `Set.size === Set.size`.** Cardinality, not
+  identity: `{59,60}` passes against `{70,80}`. I have an entry in this file
+  dated 2026-08-21 whose title is *"Cardinality, which every previous fix
+  compared its way past"*, and then I wrote this. Knowing the failure mode by
+  name did not stop me reaching for it.
+- **`scheduleCountsOnScreen` / `teamsAndPeriodsOnScreen` used `.includes()`.**
+  Presence, not assignment — swapping *published* and *resolved* leaves both
+  digits on the page and the flag true. Rewritten to anchor each number to its
+  own label.
+
+### Controls driven, each confirmed present in the file before the run was read
+
+- **Reference:** reverted the undated row to `pending_game_ids.length`, the
+  exact founding defect. Screen renders *"6 of those 6 also carry no date"*;
+  new flag **false**, old API-vs-API flag would have been **true**.
+- **Cardinality:** mapped the assumption `65 → 66`. The cohort is odd-numbered
+  59…79, so every even value is absent — the set changes while cardinality
+  stays 11 and min/max stay 59/79. Old flag **true**, new flag **false**, min
+  and max correctly unmoved. This is the same-shape-different-content case the
+  entry above could not construct.
+- **Unit:** reverting a blocker to route-only fails 2 tests; removing
+  `participation` from the back-to-back claim fails 1.
+
+### Could not verify
+
+- **The four flags with genuinely independent provenance** — `barCountMatchesApi`,
+  `minMatchesApi`, `maxMatchesApi`, `pendingTeamsOnScreen`. Each reads DOM on one
+  side and HTTP on the other, and I can state a falsifying reading for each. But
+  I drove controls for two of the three defects, not for these. *Reasoned, not
+  driven.*
+- **That the amended rule is sufficient rather than merely better.** It catches
+  everything this unit got wrong, which is exactly the evidence you would expect
+  a rule derived from those failures to produce. It has not been tried against a
+  defect it was not built from.
+- **`scripts/test_name_diff.py` is silent on this unit's tests.** It parses
+  Python `test_*` and defaults to `backend/tests`; my 59 vitest tests are
+  invisible to it, so its exit 0 means *nothing changed in a place I did not
+  look*. Pointed at `frontend/src` it refuses as vacuous — the tool contains its
+  own fix, and only the default scope is the unpassed narrowing. A frontend lane
+  reading its zero delta as reassurance would be reading nothing. Not mine to
+  change mid-freeze; filed with `architect`.
+
