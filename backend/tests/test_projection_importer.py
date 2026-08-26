@@ -47,6 +47,7 @@ from hoops_gm.ingest.projections import (
     BASKETBALL_MONSTER_PROFILE,
     CANONICAL_STAT_FIELDS,
     FANTASYPROS_PROFILE,
+    HASHTAG_2026_27_HEADERS,
     HASHTAG_PROFILE,
     MANUAL_PROFILE,
     ColumnProfile,
@@ -742,15 +743,203 @@ def test_fantasypros_profile_resolves_headers_and_flags_percentage_only() -> Non
     )
 
 
-def test_hashtag_profile_resolves_full_shooting_volume() -> None:
-    result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+@pytest.mark.adapter_contract
+class TestHashtagProjectionContract:
+    """The contract Hashtag Basketball actually renders, and its limits.
 
-    assert result.rejected_count == 0
-    beta = next(row for row in result.rows if row.player_name == "Player Beta")
-    assert beta.field_goals_made_per_game == 6.1
-    assert beta.field_goals_attempted_per_game == 13.2
-    assert beta.offensive_rebounds_per_game == 1.0
-    assert beta.defensive_rebounds_per_game == 3.5
+    This class is the adapter gate for Hashtag. It is deliberately more
+    suspicious than a mapping test, because the failure this profile guards
+    against does not look like a failure: a Hashtag import that silently
+    dropped shooting volume would produce a complete-looking projection set
+    in which every percentage category was priced on no volume at all.
+    """
+
+    def test_fixture_is_synthetic_and_declares_its_weaker_evidence(self) -> None:
+        """The fixture is pinned, and its evidence does not overclaim.
+
+        Basketball Monster's fixture is backed by the hash of a real paid
+        export. Hashtag's cannot be: the source publishes no export, so there
+        is no artifact to hash. Both metadata files carry a
+        ``privacy_safe_fixture_sha256``, which makes them look equivalent at a
+        glance, and they are not. The asymmetry is asserted here so that a
+        reader comparing the two files sees the difference stated rather than
+        inferring parity from a shared key name.
+        """
+        fixture_bytes = load_bytes("hashtag_sample.csv")
+        metadata = json.loads(
+            (FIXTURES / "hashtag_sample.metadata.json").read_text(encoding="utf-8")
+        )
+
+        canonical = fixture_bytes.replace(b"\r\n", b"\n")
+        assert (
+            hashlib.sha256(canonical).hexdigest().upper()
+            == metadata["privacy_safe_fixture_sha256"]
+        )
+        assert "private_export_sha256" not in metadata, (
+            "Hashtag has no export to hash; a key implying otherwise would make this "
+            "fixture's evidence look as strong as Basketball Monster's"
+        )
+        assert metadata["evidence_kind"].startswith("live-page contract observation")
+        assert metadata["why_no_source_hash"]
+
+        text = fixture_bytes.decode("utf-8")
+        for invented in ("Nikola", "Jokic", "Wembanyama", "Doncic"):
+            assert invented not in text, "no vendor row may be committed"
+
+    def test_header_contract_is_pinned_exactly(self) -> None:
+        """A differently-configured paste is refused, not best-effort mapped.
+
+        Hashtag's column set is *browser state*, not a vendor contract: the
+        page carries sixteen category checkboxes and renders whichever are
+        ticked. A paste therefore carries values and none of the configuration
+        that produced them. Nine categories happen to be checked by default,
+        which is why the default paste looks like a stable contract and is not
+        one.
+
+        Defect excluded: a paste made with a different category selection
+        mapping partially onto this profile and importing a subset of columns
+        as though it were the whole thing.
+
+        Reading in which this passes and the defect is present: a paste whose
+        selection differs in a column this profile already ignores as terminal
+        evidence. Toggling the vendor's composite ``TOTAL`` off changes the
+        header sequence and so is caught, but the check is a sequence
+        comparison and cannot distinguish a column that matters from one that
+        does not.
+        """
+        header = load("hashtag_sample.csv").splitlines()[0]
+        assert header.split(",") == list(HASHTAG_2026_27_HEADERS)
+
+        for dropped in ("BLK", "TREB", "FT%"):
+            mangled = [h for h in HASHTAG_2026_27_HEADERS if h != dropped]
+            with pytest.raises(ProjectionProfileError, match="drifted"):
+                parse_projection_csv(
+                    ",".join(mangled) + "\n", HASHTAG_PROFILE, season="2026-27"
+                )
+
+    def test_composite_shooting_cells_yield_volume_not_just_percentage(self) -> None:
+        """The finding this unit exists for.
+
+        Hashtag nests makes and attempts inside the percentage cell:
+        ``0.573 (10.5/18.3)``. The profile's first version declared both
+        shooting columns as percentage-only fallbacks, whose documented
+        meaning is "the source published no volume". That was true of the
+        header and false of the cell, and the consequence is
+        ``AGENTS.md``'s single most common bug in homebrew fantasy tools: a
+        90%-on-one-attempt free-throw shooter pricing identically to a
+        90%-on-eight.
+        """
+        result = parse_projection_csv(
+            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
+        )
+
+        alpha = next(row for row in result.rows if row.player_name == "Player Alpha")
+        assert alpha.field_goals_made_per_game == 10.5
+        assert alpha.field_goals_attempted_per_game == 18.3
+        assert alpha.free_throws_made_per_game == 5.6
+        assert alpha.free_throws_attempted_per_game == 6.8
+
+        # Volume must be present for every row, including the fringe ones,
+        # because those are exactly the rows a percentage-only import
+        # mis-prices most severely.
+        for row in result.rows:
+            assert row.field_goals_attempted_per_game is not None
+            assert row.free_throws_attempted_per_game is not None
+
+    def test_a_percentage_that_contradicts_its_own_volume_is_refused(self) -> None:
+        """Positive control on the reconciliation, not just on the happy path.
+
+        A check that has only ever been run against clean input has not been
+        shown to be capable of failing.
+        """
+        clean = load("hashtag_sample.csv")
+        assert parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").rows
+
+        corrupted = clean.replace("0.574 (10.5/18.3)", "0.474 (10.5/18.3)")
+        assert corrupted != clean, "the mutation must be present in the text under test"
+        result = parse_projection_csv(corrupted, HASHTAG_PROFILE, season="2026-27")
+        assert any(
+            issue.fatal and "does not reconcile" in issue.message for issue in result.issues
+        )
+
+    def test_tolerance_is_volume_weighted_in_both_directions(self) -> None:
+        """Loose where volume is thin, strict where volume is heavy.
+
+        A flat tolerance is wrong in both directions, which is why this is a
+        single test rather than two: at a tolerance tight enough to catch the
+        high-volume corruption below, the legitimate low-volume cell in the
+        fixture would be a false alarm.
+        """
+        clean = load("hashtag_sample.csv")
+
+        # Thin volume: 0.2/0.3 rounds to 0.667, and the true ratio can sit
+        # anywhere in a wide interval. This must be accepted. Asserted against
+        # reconciliation issues specifically rather than against
+        # ``rejected_count``, which is 1 for this fixture by design — the
+        # repeated header row. A coarser assertion would couple this check to
+        # an unrelated hazard and report the wrong cause when it broke.
+        assert "0.667 (0.2/0.3)" in clean
+        assert not [
+            issue
+            for issue in parse_projection_csv(
+                clean, HASHTAG_PROFILE, season="2026-27"
+            ).issues
+            if "does not reconcile" in issue.message
+        ]
+
+        # Heavy volume: the same absolute error that is invisible at 0.3
+        # attempts is decisive at 18.3.
+        nudged = clean.replace("0.574 (10.5/18.3)", "0.590 (10.5/18.3)")
+        assert nudged != clean
+        assert any(
+            issue.fatal and "does not reconcile" in issue.message
+            for issue in parse_projection_csv(
+                nudged, HASHTAG_PROFILE, season="2026-27"
+            ).issues
+        )
+
+    def test_repeated_header_rows_are_rejected_loudly(self) -> None:
+        """The live page re-emits its header roughly every thirteen rows.
+
+        Left alone these parse as a player named ``PLAYER`` carrying
+        unparsable stats, which surfaces as a scatter of numeric errors rather
+        than as the structural artefact it is.
+        """
+        result = parse_projection_csv(
+            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
+        )
+
+        assert result.rejected_count == 1
+        assert any(
+            issue.fatal and "repeats the file's header text" in issue.message
+            for issue in result.issues
+        )
+        assert not any(row.player_name == "PLAYER" for row in result.rows)
+
+    def test_vendor_composite_and_market_columns_are_refused_as_evidence(self) -> None:
+        """``TOTAL``, ``R#`` and ``ADP`` are read and discarded, per ADR-008.
+
+        ``TOTAL`` is the one column whose meaning genuinely depends on the
+        vendor's scoring format, and refusing it is a stronger response than
+        trying to verify a self-declared format. ``ADP`` is a market
+        aggregate of unestablished provenance and must not re-enter valuation
+        as though it were a projection.
+        """
+        result = parse_projection_csv(
+            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
+        )
+
+        assert set(result.ignored_terminal_headers) == {"R#", "ADP", "TOTAL"}
+        assert "TOTAL" not in result.resolved_headers.values()
+
+    def test_multi_position_cell_survives_its_embedded_comma(self) -> None:
+        result = parse_projection_csv(
+            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
+        )
+
+        delta = next(row for row in result.rows if row.player_name == "Player Epsilon")
+        assert delta.position == "SG,SF"
+        assert delta.team == "PHX"
 
 
 # --------------------------------------------------------------------------
