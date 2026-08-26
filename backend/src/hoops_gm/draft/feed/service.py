@@ -64,6 +64,7 @@ from hoops_gm.draft.feed.observations import (
     matching_key,
 )
 from hoops_gm.draft.feed.recognise import (
+    RPC_CAPTURE_SOURCES,
     SNAPSHOT_CAPTURE_SOURCES,
     RecognitionContext,
     league_id_in,
@@ -94,6 +95,15 @@ BRIDGE_SCAN_LIMIT = 400
 
 #: How long a source may be quiet before the status endpoint says so.
 DEFAULT_SILENCE_THRESHOLD = timedelta(minutes=2)
+
+#: How many candidate captures the proof-of-life lookup re-parses, newest first.
+#:
+#: The SQL substring pre-filter can match rows the exact ``league_id_in`` check
+#: then rejects, so the scan has to be able to walk past them. Bounded for the
+#: same reason as :data:`BRIDGE_SCAN_LIMIT`: an unbounded query is not a thing to
+#: discover mid-draft. Erring low costs a false ``contact_is_known=False``, which
+#: is the safe direction — it degrades to the instant clock.
+_CONTACT_SCAN_LIMIT = 50
 
 
 class DraftPickSource(Protocol):
@@ -164,6 +174,28 @@ class SourceOutcome:
     #: were therefore not looked at.
     scan_truncated: bool = False
     notes: tuple[str, ...] = ()
+
+    @property
+    def format_snapshot_suspect(self) -> bool:
+        """Whether coercion looks like *our* format record being wrong.
+
+        ``coerced_to_kind`` has two readings and the count alone cannot separate
+        them, which is the assumption most likely to be wrong at 7:14pm:
+
+        * Fantrax sends a harmless extra field on some records. Coercion is
+          correct and the rate is **sporadic**.
+        * The draft's snapshotted format is wrong — the league is an auction and
+          we recorded it as snake. Coercion then strips the amount from *every*
+          record and the board silently shows an auction as a priceless snake
+          draft. The rate is **total**.
+
+        ``kind`` is taken from our snapshot, not from the payload, so the second
+        reading is the one where the authoritative side is the broken side. A
+        total, one-directional rate is the signature that separates them, so it
+        is published as its own flag rather than left for a reader to infer from
+        two numbers that happen to be equal.
+        """
+        return self.instants_recognised > 0 and self.coerced_to_kind == self.instants_recognised
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,6 +665,12 @@ def apply_observations(
     ]
     pending.sort(key=_apply_order)
 
+    # Cleared before anything is attempted, so ``blocked_reason`` is always a
+    # fact about *this* run. A sticky value would recreate, in a second field,
+    # the exact defect that removing it from ``skipped_reason`` fixed.
+    for row in pending:
+        row.blocked_reason = None
+
     applied: list[AppliedEvent] = []
     skipped: list[tuple[int, str]] = []
     halted: str | None = None
@@ -713,6 +751,7 @@ def apply_observations(
                 # heal it under a new key, but the official source republishes
                 # byte-identically and would not.
                 halted = error.code
+                row.blocked_reason = error.code
                 break
             row.skipped_reason = f"{error.code}: {error}"
             continue
@@ -754,6 +793,14 @@ class FeedStatus:
     observation_count: int
     applied_count: int
     pending_count: int
+    #: Reasons the last apply run stopped without consuming a still-pending row.
+    #:
+    #: Empty is the ordinary case. Non-empty means ``pending_count`` is a stuck
+    #: backlog rather than a queued one, which the polling client cannot
+    #: otherwise tell — ``halted`` is returned on the ingest response only, and a
+    #: live board polls ``GET``. "Stuck" and "queued" look identical on a screen
+    #: and mean opposite things at 7:14pm.
+    blocked: tuple[str, ...]
     skipped: tuple[tuple[str, int], ...]
     last_sequence: int
 
@@ -764,17 +811,37 @@ def _transport_contact(
 ) -> dict[SourceTransport, datetime]:
     """Proof-of-life per transport, independent of any draft instant.
 
-    Only the bridge has any. A capture landing for this league is evidence the
-    userscript is running and Fantrax is being watched, whether or not it
-    contained a pick — and between two picks in a live draft it will not. This
-    is what stops the freshness indicator reading ``silent`` through every
-    ordinary deliberation and teaching the owner to dismiss it.
+    Only the bridge has any. An **RPC capture for this exact league** is
+    evidence the userscript is running and reaching Fantrax's data endpoint,
+    whether or not that particular reply contained a pick — and between two
+    picks in a live draft it will not. This is what stops the freshness
+    indicator reading ``silent`` through every ordinary deliberation and
+    teaching the owner to dismiss it.
 
-    The defect this excludes is *a live bridge reported as silent*. For
-    ``silent=False`` to be wrong here — a dead bridge reported live — a
-    ``bridge_payloads`` row would have to appear with a recent ``created_at``
-    while the userscript is not running. Nothing else writes that table; the
-    only path is ``POST /bridge/payloads``, which is the userscript.
+    Three things narrow what counts, and each excludes a row that is genuine
+    but is not evidence of the property being claimed:
+
+    * **The URL is re-parsed, not substring-matched.** ``request_url.contains``
+      is kept only as a cheap SQL pre-filter; the authority is
+      :func:`league_id_in`, which requires the path to be exactly ``/fxpa/req``
+      and the ``leagueId`` parameter to equal ours. Substring matching accepted
+      a neighbouring league whose id merely has ours as a prefix, and our id
+      appearing in any unrelated query parameter. ``autoescape=True`` because
+      an id containing ``_`` or ``%`` is otherwise a LIKE wildcard.
+    * **Only RPC capture sources count.** A ``rendered-view`` HTML snapshot is
+      stored under the *page* URL and proves the userscript is alive, but not
+      that the data endpoint is being read.
+    * **Contact never rescues a source that has produced nothing.** That rule
+      lives in :func:`freshness_of`; see the comment there.
+
+    Together these exclude the defect that matters: *a feed that has read zero
+    picks reporting itself as not silent* because some capture mentioning this
+    league happened to land.
+
+    For a contact time to be wrong in the remaining direction -- a dead bridge
+    reported live -- a ``bridge_payloads`` row would have to appear with a
+    recent ``created_at`` while the userscript is not running. Nothing else
+    writes that table; the only path is ``POST /bridge/payloads``.
 
     The official source deliberately gets nothing. Its poll happens inside
     ``ingest_official`` and is not recorded anywhere, and inventing a contact
@@ -784,15 +851,19 @@ def _transport_contact(
     """
     if isinstance(context, str):
         return {}
-    newest = session.execute(
-        select(BridgePayload.created_at)
-        .where(BridgePayload.request_url.contains(context.fantrax_league_id))
+    candidates = session.execute(
+        select(BridgePayload.created_at, BridgePayload.request_url)
+        .where(
+            BridgePayload.source.in_(RPC_CAPTURE_SOURCES),
+            BridgePayload.request_url.contains(context.fantrax_league_id, autoescape=True),
+        )
         .order_by(BridgePayload.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if newest is None:
-        return {}
-    return {SourceTransport.BRIDGE_CAPTURE: newest}
+        .limit(_CONTACT_SCAN_LIMIT)
+    ).all()
+    for created_at, request_url in candidates:
+        if league_id_in(request_url) == context.fantrax_league_id:
+            return {SourceTransport.BRIDGE_CAPTURE: created_at}
+    return {}
 
 
 def feed_status(
@@ -852,6 +923,9 @@ def feed_status(
     pending = sum(
         1 for row in rows if row.applied_event_sequence is None and row.skipped_reason is None
     )
+    blocked = tuple(
+        sorted({row.blocked_reason for row in rows if row.blocked_reason}),
+    )
     state = draft_service.load_state(session, draft)
 
     return FeedStatus(
@@ -863,6 +937,7 @@ def feed_status(
         observation_count=len(rows),
         applied_count=applied,
         pending_count=pending,
+        blocked=blocked,
         skipped=tuple(sorted(skipped.items())),
         last_sequence=state.last_sequence,
     )

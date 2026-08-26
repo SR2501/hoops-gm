@@ -178,6 +178,20 @@ class DraftFeedObservation(IntPk, TimestampMixin, Base):
     #: status endpoint, because an observation that silently never becomes an
     #: event is indistinguishable from one that was never read.
     skipped_reason: Mapped[str | None] = mapped_column(Text)
+    #: Why the *last apply run* stopped at this row without consuming it.
+    #:
+    #: Distinct from ``skipped_reason`` because it means the opposite thing: the
+    #: row is still pending and will be retried, but the run could not get past
+    #: it. Without this, an unresolvable ordering problem re-halts every run and
+    #: the polling client sees only ``pending_count == 1``, which is
+    #: indistinguishable from an ordinary backlog waiting for the next apply — a
+    #: feed that has permanently stopped reading as a feed with one item queued.
+    #:
+    #: Cleared at the start of every apply run, so it is always a fact about the
+    #: most recent one. It must never be read as a filter for ``pending``:
+    #: setting a sticky reason on the halting row is precisely the defect that
+    #: made halting "a skip with extra steps".
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
 
     draft: Mapped[Draft] = relationship()
     participant: Mapped[DraftParticipant | None] = relationship()

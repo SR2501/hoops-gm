@@ -148,12 +148,25 @@ def freshness_of(
     contact_age = (now - contact_at).total_seconds() if contact_at is not None else None
     threshold = silence_threshold.total_seconds()
     if not mine:
+        # Contact deliberately does NOT rescue a source that has produced
+        # nothing. It suppresses silence only for a source that has been read
+        # successfully at least once, which is the gap between two picks that
+        # ``contact_at`` exists for.
+        #
+        # The defect this ordering excludes is the one that matters most on the
+        # night: Fantrax serves the draft room from its service worker, the
+        # userscript captures only page HTML, the recogniser reads zero picks
+        # -- and a capture still lands, so contact is recent. Judging ``silent``
+        # on contact alone made a feed that had never read a single pick report
+        # ``silent=False``. A board frozen at pick 4 under a green indicator is
+        # worse than no board, because the indicator is the thing that tells
+        # him whether to look.
         return SourceFreshness(
             transport=transport,
             last_seen_at=None,
             age_seconds=None,
             instant_count=0,
-            silent=contact_age > threshold if contact_age is not None else True,
+            silent=True,
             silence_threshold_seconds=threshold,
             contact_at=contact_at,
             contact_age_seconds=contact_age,

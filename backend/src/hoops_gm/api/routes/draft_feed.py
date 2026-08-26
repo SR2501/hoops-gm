@@ -199,6 +199,14 @@ class FeedStatusResponse(BaseModel):
     observation_count: int
     applied_count: int
     pending_count: int
+    #: Reasons the last apply run stopped without consuming a still-pending row.
+    #:
+    #: Empty is the ordinary case. Non-empty means ``pending_count`` is stuck,
+    #: not queued. A live board polls this endpoint, and ``halted`` is returned
+    #: only on the ingest response — so without this a feed that has permanently
+    #: stopped applying is indistinguishable here from one with an item waiting
+    #: for the next run.
+    blocked: list[str]
     skipped: dict[str, int]
     #: The draft log's version token, the same one ``GET /drafts/{id}``
     #: publishes, so a screen can tell whether the board it holds is the board
@@ -234,9 +242,17 @@ class SourceOutcomeOut(BaseModel):
     #: Instants stored with a field nulled because their ``kind`` forbids it: a
     #: price on a snake pick, ordinals on an auction sale. Storing the record
     #: with the impossible field dropped is preferred to refusing it, because
-    #: the seat and the player are the parts a board needs. Non-zero here means
-    #: the source is publishing a shape we only partly understand.
+    #: the seat and the player are the parts a board needs.
+    #:
+    #: A non-zero value has two readings and this count does not choose between
+    #: them — see ``format_snapshot_suspect``, which does.
     coerced_to_kind: int
+    #: True when *every* recognised instant was coerced, which is the signature
+    #: of our own format record being wrong rather than of an unexpected extra
+    #: field. The dangerous reading: the league is an auction, we recorded it as
+    #: snake, and the board is showing an auction with no prices. Sporadic
+    #: coercion is benign; total coercion is a configuration error.
+    format_snapshot_suspect: bool
     #: Recognised instants the database refused. Expected to be zero. Non-zero
     #: means a record we thought we understood could not be represented, and it
     #: is counted rather than raised so one bad row does not cost the run.
@@ -416,6 +432,7 @@ def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
         observation_count=status.observation_count,
         applied_count=status.applied_count,
         pending_count=status.pending_count,
+        blocked=list(status.blocked),
         skipped=dict(status.skipped),
         last_sequence=status.last_sequence,
     )
@@ -515,6 +532,7 @@ def ingest_feed(
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
                 coerced_to_kind=source.coerced_to_kind,
+                format_snapshot_suspect=source.format_snapshot_suspect,
                 observations_rejected=source.observations_rejected,
                 observations_written=source.observations_written,
                 observations_already_present=source.observations_already_present,

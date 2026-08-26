@@ -160,10 +160,11 @@ def _capture(
     league_id: str = LEAGUE,
     created_at: datetime = NOW,
     captured_at: datetime | None = None,
+    source: str = "xhr",
 ) -> BridgePayload:
     row = BridgePayload(
         schema_name="hoops-gm.bridge-payload.v1",
-        source="fantrax",
+        source=source,
         captured_at=captured_at or created_at,
         request_method="POST",
         request_url=f"https://www.fantrax.com/fxpa/req?leagueId={league_id}",
@@ -444,7 +445,7 @@ def test_a_capture_for_another_league_is_refused() -> None:
     """
     result = recognise_bridge_payload(
         url="https://www.fantrax.com/fxpa/req?leagueId=someoneelse",
-        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC}]),
+        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}]),
         dedupe_key="k",
         received_at=NOW,
         captured_at=None,
@@ -466,7 +467,7 @@ def test_a_url_that_is_not_the_rpc_endpoint_is_refused() -> None:
 
     result = recognise_bridge_payload(
         url="https://www.fantrax.com/fxpa/reqDraft?leagueId=abc123league",
-        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC}]),
+        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}]),
         dedupe_key="k",
         received_at=NOW,
         captured_at=None,
@@ -493,8 +494,8 @@ def test_one_unknown_team_refuses_the_whole_list() -> None:
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
         body_json=_envelope(
             [
-                {"teamId": "t1", "playerName": JOKIC},
-                {"teamId": "not-a-seat-in-this-draft", "playerName": EDWARDS},
+                {"teamId": "t1", "playerName": JOKIC, "overallPick": 1},
+                {"teamId": "not-a-seat-in-this-draft", "playerName": EDWARDS, "overallPick": 2},
             ]
         ),
         dedupe_key="k",
@@ -574,6 +575,128 @@ def test_a_record_naming_no_player_refuses_the_list() -> None:
         assert [shape.reason for shape in result.unrecognised] == ["record_names_no_player"], record
 
 
+def test_lists_that_pair_a_seat_with_a_player_but_are_not_the_pick_log() -> None:
+    """Excludes: reading a roster, a bid history or a claim list as the board.
+
+    "Every record resolves to a seat and names a player" is a *shape*, and an
+    independent review demonstrated four distinct lists in a draft room with
+    that exact shape, each of which this module read as the pick log. They are
+    not equally harmful and the difference is worth naming:
+
+    * a **keeper roster** at draft open contains players nobody drafted, and
+      ``apply_observations`` would have turned every one into a real
+      ``draft_events`` entry;
+    * a **bid history** contains the same player repeatedly, and the first bid
+      would have been credited as the clearing price;
+    * a **claim list** and an **on-the-clock block** invent picks outright.
+
+    Each refusal below is asserted with its own reason string rather than
+    "something was refused", because a single guard that happened to catch all
+    four would be indistinguishable from four guards that each catch one, and
+    only the second is what is written here.
+
+    The reading in which these flags are true while the defect is present: a
+    recogniser that refuses *everything* passes this test perfectly. That is why
+    :func:`test_a_real_looking_pick_log_is_still_accepted` sits immediately
+    below and is not optional.
+    """
+    cases: list[tuple[DraftType, str, list[dict[str, Any]]]] = [
+        (
+            DraftType.SNAKE,
+            "record_missing_draft_coordinate",
+            [
+                # A keeper roster: seat, player, no position in the draft.
+                {"teamId": "t1", "playerId": "p1", "playerName": JOKIC},
+                {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS},
+            ],
+        ),
+        (
+            DraftType.AUCTION,
+            "record_missing_draft_coordinate",
+            [
+                # The same roster in an auction: no price, so not a sale.
+                {"teamId": "t1", "playerId": "p1", "playerName": JOKIC},
+                {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS},
+            ],
+        ),
+        (
+            DraftType.AUCTION,
+            "duplicate_player_in_list",
+            [
+                # A bid history. ``bid`` is an amount alias, so this satisfies
+                # the coordinate rule and only the duplicate rule stops it —
+                # which is the point: under auction it is the last line of
+                # defence against the opening bid being read as the sale price.
+                {"teamId": "t1", "playerId": "p9", "playerName": HALIBURTON, "bid": 12},
+                {"teamId": "t2", "playerId": "p9", "playerName": HALIBURTON, "bid": 14},
+                {"teamId": "t1", "playerId": "p9", "playerName": HALIBURTON, "bid": 17},
+            ],
+        ),
+        (
+            DraftType.SNAKE,
+            "player_identity_is_the_seat",
+            [
+                # A team block whose own id is echoed under a player-shaped key
+                # — the residual case the narrowed name aliases cannot exclude.
+                {"teamId": "t1", "playerId": "t1", "name": "Team Rocket", "overallPick": 1},
+                {"teamId": "t2", "playerId": "t2", "name": "Slam Dunkers", "overallPick": 2},
+            ],
+        ),
+    ]
+    for draft_type, expected, records in cases:
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(records),
+            dedupe_key="k",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(draft_type=draft_type),
+        )
+        assert result.instants == (), expected
+        assert [shape.reason for shape in result.unrecognised] == [expected], records
+
+
+def test_a_real_looking_pick_log_is_still_accepted() -> None:
+    """The positive control for every refusal above.
+
+    Without this, "refuse everything" satisfies the whole family of guard tests
+    in this module — which is exactly the failure mode that let two defects
+    through a suite where every test named a defect. A snake pick log and an
+    auction sale log, each carrying the coordinate its kind is defined by, must
+    still be read.
+    """
+    snake = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1},
+                {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS, "overallPick": 2},
+            ]
+        ),
+        dedupe_key="k",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert [instant.player_label for instant in snake.instants] == [JOKIC, EDWARDS]
+
+    auction = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": 61},
+                {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS, "winningBid": 44},
+            ]
+        ),
+        dedupe_key="k",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(draft_type=DraftType.AUCTION),
+    )
+    assert [instant.player_label for instant in auction.instants] == [JOKIC, EDWARDS]
+    assert [instant.amount for instant in auction.instants] == [Decimal("61"), Decimal("44")]
+
+
 def test_an_ambiguous_name_still_labels_a_record_a_player_key_identified() -> None:
     """The other half of the split above, and the reason it is a split.
 
@@ -591,7 +714,9 @@ def test_an_ambiguous_name_still_labels_a_record_a_player_key_identified() -> No
     """
     result = recognise_bridge_payload(
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-        body_json=_envelope([{"teamId": "t1", "playerId": "p-jokic", "name": JOKIC}]),
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p-jokic", "name": JOKIC, "overallPick": 1}]
+        ),
         dedupe_key="k",
         received_at=NOW,
         captured_at=None,
@@ -644,7 +769,7 @@ def test_a_context_that_cannot_anchor_refuses_before_reading(
     """
     result = recognise_bridge_payload(
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC}]),
+        body_json=_envelope([{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}]),
         dedupe_key="k",
         received_at=NOW,
         captured_at=None,
@@ -812,6 +937,23 @@ def test_a_bridge_still_capturing_between_picks_is_not_called_silent() -> None:
     assert still_capturing.silent is False
     assert still_capturing.contact_is_known is True
     assert still_capturing.contact_age_seconds == 20.0
+
+    # And the boundary the suppression must not cross: contact may quieten the
+    # indicator for a source that has been read successfully at least once, and
+    # never for one that has produced nothing. Same recent contact, no instants
+    # — still silent. Without this the whole flag inverts in the case it exists
+    # for, because a capture landing is not the same fact as a pick being read.
+    never_read_anything = freshness_of(
+        [],
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        now=NOW,
+        silence_threshold=timedelta(minutes=2),
+        contact_at=NOW - timedelta(seconds=20),
+    )
+    assert never_read_anything.silent is True
+    assert never_read_anything.instant_count == 0
+    assert never_read_anything.contact_is_known is True
+    assert never_read_anything.contact_age_seconds == 20.0
     # The pick clock is unchanged, so "no new pick for six minutes" is still
     # readable. The fix adds a fact; it does not overwrite one.
     assert still_capturing.age_seconds == 360.0
@@ -866,13 +1008,111 @@ def test_status_reads_the_bridges_proof_of_life_from_its_own_captures(
 
     assert bridge.contact_is_known is True
     assert bridge.contact_age_seconds == 30.0
-    assert bridge.silent is False
+    # Contact is published, and it does NOT rescue the silence flag. This feed
+    # has read zero picks, so it is blind and says so. Judging ``silent`` on
+    # contact alone was a real defect here: the service-worker case (Fantrax
+    # serves the draft room from ``fx-sw.js``, the userscript captures only
+    # page HTML, the recogniser reads nothing) still lands captures, so a feed
+    # that had never seen a single pick reported ``silent=False``. A board
+    # frozen at pick 4 under a green light is worse than no board.
     assert bridge.last_seen_at is None  # no pick has ever arrived
+    assert bridge.silent is True
     # The official source has no recorded poll and does not borrow the
     # bridge's. Reporting it live on the strength of another pipe's traffic is
     # precisely the one-read-as-two mistake this package exists to avoid.
     assert official.contact_is_known is False
     assert official.silent is True
+
+
+def test_proof_of_life_ignores_captures_that_are_not_proof_of_this_feed(
+    session: Session,
+) -> None:
+    """Excludes: contact set by a row that is genuine but proves nothing.
+
+    The threat is not a forged ``bridge_payloads`` row — nothing but the bridge
+    endpoint writes that table. It is a **real** row that is not evidence of the
+    property ``contact_at`` claims, which is "the userscript is reaching this
+    league's data endpoint". Four such rows, each of which a substring match on
+    the league id accepted:
+
+    * a page snapshot, which proves the userscript is alive but not that the
+      RPC endpoint is being read — the service-worker case exactly;
+    * a neighbouring league whose id merely *contains* ours as a prefix;
+    * our id appearing in an unrelated query parameter of another call;
+    * a capture whose source label the userscript never emits.
+
+    Each is asserted individually, because a check that only excluded one of
+    them would pass a test that presented them together.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+
+    def contact_known() -> bool:
+        status = feed_service.feed_status(session, draft, now=NOW)
+        bridge = next(
+            item for item in status.freshness if item.transport is SourceTransport.BRIDGE_CAPTURE
+        )
+        return bridge.contact_is_known
+
+    def store(*, url: str, source: str, key: str) -> None:
+        session.add(
+            BridgePayload(
+                schema_name="hoops-gm.bridge-payload.v1",
+                source=source,
+                captured_at=NOW,
+                request_method="POST",
+                request_url=url,
+                response_status=200,
+                response_ok=True,
+                response_content_type="application/json",
+                body_raw="{}",
+                body_json=_envelope([]),
+                dedupe_key=key,
+                raw_payload="{}",
+                created_at=NOW,
+            )
+        )
+        session.flush()
+
+    assert contact_known() is False
+
+    store(
+        url=f"https://www.fantrax.com/fantasy/league/{LEAGUE}/livedraft",
+        source="rendered-view",
+        key="snapshot",
+    )
+    assert contact_known() is False, "an HTML snapshot is not proof the RPC feed is being read"
+
+    store(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}9999",
+        source="xhr",
+        key="neighbour",
+    )
+    assert contact_known() is False, "a league id with ours as a prefix is a different league"
+
+    store(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId=zzz999&ref={LEAGUE}",
+        source="xhr",
+        key="query-collision",
+    )
+    assert contact_known() is False, "our id in an unrelated parameter is a coincidence"
+
+    store(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        source="some-source-we-have-never-seen",
+        key="unknown-source",
+    )
+    assert contact_known() is False, "an unrecognised capture source is not known to be an RPC body"
+
+    # ...and the row that genuinely is proof does set it, so the four refusals
+    # above are discrimination rather than a lookup that never returns anything.
+    store(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        source="xhr",
+        key="real-rpc",
+    )
+    assert contact_known() is True
 
 
 # --------------------------------------------------------------------------
@@ -931,7 +1171,7 @@ def test_a_busy_bridge_for_the_wrong_league_is_distinguishable_from_a_quiet_one(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t1", "playerName": JOKIC}],
+        records=[{"overallPick": 1, "teamId": "t1", "playerName": JOKIC}],
         dedupe_key="other-league",
         league_id="a-different-league",
     )
@@ -1055,7 +1295,11 @@ def test_re_ingesting_the_same_capture_writes_nothing_new(session: Session) -> N
     league = _league(session)
     teams = _teams(session, league, ["t1", "t2"])
     draft = _draft(session, league, teams)
-    _capture(session, records=[{"teamId": "t1", "playerName": JOKIC}], dedupe_key="capture-one")
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="capture-one",
+    )
 
     first = feed_service.ingest_bridge(session, draft, _context())
     second = feed_service.ingest_bridge(session, draft, _context())
@@ -1241,6 +1485,108 @@ def test_the_observation_that_halted_the_run_is_still_pending_afterwards(
     again = feed_service.apply_observations(session, draft)
     assert again.halted is None
     assert [event.player_label for event in again.applied] == [JOKIC]
+
+
+def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
+    session: Session,
+) -> None:
+    """Excludes: a stuck feed and a queued one looking identical on the screen.
+
+    ``halted`` is returned on the ingest response only, and a live board polls
+    ``GET /drafts/{id}/feed``. Leaving the halting row pending (correctly) means
+    that endpoint shows ``pending_count == 1`` — indistinguishable from an
+    ordinary backlog waiting for the next apply. On an unresolvable ordering
+    problem the run re-halts every time and the board quietly stops advancing
+    while the status endpoint reports a healthy-looking queue.
+
+    A reading in which the flag is true while the defect is present: asserting
+    only ``pending_count == 1`` after a halt, which is what the test above does
+    and which passed throughout. So this asserts ``blocked`` names the reason,
+    that it *stays* named across repeated runs, and — the part that stops this
+    becoming F3 in a second field — that it **clears** once the row applies.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="capture-one",
+    )
+    feed_service.ingest(session, draft)
+
+    for _ in range(3):
+        assert feed_service.apply_observations(session, draft).halted == "draft_pick_out_of_turn"
+        status = feed_service.feed_status(session, draft, now=NOW)
+        assert status.pending_count == 1
+        assert status.blocked == ("draft_pick_out_of_turn",)
+
+    # Resolve the ordering: the row applies, and the blocked reason goes with
+    # it. A sticky value here would be the halting defect wearing a new name.
+    draft_service.record_pick(
+        session,
+        draft,
+        participant_id=draft.participants[0].id,
+        player_label=EDWARDS,
+    )
+    assert feed_service.apply_observations(session, draft).halted is None
+    healthy = feed_service.feed_status(session, draft, now=NOW)
+    assert healthy.blocked == ()
+    assert healthy.pending_count == 0
+
+
+def test_total_coercion_is_reported_differently_from_the_occasional_stray_field(
+    session: Session,
+) -> None:
+    """Excludes: our own format record being wrong and reading as a Fantrax quirk.
+
+    ``coerced_to_kind`` has two readings. Sporadic coercion means the source
+    sent an extra field and dropping it was right. **Total** coercion means the
+    ``kind`` we are coercing *to* is wrong — the league is an auction, we
+    snapshotted it as snake, and every price is being stripped on the way in.
+    The board then shows an auction as a priceless snake draft, and the count
+    alone cannot tell the owner which of the two he is looking at.
+
+    A reading in which a bare count is true while the defect is present: any
+    non-zero value at all, which is why the count is not the flag. The rate is.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)  # snake
+
+    # Every record priced: the signature of an auction recorded as a snake.
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "overallPick": 1, "winningBid": 61},
+            {"teamId": "t2", "playerName": EDWARDS, "overallPick": 2, "winningBid": 44},
+        ],
+        dedupe_key="all-priced",
+    )
+    total = feed_service.ingest(session, draft).sources[0]
+    assert total.instants_recognised == 2
+    assert total.coerced_to_kind == 2
+    assert total.format_snapshot_suspect is True
+
+    # The benign case: one stray field among several clean records. Same
+    # counter, non-zero, and deliberately *not* flagged.
+    league2 = _league(session, fantrax_league_id="league-two")
+    teams2 = _teams(session, league2, ["t1", "t2"])
+    draft2 = _draft(session, league2, teams2)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "overallPick": 1, "salary": 3},
+            {"teamId": "t2", "playerName": EDWARDS, "overallPick": 2},
+            {"teamId": "t1", "playerName": HALIBURTON, "overallPick": 3},
+        ],
+        dedupe_key="one-stray",
+        league_id="league-two",
+    )
+    sporadic = feed_service.ingest(session, draft2).sources[0]
+    assert sporadic.instants_recognised == 3
+    assert sporadic.coerced_to_kind == 1
+    assert sporadic.format_snapshot_suspect is False
 
 
 def test_a_pick_already_in_the_log_is_linked_not_appended_twice(session: Session) -> None:
@@ -1553,7 +1899,11 @@ def test_the_official_source_being_down_does_not_cost_the_bridge(session: Sessio
     league = _league(session)
     teams = _teams(session, league, ["t1", "t2"])
     draft = _draft(session, league, teams)
-    _capture(session, records=[{"teamId": "t1", "playerName": JOKIC}], dedupe_key="capture-one")
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="capture-one",
+    )
 
     outcome = feed_service.ingest(session, draft, client=Broken())
 
@@ -1752,7 +2102,7 @@ def test_a_pick_only_one_source_saw_is_listed_even_without_a_name(
     draft = _draft(session, league, teams)
     _capture(
         session,
-        records=[{"teamId": "t1", "playerId": "p-jokic"}],
+        records=[{"overallPick": 1, "teamId": "t1", "playerId": "p-jokic"}],
         dedupe_key="capture-one",
     )
     session.commit()
@@ -1854,6 +2204,39 @@ def test_a_logged_out_reply_is_named_rather_than_called_a_shape_change() -> None
     assert result.unrecognised[0].example_locator == "$.pageError"
 
 
+def test_an_error_alongside_a_well_formed_batch_is_still_an_error() -> None:
+    """Excludes: a logged-out reply being read as data because it also parsed.
+
+    The ``pageError`` check started inside the branch taken only when
+    ``responses`` was *not* a list, so a reply carrying an error **and** a
+    well-formed batch had its error ignored entirely — we would read whatever
+    the list happened to hold and report nothing wrong. ``fantraxapi``'s own
+    ``_request`` checks ``"pageError" in response_json`` unconditionally, so the
+    pinned client treats that reply as an error and we did not.
+
+    A reading in which the old flag was true while the defect was present is
+    precisely this payload: ``test_a_logged_out_reply_is_named_rather_than_
+    called_a_shape_change`` passes throughout, because its body has no
+    ``responses`` key at all. Being logged out is the one rejection the owner
+    can act on in thirty seconds; reading a stale or partial list instead is a
+    board that looks fine and is not.
+    """
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json={
+            "pageError": {"code": "WARNING_NOT_LOGGED_IN", "title": "Not Logged In"},
+            "responses": [{"data": {"draftPicks": [{"teamId": "t1", "playerName": JOKIC}]}}],
+        },
+        dedupe_key="k",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+
+    assert result.rejected == "page_error:WARNING_NOT_LOGGED_IN"
+    assert result.instants == ()
+
+
 def test_the_recogniser_reads_every_response_in_the_batch() -> None:
     """Excludes: reading ``responses[0]`` and missing the draft block.
 
@@ -1864,7 +2247,11 @@ def test_the_recogniser_reads_every_response_in_the_batch() -> None:
     body = {
         "responses": [
             {"data": {"leagueInfo": {"name": "not picks"}}},
-            {"data": {"draftPicks": [{"teamId": "t1", "playerName": HALIBURTON}]}},
+            {
+                "data": {
+                    "draftPicks": [{"teamId": "t1", "playerName": HALIBURTON, "overallPick": 3}]
+                }
+            },
         ]
     }
 

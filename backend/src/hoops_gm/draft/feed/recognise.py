@@ -93,6 +93,15 @@ FXPA_REQ_PATHNAME: Final = "/fxpa/req"
 #: distinction, never to blur it.
 SNAPSHOT_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"rendered-view", "manual-export"})
 
+#: Bridge capture sources that carry a raw RPC body the recogniser can read.
+#:
+#: The complement of :data:`SNAPSHOT_CAPTURE_SOURCES` within the labels
+#: ``userscript/src/capture.js`` emits, listed positively rather than derived by
+#: subtraction so that a *new* capture source added upstream does not silently
+#: become evidence the data endpoint is being read. A source we have never heard
+#: of should not count as proof of life until someone looks at it.
+RPC_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"fetch", "xhr", "cache-storage"})
+
 #: Candidate key names, **not** verified names.
 #:
 #: Mostly the same vocabulary
@@ -260,11 +269,11 @@ def _candidate_lists(block: Any, locator: str, depth: int = 0) -> list[tuple[str
 
 
 def _accept_list(
-    records: list[Any], context: RecognitionContext
+    records: list[Any], context: RecognitionContext, kind: InstantKind
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Accept the whole list or none of it, and say why when none.
 
-    The three refusals are separate strings rather than one because they mean
+    The refusals are separate strings rather than one because they mean
     different things to whoever reads the status screen: a length refusal says
     "this is a different kind of collection", an anchor refusal says "the alias
     is wrong or this is another league's data", and an identification refusal
@@ -279,6 +288,36 @@ def _accept_list(
     does not carry: an id under :data:`FIELD_ALIASES`\\ ``["player_external_id"]``
     or a name under a player-specific key. A team's own ``name`` no longer
     counts, which is what previously let a list of teams through.
+
+    **"Seat plus player" is still only a shape, and several lists in a draft
+    room have that shape.** An independent review demonstrated four against this
+    module: a keeper roster, an auction bid history, a waiver claim list, and an
+    on-the-clock block. Each was read as the pick log. The consequences are not
+    cosmetic — keepers are not picks and would have become real ``draft_events``
+    via :func:`apply_observations`, and a bid history would have credited the
+    *first* bid on a player as the clearing price. So three further rules, each
+    keyed on a property the pick log genuinely has and those lists genuinely
+    lack, rather than on a guessed key path:
+
+    * ``record_missing_draft_coordinate`` — every record must carry the
+      coordinate its ``kind`` is defined by: an ordinal for a snake selection,
+      an amount for an auction sale. A roster row records *that* a player is on
+      a team; a pick record records *where in the draft* he was taken, and
+      without that this module cannot order the board anyway. This is the
+      strongest of the three and the one that excludes keepers.
+    * ``duplicate_player_in_list`` — a pick log never contains the same player
+      twice; a bid history contains little else. Cheap, and structural.
+    * ``player_identity_is_the_seat`` — a record whose player id equals its own
+      team id is a team wearing a player-shaped key, which is the residual case
+      the review could still get through. A player is not a team.
+
+    **The cost of these rules is real and is the intended direction.** If a real
+    Fantrax pick log turns out not to carry an ordinal, this refuses it and the
+    board stays blank — with the refused list's key names published on the
+    status endpoint, which makes it a five-minute fix rather than a dead
+    evening. That trade is the same one the whole module makes: on draft night a
+    blank board you can diagnose beats a populated board that is quietly lying.
+    No fixture exists to say which way it will go. See ``docs/handoff.md``.
     """
     if not records or len(records) > MAX_RECORD_LIST:
         return [], "list_length_out_of_range"
@@ -287,13 +326,39 @@ def _accept_list(
     if len(typed) != len(records):  # pragma: no cover - _candidate_lists filters this
         return [], "mixed_record_types"
 
+    seen_players: set[str] = set()
     for record in typed:
         team = _as_text(_first(record, "team_external_id"))
         if team is None or team not in context.team_external_ids:
             return [], "no_seat_anchor"
-        if _player_identity(record) is None:
+        identity = _player_identity(record)
+        if identity is None:
             return [], "record_names_no_player"
+        if identity == team:
+            return [], "player_identity_is_the_seat"
+        if not _has_draft_coordinate(record, kind):
+            return [], "record_missing_draft_coordinate"
+        if identity in seen_players:
+            return [], "duplicate_player_in_list"
+        seen_players.add(identity)
     return typed, None
+
+
+def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
+    """Whether the record positions itself in the draft, per its kind.
+
+    A snake selection is defined by *where* it happened, an auction sale by
+    *what it cost*. A record carrying neither may well be about a player on a
+    team — a roster, a keeper, a watchlist — but it is not a record of a pick,
+    and this module has no way to order it if it were.
+    """
+    if kind is InstantKind.SALE:
+        return _first(record, "amount") is not None
+    return (
+        _first(record, "overall_pick") is not None
+        or _first(record, "round_number") is not None
+        or _first(record, "pick_in_round") is not None
+    )
 
 
 def _player_identity(record: dict[str, Any]) -> str | None:
@@ -462,29 +527,39 @@ def recognise_bridge_payload(
     if league_id != context.fantrax_league_id:
         return RecognitionResult(rejected="wrong_league")
 
-    if not isinstance(body_json, dict) or not isinstance(body_json.get("responses"), list):
-        # A Fantrax error arrives with HTTP 200 and a ``pageError`` block rather
-        # than a status code — ``fantraxapi``'s own ``_request`` checks for it
-        # after the status check, which is where the evidence for this comes
-        # from. Naming it is worth the branch: the common cause is an expired
-        # cookie, and "you are logged out" and "Fantrax changed its envelope"
-        # are otherwise the same string on the screen at the moment the owner
-        # has the least time to work out which one he is looking at.
-        page_error = body_json.get("pageError") if isinstance(body_json, dict) else None
-        if isinstance(page_error, dict):
-            code = page_error.get("code")
-            reason = f"page_error:{code}" if isinstance(code, str) and code else "page_error"
-            return RecognitionResult(
-                rejected=reason,
-                unrecognised=(
-                    UnrecognisedShape(
-                        keys=_keys_of(page_error),
-                        occurrences=1,
-                        example_locator="$.pageError",
-                        reason=reason,
-                    ),
+    # A Fantrax error arrives with HTTP 200 and a ``pageError`` block rather
+    # than a status code — ``fantraxapi``'s own ``_request`` checks for it
+    # after the status check, which is where the evidence for this comes from.
+    # Naming it is worth the branch: the common cause is an expired cookie, and
+    # "you are logged out" and "Fantrax changed its envelope" are otherwise the
+    # same string on the screen at the moment the owner has the least time to
+    # work out which one he is looking at.
+    #
+    # Checked **before** the envelope shape, not inside the not-a-list branch
+    # where it started. ``fantraxapi`` checks ``"pageError" in response_json``
+    # unconditionally, so a reply carrying an error *and* a well-formed
+    # ``responses`` list is a shape the pinned client treats as an error and we
+    # were treating as ordinary data — reading whatever the list happened to
+    # hold and reporting nothing wrong. Being logged out is the one rejection
+    # the owner can act on in thirty seconds, and it is the one this ordering
+    # was hiding.
+    page_error = body_json.get("pageError") if isinstance(body_json, dict) else None
+    if isinstance(page_error, dict):
+        code = page_error.get("code")
+        reason = f"page_error:{code}" if isinstance(code, str) and code else "page_error"
+        return RecognitionResult(
+            rejected=reason,
+            unrecognised=(
+                UnrecognisedShape(
+                    keys=_keys_of(page_error),
+                    occurrences=1,
+                    example_locator="$.pageError",
+                    reason=reason,
                 ),
-            )
+            ),
+        )
+
+    if not isinstance(body_json, dict) or not isinstance(body_json.get("responses"), list):
         return RecognitionResult(
             rejected="envelope_unrecognised",
             unrecognised=(
@@ -515,7 +590,7 @@ def recognise_bridge_payload(
         accepted_here = False
         refusals: list[tuple[str, tuple[str, ...], str]] = []
         for list_locator, records in _candidate_lists(block, locator):
-            typed, refusal = _accept_list(records, context)
+            typed, refusal = _accept_list(records, context, kind)
             if refusal is not None:
                 refusals.append((list_locator, _keys_of(records[0] if records else None), refusal))
                 continue

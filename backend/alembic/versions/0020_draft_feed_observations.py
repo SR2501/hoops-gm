@@ -89,6 +89,7 @@ def upgrade() -> None:
         sa.Column("applied_event_sequence", sa.Integer(), nullable=True),
         sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("skipped_reason", sa.Text(), nullable=True),
+        sa.Column("blocked_reason", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
