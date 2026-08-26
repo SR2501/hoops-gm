@@ -27873,3 +27873,165 @@ engines** -- and nobody had written one. This belongs in the ADR-001 amendment a
   anchor appears exactly once -- which reported `anchor appears 0 times` instead of a false pass.
   I have now had three instrumentation bugs on this unit and each was found by a self-check rather
   than by reasoning.
+
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round eight and the guard that was never called
+
+Eighth independent review of `draft-tracker-bridge-feed` (PR #104), read at `c51a160`. **Two
+findings, one High, and both of them are in a file this unit does not own.** Then a separate
+experiment, run afterwards on the coordinator's corrected instructions, found **three more defects
+that no review has raised in eight rounds**. Eight rounds, eight findings, and no convergence.
+
+### What round eight found
+
+Both findings are in `backend/src/hoops_gm/ingest/fantrax_official/parsers.py`, which belongs to
+`data-engineer`:
+
+- **High** -- `parse_draft_picks` normalises the payload before this unit's coercers see anything.
+  It converts with a bare `int()` / `float()` / `str()` and selects aliases with a truthy `or`
+  chain.
+- **Medium** -- a malformed container becomes a *successful empty read*. A missing `draftPicks`
+  key, a non-list value and a non-object row all return `[]`, so `rejected` is `None` and
+  `unrecognised` is empty. **On draft night "nobody has picked yet" and "I could not read the
+  response" call for opposite actions, and they are byte-identical here.**
+
+### Why this is the same defect as rounds four and seven, one layer down
+
+Round four was how the two recognisers **admitted a list**. Round seven F2 was how they **read a
+field**. Round eight is **what they read from at all**: the bridge reader takes raw JSON, the
+official reader takes dataclasses a parser has already digested. The coordinator's standing
+prediction -- *look at whatever the last round's fixes now delegate to* -- is **three for three**,
+and is the most reliable predictor produced on this unit.
+
+The consequence is that **the information is destroyed upstream and cannot be recovered
+downstream**. Measured on the real chain, with the same raw record handed to the bridge reader:
+
+| Raw record | Parser output | Official path | Bridge path |
+|---|---|---|---|
+| `{"overallPick": 1.9}` | `1` | recorded at pick 1 | refuses, `record_missing_draft_coordinate` |
+| `{"overallPick": "1_0"}` | `10` | recorded at pick 10 | refuses |
+| `{"overallPick": 0, "overall": 3}` | `3` | recorded at pick 3 | refuses |
+| `{"amount": 0, "bid": 10}` | `10.0` | stored as a $10 sale | refuses |
+
+`1.9` reaches my coercers as an exact `1`, **indistinguishable from a genuine `1`**. Round seven
+closed the asymmetry at the typed-dataclass layer and **not** across the raw source, and
+`recognise_official_draft_picks` carried a docstring asserting the opposite -- that it *"can afford
+to be weaker, because the shape is already typed by `parse_draft_picks`"*. **Being typed by that
+parser is not a safety property.** The docstring now carries the retraction, the four measured
+conversions, and an instruction not to reintroduce a "the parser validates that" clause.
+
+I did not edit `parsers.py`. The reasoning is the one the coordinator used for the `artifact_key`
+case: neither module is wrong on its own terms, so the defect lives in the seam and it is an
+**architecture** finding. I also declined the large fix -- reading raw payloads on both paths --
+because eight rounds have shown large late changes carry defects, and this one crosses two units.
+
+What I did instead is **three executable tests that pin the seam**, asserting the current defective
+behaviour *alongside the bridge path's refusal of the identical bytes*, which is what stops a
+reader dismissing them as two paths permitted to differ. Each was proved load-bearing by
+temporarily fixing the upstream defect and confirming it turns red naming the fix.
+
+### The finding the neighbours produced and the review did not
+
+Round eight's sample for the alias chain was `{"playerName": False, "name": "Seat One"}`, where the
+paths **disagree**. Running the neighbours found the case it masked: with `playerName` **absent**
+-- the realistic shape, not the hostile one -- or explicitly `None`, **both paths yield
+`player_label='Seat One'`**.
+
+They agree. **And because they agree, reconciliation cannot see it.** This is exactly the failure
+the unit brief warned about in its first numbered point: two sources agreeing is weaker evidence
+than it looks. No check is constructible either -- `player_identity_is_the_seat` compares **ids**,
+not labels, and `RecognitionContext` carries no team names.
+
+### The guard that was correct, matched its column, and was never called
+
+The coordinator corrected a control he had given me: **deleting an assert and staying green proves
+nothing**, because it is green by construction unless something else covers the property. The
+discriminating experiment deletes the assert *and injects the defect it names*. Applied to my own
+could-not-verify -- *"the enumeration checks that a bound exists and matches, not that the coercer
+is wired to it"* -- that meant leaving every `MAX_*` constant correct, so the enumeration harness
+stays green by construction, and widening only the `limit=` actually passed, one production call
+site at a time.
+
+**Six of nine sites turned the behaviour suite red. Three did not.** So the gap was real, not
+theoretical, and I had filed it as an open question when it was measurable all along.
+
+All three failed for a single reason, and it is the generator:
+
+> **`no_seat_anchor` is produced by two independent mechanisms** -- the bound refusing the text,
+> and the resulting text simply not being a configured seat.
+
+The existing assertion used an over-long team id that was *also* not a configured seat, so both
+mechanisms were live and the outcome was identical either way. **Widening the bound to ten million
+kept it green.** That is this project's own review rule failing on this project's own test: name a
+reading in which the assertion holds and the defect is present.
+
+Measured with the two limits widened and the constants left correct, the official path **anchored,
+reported nothing, and carried a 65-character id into a `String(64)` column** -- silently truncated
+on SQLite, and a `DataError` outside `IntegrityError` on Postgres, which fails the whole ingest
+rather than the row. **That is the ADR-001 divergence class again, and the Postgres job could not
+have caught it, because no test used a string long enough.**
+
+The fix is the rule rather than the three fields: **assert each bound where no other cause can
+produce the refusal**, by configuring the over-long id as a genuine seat so that anchoring at all
+can only mean the guard is gone. Re-running the full experiment afterwards reports **9/9 sites
+covered, 0 gaps**, with all three previously-blind sites killed by the new test specifically.
+
+### Instrumentation, which was wrong again and refused rather than lying
+
+Two of the nine anchors matched **zero times**, because they were written with `\n` against a CRLF
+working tree. The harness **refused a verdict** instead of reporting COVERED. Had it not, I would
+have reported 9/9 clean on a run where two sites were never tested -- and one of those two, once
+corrected, was a gap. Separately, an earlier mutation was mangled by PowerShell backslash handling
+and **never landed**, and the test run still printed `2 passed`, which reads exactly like a
+mutation the tests failed to kill. **Only the on-disk check separated "the tests are weak" from
+"the experiment did not happen".** That is now five instrumentation defects on this unit, every one
+caught by a self-check rather than by reasoning.
+
+### Two things every lane rebasing needs, learned expensively
+
+- **`scripts/resolve_doc_conflicts.py` must not be used to resolve a `docs/handoff.md` rebase
+  conflict.** Its union behaviour re-duplicates the accumulated file on every iteration. Mine
+  reached **2,078 dated entries, 12 MB, 184,572 lines**, and the rebase **reported success on the
+  destroyed file**. It is fine as post-rebase hygiene on a clean tree; it is not a merge driver.
+- **Git does not normalise CRLF to LF when staging a *conflicted* path.** A normal `git add` does
+  -- proved in both directions. So a Windows rebase that resolves `docs/handoff.md` commits it as
+  CRLF against an LF blob and produces a **26,542-line phantom diff**.
+
+The correct merge needs no heuristic. Since every version is a byte-prefix of the next,
+`merged = ours + heal + theirs[len(base):]` taken from index stages `:1:` / `:2:` / `:3:`,
+refusing outright if base is not a byte-prefix of either side. Note that during a *rebase* `:2:`
+is upstream and `:3:` is the commit being replayed, which is inverted from a merge.
+
+### Gates
+
+`working-directory: backend`, on the rebased tree:
+
+- `ruff check .` -- clean
+- `ruff format --check .` -- 223 files
+- `mypy` -- clean, 214 source files
+- `pytest tests/test_draft_feed.py` -- 78 passed
+- full suite -- 2223 passed, 1 skipped, 41 deselected
+- model-derived guard enumeration harness -- 11/11 verdicts, both controls
+- round-seven mutation harness -- 10/10 killed, byte-identical restore
+- guard-wiring experiment -- **9/9 sites covered, 0 gaps**
+
+Note on the Adapter gate: `c339` records that the **live smoke half converts `pytest` exit 5 --
+nothing collected -- into a green with a `::notice::`**. So the live half of this unit's Adapter
+gate can report success while running nothing, and **the Adapter claim here rests on the
+recorded-fixture half only**.
+
+### Could not verify
+
+- **Whether the recogniser fires at all on a real draft-room payload.** No real Fantrax draft
+  payload has been seen by anyone on this project. **Not disproved, unestablished.** Behind the one
+  mock draft, which is with the owner.
+- **Whether `name` is the team name in real Fantrax `draftPicks` records.** If it is, every board
+  row shows the seat's name instead of the player's, **on both paths, with the sources agreeing**,
+  and nothing in this unit reports a problem.
+- **Whether the three seam tests describe a reachable payload.** They pin what the parser *does*
+  with values that no observed Fantrax response has ever contained. They are a statement about the
+  code path, not about Fantrax.
+- **Whether round nine finds a defect inside round eight's fixes.** Eight for eight so far. The
+  previous could-not-verify -- that nothing covered bound-and-wiring at once -- turned out to be
+  concealing three live defects, which is the argument against treating any remaining one as
+  merely theoretical.
