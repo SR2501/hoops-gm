@@ -5,6 +5,12 @@ is an operator tool with a ``main()``, and importing it into the package
 namespace makes ``python -m hoops_gm.availability.coverage`` emit a runpy
 double-import ``RuntimeWarning`` on every run. Same reason
 ``hoops_gm.ingest.__init__`` omits ``backfill``. Import it by full path.
+
+``hoops_gm.availability.calibration_synthetic`` is also deliberately **not**
+re-exported. Every outcome it produces is fictional, invented to give the
+calibration machinery inputs whose calibration properties are known in advance.
+Putting those generators one dot from ``compute_reliability_scorecards`` invites
+exactly the confusion the module exists to avoid. Import it by full path.
 """
 
 from hoops_gm.availability.absence_splits import (
@@ -14,6 +20,32 @@ from hoops_gm.availability.absence_splits import (
     AbsenceSplitRun,
     compute_absence_splits,
     latest_absence_splits,
+)
+from hoops_gm.availability.calibration import (
+    CALIBRATION_MACHINERY_VERSION,
+    DECLARED_CONVENTIONS,
+    DEFAULT_BOOTSTRAP_RESAMPLES,
+    DEFAULT_BOOTSTRAP_SEED,
+    DEFAULT_POPULATION_FLOOR,
+    DEFAULT_PROBABILITY_DECIMALS,
+    LOG_LOSS_CLIP,
+    WILSON_CONTINUITY_CORRECTION,
+    WILSON_Z_95,
+    Band,
+    BinningScheme,
+    BrierComparison,
+    CalibrationBin,
+    CalibrationObservation,
+    CalibrationReport,
+    PairedPrediction,
+    Provenance,
+    RestrictedCohort,
+    bands_from_labels,
+    build_calibration_report,
+    detect_monotonic_reversals,
+    paired_bootstrap_brier,
+    restrict,
+    wilson_interval,
 )
 from hoops_gm.availability.reliability import (
     OBSERVED_COVERAGE_STATUS,
@@ -40,19 +72,36 @@ from hoops_gm.availability.reliability import (
 
 __all__ = [
     "ABSENCE_SPLIT_EVIDENCE_VERSION",
+    "CALIBRATION_MACHINERY_VERSION",
+    "DECLARED_CONVENTIONS",
+    "DEFAULT_BOOTSTRAP_RESAMPLES",
+    "DEFAULT_BOOTSTRAP_SEED",
+    "DEFAULT_POPULATION_FLOOR",
+    "DEFAULT_PROBABILITY_DECIMALS",
     "DIRECT_EVIDENCE_METHOD",
+    "LOG_LOSS_CLIP",
     "OBSERVED_COVERAGE_STATUS",
     "RELIABILITY_DERIVATION_KEY",
     "RELIABILITY_SOURCE_KEY",
+    "WILSON_CONTINUITY_CORRECTION",
+    "WILSON_Z_95",
     "AbsenceSplitInputError",
     "AbsenceSplitRun",
     "AvailabilityEvidence",
+    "Band",
+    "BinningScheme",
+    "BrierComparison",
+    "CalibrationBin",
+    "CalibrationObservation",
+    "CalibrationReport",
     "CategoryConsistency",
     "DistributionSummary",
     "MinutesConsistency",
     "MonthlyRateEvidence",
+    "PairedPrediction",
     "PlayerReliabilityScorecard",
     "ProductionConsistency",
+    "Provenance",
     "RateEvidence",
     "RatioBaseline",
     "ReliabilityCohortClaim",
@@ -60,9 +109,16 @@ __all__ = [
     "ReliabilityInputError",
     "ReliabilityLineage",
     "ReliabilityRun",
+    "RestrictedCohort",
     "StaleReliabilityCohortError",
+    "bands_from_labels",
+    "build_calibration_report",
     "compute_absence_splits",
     "compute_reliability_scorecards",
+    "detect_monotonic_reversals",
     "latest_absence_splits",
+    "paired_bootstrap_brier",
     "publish_reliability_cohorts",
+    "restrict",
+    "wilson_interval",
 ]

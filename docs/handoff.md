@@ -23986,3 +23986,1231 @@ here so the option is refusable again rather than rediscovered.
   review comment. That is the intended behaviour and it is also, for whoever
   hits it, an unpleasant surprise. The message is written for that person.
   *Known, unmitigated.*
+## 2026-08-23 - `quant` - Calibration machinery built with the answers still sealed, and the hole the pooled table cannot see
+
+Base verified: `f3e2c53c11501ece45f9eff4cc09b2f29bfb4c1e`, matching `origin/main`
+at start. **Merge freeze respected — not rebased.** Code gate only; I fitted
+nothing and read no outcome.
+
+### 1. The blind held, and here is what "held" means concretely
+
+No file in this unit opens `player_participation`, a cohort database, or any
+conversion rate. §5 selection and §6 model selection were not run. The only real
+numbers used are **predictor-side published counts** from
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json` and
+`docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json`, both of
+which state that no outcome *value* is published in them
+(`disclosure_surface.no_outcome_value_is_published_here`). Every play rate
+appearing anywhere in the tests is an **argument I chose**, deliberately
+fictional, and the test module says so in its docstring so no later reader
+mistakes a synthetic outcome for a measured one.
+
+The reason this matters is not the held-out blind. v3 §5 — the section arguing
+the amendment is legal — asserts its author knows no status's conversion rate.
+Running the fit while v3 is unbound would not spend a blind, it would
+**retroactively remove the property that makes v3 bindable**, and no later
+evidence could restore it. So the machinery was written first, by someone who
+cannot be steered by the answer, which is the only window in which that is
+true.
+
+### 2. The dilution arithmetic, re-derived rather than accepted
+
+From `section_2_admissibility.held_out_direct_outcomes_by_status` —
+`out` 2,963, `available` 467, `questionable` 335, `probable` 92, `doubtful` 83.
+
+- Held-out total **3,940**; informative (`questionable` + `probable` +
+  `doubtful`) **510**.
+- Informative share = 510/3,940 = **51/394 = 0.1294416243654822…**
+- A model exactly right on the other 87.06% and wrong by δ on *every*
+  informative row shows a pooled calibration-in-the-large error of `0.129441·δ`.
+- Breaching 0.10 therefore needs **δ > 197/255 = 0.7725490196…**
+
+Computed with `fractions.Fraction`, so those are exact and not float artefacts.
+v3's "0.773" is that to three significant figures. Driven in
+`test_v2_condition_three_survives_a_seventy_seven_point_error_and_fails_at_seventy_eight`,
+which asserts the condition survives at δ = 0.77 and fails at δ = 0.78.
+
+### 3. The dilution argument is not the strongest form of the finding
+
+v3 §4 argues conditions 2 and 3 are near-unfailable from dilution alone. That is
+right, but **it understates one thing and overstates another**, and both matter
+for what the owner is being asked to bind.
+
+**It overstates, because §4 does not analyse condition 5.** Under
+distinct-emitted-probability binning, per-bin Wilson coverage supplies real
+per-status protection wherever a status gets its own bin: the Wilson half-width
+on `questionable` at n = 335 is ≈0.054, comfortably tighter than 0.10. So a
+five-status model is not nearly as unconstrained as the calibration-in-the-large
+argument alone suggests.
+
+**It understates, because the actual hole is masking under a pooled band, and
+condition 5 does not touch it.** v2 §5 pre-registers `three_band_jeffreys`, which
+pools `out` with `doubtful`. Held out those are **2,963 and 83** — 35.7 to 1 — so
+the band rate is set by `out` and `doubtful` is predicted at whatever `out` does.
+If each band emits its own realised rate, every bin gap is **exactly zero**:
+calibration-in-the-large 0.0, ECE 0.0, condition 4 passes, condition 5 passes
+because the band is one bin and that bin is exactly right, and no monotonic
+reversal appears. Meanwhile the `doubtful` cell can be wrong by any amount at
+all.
+
+I built that model on synthetic data and drove it:
+`test_a_band_model_right_in_aggregate_clears_every_computable_pooled_condition`
+clears every computable pooled condition while `doubtful` (n = 83, fictional rate
+0.90) is predicted at the band's 134/3046 ≈ 0.0440 — **about 86 percentage points
+wrong**. `test_subgroup_restriction_exposes_the_status_the_pooled_table_masked`
+then shows restriction is what sees it.
+
+That is a claim about what the **condition set can detect**, not a prediction
+about the real fit, which I have not seen and will not. But it means the case for
+a restricted table does not depend on the dilution bound at all, and it survives
+even if someone disputes the 0.7725.
+
+### 4. Subgroup restriction is a first-class operation in the tool regardless of v3
+
+`restrict()` filters a cohort by exact label match on every requested key and
+**refuses an empty result rather than returning an empty report** — a restriction
+that silently matches nothing is the failure mode that would make this whole
+apparatus decorative. Whether the *gate* may use a restricted table is the
+owner's v3 call and nothing here presumes it. Whether the *tool* can is settled:
+it can, and the post-hoc diagnostic is worth having even if v3 is declined.
+
+The guard that keeps those separate is a `Provenance` enum required on every
+report — `PREREGISTERED_V2` / `PROPOSED_V3_NOT_BOUND` / `POST_HOC_DIAGNOSTIC` —
+and **a restricted report may never claim `PREREGISTERED_V2`**, because v2 §7
+pre-registers a pooled table only. That guard keys on *the presence of a
+restriction*, not on a mutable "is v3 bound yet?" flag, so it stays sound
+whichever way the owner rules and cannot drift if someone later flips a config.
+
+### 5. Conventions pinned now, one of them deliberately against my own interest
+
+Every estimator carries convention choices that change a verdict. Fixed before
+an unblind they are conventions; fixed after, they are choices made knowing which
+way they push. All are pinned in `DECLARED_CONVENTIONS` and copied into every
+report payload, so a later reader can check they were not tuned to a result.
+
+- **Wilson, no continuity correction.** The corrected interval is strictly
+  *wider*, which makes v2 §8 condition 5 strictly *easier* to pass. I took the
+  narrower, stricter arm. `test_wilson_interval_is_narrower_than_its_continuity_corrected_form`
+  proves the direction rather than asserting it.
+- **`round(p, 12)` before grouping distinct probabilities.** v2 §7 wants one row
+  per distinct emitted probability; raw float grouping splits `0.1 + 0.2` from
+  `0.3` into two half-population bins and could fail condition 4 for a purely
+  numerical reason. **A wrong veto is as bad as a wrong pass.**
+- **ECE weighted by observations, not by bin.** Bin-weighting is the same defect
+  family as scoring a 90% FT shooter on one attempt.
+- **Log loss clipped to `[1e-15, 1-1e-15]` with the clipped-row count reported**,
+  so a finite log loss can never quietly be finite only by convention.
+- **CITL sign is `mean(predicted) − observed`**; positive over-predicts play.
+- Wilson is verified against **its defining inequality solved by bisection**, not
+  against a second copy of the closed form — an independent derivation, so a
+  transcription error in the closed form cannot pass by agreeing with itself.
+
+### 6. Fourteen pathologies, each driven red
+
+Green tests prove nothing about a machine nobody has shown a broken input to. I
+wrote `scripts/mutate_calibration.py` on the `mutate_seed_demo.py` pattern —
+anchor must match exactly once, mutation must change the file, only `rc 1` with a
+parsed `N failed` counts as caught, files asserted byte-identical afterwards,
+SKIP and harness failure both count as failure.
+
+```
+baseline: 48 passed, rc=0
+[M01 provenance guard disabled (a restricted report may claim v2)]      CAUGHT(1 failed)
+[M02 Wilson interval loses its z^2/4n^2 term]                           CAUGHT(2 failed)
+[M03 expected calibration error unweighted over bins]                   CAUGHT(1 failed)
+[M04 calibration-in-the-large sign flipped]                             CAUGHT(6 failed)
+[M05 monotonic reversal comparison flipped]                             CAUGHT(4 failed)
+[M06 subgroup restriction widened from all to any]                      CAUGHT(1 failed)
+[M07 distinct-probability grouping without the ulp rounding]            CAUGHT(1 failed)
+[M08 log-loss clips stop being counted]                                 CAUGHT(1 failed)
+[M09 population floor check never fires]                                CAUGHT(1 failed)
+[M10 emitted probability always declared inside its Wilson interval]    CAUGHT(4 failed)
+[M11 exact_plays returns to banker's rounding]                          CAUGHT(1 failed)
+[M12 band order inferred rather than declared]                          CAUGHT(2 failed)
+[M13 an out-of-range injected error is clipped instead of refused]      CAUGHT(1 failed)
+[M14 final equal-width bin left half-open]                              CAUGHT(1 failed)
+
+=== 14 mutations: 14 caught, 0 survived, 0 harness failures ===
+```
+
+**Scope, attached:** against the tree committed with this entry, on base
+`f3e2c53`, those fourteen specific corruptions of
+`backend/src/hoops_gm/availability/calibration.py` and
+`calibration_synthetic.py` are each detected by at least one test, and I drove
+every one. It says nothing about a fifteenth.
+
+M12 is the one that taught me something. `detect_monotonic_reversals` is
+**invariant under reversing the band order** — the sign products of consecutive
+steps both flip — so a naive "read the order backwards" mutation survives. The
+mutation that catches it replaces the declared order with `sorted(order)` against
+a deliberately non-alphabetical declared order `("beta","alpha","gamma")`, where
+a reversal exists only alphabetically. A detector can be correct and still have a
+symmetry that makes a whole class of mutation invisible.
+
+### 7. `scripts/test_name_diff.py main` compared against the wrong base and manufactured a phantom deletion
+
+Predicted before running: 48 added, 0 dropped. What `python scripts/test_name_diff.py main`
+actually reported was hundreds added — including `test_yahoo_stores_both_kinds_for_the_same_player_and_date`
+and `test_vitest_paths_are_made_relative`, which are plainly not mine — and
+**`DROPPED (1): test_schedule_import_refuses_a_cohort_with_unresolved_games`**,
+which I never touched. Read at face value that is a lane having silently deleted
+another lane's test.
+
+It is nothing of the kind. **The local `main` ref in this worktree is
+`9d7e791`, and `origin/main` is `f3e2c53`** — local `main` is *behind*, because
+nothing in a worktree fast-forwards it. `git rev-list f3e2c53..main` is empty and
+`git merge-base HEAD main` returns `main` itself, which is how I confirmed the
+direction rather than guessing it. The diff was against a five-PR-stale base, and
+the "dropped" test was renamed or removed by a PR that landed *before* my base.
+
+Against `origin/main` the answer is what I predicted: **1,557 → 1,605 test
+function names in `backend/tests`, ADDED (48), nothing dropped.**
+
+The trap is that `main` is the obvious argument, it is spelled the way the
+docstring spells it, and **a stale base produces a report that looks exactly like
+a real deletion** — the same "absence that reads as an ordinary result" shape as
+the `-qq` finding two entries above. **Pass `origin/main`, or fetch and
+fast-forward `main` first.** Full suite: **1,835 passed, 32 deselected** — 1,787
+baseline + 48, predicted before the run and matched.
+
+### 8. Gate judgement, stated as a judgement so it can be overruled
+
+I claimed **Code gate only** and I want that read as an argument, not a
+disposal. `docs/backlog.md:1588-1595` is binding precedent that no gate may be
+waived by the agent it applies to, so this is for the architect.
+
+The Model gate applies to work "producing a number a decision rests on". This
+module produces no such number: it is a deterministic **estimator of a report**,
+it fits nothing, it has no training window and no held-out partition. You cannot
+hold data out from a formula, so the honest discharge of "backtest against
+held-out data" for a deterministic estimator is **verification against
+analytically known values**, which is precisely what the synthetic suite does —
+a perfectly calibrated generator, an overconfident one, an underconfident one,
+and one well-calibrated in aggregate but badly calibrated in a subgroup.
+
+**One word-collision worth flagging explicitly**, because it is exactly the kind
+of thing that makes a gate argument look wrong later: `gates.md` names
+"reliability metrics" in the Model gate's applies-to list. That means the
+existing player-consistency model in `docs/models/reliability-metrics.md`. It
+does **not** mean a *reliability diagram*, which is a calibration plot. Different
+senses of "reliability", and I would rather name the ambiguity than quietly rely
+on my reading of it.
+
+Two Model-gate bullets bite regardless and are satisfied anyway: the output is
+**versioned** (`CALIBRATION_MACHINERY_VERSION` plus `declared_conventions` in
+every payload), and **what it cannot see** is stated in the module docstring.
+
+**The caveat that actually matters:** when this machinery later produces the §7
+held-out table, *that report* is Model-gated, and this module is load-bearing
+inside it. Nothing here is a pre-emptive discharge of that gate.
+
+### 9. Model card skeleton, written before the fit on purpose
+
+`docs/models/injury-status-conversion.md`, per the `docs/models/README.md`
+normative minimum, with **every results field reading `NOT YET COMPUTED — blind
+in force`** and a change-log rule that the next entry must state the date the
+blind was broken and under which pre-registration version.
+
+The point is not tidiness. A card written after a fit records whatever metrics
+happened to flatter it; written before, it stops the fit defining its own success
+criteria afterwards. It also carries the disclosure v3 §6 asks for: **3,822 of
+13,789 observations — 27.72% — carry a stated reason that is not a health
+event** (`G League` 3,385 = Two-Way 2,828 + On Assignment 557, `Not With Team`
+247, `Personal Reasons` 82, suspensions 56, `Trade Pending` 37, `Coach's
+Decision` 15), and **41 of 221 `doubtful` are `G League`, 18.6%** — a roster
+mechanic with no reason to share injury-`doubtful`'s conversion rate.
+
+A small thing I noticed while counting those, which cuts against the house rule
+in an instructive direction: 7 of the 97 `Rest` rows carry the subcategories
+`Left Knee - Injury Management` and `Left Knee Injury Management`. The rule is
+that rest is laundered as a minor ailment; here the ailment is filed under rest.
+The reasons are unreliable in **both** directions, so a health/non-health split
+built on the stated category is itself a stated-reason artefact, not ground
+truth.
+
+### What I could not verify
+
+- **That the machinery is right on real data.** It has never been shown a real
+  outcome and by design cannot be until the owner rules on v3. Everything
+  asserted is asserted about synthetic cohorts whose properties I chose.
+  *Driven on synthetic, unverifiable on real by construction.*
+- **That the fourteen mutations exhaust the ways this code can be wrong.** They
+  are fourteen I thought of. M12 exists only because a first attempt survived a
+  symmetry I had not noticed, which is direct evidence that my imagination is the
+  binding constraint here. *Driven for fourteen, reasoned for the rest.*
+- **The full-scale bootstrap.** Defaults are 5,000 resamples at the v2 §7 seed
+  250119; tests exercise 200-400 for runtime. I have not run 5,000 × 3,940 in
+  pure Python and my estimate of 10-20 s is arithmetic, not a measurement.
+  *Reasoned.*
+- **That `origin/main` was still `f3e2c53` when this was committed.** I verified
+  it at the start and again before the name diff. Three lanes are running and I
+  did not re-fetch immediately before committing, because the freeze says not to
+  move. *Driven at two points in time, not at the third.*
+- **Whether the ~86-point masking gap is anywhere near what the real fit would
+  do.** I constructed it to be extreme so the detector had something unambiguous
+  to catch. The real `doubtful`/`out` gap could be small enough that pooling is
+  harmless — I have no way to know and did not look. The finding is that the
+  condition set **cannot tell the difference**, not that a difference exists.
+  *Driven as a possibility, unknown as a fact.*
+- **That local `main` being stale is a worktree-wide fact rather than mine
+  alone.** I verified it in this worktree. Other lanes may have fetched. If it is
+  general, every lane running `test_name_diff.py main` today got a phantom
+  dropped test. *Driven here, reasoned for the others.*
+
+## 2026-08-23 - `quant`: an independent review broke four things in the calibration machinery, and one of them was the guard I was proudest of
+
+Second entry for the same unit. The first (above, at `5032bf1`) reported 14
+driven mutations and a Code-gate-only claim. A non-`quant` `code-review` agent
+was pointed at `5032bf1` in a detached worktree with an adversarial brief. It
+wrote nine mutations of its own; **four survived the suite that had just caught
+fourteen.** All four are now caught, and the harness stands at **18/18 caught, 0
+survived**, baseline 61 passed. The blind is unbroken: no outcome was read at any
+point in this entry, and nothing was fitted.
+
+### The one that mattered: the provenance guard was one line from useless
+
+A restricted report is structurally forbidden from claiming `PREREGISTERED_V2`,
+because v2 §7 pre-registers a **pooled** table only. My guard read the
+`restriction` **parameter**. The reviewer bypassed it without touching the
+module:
+
+    rows = list(restrict(cohort, status="doubtful"))
+    build_calibration_report(rows, provenance=Provenance.PREREGISTERED_V2, ...)
+
+An 83-row single-status subgroup, reported as a pooled v2 table, `restriction:
+None` in the payload. The guard was checking *how you asked*, not *what you had*.
+Fixed by making `restrict()` return a `RestrictedCohort` that carries its own
+filter, and having `build_calibration_report` merge the inherited restriction with
+the parameter one before the guard runs. **The residual is real and is now in the
+module docstring rather than glossed:** `list(restrict(...))` strips the marker, so
+a caller who deliberately launders the cohort through a plain `list` still gets a
+pooled label. A type cannot stop that; only the audit trail can, which is why the
+recorded restriction is part of the payload rather than a runtime check alone.
+That is M15.
+
+The other three, each now a mutation:
+
+- **M16** - `restrict()`'s behaviour on a **missing** label key was untested. Every
+  fixture happened to be fully labelled, so a mutation making a missing key count
+  as a match turned restriction into a near-no-op with the suite still green.
+- **M17** - `WILSON_Z_95` was self-referential: every interval derived from it, so
+  the suite agreed with itself at any value. Now pinned against
+  `statistics.NormalDist().inv_cdf(0.975)`.
+- **M18** - the bootstrap interval's endpoint ordering was unpinned. v2 §8
+  condition 2 reads the **upper** endpoint, so swapping them converts a
+  straddling interval into a pass - miscalibration in the direction that flatters
+  the candidate. `BrierComparison.__post_init__` now refuses an inverted interval.
+
+### I withdraw the Code-gate-only claim
+
+I filed this unit as Code gate only, reasoning that a lane which fits nothing
+emits no number a decision rests on. The reviewer's reading is better and I am
+taking it. `gates.md` says the Model gate applies to *"anything producing a number
+a decision rests on — `p(play)`, reliability metrics, projections, blending"*: the
+em-dash introduces examples and **the leading clause is the test**. CITL, ECE, the
+Wilson endpoints and the bootstrapped Brier interval are exactly the numbers v2
+§8's conditions 2-5 and 7 are evaluated from. `docs/backlog.md:1588-1595` already
+ruled an identically-shaped argument wrong with identically true premises, and
+**no gate may be waived by the agent it applies to** - which is the part that
+should have stopped me, independent of whether my reading was defensible.
+
+Filed **Code + Model**, with backtest and calibration-reporting recorded
+*inapplicable* rather than skipped - there is no estimate to back-test, and this
+module **is** the calibration-reporting apparatus. The table is in the card. The
+cost of relabelling was about twenty minutes; the cost of the precedent was not.
+
+### I also overstated the headline finding, in a way worth naming
+
+I wrote that a three-band model emitting each band's realised rate "clears
+**every** computable pooled condition" while `doubtful` is ~86 points wrong. Two
+things were wrong with that.
+
+1. **The exact zeros are definitional.** A model emitting its own evaluation-set
+   band rates has CITL and ECE of exactly zero *by construction*. Quoting them as
+   results reads a construction as a measurement. There is now a test whose name
+   says so.
+2. **Condition 5 does bite, just not at zero displacement.** A real fit takes its
+   band rate from the development partition, so its held-out band rate is
+   displaced. The `unlikely` band's 3,046 observations give a Wilson half-width of
+   ~0.0073. Driven: displacement 0.005 passes condition 5; 0.010 and 0.020 fail
+   it - and `doubtful` is still ~85 points out at all three.
+
+The part that survives intact, and is a **theorem** rather than a demonstration:
+distinct-emitted-probability binning partitions rows **by predicted value**, so
+statuses sharing a band share a bin, and no statistic on that partition can
+separate them **at any rates**. Conditions 3, 4, 5 and 7 all read that partition.
+The reviewer noted a structural asymmetry worth recording: I had protected the
+*dilution* finding with an explicit rate-independence test but not the *masking*
+one, which is exactly the finding where an invented rate could have been doing the
+work. Now closed by
+`test_pooling_puts_the_two_statuses_in_one_bin_whatever_the_invented_rates`,
+driven across three unrelated rate assignments.
+
+Corrected statement, with its scope attached: **at `5032bf1`+, a three-band model
+whose emitted band probability lands within ~0.7pp of the held-out band rate
+clears every pooled condition while `doubtful` is ~86 points wrong.**
+
+### Two numbers in the card were wrong, and one of them is v3's
+
+- **The Wilson half-width I cited for `questionable` (~0.054) came from a
+  synthetic realised rate.** That is a number this lane must not attach to a real
+  status. Restated at the blind-safe worst case `p_hat = 0.5`, which maximises the
+  half-width and depends on nothing but the count: `questionable` (n=335)
+  **0.053238**, `available` (n=467) **0.045163**, `probable` (n=92) **0.100102**,
+  `doubtful` (n=83) **0.105154**. So condition 5 protects `questionable` and
+  `available` below 0.10 at any rate, and **does not protect `probable` or
+  `doubtful`** - `probable` misses by a tenth of a point.
+- **v3 §6's own arithmetic does not close, and I am reporting it rather than
+  copying it.** §6 says 41 of 221 season-wide `doubtful` (18.6%) are G League
+  recalls, and separately that health-only held-out `doubtful` is "~74", giving
+  "2.5x" headroom over condition 6's floor of 30. Applying §6's share to the
+  held-out 83 gives `83 x (1 - 41/221) = 14940/221 = 67.6`, so **~68**, and
+  **2.25x**. I cannot find a route to 74. The conclusion is unaffected - condition
+  6 clears comfortably either way - which is why this is a note to the architect
+  before the owner binds v3, not an objection to v3.
+
+Separately: **41/221 is not derivable from anything committed on `main`.** The
+cohort manifest publishes `status_counts` and `stated_reason_categories` as
+separate marginals with no status-by-reason cross. It is quoted from v3 and
+labelled as quoted. A `data-engineer` lane is committing that cross.
+
+### What I could not verify
+
+- **That the reviewer found everything.** Four survivors out of nine attempts on a
+  suite I believed complete is the useful measurement here, and the honest
+  inference is about my hit rate, not his exhaustiveness. A second reviewer would
+  probably find more. *Reasoned, not driven.*
+- **That `RestrictedCohort` survives every laundering route.** I closed the one
+  the reviewer drove and documented the one I know remains (`list(...)`). I did
+  not enumerate the space - `copy.copy`, slicing, `itertools` round-trips and
+  pickling all plausibly strip it, and I checked none of them. *Not driven.*
+- **That the ~0.7pp condition-5 boundary transfers to the real fit.** It is
+  computed from the held-out band **count** (3,046), which is predictor-side and
+  legal, at the widest point of the interval. Where a real fit's band probability
+  actually lands is an outcome question I did not and may not look at. *Driven as
+  a bound, unknown as a fact.*
+- **That v3 §6's "~74" is an error rather than a figure derived from something I
+  cannot see.** I can only say it does not follow from the two numbers §6 itself
+  publishes. If it came from a row-level cross, it may be right and 18.6% may be
+  the loose figure. Only the architect or the `data-engineer` lane holding the
+  cross can settle it. *Not driven - by construction I cannot drive it.*
+- **That the Code+Model relabel is where the line actually sits.** I argued one
+  side, was corrected, and took the correction; that is not the same as knowing
+  the boundary. If `architect` thinks a lane that fits nothing should be
+  Code-gate-only, the precedent matters more than this unit and I would rather it
+  were settled in `gates.md` than re-argued per lane. *Judgement, not a finding.*
+- **The full suite count for this second entry.** Predicted 1,848 and driven; the
+  first entry's 1,835 plus the 13 tests added since. Any lane seeing a different
+  number should suspect its local `main` is stale before suspecting this branch.
+
+## 2026-08-23 - `quant`: a second review pass, and the two fixes that were themselves wrong
+
+Third and final entry for this unit. The gate ruling landed while the second
+review was running, so both are here.
+
+### The architect ruled Code only, and I had flipped the wrong way
+
+I filed this Code-gate-only. A reviewer argued Code + Model from `gates.md`'s
+leading clause and I accepted the correction, on the principle that **no gate may
+be waived by the agent it applies to** - which I still hold. The architect then
+upheld Code only on two grounds, one of which I did not have: **"reliability
+metrics" in `gates.md` is a word collision.** It names the player-consistency
+model in `docs/models/reliability-metrics.md`, not a *reliability diagram*, which
+is a calibration plot. Two senses of one word inside the file that decides which
+gate applies. And on the merits: **you cannot hold data out from a formula**, so
+the honest discharge for a deterministic scorer is verification against
+analytically known values plus deliberate corruption.
+
+So I argued one position, accepted its opposite, and ended on the first - which
+looks like drift and is worth being precise about. **I flagged the vocabulary
+coincidence myself before the reviewer's argument existed, then failed to weight
+it when the argument arrived.** Being handed a well-argued objection made me
+discount a doubt I had already raised. That is the actual lesson and it is not a
+lesson about gates.
+
+The half that binds forward is now in the module docstring and pinned by
+`test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate`: when
+this machinery later produces v2 §7's held-out table, **that report is
+Model-gated and this module is load-bearing inside it. Nothing here
+pre-discharges any part of it.** It is governance prose, so no arithmetic
+protects it; the test is the only thing between that paragraph and someone citing
+"the calibration machinery passed its gate" as though it settled the model's.
+
+### Two of my four fixes were incomplete, in ways their own tests could not see
+
+The reviewer re-attacked the fixed head. Findings, all now closed:
+
+- **Nested `restrict()` dropped the inherited pairs.** `restrict(restrict(rows,
+  status="doubtful"), era="legacy")` recorded only `era=legacy`, so a 60-row
+  payload claimed to be the legacy cohort while 200 legacy rows had been silently
+  excluded. Only `build_calibration_report` merged, and by then the inner pair
+  was gone. **This is the pooled-versus-restricted confusion this module exists
+  to prevent, one level down.**
+- **The marker was an unvalidated assertion on a mutable list.** `rc.extend(...)`
+  moved the rows and left the claim behind: 83 `doubtful` rows extended to 520
+  still recorded `status=doubtful`, attributing an `out`-dominated rate to
+  `doubtful`. That is this project's headline failure mode reached through an
+  ordinary list method. Markers are now **verified against the rows** before they
+  are recorded.
+- **Nine of fifteen strip routes, not one.** I had documented `list(restrict(...))`
+  as *the* residual and called laundering "a deliberate act". `rc[:]`, `tuple(rc)`,
+  `[*rc]`, `rc + []` and `rc * 1` also stripped it, and slicing a sequence is not
+  a laundering act - it is how anyone copies one. Slice, `+`, `*` and `.copy()`
+  now re-wrap. `copy`, `deepcopy` and `pickle` already held, via `__reduce_ex__`.
+  The iteration routes cannot be closed in Python and are now documented as a
+  **class** and pinned by a test that asserts the hole is where the docstring says
+  it is - so a future fix cannot silently make the docstring false.
+- **A test that looked like it pinned ordering could not.** Dropping `sorted()`
+  from the recorded restriction left all 61 tests green, because the test applied
+  `band` then `status` - insertion order was already sorted order. Filtering on
+  the later key first makes the two differ. **A green that passes for a reason
+  other than the one claimed**, which is exactly what the mutation discipline is
+  for, and my mutation set had not covered it.
+- **I made a quantifier error and the reviewer caught it.** I wrote that
+  `probable` and `doubtful` are "NOT protected by a 0.10 threshold". The worst
+  case exceeding 0.10 shows only that **a guarantee cannot be issued without the
+  rate** - existential, not universal. The failing region is narrow and derivable
+  from counts alone: `probable` breaches only at `p_hat` in [0.478, 0.522], 5 of
+  93 possible counts; `doubtful` at [0.349, 0.651]. Both centred on a coin flip.
+  My independent enumeration reproduced his four bounds exactly.
+
+He also confirmed, by brute-forcing `c x (1 - a/b)` over 23 published counts, that
+**no expression starting from the held-out 83 reaches v3 §6's 74**; the 43 near
+misses are all anchored on the *development* partition's 75. So the likeliest
+explanation of v3's figure is a partition mix-up, and my ~68 / 2.25x stands.
+
+### One mutation I wrote survived my own suite
+
+M23 - making the new verification treat a missing label key as satisfying the
+claim - survived on its first run. Nothing exercised verification against a
+cohort that is merely *silent* about the restricted key. It is the **second** time
+this exact shape has bitten here: a key that is absent is not a key that matches,
+and a suite whose fixtures are all fully labelled cannot tell the difference.
+Now closed. **23 mutations, 23 caught, 0 survived.** 78 tests in the module.
+
+### What I could not verify
+
+- **That the residual strip-route list is complete.** The reviewer enumerated 15;
+  I closed 4 and pinned 4 as permanent. Neither of us proved 15 is all of them,
+  and metaclass or C-level routes were not considered. *Partially driven.*
+- **That verifying markers costs nothing at real scale.** `_verify_restriction_holds`
+  is O(rows x pairs) and was only ever run on cohorts of a few thousand. Fine
+  here; unmeasured beyond here. *Not driven.*
+- **That the failing-rate windows transfer to a real fit.** They are exact for the
+  held-out counts, which are predictor-side. Whether a real `probable` rate lands
+  in [0.478, 0.522] is an outcome question I must not look at. *Driven as a range,
+  unknown as a fact.*
+- **That my judgement on the gate is now right rather than merely deferred.** I
+  hold the architect's ruling because his facts were better, not because I
+  re-derived it. If `gates.md`'s ambiguity is fixed, the reasoning here should be
+  re-read rather than cited. *Deference, recorded as such.*
+- **Whether a third review would find a third layer.** Pass 1 found 4, pass 2
+  found 5 including 2 inside my fixes. The sequence does not look exhausted, and
+  the honest reading is about my hit rate rather than his thoroughness. I stopped
+  because the unit is bounded, not because it converged. *Not driven.*
+
+## 2026-08-23 - `quant`: a third review pass, and the shape all three share
+
+Fourth and last entry for this unit. Four of the reviewer's mutations survived a
+suite that had just caught twenty-three, and the interesting thing is not the
+four - it is that they rhyme with the four from pass 1 and the five from pass 2.
+
+### The shape, which is the useful output of this pass
+
+**Each fix landed correctly on the case that was driven, and left the
+generalisation of that case untested.** Every time.
+
+- Pass 2 taught `restrict()` to accumulate pairs, which made a **two-key marker
+  the normal case**. Pass 3 then mutated the verification loop to check only the
+  first pair and all 78 tests stayed green, because every test that reached
+  verification used a single-key restriction. The fix enlarged the surface the
+  next defect hid in.
+- Pass 2 added four container overrides. Pass 3 mutated `__mul__` to ignore its
+  count and it survived, because the tests asserted the **type** and the
+  **marker** and never the **contents**.
+
+The reviewer's rule, which I am adopting: **when a fix introduces a new dimension
+- a second pair, a count, a precedence - write the test at n=2, not n=1.** It is
+cheaper than another round of mutations of the same shape.
+
+### The re-wrap rule I wrote in pass 2 was wrong in the other direction
+
+Pass 2 found that `rc[:]`, `rc + []` and `rc * 1` stripped the restriction
+marker, and I fixed it by re-wrapping in `__getitem__`, `__add__`, `__mul__` and
+`__rmul__`. That was too wide, and pass 3 drove why: the marker then survived
+`rc * 3` and `rc[:10]` too. **Every row still satisfied every recorded pair, so
+verification passed - the marker was true and the payload was false about the
+cohort.** 249 rows recorded as the 83-row `doubtful` subgroup.
+
+It is not academic. v2 §8 condition 5 is a Wilson half-width and goes as
+`1/sqrt(n)`. At the held-out `doubtful` count of 83 the worst case is **0.1052**,
+outside 0.10, which is exactly the basis of the card's claim that no 0.10
+guarantee can be issued for `doubtful` blind. Duplicate the cohort and `n=166`
+gives **0.0752** - inside. **Duplication manufactures the guarantee**, with a
+marker that is true in every particular. Condition 6's population floor reads the
+same inflated `n`. Re-wrapping is now restricted to operations that provably
+preserve the row multiset, and everything else returns a plain `list`, which
+asserts nothing.
+
+### The bounded guarantee, now stated instead of implied
+
+`_verify_restriction_holds` establishes **soundness** - every row present
+satisfies every recorded pair. It cannot establish **completeness**, because a
+cohort does not carry the population it was drawn from, so `pop` and `del
+rc[40:]` leave a marker that is still true and no longer describes the subgroup.
+It cannot establish **multiplicity**, because a duplicated row satisfies a pair
+as happily as the original. Both are in the module docstring and the completeness
+residual is pinned by a test that drives it, rather than being a sentence.
+
+### I asked him to rule against me and he did
+
+I claimed the iteration-based strip routes were irreducible because "Python
+offers no way to intercept 'somebody iterated me'". **That is false.** `__iter__`
+is an ordinary dunder; `list()`, `tuple()`, unpacking and `itertools` all route
+through it. His proof-of-concept - a subclass yielding rows that carry provenance
+in `labels` - **refused all five routes I had called impossible**, with the
+module unmodified on disk.
+
+My conclusion was safe and my premise was false, which is the worse of the two
+ways to be right. The premise was doing load-bearing work: it presented a design
+choice as a limit of the language, and nothing in the gates would have caught it,
+because it is a claim about Python rather than about a number. It now reads as a
+choice, with the reasons row-level provenance was not taken - it mutates row
+labels, allocates a frozen dataclass per row per iteration, breaks row identity,
+and is itself strippable, so it **moves** the residual rather than removing it.
+
+### A second instance of the M12 symmetry class
+
+Pass 1 found that `detect_monotonic_reversals` is invariant under reversing band
+order, because both sign products flip. Pass 3 found the same shape in
+`CalibrationBin.gap`: reversing its declared sign survived the whole suite,
+because every internal consumer takes `abs()` and the only two tests that touched
+it either wrapped it in `abs()` or asserted it equal to zero. The sign is emitted
+in `to_dict()`, so it is load-bearing for any reader of the per-bin table.
+
+**The generalisation, which is worth more than the fix:** a declared convention is
+pinned only if some test observes it through a path that does not symmetrise it.
+`abs`, a square, and a product of two sign-flipping factors all destroy exactly
+the information the convention asserts. That is mechanically auditable - for each
+entry in `DECLARED_CONVENTIONS`, name the test that fails if it is reversed - and
+it generalises past this module.
+
+### State at this commit
+
+30 mutations, **30 caught, 0 survived**. 96 tests in the module, full suite 1883
+passed, 32 deselected - predicted 1883 before running it, from 1865 plus the 18
+tests this pass added. ruff and mypy clean. The blind is intact: the reviewer
+re-ran his AST and
+string-literal audit at `57e370d` and found no database driver, no network, no
+filesystem read, and no play-rate literal in the generators - every rate is still
+a caller-supplied argument.
+
+### What I could not verify
+
+- **That a fourth pass would find nothing.** Three passes found 4, 5 and 4
+  survivors. That sequence is not converging, and the honest reading is about my
+  hit rate rather than his thoroughness. I am stopping because the unit is
+  bounded, not because it is exhausted. *Not driven.*
+- **That the multiplicity rule has no legitimate victim.** Anyone concatenating
+  two disjoint halves of the same subgroup now loses the marker, which is safe
+  but inconvenient, and I have not looked for a caller who wants that. *Not
+  driven.*
+- **That the completeness residual is the last one of its kind.** It is the one I
+  can name. Soundness, completeness and multiplicity are the three properties I
+  thought to check for; there may be a fourth. *Not driven.*
+- **That the `__iter__` interception the reviewer demonstrated would survive
+  contact with the rest of the module.** He proved the routes can be refused. I
+  did not build it, and my reasons for not building it are design judgement
+  rather than measurement - the per-row allocation cost in particular is asserted
+  and unmeasured. *Argued, not driven.*
+- **That the four Wilson figures transfer.** They are exact for the published
+  held-out counts, which are predictor-side. Whether any real rate lands in a
+  breach window is an outcome question I still must not look at. *Driven as a
+  range, unknown as a fact.*
+
+## 2026-08-23 - `quant` - calibration machinery, fourth review pass closed
+
+**Base:** `f3e2c53` (`main` at brief time). Branch `sr2501-calibration-machinery`,
+not rebased - merge freeze still in force. `origin/main` has since moved to
+`193aa1e`.
+
+**Blind: unbroken.** No participation outcome, no conversion rate, no v2 §5/§6
+selection was read. The reviewer re-ran the AST and string-literal audits on
+this head and found no banned import, no `open()`, no DB or network reach, and
+no play-rate literal in either source module.
+
+**What changed.** Seven mutations survived the fourth independent non-`quant`
+review against a suite that had just caught thirty. Two of them are a kind the
+first three passes did not produce.
+
+- **A false guarantee, not a disclosed residual.** Both docstrings promised that
+  multiplicity-changing container operations return a plain `list`. They do not:
+  `rc += list(rc)`, `rc.extend(list(rc))`, `rc[0:0] = list(rc)`, and `append` or
+  `insert` of a row taken from the cohort itself, all return a
+  `RestrictedCohort` whose marker is true of every row present and whose `n` is
+  doubled. `n` is not decoration - condition 5 is a Wilson half-width, and
+  doubling the 83-row `doubtful` cohort moves its worst case from 0.1052 to
+  0.0752, which manufactures the 0.10 guarantee this model card says cannot be
+  issued blind.
+- **A declared convention the code did not implement.**
+  `DECLARED_CONVENTIONS["bootstrap_unit"]` said "one observation id, resampled
+  with replacement"; the loop resampled row *positions* and never read
+  `observation_id`. Harmless while ids are unique, and otherwise an interval
+  that is **too narrow** - the direction that makes condition 2 easier for the
+  candidate. That is worse than an undeclared convention, because a later reader
+  has a written assurance and no reason to check it.
+
+**The repair for the first is deliberately not a longer list of dunders.** The
+reviewer's rule - when you override a dunder to enforce an invariant, enumerate
+its in-place twin and its reflected form in the same breath - is a good rule and
+a closed list, and it is still the weaker fix. It guards the routes someone
+thought of; `append` and `insert` have no non-mutating twin to have prompted
+them, and direct construction touches no dunder at all. Duplicate
+`observation_id`s are now refused in `build_calibration_report` and in
+`paired_bootstrap_brier`, where the cohort becomes a number, which covers every
+route at once including the adversarial stateful `__index__`.
+
+`bootstrap_quantile` (Hyndman-Fan type 7) was declared and pinned by nothing;
+the floor-rule substitute left every test green while moving `interval_high`,
+which `candidate_beats_baseline` reads. It is now pinned against hand arithmetic
+at both endpoints, and the call site is pinned separately from the helper.
+
+**Two things I found by checking the reviewer's payloads rather than accepting
+them.**
+
+- **His headline payload is false.** `rc *= 2` does *not* keep the marker; it
+  returns a plain `list`, because defining `__mul__` at Python level fills
+  `nb_multiply` and `PyNumber_InPlaceMultiply` falls back to it before reaching
+  `list`'s sequence-repeat slot. The route is closed **by accident**. Nothing
+  was written to close it and no comment recorded it, so deleting the `__mul__`
+  override - which a later reader could reasonably think redundant once
+  duplication is refused at the report - would silently reopen it. Pinned by
+  test, with the mechanism, so it is now closed on purpose.
+- **A numeral error four passes read without recomputing.**
+  `RestrictedCohort`'s docstring gave the duplicated half-width as 0.0745. It is
+  0.0752. 0.0745 is the Wald `1/sqrt(2)` scaling, and a Wilson interval does not
+  obey it, because of the `z^2/n` term. Found by my own numeral sweep, not by
+  review. Both values are now asserted, and the wrong one is asserted *as* the
+  naive scaling so the trap is recorded rather than merely removed.
+
+**Verified at this head:** module tests 119 passed (was 96); mutation suite
+**40 mutations, 40 caught, 0 survived**; full backend suite 1906 passed, 32
+deselected, against a pre-registered prediction of 1906; `ruff check` and `mypy`
+clean; `scripts/resolve_doc_conflicts.py` leaves the backlog header unchanged.
+
+**The survivor sequence is 4, 5, 4, 7 and is not converging.** I am reporting
+that rather than smoothing it. Three readings are available and I cannot
+distinguish them from inside: the reviewer is getting better at attacking this
+module; the module's surface grows with each fix; or four passes is simply not
+enough for a module whose failure mode is a confident wrong number. The honest
+statement is that forty driven mutations say what forty specific corruptions do,
+and nothing about the forty-first.
+
+### What I could not verify
+
+- **That the module is correct**, as opposed to correct on every corruption I or
+  four review passes thought to drive. Every pass so far has found survivors,
+  and nothing in the trend suggests the next would not.
+- **That refusing duplicate `observation_id`s is the right rule for real data.**
+  It is right for a held-out cohort where a row is one status entry for one
+  player-game. If a later lane has a legitimate reason to feed the same id
+  twice, this refuses correct input. I chose the fail-closed direction because
+  an inflated `n` is invisible and a raised error is not, but I am asserting a
+  property of data I have not seen.
+- **That `rc *= 2`'s fallback holds on other Python implementations.** The
+  mechanism is CPython's; the test would fail loudly elsewhere, which is the
+  behaviour I want, but I have run it on one interpreter.
+- **Whether pinning the bootstrap quantile changes any figure.** It cannot
+  change one that exists, because none exists. Whether type 7 versus the floor
+  rule would move a real `interval_high` past zero is an outcome question.
+- **That the fourth pass's remaining adjudications are right.** He rated the
+  stateful `__index__` route Low and would not fix it. The duplicate check now
+  covers its duplicating form; its *truncating* form still keeps a marker, which
+  is the completeness residual and stays disclosed rather than closed.
+
+## 2026-08-23 - `quant` - v3 §6 label correction, and the same error in my own card
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken - everything
+here is status counts and stated-reason counts, both predictor-side.
+
+A `data-engineer` lane's reviewer found that v3 §6's "~74 on health reasons"
+subtracts G League and nothing else, leaving `Rest`, which is a coach's decision
+on the same footing as the Two-Way recall whose removal §6 endorses. The lane
+reported it against its own number.
+
+**The same defect was in this card and I did not see it when I wrote it.** My
+~68 / 2.25x applied §6's G League share and then reported the result against
+§6's "health reasons alone" framing. I inherited the label from the document I
+was correcting, which is the failure mode `AGENTS.md` calls unexamined
+inheritance, reached while doing the opposite. The test asserting it was named
+`..._health_only_floor_...`; it is renamed to `..._non_g_league_floor_...`,
+because the name is the part a later reader quotes.
+
+**I declined to make the correction in v3 itself, and told the architect why.**
+The edit is two sentences and blocks an owner decision; my branch is behind
+`origin/main` under a merge freeze and is gated on a fifth review pass whose
+survivor sequence is not converging. Coupling an owner-blocking correction to
+that is a scheduling error, not a thoroughness one. I supplied the replacement
+wording instead.
+
+**And I did not paste the correction as given, because checking it found a
+one-row problem that changes what the correction should say.** The reported
+held-out `doubtful` breakdown - `Injury/Illness 68, G League 10, Rest 4,
+Concussion Protocol 1, Reconditioning 1` - sums to **84**, against a published
+held-out `doubtful` count of **83**. Non-G-League is therefore 74 from the
+breakdown and 73 from the published count, and **74 is exactly the figure the
+correction proposes to replace**. An earlier reviewer brute-forced 23 published
+counts and found no route from 83 to 74; a reason table totalling 84 is one, and
+it is the first account of §6's number that does not require an arithmetic
+error. So "correct 74 to 73" would swap the base silently. The extra row has to
+be explained first - a row carrying two reason categories is the obvious
+candidate.
+
+**A second thing I should have flagged when I used it:** the 18.6% G League
+share is cohort-wide and does not transfer to the held-out partition, where the
+direct share is 10/83 = 12.05%. My estimate was five rows low as a non-G-League
+figure, and the transfer was an assumption stated nowhere in my own arithmetic.
+
+No verdict moves. Condition 6's floor of 30 clears by more than 2x on all four
+readings (73, 74, 68, 69).
+
+### What I could not verify
+
+- **The breakdown itself.** It is not on this branch; I have it only as reported.
+  Every figure derived from it here is conditional on it, and the one-row gap is
+  the reason to treat it as unsettled rather than to pick the convenient base.
+- **Whether the 84th row is a double-categorised row.** That is a guess with a
+  mechanism, which is better than a guess without one, and it is still a guess.
+- **That `Rest` and `Reconditioning` belong outside a health set.** 7 of 97
+  `Rest` rows in this cohort carry "Left Knee - Injury Management", so the split
+  is a stated-reason artefact in both directions. Any health-reason bound is
+  approximate for that reason and not only for the one-row reason.
+
+## 2026-08-23 - `quant` - the 84th row was explained on `main` before I guessed at it
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken: this entry
+reads a **docstring** on `origin/main`, no data, and runs nothing.
+
+The previous entry reported that the held-out `doubtful` reason breakdown sums
+to 84 against a published 83, and offered a double-categorised row as "a guess
+with a mechanism, which is better than a guess without one". **It was a guess
+against an answer that was already committed.**
+
+`scripts/cohort_predictor_crosses.py`, merged to `main` in #97 before I wrote
+that, says in its own module docstring that its crosses are over the
+**canonical** selection - 13,789 observations - and explicitly **not** over the
+**direct** selection of 13,598 that the admissibility artifact uses, the two
+differing by the participation join. The same distinction at the `doubtful`
+cell is the entire 84-vs-83 gap: **one canonical held-out `doubtful` row has no
+participation outcome attached.** Not a double-count.
+
+**The numbers I published were right and my account of why was wrong**, which is
+the more embarrassing way round, because a correct number with a wrong mechanism
+survives review. The pair is now *derived* rather than hedged: exactly one
+canonical row is non-direct, it is G League or it is not, so direct
+non-G-League is in **[73, 74]** from two committed integers and a subset
+relation - no join, no outcome. `_held_out_doubtful_note` computes precisely
+that bracket and refuses to print one if the direct count exceeds the canonical.
+
+**It also sharpens the v3 §6 defect rather than softening it.** 74 is not a
+rival base for the direct count; it is the **canonical** non-G-League count
+reported as though it were the direct one. So §6's sentence carries *two*
+population errors - canonical-for-direct and non-G-League-for-health - and only
+the second was under correction. Two well-formed quantities that are not about
+the same thing, which is the shape this repository keeps finding.
+
+**How I got there is the part worth keeping.** I was handed a breakdown and a
+published count in one message and treated them as one population without
+checking, then reasoned carefully *inside* that frame. That is the failure the
+previous entry exists to record, committed a day later by the person recording
+it. The lesson I actually take is narrower than "check your frame": **before
+guessing at a discrepancy, look for the lane that owns the quantity.** A
+`data-engineer` lane had committed the answer and I did not look.
+
+### What I could not verify
+
+- **That the coordinator's breakdown is this script's canonical table.** It sums
+  to 84 and the script's own bracket lands on [73, 74], which is strong
+  agreement, but I have not run it - the store is gitignored and running it
+  needs a rebase I do not have a window for.
+- **That exactly one row is non-direct at the `doubtful` cell specifically.** I
+  am inferring it from `84 - 83`, which is the script's arithmetic, not a count
+  I have seen. If the coordinator's table were over a different window the
+  subtraction is meaningless - which is why the script checks the partition
+  endpoints before bounding, and I cannot.
+- **Whether `Rest` and `Reconditioning` belong outside a health set.** Unchanged
+  and unresolvable from stated reasons; 7 of 97 `Rest` rows carry "Left Knee -
+  Injury Management". The script's docstring reaches the same conclusion
+  independently and calls the result an upper bound on the health-reason count.
+
+## 2026-08-23 - `quant` - fifth review pass: a gate reported from the wrong command
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken; the reviewer
+re-ran his AST and literal audit over every file in `f3e2c53..HEAD` and found 0
+hits.
+
+Ten new mutations, **four survived**. Sequence is now **4, 5, 4, 7, 4** and is
+still not converging. Reported rather than smoothed, for the third time.
+
+**The headline is not a mutation.** I reported "mypy clean" from `python -m mypy
+src` - 121 files. The gate `.github/workflows/ci.yml` runs is bare `mypy`, which
+is **195 files** because it includes the tests. Under the real command my branch
+had **five errors and would have failed CI**, and they were introduced by the
+pass-four fixes, so the wrong command had been reported at least once already.
+
+`docs/governance/gates.md` **already records this exact shape**: a prior incident
+of running `mypy --strict` on a script and reporting "strict mypy clean" while
+eighteen unannotated test functions sat outside the checked path. So this is a
+second instance of a named, documented failure mode, in a change set whose whole
+argument is that its verification can be trusted before its results can be seen.
+The five errors were trivial to fix; being the second instance is not trivial.
+**The rule I take from it: quote the gate with its file count**, because "mypy
+clean" is true of both commands and distinguishes neither.
+
+**The three real survivors share a generator I had not seen before.** In each,
+*a guard exists and is correct, and the only test pinning it exercises the one
+input on which a broken guard still returns the right answer.*
+
+- Duplicate detection is keyed on `observation_id`, but every test drove
+  duplication by repeating **the same object**, so `Counter(id(row) ...)` passed
+  all 119 tests. The realistic bug - two instances sharing an id, which is what a
+  join produces - was never driven.
+- `Band.observations` was read by no assertion anywhere, so replacing a band's
+  own count with the whole cohort's size survived. **A field no assertion reads
+  is not data, it is decoration**, and the audit is mechanical: for each field on
+  each emitted dataclass, name the test that fails if it is corrupted.
+- `bands_from_labels` is a second public place where the cohort becomes a number
+  and it had no duplicate check. My pass-four rule was "check where the cohort
+  becomes a number" and I applied it at one of the two such places - **the dunder
+  enumeration I had just rejected, one level up.**
+
+All four are now in `scripts/mutate_calibration.py` as M41-M44; 44 mutations, 44
+caught. One reviewer survivor is deliberately **not** added: swapping the two
+steps in `detect_monotonic_reversals` is a provably equivalent mutant, and an
+equivalent mutant in a harness is worse than no mutation because it trains its
+readers to expect a survivor.
+
+**A methodological correction that matters more than the finding it came from.**
+The reviewer showed my `*=` docstring credited `__mul__` with closing the route
+when `__rmul__` fills the same slot and either alone suffices. Checking it, **we
+had both used `delattr`, and `delattr` cannot model "this method was never
+defined"** - removing a method from a heap type does not restore the slot layout
+the type would have had without it. His matrix and mine disagreed and both were
+artefacts. The sound experiment builds a fresh `type("C", (list,), ns)` per cell;
+it confirms his conclusion, and it is now a test with a mutation guarding it.
+
+**The `doubtful` restriction table.** He recomputed my "68 or 69 on health
+reasons" as 70 or 69 and called it wrong. Both are right about their own
+definition: he removed G League and `Rest`, I had also removed `Reconditioning`,
+and **neither of us wrote down which**. The card now tabulates all four
+restrictions as brackets rather than choosing one. His reading of 74-and-73 as
+rival *bases* is the account I had already superseded - under the
+canonical-versus-direct mechanism they are the two ends of one bracket. Lowest
+reading on any definition is **67/30 = 2.23x**, so condition 6 clears on all of
+them.
+
+Verified at this commit: full suite **1914 passed, 32 deselected** against a
+prediction of 1914 stated before the run; module tests 127; **44 mutations, 44
+caught, 0 survived**; `ruff check .` clean; **bare `mypy` clean, 195 files**;
+backlog header recomputes unchanged; `test_name_diff.py origin/main` 101 added
+(93 + 8 new) and 15 dropped, still PR #96's.
+
+### What I could not verify
+
+- **That there is no third command whose gate I am still reporting narrowly.** I
+  checked `mypy` and `ruff` against `ci.yml` after being caught once. I have not
+  audited every gate in that file against what I run, and the finding above is
+  precisely that I would not notice.
+- **That `Band.observations` is the only decorative field.** I fixed the one the
+  reviewer found and named the audit that would find the rest; I did not run
+  that audit exhaustively over every emitted dataclass.
+- **That refusing duplicate ids is right for real data.** It asserts a property
+  of the **id scheme**, not of the world, which is a better framing than I had -
+  but whoever builds `observation_id` now inherits an obligation stated only in
+  a docstring.
+- **The reason breakdown behind the restriction table.** Still held only as
+  reported; every bracket is conditional on it, and I still cannot run the
+  script that would settle it without a rebase window.
+
+---
+
+## 2026-08-23 - quant - calibration machinery: closing my own "could not verify", and a near-miss that would have voided the mutation evidence
+
+Branch `sr2501-calibration-machinery`. **Blind unbroken.** No file added or
+changed here reads a participation outcome, a cohort database or a conversion
+rate. Base verified: still behind `origin/main` at `193aa1e`; no rebase, the
+freeze is respected.
+
+### Entry #8's first "could not verify" paid out within minutes, twice, in opposite directions
+
+I wrote that I could not rule out **a third command whose gate I was reporting
+narrowly**. Running that audit found two more.
+
+**The false pass.** `ruff format --check .` **is** a CI gate -
+`.github/workflows/ci.yml:62`, no `continue-on-error`. I had inherited a belief
+that it was not, and that belief was load-bearing: both of this unit's source
+files failed it, `main` passes, so the branch and only the branch would have
+broken CI. Formatting them then joined three lines and moved four mutation
+anchors - M06, M09, M16, M40. The harness reported those as **harness failures,
+not survivors**, which is the one distinction that stopped a formatting change
+reading as four passing tests.
+
+**The false alarm, which is the half I had not thought about.** Run from the
+**repository root**, those same commands report 15 lint errors and 13
+unformatted files. The backend job declares `working-directory: backend`, and
+from there everything is clean. So a gate quoted without its **working
+directory** is exactly as unquotable as one quoted without its file count - and
+this direction fails *loudly and wrongly*, which would have had me editing three
+other lanes' files during a merge freeze on the strength of a number that was
+never mine to read.
+
+**Recorded and deliberately not fixed: no CI job lints `scripts/` at all.** Every
+Python job in `ci.yml` scopes to `backend`, `frontend` or `userscript`. So
+`scripts/mutate_calibration.py` - the harness that produces this unit's only
+evidence that its detectors fire - sits **outside the gate that evidence is
+for**. It matches `main`'s existing practice (`frontend/src/test/fixtures/
+make_pending_date_payloads.py` is unformatted at repo root too), so it is a
+question for the architect rather than a defect of this branch.
+
+### The near-miss, which is the more important half of this entry
+
+The obvious response to "stale anchors are only caught by a manual run of an
+ungated harness" is to write the anchor check as tests. I did, and put them in
+`test_calibration_machinery.py` - **which is the module the harness runs.**
+
+While a mutation is applied, the mutated line no longer matches its own anchor,
+so the anchor test fails; and the harness scores **any** failure as CAUGHT. Every
+mutation of `calibration.py` would have been marked caught by the anchor test
+rather than by the detector it was written to exercise. The harness would have
+kept printing `44 caught, 0 survived` while establishing nothing at all.
+
+I drove it rather than arguing it: with M02 applied, the anchor assertion fails
+with `anchor found 0 times`. The four tests now live in
+`backend/tests/test_mutation_harness_integrity.py`, which the harness never runs
+and CI always does.
+
+**Why this one generalises past my module.** It is the false-zero shape in its
+most expensive location so far - not a detector that fails to fire, but a
+detector firing so reliably it drowns out the ones being measured, with the
+visible symptom being the *reassuring* number. The rule I would hand anyone
+running a mutation harness: **any test added to the module the harness targets
+makes the harness weaker, and the weakening is invisible in its output.**
+
+### Detectors driven, with the scope attached
+
+At this commit, these five pathologies are each detected and I drove every one;
+it says nothing about a sixth. A stale anchor (`anchor found 0 times`); a
+replacement identical to its anchor; two mutations sharing a name; the harness
+file missing - which **fails, never skips**, because a green skip reads as a pass
+in the summary line; and a mutation removed while the model card still says 44
+(`assert 43 == 44`).
+
+**One of the five was a driver failure first.** My payload for the last case
+prefixed a comment without removing the tuple, so `len(MUTATIONS)` never changed
+and the case passed. I reported it as a driver failure and rewrote it, because
+"a mutation that did not apply looks exactly like a guard that works" is a rule
+this harness states about itself in its own docstring, and it still caught its
+author.
+
+### Verified at this commit
+
+`test_calibration_machinery.py` **127**; `test_mutation_harness_integrity.py`
+**4**; **44 mutations, 44 caught, 0 survived, 0 harness failures**; from
+`backend`: `ruff check .` clean, `ruff format --check .` **204 files already
+formatted**, bare `mypy` clean over **196 source files**.
+
+### What I could not verify
+
+- **The full suite at this commit.** It takes about three hours and the last
+  full run was 1914 passed / 32 deselected at the previous head. Four tests were
+  added since, so the prediction is **1918**; I am recording the prediction here
+  rather than a result, and it is stated before the run rather than after.
+- **That the `ci.yml` audit is now exhaustive.** I checked every step of the
+  backend job and the working directory of every Python job. I did **not** check
+  the frontend, userscript, migrations, Postgres, secrets or backlog jobs
+  against what I run, because none of them covers a file I touch - which is a
+  reason, not a verification, and is the same reason I gave last time.
+- **That no other test in the suite weakens the harness the way the anchor tests
+  would have.** The harness runs exactly one module, and I have not audited that
+  module for other assertions that fail merely *because* a mutation is applied
+  rather than because it was detected. That class is real and I found one member
+  of it by writing it myself.
+- **That `Band.observations` was the only decorative field**, and **the reason
+  breakdown behind the restriction table** - both carried forward from entry #8
+  unchanged, still not run exhaustively, still conditional on a report I cannot
+  check without a rebase window.
+
+
+---
+
+## 2026-08-23 - quant - calibration machinery: closing entry #9's audit item, and a hole in the fix that produced it
+
+Branch `sr2501-calibration-machinery`. **Blind unbroken.** Base verified: still
+behind `origin/main` at `193aa1e`; no rebase, freeze respected.
+
+### The audit item from entry #9 is closed, and it closed clean
+
+Entry #9 asked whether any *other* test in the module the mutation harness
+targets fails merely **because a mutation is applied** rather than because it
+was **detected**. That is the class entry #9 found one member of - by writing it
+myself - and "I found one member of that class by writing it" is not encouraging
+about the rest, which is why I would not leave it open.
+
+Answered mechanically rather than by reading the file: each of the 44 mutations
+was applied in turn and the **names of the failing tests** recorded, not merely
+the fact that something failed.
+
+**Zero false catches.** The only test in that module that asserts on text rather
+than behaviour - the one pinning the docstring sentence saying this unit's Code
+gate does not pre-discharge the Model gate - is a catcher for **none** of the 44,
+so it cannot fire incidentally. One mutation, M40, is caught only by a test that
+reads a declared-convention string, and that is **correct rather than
+incidental**: the declaration is exactly what M40 mutates.
+
+**The audit surfaced something the pass/fail total hides. 19 of the 44 mutations
+are pinned by exactly one test.** That is not a defect and I am not treating it
+as one. It is a fragility worth stating: delete any one of those tests and a
+mutation is silently unpinned while the harness carries on reporting `44 caught`.
+That is the same false-zero shape one level up from row 0.9's, and it is the
+reason `scripts/test_name_diff.py` exists and why a dropped test name goes in
+every one of these entries.
+
+### A hole in the fix that produced that audit, found before review reported it
+
+`_harness_mutations()` resolves `CAL`/`TEST`/`SYN` by walking the harness module
+top to bottom. A name assigned **twice** would resolve here to its *final* value
+while Python built `MUTATIONS` from the value in force at that point - so this
+reader would check the wrong file and cheerfully report every anchor present.
+
+Rebinding is now **refused rather than resolved**, with three cases driven red:
+rebound to another path, rebound to a non-literal, and rebound to the *same*
+value - refused too, because this reader cannot establish sameness without
+evaluating the module it is deliberately not executing.
+
+Worth naming why I missed it: the function already refuses f-strings,
+concatenations, nested tuples and non-literal fields. **It refused four exotic
+forms and missed the mundane one**, which is the shape of someone defending
+against the attacks he found interesting.
+
+### An inherited figure that was wrong by a factor of twenty
+
+I have been quoting a full-suite runtime of **about three hours** and using it to
+decide what was affordable to verify. Measured at this commit it is **9m23s**.
+I never checked it; it arrived in my notes and I planned around it. That is a
+smaller instance of the same unexamined inheritance this unit keeps recording,
+and it is the one that cost the most in decisions not taken.
+
+### Verified at this commit
+
+Full suite **1918 passed, 32 deselected in 563.37s**, against a prediction of
+**1918** stated before the run. `test_calibration_machinery.py` **127**;
+`test_mutation_harness_integrity.py` **4**; **44 mutations, 44 caught, 0
+survived, 0 harness failures**; from `backend/`: `ruff check .` clean,
+`ruff format --check .` **204 files already formatted**, bare `mypy` clean over
+**196 source files**.
+
+### What I could not verify
+
+- **That the catcher audit generalises to a 45th mutation.** It establishes that
+  none of *these* 44 is caught by an incidental test. A new mutation could be,
+  and nothing runs this audit automatically - it was a throwaway, so the next
+  person to add a mutation inherits the claim without the check. If that matters
+  it belongs in the harness as a mode, which is scope I did not take under a
+  freeze with a review in flight.
+- **That refusing rebinding is the last hole in the resolver.** I found this one
+  by asking what a reviewer would attack, which is a method that finds what I can
+  imagine being attacked.
+- **That 19-of-44 single-pinning is acceptable.** I am reporting it, not judging
+  it. Reducing it means writing a second test for each, and I do not know
+  whether that buys anything beyond making deletion louder - which
+  `test_name_diff.py` already does from the other side.
+- **`Band.observations` as the only decorative field**, and **the reason
+  breakdown behind the restriction table** - both carried forward unchanged from
+  entries #8 and #9, still not run exhaustively, still conditional on a report I
+  cannot check without a rebase window.
+
+
+## 2026-08-23 - quant - calibration machinery: sixth and seventh reviews closed
+
+**What I did.** Closed eleven survivors across two independent review passes on
+`backend/src/hoops_gm/availability/calibration.py` and its harness. No model was
+fitted and no participation outcome was read; the blind is intact.
+
+**The finding worth carrying, because it is not about this module.** Handoff #10
+recorded a hole its author found before review: the mutation-harness reader
+resolved a rebound path constant to the wrong file and would then have validated
+41 anchors against a file the harness never touches, reporting every anchor
+present. That was fixed - for the one form that had been driven. The reviewer
+walked four more straight through the fix: a tuple unpack, a walrus, a
+`globals()[...]` store, and an assignment nested in an `if` **that he had already
+reported in the previous pass**. So the fix to the fix reproduced the generator it
+was fixing, inside one commit cycle. **A guard that works by enumerating
+syntactic forms is always one form behind.** The repair is a predicate over a
+single `ast.walk` - every `Name` with `ctx=Store`, which is the same node for
+tuple, walrus, `for`, `with ... as`, comprehension and augmented targets alike -
+plus a blunt refusal of `globals`/`locals`/`vars`/`setattr`/`exec`/`eval`, since
+dynamic rebinding leaves no store to count. Seven evasions driven red, control
+green.
+
+**A false generalisation, and it was in the durable artefact.** The model card
+says *no CI job lints `scripts/`*, which is true. The test-file docstring and
+`docs/backlog.md` said `scripts/` is *linted, type-checked and executed* by no
+job, and that every Python job declares a working directory. Both clauses are
+false: `ci.yml` runs `scripts/backlog_graph.py` (line 142),
+`scripts/check_no_secrets.py` (354) and `scripts/run_metrics.py` (93, 98, 292,
+297) across four jobs, and the `backlog-graph` and `secrets` jobs declare no
+working directory at all. The careful wording sat in the prose and the false one
+in the test file, which is the artefact a later reader inherits. The compounding
+part: handoff #9's stated reason for not auditing those jobs was that none of them
+covers a file I touch - false for three of them, so **the audit skipped exactly
+the jobs that would have refuted its own generalisation, on the strength of that
+generalisation.** Both were run by hand and pass, so there is no red CI; the
+conclusion was correct by luck rather than by the reasoning given.
+
+**Four published fields no assertion read, one a headline metric.** Pass five's
+rule - a field no assertion reads is not data, it is decoration - had been applied
+only to the field that was driven. An exhaustive audit of all 41 fields of the
+seven emitted dataclasses found four more, every one reachable in `to_dict()` and
+therefore *published*: `CalibrationReport.plays`, `CalibrationBin.plays`,
+`BrierComparison.seed`, and `brier_score`. `brier_score` could be **doubled** with
+the entire suite green - a reported section 7 number wrong by 100%, strictly worse
+than the internal field that produced the rule.
+
+**Declaration twins.** A test asserting a `DECLARED_CONVENTIONS` string verifies
+that the sentence is right, not that the code obeys it; `bootstrap_unit` declared
+id-resampling while the code resampled positions and a string-asserting test
+passed throughout. All ten conventions were driven by mutating the implementation.
+All ten are caught, and the seven with no standing mutation are now permanent
+(D01-D07). `bin_gap_sign` is caught by exactly one test, which is the point: every
+other consumer takes `abs()` and symmetrises the declaration away.
+
+**Verified at this commit**, from `backend` unless stated: module tests **131**,
+harness-integrity tests **4**, `ruff check .` clean, `ruff format --check .`
+**204 files already formatted**, bare `mypy` clean over **196 source files**,
+**55 mutations, 55 caught, 0 survived, 0 harness failures**, full suite **1918
+passed, 32 deselected**. Backlog header recomputes unchanged.
+
+**What I could not verify.**
+
+1. **That the survivor sequence has converged. It has not: 4, 5, 4, 7, 4, 8, 3.**
+   A rising count is evidence the mutations are getting better, not that the code
+   is getting worse - but it is also the shape that, sustained, says the module is
+   not ready. Both readings remain live and I am not picking the flattering one.
+   Each pass has found a *new generator* rather than a repeat, which is the part I
+   cannot distinguish from an improving reviewer.
+
+2. **That the decorative-field audit is exhaustive beyond what was driven.** Four
+   fields were found by inspecting all 41 and confirmed by mutation. A field that
+   is read by an assertion which would pass on a wrong value is still decoration,
+   and that is a different question I did not ask.
+
+3. **That `ast.walk` over `Name` stores covers every rebinding route.** It covers
+   every route that produces a store node, and the opaque calls are refused
+   wholesale. A module that rebinds through an import, a decorator, or a metaclass
+   would still resolve silently. I chose refusal over enumeration precisely because
+   I cannot enumerate this, but the residual is real rather than closed.
+
+4. **That the ten `DECLARED_CONVENTIONS` are the right ten.** I verified each
+   declaration is pinned by a mutation of the behaviour it describes. Whether some
+   property of this machinery *should* be declared and is not is a question no
+   audit of the existing list can answer.

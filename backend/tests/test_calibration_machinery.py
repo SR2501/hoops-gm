@@ -1,0 +1,2552 @@
+"""Tests for the calibration machinery, entirely on synthetic cohorts.
+
+**No test here reads a participation outcome, a cohort database, or a conversion
+rate.** Every play rate below is an argument chosen to be obviously fictional;
+the arithmetic these tests assert is about *denominators*, and the denominators
+used — held-out counts by status — are predictor-side counts already published in
+`docs/adapters/nba-injury-report-cohort-admissibility-2025-26.json`.
+
+A calibration checker that has only ever been shown well-calibrated input is not
+evidence. Each detector below is driven against a cohort built to break it.
+"""
+
+from __future__ import annotations
+
+import copy
+import itertools
+import math
+import operator
+import pickle
+import random
+import statistics
+from collections.abc import Callable
+from fractions import Fraction
+
+import pytest
+
+from hoops_gm.availability.calibration import (
+    CALIBRATION_MACHINERY_VERSION,
+    DECLARED_CONVENTIONS,
+    DEFAULT_PROBABILITY_DECIMALS,
+    WILSON_Z_95,
+    Band,
+    BinningScheme,
+    BrierComparison,
+    CalibrationBin,
+    CalibrationObservation,
+    PairedPrediction,
+    Provenance,
+    RestrictedCohort,
+    bands_from_labels,
+    build_calibration_report,
+    detect_monotonic_reversals,
+    paired_bootstrap_brier,
+    restrict,
+    wilson_interval,
+)
+from hoops_gm.availability.calibration_synthetic import (
+    exact_plays,
+    perfectly_calibrated_cohort,
+    pooled_band_cohort,
+    reversed_band_cohort,
+    sharpened_cohort,
+    status_cohort_with_informative_error,
+    uniformly_biased_cohort,
+)
+from hoops_gm.availability.reliability import type7_quantile
+
+# Held-out direct outcomes by status, from
+# `section_2_admissibility.held_out_direct_outcomes_by_status`. Counts only —
+# how often any of these players actually played is not in this file and is not
+# knowable from it.
+HELD_OUT_COUNTS = {
+    "out": 2963,
+    "available": 467,
+    "questionable": 335,
+    "probable": 92,
+    "doubtful": 83,
+}
+INFORMATIVE = frozenset({"questionable", "probable", "doubtful"})
+# Self-evidently invented. The whole point of the dilution identity is that it
+# does not depend on these, which `test_the_dilution_identity_ignores_the_fictional_rates`
+# drives directly.
+FICTIONAL_RATES = {
+    "out": 0.05,
+    "available": 0.95,
+    "questionable": 0.90,
+    "probable": 0.90,
+    "doubtful": 0.90,
+}
+
+
+def _delta_dilution(delta: float) -> float:
+    """The share the pooled figure dilutes an informative-only error by."""
+
+    informative = sum(HELD_OUT_COUNTS[status] for status in INFORMATIVE)
+    return delta * informative / sum(HELD_OUT_COUNTS.values())
+
+
+# --- Wilson interval, checked against its own definition ---------------------
+
+
+def test_wilson_interval_matches_the_defining_inequality_solved_numerically() -> None:
+    """The closed form is verified against the definition, not against itself.
+
+    The Wilson interval is the set of `p` with `|p_hat - p| <= z*sqrt(p(1-p)/n)`.
+    Bisecting that inequality's boundary is an independent derivation, so a
+    transcription error in the closed form cannot pass by agreeing with a second
+    copy of the same transcription.
+    """
+
+    for plays, observations in ((1, 10), (5, 20), (75, 83), (184, 335), (2963, 3940)):
+        low, high = wilson_interval(plays, observations)
+        p_hat = plays / observations
+
+        def boundary(p: float, p_hat: float = p_hat, n: int = observations) -> float:
+            return (p_hat - p) ** 2 - WILSON_Z_95**2 * p * (1.0 - p) / n
+
+        assert boundary(low) == pytest.approx(0.0, abs=1e-12)
+        assert boundary(high) == pytest.approx(0.0, abs=1e-12)
+        assert _bisect(boundary, 0.0, p_hat) == pytest.approx(low, abs=1e-10)
+        assert _bisect(boundary, p_hat, 1.0) == pytest.approx(high, abs=1e-10)
+
+
+def _bisect(function: Callable[[float], float], low: float, high: float) -> float:
+    for _step in range(200):
+        middle = (low + high) / 2.0
+        if function(low) * function(middle) <= 0:
+            high = middle
+        else:
+            low = middle
+    return (low + high) / 2.0
+
+
+def test_wilson_interval_is_narrower_than_its_continuity_corrected_form() -> None:
+    """The declared convention is the stricter arm, and that is checked, not asserted.
+
+    A continuity-corrected interval is wider, and a wider interval makes v2 §8
+    condition 5 easier to pass. `WILSON_CONTINUITY_CORRECTION = False` is
+    therefore a choice against the author's interest, which is the only kind of
+    convention worth declaring blind.
+    """
+
+    plays, observations = 184, 335
+    low, high = wilson_interval(plays, observations)
+    corrected_low, corrected_high = _continuity_corrected_wilson(plays, observations)
+    assert corrected_low < low
+    assert corrected_high > high
+
+
+def _continuity_corrected_wilson(plays: int, observations: int) -> tuple[float, float]:
+    n = float(observations)
+    p_hat = plays / n
+    z = WILSON_Z_95
+    denominator = 2.0 * (n + z * z)
+    root = z * math.sqrt(z * z - 1.0 / n + 4.0 * n * p_hat * (1.0 - p_hat) + (4.0 * p_hat - 2.0))
+    low = (2.0 * n * p_hat + z * z - root - 1.0) / denominator
+    root_high = z * math.sqrt(
+        z * z - 1.0 / n + 4.0 * n * p_hat * (1.0 - p_hat) - (4.0 * p_hat - 2.0)
+    )
+    high = (2.0 * n * p_hat + z * z + root_high + 1.0) / denominator
+    return max(0.0, low), min(1.0, high)
+
+
+def test_wilson_interval_of_a_zero_play_bin_starts_at_zero() -> None:
+    low, high = wilson_interval(0, 40)
+    assert low == 0.0
+    assert high == pytest.approx(WILSON_Z_95**2 / (40 + WILSON_Z_95**2))
+
+
+def test_wilson_interval_refuses_an_empty_bin() -> None:
+    with pytest.raises(ValueError, match="at least one observation"):
+        wilson_interval(0, 0)
+
+
+def test_wilson_interval_refuses_more_plays_than_observations() -> None:
+    with pytest.raises(ValueError, match="outside"):
+        wilson_interval(11, 10)
+
+
+# --- The cohort no detector may fire on --------------------------------------
+
+
+def test_a_perfectly_calibrated_cohort_fires_no_detector() -> None:
+    """False positives are the failure mode that discredits the whole apparatus."""
+
+    rows = perfectly_calibrated_cohort(
+        {"low": 400, "mid": 400, "high": 400},
+        {"low": 0.2, "mid": 0.5, "high": 0.8},
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(0.0, abs=1e-12)
+    assert report.expected_calibration_error == pytest.approx(0.0, abs=1e-12)
+    assert report.maximum_calibration_error == pytest.approx(0.0, abs=1e-12)
+    assert report.bins_outside_wilson_interval == ()
+    assert report.bins_below_population_floor == ()
+    assert len(report.bins) == 3
+
+
+# --- Overconfidence and underconfidence --------------------------------------
+
+
+def test_an_overconfident_model_is_invisible_to_calibration_in_the_large() -> None:
+    """The reason a pooled CITL is not sufficient, shown rather than argued.
+
+    A symmetrically overconfident model over-predicts as much as it
+    under-predicts, so its calibration-in-the-large is exactly zero while every
+    bin it emits is rejected by its own data.
+    """
+
+    rows = sharpened_cohort(
+        {"low": 400, "mid": 400, "high": 400},
+        {"low": 0.2, "mid": 0.5, "high": 0.8},
+        factor=1.5,
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(0.0, abs=1e-12)
+    assert report.expected_calibration_error == pytest.approx(0.1, abs=1e-9)
+    assert set(report.bins_outside_wilson_interval) == {"p=0.050000", "p=0.950000"}
+
+
+def test_an_underconfident_model_is_detected_by_the_binned_table() -> None:
+    rows = sharpened_cohort(
+        {"low": 400, "mid": 400, "high": 400},
+        {"low": 0.2, "mid": 0.5, "high": 0.8},
+        factor=0.5,
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(0.0, abs=1e-12)
+    assert report.expected_calibration_error == pytest.approx(0.1, abs=1e-9)
+    assert set(report.bins_outside_wilson_interval) == {"p=0.350000", "p=0.650000"}
+
+
+def test_a_uniform_bias_reproduces_itself_as_calibration_in_the_large() -> None:
+    """Pins the sign convention: positive bias over-predicts play."""
+
+    rows = uniformly_biased_cohort(
+        {"low": 400, "high": 400},
+        {"low": 0.3, "high": 0.6},
+        bias=0.08,
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(0.08, abs=1e-12)
+    assert report.predicted_mean > report.observed_rate
+
+
+def test_a_negative_bias_under_predicts_play() -> None:
+    rows = uniformly_biased_cohort(
+        {"low": 400, "high": 400},
+        {"low": 0.3, "high": 0.6},
+        bias=-0.08,
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(-0.08, abs=1e-12)
+
+
+def test_a_bias_that_would_leave_the_unit_interval_is_refused() -> None:
+    with pytest.raises(ValueError, match="outside"):
+        uniformly_biased_cohort({"high": 100}, {"high": 0.95}, bias=0.2)
+
+
+# --- The finding that motivated preregistration v3 ---------------------------
+
+
+def test_the_published_holdout_is_one_eighth_informative() -> None:
+    """51/394 of the held-out partition carries an informative status.
+
+    Recomputed here from the published counts rather than copied from v3, so the
+    share this suite reasons about cannot silently disagree with the artefact.
+    """
+
+    total = sum(HELD_OUT_COUNTS.values())
+    informative = sum(HELD_OUT_COUNTS[status] for status in INFORMATIVE)
+    assert total == 3940
+    assert informative == 510
+    assert informative / total == pytest.approx(51 / 394)
+    assert informative / total == pytest.approx(0.1294416, abs=1e-7)
+
+
+def test_pooled_calibration_dilutes_an_informative_error_by_that_share() -> None:
+    """`pooled CITL = informative_share x delta`, exactly.
+
+    This is the arithmetic behind v3 §4: a model exactly right on the 87% of
+    near-deterministic rows and wrong by delta on every informative row moves the
+    pooled figure by only delta times one eighth.
+    """
+
+    delta = -0.77
+    rows = status_cohort_with_informative_error(
+        counts_by_status=HELD_OUT_COUNTS,
+        fictional_rate_by_status=FICTIONAL_RATES,
+        informative_statuses=INFORMATIVE,
+        informative_error=delta,
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.calibration_in_the_large == pytest.approx(delta * 510 / 3940, abs=1e-12)
+    assert report.calibration_in_the_large == pytest.approx(_delta_dilution(delta), abs=1e-12)
+
+
+def test_v2_condition_three_survives_a_seventy_seven_point_error_and_fails_at_seventy_eight() -> (
+    None
+):
+    """The threshold is `delta > 197/255 = 0.7725490...`, driven both sides.
+
+    v2 §8 condition 3 caps |CITL| at 0.10. Against this holdout's composition
+    that needs the model to be wrong by 77 percentage points on *every*
+    informative row, which is what "close to unfailable" means.
+    """
+
+    threshold = 0.10 * 3940 / 510
+    assert threshold == pytest.approx(197 / 255)
+    assert threshold == pytest.approx(0.7725490196, abs=1e-9)
+
+    for delta, expected_pass in ((-0.77, True), (-0.78, False), (-1.0, False)):
+        rows = status_cohort_with_informative_error(
+            counts_by_status=HELD_OUT_COUNTS,
+            fictional_rate_by_status={**FICTIONAL_RATES, **dict.fromkeys(INFORMATIVE, 1.0)},
+            informative_statuses=INFORMATIVE,
+            informative_error=delta,
+        )
+        report = build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+        assert (abs(report.calibration_in_the_large) <= 0.10) is expected_pass
+
+
+def test_restricting_to_the_informative_statuses_reports_the_undiluted_error() -> None:
+    """v3 §4's condition 9, computed. Restricted CITL is delta itself."""
+
+    delta = -0.77
+    rows = status_cohort_with_informative_error(
+        counts_by_status=HELD_OUT_COUNTS,
+        fictional_rate_by_status=FICTIONAL_RATES,
+        informative_statuses=INFORMATIVE,
+        informative_error=delta,
+    )
+    restricted = build_calibration_report(
+        rows,
+        provenance=Provenance.PROPOSED_V3_NOT_BOUND,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"informative": "yes"},
+    )
+    assert restricted.observations == 510
+    assert restricted.calibration_in_the_large == pytest.approx(delta, abs=1e-12)
+    assert abs(restricted.calibration_in_the_large) > 0.10
+
+
+def test_the_dilution_identity_ignores_the_fictional_rates() -> None:
+    """The claim is about denominators, so varying the invented rates changes nothing.
+
+    This is what makes the whole exercise legal pre-unblind: no real conversion
+    rate is needed to establish it, and none is used.
+    """
+
+    delta = -0.5
+    results = []
+    for informative_rate, out_rate, available_rate in (
+        (0.55, 0.05, 0.95),
+        (0.70, 0.40, 0.60),
+        (0.99, 0.99, 0.01),
+    ):
+        rows = status_cohort_with_informative_error(
+            counts_by_status=HELD_OUT_COUNTS,
+            fictional_rate_by_status={
+                "out": out_rate,
+                "available": available_rate,
+                **dict.fromkeys(INFORMATIVE, informative_rate),
+            },
+            informative_statuses=INFORMATIVE,
+            informative_error=delta,
+        )
+        report = build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+        results.append(report.calibration_in_the_large)
+    assert results == pytest.approx([delta * 510 / 3940] * 3, abs=1e-12)
+
+
+# --- Masking: the case the pooled table cannot see at all --------------------
+
+
+def _masked_band_cohort(*, offset: float = 0.0) -> list[CalibrationObservation]:
+    return pooled_band_cohort(
+        band_probability_offset=offset,
+        counts_by_status=HELD_OUT_COUNTS,
+        fictional_rate_by_status={
+            "out": 0.02,
+            "doubtful": 0.90,
+            "questionable": 0.55,
+            "probable": 0.85,
+            "available": 0.95,
+        },
+        band_by_status={
+            "out": "unlikely",
+            "doubtful": "unlikely",
+            "questionable": "uncertain",
+            "probable": "likely",
+            "available": "likely",
+        },
+    )
+
+
+def test_a_band_model_emitting_each_realised_band_rate_clears_the_pooled_conditions() -> None:
+    """A three-band model can pass v2 §8's pooled checks while one status is 86 points out.
+
+    Every emitted probability is its own band's realised rate, so each bin gap is
+    exactly zero: condition 3 passes at 0.0, condition 4 passes, condition 5
+    passes, condition 7 finds no reversal. The `doubtful` rows inside the
+    `unlikely` band are predicted at the band rate, which `out` dominates
+    2,963 to 83.
+
+    Read the scope in the name. This is the **zero-displacement** case, and its
+    exact zeros are definitional - see
+    `test_the_pooled_zeros_are_definitional_and_this_test_says_so`. A real fit
+    takes its band rate from a different partition, and
+    `test_a_band_probability_displaced_by_one_point_starts_failing_condition_five`
+    shows condition 5 firing about 0.7pp away. An earlier name for this test said
+    "clears every computable pooled condition", which read as a claim about band
+    models generally rather than about this one.
+
+    Synthetic. It shows the condition set is *satisfiable* by such a model, not
+    that the real fit will be one.
+    """
+
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert abs(report.calibration_in_the_large) == pytest.approx(0.0, abs=1e-12)
+    assert report.expected_calibration_error == pytest.approx(0.0, abs=1e-12)
+    assert report.bins_below_population_floor == ()
+    assert report.bins_outside_wilson_interval == ()
+    bands = bands_from_labels(rows, label_key="band", order=("unlikely", "uncertain", "likely"))
+    assert detect_monotonic_reversals(bands) == ()
+
+
+def test_subgroup_restriction_exposes_the_status_the_pooled_table_masked() -> None:
+    rows = _masked_band_cohort()
+    restricted = build_calibration_report(
+        rows,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"status": "doubtful"},
+    )
+    assert restricted.observations == 83
+    assert restricted.observed_rate == pytest.approx(75 / 83)
+    assert restricted.calibration_in_the_large < -0.8
+    assert restricted.bins_outside_wilson_interval == tuple(row.label for row in restricted.bins)
+
+
+# --- Provenance guard --------------------------------------------------------
+
+
+def test_a_restricted_report_may_not_claim_v2_preregistration() -> None:
+    """v2 §7 pre-registers a pooled table only, so a restricted one is not it.
+
+    True whatever the owner decides about v3, which is why the guard keys on the
+    presence of a restriction rather than on a mutable "is v3 bound yet" flag.
+    """
+
+    rows = perfectly_calibrated_cohort({"a": 100, "b": 100}, {"a": 0.3, "b": 0.7})
+    with pytest.raises(ValueError, match="may not claim PREREGISTERED_V2"):
+        build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+            restriction={"group": "a"},
+        )
+
+
+def test_a_restricted_report_may_be_labelled_proposed_or_post_hoc() -> None:
+    rows = perfectly_calibrated_cohort({"a": 100, "b": 100}, {"a": 0.3, "b": 0.7})
+    for provenance in (Provenance.PROPOSED_V3_NOT_BOUND, Provenance.POST_HOC_DIAGNOSTIC):
+        report = build_calibration_report(
+            rows,
+            provenance=provenance,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+            restriction={"group": "a"},
+        )
+        assert report.restriction == (("group", "a"),)
+        assert report.observations == 100
+
+
+def test_a_pooled_report_may_claim_v2_preregistration() -> None:
+    rows = perfectly_calibrated_cohort({"a": 100, "b": 100}, {"a": 0.3, "b": 0.7})
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction is None
+
+
+# --- Restriction semantics ---------------------------------------------------
+
+
+def test_restriction_requires_every_label_to_match() -> None:
+    """`all`, not `any`: a restriction that widens under a second key is not one."""
+
+    rows = [
+        CalibrationObservation("a", 0.5, True, {"status": "doubtful", "era": "legacy"}),
+        CalibrationObservation("b", 0.5, False, {"status": "doubtful", "era": "short_lead"}),
+        CalibrationObservation("c", 0.5, True, {"status": "out", "era": "legacy"}),
+    ]
+    both = restrict(rows, status="doubtful", era="legacy")
+    assert [row.observation_id for row in both] == ["a"]
+
+
+def test_restriction_to_an_absent_subgroup_is_refused_rather_than_returning_nothing() -> None:
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    with pytest.raises(ValueError, match="at least one observation after restriction"):
+        build_calibration_report(
+            rows,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+            restriction={"group": "nonexistent"},
+        )
+
+
+# --- Population floor and Wilson containment ---------------------------------
+
+
+def test_thin_bins_are_named_against_the_population_floor() -> None:
+    """v2 §8 condition 4: a bin under 20 observations cannot support its own rate."""
+
+    rows = perfectly_calibrated_cohort(
+        {"thin": 8, "fat": 400},
+        {"thin": 0.25, "fat": 0.75},
+    )
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.EQUAL_WIDTH,
+        equal_width_bins=10,
+    )
+    assert [row.observations for row in report.bins] == [8, 400]
+    assert report.bins_below_population_floor == ("[0.200,0.300)",)
+
+
+def test_a_bin_whose_emitted_probability_its_own_data_rejects_is_named() -> None:
+    """v2 §8 condition 5, driven."""
+
+    rows = uniformly_biased_cohort({"a": 500}, {"a": 0.5}, bias=0.2)
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.bins_outside_wilson_interval == ("p=0.700000",)
+
+
+# --- Monotonic reversal ------------------------------------------------------
+
+
+def test_a_monotonic_reversal_across_declared_bands_is_detected() -> None:
+    """v2 §8 condition 7. v1's held-out `probable` and `available` reversed."""
+
+    rows = reversed_band_cohort(
+        {"unlikely": 200, "uncertain": 200, "likely": 200},
+        {"unlikely": 0.20, "uncertain": 0.50, "likely": 0.80},
+        {"unlikely": 0.20, "uncertain": 0.80, "likely": 0.50},
+    )
+    bands = bands_from_labels(rows, label_key="group", order=("unlikely", "uncertain", "likely"))
+    assert detect_monotonic_reversals(bands) == (("uncertain", "likely"),)
+
+
+def test_no_reversal_is_reported_when_predictions_and_outcomes_move_together() -> None:
+    rows = perfectly_calibrated_cohort(
+        {"unlikely": 200, "uncertain": 200, "likely": 200},
+        {"unlikely": 0.2, "uncertain": 0.5, "likely": 0.8},
+    )
+    bands = bands_from_labels(rows, label_key="group", order=("unlikely", "uncertain", "likely"))
+    assert detect_monotonic_reversals(bands) == ()
+
+
+def test_bands_are_summarised_in_the_declared_order_not_alphabetically() -> None:
+    """The prior ordering is supplied, because inferring it hides the reversal.
+
+    The declared order below is deliberately not alphabetical: under it the three
+    bands step consistently, while in alphabetical order the same three bands
+    contain a reversal. If the order were inferred rather than declared, this
+    cohort would report a reversal that its own prior ordering does not contain.
+    """
+
+    rows = reversed_band_cohort(
+        {"beta": 200, "alpha": 200, "gamma": 200},
+        {"beta": 0.5, "alpha": 0.2, "gamma": 0.8},
+        {"beta": 0.9, "alpha": 0.2, "gamma": 0.5},
+    )
+    declared = bands_from_labels(rows, label_key="group", order=("beta", "alpha", "gamma"))
+    assert [band.label for band in declared] == ["beta", "alpha", "gamma"]
+    assert detect_monotonic_reversals(declared) == ()
+
+    alphabetical = bands_from_labels(rows, label_key="group", order=("alpha", "beta", "gamma"))
+    assert detect_monotonic_reversals(alphabetical) == (("beta", "gamma"),)
+
+
+def test_a_band_with_no_members_is_omitted_rather_than_invented() -> None:
+    rows = perfectly_calibrated_cohort({"present": 40}, {"present": 0.5})
+    bands = bands_from_labels(rows, label_key="group", order=("present", "absent"))
+    assert [band.label for band in bands] == ["present"]
+
+
+def test_reversal_detection_needs_at_least_two_bands() -> None:
+    assert detect_monotonic_reversals([Band("only", 0.5, 0.5, 10)]) == ()
+
+
+# --- Expected calibration error ----------------------------------------------
+
+
+def test_expected_calibration_error_is_weighted_by_population_not_by_bin() -> None:
+    """The same volume-weighting mistake as a raw-percentage fantasy category.
+
+    A bin holding 20 observations must not count as much as one holding 2,000.
+    An unweighted mean over bins here would report 0.25; the weighted figure is
+    0.0099..., and the difference is the whole reason the naive version is wrong.
+    """
+
+    rows = [
+        *uniformly_biased_cohort({"tiny": 20}, {"tiny": 0.5}, bias=0.5),
+        *perfectly_calibrated_cohort({"huge": 2000}, {"huge": 0.5}),
+    ]
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    unweighted = sum(abs(row.gap) for row in report.bins) / len(report.bins)
+    assert unweighted == pytest.approx(0.25, abs=1e-12)
+    assert report.expected_calibration_error == pytest.approx(0.5 * 20 / 2020, abs=1e-12)
+    assert report.maximum_calibration_error == pytest.approx(0.5, abs=1e-12)
+
+
+# --- Binning -----------------------------------------------------------------
+
+
+def test_distinct_probability_binning_survives_floating_point_drift() -> None:
+    """Two arithmetically equal rates that differ by an ulp are one bin, not two.
+
+    Splitting them would halve each bin's population and could fail v2 §8
+    condition 4 for a purely numerical reason — a wrong veto, which is as bad as
+    a wrong pass.
+    """
+
+    assert 0.1 + 0.2 != 0.3
+    rows = [
+        CalibrationObservation(f"drift#{index}", 0.1 + 0.2, index % 2 == 0) for index in range(30)
+    ] + [CalibrationObservation(f"exact#{index}", 0.3, index % 2 == 0) for index in range(30)]
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert len(report.bins) == 1
+    assert report.bins[0].observations == 60
+
+
+def test_equal_width_binning_requires_an_explicit_bin_count() -> None:
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    with pytest.raises(ValueError, match="equal_width_bins"):
+        build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.EQUAL_WIDTH,
+        )
+
+
+def test_equal_width_binning_closes_the_final_bin_on_one() -> None:
+    rows = [CalibrationObservation(f"certain#{index}", 1.0, True) for index in range(25)]
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.EQUAL_WIDTH,
+        equal_width_bins=10,
+    )
+    assert [row.label for row in report.bins] == ["[0.900,1.000]"]
+
+
+# --- Log loss ----------------------------------------------------------------
+
+
+def test_log_loss_reports_how_many_rows_the_clip_touched() -> None:
+    """A finite log loss must never hide that it is finite only by convention."""
+
+    rows = [
+        CalibrationObservation("confident-miss", 0.0, True),
+        *[CalibrationObservation(f"ordinary#{i}", 0.5, i % 2 == 0) for i in range(9)],
+    ]
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.log_loss_clipped_observations == 1
+    assert math.isfinite(report.log_loss)
+    assert report.log_loss > 3.0
+
+
+def test_log_loss_reports_no_clipping_when_no_prediction_is_extreme() -> None:
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.log_loss_clipped_observations == 0
+    assert report.log_loss == pytest.approx(math.log(2.0), abs=1e-12)
+
+
+# --- Paired bootstrap --------------------------------------------------------
+
+
+def _paired(rows: list[CalibrationObservation], baseline: float) -> list[PairedPrediction]:
+    return [
+        PairedPrediction(
+            observation_id=row.observation_id,
+            candidate_predicted=row.predicted,
+            baseline_predicted=baseline,
+            played=row.played,
+        )
+        for row in rows
+    ]
+
+
+def test_paired_bootstrap_interval_clears_zero_for_a_genuinely_better_candidate() -> None:
+    rows = perfectly_calibrated_cohort(
+        {"low": 300, "high": 300},
+        {"low": 0.1, "high": 0.9},
+    )
+    comparison = paired_bootstrap_brier(_paired(rows, 0.5), resamples=400, seed=250119)
+    assert comparison.candidate_brier < comparison.baseline_brier
+    assert comparison.interval_high < 0.0
+    assert comparison.candidate_beats_baseline is True
+
+
+def test_paired_bootstrap_does_not_clear_zero_for_an_identical_candidate() -> None:
+    rows = perfectly_calibrated_cohort({"only": 300}, {"only": 0.5})
+    comparison = paired_bootstrap_brier(_paired(rows, 0.5), resamples=400, seed=250119)
+    assert comparison.mean_difference == pytest.approx(0.0, abs=1e-12)
+    assert comparison.interval_high == pytest.approx(0.0, abs=1e-12)
+    assert comparison.candidate_beats_baseline is False
+
+
+def test_paired_bootstrap_is_deterministic_for_a_fixed_seed() -> None:
+    rows = perfectly_calibrated_cohort({"low": 120, "high": 120}, {"low": 0.2, "high": 0.8})
+    pairs = _paired(rows, 0.5)
+    first = paired_bootstrap_brier(pairs, resamples=200, seed=250119)
+    second = paired_bootstrap_brier(pairs, resamples=200, seed=250119)
+    different = paired_bootstrap_brier(pairs, resamples=200, seed=999)
+    assert first.interval_low == second.interval_low
+    assert first.interval_high == second.interval_high
+    assert (first.interval_low, first.interval_high) != (
+        different.interval_low,
+        different.interval_high,
+    )
+
+
+def test_paired_bootstrap_refuses_an_empty_cohort() -> None:
+    with pytest.raises(ValueError, match="at least one observation"):
+        paired_bootstrap_brier([], resamples=10, seed=1)
+
+
+def test_paired_bootstrap_records_the_correlation_caveat_beside_the_number() -> None:
+    rows = perfectly_calibrated_cohort({"only": 60}, {"only": 0.5})
+    payload = paired_bootstrap_brier(_paired(rows, 0.5), resamples=50, seed=1).to_dict()
+    assert "within-player" in str(payload["interval_caveat"])
+
+
+# --- Emitted payload ---------------------------------------------------------
+
+
+def test_every_report_carries_its_provenance_version_and_conventions() -> None:
+    """ "Version the output" — the Model gate bullet that does bite here."""
+
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    payload = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    ).to_dict()
+    assert payload["machinery_version"] == CALIBRATION_MACHINERY_VERSION
+    assert payload["provenance"] == "preregistered_v2"
+    assert payload["binning"] == "distinct_emitted_probability"
+    assert payload["restriction"] is None
+    conventions = payload["declared_conventions"]
+    assert isinstance(conventions, dict)
+    assert "no continuity correction" in conventions["wilson_interval"]
+    assert str(DEFAULT_PROBABILITY_DECIMALS) in conventions["probability_decimals"]
+
+
+def test_a_restricted_payload_records_what_it_was_restricted_to() -> None:
+    rows = perfectly_calibrated_cohort({"a": 40, "b": 40}, {"a": 0.3, "b": 0.7})
+    payload = build_calibration_report(
+        rows,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"group": "b"},
+    ).to_dict()
+    assert payload["restriction"] == [["group", "b"]]
+    assert payload["provenance"] == "post_hoc_diagnostic"
+
+
+# --- Input validation and generator determinism ------------------------------
+
+
+def test_a_prediction_outside_zero_one_is_refused() -> None:
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        CalibrationObservation("bad", 1.5, True)
+
+
+def test_a_non_finite_prediction_is_refused() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        CalibrationObservation("bad", float("nan"), True)
+
+
+def test_exact_plays_rounds_half_up_rather_than_to_even() -> None:
+    """`round()` would send 0.5 to 0 and 1.5 to 2, which no reader expects."""
+
+    assert exact_plays(1, 0.5) == 1
+    assert exact_plays(3, 0.5) == 2
+    assert exact_plays(2963, 0.02) == 59
+    assert exact_plays(83, 0.90) == 75
+
+
+def test_synthetic_cohorts_are_reproducible_byte_for_byte() -> None:
+    first = status_cohort_with_informative_error(
+        counts_by_status=HELD_OUT_COUNTS,
+        fictional_rate_by_status=FICTIONAL_RATES,
+        informative_statuses=INFORMATIVE,
+        informative_error=-0.5,
+    )
+    second = status_cohort_with_informative_error(
+        counts_by_status=HELD_OUT_COUNTS,
+        fictional_rate_by_status=FICTIONAL_RATES,
+        informative_statuses=INFORMATIVE,
+        informative_error=-0.5,
+    )
+    assert first == second
+    assert len(first) == 3940
+
+
+def test_an_error_pushing_a_prediction_out_of_range_is_refused_not_clipped() -> None:
+    with pytest.raises(ValueError, match="leaves"):
+        status_cohort_with_informative_error(
+            counts_by_status=HELD_OUT_COUNTS,
+            fictional_rate_by_status=FICTIONAL_RATES,
+            informative_statuses=INFORMATIVE,
+            informative_error=0.5,
+        )
+
+
+# --- Findings from the independent review at 5032bf1 -------------------------
+#
+# Four mutations written by a reviewer who was not the author survived the suite
+# above. Every one is pinned here, and two of them were closed in the module
+# rather than only in a test, because a survivor that is merely tested can be
+# reintroduced by the next person who reads the test as optional.
+
+
+def test_the_pooled_zeros_are_definitional_and_this_test_says_so() -> None:
+    """The masked band's exact zeros are a restatement of the construction.
+
+    An independent review was right that reporting `CITL == 0.0` and `ECE == 0.0`
+    as though they were measurements invites a reader to treat a construction as
+    a result. At offset zero every emitted probability **is** its bin's realised
+    rate, so a zero gap is arithmetic, not evidence. This test exists to make
+    that explicit in the suite rather than only in a docstring, and the honest
+    version of the finding is driven by the two tests after it.
+    """
+
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        rows,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    for row in report.bins:
+        assert row.predicted_mean == pytest.approx(row.observed_rate, abs=1e-12)
+        assert row.gap == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_band_probability_displaced_by_one_point_starts_failing_condition_five() -> None:
+    """The non-circular form: a real fit's band rate comes from another partition.
+
+    A model fitted on development emits a band probability that is *not* the
+    held-out band rate, so the interesting question is how far it may drift
+    before a pooled condition notices. The `unlikely` band's 3,046 observations
+    make condition 5 tight at band level, which is a real defence and one the
+    first write-up of this finding did not mention.
+
+    What does **not** move with the offset is the `doubtful` error: it stays
+    around 86 points at every displacement, because condition 5 is protecting the
+    band, not the status inside it.
+    """
+
+    tolerated = build_calibration_report(
+        _masked_band_cohort(offset=0.005),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert tolerated.bins_outside_wilson_interval == ()
+
+    caught = build_calibration_report(
+        _masked_band_cohort(offset=0.02),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    unlikely = next(row for row in caught.bins if row.observations == 3046)
+    assert unlikely.label in caught.bins_outside_wilson_interval
+
+    for offset in (0.0, 0.005, 0.02):
+        restricted = build_calibration_report(
+            _masked_band_cohort(offset=offset),
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+            restriction={"status": "doubtful"},
+        )
+        assert restricted.calibration_in_the_large < -0.8
+
+
+def test_pooling_puts_the_two_statuses_in_one_bin_whatever_the_invented_rates() -> None:
+    """The part of the masking finding that is a theorem, not a construction.
+
+    Distinct-emitted-probability binning partitions rows by *predicted value*.
+    Statuses sharing a band share a predicted value. So no statistic computed on
+    that partition can separate them - at any offset, at any rates. Driven across
+    three unrelated rate assignments so the claim cannot be an artefact of the
+    numbers chosen, which is the guarantee the dilution identity already had and
+    this finding did not.
+    """
+
+    for doubtful_rate in (0.10, 0.50, 0.90):
+        rows = pooled_band_cohort(
+            counts_by_status=HELD_OUT_COUNTS,
+            fictional_rate_by_status={
+                "out": 0.02,
+                "doubtful": doubtful_rate,
+                "questionable": 0.55,
+                "probable": 0.85,
+                "available": 0.95,
+            },
+            band_by_status={
+                "out": "unlikely",
+                "doubtful": "unlikely",
+                "questionable": "uncertain",
+                "probable": "likely",
+                "available": "likely",
+            },
+        )
+        report = build_calibration_report(
+            rows,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+        assert len(report.bins) == 3
+        assert report.bins_outside_wilson_interval == ()
+        unlikely = next(row for row in report.bins if row.observations == 3046)
+        assert unlikely.observations == HELD_OUT_COUNTS["out"] + HELD_OUT_COUNTS["doubtful"]
+
+
+def test_restriction_excludes_a_row_that_lacks_the_restricted_key() -> None:
+    """Reviewer mutation N02: treating a missing key as a match, and surviving.
+
+    A restriction that keeps unlabelled rows is not a restriction. The mutation
+    turned `restrict()` into a near-no-op and every test above stayed green,
+    which means nothing was checking the one property that makes the operation
+    worth having.
+    """
+
+    labelled = perfectly_calibrated_cohort({"a": 30}, {"a": 0.5})
+    unlabelled = [
+        CalibrationObservation(
+            observation_id=f"bare-{index}",
+            predicted=0.5,
+            played=index % 2 == 0,
+            labels={},
+        )
+        for index in range(30)
+    ]
+    kept = restrict([*labelled, *unlabelled], group="a")
+    assert len(kept) == 30
+    assert all(row.labels.get("group") == "a" for row in kept)
+    assert not any(row.observation_id.startswith("bare-") for row in kept)
+
+
+def test_wilson_z_is_the_standard_normal_upper_975th_percentile() -> None:
+    """Reviewer mutation N01: swap the 95% constant for the 90% one, and survive.
+
+    Everything else derived the interval from `WILSON_Z_95`, so the constant was
+    self-referential: it could be any number and the suite would agree with
+    itself. Pinned against an independent source rather than against a literal I
+    typed twice.
+    """
+
+    assert pytest.approx(statistics.NormalDist().inv_cdf(0.975), abs=1e-12) == WILSON_Z_95
+
+
+def test_an_inverted_bootstrap_interval_is_refused_rather_than_reported() -> None:
+    """Reviewer mutation N05: swap the 2.5% and 97.5% quantiles, and survive.
+
+    v2 §8 condition 2 reads the **upper** endpoint, so an inverted pair converts
+    a straddling interval into a pass - a loosening, in the direction that
+    flatters the candidate. Closed in `BrierComparison.__post_init__` rather than
+    only here, because an invariant of the object belongs on the object.
+    """
+
+    with pytest.raises(ValueError, match="inverted"):
+        BrierComparison(
+            candidate_brier=0.2,
+            baseline_brier=0.2,
+            mean_difference=0.0,
+            interval_low=0.05,
+            interval_high=-0.05,
+            resamples=10,
+            seed=1,
+        )
+
+
+def test_a_straddling_interval_does_not_claim_the_candidate_wins() -> None:
+    comparison = BrierComparison(
+        candidate_brier=0.2,
+        baseline_brier=0.2,
+        mean_difference=-0.001,
+        interval_low=-0.05,
+        interval_high=0.05,
+        resamples=10,
+        seed=1,
+    )
+    assert comparison.interval_low < 0.0
+    assert comparison.candidate_beats_baseline is False
+
+
+def test_pre_filtered_rows_cannot_be_presented_as_a_pooled_v2_report() -> None:
+    """The review's highest-severity finding, closed.
+
+    The guard used to key on the `restriction` **parameter**, so narrowing the
+    rows first with this module's own `restrict()` produced an 83-row
+    `doubtful`-only table stamped `preregistered_v2` and `restriction: None` -
+    indistinguishable from a legitimate pooled report. Not an exotic bypass: it
+    is the obvious way to use the primitive this module deliberately promotes.
+    """
+
+    rows = _masked_band_cohort()
+    only_doubtful = restrict(rows, status="doubtful")
+    with pytest.raises(ValueError, match="PREREGISTERED_V2"):
+        build_calibration_report(
+            only_doubtful,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_pre_filtered_report_records_what_it_was_filtered_on() -> None:
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        restrict(rows, status="doubtful"),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction == (("status", "doubtful"),)
+    assert report.observations == 83
+
+
+def test_a_pre_filter_and_a_parameter_restriction_are_both_recorded() -> None:
+    """Pre-filter on the LATER key so insertion order and sorted order differ.
+
+    A reviewer's mutation dropped the `sorted()` from the recorded restriction
+    and all 61 tests stayed green, because this test used to pre-filter on
+    `band` and pass `status` as the parameter - insertion order was already
+    sorted order, so the assertion could not tell the two apart. Filtering on
+    `status` first makes insertion order `(status, band)` and sorted order
+    `(band, status)`, so the assertion now fails if the sort is removed.
+    """
+
+    rows = _masked_band_cohort()
+    report = build_calibration_report(
+        restrict(rows, status="doubtful"),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"band": "unlikely"},
+    )
+    assert report.restriction == (("band", "unlikely"), ("status", "doubtful"))
+    assert report.observations == 83
+
+
+def test_an_unlabelled_restrict_call_is_not_treated_as_a_restriction() -> None:
+    """`restrict(rows)` narrows nothing, so it must not block a pooled claim."""
+
+    rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
+    report = build_calibration_report(
+        restrict(rows),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction is None
+    assert report.observations == 40
+
+
+def test_the_wilson_half_width_at_the_informative_counts_is_bounded_without_a_rate() -> None:
+    """What condition 5 can promise per status, stated in a blind-safe form.
+
+    The model card claims per-bin Wilson coverage gives real protection where a
+    status gets its own bin. The reviewer computed ~0.053 at `questionable`'s
+    *realised* rate - but that rate is an outcome nobody here may know, so the
+    claim has to be made at the worst case, `p_hat = 0.5`, which maximises the
+    half-width and depends on nothing but the count.
+    """
+
+    worst_case = {
+        status: (lambda bounds: (bounds[1] - bounds[0]) / 2.0)(
+            wilson_interval(HELD_OUT_COUNTS[status] // 2, HELD_OUT_COUNTS[status])
+        )
+        for status in ("questionable", "probable", "doubtful", "available")
+    }
+    assert worst_case["questionable"] == pytest.approx(0.0533, abs=5e-4)
+    assert worst_case["questionable"] < 0.10
+    assert worst_case["available"] == pytest.approx(0.0452, abs=5e-4)
+    assert worst_case["available"] < 0.10
+    # Mind the quantifier. For the two smaller statuses the supremum exceeds
+    # 0.10, which establishes that no guarantee can be ISSUED without knowing
+    # the rate - not that protection is absent. See the test below for the
+    # narrow band of rates where it actually fails.
+    assert worst_case["probable"] > 0.10
+    assert worst_case["doubtful"] > 0.10
+
+
+def test_where_condition_five_actually_stops_protecting_probable_and_doubtful() -> None:
+    """The existential arm of the previous test, made specific.
+
+    Saying `probable` and `doubtful` are "not protected by a 0.10 threshold" is
+    a quantifier error: their worst case exceeds 0.10, so a guarantee cannot be
+    issued blind, but the region where protection genuinely fails is narrow and
+    is derivable from the counts alone. A reviewer caught the unqualified form
+    in the model card's change log; this pins the corrected version.
+
+    Blind-safe: it enumerates every arithmetically possible play count and
+    reports which ones would breach. It reads no outcome and asserts nothing
+    about which count is real.
+    """
+
+    def breaching_rates(observations: int) -> list[float]:
+        breaching = []
+        for plays in range(observations + 1):
+            low, high = wilson_interval(plays, observations)
+            if (high - low) / 2.0 >= 0.10:
+                breaching.append(plays / observations)
+        return breaching
+
+    probable = breaching_rates(HELD_OUT_COUNTS["probable"])
+    doubtful = breaching_rates(HELD_OUT_COUNTS["doubtful"])
+
+    # `probable` fails only in a ~4-point window centred on a coin flip - for a
+    # status whose label means "likely to play".
+    assert len(probable) == 5
+    assert min(probable) == pytest.approx(0.478, abs=5e-4)
+    assert max(probable) == pytest.approx(0.522, abs=5e-4)
+
+    # `doubtful` is wider, and likewise centred where a status meaning
+    # "unlikely to play" is least expected to sit.
+    assert min(doubtful) == pytest.approx(0.349, abs=5e-4)
+    assert max(doubtful) == pytest.approx(0.651, abs=5e-4)
+
+    # And the statuses with a sub-0.10 supremum have no breaching rate at all.
+    assert breaching_rates(HELD_OUT_COUNTS["questionable"]) == []
+    assert breaching_rates(HELD_OUT_COUNTS["available"]) == []
+
+
+def test_the_g_league_share_of_doubtful_implies_a_non_g_league_floor_near_sixty_eight() -> None:
+    """v3 section 6's own share does not reach v3 section 6's own headroom figure.
+
+    v3 states that 41 of 221 season-wide `doubtful` observations are G League
+    recall cases (18.6%), and separately that on health reasons alone the
+    held-out `doubtful` floor is "~74", giving "2.5x" headroom over v2 section 8
+    condition 6's minimum of 30. Applying the first number to the held-out count
+    gives ~68 and 2.25x - 2.27x if the count is rounded to a whole player
+    first - not 74 and 2.5x. The card leads with 2.25x; both are asserted below.
+
+    **This test was renamed.** It said `health_only`, and it computes no such
+    thing: removing a G League share removes G League and leaves `Rest`, which
+    is a coach's decision on the same footing as the recall it just excluded.
+    The figure is a **non-G-League** floor, and calling it health-only adopted a
+    label this arithmetic does not establish - the same defect a `data-engineer`
+    lane's reviewer independently found in v3 section 6 itself. The name is the
+    part a later reader quotes, so the name is what had to change.
+
+    **What this asserts is an estimate, not a count**, and the two disagree. A
+    direct held-out reason breakdown reported afterwards puts G League at 10 of
+    83 - 12.05%, not 18.55% - so the cohort-wide share does not transfer to this
+    partition, and the transfer was an assumption this test made silently. The
+    direct counts are not on this branch and are deliberately not asserted here.
+
+    Both are predictor-side counts, so this is checkable under the blind. The
+    conclusion is unchanged either way - condition 6 clears comfortably - which
+    is why the model card reports this to the architect rather than treating it
+    as an objection. It is here so the discrepancy cannot be quietly re-copied.
+
+    The 41/221 itself is NOT independently derivable from anything committed on
+    `main`: the cohort manifest publishes status counts and stated-reason
+    categories as separate marginals with no cross. It is quoted from v3.
+    """
+
+    g_league_doubtful_share = Fraction(41, 221)
+    assert float(g_league_doubtful_share) == pytest.approx(0.186, abs=5e-4)
+
+    held_out_doubtful = HELD_OUT_COUNTS["doubtful"]
+    assert held_out_doubtful == 83
+
+    health_only = held_out_doubtful * (1 - g_league_doubtful_share)
+    assert health_only == Fraction(14940, 221)
+    assert float(health_only) == pytest.approx(67.6, abs=0.05)
+    assert round(float(health_only)) == 68
+
+    condition_six_floor = 30
+    headroom = float(health_only) / condition_six_floor
+    assert headroom == pytest.approx(2.2534, abs=5e-4)
+    # Rounding the count to a whole player first moves it barely.
+    assert round(float(health_only)) / condition_six_floor == pytest.approx(2.2667, abs=5e-4)
+
+    # v3's stated pair is not reproducible from v3's stated share.
+    assert round(float(health_only)) != 74
+    assert headroom < 2.5
+
+
+def test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate() -> None:
+    """The one sentence in the docstring that a later lane is most likely to need.
+
+    The architect ruled this unit Code-gated and pinned the caveat that carries
+    the weight: when this machinery is later used to produce v2 section 7's
+    held-out table, *that* report is Model-gated and this module is load-bearing
+    inside it. Nothing verified here discharges any part of it.
+
+    That is a claim about governance, so nothing in the arithmetic protects it -
+    it survives only as prose, and prose is deletable. This test is the only
+    thing standing between that paragraph and someone citing "the calibration
+    machinery passed its gate" as though it settled the model's.
+    """
+
+    import hoops_gm.availability.calibration as module
+
+    docstring = module.__doc__
+    assert docstring is not None
+    assert "does not pre-discharge" in docstring
+    assert "Model-gated" in docstring
+    assert "Nothing verified here discharges any part of that" in docstring
+    # And the reason the reviewer's reading was available at all, so it is not
+    # silently re-derived by the next lane to read gates.md.
+    assert "word collision" in docstring
+    assert "reliability-metrics.md" in docstring
+
+
+# ---------------------------------------------------------------------------
+# Findings from the second independent review, at 471c061
+# ---------------------------------------------------------------------------
+
+
+def test_nested_restriction_accumulates_rather_than_replacing() -> None:
+    """P2-2: the inner filter used to vanish, and the payload under-reported.
+
+    `restrict(restrict(rows, status="doubtful"), band="unlikely")` narrows twice
+    but used to record only the outer pair. The reviewer drove the analogous
+    case: a 60-row payload labelled as the whole `era=legacy` cohort when 200
+    legacy rows had been dropped. Under-reporting is not obviously dangerous
+    until you notice it is the same shape as the pooled-versus-restricted
+    confusion this module exists to prevent, one level down.
+    """
+
+    rows = _masked_band_cohort()
+    nested = restrict(restrict(rows, status="doubtful"), band="unlikely")
+
+    assert nested.restriction == (("band", "unlikely"), ("status", "doubtful"))
+
+    report = build_calibration_report(
+        nested,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction == (("band", "unlikely"), ("status", "doubtful"))
+    assert report.observations == 83
+
+    # The outer key alone selects far more than the nested pair does, which is
+    # exactly what the old payload concealed.
+    assert len(restrict(rows, band="unlikely")) == 3046
+
+
+def test_a_cohort_mutated_after_restriction_is_refused_rather_than_mislabelled() -> None:
+    """P2-3: `extend` moved the rows and left the marker behind.
+
+    The reviewer took an 83-row `doubtful` cohort, extended it with `out` rows,
+    and got a 520-row report still recording `status=doubtful` - an
+    `out`-dominated rate attributed to `doubtful`, through an ordinary list
+    method. That is this project's headline failure mode arriving by the back
+    door, so the marker is now re-verified against the rows instead of trusted.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    assert len(cohort) == 83
+    cohort.extend(restrict(rows, status="out"))
+    assert len(cohort) > 83
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            cohort,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_forged_marker_is_refused() -> None:
+    """The same verification, reached by constructing the claim directly."""
+
+    rows = _masked_band_cohort()
+    forged = RestrictedCohort(rows, (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "transform"),
+    [
+        ("copy", lambda rc: copy.copy(rc)),
+        ("deepcopy", lambda rc: copy.deepcopy(rc)),
+        ("pickle", lambda rc: pickle.loads(pickle.dumps(rc))),
+        ("slice", lambda rc: rc[:]),
+        ("method_copy", lambda rc: rc.copy()),
+        ("concat", lambda rc: rc + []),  # noqa: RUF005 - concatenation is the construct under test
+        ("repeat", lambda rc: rc * 1),
+    ],
+)
+def test_copying_a_restricted_cohort_keeps_it_restricted(
+    name: str,
+    transform: Callable[[RestrictedCohort], RestrictedCohort],
+) -> None:
+    """Defensive copying must not disarm the guard.
+
+    Slicing and concatenation are how anyone copies a sequence; they are not
+    laundering. A reviewer's enumeration found `rc[:]`, `rc + []` and `rc * 1`
+    silently returning plain lists, which stripped the marker through an idiom
+    nobody would think twice about. `copy`, `deepcopy` and `pickle` already
+    held, because they restore `__dict__` without calling `__init__`.
+    """
+
+    rows = _masked_band_cohort()
+    copied = transform(restrict(rows, status="doubtful"))
+
+    assert isinstance(copied, RestrictedCohort), name
+    assert copied.restriction == (("status", "doubtful"),), name
+    with pytest.raises(ValueError, match="restricted"):
+        build_calibration_report(
+            copied,
+            provenance=Provenance.PREREGISTERED_V2,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "transform"),
+    [
+        ("list", lambda rc: list(rc)),
+        ("tuple", lambda rc: list(tuple(rc))),  # noqa: C414 - the tuple round-trip is the point
+        ("star", lambda rc: [*rc]),
+        ("chain", lambda rc: list(itertools.chain(rc))),
+    ],
+)
+def test_the_iteration_routes_that_strip_the_marker_are_named_not_denied(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+) -> None:
+    """The residual, pinned as a fact so the docstring cannot drift from it.
+
+    Any route that builds a fresh container by iterating discards the marker and
+    the guard cannot fire. A third review refuted the *reason* an earlier version
+    of this docstring gave - it said Python cannot intercept iteration, and it
+    can: `__iter__` is an ordinary dunder, and a proof-of-concept that yields
+    rows carrying provenance in `labels` refused all four of these routes. So
+    the hole is a design choice, not a limit of the language, and the choice is
+    argued in the module docstring rather than hidden behind a false
+    impossibility claim.
+
+    This test asserts the hole is still exactly where the docstring says it is.
+    If a future change closes one of these, this test fails and the docstring
+    gets corrected - which is the point. A claim of closure that nothing checks
+    is how the first version of this guard came to be believed.
+    """
+
+    rows = _masked_band_cohort()
+    stripped = transform(restrict(rows, status="doubtful"))
+
+    assert not isinstance(stripped, RestrictedCohort), name
+    report = build_calibration_report(
+        stripped,
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.restriction is None, name
+    assert report.observations == 83, name
+
+
+def test_verification_refuses_a_claim_the_rows_are_merely_silent_about() -> None:
+    """M23, which I wrote and which then survived my own suite.
+
+    `_verify_restriction_holds` compares `row.labels.get(key)` to the value, so
+    an unlabelled row fails the claim. Defaulting the lookup to the claimed
+    value instead - the same missing-key trap the reviewer found one layer down
+    in `restrict()` - would let a cohort that says nothing about `status` assert
+    `status=doubtful` and be believed.
+
+    Nothing exercised that path, so the mutation lived. It is the second time
+    this exact shape has bitten in this module: a key that is absent is not a
+    key that matches, and a suite whose fixtures are all fully labelled cannot
+    tell the difference.
+    """
+
+    silent = RestrictedCohort(
+        [
+            CalibrationObservation(
+                observation_id=f"silent-{index}",
+                predicted=0.5,
+                played=index % 2 == 0,
+                labels={"era": "legacy"},
+            )
+            for index in range(30)
+        ],
+        (("status", "doubtful"),),
+    )
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            silent,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Findings from the third independent review, at 57e370d
+# ---------------------------------------------------------------------------
+
+
+def test_verification_checks_every_recorded_pair_not_merely_the_first() -> None:
+    """3-A: a survivor, and the clearest case yet of a fix enlarging its own blind spot.
+
+    Mutating the verification loop to `list(restriction.items())[:1]` survived
+    all 78 tests. Every test that reached verification used a single-key
+    restriction, so the loop body was never entered twice with a failing second
+    pair - and the P2-2 fix, which made `restrict()` accumulate, had just made
+    two-key markers the normal case rather than an exotic one.
+
+    Sorted order puts `band` before `status`, so this cohort satisfies the first
+    pair completely and the second not at all: exactly the shape a first-pair-only
+    check cannot see. Under the mutant, 3,046 rows that `out` dominates 2,963 to
+    83 are recorded as `status=doubtful` - the P2-3 lie, reached again through
+    the door the P2-3 fix left open.
+    """
+
+    rows = _masked_band_cohort()
+    band = restrict(rows, band="unlikely")
+    assert len(band) == 3046
+    assert all(row.labels["band"] == "unlikely" for row in band)
+
+    forged = RestrictedCohort(band, (("band", "unlikely"), ("status", "doubtful")))
+    with pytest.raises(ValueError, match="claims restriction status='doubtful'"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_restrict_lets_the_outer_call_win_a_key_conflict() -> None:
+    """3-D: a survivor. Reversing the merge returns rows under the wrong label.
+
+    `restrict(restrict(rows, status="doubtful"), status="out")` must be empty:
+    no row is both. Under `labels | inherited` it returns 83 `doubtful` rows
+    marked `status=out`, and nothing downstream can tell, because the marker is
+    self-consistent - every row present satisfies the recorded pair, so
+    `_verify_restriction_holds` passes. Soundness is not identity.
+    """
+
+    rows = _masked_band_cohort()
+    conflicting = restrict(restrict(rows, status="doubtful"), status="out")
+
+    assert conflicting.restriction == (("status", "out"),)
+    assert len(conflicting) == 0
+
+    same_key_same_value = restrict(restrict(rows, status="doubtful"), status="doubtful")
+    assert len(same_key_same_value) == 83
+
+
+@pytest.mark.parametrize(
+    ("name", "transform", "expected"),
+    [
+        ("double", lambda rc: rc * 2, 166),
+        ("triple", lambda rc: rc * 3, 249),
+        ("rdouble", lambda rc: 2 * rc, 166),
+        ("head", lambda rc: rc[:10], 10),
+        ("stride", lambda rc: rc[::2], 42),
+        ("reverse", lambda rc: rc[::-1], 83),
+        ("concat_self", lambda rc: rc + rc, 166),
+    ],
+)
+def test_operations_that_change_multiplicity_or_extent_drop_the_marker(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+    expected: int,
+) -> None:
+    """3-B and 3-C: the P2-1 fix over-applied, and its contents were never asserted.
+
+    Re-wrapping made the marker survive duplication and truncation. Every row
+    still satisfied every recorded pair, so verification passed - the marker was
+    true and the payload was false about the cohort. `rc * 3` recorded 249 rows
+    as the 83-row `doubtful` subgroup.
+
+    The count is asserted here as well as the type, because a separate survivor
+    (`super().__mul__(1)` in place of `count`) showed that a container override
+    can lose rows silently while every type and marker assertion still passes.
+    """
+
+    rows = _masked_band_cohort()
+    result = transform(restrict(rows, status="doubtful"))
+
+    assert len(result) == expected, name
+    assert not isinstance(result, RestrictedCohort), name
+
+
+@pytest.mark.parametrize(
+    ("name", "transform", "expected"),
+    [
+        ("whole_slice", lambda rc: rc[:], 83),
+        ("explicit_whole_slice", lambda rc: rc[0:83:1], 83),
+        ("repeat_once", lambda rc: rc * 1, 83),
+        ("concat_empty", lambda rc: rc + [], 83),  # noqa: RUF005 - concatenation is the construct under test
+        ("method_copy", lambda rc: rc.copy(), 83),
+    ],
+)
+def test_the_defensive_copy_idioms_still_preserve_the_marker_and_the_rows(
+    name: str,
+    transform: Callable[[RestrictedCohort], list[CalibrationObservation]],
+    expected: int,
+) -> None:
+    """The other half of 3-B: narrowing the rule must not re-open the P2-1 hole.
+
+    A whole-extent slice, `* 1`, `+ []` and `.copy()` provably preserve the row
+    multiset, so they keep the marker. Anything that does not is above.
+    """
+
+    rows = _masked_band_cohort()
+    result = transform(restrict(rows, status="doubtful"))
+
+    assert len(result) == expected, name
+    assert isinstance(result, RestrictedCohort), name
+    assert result.restriction == (("status", "doubtful"),), name
+
+
+def test_why_multiplicity_matters_condition_five_is_a_function_of_n() -> None:
+    """3-B's motivation, as arithmetic rather than as principle.
+
+    v2 §8 condition 5 is a Wilson half-width and goes as 1/sqrt(n), so
+    duplicating a cohort tightens it. At the held-out `doubtful` count of 83 the
+    worst case is outside 0.10 and a 0.10 guarantee cannot be issued; at 166 it
+    is inside, and the same marker would still read `status=doubtful` with every
+    recorded pair true. That is why the multiplicity rule exists, and it is
+    computed from counts alone at the worst-case rate - no outcome is read.
+    """
+
+    def half_width(observations: int) -> float:
+        low, high = wilson_interval(observations // 2, observations)
+        return (high - low) / 2.0
+
+    assert half_width(83) > 0.10
+    assert half_width(166) < 0.10
+    assert half_width(83) == pytest.approx(0.105154, abs=5e-6)
+    assert half_width(166) == pytest.approx(0.075196, abs=5e-6)
+
+
+def test_the_per_bin_gap_sign_is_observed_through_a_path_that_does_not_take_abs() -> None:
+    """3-E: the second instance of the M12 symmetry class, and the general rule.
+
+    `Band.gap` declares "positive over-predicts play", and reversing it survived
+    the whole suite: every internal consumer takes `abs()` (ECE, MCE), and the
+    only two tests that touched it wrapped it in `abs()` or asserted it equal to
+    zero. So the sign was never observed at a nonzero value.
+
+    The generalisation, which is worth more than this fix: a declared convention
+    is pinned only if some test observes it through a path that does not
+    symmetrise it. `abs`, a square, and a product of two sign-flipping factors
+    all destroy exactly the information the convention asserts.
+
+    `to_dict()` emits the signed gap, so this is load-bearing for any reader of
+    the per-bin table, not merely internal bookkeeping.
+    """
+
+    over = CalibrationBin(
+        label="over",
+        predicted_mean=0.80,
+        observed_rate=0.50,
+        observations=100,
+        plays=50,
+        wilson_low=0.404,
+        wilson_high=0.596,
+    )
+    under = CalibrationBin(
+        label="under",
+        predicted_mean=0.20,
+        observed_rate=0.50,
+        observations=100,
+        plays=50,
+        wilson_low=0.404,
+        wilson_high=0.596,
+    )
+
+    assert over.gap == pytest.approx(0.30)
+    assert under.gap == pytest.approx(-0.30)
+    assert over.to_dict()["gap"] == pytest.approx(0.30)
+    assert under.to_dict()["gap"] == pytest.approx(-0.30)
+    assert "positive over-predicts play" in DECLARED_CONVENTIONS["bin_gap_sign"]
+
+
+def test_a_tampered_cohort_is_repaired_rather_than_refused_when_a_restriction_is_passed() -> None:
+    """The reviewer's informational asymmetry, pinned so it cannot drift silently.
+
+    The same tampered object is refused on one call shape and silently repaired
+    on the other: with a `restriction` parameter, `restrict()` re-filters the
+    offending rows away before verification sees them. It fails safe - the
+    payload that results is true of the rows it reports - but half the call
+    surface never surfaces the tampering, which is worth knowing if you are
+    relying on the error to tell you something went wrong.
+    """
+
+    rows = _masked_band_cohort()
+    tampered = RestrictedCohort(rows, (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="claims restriction"):
+        build_calibration_report(
+            tampered,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+    repaired = build_calibration_report(
+        tampered,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        restriction={"band": "unlikely"},
+    )
+    assert repaired.observations == 83
+    assert repaired.restriction == (("band", "unlikely"), ("status", "doubtful"))
+
+
+def test_removal_leaves_a_marker_that_is_true_and_no_longer_complete() -> None:
+    """The completeness residual, driven rather than asserted in prose.
+
+    Verification establishes soundness - every row present satisfies every
+    recorded pair. It cannot establish completeness, because a cohort does not
+    carry the population it was drawn from. `pop` leaves a marker that is still
+    true of all 82 remaining rows and no longer describes the subgroup, and no
+    check in this module can tell. Stated in the docstring, pinned here.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    cohort.pop()
+    cohort.pop()
+
+    report = build_calibration_report(
+        cohort,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 81
+    assert report.restriction == (("status", "doubtful"),)
+
+
+# --- Fourth review: multiplicity is enforced where the cohort becomes a number ---
+#
+# Every test below drives a survivor of the fourth independent review. The
+# generalisation the reviewer drew, and it is the right one: when a dunder is
+# overridden to enforce an invariant, its in-place twin and its reflected form
+# have to be enumerated in the same breath. `__add__`/`__iadd__`/`__radd__`,
+# `__mul__`/`__imul__`/`__rmul__`, `__getitem__`/`__setitem__`/`__delitem__`.
+# That is a closed, checkable list, unlike "routes a caller might take" - which
+# is exactly why the repair for P4-1 is not a longer list of dunders.
+
+
+def _duplicate_in_place_by_iadd(cohort: RestrictedCohort) -> RestrictedCohort:
+    """Exactly `cohort += list(cohort)`, spelled so the return type is inspectable."""
+
+    duplicated = operator.iadd(cohort, list(cohort))  # type: ignore[no-untyped-call]
+    assert isinstance(duplicated, RestrictedCohort)
+    assert duplicated is cohort
+    return duplicated
+
+
+def _duplicate_in_place_by_extend(cohort: RestrictedCohort) -> RestrictedCohort:
+    cohort.extend(list(cohort))
+    return cohort
+
+
+def _duplicate_in_place_by_slice_assignment(cohort: RestrictedCohort) -> RestrictedCohort:
+    cohort[0:0] = list(cohort)
+    return cohort
+
+
+def _duplicate_by_direct_construction(cohort: RestrictedCohort) -> RestrictedCohort:
+    """No overridden dunder is touched at all - which is the point."""
+
+    return RestrictedCohort([*cohort, *cohort], cohort.restriction)
+
+
+@pytest.mark.parametrize(
+    ("name", "mutate"),
+    [
+        ("iadd", _duplicate_in_place_by_iadd),
+        ("extend", _duplicate_in_place_by_extend),
+        ("slice_assignment", _duplicate_in_place_by_slice_assignment),
+        ("direct_construction", _duplicate_by_direct_construction),
+    ],
+)
+def test_a_duplicated_cohort_is_refused_however_the_duplication_was_reached(
+    name: str,
+    mutate: Callable[[RestrictedCohort], RestrictedCohort],
+) -> None:
+    """P4-1: a false guarantee, reached one character from the route that was closed.
+
+    `rc + other` is refused and `rc += other` was not, because `__iadd__` and
+    slice-assignment were never overridden. Each of these returns a
+    `RestrictedCohort` with the marker intact and `n` doubled, and both
+    docstrings promised the opposite - a written assurance that was false, not a
+    disclosed residual.
+
+    The harm is condition 5. A Wilson half-width shrinks with `n`, so doubling
+    the 83-row `doubtful` cohort moves its worst case from 0.1052 to 0.0752:
+    outside the 0.10 bound to inside it, with every recorded pair still true and
+    every duplicated row satisfying the marker as happily as the original.
+    Soundness cannot see it, which is why multiplicity is checked separately.
+
+    Note the last case. `direct_construction` never touches an overridden dunder
+    at all, so no enumeration of in-place twins would have caught it. That is
+    the argument for enforcing the invariant where the cohort becomes a number
+    rather than at each route into it.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    assert len(cohort) == 83
+
+    duplicated = mutate(cohort)
+    assert len(duplicated) == 166
+    assert duplicated.restriction == (("status", "doubtful"),)
+    assert all(row.labels["status"] == "doubtful" for row in duplicated)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            duplicated,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_one_in_place_route_that_does_drop_the_marker_drops_it_by_accident() -> None:
+    """The fourth review's headline payload is **false**, and the reason matters.
+
+    It reported `rc *= 2` returning a `RestrictedCohort` with `n` doubled. It
+    does not: it returns a plain `list`. `PyNumber_InPlaceMultiply` looks for
+    `nb_inplace_multiply` first, and `list`'s in-place repeat lives in the
+    *sequence* slot, so defining `__mul__` at Python level fills `nb_multiply`
+    and the in-place operator falls back to it - to the guard, which refuses to
+    re-wrap at `count != 1`.
+
+    So the route is closed, and it is closed **by accident**. Nothing was
+    written to close it and no comment recorded it.
+
+    **A fifth review pass corrected the attribution, and the correction is the
+    interesting part.** This docstring used to say that deleting `__mul__` would
+    silently reopen the route. It would not. `__rmul__` fills the same
+    `nb_multiply` slot, so *either* override alone closes it, and the route is
+    open only when **both** are absent. The test below therefore trips on the
+    removal of both and is blind to the removal of one - a **disclosed residual**
+    rather than a guarantee, which is the distinction pass four was about.
+
+    **And both parties reached the matrix by an unsound method.** Deleting a
+    method from a heap type with `delattr` does not restore the slot layout the
+    type would have had if the method had never been defined, so a delattr-based
+    counterfactual measures runtime slot patching rather than the source variant
+    it claims to model. Driving it that way gave `list` in all four cells, which
+    is wrong. The sound experiment builds a fresh `type("C", (list,), ns)` per
+    cell, and :func:`test_only_removing_both_multiply_overrides_reopens_the_route`
+    is that experiment, kept as a test so the attribution cannot rot again.
+
+    `rc += list(rc)` has no such accident: `list` *does* expose
+    `nb_inplace_add`-equivalent behaviour through `sq_inplace_concat`, and
+    `__add__` is not consulted.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    doubled = operator.imul(cohort, 2)  # type: ignore[no-untyped-call]
+
+    assert len(doubled) == 166
+    assert type(doubled) is list
+    assert not isinstance(doubled, RestrictedCohort)
+    assert not hasattr(doubled, "restriction")
+
+    added = operator.iadd(  # type: ignore[no-untyped-call]
+        restrict(_masked_band_cohort(), status="doubtful"),
+        list(restrict(_masked_band_cohort(), status="doubtful")),
+    )
+    assert type(added) is RestrictedCohort
+
+
+def test_only_removing_both_multiply_overrides_reopens_the_route() -> None:
+    """Either `__mul__` or `__rmul__` alone closes `*=`; the residual needs both.
+
+    Built from fresh class definitions rather than `delattr` for the reason given
+    in the test above: `delattr` cannot model "this method was never defined".
+
+    The cell that matters is the first one. With neither override present the
+    operator reaches `list`'s `sq_inplace_repeat`, which mutates in place and
+    **preserves the subclass**, so a marker-carrying cohort would come back
+    marked with `n` doubled - exactly the payload the fourth review reported
+    against the real class, correct about the danger and wrong about where it
+    lives.
+    """
+
+    def build(with_mul: bool, with_rmul: bool) -> type[list[int]]:
+        namespace: dict[str, object] = {}
+        if with_mul:
+            namespace["__mul__"] = lambda self, count: list.__mul__(self, count)
+        if with_rmul:
+            namespace["__rmul__"] = lambda self, count: list.__rmul__(self, count)
+        return type("C", (list,), namespace)
+
+    observed = {}
+    for with_mul in (False, True):
+        for with_rmul in (False, True):
+            cls = build(with_mul, with_rmul)
+            obj = cls([1])
+            identity = id(obj)
+            obj *= 2
+            observed[(with_mul, with_rmul)] = (type(obj) is cls, id(obj) == identity)
+
+    assert observed[(False, False)] == (True, True), "no override: route is OPEN"
+    assert observed[(True, False)] == (False, False), "__mul__ alone closes it"
+    assert observed[(False, True)] == (False, False), "__rmul__ alone closes it"
+    assert observed[(True, True)] == (False, False), "both closes it"
+
+
+@pytest.mark.parametrize(
+    ("name", "mutate", "expected_length"),
+    [
+        ("append", lambda rc: rc.append(rc[0]), 84),
+        ("insert", lambda rc: rc.insert(0, rc[0]), 84),
+        ("setitem_scalar", lambda rc: rc.__setitem__(1, rc[0]), 83),
+    ],
+)
+def test_duplicating_a_single_row_in_place_is_refused_too(
+    name: str,
+    mutate: Callable[[RestrictedCohort], None],
+    expected_length: int,
+) -> None:
+    """Routes the fourth review did not list, found while checking the ones it did.
+
+    It reported `insert` and `__setitem__` as "correctly refused", which is true
+    only of a **foreign** row: verification catches a row that fails the marker.
+    A row copied from the cohort itself is not foreign - it satisfies every
+    recorded pair - so before the duplicate check these three passed
+    verification and quietly inflated `n` by one.
+
+    Note `setitem_scalar`, which leaves the length **unchanged** at 83 while
+    counting one row twice and dropping another entirely. Any check written
+    against `len` rather than against the ids would miss it, and it is the
+    closest thing here to a silent corruption of the cohort's composition.
+
+    One row is a small lie. It is also the one that arrives by accident, and it
+    is the shape a fix aimed at whole-cohort duplication would miss.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    mutate(cohort)
+
+    assert len(cohort) == expected_length
+    assert all(row.labels["status"] == "doubtful" for row in cohort)
+
+    with pytest.raises(ValueError, match="1 observation id\\(s\\) appear more than once"):
+        build_calibration_report(
+            cohort,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_why_duplication_would_have_manufactured_the_condition_five_guarantee() -> None:
+    """The arithmetic that makes P4-1 a finding rather than a tidiness complaint.
+
+    And a caveat worth pinning, because getting it wrong is how the wrong figure
+    entered this repository in the first place. A Wilson half-width is **not**
+    exactly proportional to `1/sqrt(n)`: the score interval carries a `z^2/n`
+    term that the Wald interval does not. Scaling 0.105154 by `1/sqrt(2)` gives
+    0.074355, and an earlier version of `RestrictedCohort`'s docstring recorded
+    exactly that as the duplicated half-width. The true value is 0.075196. Four
+    independent review passes read that number without recomputing it.
+
+    Nothing here reads an outcome: both half-widths are functions of two
+    integers, at the worst-case rate of one half.
+    """
+
+    honest = wilson_interval(83 // 2, 83)
+    duplicated = wilson_interval(166 // 2, 166)
+    honest_half_width = (honest[1] - honest[0]) / 2
+    duplicated_half_width = (duplicated[1] - duplicated[0]) / 2
+
+    assert honest_half_width == pytest.approx(0.105154, abs=5e-7)
+    assert duplicated_half_width == pytest.approx(0.075196, abs=5e-7)
+    assert honest_half_width > 0.10 > duplicated_half_width
+
+    naive_wald_scaling = honest_half_width / math.sqrt(2)
+    assert naive_wald_scaling == pytest.approx(0.074355, abs=5e-7)
+    assert duplicated_half_width > naive_wald_scaling
+
+
+def test_an_unduplicated_cohort_still_reports() -> None:
+    """The refusal has to be specific to duplication, or it is just a broken module."""
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    report = build_calibration_report(
+        cohort,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 83
+
+
+def test_the_duplicate_check_fires_at_exactly_one_repeated_id() -> None:
+    """The n=1 boundary of the *count*, applying the rule the last round produced.
+
+    A check written as `if len(repeated) > 1` would pass every test that
+    duplicates a whole cohort, because those repeat 83 ids at once. One repeated
+    row is the smallest lie and the likeliest accident.
+    """
+
+    rows = list(restrict(_masked_band_cohort(), status="doubtful"))
+    with pytest.raises(ValueError, match="1 observation id\\(s\\) appear more than once"):
+        build_calibration_report(
+            [*rows, rows[0]],
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_verification_fires_at_exactly_one_violating_row() -> None:
+    """P4-4: a survivor. `if offenders > 1` passed the whole suite.
+
+    Every cohort that reached verification carried dozens of foreign rows, so
+    the boundary the check actually has to hold at - one - was never driven. A
+    single `out` row smuggled into a `doubtful` cohort is both the smallest
+    version of the P2-3 masking lie and the one most likely to arrive by
+    accident.
+    """
+
+    rows = _masked_band_cohort()
+    cohort = restrict(rows, status="doubtful")
+    intruder = next(row for row in rows if row.labels["status"] == "out")
+    forged = RestrictedCohort([*cohort, intruder], (("status", "doubtful"),))
+
+    with pytest.raises(ValueError, match="1 of 84 rows do not satisfy it"):
+        build_calibration_report(
+            forged,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_verification_compares_label_values_by_equality_not_identity() -> None:
+    """P4-8: a survivor, and the reason it survived is that every literal is interned.
+
+    `!=` mutated to `is not` passed all 96 tests, because every label value in
+    the suite is a compile-time constant and therefore the same object. A value
+    arriving from a CSV row or a database column is not, so the mutant would
+    refuse a cohort that is perfectly correct. The direction is fail-closed,
+    which is why this is Low and not a lie - but a spurious refusal on real data
+    is still a defect, and it is invisible to a suite built from literals.
+    """
+
+    runtime_built = "doubt" + "".join("ful")
+    interned = "doubtful"
+    assert runtime_built == interned
+    assert runtime_built is not interned
+
+    rows = [
+        CalibrationObservation(
+            f"row#{index:03d}",
+            0.9,
+            index % 2 == 0,
+            labels={"status": runtime_built},
+        )
+        for index in range(40)
+    ]
+    report = build_calibration_report(
+        RestrictedCohort(rows, (("status", "doubtful"),)),
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 40
+    assert report.restriction == (("status", "doubtful"),)
+
+
+def test_the_bootstrap_refuses_a_duplicate_observation_id() -> None:
+    """P4-2: a **declared convention the code did not implement**.
+
+    `DECLARED_CONVENTIONS["bootstrap_unit"]` says "one observation id, resampled
+    with replacement". The loop resampled row *positions* and never read
+    `observation_id` at all. That is indistinguishable from the declaration for
+    as long as ids happen to be unique, and wrong the moment they are not: the
+    same observation entering twice makes the draws less variable than the data,
+    and the interval comes out **too narrow**.
+
+    Too narrow is the direction that makes v2 §8 condition 2 - the interval
+    clearing zero - *easier* for the candidate to pass. A declared convention
+    that the code does not implement is worse than an undeclared one, because a
+    later reader has a written assurance to rely on and no reason to check.
+    """
+
+    rows = perfectly_calibrated_cohort({"only": 40}, {"only": 0.5})
+    pairs = _paired(rows, 0.5)
+
+    honest = paired_bootstrap_brier(pairs, resamples=200, seed=41)
+    assert honest.resamples == 200
+
+    with pytest.raises(ValueError, match="declared resampling unit is one observation id"):
+        paired_bootstrap_brier([*pairs, pairs[0]], resamples=200, seed=41)
+
+
+def test_the_bootstrap_names_how_many_ids_repeated_and_which() -> None:
+    """One repeated id, the n=1 boundary of the count, and the message has to name it."""
+
+    rows = perfectly_calibrated_cohort({"only": 40}, {"only": 0.5})
+    pairs = _paired(rows, 0.5)
+
+    with pytest.raises(ValueError, match=r"1 observation id\(s\) appear more than once"):
+        paired_bootstrap_brier([*pairs, pairs[0]], resamples=50, seed=41)
+
+
+def test_the_declared_bootstrap_unit_says_duplicates_are_refused() -> None:
+    """The declaration and the behaviour are pinned to each other, not merely both present."""
+
+    assert "duplicate ids are refused" in DECLARED_CONVENTIONS["bootstrap_unit"]
+    assert DECLARED_CONVENTIONS["duplicate_observations"].startswith("refused")
+
+
+def test_type_seven_quantile_is_pinned_against_hand_computed_values() -> None:
+    """P4-3: a convention declared and pinned by nothing.
+
+    `DECLARED_CONVENTIONS["bootstrap_quantile"]` names Hyndman-Fan type 7, and
+    substituting the floor rule - take `x[floor(p*(n-1))]` and interpolate
+    nothing - left every test green. That is not an equivalent mutant: it moves
+    `interval_high`, and `candidate_beats_baseline` reads `interval_high`. A
+    lower `interval_high` makes condition 2 easier to pass, so the unpinned
+    convention had a direction, and the direction favoured the candidate.
+
+    Type 7 on `0..9`: `h = (n - 1) * p`, then linear interpolation between
+    `x[floor(h)]` and `x[floor(h) + 1]`. At p=0.025, `h = 0.225`, so the answer
+    is `0.225`; the floor rule gives `0`. At p=0.975, `h = 8.775` gives `8.775`
+    against the floor rule's `8`. Computed by hand here rather than by calling a
+    second implementation of the same thing.
+    """
+
+    data = [float(value) for value in range(10)]
+
+    assert type7_quantile(data, 0.025) == pytest.approx(0.225, abs=1e-12)
+    assert type7_quantile(data, 0.975) == pytest.approx(8.775, abs=1e-12)
+    assert type7_quantile(data, 0.5) == pytest.approx(4.5, abs=1e-12)
+    assert type7_quantile(data, 0.0) == pytest.approx(0.0, abs=1e-12)
+    assert type7_quantile(data, 1.0) == pytest.approx(9.0, abs=1e-12)
+
+    # `statistics.quantiles(..., method="inclusive")` is type 7 by another
+    # implementation. Agreement is a cross-check, not the pin: the pin is the
+    # hand arithmetic above, which does not depend on the standard library
+    # meaning what this comment says it means.
+    deciles = statistics.quantiles(data, n=10, method="inclusive")
+    assert type7_quantile(data, 0.1) == pytest.approx(deciles[0], abs=1e-12)
+    assert type7_quantile(data, 0.9) == pytest.approx(deciles[-1], abs=1e-12)
+
+
+def test_the_bootstrap_endpoints_use_type_seven_and_not_the_floor_rule() -> None:
+    """Pins the call site, not just the helper.
+
+    The mutation that survived replaced the *use* of `type7_quantile`, so a test
+    of `type7_quantile` alone would not have caught it. The resampled
+    distribution is reconstructed here from the declared seed, and the two rules
+    are shown to disagree on it - so a report whose endpoints match the floor
+    rule fails this test whatever the helper does.
+    """
+
+    rows = perfectly_calibrated_cohort({"low": 60, "high": 60}, {"low": 0.1, "high": 0.9})
+    pairs = _paired(rows, 0.5)
+    comparison = paired_bootstrap_brier(pairs, resamples=250, seed=90210)
+
+    differences = [
+        (pair.candidate_predicted - float(pair.played)) ** 2
+        - (pair.baseline_predicted - float(pair.played)) ** 2
+        for pair in pairs
+    ]
+    generator = random.Random(90210)
+    size = len(differences)
+    estimates = sorted(
+        sum(differences[generator.randrange(size)] for _ in range(size)) / size
+        for _resample in range(250)
+    )
+
+    def floor_rule(sorted_values: list[float], probability: float) -> float:
+        return sorted_values[math.floor(probability * (len(sorted_values) - 1))]
+
+    assert comparison.interval_low == pytest.approx(type7_quantile(estimates, 0.025), abs=1e-12)
+    assert comparison.interval_high == pytest.approx(type7_quantile(estimates, 0.975), abs=1e-12)
+    assert comparison.interval_high != pytest.approx(floor_rule(estimates, 0.975), abs=1e-12)
+    assert floor_rule(estimates, 0.975) < comparison.interval_high
+
+
+def test_add_drops_the_marker_for_a_distinct_non_empty_operand() -> None:
+    """P4-5: a survivor, because every recorded case had `other is self`.
+
+    The drop list contained `rc + rc`, which drops under the live rule (`other`
+    is truthy) *and* under the mutant "re-wrap unless `other` is literally this
+    same object". One operand that is neither empty nor `self` separates them.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+    combined = cohort + cohort.copy()
+
+    assert type(combined) is list
+    assert not isinstance(combined, RestrictedCohort)
+    assert len(combined) == 166
+
+    same_object = cohort + cohort
+    assert type(same_object) is list
+
+    empty_operand = cohort + []  # noqa: RUF005 - the `+ []` idiom is the thing under test
+    assert type(empty_operand) is RestrictedCohort
+    assert empty_operand.restriction == (("status", "doubtful"),)
+
+
+def test_a_partial_slice_with_an_explicit_step_of_one_drops_the_marker() -> None:
+    """P4-6: a survivor. The twelve routes sampled the slice space rather than partitioning it.
+
+    Every recorded slice had `step` `None`, `2` or `-1`, so "whole extent" and
+    "step is 1" were never separated. `rc[0:10:1]` is a truncation with an
+    explicit unit step: the marker stays true of all ten rows and `n` is wrong
+    by a factor of eight.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+
+    truncated = cohort[0:10:1]
+    assert type(truncated) is list
+    assert len(truncated) == 10
+
+    whole_extent = cohort[0:83:1]
+    assert type(whole_extent) is RestrictedCohort
+    assert len(whole_extent) == 83
+    assert whole_extent.restriction == (("status", "doubtful"),)
+
+
+@pytest.mark.parametrize("count", [0, -1, -5])
+def test_multiplying_by_zero_or_a_negative_count_drops_the_marker(count: int) -> None:
+    """P4-7: a survivor. The drop list had `*2`, `*3`, `2*rc` and no `*0`.
+
+    An empty cohort carrying `status=doubtful` is a claim about no rows at all.
+    `build_calibration_report` raises on empty rows, so the harm is bounded -
+    but "another check happens to catch it" is the argument that made the
+    original guard too wide, and the guard is `count == 1`, not `count <= 1`.
+    """
+
+    cohort = restrict(_masked_band_cohort(), status="doubtful")
+
+    assert type(cohort * count) is list
+    assert len(cohort * count) == 0
+    assert type(count * cohort) is list
+
+    assert type(cohort * 1) is RestrictedCohort
+    once = cohort * 1
+    assert isinstance(once, RestrictedCohort)
+    assert once.restriction == (("status", "doubtful"),)
+
+
+# ---------------------------------------------------------------------------
+# Fifth review: a guard is pinned only by an input on which a broken guard fails
+# ---------------------------------------------------------------------------
+#
+# Three of this pass's findings share one generator, and it is not the pass-four
+# generator. In each case a guard exists and is correct, and the test that pins
+# it exercises the single input shape on which a *broken* guard still returns
+# the right answer. The audit that catches it is mechanical: for each assertion,
+# name the input on which it would fail if the implementation were wrong, and if
+# that is the same input the happy path already uses, it is not pinned.
+
+
+def test_the_duplicate_check_is_keyed_on_the_id_not_on_object_identity() -> None:
+    """V02 survived: `Counter(id(row) ...)` passed all 119 tests.
+
+    Every existing test that drives the duplicate check appends, extends or
+    repeats **the same object**, so `id()` and `observation_id` agree on all of
+    them and the wrong key still gives the right answer. The realistic form of
+    the bug is the one no test had: two distinct instances carrying one id,
+    which is what a join against a second table produces.
+
+    That is why this matters more than an ordinary uncovered branch. The check
+    *is* the multiplicity guarantee, and its only coverage was the input shape
+    that cannot distinguish a correct implementation from a broken one.
+    """
+
+    rows = _masked_band_cohort()
+    original = rows[0]
+    twin = CalibrationObservation(
+        observation_id=original.observation_id,
+        predicted=original.predicted,
+        played=original.played,
+        labels=dict(original.labels),
+    )
+
+    assert twin is not original
+    assert id(twin) != id(original)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            [*rows, twin],
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_distinct_twin_with_a_distinct_id_is_accepted() -> None:
+    """The complement, so the test above cannot pass by refusing everything.
+
+    Written at the same time as its partner deliberately. A refusal test alone
+    is satisfied by a check that raises unconditionally, which is the n=1 shape
+    this repository keeps rediscovering under other names.
+    """
+
+    rows = _masked_band_cohort()
+    original = rows[0]
+    twin = CalibrationObservation(
+        observation_id=original.observation_id + "-second-report",
+        predicted=original.predicted,
+        played=original.played,
+        labels=dict(original.labels),
+    )
+
+    report = build_calibration_report(
+        [*rows, twin],
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == len(rows) + 1
+
+
+def test_band_observations_is_read_by_an_assertion_and_is_therefore_not_decoration() -> None:
+    """V04 survived: `observations=count` -> `observations=len(observations)`.
+
+    The band's own `n` was replaced by the size of the **whole cohort** and no
+    test noticed, because nothing downstream reads `Band.observations`:
+    `detect_monotonic_reversals` uses only `predicted_mean` and `observed_rate`.
+
+    The generalisation is worth more than the fix. **A field that no assertion
+    reads is not data, it is decoration** - and the audit is the same shape as
+    the `DECLARED_CONVENTIONS` audit from pass four, applied to payload fields
+    instead of to declared conventions: for each field on each emitted
+    dataclass, name the test that fails if it is corrupted.
+
+    This test names it for `Band.observations`, and asserts the two properties
+    the mutant broke: the per-band counts are the *band's* size, not the
+    cohort's, and they sum to the cohort.
+    """
+
+    rows = _masked_band_cohort()
+    bands = bands_from_labels(rows, label_key="band", order=("unlikely", "uncertain", "likely"))
+
+    by_label = {band.label: band.observations for band in bands}
+    expected = {
+        "unlikely": HELD_OUT_COUNTS["out"] + HELD_OUT_COUNTS["doubtful"],
+        "uncertain": HELD_OUT_COUNTS["questionable"],
+        "likely": HELD_OUT_COUNTS["probable"] + HELD_OUT_COUNTS["available"],
+    }
+    assert by_label == expected
+
+    assert sum(by_label.values()) == len(rows)
+    assert all(band.observations < len(rows) for band in bands), (
+        "every band is a proper subset here, so a band carrying the cohort size "
+        "is detectable - which is exactly what V04 did"
+    )
+
+
+def test_bands_from_labels_refuses_a_duplicated_cohort() -> None:
+    """P5-3: the rule was 'check where the cohort becomes a number', applied once.
+
+    `build_calibration_report` had the check; this public entry point did not,
+    and it emits `observations`, `predicted_mean` and `observed_rate` from a raw
+    cohort. The reviewer drove a duplicated cohort through it and watched a
+    band's `n` go 100 -> 140 while its `observed_rate` went 0.900 -> 0.643.
+
+    A rule applied at the places its author happened to think of is the same
+    defect as the dunder enumeration it replaced, one level up.
+    """
+
+    rows = _masked_band_cohort()
+    order = ("unlikely", "uncertain", "likely")
+
+    clean = bands_from_labels(rows, label_key="band", order=order)
+    assert sum(band.observations for band in clean) == len(rows)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        bands_from_labels([*rows, rows[0]], label_key="band", order=order)
+
+
+def test_bands_from_labels_checks_before_the_band_split_not_within_it() -> None:
+    """A per-band check would miss two copies that land in different bands.
+
+    The duplicate check runs over the cohort as supplied, so a row duplicated
+    under a *different* band label - which is what a bad join across two report
+    snapshots produces - is refused too. Driving the harder case rather than the
+    one the fix was written against.
+    """
+
+    rows = _masked_band_cohort()
+    source = next(row for row in rows if row.labels["band"] == "unlikely")
+    relabelled = CalibrationObservation(
+        observation_id=source.observation_id,
+        predicted=source.predicted,
+        played=source.played,
+        labels={**source.labels, "band": "likely"},
+    )
+    assert source.labels["band"] != relabelled.labels["band"]
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        bands_from_labels(
+            [*rows, relabelled],
+            label_key="band",
+            order=("unlikely", "uncertain", "likely"),
+        )
+
+
+def test_the_report_duplicate_check_runs_over_the_rows_it_reports_on() -> None:
+    """V08 survived: moving the check from `rows` to the unrestricted input.
+
+    The direction is fail-closed - it can only refuse more - so the severity is
+    low, but *which* collection is checked was pinned by nothing. It must be the
+    collection the numbers come from: checking a superset would refuse reports
+    whose own rows are clean, and checking a subset would let a duplicate
+    through in the part that was filtered out.
+
+    Driven by restricting to a subgroup and duplicating a row that the
+    restriction **excludes**. The report is about `doubtful` rows only, none of
+    them is duplicated, and it must therefore be produced rather than refused.
+    """
+
+    rows = _masked_band_cohort()
+    excluded = next(row for row in rows if row.labels["status"] == "out")
+    contaminated = [*rows, excluded]
+
+    subgroup = restrict(contaminated, status="doubtful")
+    assert len(subgroup) == HELD_OUT_COUNTS["doubtful"]
+
+    report = build_calibration_report(
+        subgroup,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == HELD_OUT_COUNTS["doubtful"]
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            contaminated,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_doubtful_restriction_table_is_a_bracket_not_a_pair_of_bases() -> None:
+    """P5-6: "health reasons" was three restrictions wearing one name.
+
+    The fifth review recomputed the card's health pair as 70-or-69 against the
+    card's 68-or-69 and called it a mismatch. Both are right about their own
+    definition: the reviewer removed G League and `Rest`, the card had also
+    removed `Reconditioning`, and **neither definition was written down**. That
+    is the defect - not the arithmetic.
+
+    It also reads the two numbers as rival *bases* (one from the 84-row
+    breakdown, one from the 83-row published count), which was this card's own
+    superseded account. Under the mechanism actually documented on `main` -
+    canonical versus direct, differing by the participation join - the two
+    numbers are the ends of a **bracket**: exactly `84 - 83 = 1` canonical row is
+    non-direct, and it either carries the removed reason or does not.
+
+    This pins every row of the card's table, and the claim that survives all of
+    them: the floor of 30 clears by more than 2x on the most restrictive
+    reading available.
+    """
+
+    canonical = {
+        "Injury/Illness": 68,
+        "G League": 10,
+        "Rest": 4,
+        "Concussion Protocol": 1,
+        "Reconditioning": 1,
+    }
+    published_direct = 83
+
+    assert sum(canonical.values()) == 84
+    non_direct = sum(canonical.values()) - published_direct
+    assert non_direct == 1, "the bracket width; every row below is +/- this"
+
+    def bracket(*removed: str) -> tuple[int, int]:
+        kept = sum(count for head, count in canonical.items() if head not in removed)
+        return (kept - non_direct, kept)
+
+    assert bracket("G League") == (73, 74)
+    assert bracket("G League", "Rest") == (69, 70)
+    assert bracket("G League", "Rest", "Reconditioning") == (68, 69)
+    assert bracket("G League", "Rest", "Reconditioning", "Concussion Protocol") == (67, 68)
+
+    # v3 section 6's disputed 74 is the canonical non-G-League count - the upper
+    # end of the first bracket - not a rival estimate of the direct count.
+    assert bracket("G League")[1] == 74
+
+    floor = 30
+    lowest = bracket("G League", "Rest", "Reconditioning", "Concussion Protocol")[0]
+    assert lowest == 67
+    assert lowest / floor > 2.0
+    assert round(lowest / floor, 2) == 2.23
+    assert round(bracket("G League")[1] / floor, 2) == 2.47
+
+
+# ---------------------------------------------------------------------------
+# Published fields no assertion reads.
+#
+# Pass five established the rule - a field no assertion reads is not data, it is
+# decoration - by driving `Band.observations`, whose value could be replaced with
+# a constant while 127 tests stayed green. The rule was then applied to the one
+# field that had been driven. Pass six audited all 41 fields of the seven emitted
+# dataclasses and found four more, every one of them reachable in `to_dict()`, so
+# every one of them a *published* number: `CalibrationReport.plays`,
+# `CalibrationReport.brier_score`, `CalibrationBin.plays` and
+# `BrierComparison.seed`.
+#
+# `brier_score` is the one that matters. It is a headline section 7 metric, it can
+# be doubled without a single test noticing, and a reported number wrong by 100%
+# is strictly worse than the internal field that produced the rule. The others are
+# quieter and not harmless: `plays` set to the observation count makes plays per
+# observation read as 1.0, and a recorded `seed` that is not the seed used breaks
+# reproducibility of every interval built from it while still printing a seed.
+#
+# The cohort below is sized so each mutation's substitute is a *different* number
+# from the truth, which is the whole requirement: a field is pinned only by an
+# input on which the wrong value differs from the right one. Four rows, all
+# emitting 0.5, two of which play. plays 2, observations 4, and the constant each
+# mutation would substitute is 4.
+# ---------------------------------------------------------------------------
+
+
+def _half_and_half() -> list[CalibrationObservation]:
+    return [
+        CalibrationObservation(observation_id=f"h{index}", predicted=0.5, played=index < 2)
+        for index in range(4)
+    ]
+
+
+def test_the_reports_play_count_is_the_plays_not_the_row_count() -> None:
+    """`CalibrationReport.plays` survived being replaced by `len(rows)`."""
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 4
+    assert report.plays == 2, "plays is the number that played, not the number of rows"
+    assert report.to_dict()["plays"] == 2
+
+
+def test_the_reported_brier_score_is_the_computed_one() -> None:
+    """`brier_score` survived being doubled. It is a headline section 7 metric.
+
+    Every row emits 0.5 and squared error is 0.25 whether the row played or not,
+    so the Brier score is exactly 0.25 by hand - no tolerance argument, and no
+    dependence on how the rows are binned.
+    """
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.brier_score == pytest.approx(0.25)
+    assert report.to_dict()["brier_score"] == pytest.approx(0.25)
+
+
+def test_a_bins_play_count_is_the_plays_not_the_bin_size() -> None:
+    """`CalibrationBin.plays` survived being replaced by the bin's row count."""
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    (only_bin,) = report.bins
+    assert only_bin.observations == 4
+    assert only_bin.plays == 2
+    assert only_bin.plays / only_bin.observations == pytest.approx(only_bin.observed_rate)
+
+
+def test_the_recorded_seed_is_the_seed_that_was_used() -> None:
+    """`BrierComparison.seed` survived being replaced by 0.
+
+    Driven rather than asserted: the same pairs bootstrapped under two seeds give
+    two different intervals, so a report that misrecords its seed cannot be
+    reproduced from what it published. The second half of the test is what makes
+    the first half matter - without it, `seed` could be any label at all.
+    """
+
+    rows = _half_and_half()
+    pairs = _paired(rows, baseline=0.9)
+    first = paired_bootstrap_brier(pairs, resamples=64, seed=7)
+    assert first.seed == 7
+    assert first.to_dict()["seed"] == 7
+
+    second = paired_bootstrap_brier(pairs, resamples=64, seed=0)
+    assert second.seed == 0
+    assert (first.interval_low, first.interval_high) != (
+        second.interval_low,
+        second.interval_high,
+    ), "seeds that produce identical intervals cannot pin the recorded seed"
