@@ -23576,7 +23576,9 @@ be added without being driven.
 **It was not, and the precise size matters more than the verdict.** At `f3e2c53`:
 39 mapped tables, **62 declared foreign keys, zero of which flow backwards** once
 every table is assigned. The reviewer confirmed the same three figures
-independently.
+independently. Re-counted after rebasing onto `5926850` and **unchanged** - #96,
+#97 and #98 added no mapped table and no foreign key, so the guard met the three
+lanes that landed ahead of it without firing.
 
 What `main` *did* have was an assignment gap, and "assigns nothing" would be the
 wrong summary of it. **Three of thirty-nine tables already recorded a layer** -
@@ -23700,6 +23702,49 @@ a stale one, so an exemption cannot outlive its cause.
   against the final head.
 - Not a Model gate: this unit computes no quantity. Not an Adapter or Automation
   gate: it touches no external source and nothing in the write path.
+
+### The rebase, and my throwaway script reproducing the defect twice in ten minutes
+
+Rebasing onto `5926850` produced two conflicts, and the disposable resolver I
+wrote for them failed **the same way this whole unit is about**, twice, in code
+I wrote knowing exactly what to look for. Recording it because a defect class
+you can name and still walk into is worth more evidence than one you only
+describe.
+
+**First: an unanchored regex matched a quoted conflict marker.**
+`docs/handoff.md` contains the literal text `<<<<<<< HEAD` inside backticks -
+in an earlier lane's entry *about this exact trap* - roughly 6,000 lines above
+the real conflict. My pattern was unanchored, so it matched the quoted one
+first, spanned from prose into the conflict, removed the real `=======` and
+`>>>>>>>`, and left the real `<<<<<<< HEAD` sitting in the output.
+
+**The dated-entry count still came out at the predicted 278.** Nothing had been
+deleted, so the count was right and the file was broken. The prediction I had
+been told to make could not see this; only counting markers before and after
+could. The check that would have caught it is not the one the process
+prescribes.
+
+**Second, and worse: my supersession classifier keyed on the whole heading.** It
+was meant to distinguish an append collision from an entry correcting its
+earlier self. It compared full heading strings - so a correction that also
+*edits its own title*, which is what a corrected entry normally does, has two
+different headings and reads as a clean append. It cheerfully resolved "2 append
+collisions" and left my entry's heading in the file twice, two lines apart, with
+the shared body auto-merged between them.
+
+That is the architect's rule failing in one line: **name the defect the flag
+excludes, then name a reading in which the flag is false and the defect is
+present.** The defect is "the same entry twice". The reading is "the title was
+edited". I could have constructed it in five seconds and did not, because I was
+the author of both the flag and the thing it was checking. Keyed on
+`(date, agent)` it survives a retitle; keyed on the full string it does not.
+
+The third shape was real too and I had not anticipated it: git put upstream's
+14 appended entries and my self-superseding entry in **one hunk**, so it was
+neither a clean append nor a clean supersession. The classifier refused rather
+than guessing, which is the one thing it got right first time, and the mixed
+case is handled explicitly. The script was deleted before the PR; the lesson is
+here because that is where it survives.
 
 ### What I could not verify
 
