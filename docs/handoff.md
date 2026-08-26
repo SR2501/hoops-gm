@@ -27766,3 +27766,110 @@ reported the tree as unclean on this and it is an artifact, not a change.
   `/fxpa/req` captures are method-anonymous by construction. Not disproved,
   unestablished. One mock draft with the userscript loaded turns every guess
   here into a fixture.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round seven and the collapsed distinctions
+
+Seventh independent review of `draft-tracker-bridge-feed` (PR #104), read at `1a861d0`. **Five
+findings, two High, and a direct hit on the structural test I had told the coordinator was
+protecting us.** Round five remains the only round clean of the previous round's fixes, and round
+six withdrew that evidence; seven rounds have now produced seven findings.
+
+All five were reproduced by execution before anything was changed, and the neighbours of each
+reported input were run before its fix was written. That found **three more defects no review
+raised**.
+
+### The correction I owe, first
+
+I told the coordinator the model-derived guard test made *"adding a column red until someone
+decides which"*. **That was true only for `String` columns.** The reviewer appended an unlisted
+`Numeric(12,3)` and an unlisted `Integer` and watched the test stay green, because the loop
+enumerated `String(length)` and nothing else.
+
+That is not a cosmetic gap. `MAX_COORDINATE` was `2**63 - 1` on the strength of a comment
+asserting the real bound was *"not readable off the model"* -- and every coordinate column
+compiles to Postgres `INTEGER`, which is `2**31 - 1`. **The guard was wrong by a factor of four
+billion and the check written to catch exactly that class could not see the column.** The bound is
+now *derived* by compiling each column under `postgresql.dialect()` rather than asserted, and the
+enumeration covers `String`, `Integer` and `Numeric` (11/11 controls, including an unlisted `Text`
+column that must *not* fire).
+
+Worth generalising beyond this file: **a comment claiming something cannot be checked is itself an
+unchecked claim.** That sentence is what stopped anyone deriving the number for three rounds.
+
+### The five findings
+
+| # | Sev | Defect | Measured before the fix |
+|---|---|---|---|
+| F1 | High | An overlong `playerName` fell through to the ambiguous `name` alias | `player_label='Seat One'` -- **the seat's own name on the board as the player taken**, with `unrecognised == ()` |
+| F2 | High | The official path copied `overall_pick` / `round_number` / `pick_number` / `player_name` / `player_id` **raw**, bypassing every coercer | `int(1e100)` recognised, then `OverflowError` at flush killing **the whole ingest**; a 129-char name and 65-char id stored clean on SQLite |
+| F3 | Med | `MAX_COORDINATE` was 64-bit; the columns are 32-bit on Postgres | `_as_int(2147483648)` returned the value and SQLite stored it |
+| F4 | Med | A capacity refusal was suppressed when a sibling list was accepted | deep list alone -> `locator_too_long_to_record`; deep **plus** shallow -> `unrecognised []`, `rejected None` |
+| F5 | Med | `int()` and `Decimal()` implement **Python literal grammar**, not JSON's | `"1_0"` -> 10; `"\u0661\u0662"` -> 12; `"_10"`, `"1__0"`, `"10_"` -> `Decimal(10)` **applied as a sale price** |
+
+### Three more, found by running the neighbours
+
+- The official path admitted **`overall_pick=0`** and **`overall_pick=-5`**; the bridge path
+  refuses both as not one-indexed. Same asymmetry as F2, one field along.
+- `_as_amount("1e2")` returned `Decimal('1E+2')` and was accepted as 100.
+- **Not mine to fix:** `ingest/fantrax_official/parsers._as_int` truncates with a bare `int()`, so
+  `parse_draft_picks` turns `1.9` into `overall_pick=1` and `2.999` into `2` *upstream of this
+  module*. Re-coercion here cannot recover it -- the information is gone before the feed sees the
+  record. Also `overallPick: 0` is dropped by that file's `or` chain, because `0` is falsy. **This
+  is a `data-engineer` item and is filed, not patched.**
+
+### The generator, and why it survived three rounds
+
+F1, F2, F3 and the structural-test miss are one shape: **a distinction that exists in the domain
+was collapsed by the code, and the collapse was invisible on SQLite.**
+
+- F1 collapsed *absent* and *present but refused*, and substituted a different field's value.
+- F2 collapsed *typed* and *bounded* -- `int | None` is arbitrary precision, `str | None` has no
+  length.
+- F3 and the meta finding collapsed *the Python type* and *the storage width*.
+
+F2 is explicitly the round-four asymmetry one layer down. Round four closed a difference in how
+the two recognisers **admitted a list**; this was a difference in how they **read a field**, and
+it survived because every subsequent round re-read admission. That is the coordinator's own
+prediction -- *look at whatever the last round's fixes now delegate to* -- proving correct twice.
+
+The fix is a rule rather than five patches: a three-way `_read_text` returning text / `UNREADABLE`
+/ `None` so presence and usability stay separate; ASCII-only grammar regexes plus width ceilings
+applied *before* conversion; and `recognise_official_draft_picks` routing every field through the
+same coercers the bridge path uses, anchoring on the coerced id.
+
+### For ADR-001
+
+`MAX_COORDINATE` is a second defect **invisible on SQLite and fatal on Postgres**, and the
+Postgres CI job could not have caught it, because no test used a value above `2**31`. A gate that
+runs the same suite against both engines **only discriminates on inputs that differ between the
+engines** -- and nobody had written one. This belongs in the ADR-001 amendment alongside the
+`String(128)` case, not only in the PR.
+
+### Verification
+
+- `pytest` full backend suite: **2132 passed, 38 deselected** (baseline `1a861d0` was 2128; four
+  new tests). `working-directory: backend`.
+- `test_draft_feed.py`: **74 passed**.
+- Mutation harness: **10/10 killed**, `recognise.py` restored byte-identical, zero `# MUTANT`
+  residue, post-restore suite green.
+- Enumeration harness: **11/11**, positive control and restored-state control both pass.
+- `ruff check` clean; `ruff format --check` 218 files already formatted; `mypy` clean, 209 files.
+
+### Could not verify
+
+- **Whether any of this fires on a real draft-room payload.** No real Fantrax draft payload has
+  ever been seen by anyone on this project. Every fixture is constructed. The correct wording is
+  **not disproved, unestablished** -- and it is behind the one mock draft, which is with the owner.
+- **Whether `NaN`, `Infinity`, fractional or non-ASCII-digit values are reachable from a real
+  payload at all.** Unestablished for the same reason. The fixes are cheap and fail closed, which
+  is why they were made anyway.
+- **That the coercers are wired to the guards.** The enumeration proves a bound *exists and
+  matches the column*; the per-rule mutations prove the *wiring*. **Nothing covers both at once**,
+  so a guard could be correct and uncalled in a combination neither check reaches. Named rather
+  than closed badly.
+- **My own instrumentation, three times over.** The mutation harness silently covered only
+  single-line anchors on its first run, because the working tree is CRLF and the anchors were
+  written with `\n`. It was caught only by the harness's own rule -- refuse a verdict unless the
+  anchor appears exactly once -- which reported `anchor appears 0 times` instead of a false pass.
+  I have now had three instrumentation bugs on this unit and each was found by a self-check rather
+  than by reasoning.
