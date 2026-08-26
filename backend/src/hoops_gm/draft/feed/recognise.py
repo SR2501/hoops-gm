@@ -76,6 +76,7 @@ papered over.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -196,10 +197,25 @@ MAX_RECORD_LIST: Final = 1000
 MAX_AMOUNT: Final = Decimal("99999999.99")
 _CENT: Final = Decimal("0.01")
 
-#: Draft coordinates are plain integer columns. SQLite and Postgres both cap a
-#: bound integer at signed 64 bits, and JSON ``1e100`` — whose ``is_integer()``
-#: is ``True`` — becomes a 101-digit Python ``int`` that raises on bind.
-MAX_COORDINATE: Final = 2**63 - 1
+#: Draft coordinates are plain :class:`~sqlalchemy.Integer` columns, and this
+#: bound is **the column's, not Python's**. JSON ``1e100`` — whose
+#: ``is_integer()`` is ``True`` — becomes a 101-digit Python ``int`` that raises
+#: on bind, so some ceiling is needed; the question is which.
+#:
+#: An earlier version of this said "SQLite and Postgres both cap a bound integer
+#: at signed 64 bits, and that is not readable off the model", and set
+#: ``2**63 - 1``. **Both halves were wrong.** SQLAlchemy's ``Integer`` compiles
+#: to Postgres ``INTEGER``, which is signed *32* bits, so everything from
+#: ``2147483648`` up cleared this guard and overflowed on the engine ADR-001
+#: exists to protect. And it *is* readable off the model — by compiling the
+#: column's type under the Postgres dialect, which is what
+#: ``test_every_bounded_column_this_path_writes_has_a_guard_derived_from_it``
+#: now does rather than restating a number.
+#:
+#: This is the same defect as the text bounds beside it wearing a different
+#: type: a value the reader accepts that the storage layer then cannot hold,
+#: failing on Postgres and passing in every SQLite test.
+MAX_COORDINATE: Final = 2**31 - 1
 
 #: ``player_label`` is ``String(128)``; the external ids are ``String(64)``.
 #: This bound is the one that does not fail the same way on both engines:
@@ -231,6 +247,36 @@ MAX_LOCATOR_CHARS: Final = 128
 #: show it. The userscript chooses the value, so this is the one bound here
 #: that a *cooperating* component can breach by accident.
 MAX_ARTIFACT_KEY_CHARS: Final = 128
+
+#: A numeric field arriving as a *string* is parsed against these, not handed
+#: straight to ``int()`` or ``Decimal()``.
+#:
+#: **Both of those implement Python's literal grammar, which is wider than any
+#: grammar a JSON producer emits**, and the widening is silent rather than
+#: erroneous. Measured on this module: ``"1_0"`` read as ``10`` (PEP 515
+#: underscore separators), and ``"١٢"`` — Arabic-Indic digits — read as ``12``,
+#: because ``int()`` accepts every Unicode ``Nd`` character. ``Decimal`` is
+#: looser still and took ``"_10"``, ``"1__0"`` and ``"10_"`` as ``10``; one of
+#: those was applied as a completed sale at ``10.00`` with nothing reported.
+#:
+#: None of those is a misreading of a price or a position. Each is this reader
+#: *inventing* a number from a string, and then presenting it with the same
+#: confidence as one it read — which is the failure this whole module is shaped
+#: to avoid. Refusing them costs nothing a real payload would notice: a JSON
+#: number arrives as ``int`` or ``float`` and never touches these.
+#:
+#: Deliberately narrow. No currency symbol, no thousands separator, no leading
+#: ``+``, no exponent. Widening any of them means someone has *seen* Fantrax
+#: emit it, which is a different state of knowledge from guessing that it might.
+_ASCII_ORDINAL: Final = re.compile(r"\A[0-9]+\Z")
+_ASCII_DECIMAL: Final = re.compile(r"\A[0-9]+(?:\.[0-9]+)?\Z")
+
+#: Length ceilings applied *before* conversion, derived from the bounds above.
+#: Python 3.11+ raises ``ValueError`` converting an ``int`` from a string past
+#: 4300 digits and ``Decimal`` will happily build a megabyte-wide number, so a
+#: digit string is refused on width before either is asked to parse it.
+_MAX_ORDINAL_DIGITS: Final = len(str(MAX_COORDINATE))
+_MAX_AMOUNT_CHARS: Final = len(str(MAX_AMOUNT))
 
 _BRIDGE_RECOGNISER: Final = "fxpa_req.seat_anchored.v1"
 _OFFICIAL_RECOGNISER: Final = "fxea.getDraftPicks.v1"
@@ -294,6 +340,55 @@ def _locator_fits(list_locator: str, count: int) -> bool:
     return len(widest) <= MAX_LOCATOR_CHARS
 
 
+class _Unreadable:
+    """A field that was **present and could not be read**.
+
+    Distinct from ``None``, which means *absent*, and the distinction is the
+    whole of one defect. :func:`_as_text` collapses the two, which is right for
+    a caller that only wants a value and wrong for a caller that will otherwise
+    go looking for a *different* field.
+
+    A review put a 129-character ``playerName`` beside a ``name`` of
+    ``"Seat One"``. ``_as_text`` refused the first, :func:`_player_label` read
+    that refusal as "no explicit name here", fell through to the ambiguous
+    alias, and the pick was applied with ``player_label='Seat One'`` — the
+    seat's own name on the board as the player taken. Nothing was reported: the
+    record still had an id, so it was accepted, and the count of unrecognised
+    shapes was zero.
+
+    The failure is not that a name was lost. It is that a *substitute* was
+    supplied, from a key this module already classifies as ambiguous, and
+    presented with the same confidence as a real one.
+    """
+
+    __slots__ = ()
+
+
+#: Singleton for the above; compared with ``is``.
+UNREADABLE: Final = _Unreadable()
+
+
+def _read_text(value: Any, *, limit: int) -> str | _Unreadable | None:
+    """Text, :data:`UNREADABLE`, or ``None`` for absent.
+
+    The three-way version of :func:`_as_text`. Use it wherever a refusal must
+    not be mistaken for an absence — which is anywhere a fallback follows.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return UNREADABLE
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or len(stripped) > limit:
+            return UNREADABLE
+        return stripped
+    if isinstance(value, int | float):
+        rendered = str(value)
+        return rendered if len(rendered) <= limit else UNREADABLE
+    return UNREADABLE
+
+
 def _as_text(value: Any, *, limit: int) -> str | None:
     """Text short enough for the column it is bound for, or ``None``.
 
@@ -306,18 +401,14 @@ def _as_text(value: Any, *, limit: int) -> str | None:
     cut to fit is still a name and would be stored as one; the identity gates
     already know what to do with a record that has no name at all, and they
     report it by name.
+
+    **This collapses "absent" and "present but refused" into one answer**, which
+    is safe for a caller that stores the result and unsafe for one that falls
+    back to another key. Those callers use :func:`_read_text`. See
+    :class:`_Unreadable` for what went wrong when they did not.
     """
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped or len(stripped) > limit:
-            return None
-        return stripped
-    if isinstance(value, int | float):
-        rendered = str(value)
-        return rendered if len(rendered) <= limit else None
-    return None
+    read = _read_text(value, limit=limit)
+    return read if isinstance(read, str) else None
 
 
 def _is_integral(value: float | Decimal) -> bool:
@@ -373,10 +464,12 @@ def _as_int(value: Any) -> int | None:
             return None
         parsed = int(value)
     elif isinstance(value, str):
-        try:
-            parsed = int(value.strip())
-        except ValueError:
+        stripped = value.strip()
+        # Grammar before conversion: see ``_ASCII_ORDINAL``. ``int()`` accepts
+        # underscore separators and non-ASCII digits, and does so silently.
+        if len(stripped) > _MAX_ORDINAL_DIGITS or not _ASCII_ORDINAL.match(stripped):
             return None
+        parsed = int(stripped)
     else:
         return None
     return parsed if 1 <= parsed <= MAX_COORDINATE else None
@@ -415,6 +508,12 @@ def _as_amount(value: Any) -> Decimal | None:
     """
     if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, str):
+        # Grammar before conversion: see ``_ASCII_DECIMAL``. ``Decimal`` is the
+        # looser of the two constructors and took ``"_10"`` as ten.
+        stripped = value.strip()
+        if len(stripped) > _MAX_AMOUNT_CHARS or not _ASCII_DECIMAL.match(stripped):
+            return None
     try:
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
@@ -605,16 +704,29 @@ def _player_label(record: dict[str, Any]) -> str | None:
     first. A record identified solely by ``playerId`` can therefore still show
     a name on the board, without an ambiguous name ever being what let the list
     in.
+
+    **The fallback is conditional on the explicit key being absent, not on it
+    being unusable.** A ``playerName`` that is present and refused means this
+    record *does* carry an explicit claim about the player and this module
+    could not read it; substituting ``name`` there does not recover the claim,
+    it replaces it with a different one. In the case that surfaced this, the
+    different one was the seat's own name. So a refused explicit label yields
+    ``None`` — the pick is still recorded against the right seat and the right
+    player id, with no name, which is a visible gap rather than a wrong name.
+
+    The same rule applies to the ambiguous aliases among themselves: the first
+    one *present* decides, whether or not it is readable. Otherwise a refused
+    ``name`` would fall through to ``shortName`` and reintroduce the substitution
+    one key along.
     """
-    label = _as_text(_first(record, "player_label"), limit=MAX_LABEL_CHARS)
-    if label is not None:
-        return label
+    explicit = _read_text(_first(record, "player_label"), limit=MAX_LABEL_CHARS)
+    if explicit is not None:
+        return explicit if isinstance(explicit, str) else None
     for alias in AMBIGUOUS_NAME_ALIASES:
-        value = record.get(alias)
-        if value is not None:
-            text = _as_text(value, limit=MAX_LABEL_CHARS)
-            if text is not None:
-                return text
+        if record.get(alias) is None:
+            continue
+        text = _read_text(record[alias], limit=MAX_LABEL_CHARS)
+        return text if isinstance(text, str) else None
     return None
 
 
@@ -837,10 +949,11 @@ def recognise_bridge_payload(
             # skipping quietly.
             block = entry
         accepted_here = False
-        refusals: list[tuple[str, tuple[str, ...], str]] = []
+        shape_refusals: list[tuple[str, tuple[str, ...], str]] = []
+        capacity_refusals: list[tuple[str, tuple[str, ...], str]] = []
         for list_locator, records in _candidate_lists(block, locator):
             if not _locator_fits(list_locator, len(records)):
-                refusals.append(
+                capacity_refusals.append(
                     (
                         list_locator,
                         _keys_of(records[0] if records else None),
@@ -850,7 +963,9 @@ def recognise_bridge_payload(
                 continue
             typed, refusal = _accept_list(records, context, kind)
             if refusal is not None:
-                refusals.append((list_locator, _keys_of(records[0] if records else None), refusal))
+                shape_refusals.append(
+                    (list_locator, _keys_of(records[0] if records else None), refusal)
+                )
                 continue
             accepted_here = True
             for position, record in enumerate(typed):
@@ -872,13 +987,38 @@ def recognise_bridge_payload(
                         ),
                     )
                 )
-        if not accepted_here:
-            if refusals:
-                list_locator, keys, refusal = refusals[0]
+        # A capacity refusal is reported whatever else happened in this entry.
+        #
+        # The suppression below is right for a *shape* refusal and wrong for
+        # this one, and the difference is which side the fault is on. Walking a
+        # draft-room block finds many lists that are simply not the pick log —
+        # a standings table, a budget block — and each returns ``no_seat_anchor``
+        # or ``record_names_no_player``. Reporting those once something was
+        # accepted would bury the screen in noise about lists nobody wanted.
+        #
+        # ``locator_too_long_to_record`` says the opposite: this list may well
+        # be the pick log, and *this module* cannot write down where it found
+        # it. A review showed one shallow accepted list silencing exactly that
+        # about a deep one — recognition returned ``unrecognised []`` and
+        # ``rejected None`` while the deeper list's records went nowhere. A
+        # missing pick reported as nothing, which is the failure mode this
+        # refusal exists to prevent, defeated by the channel it reports on.
+        for list_locator, keys, refusal in capacity_refusals:
+            unrecognised.append(
+                UnrecognisedShape(
+                    keys=keys,
+                    occurrences=1,
+                    example_locator=list_locator,
+                    reason=refusal,
+                )
+            )
+        if not accepted_here and not capacity_refusals:
+            if shape_refusals:
+                list_locator, keys, refusal = shape_refusals[0]
                 unrecognised.append(
                     UnrecognisedShape(
                         keys=keys,
-                        occurrences=len(refusals),
+                        occurrences=len(shape_refusals),
                         example_locator=list_locator,
                         reason=refusal,
                     )
@@ -947,18 +1087,56 @@ def recognise_official_draft_picks(
     unanchored = 0
     unnamed = 0
     coerced = 0
+    unreadable = 0
+    unreadable_fields: set[str] = set()
     dropped_names: set[str] = set()
     for index, pick in enumerate(picks):
-        if pick.team_id not in context.team_external_ids:
+        # Every field below goes through the same coercers as the bridge path.
+        #
+        # **This is the round-4 asymmetry one layer down.** That round closed a
+        # difference in how the two recognisers *admitted a list*; this one was
+        # a difference in how they *read a field*, and it survived because the
+        # reviews kept re-reading admission. ``parse_draft_picks`` returns a
+        # typed dataclass, and being typed was mistaken for being bounded: its
+        # ``int | None`` is a Python ``int``, and a Python ``int`` is arbitrary
+        # precision. Measured here, ``overallPick: 1e100`` arrived as a
+        # 101-digit ``int``, was recognised without comment, and raised
+        # ``OverflowError`` binding to SQLite — outside the ``IntegrityError``
+        # ``_store`` handles, so the whole ingest, not the row. A 129-character
+        # ``playerName`` and a 65-character ``playerId`` likewise stored on
+        # SQLite and would have raised ``DataError`` on Postgres.
+        team_external_id = _as_text(pick.team_id, limit=MAX_EXTERNAL_ID_CHARS)
+        if team_external_id is None or team_external_id not in context.team_external_ids:
             unanchored += 1
             continue
-        if not (pick.player_id or pick.player_name):
+        player_external_id = _as_text(pick.player_id, limit=MAX_EXTERNAL_ID_CHARS)
+        player_label = _as_text(pick.player_name, limit=MAX_LABEL_CHARS)
+        amount = _as_amount(pick.auction_amount)
+        overall_pick = _as_int(pick.overall_pick)
+        round_number = _as_int(pick.round_number)
+        pick_in_round = _as_int(pick.pick_number)
+        # A field the source supplied and this reader refused is a loss, and an
+        # unreported loss on this path is indistinguishable from the source
+        # never having sent it. Counted by name so the status screen can say
+        # which one.
+        lost = tuple(
+            field
+            for field, supplied, read in (
+                ("player_external_id", pick.player_id, player_external_id),
+                ("player_label", pick.player_name, player_label),
+                ("amount", pick.auction_amount, amount),
+                ("overall_pick", pick.overall_pick, overall_pick),
+                ("round_number", pick.round_number, round_number),
+                ("pick_in_round", pick.pick_number, pick_in_round),
+            )
+            if supplied is not None and read is None
+        )
+        if lost:
+            unreadable += 1
+            unreadable_fields.update(lost)
+        if not (player_external_id or player_label):
             unnamed += 1
             continue
-        amount = _as_amount(pick.auction_amount)
-        overall_pick = pick.overall_pick
-        round_number = pick.round_number
-        pick_in_round = pick.pick_number
         # ``parse_draft_picks`` fills the ordinals *and* the amount from the
         # same row unconditionally, so an auction league's own results are the
         # expected shape that violates the storage CHECK. Conform to the kind
@@ -996,9 +1174,9 @@ def recognise_official_draft_picks(
                     source_claimed_at=None,
                     locator=f"draftPicks[{index}]",
                 ),
-                team_external_id=pick.team_id,
-                player_label=pick.player_name,
-                player_external_id=pick.player_id,
+                team_external_id=team_external_id,
+                player_label=player_label,
+                player_external_id=player_external_id,
                 overall_pick=overall_pick,
                 round_number=round_number,
                 pick_in_round=pick_in_round,
@@ -1023,6 +1201,18 @@ def recognise_official_draft_picks(
                 occurrences=unnamed,
                 example_locator="draftPicks[]",
                 reason="record_names_no_player",
+            )
+        )
+    if unreadable:
+        # Not ``rejected``: these picks were still recorded, minus a field. The
+        # count exists so "the board shows no price for that sale" has an
+        # answer other than "the source did not send one".
+        unrecognised.append(
+            UnrecognisedShape(
+                keys=tuple(sorted(unreadable_fields)),
+                occurrences=unreadable,
+                example_locator="draftPicks[]",
+                reason="field_too_large_to_record",
             )
         )
     return RecognitionResult(
