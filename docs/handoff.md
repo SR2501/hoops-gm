@@ -24755,3 +24755,92 @@ guessing at a discrepancy, look for the lane that owns the quantity.** A
   and unresolvable from stated reasons; 7 of 97 `Rest` rows carry "Left Knee -
   Injury Management". The script's docstring reaches the same conclusion
   independently and calls the result an upper bound on the health-reason count.
+
+## 2026-08-23 - `quant` - fifth review pass: a gate reported from the wrong command
+
+**Base:** unchanged, `f3e2c53`, still not rebased. Blind unbroken; the reviewer
+re-ran his AST and literal audit over every file in `f3e2c53..HEAD` and found 0
+hits.
+
+Ten new mutations, **four survived**. Sequence is now **4, 5, 4, 7, 4** and is
+still not converging. Reported rather than smoothed, for the third time.
+
+**The headline is not a mutation.** I reported "mypy clean" from `python -m mypy
+src` - 121 files. The gate `.github/workflows/ci.yml` runs is bare `mypy`, which
+is **195 files** because it includes the tests. Under the real command my branch
+had **five errors and would have failed CI**, and they were introduced by the
+pass-four fixes, so the wrong command had been reported at least once already.
+
+`docs/governance/gates.md` **already records this exact shape**: a prior incident
+of running `mypy --strict` on a script and reporting "strict mypy clean" while
+eighteen unannotated test functions sat outside the checked path. So this is a
+second instance of a named, documented failure mode, in a change set whose whole
+argument is that its verification can be trusted before its results can be seen.
+The five errors were trivial to fix; being the second instance is not trivial.
+**The rule I take from it: quote the gate with its file count**, because "mypy
+clean" is true of both commands and distinguishes neither.
+
+**The three real survivors share a generator I had not seen before.** In each,
+*a guard exists and is correct, and the only test pinning it exercises the one
+input on which a broken guard still returns the right answer.*
+
+- Duplicate detection is keyed on `observation_id`, but every test drove
+  duplication by repeating **the same object**, so `Counter(id(row) ...)` passed
+  all 119 tests. The realistic bug - two instances sharing an id, which is what a
+  join produces - was never driven.
+- `Band.observations` was read by no assertion anywhere, so replacing a band's
+  own count with the whole cohort's size survived. **A field no assertion reads
+  is not data, it is decoration**, and the audit is mechanical: for each field on
+  each emitted dataclass, name the test that fails if it is corrupted.
+- `bands_from_labels` is a second public place where the cohort becomes a number
+  and it had no duplicate check. My pass-four rule was "check where the cohort
+  becomes a number" and I applied it at one of the two such places - **the dunder
+  enumeration I had just rejected, one level up.**
+
+All four are now in `scripts/mutate_calibration.py` as M41-M44; 44 mutations, 44
+caught. One reviewer survivor is deliberately **not** added: swapping the two
+steps in `detect_monotonic_reversals` is a provably equivalent mutant, and an
+equivalent mutant in a harness is worse than no mutation because it trains its
+readers to expect a survivor.
+
+**A methodological correction that matters more than the finding it came from.**
+The reviewer showed my `*=` docstring credited `__mul__` with closing the route
+when `__rmul__` fills the same slot and either alone suffices. Checking it, **we
+had both used `delattr`, and `delattr` cannot model "this method was never
+defined"** - removing a method from a heap type does not restore the slot layout
+the type would have had without it. His matrix and mine disagreed and both were
+artefacts. The sound experiment builds a fresh `type("C", (list,), ns)` per cell;
+it confirms his conclusion, and it is now a test with a mutation guarding it.
+
+**The `doubtful` restriction table.** He recomputed my "68 or 69 on health
+reasons" as 70 or 69 and called it wrong. Both are right about their own
+definition: he removed G League and `Rest`, I had also removed `Reconditioning`,
+and **neither of us wrote down which**. The card now tabulates all four
+restrictions as brackets rather than choosing one. His reading of 74-and-73 as
+rival *bases* is the account I had already superseded - under the
+canonical-versus-direct mechanism they are the two ends of one bracket. Lowest
+reading on any definition is **67/30 = 2.23x**, so condition 6 clears on all of
+them.
+
+Verified at this commit: full suite **1914 passed, 32 deselected** against a
+prediction of 1914 stated before the run; module tests 127; **44 mutations, 44
+caught, 0 survived**; `ruff check .` clean; **bare `mypy` clean, 195 files**;
+backlog header recomputes unchanged; `test_name_diff.py origin/main` 101 added
+(93 + 8 new) and 15 dropped, still PR #96's.
+
+### What I could not verify
+
+- **That there is no third command whose gate I am still reporting narrowly.** I
+  checked `mypy` and `ruff` against `ci.yml` after being caught once. I have not
+  audited every gate in that file against what I run, and the finding above is
+  precisely that I would not notice.
+- **That `Band.observations` is the only decorative field.** I fixed the one the
+  reviewer found and named the audit that would find the rest; I did not run
+  that audit exhaustively over every emitted dataclass.
+- **That refusing duplicate ids is right for real data.** It asserts a property
+  of the **id scheme**, not of the world, which is a better framing than I had -
+  but whoever builds `observation_id` now inherits an obligation stated only in
+  a docstring.
+- **The reason breakdown behind the restriction table.** Still held only as
+  reported; every bracket is conditional on it, and I still cannot run the
+  script that would settle it without a rebase window.

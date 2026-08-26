@@ -172,6 +172,39 @@ was declared and pinned by nothing at all.
   mutant, because it moves `interval_high` downward and `candidate_beats_baseline`
   reads `interval_high` - and M40 reverts the declaration while leaving the
   behaviour, which is the defect that started this group.
+
+The fifth pass found a third generator, distinct from both of those. In each of
+its findings **a guard exists and is correct, and the test pinning it exercises
+the one input on which a broken guard still returns the right answer.** That is
+not an uncovered branch; it is coverage that cannot discriminate. The audit is
+mechanical: for each assertion, name the input on which it would fail if the
+implementation were wrong, and if that is the input the happy path already uses,
+it is not pinned.
+
+* **M41** keys the duplicate check on `id(row)` instead of `observation_id`.
+  Every test drove duplication by repeating the *same object*, so the wrong key
+  agreed with the right one on all of them - while the realistic bug, two
+  instances sharing an id from a join, went straight through.
+* **M42** makes a band report the whole cohort's size. It survived because
+  nothing downstream read `Band.observations`: **a field no assertion reads is
+  not data, it is decoration**, and the audit that finds these is the pass-four
+  `DECLARED_CONVENTIONS` audit applied to payload fields.
+* **M43** removes the duplicate check from `bands_from_labels`, the second place
+  the cohort becomes a number and the one the rule was not applied to. A rule
+  applied where its author happened to think of it is the dunder enumeration it
+  replaced, one level up.
+* **M44** is the only mutation here that targets a **test**, because the claim at
+  risk is a claim about CPython rather than about this module: that either
+  `__mul__` or `__rmul__` alone closes the `*=` route. The fifth review and this
+  author both first measured it with `delattr`, which cannot model "this method
+  was never defined" and produced two different wrong matrices. The pinned
+  experiment builds fresh classes instead, and M44 asserts it can still fail.
+
+One survivor is deliberately **not** here. Swapping the two steps in
+`detect_monotonic_reversals` is a provably equivalent mutant - the sign product
+commutes, so no test can distinguish it - and adding it would install a
+permanent false survivor. An equivalent mutant in a mutation harness is worse
+than no mutation, because it trains its readers to expect a survivor.
 """
 
 from __future__ import annotations
@@ -197,6 +230,7 @@ ENV = {
 TESTS = ["tests/test_calibration_machinery.py"]
 
 CAL = "src/hoops_gm/availability/calibration.py"
+TEST = "tests/test_calibration_machinery.py"
 SYN = "src/hoops_gm/availability/calibration_synthetic.py"
 
 MUTATIONS: list[tuple[str, str, str, str]] = [
@@ -506,6 +540,30 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         CAL,
         '        "one observation id, resampled with replacement; duplicate ids are refused"',
         '        "one observation id, resampled with replacement"',
+    ),
+    (
+        "M41 duplicate detection keyed on object identity, not the id (review V02)",
+        CAL,
+        "    counts = Counter(row.observation_id for row in rows)",
+        "    counts = Counter(id(row) for row in rows)",
+    ),
+    (
+        "M42 a band carries the cohort size instead of its own (review V04)",
+        CAL,
+        "                observations=count,",
+        "                observations=len(observations),",
+    ),
+    (
+        "M43 bands_from_labels stops refusing a duplicated cohort (review P5-3)",
+        CAL,
+        "    _verify_no_duplicate_observations(observations)",
+        "    pass  # check removed",
+    ),
+    (
+        "M44 either multiply override alone is claimed insufficient (review P5-2)",
+        TEST,
+        '    assert observed[(True, False)] == (False, False), "__mul__ alone closes it"',
+        '    assert observed[(True, False)] == (True, True), "__mul__ alone closes it"',
     ),
 ]
 

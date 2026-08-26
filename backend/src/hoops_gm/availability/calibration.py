@@ -592,6 +592,30 @@ def _verify_no_duplicate_observations(
     direct construction and the adversarial `__index__` that the container
     guards cannot see. It is the same principle as verifying the marker rather
     than believing it.
+
+    **What this asserts, precisely.** A fifth review pass asked whether refusing
+    duplicate ids asserts a property of data nobody has seen. It does not: it
+    asserts a property of the **id scheme** — that an `observation_id` names one
+    bootstrap unit — and puts the burden on whoever constructs the id to make
+    that true. Stated that way it asserts nothing about the world. If a
+    player-game can legitimately appear twice, under a status revision within one
+    report cycle, then the two rows are a genuinely ambiguous unit and the *id*
+    is what must change, not this check.
+
+    **Fail-closed is deliberate, and the error costs are asymmetric in kind.** A
+    false refusal is loud, local and diagnosable: the caller gets an exception
+    naming the offending id. Accepting a real duplicate is silent and global —
+    it narrows every interval in the report, in the direction that flatters the
+    candidate, and under the blind that is undetectable from the output, because
+    the output that would reveal it is the output nobody may look at. A guard
+    whose failure mode is invisible to the only inspection permitted must fail
+    closed.
+
+    The check is keyed on `observation_id` and **not** on object identity. Those
+    agree whenever a cohort is duplicated by repeating the same object, which is
+    every way the tests originally drove it, so `id(row)` passed the entire suite
+    while missing the realistic form of the bug — two distinct instances sharing
+    an id, which is what a join against a second table produces.
     """
 
     counts = Counter(row.observation_id for row in rows)
@@ -784,7 +808,22 @@ def bands_from_labels(
     about a *prior* ordering — unlikely, uncertain, likely — and inferring the
     order from the data would make a reversal impossible to detect by
     construction.
+
+    **This is a second place where the cohort becomes a number**, so it runs the
+    same duplicate check as :func:`build_calibration_report`. It did not, for one
+    review pass: the rule was stated as "check where the cohort becomes a number"
+    and then applied at one of the two such places, which an independent reviewer
+    found by driving a duplicated cohort through this entry point and watching a
+    band's ``n`` go 100 → 140 and its ``observed_rate`` 0.900 → 0.643. A rule
+    applied at the places its author happened to think of is the same defect as
+    the dunder enumeration it replaced, one level up.
+
+    The check runs over ``observations`` as supplied, **before** the per-band
+    split, so a duplicate is refused even when the two copies land in different
+    bands — which is the case a per-band check would miss.
     """
+
+    _verify_no_duplicate_observations(observations)
 
     bands: list[Band] = []
     for label in order:

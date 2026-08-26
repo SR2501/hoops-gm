@@ -42,7 +42,6 @@ from hoops_gm.availability.calibration import (
     detect_monotonic_reversals,
     paired_bootstrap_brier,
     restrict,
-    type7_quantile,
     wilson_interval,
 )
 from hoops_gm.availability.calibration_synthetic import (
@@ -54,6 +53,7 @@ from hoops_gm.availability.calibration_synthetic import (
     status_cohort_with_informative_error,
     uniformly_biased_cohort,
 )
+from hoops_gm.availability.reliability import type7_quantile
 
 # Held-out direct outcomes by status, from
 # `section_2_admissibility.held_out_direct_outcomes_by_status`. Counts only —
@@ -1713,7 +1713,7 @@ def test_removal_leaves_a_marker_that_is_true_and_no_longer_complete() -> None:
 def _duplicate_in_place_by_iadd(cohort: RestrictedCohort) -> RestrictedCohort:
     """Exactly `cohort += list(cohort)`, spelled so the return type is inspectable."""
 
-    duplicated = operator.iadd(cohort, list(cohort))
+    duplicated = operator.iadd(cohort, list(cohort))  # type: ignore[no-untyped-call]
     assert isinstance(duplicated, RestrictedCohort)
     assert duplicated is cohort
     return duplicated
@@ -1795,11 +1795,24 @@ def test_the_one_in_place_route_that_does_drop_the_marker_drops_it_by_accident()
     re-wrap at `count != 1`.
 
     So the route is closed, and it is closed **by accident**. Nothing was
-    written to close it, no comment records it, and deleting the `__mul__`
-    override - which a later reader could reasonably think redundant once
-    duplication is refused at report time - would silently reopen it. A guard
-    that holds for a reason nobody wrote down is not a guard you may rely on,
-    which is the argument for the check that does not care how the rows arrived.
+    written to close it and no comment recorded it.
+
+    **A fifth review pass corrected the attribution, and the correction is the
+    interesting part.** This docstring used to say that deleting `__mul__` would
+    silently reopen the route. It would not. `__rmul__` fills the same
+    `nb_multiply` slot, so *either* override alone closes it, and the route is
+    open only when **both** are absent. The test below therefore trips on the
+    removal of both and is blind to the removal of one - a **disclosed residual**
+    rather than a guarantee, which is the distinction pass four was about.
+
+    **And both parties reached the matrix by an unsound method.** Deleting a
+    method from a heap type with `delattr` does not restore the slot layout the
+    type would have had if the method had never been defined, so a delattr-based
+    counterfactual measures runtime slot patching rather than the source variant
+    it claims to model. Driving it that way gave `list` in all four cells, which
+    is wrong. The sound experiment builds a fresh `type("C", (list,), ns)` per
+    cell, and :func:`test_only_removing_both_multiply_overrides_reopens_the_route`
+    is that experiment, kept as a test so the attribution cannot rot again.
 
     `rc += list(rc)` has no such accident: `list` *does* expose
     `nb_inplace_add`-equivalent behaviour through `sq_inplace_concat`, and
@@ -1807,18 +1820,55 @@ def test_the_one_in_place_route_that_does_drop_the_marker_drops_it_by_accident()
     """
 
     cohort = restrict(_masked_band_cohort(), status="doubtful")
-    doubled = operator.imul(cohort, 2)
+    doubled = operator.imul(cohort, 2)  # type: ignore[no-untyped-call]
 
     assert len(doubled) == 166
     assert type(doubled) is list
     assert not isinstance(doubled, RestrictedCohort)
     assert not hasattr(doubled, "restriction")
 
-    added = operator.iadd(
+    added = operator.iadd(  # type: ignore[no-untyped-call]
         restrict(_masked_band_cohort(), status="doubtful"),
         list(restrict(_masked_band_cohort(), status="doubtful")),
     )
     assert type(added) is RestrictedCohort
+
+
+def test_only_removing_both_multiply_overrides_reopens_the_route() -> None:
+    """Either `__mul__` or `__rmul__` alone closes `*=`; the residual needs both.
+
+    Built from fresh class definitions rather than `delattr` for the reason given
+    in the test above: `delattr` cannot model "this method was never defined".
+
+    The cell that matters is the first one. With neither override present the
+    operator reaches `list`'s `sq_inplace_repeat`, which mutates in place and
+    **preserves the subclass**, so a marker-carrying cohort would come back
+    marked with `n` doubled - exactly the payload the fourth review reported
+    against the real class, correct about the danger and wrong about where it
+    lives.
+    """
+
+    def build(with_mul: bool, with_rmul: bool) -> type[list[int]]:
+        namespace: dict[str, object] = {}
+        if with_mul:
+            namespace["__mul__"] = lambda self, count: list.__mul__(self, count)
+        if with_rmul:
+            namespace["__rmul__"] = lambda self, count: list.__rmul__(self, count)
+        return type("C", (list,), namespace)
+
+    observed = {}
+    for with_mul in (False, True):
+        for with_rmul in (False, True):
+            cls = build(with_mul, with_rmul)
+            obj = cls([1])
+            identity = id(obj)
+            obj *= 2
+            observed[(with_mul, with_rmul)] = (type(obj) is cls, id(obj) == identity)
+
+    assert observed[(False, False)] == (True, True), "no override: route is OPEN"
+    assert observed[(True, False)] == (False, False), "__mul__ alone closes it"
+    assert observed[(False, True)] == (False, False), "__rmul__ alone closes it"
+    assert observed[(True, True)] == (False, False), "both closes it"
 
 
 @pytest.mark.parametrize(
@@ -2156,4 +2206,259 @@ def test_multiplying_by_zero_or_a_negative_count_drops_the_marker(count: int) ->
     assert type(count * cohort) is list
 
     assert type(cohort * 1) is RestrictedCohort
-    assert (cohort * 1).restriction == (("status", "doubtful"),)
+    once = cohort * 1
+    assert isinstance(once, RestrictedCohort)
+    assert once.restriction == (("status", "doubtful"),)
+
+
+# ---------------------------------------------------------------------------
+# Fifth review: a guard is pinned only by an input on which a broken guard fails
+# ---------------------------------------------------------------------------
+#
+# Three of this pass's findings share one generator, and it is not the pass-four
+# generator. In each case a guard exists and is correct, and the test that pins
+# it exercises the single input shape on which a *broken* guard still returns
+# the right answer. The audit that catches it is mechanical: for each assertion,
+# name the input on which it would fail if the implementation were wrong, and if
+# that is the same input the happy path already uses, it is not pinned.
+
+
+def test_the_duplicate_check_is_keyed_on_the_id_not_on_object_identity() -> None:
+    """V02 survived: `Counter(id(row) ...)` passed all 119 tests.
+
+    Every existing test that drives the duplicate check appends, extends or
+    repeats **the same object**, so `id()` and `observation_id` agree on all of
+    them and the wrong key still gives the right answer. The realistic form of
+    the bug is the one no test had: two distinct instances carrying one id,
+    which is what a join against a second table produces.
+
+    That is why this matters more than an ordinary uncovered branch. The check
+    *is* the multiplicity guarantee, and its only coverage was the input shape
+    that cannot distinguish a correct implementation from a broken one.
+    """
+
+    rows = _masked_band_cohort()
+    original = rows[0]
+    twin = CalibrationObservation(
+        observation_id=original.observation_id,
+        predicted=original.predicted,
+        played=original.played,
+        labels=dict(original.labels),
+    )
+
+    assert twin is not original
+    assert id(twin) != id(original)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            [*rows, twin],
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_a_distinct_twin_with_a_distinct_id_is_accepted() -> None:
+    """The complement, so the test above cannot pass by refusing everything.
+
+    Written at the same time as its partner deliberately. A refusal test alone
+    is satisfied by a check that raises unconditionally, which is the n=1 shape
+    this repository keeps rediscovering under other names.
+    """
+
+    rows = _masked_band_cohort()
+    original = rows[0]
+    twin = CalibrationObservation(
+        observation_id=original.observation_id + "-second-report",
+        predicted=original.predicted,
+        played=original.played,
+        labels=dict(original.labels),
+    )
+
+    report = build_calibration_report(
+        [*rows, twin],
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == len(rows) + 1
+
+
+def test_band_observations_is_read_by_an_assertion_and_is_therefore_not_decoration() -> (
+    None
+):
+    """V04 survived: `observations=count` -> `observations=len(observations)`.
+
+    The band's own `n` was replaced by the size of the **whole cohort** and no
+    test noticed, because nothing downstream reads `Band.observations`:
+    `detect_monotonic_reversals` uses only `predicted_mean` and `observed_rate`.
+
+    The generalisation is worth more than the fix. **A field that no assertion
+    reads is not data, it is decoration** - and the audit is the same shape as
+    the `DECLARED_CONVENTIONS` audit from pass four, applied to payload fields
+    instead of to declared conventions: for each field on each emitted
+    dataclass, name the test that fails if it is corrupted.
+
+    This test names it for `Band.observations`, and asserts the two properties
+    the mutant broke: the per-band counts are the *band's* size, not the
+    cohort's, and they sum to the cohort.
+    """
+
+    rows = _masked_band_cohort()
+    bands = bands_from_labels(
+        rows, label_key="band", order=("unlikely", "uncertain", "likely")
+    )
+
+    by_label = {band.label: band.observations for band in bands}
+    expected = {
+        "unlikely": HELD_OUT_COUNTS["out"] + HELD_OUT_COUNTS["doubtful"],
+        "uncertain": HELD_OUT_COUNTS["questionable"],
+        "likely": HELD_OUT_COUNTS["probable"] + HELD_OUT_COUNTS["available"],
+    }
+    assert by_label == expected
+
+    assert sum(by_label.values()) == len(rows)
+    assert all(band.observations < len(rows) for band in bands), (
+        "every band is a proper subset here, so a band carrying the cohort size "
+        "is detectable - which is exactly what V04 did"
+    )
+
+
+def test_bands_from_labels_refuses_a_duplicated_cohort() -> None:
+    """P5-3: the rule was 'check where the cohort becomes a number', applied once.
+
+    `build_calibration_report` had the check; this public entry point did not,
+    and it emits `observations`, `predicted_mean` and `observed_rate` from a raw
+    cohort. The reviewer drove a duplicated cohort through it and watched a
+    band's `n` go 100 -> 140 while its `observed_rate` went 0.900 -> 0.643.
+
+    A rule applied at the places its author happened to think of is the same
+    defect as the dunder enumeration it replaced, one level up.
+    """
+
+    rows = _masked_band_cohort()
+    order = ("unlikely", "uncertain", "likely")
+
+    clean = bands_from_labels(rows, label_key="band", order=order)
+    assert sum(band.observations for band in clean) == len(rows)
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        bands_from_labels([*rows, rows[0]], label_key="band", order=order)
+
+
+def test_bands_from_labels_checks_before_the_band_split_not_within_it() -> None:
+    """A per-band check would miss two copies that land in different bands.
+
+    The duplicate check runs over the cohort as supplied, so a row duplicated
+    under a *different* band label - which is what a bad join across two report
+    snapshots produces - is refused too. Driving the harder case rather than the
+    one the fix was written against.
+    """
+
+    rows = _masked_band_cohort()
+    source = next(row for row in rows if row.labels["band"] == "unlikely")
+    relabelled = CalibrationObservation(
+        observation_id=source.observation_id,
+        predicted=source.predicted,
+        played=source.played,
+        labels={**source.labels, "band": "likely"},
+    )
+    assert source.labels["band"] != relabelled.labels["band"]
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        bands_from_labels(
+            [*rows, relabelled],
+            label_key="band",
+            order=("unlikely", "uncertain", "likely"),
+        )
+
+
+def test_the_report_duplicate_check_runs_over_the_rows_it_reports_on() -> None:
+    """V08 survived: moving the check from `rows` to the unrestricted input.
+
+    The direction is fail-closed - it can only refuse more - so the severity is
+    low, but *which* collection is checked was pinned by nothing. It must be the
+    collection the numbers come from: checking a superset would refuse reports
+    whose own rows are clean, and checking a subset would let a duplicate
+    through in the part that was filtered out.
+
+    Driven by restricting to a subgroup and duplicating a row that the
+    restriction **excludes**. The report is about `doubtful` rows only, none of
+    them is duplicated, and it must therefore be produced rather than refused.
+    """
+
+    rows = _masked_band_cohort()
+    excluded = next(row for row in rows if row.labels["status"] == "out")
+    contaminated = [*rows, excluded]
+
+    subgroup = restrict(contaminated, status="doubtful")
+    assert len(subgroup) == HELD_OUT_COUNTS["doubtful"]
+
+    report = build_calibration_report(
+        subgroup,
+        provenance=Provenance.POST_HOC_DIAGNOSTIC,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == HELD_OUT_COUNTS["doubtful"]
+
+    with pytest.raises(ValueError, match="appear more than once"):
+        build_calibration_report(
+            contaminated,
+            provenance=Provenance.POST_HOC_DIAGNOSTIC,
+            binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+        )
+
+
+def test_the_doubtful_restriction_table_is_a_bracket_not_a_pair_of_bases() -> None:
+    """P5-6: "health reasons" was three restrictions wearing one name.
+
+    The fifth review recomputed the card's health pair as 70-or-69 against the
+    card's 68-or-69 and called it a mismatch. Both are right about their own
+    definition: the reviewer removed G League and `Rest`, the card had also
+    removed `Reconditioning`, and **neither definition was written down**. That
+    is the defect - not the arithmetic.
+
+    It also reads the two numbers as rival *bases* (one from the 84-row
+    breakdown, one from the 83-row published count), which was this card's own
+    superseded account. Under the mechanism actually documented on `main` -
+    canonical versus direct, differing by the participation join - the two
+    numbers are the ends of a **bracket**: exactly `84 - 83 = 1` canonical row is
+    non-direct, and it either carries the removed reason or does not.
+
+    This pins every row of the card's table, and the claim that survives all of
+    them: the floor of 30 clears by more than 2x on the most restrictive
+    reading available.
+    """
+
+    canonical = {
+        "Injury/Illness": 68,
+        "G League": 10,
+        "Rest": 4,
+        "Concussion Protocol": 1,
+        "Reconditioning": 1,
+    }
+    published_direct = 83
+
+    assert sum(canonical.values()) == 84
+    non_direct = sum(canonical.values()) - published_direct
+    assert non_direct == 1, "the bracket width; every row below is +/- this"
+
+    def bracket(*removed: str) -> tuple[int, int]:
+        kept = sum(count for head, count in canonical.items() if head not in removed)
+        return (kept - non_direct, kept)
+
+    assert bracket("G League") == (73, 74)
+    assert bracket("G League", "Rest") == (69, 70)
+    assert bracket("G League", "Rest", "Reconditioning") == (68, 69)
+    assert bracket(
+        "G League", "Rest", "Reconditioning", "Concussion Protocol"
+    ) == (67, 68)
+
+    # v3 section 6's disputed 74 is the canonical non-G-League count - the upper
+    # end of the first bracket - not a rival estimate of the direct count.
+    assert bracket("G League")[1] == 74
+
+    floor = 30
+    lowest = bracket("G League", "Rest", "Reconditioning", "Concussion Protocol")[0]
+    assert lowest == 67
+    assert lowest / floor > 2.0
+    assert round(lowest / floor, 2) == 2.23
+    assert round(bracket("G League")[1] / floor, 2) == 2.47
