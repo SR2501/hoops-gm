@@ -26279,3 +26279,86 @@ that moved, but a subject that never did.**
   appearing and vanishing during their run in a tree we were both using. Neither of us touched it.
   It is absent now. Recorded because an unexplained mutation in a shared tree is exactly the thing
   that should not be silently dropped.
+---
+
+## 2026-08-26 - backend - three fixes with no regression barrier, which is the same as no fixes
+
+A third independent review read `8ad253d` and returned no BLOCKING finding. It returned
+something worse, and the fact that it is not blocking is the interesting part.
+
+**The MEDIUM is the real finding. It restored the pre-fix form of three previous fixes -
+the scope-blindness fix, the relative-import fix, the attribute-walk fix - one at a time,
+and got `9 passed, 1 skipped` on each.** Every fix this file has received across three
+rounds was revertible in silence.
+
+The mechanism is that **every test in the file routed through a walk over the real
+`src/` tree**. So a fix could only be exercised if some production file happened to spell
+the defect it closes - and none do, which is precisely why the holes were latent rather
+than live. Green meant *"this repository does not currently contain the bad case"*, and it
+read identically to *"the fix works"*.
+
+**That is a coverage check wearing a mechanism check's name**, filed by this project once
+before against my own `schedule_source` fix, and I reproduced it three times without
+noticing. My own mutation controls did not catch it because I injected defects - which the
+walk then found - rather than reverting fixes, which nothing observed. **An injected-defect
+control and a reverted-fix control are different questions**, and I had been answering only
+the first while believing I had answered both.
+
+The fix is a split: `_sites_in_module(rel, text)` takes source directly, and `_call_sites()`
+maps it over `src/`. Seventeen new cases now hand the walk the defect in-hand, so a revert
+fails **in the function that was reverted** instead of waiting for someone to write the bad
+spelling for real. All six reversions now die, each naming its own barrier.
+
+**The HIGH: three more binders that are not `Name(Store)` nodes.** A store-only walk cannot
+see them, so all three classified a runtime value as a compile-time constant:
+
+- `case {"source": SOURCE}` - `ast.MatchAs`. **It reads like a comparison and it is a
+  rebind**, which is the sharpest of the three.
+- `except RuntimeError as SOURCE` - `ast.ExceptHandler.name` is a bare `str` field.
+- `globals()["SOURCE"] = os.environ[...]` - binds no name a walk could ever see.
+
+The first two join the walk. The third cannot be tracked by name because there is no name,
+so any module calling `globals()` or `vars()` now gets **no** trusted constants at all.
+Blunt, aimed at a construct absent from `src/`, and the right direction: its failure mode is
+a false alarm, which gets investigated.
+
+**A positive control on the predicate, which was missing and would have made everything
+vacuous.** Every "this is not a constant" assertion is satisfied by a `_source_is_constant`
+that returns `False` unconditionally. `test_a_genuine_module_constant_is_still_accepted`
+excludes that reading. **Seventeen negative cases and no positive one is not a strong test
+suite, it is an unfalsifiable one** - and I built the first sixteen before noticing.
+
+**The enumeration is byte-identical across the refactor**: 8 sites, 7 constant, 1 variable
+at `ingest/importers.py:952`, same files and same line numbers. That is the control showing
+the split preserved behaviour on the real tree rather than merely still passing.
+
+**My mutation driver committed the defect it exists to exclude.** It confirmed a mutation
+had landed by looking for `replacement.split("\n")[0]` - the replacement's *first* line. For
+a multi-line mutation whose first line is unchanged, that string is in the original file
+too, so the presence check passed without the mutation existing **and printed an unmodified
+line as evidence of modification**. M-F reported `if isinstance(arg, ast.Name):` - a line I
+had not touched. The check now requires the full replacement present and prints the line
+that is absent from the original, which reports `if isinstance(arg, ast.Attribute):`.
+
+The test still died, so the verdict was right and the evidence for it was fake. **A control
+that reaches the correct conclusion through a broken instrument is not a weaker control, it
+is an unrelated event that happened to agree** - and this is the fourth instrument failure
+this lane has caught by printing values rather than verdicts.
+
+### Could not verify
+
+- **Whether `match`, `except ... as`, or `globals()` shadowing of a module constant exists
+  anywhere in `src/` today.** Closed on mechanism, demonstrated on synthetic source. The
+  reviewer demonstrated the false-greens but did not enumerate live exposure, and neither
+  did I.
+- **Whether the `globals()`/`vars()` distrust is reachable at all.** No module under `src/`
+  calls either, so the branch is closed before it is reachable and its cost today is zero -
+  but that also means nothing in the real tree exercises it. Only the synthetic case does.
+- **`setattr(sys.modules[__name__], "SOURCE", ...)`** is the same defect as the `globals()`
+  case in a spelling I did not close. Named rather than fixed, because an unstated
+  assumption is how the previous holes survived.
+- **`getattr(lineage, "record_" + "refresh")`** still defeats the substring early-out
+  wholesale. Unchanged from last round, still documented, still not gated, exposure still
+  unmeasured by anyone.
+- **The Postgres row-lock reasoning** for `session.commit()` before `main()` remains
+  reasoned rather than exercised; both the reviewer and I have SQLite only.

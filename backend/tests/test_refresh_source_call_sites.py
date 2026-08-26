@@ -71,6 +71,19 @@ def _module_level_constants(tree: ast.Module) -> set[str]:
     ``SOURCE += os.environ["X"]`` is the same function failing differently - ``AugAssign``
     was handled by neither branch, so the name stayed "bound exactly once".
 
+    **A third review found three more binders that are not ``Name(Store)``**, so walking
+    for stores missed them entirely: a ``match`` capture pattern (``case {"source": SOURCE}``
+    is an ``ast.MatchAs``, and it binds), ``except RuntimeError as SOURCE``
+    (``ast.ExceptHandler.name`` is a bare ``str``, not a node), and
+    ``globals()["SOURCE"] = os.environ[...]``, which binds nothing syntactically at all.
+    All three were demonstrated classifying a runtime value as a compile-time constant.
+
+    The match case is the sharpest: it reads like a comparison and is a rebind.
+
+    ``globals()`` cannot be tracked by name, so it is not tracked by name: any module that
+    calls ``globals()`` or ``vars()`` gets **no** trusted constants. That is a blunt
+    instrument aimed at a rare construct, and it is the right direction - see below.
+
     Rejecting a shadowed name costs a false alarm, which gets investigated. Accepting one
     costs a green, which does not.
     """
@@ -97,8 +110,10 @@ def _module_level_constants(tree: ast.Module) -> set[str]:
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
     }
 
-    # Every other binding of the name, at any depth: parameters, for-targets, with-items,
-    # comprehensions, walruses, imports, nested def/class names, augmented assignment.
+    # Every other binding of the name: parameters, for-targets, with-items, comprehensions,
+    # walruses, imports, nested def/class names, augmented assignment, match captures and
+    # except-clause names. The last two are not ``Name(Store)`` nodes, which is exactly why
+    # a store-only walk missed them.
     shadowed: set[str] = set()
     for walked in ast.walk(tree):
         if isinstance(walked, ast.Name) and isinstance(walked.ctx, ast.Store | ast.Del):
@@ -115,8 +130,35 @@ def _module_level_constants(tree: ast.Module) -> set[str]:
         elif isinstance(walked, ast.Import | ast.ImportFrom):
             for alias in walked.names:
                 shadowed.add(alias.asname or alias.name.split(".")[0])
+        elif (
+            isinstance(walked, ast.ExceptHandler | ast.MatchAs | ast.MatchStar)
+            and walked.name is not None
+        ):
+            # All three keep the bound name in a plain ``str`` field rather than a
+            # ``Name`` node, which is exactly why a store-only walk never saw them.
+            shadowed.add(walked.name)
+        elif isinstance(walked, ast.MatchMapping) and walked.rest is not None:
+            shadowed.add(walked.rest)
+        elif _rebinds_through_the_module_dict(walked):
+            # No name to shadow: ``globals()["SOURCE"] = x`` is a subscript store on the
+            # result of a call. Rather than model it, distrust the whole module. A file
+            # that writes its own globals at runtime has no compile-time constants worth
+            # the word, and there are none in this tree - so the cost is zero today and
+            # the failure, if it ever fires, is a false alarm rather than a false green.
+            return set()
 
     return {name for name in literal if counts[name] == 1 and name not in shadowed}
+
+
+def _rebinds_through_the_module_dict(node: ast.AST) -> bool:
+    """``globals()`` or ``vars()`` called with no arguments, i.e. the module's own dict."""
+
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"globals", "vars"}
+        and not node.args
+    )
 
 
 def _source_is_constant(arg: ast.expr, constants: set[str]) -> bool:
@@ -181,6 +223,73 @@ def _record_refresh_bindings(tree: ast.Module) -> set[str]:
     return names
 
 
+def _sites_in_module(rel: str, text: str) -> list[tuple[str, int, str, bool]]:
+    """Resolve every ``record_refresh`` site in one module's source.
+
+    Split out of :func:`_call_sites` so the walk can be exercised against source that
+    does not exist in this repository. That split is the point, not tidiness.
+
+    **Every test in this file used to route through a walk over the real tree**, so a
+    fix here had no regression barrier of its own: a review restored the pre-fix form
+    of the scope-blindness fix, the relative-import fix and the attribute-walk fix, one
+    at a time, and got ``9 passed, 1 skipped`` on each - because nothing in this
+    repository spells the defect any of them close. Green meant "the tree happens not to
+    contain the case", and it read identically to "the fix works".
+
+    That is a coverage check wearing a mechanism check's name, which this project has
+    shipped once before. The tests below call this function with the case in hand.
+    """
+
+    sites: list[tuple[str, int, str, bool]] = []
+    tree = ast.parse(text)
+    constants = _module_level_constants(tree)
+    bindings = _record_refresh_bindings(tree)
+    called_here: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            matched = func.id in bindings
+        else:
+            matched = getattr(func, "attr", None) == "record_refresh"
+        if not matched:
+            continue
+        called_here.add(id(func))
+        source = next((k.value for k in node.keywords if k.arg == "source"), None)
+        if source is None:
+            # ``source`` is keyword-only in the real signature, so a *positional*
+            # source is a TypeError rather than a hole here - an earlier version of
+            # this comment claimed to catch something that cannot happen, which is
+            # true vacuously and therefore says nothing. What this branch actually
+            # catches is ``**kwargs`` unpacking and outright omission: nothing here
+            # can tell what the source is, so it fails loudly rather than skipping.
+            sites.append((rel, node.lineno, "<not a keyword argument>", False))
+            continue
+        sites.append(
+            (rel, node.lineno, ast.unparse(source), _source_is_constant(source, constants))
+        )
+
+    # The primitive handed somewhere rather than called: functools.partial, a
+    # decorator, a dict of writers. The source cannot be resolved from here, so it is
+    # reported as non-constant rather than passed over in silence.
+    #
+    # Both spellings are covered. An earlier version walked only ``ast.Name``, so it
+    # missed the attribute form - ``functools.partial(lineage.record_refresh, ...)``
+    # and ``_rr = lin.record_refresh`` both passed clean, because the attribute node
+    # is neither a call's callee nor a Name. Neither spelling occurs in this tree
+    # today (``functools.partial`` and ``import hoops_gm`` are both absent under
+    # ``src/``), so this is a hole closed before it was reachable.
+    for node in ast.walk(tree):
+        if id(node) in called_here:
+            continue
+        if isinstance(node, ast.Name) and node.id in bindings:
+            sites.append((rel, node.lineno, f"<{node.id} referenced, not called>", False))
+        elif isinstance(node, ast.Attribute) and node.attr == "record_refresh":
+            sites.append((rel, node.lineno, "<record_refresh referenced, not called>", False))
+    return sites
+
+
 def _call_sites() -> list[tuple[str, int, str, bool]]:
     """Every record_refresh call in production code, with its resolved source."""
 
@@ -193,53 +302,7 @@ def _call_sites() -> list[tuple[str, int, str, bool]]:
         # an unstated assumption is how the previous two holes in this file survived.
         if "record_refresh" not in text:
             continue
-        tree = ast.parse(text)
-        constants = _module_level_constants(tree)
-        bindings = _record_refresh_bindings(tree)
-        rel = path.relative_to(SRC).as_posix()
-        called_here: set[int] = set()
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if isinstance(func, ast.Name):
-                matched = func.id in bindings
-            else:
-                matched = getattr(func, "attr", None) == "record_refresh"
-            if not matched:
-                continue
-            called_here.add(id(func))
-            source = next((k.value for k in node.keywords if k.arg == "source"), None)
-            if source is None:
-                # ``source`` is keyword-only in the real signature, so a *positional*
-                # source is a TypeError rather than a hole here - an earlier version of
-                # this comment claimed to catch something that cannot happen, which is
-                # true vacuously and therefore says nothing. What this branch actually
-                # catches is ``**kwargs`` unpacking and outright omission: nothing here
-                # can tell what the source is, so it fails loudly rather than skipping.
-                sites.append((rel, node.lineno, "<not a keyword argument>", False))
-                continue
-            sites.append(
-                (rel, node.lineno, ast.unparse(source), _source_is_constant(source, constants))
-            )
-
-        # The primitive handed somewhere rather than called: functools.partial, a
-        # decorator, a dict of writers. The source cannot be resolved from here, so it is
-        # reported as non-constant rather than passed over in silence.
-        #
-        # Both spellings are covered. An earlier version walked only ``ast.Name``, so it
-        # missed the attribute form - ``functools.partial(lineage.record_refresh, ...)``
-        # and ``_rr = lin.record_refresh`` both passed clean, because the attribute node
-        # is neither a call's callee nor a Name. Neither spelling occurs in this tree
-        # today (``functools.partial`` and ``import hoops_gm`` are both absent under
-        # ``src/``), so this is a hole closed before it was reachable.
-        for node in ast.walk(tree):
-            if id(node) in called_here:
-                continue
-            if isinstance(node, ast.Name) and node.id in bindings:
-                sites.append((rel, node.lineno, f"<{node.id} referenced, not called>", False))
-            elif isinstance(node, ast.Attribute) and node.attr == "record_refresh":
-                sites.append((rel, node.lineno, "<record_refresh referenced, not called>", False))
+        sites.extend(_sites_in_module(path.relative_to(SRC).as_posix(), text))
     return sites
 
 
@@ -302,4 +365,198 @@ def test_every_other_call_site_passes_a_compile_time_constant(
     assert is_constant, (
         f"{path}:{line} passes source={expr}, which is not a compile-time constant. "
         "That scope can now receive two sources, and record_refresh relabels in place."
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Regression barriers, each at the location of the defect it excludes.
+#
+# Everything above walks the real tree, so it can only fail when this repository actually
+# contains the bad spelling. A review restored three previous fixes to their pre-fix form
+# and every test above stayed green, because no production file spells any of them. The
+# tests below hand the walk the case directly, so reverting a fix fails *here*, in the
+# function that was reverted, without waiting for someone to write the defect for real.
+# --------------------------------------------------------------------------------------
+
+# A module that is constant in every respect except the one binding under test, so a
+# failure names the binder rather than some unrelated difference.
+_SHADOW_PROBE = """
+SOURCE = "literal-source"
+
+{binder}
+
+def publish(session, payload):
+    record_refresh(session, artifact_type="X", artifact_key="k", source=SOURCE)
+"""
+
+
+@pytest.mark.parametrize(
+    "label, binder",
+    [
+        (
+            "match capture",
+            'def read(payload):\n    match payload:\n        case {"source": SOURCE}:\n'
+            "            return SOURCE",
+        ),
+        (
+            "except-clause name",
+            "def read():\n    try:\n        pass\n    except RuntimeError as SOURCE:\n"
+            "        return SOURCE",
+        ),
+        ("function parameter", "def read(SOURCE):\n    return SOURCE"),
+        ("augmented assignment", 'SOURCE += "-suffix"'),
+        ("global rebind", 'def read():\n    global SOURCE\n    SOURCE = open("x").read()'),
+        ("for target", 'for SOURCE in ["a", "b"]:\n    pass'),
+        ("comprehension target", "_ = [SOURCE for SOURCE in range(3)]"),
+        ("walrus", "_ = (SOURCE := 1)"),
+    ],
+)
+def test_a_rebound_name_is_never_a_compile_time_constant(label: str, binder: str) -> None:
+    """Each of these binds ``SOURCE`` to something the reader cannot pin at import time.
+
+    The defect excluded: a runtime value classified as a constant, so its call site is
+    counted safe and a second producer can relabel it unnoticed.
+
+    The reading in which this is green and the defect present: the binder is not a
+    ``Name(Store)`` node, so a store-only walk never sees it. ``match`` captures and
+    ``except ... as`` are exactly that - the first reads like a comparison and the second
+    keeps its name in a plain ``str`` field - and both were demonstrated passing.
+    """
+
+    sites = _sites_in_module("probe.py", _SHADOW_PROBE.format(binder=binder))
+
+    assert len(sites) == 1, f"{label}: expected one site, got {sites}"
+    assert not sites[0][3], (
+        f"{label}: SOURCE is rebound by this construct, so it is not a compile-time "
+        "constant - classifying it as one is the false-green this module exists to stop"
+    )
+
+
+def test_a_module_that_writes_its_own_globals_has_no_trusted_constants() -> None:
+    """``globals()["SOURCE"] = ...`` binds no name a walk could see.
+
+    Not fixable by tracking names, because there is no name node to track. So the whole
+    module is distrusted instead. Blunt, and the right direction: nothing under ``src/``
+    calls ``globals()``, so the cost today is zero, and the failure mode is a false alarm.
+    """
+
+    source = """
+SOURCE = "literal-source"
+globals()["SOURCE"] = __import__("os").environ["X"]
+
+def publish(session):
+    record_refresh(session, artifact_type="X", artifact_key="k", source=SOURCE)
+"""
+
+    sites = _sites_in_module("probe.py", source)
+
+    assert len(sites) == 1
+    assert not sites[0][3], (
+        "a module that rebinds through globals() cannot have its constants trusted by "
+        "this walk, so it must report none rather than report the pre-rebind literal"
+    )
+
+
+@pytest.mark.parametrize(
+    "label, importer",
+    [
+        ("relative aliased", "from ..db.lineage import record_refresh as _register"),
+        ("deeper relative", "from ...hoops_gm.db.lineage import record_refresh as _register"),
+        ("absolute aliased", "from hoops_gm.db.lineage import record_refresh as _register"),
+        ("aliased from a package", "from hoops_gm.db import lineage as _lin"),
+    ],
+)
+def test_an_aliased_import_does_not_hide_a_call_site(label: str, importer: str) -> None:
+    """The blocking finding of the previous round, pinned where it happened.
+
+    The defect excluded: a call site invisible to the walk, so it is neither counted nor
+    checked and its runtime source goes unnoticed.
+
+    The reading in which this is green and the defect present: the binding resolver
+    filters on ``node.module``, which for a *relative* import is ``"db.lineage"`` with
+    ``level == 2`` rather than the full dotted path. The equality fails silently.
+
+    Note this must fail **by naming the site**, not by tripping the vacuity floor - an
+    added invisible site contributes zero to the count, so the floor never sees it.
+    """
+
+    call = (
+        "_lin.record_refresh(session, artifact_type='X', artifact_key='k', source=payload)"
+        if "lineage as _lin" in importer
+        else "_register(session, artifact_type='X', artifact_key='k', source=payload)"
+    )
+    sites = _sites_in_module(
+        "probe.py", f"{importer}\n\ndef publish(session, payload):\n    {call}\n"
+    )
+
+    assert len(sites) == 1, f"{label}: the call site is invisible to the walk: {sites}"
+    assert not sites[0][3], f"{label}: source=payload is a parameter, not a constant"
+
+
+def test_an_attribute_source_is_not_a_constant() -> None:
+    """The first round's finding: ``release.source_version`` is not ``SomeEnum.MEMBER``.
+
+    The reading in which this is green and the defect present: ``_source_is_constant``
+    returns ``True`` for any ``ast.Attribute`` on the reasoning that enum members are
+    constants. ``self.x``, ``config.x`` and ``parsed.x`` spell identically.
+    """
+
+    source = """
+def publish(session, release):
+    record_refresh(session, artifact_type="X", artifact_key="k", source=release.source_version)
+"""
+
+    sites = _sites_in_module("probe.py", source)
+
+    assert len(sites) == 1
+    assert not sites[0][3], "an attribute is read at runtime and cannot be pinned here"
+
+
+@pytest.mark.parametrize(
+    "label, body",
+    [
+        ("functools.partial on an attribute", "_w = functools.partial(lineage.record_refresh, s)"),
+        ("attribute bound to a name", "_rr = lin.record_refresh"),
+        ("bare name handed on", "_rr = record_refresh"),
+    ],
+)
+def test_the_primitive_handed_somewhere_is_reported_rather_than_skipped(
+    label: str, body: str
+) -> None:
+    """Referenced but not called: the source cannot be resolved, so it is not a constant.
+
+    The reading in which this is green and the defect present: the second walk looks only
+    at ``ast.Name``, so the attribute spellings are neither a call's callee nor a Name and
+    fall through both walks in silence.
+    """
+
+    sites = _sites_in_module(
+        "probe.py", f"from hoops_gm.db import lineage as lin\n\ndef publish(s):\n    {body}\n"
+    )
+
+    assert sites, f"{label}: the reference was passed over in silence"
+    assert not any(site[3] for site in sites), f"{label}: an unresolvable source is not constant"
+
+
+def test_a_genuine_module_constant_is_still_accepted() -> None:
+    """The positive control on the predicate.
+
+    Without this, every test above is satisfiable by a ``_source_is_constant`` that
+    returns ``False`` unconditionally - which would pass the whole file while making the
+    count test fail closed on the real tree for the wrong reason.
+    """
+
+    source = """
+SOURCE = "nba_api:ScheduleLeagueV2"
+
+def publish(session):
+    record_refresh(session, artifact_type="X", artifact_key="k", source=SOURCE)
+"""
+
+    sites = _sites_in_module("probe.py", source)
+
+    assert len(sites) == 1
+    assert sites[0][3], (
+        "a module-level literal bound once and never rebound is the case this whole "
+        "module is built to accept; rejecting it makes every other test here vacuous"
     )
