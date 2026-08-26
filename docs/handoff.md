@@ -26740,3 +26740,63 @@ Environment, new: `[IO.File]::ReadAllText` resolves relative paths against the
 failed loudly here; the same call as `WriteAllText`, with a path that exists in
 both locations, writes to the wrong file and returns success. Use absolute
 paths for `[IO.File]`.
+
+## 2026-08-26 - `data-engineer` - Rebase onto `c72b207`: a healed generator, an over-broad guard, and what reversion actually measured
+
+Rebased `hashtag-projection-profile-verification` a second time (`553df7a` -> `c72b207`)
+after #105 landed. Three things worth recording, none of them about the unit itself.
+
+**`docs/handoff.md` on `main` lost its trailing newline again.** The instance was
+healed at `c07aefb` and recorded closed; the condition that produces it was not.
+`c72b207` ends `b' and I have SQLite only.'` with no terminator. My splice resolver
+refuses on that condition, so the rebase stopped on the first conflict instead of
+producing a plausible file.
+
+**And my refusal message was wrong in my own favour.** It said my heading "would land
+mid-line". It would not. My appended tail begins with `\n`, so the heading sits at a
+line start whether or not upstream is healed. Tested rather than reasoned, with a
+positive control on the extractor first so the zeros meant something:
+
+    positive control, isolated heading            -> counted 1
+    A. appended text begins "\n" (my tail)        -> counted 1
+    B. appended text begins "##" directly         -> counted 0   b'y.## 2026-08-26 - ...'
+    C. upstream healed, either form               -> counted 1
+
+The hazard is real and it is narrower than I first said: it costs an entry only for a
+lane whose appended text starts directly with `##`, which is exactly what
+`open(f, 'a').write("## ...")` produces and is the natural way to write it. The entry
+is still in the file and is invisible to `^## \d{4}-` forever after.
+
+The resolver now heals instead of refusing, because a guard that stops work without
+repairing the cause just relocates the outage to the next lane. The heal is asserted
+to be exactly one byte (`len(result) == len(main) + 1 + len(tail)`), and it shows up
+in the append-only arithmetic as `+23,364` against a 23,363-byte tail.
+
+**Reversion measured something different from what its first number suggested.** A
+sweep of 14 mutations reported 10 leaving the whole file green, which read as alarming
+and was not. Deleting a test's own assertion is green by construction unless some other
+test independently covers the property, so the sweep alone cannot separate a vacuous
+green from a real hole. The experiment that separates them is deleting the assert *and*
+introducing the defect it names:
+
+    R1  drop a detector, keep its declaration        4/4 RED    not half-revertible
+    R2  drop a detector AND its declaration          4/4 GREEN  the declared blind spot
+    R3  delete or weaken each assert, no defect      6/6 GREEN  uninterpretable alone
+    R4  delete each assert AND inject its defect     5 RED, 2 GREEN
+
+Of the four asserts, three turn out to have independent coverage
+(`test_fixture_is_synthetic_and_declares_its_weaker_evidence` catches all three), and
+one is the sole guard: the `len(declared) == len(detectors)` pairing, against a hazard
+declared with no detector. Both greens in R4 are that same assert, deleted and inverted.
+GREEN there is what a load-bearing, unduplicated check looks like, not a defect.
+
+The blind spot is now stated more precisely than it was: the pairing is enforced in the
+direction declaration -> detector only. Nothing enforces fixture -> declaration, so a
+hazard sitting in the fixture that nobody declares and nobody detects changes no bytes
+and fires nothing.
+
+**Could not verify.** Whether any other lane's appender writes `##` as its first byte -
+I checked my own and reasoned about the general form, but did not read anyone else's
+append path. And R2's blind spot is demonstrated, not closed; closing it needs a check
+that walks the fixture for hazard shapes rather than walking the declarations, which is
+a different and much weaker test to write because the set of shapes is open.
