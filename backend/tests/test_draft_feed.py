@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Numeric, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -49,6 +50,16 @@ from hoops_gm.draft.feed import (
     reconcile,
 )
 from hoops_gm.draft.feed import service as feed_service
+from hoops_gm.draft.feed.recognise import (
+    MAX_AMOUNT,
+    MAX_ARTIFACT_KEY_CHARS,
+    MAX_COORDINATE,
+    MAX_EXTERNAL_ID_CHARS,
+    MAX_LABEL_CHARS,
+    MAX_LOCATOR_CHARS,
+    _as_int,
+    _as_text,
+)
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 
 LEAGUE = "abc123league"
@@ -1859,6 +1870,376 @@ def test_a_non_finite_price_is_refused_rather_than_raising_or_being_believed() -
         context=_context(draft_type=DraftType.AUCTION),
     )
     assert [instant.amount for instant in real.instants] == [Decimal("41.10")]
+
+
+def test_a_price_the_column_cannot_hold_is_refused_rather_than_silently_altered(
+    session: Session,
+) -> None:
+    """Excludes: a price that passes every check and is stored as a different number.
+
+    ``is_finite()`` was the previous fix and it is not the same question as
+    "can ``Numeric(10, 2)`` hold this". A review measured both survivors
+    against the real model: ``1E+30`` stores and reloads as
+    ``1000000000000000019884624838656.00``, and ``0.001`` passes the
+    ``amount > 0`` CHECK, stores, and **reloads as** ``0.00``.
+
+    The second is the one that matters at 7:14pm. It is not an error the owner
+    can see: it is a player he watched sell, on the board, at no price, on the
+    source that carries the prices. Nothing about that row is malformed.
+
+    Rounding into range was rejected as the fix. This module reads prices; a
+    price it altered to fit would be a number it invented, and the whole point
+    of the amount gate is that an auction sale is *defined* by what it cost.
+
+    The two positive controls are the exact column bounds — one cent and
+    ``99999999.99`` — so this is not "refuse anything unusual".
+    """
+    for label, bid in (
+        ("too-large", "1E+30"),
+        ("sub-cent", "0.001"),
+        ("sub-cent-tail", "41.105"),
+        ("one-over-column-max", "100000000.00"),
+    ):
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(
+                [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": bid}]
+            ),
+            dedupe_key=f"unrepresentable-{label}",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(draft_type=DraftType.AUCTION),
+        )
+        assert result.instants == (), label
+        assert [shape.reason for shape in result.unrecognised] == [
+            "record_missing_draft_coordinate"
+        ], label
+
+    for label, bid in (("cent", "0.01"), ("column-max", "99999999.99")):
+        kept = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(
+                [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": bid}]
+            ),
+            dedupe_key=f"representable-{label}",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(draft_type=DraftType.AUCTION),
+        )
+        assert [instant.amount for instant in kept.instants] == [Decimal(bid)], label
+
+    # Asserted against storage, not only the recogniser, because the defect was
+    # only ever visible after a round trip: the recogniser returned a Decimal
+    # that looked perfectly reasonable and the column changed it.
+    league = _league(session, draft_type=DraftType.AUCTION, budget=Decimal("200.00"))
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": "0.001"}],
+        dedupe_key="sub-cent-ingest",
+    )
+    outcome = feed_service.ingest(session, draft).sources[0]
+    assert outcome.instants_recognised == 0
+    assert [shape.reason for shape in outcome.unrecognised] == [
+        "record_missing_draft_coordinate"
+    ], outcome.unrecognised
+    assert feed_service.load_observations(session, draft) == []
+
+
+def test_a_coordinate_too_large_to_bind_is_refused_not_left_to_kill_the_ingest(
+    session: Session,
+) -> None:
+    """Excludes: one unreadable record destroying every observation beside it.
+
+    JSON ``1e100`` has ``float.is_integer() == True``, so the exactness rule
+    added by the previous round admits it, and ``int()`` makes it a 101-digit
+    integer. That does not fail as a refused row — it raises ``OverflowError``
+    when SQLAlchemy binds it. ``_store`` catches ``IntegrityError`` and nothing
+    else, so the exception escapes and the **whole ingest** fails, discarding
+    every good pick captured in the same run.
+
+    That is the difference this test is about. A refused record costs one row
+    and reports itself; an unbindable record costs the batch. During a live
+    draft those are not the same failure at all.
+
+    The bound is the storage engine's, not a guess about draft sizes: signed
+    64 bits, which both SQLite and Postgres share. A real coordinate is four
+    digits at the very most, so nothing legitimate is anywhere near it — and
+    :data:`MAX_COORDINATE` itself is asserted as accepted below to prove the
+    rule is a bound and not a ceiling on plausibility.
+
+    The good record travels in the **same capture** as the bad one. Put in a
+    separate capture it would prove only that a later ingest works, which is
+    not the claim.
+    """
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1e100},
+            {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS, "overallPick": 2},
+        ],
+        dedupe_key="oversized-coordinate",
+    )
+
+    outcome = feed_service.ingest(session, draft).sources[0]
+
+    # The list is refused as a list — that is this module's admission rule and
+    # not what is under test here. What is under test is that a value which
+    # previously raised now produces an outcome at all.
+    assert outcome.instants_recognised == 0
+    assert [shape.reason for shape in outcome.unrecognised] == [
+        "record_missing_draft_coordinate"
+    ], outcome.unrecognised
+
+    assert _as_int(MAX_COORDINATE) == MAX_COORDINATE
+    assert _as_int(MAX_COORDINATE + 1) is None
+    assert _as_int(1e100) is None
+
+
+def test_a_decimal_coordinate_is_not_truncated_into_a_position() -> None:
+    """Excludes: the previous round's own fix, applied to only one numeric type.
+
+    The exactness rule was written as ``isinstance(value, float) and not
+    value.is_integer()``. ``int(Decimal("1.9"))`` is also ``1``, so a
+    ``Decimal`` walked straight past it and produced ``overall_pick == 1`` with
+    ``unrecognised == ()`` — the identical defect, surviving inside its own fix.
+
+    **Reachability, measured rather than asserted.** The first version of this
+    test tried to drive a ``Decimal`` through a captured payload and could not:
+    ``body_json`` is a JSON column, and the insert fails with *"Object of type
+    Decimal is not JSON serializable"* before recognition is ever reached. That
+    is a stronger statement than the prose it replaced — the bridge path cannot
+    carry a ``Decimal`` at all, because the storage layer refuses to hold one.
+
+    The guard is kept regardless: the parameter is annotated ``Any``, the
+    official adapter builds its records in Python rather than from JSON, and
+    the cost of being wrong about reachability is a pick silently placed at a
+    position no source claimed. It is asserted at the level it is reachable at.
+
+    The control is ``Decimal("2.0")`` — integral, and still accepted — so this
+    is a test of exactness and not of the type.
+    """
+    assert _as_int(Decimal("1.9")) is None
+    assert _as_int(Decimal("0.5")) is None
+    assert _as_int(Decimal("2.0")) == 2
+    assert _as_int(Decimal("2")) == 2
+
+
+def test_text_longer_than_its_column_is_dropped_rather_than_stored_or_truncated(
+    session: Session,
+) -> None:
+    """Excludes: a value that stores cleanly on SQLite and raises on Postgres.
+
+    This one is not from a review. It is the previous finding's mechanism
+    applied to the other kind of column: ``_as_text`` was unbounded, and
+    ``player_label`` is ``String(128)``. **SQLite ignores a ``VARCHAR`` length
+    entirely**, so an over-long name stores without complaint in every test in
+    this file, and Postgres raises ``DataError`` — which, like the
+    ``OverflowError`` above, is outside the ``IntegrityError`` that ``_store``
+    handles and therefore costs the whole ingest.
+
+    A defect that is invisible on the development engine and fatal on the
+    deployment one is exactly what ADR-001's "every access goes through
+    SQLAlchemy" is meant to keep out, and the suite could not have found it:
+    the Postgres CI job runs these same tests, and none of them used a long
+    string.
+
+    **Dropped, not truncated.** A name cut to 128 characters is still a name
+    and would be stored as one; the pick would show under a plausible wrong
+    label. Dropping leaves the record identified by its id, which is what
+    actually resolves the player, and leaves the board honest about not having
+    read the name.
+
+    Asserted at exactly the boundary in both directions, so this is a length
+    rule rather than a rejection of unusual input.
+    """
+    assert _as_text("X" * 128, limit=MAX_LABEL_CHARS) == "X" * 128
+    assert _as_text("X" * 129, limit=MAX_LABEL_CHARS) is None
+    assert _as_text("X" * 64, limit=MAX_EXTERNAL_ID_CHARS) == "X" * 64
+    assert _as_text("X" * 65, limit=MAX_EXTERNAL_ID_CHARS) is None
+
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {
+                "teamId": "t1",
+                "playerId": "p1",
+                "playerName": "N" * 5000,
+                "overallPick": 1,
+            }
+        ],
+        dedupe_key="overlong-label",
+    )
+    outcome = feed_service.ingest(session, draft).sources[0]
+
+    # The record is still a pick — it has a seat, an id and a coordinate — so it
+    # is stored. What must not survive is the 5000-character string.
+    assert outcome.instants_recognised == 1
+    rows = feed_service.load_observations(session, draft)
+    assert [row.player_external_id for row in rows] == ["p1"]
+    assert [row.player_label for row in rows] == [None]
+
+
+def test_a_path_or_key_too_long_for_its_column_is_refused_by_name(session: Session) -> None:
+    """Excludes: a whole-ingest failure caused by bookkeeping, not by a record.
+
+    Two values reach ``String(128)`` columns without ever being a field of a
+    record, so no amount of tightening the field coercers touches them:
+
+    * ``locator`` is the path the walk took, **built from the payload's own key
+      names**. Six levels of realistic Fantrax naming reaches 128 characters
+      without trying, so this is not an exotic input — it is a plausible one.
+    * ``artifact_key`` is the capture's ``dedupe_key``, and
+      ``bridge_payloads.dedupe_key`` is ``TEXT``. The two columns are in two
+      tables owned by two units and **neither is wrong on its own**; the defect
+      exists only in the join between them, which is why reading either model
+      alone would not reveal it.
+
+    Both are refused rather than truncated, and for ``locator`` that choice is
+    load-bearing: it is a third of the idempotency key ``(transport,
+    artifact_key, locator)``. Two distinct paths truncated to the same 128
+    characters collapse into one row, and the second pick is dropped as a
+    duplicate — a pick **missing** from the board, with nothing reported.
+
+    The controls are values one character inside each bound, so this is a
+    length rule and not a refusal of deep payloads as such.
+    """
+    deep: dict[str, object] = {
+        "draftPickRecords": [
+            {"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1}
+        ]
+    }
+    for key in (
+        "playerSelectionDisplayRecords",
+        "currentDraftBoardSelectionRecords",
+        "draftRoomDisplayStateForCurrentUser",
+    ):
+        deep = {key: deep}
+
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json={"responses": [{"data": deep}]},
+        dedupe_key="deep-locator",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(draft_type=DraftType.SNAKE),
+    )
+    # The record itself is entirely valid — seat, player, coordinate — so the
+    # locator rule is the only thing that can refuse it. Without that, this
+    # list is accepted and its rows carry a 137-character locator.
+    assert result.instants == ()
+    assert [shape.reason for shape in result.unrecognised] == ["locator_too_long_to_record"]
+    assert len(result.unrecognised[0].example_locator) > MAX_LOCATOR_CHARS
+
+    over_long_key = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1}]
+        ),
+        dedupe_key="k" * 129,
+        received_at=NOW,
+        captured_at=None,
+        context=_context(draft_type=DraftType.SNAKE),
+    )
+    assert over_long_key.instants == ()
+    assert over_long_key.rejected == "artifact_key_too_long_to_record"
+
+    # Control: the same payload with a key one character inside the bound is
+    # read normally, and stores — so the rule is the length and nothing else.
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="k" * 128,
+    )
+    outcome = feed_service.ingest(session, draft).sources[0]
+    assert outcome.instants_recognised == 1
+    rows = feed_service.load_observations(session, draft)
+    assert [len(row.artifact_key) for row in rows] == [128]
+    assert all(len(row.locator) <= 128 for row in rows)
+
+
+def test_every_bounded_column_this_path_writes_has_a_guard_derived_from_it() -> None:
+    """Excludes: the *class* of defect four consecutive findings belonged to.
+
+    Rounds five and six each found the same shape — a value the coercer
+    accepted that the column could not hold — in a different column: a price
+    (``Numeric(10, 2)``), a coordinate (64-bit integer), a name
+    (``String(128)``), a walk path and a capture key (``String(128)`` each).
+    Fixing them one at a time is how a seventh gets found later, on Postgres,
+    during a draft. So this test enumerates the table instead.
+
+    Two things are asserted, and the second is the one that earns its keep:
+
+    1. every bound **equals** the column it claims to describe, computed from
+       the model rather than written down twice — so narrowing a column
+       without narrowing its guard is red;
+    2. every bounded column is **either** guarded **or** explicitly listed as
+       not payload-derived — so *adding* a column is red until someone decides
+       which it is. That is the half that catches the defect nobody has found
+       yet.
+
+    **The second half is not theoretical: it fired on its first run.** It
+    flagged ``skipped_reason``, which is ``Text`` — and ``Text`` subclasses
+    ``String`` with ``length is None``, so the class hierarchy says "bounded"
+    where the model says "unbounded". The rule now keys on ``length`` rather
+    than on the type, which is the distinction that actually matters, and that
+    correction came from the check catching something rather than from
+    reasoning about it.
+
+    **What this does not cover, stated plainly.** It checks that a bound exists
+    and matches, not that the coercers are wired to it — a guard could be
+    correct here and uncalled. The call sites are covered by the mutation of
+    each rule separately. It also cannot see columns written by other units.
+    """
+    bounded = {
+        "artifact_key": MAX_ARTIFACT_KEY_CHARS,
+        "locator": MAX_LOCATOR_CHARS,
+        "team_external_id": MAX_EXTERNAL_ID_CHARS,
+        "player_external_id": MAX_EXTERNAL_ID_CHARS,
+        "player_label": MAX_LABEL_CHARS,
+    }
+    # Values this module generates itself from a closed set, so no payload can
+    # widen them. Listed rather than skipped, so a new column cannot join them
+    # by accident.
+    self_generated = {"transport", "recogniser", "kind"}
+
+    columns = DraftFeedObservation.__table__.columns
+    for name, bound in bounded.items():
+        column_type = columns[name].type
+        assert isinstance(column_type, String)
+        assert column_type.length == bound, name
+
+    for column in columns:
+        # ``Text`` subclasses ``String`` with ``length is None`` — unbounded, so
+        # not a hazard of this kind. This distinction is drawn on the model's own
+        # ``length`` rather than on the Python class, because the class hierarchy
+        # says the opposite of what matters here.
+        if isinstance(column.type, String) and column.type.length is not None:
+            assert column.name in bounded or column.name in self_generated, (
+                f"{column.name} is a bounded text column with no guard and no "
+                f"declaration that it is not payload-derived"
+            )
+
+    amount = columns["amount"].type
+    assert isinstance(amount, Numeric)
+    assert amount.precision is not None and amount.scale is not None
+    largest = Decimal(10) ** (amount.precision - amount.scale) - Decimal(10) ** -amount.scale
+    assert largest == MAX_AMOUNT, (amount.precision, amount.scale)
+
+    # The coordinate bound is the storage engine's, not the column's: SQLite and
+    # Postgres both cap a bound integer at signed 64 bits, and that is not
+    # readable off the model.
+    assert MAX_COORDINATE == 2**63 - 1
 
 
 def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(

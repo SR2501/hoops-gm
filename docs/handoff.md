@@ -27662,3 +27662,107 @@ as an equivalent mutant, 0 `# MUTANT` markers left in either file.
   `/fxpa/req` captures are method-anonymous by construction. Not disproved,
   unestablished. One mock draft with the userscript loaded turns every guess
   here into a fixture.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round six and the class underneath it
+
+Round six read `4db9123` and returned three findings. Two of them were inside
+round five's own fixes, so the "each round finds a defect in the previous
+round's fix" pattern resumed after one clean round. All three reproduced by
+direct execution before I touched anything.
+
+### What the three were
+
+**A price can be finite and still not be storable.** `is_finite()` was round
+five's fix and it is not the same question as "can `Numeric(10, 2)` hold this".
+`1E+30` and `0.001` both pass it. Measured against the real model: the first
+reloads as `1000000000000000019884624838656.00`; the second passes the
+`amount > 0` CHECK, stores, and **reloads as `0.00`**. That second one is the
+one that matters -- a player the owner watched sell, shown on the board at no
+price, on the source that carries the prices, with nothing about the row
+malformed.
+
+**A coordinate can be integral and still not be bindable.** JSON `1e100` has
+`float.is_integer() == True`, so round five's exactness rule admits it, and it
+becomes a 101-digit int that raises `OverflowError` at `session.flush()`.
+`_store` catches `IntegrityError` and nothing else, so that is not a refused
+row -- it is the **whole ingest** failing and discarding every good pick
+captured beside it.
+
+**The integrality rule was written for `float` only.** `int(Decimal("1.9"))` is
+also `1`. Same defect, surviving inside its own fix.
+
+### The class, and what I did about it
+
+All three are one shape: **the coercers validated form, and the question that
+mattered was capacity.** So rather than fix three instances I enumerated every
+column this path writes, and found four more of the same shape that no review
+had raised:
+
+- `player_label` is `String(128)` and `_as_text` was unbounded. **SQLite ignores
+  a `VARCHAR` length entirely**, so a 5,000-character name stores cleanly in
+  every test in this file and raises `DataError` on Postgres -- outside the
+  `IntegrityError` `_store` handles, so again the whole ingest. A defect
+  invisible on the development engine and fatal on the deployment one is
+  precisely what ADR-001's "every access goes through SQLAlchemy" exists to
+  keep out, and the Postgres CI job could not have caught it because no test
+  used a long string.
+- `locator` is `String(128)` and is built from **the payload's own key names**.
+  Six levels of realistic Fantrax naming reaches 128 characters without trying;
+  the test case is 137. This is the least exotic of the lot.
+- `artifact_key` is `String(128)` and is filled from `bridge_payloads.dedupe_key`,
+  which is `TEXT` -- unbounded. The mismatch spans two tables owned by two
+  units and **neither model is wrong on its own**, so reading either alone
+  would never show it.
+
+`locator` is refused rather than truncated, and that choice is load-bearing: it
+is a third of the idempotency key `(transport, artifact_key, locator)`. Two
+distinct paths truncated to the same 128 characters collapse into one row and
+the second pick is dropped as a duplicate -- a pick **missing** from the board,
+reported as nothing at all. Truncating a name is the same error in a quieter
+place.
+
+Then a test that derives the guards from the model rather than restating them:
+every bound must equal the column it describes, and every bounded column must
+be either guarded or explicitly declared not payload-derived, so *adding* a
+column is red until someone decides which it is. **It fired on its first run**,
+flagging `skipped_reason` -- `Text` subclasses `String` with `length is None`,
+so the class hierarchy says "bounded" where the model says "unbounded". The
+rule now keys on `length`. That correction came from the check catching
+something rather than from me reasoning about it, which is the only reason I
+trust the other half of it.
+
+### Gates
+
+From `working-directory: backend`. `ruff check` clean; `ruff format --check`
+218 files; `mypy` 209 source files, no issues; `pytest tests/test_draft_feed.py`
+70 passed, up from 64. Mutations: **8/8 verdicts reached, 8/8 killed**, each
+marker confirmed present in the file on disk before its run was read, source
+restored byte-for-byte after each. Full backend suite run separately.
+
+`docs/handoff.md` shows as modified in `git status` with a **zero-byte
+`git diff`** -- worktree CRLF against an LF index, content-identical. Round six
+reported the tree as unclean on this and it is an artifact, not a change.
+
+### Could not verify
+
+- **Whether any of the seven bounds is reachable from a real Fantrax payload.**
+  Unchanged in kind from round five and still an argument from the class of
+  source rather than evidence about this one. The `locator` case is the one I
+  would bet on, because it needs no hostile input at all -- only long key
+  names, which Fantrax uses.
+- **Whether the enumeration is complete.** It covers the columns of
+  `draft_feed_observations` that this path writes. It cannot see columns other
+  units write from the same payloads, and it checks that a bound exists and
+  matches, **not that the coercer is wired to it** -- a guard could be correct
+  and uncalled. The per-rule mutations cover the wiring; nothing covers both at
+  once.
+- **Whether six rounds is convergence.** It is not. Round five was clean of the
+  previous round's fixes and round six was not, so the one piece of evidence
+  for convergence has been withdrawn by the next round. Round seven is reading
+  these fixes, and these fixes are larger than round five's.
+- **Whether the recogniser fires at all on a real draft-room payload.**
+  Unchanged and still the largest unknown in this unit. `getDraftPicks` has
+  never returned a verified real payload, no draft-room fixture exists, and
+  `/fxpa/req` captures are method-anonymous by construction. Not disproved,
+  unestablished. One mock draft with the userscript loaded turns every guess
+  here into a fixture.

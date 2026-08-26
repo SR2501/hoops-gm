@@ -173,6 +173,65 @@ MAX_WALK_DEPTH: Final = 6
 #: things that are obviously a different kind of collection.
 MAX_RECORD_LIST: Final = 1000
 
+#: The bounds below are all restatements of a column definition, and they exist
+#: because a value this reader *accepts* is a value the storage layer is then
+#: obliged to hold. Where those two disagree the failure is not a refused row —
+#: it is a raised exception during ``session.flush()``, which aborts every
+#: observation captured in the same run. ``_store`` catches ``IntegrityError``
+#: (a CHECK it can attribute to one row) and nothing else, so a bind-time
+#: ``OverflowError`` or ``DataError`` is a whole-ingest failure mid-draft.
+#:
+#: Keeping the numbers here rather than catching more broadly is deliberate:
+#: the coercers are the one place every stored value passes through, and a
+#: bound stated as a constant can be checked against the model by reading two
+#: lines. A wider ``except`` would convert a knowable refusal into an
+#: unattributable one.
+
+#: ``draft_feed_observations.amount`` is ``Numeric(10, 2)``: eight integer
+#: digits and two decimal places. ``Decimal.is_finite()`` admits ``1E+30`` and
+#: ``0.001`` — both finite, both positive, neither representable. The first
+#: reloads from Postgres as a different number; the second passes an
+#: ``amount > 0`` check and reloads as ``0.00``, which is a *free* player shown
+#: as sold.
+MAX_AMOUNT: Final = Decimal("99999999.99")
+_CENT: Final = Decimal("0.01")
+
+#: Draft coordinates are plain integer columns. SQLite and Postgres both cap a
+#: bound integer at signed 64 bits, and JSON ``1e100`` — whose ``is_integer()``
+#: is ``True`` — becomes a 101-digit Python ``int`` that raises on bind.
+MAX_COORDINATE: Final = 2**63 - 1
+
+#: ``player_label`` is ``String(128)``; the external ids are ``String(64)``.
+#: This bound is the one that does not fail the same way on both engines:
+#: SQLite ignores a ``VARCHAR`` length entirely, so an over-long name stores
+#: cleanly in the test suite and raises ``DataError`` on Postgres. Over-long
+#: text is read as *absent* rather than truncated, because a truncated name is
+#: a wrong name and the identity gates already refuse a record that has none.
+MAX_LABEL_CHARS: Final = 128
+MAX_EXTERNAL_ID_CHARS: Final = 64
+
+#: ``draft_feed_observations.locator`` is ``String(128)``, and unlike the other
+#: bounds here the value is not a field of a record — it is the *path this walk
+#: took to reach one*, built from the payload's own key names. Six levels of
+#: realistic Fantrax naming (``responses[0].data.draftRoomState...``) reaches
+#: this comfortably, so it is not an exotic input.
+#:
+#: An over-long path is refused rather than truncated, and that is the whole
+#: reason this is a separate rule instead of a call to :func:`_as_text`:
+#: ``locator`` is a third of the idempotency key ``(transport, artifact_key,
+#: locator)``. Two distinct paths truncated to the same 128 characters become
+#: the same row, and the second pick of the two is then silently discarded as
+#: a duplicate — a *missing pick* on the board rather than a reported refusal.
+MAX_LOCATOR_CHARS: Final = 128
+
+#: ``draft_feed_observations.artifact_key`` is ``String(128)`` and is filled on
+#: the bridge path from ``bridge_payloads.dedupe_key``, which is ``TEXT`` —
+#: **unbounded**. That mismatch spans two tables owned by two different units,
+#: so neither model is wrong on its own and reading either one alone would not
+#: show it. The userscript chooses the value, so this is the one bound here
+#: that a *cooperating* component can breach by accident.
+MAX_ARTIFACT_KEY_CHARS: Final = 128
+
 _BRIDGE_RECOGNISER: Final = "fxpa_req.seat_anchored.v1"
 _OFFICIAL_RECOGNISER: Final = "fxea.getDraftPicks.v1"
 
@@ -224,19 +283,52 @@ def _first(record: dict[str, Any], field: str) -> Any:
     return None
 
 
-def _as_text(value: Any) -> str | None:
+def _locator_fits(list_locator: str, count: int) -> bool:
+    """Whether every locator this list will produce fits its column.
+
+    Checked once for the list rather than per record, using the widest index
+    it will reach, because admission in this module is a property of the whole
+    list and a half-stored list is worse than a refused one.
+    """
+    widest = f"{list_locator}[{max(count - 1, 0)}]"
+    return len(widest) <= MAX_LOCATOR_CHARS
+
+
+def _as_text(value: Any, *, limit: int) -> str | None:
+    """Text short enough for the column it is bound for, or ``None``.
+
+    ``limit`` is required rather than defaulted because the defect this closes
+    is an *unbounded* call site, and a default is exactly the thing that lets
+    the next one be added silently. Pass :data:`MAX_LABEL_CHARS` or
+    :data:`MAX_EXTERNAL_ID_CHARS`; both are restatements of a column.
+
+    Over-long text reads as **absent**, never truncated. ``"Nikola Jokic"``
+    cut to fit is still a name and would be stored as one; the identity gates
+    already know what to do with a record that has no name at all, and they
+    report it by name.
+    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, str):
         stripped = value.strip()
-        return stripped or None
+        if not stripped or len(stripped) > limit:
+            return None
+        return stripped
     if isinstance(value, int | float):
-        return str(value)
+        rendered = str(value)
+        return rendered if len(rendered) <= limit else None
     return None
 
 
+def _is_integral(value: float | Decimal) -> bool:
+    """Whether a non-``int`` number sits exactly on an integer."""
+    if isinstance(value, float):
+        return value.is_integer()
+    return value.is_finite() and value == value.to_integral_value()
+
+
 def _as_int(value: Any) -> int | None:
-    """A draft coordinate: an exact, one-indexed ordinal, or ``None``.
+    """A draft coordinate: an exact, one-indexed, storable ordinal, or ``None``.
 
     Every call site is a coordinate — ``overall_pick``, ``round_number``,
     ``pick_in_round`` — so this applies the coordinate's rules rather than a
@@ -251,26 +343,47 @@ def _as_int(value: Any) -> int | None:
     and ``1.1``, collide on pick 1. A float that *is* integral (``2.0``, which
     is how JSON often delivers a whole number) is still accepted.
 
+    The integrality test covers ``Decimal`` as well as ``float``, because the
+    first version of it tested ``float`` alone and ``int(Decimal("1.9"))`` is
+    also ``1`` — the same defect surviving inside its own fix. ``Decimal`` is
+    not reachable from :mod:`json`, which yields only ``int`` and ``float``;
+    the guard is here because the annotation is ``Any`` and the cost of being
+    wrong about that reachability is a silently relocated pick.
+
     **Positive, because the coordinate is one-indexed.** ``0`` and negatives
     parsed here and were refused later by the database CHECK, surfacing as a
     generic ``observations_rejected`` rather than the named
     ``record_missing_draft_coordinate`` that :func:`_has_draft_coordinate`
     promises. Same records refused either way; only one of the two tells the
     owner which payload was unreadable.
+
+    **Bounded, because past :data:`MAX_COORDINATE` the failure stops being a
+    refusal.** JSON ``1e100`` has ``is_integer() == True``, so it clears the
+    exactness test, becomes a 101-digit ``int``, and raises ``OverflowError``
+    when SQLAlchemy binds it — outside the ``IntegrityError`` that ``_store``
+    handles, so the *entire* ingest fails instead of one row being counted and
+    skipped. A number too large to be a pick is refused where it is read.
     """
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, float) and not value.is_integer():
-        return None
-    try:
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float | Decimal):
+        if not _is_integral(value):
+            return None
         parsed = int(value)
-    except (TypeError, ValueError, OverflowError):
+    elif isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+    else:
         return None
-    return parsed if parsed > 0 else None
+    return parsed if 1 <= parsed <= MAX_COORDINATE else None
 
 
 def _as_amount(value: Any) -> Decimal | None:
-    """A price, as an exact decimal.
+    """A price the ``Numeric(10, 2)`` column can actually hold, or ``None``.
 
     Via ``str`` rather than ``Decimal(float)``: a JSON ``41.1`` becomes
     ``41.100000000000001421...`` through the float constructor, and this number
@@ -287,9 +400,18 @@ def _as_amount(value: Any) -> Decimal | None:
     compares greater than zero perfectly happily, so it was returned as a
     *valid price* and carried to a ``Numeric(10, 2)`` column.
 
+    **Finite is not the same as representable, and that gap was the whole of
+    the previous fix's remaining hole.** ``is_finite()`` is true for both
+    ``1E+30`` and ``0.001``. Measured against the real model: the first
+    reloads as ``1000000000000000019884624838656.00`` and the second passes
+    ``amount > 0``, is stored, and **reloads as** ``0.00`` — a player the owner
+    watched sell shown at no price, on the source that carries the prices.
+    Neither is a bid, and rounding either into range would be this reader
+    inventing a number rather than reading one.
+
     This is a fail-closed reader of arbitrary JSON from an undocumented
-    endpoint. ``NaN`` and ``Infinity`` are exactly the kind of thing such a
-    source emits, and neither is a bid.
+    endpoint. ``NaN``, ``Infinity``, ``1E+30`` and sub-cent dust are exactly
+    the kind of thing such a source emits, and none of them is a price.
     """
     if value is None or isinstance(value, bool):
         return None
@@ -299,7 +421,13 @@ def _as_amount(value: Any) -> Decimal | None:
         return None
     if not amount.is_finite():
         return None
-    return amount if amount > 0 else None
+    if not 0 < amount <= MAX_AMOUNT:
+        return None
+    # Order matters: ``quantize`` raises ``InvalidOperation`` above the column's
+    # digit budget, so the magnitude bound has to clear first.
+    if amount != amount.quantize(_CENT):
+        return None
+    return amount
 
 
 def _candidate_lists(block: Any, locator: str, depth: int = 0) -> list[tuple[str, list[Any]]]:
@@ -398,7 +526,7 @@ def _accept_list(
 
     seen_players: set[str] = set()
     for record in typed:
-        team = _as_text(_first(record, "team_external_id"))
+        team = _as_text(_first(record, "team_external_id"), limit=MAX_EXTERNAL_ID_CHARS)
         if team is None or team not in context.team_external_ids:
             return [], "no_seat_anchor"
         identity = _player_identity(record)
@@ -464,8 +592,8 @@ def _player_identity(record: dict[str, Any]) -> str | None:
     not consulted here — that is the whole distinction, and consulting it would
     restore the defect this split exists to remove.
     """
-    return _as_text(_first(record, "player_external_id")) or _as_text(
-        _first(record, "player_label")
+    return _as_text(_first(record, "player_external_id"), limit=MAX_EXTERNAL_ID_CHARS) or _as_text(
+        _first(record, "player_label"), limit=MAX_LABEL_CHARS
     )
 
 
@@ -478,13 +606,13 @@ def _player_label(record: dict[str, Any]) -> str | None:
     a name on the board, without an ambiguous name ever being what let the list
     in.
     """
-    label = _as_text(_first(record, "player_label"))
+    label = _as_text(_first(record, "player_label"), limit=MAX_LABEL_CHARS)
     if label is not None:
         return label
     for alias in AMBIGUOUS_NAME_ALIASES:
         value = record.get(alias)
         if value is not None:
-            text = _as_text(value)
+            text = _as_text(value, limit=MAX_LABEL_CHARS)
             if text is not None:
                 return text
     return None
@@ -524,9 +652,11 @@ def _instant_from(
     return ObservedInstant(
         kind=kind,
         provenance=provenance,
-        team_external_id=_as_text(_first(record, "team_external_id")),
+        team_external_id=_as_text(_first(record, "team_external_id"), limit=MAX_EXTERNAL_ID_CHARS),
         player_label=_player_label(record),
-        player_external_id=_as_text(_first(record, "player_external_id")),
+        player_external_id=_as_text(
+            _first(record, "player_external_id"), limit=MAX_EXTERNAL_ID_CHARS
+        ),
         overall_pick=overall_pick,
         round_number=round_number,
         pick_in_round=pick_in_round,
@@ -677,6 +807,19 @@ def recognise_bridge_payload(
             ),
         )
 
+    if len(dedupe_key) > MAX_ARTIFACT_KEY_CHARS:
+        return RecognitionResult(
+            rejected="artifact_key_too_long_to_record",
+            unrecognised=(
+                UnrecognisedShape(
+                    keys=(),
+                    occurrences=1,
+                    example_locator="$",
+                    reason="artifact_key_too_long_to_record",
+                ),
+            ),
+        )
+
     instants: list[ObservedInstant] = []
     unrecognised: list[UnrecognisedShape] = []
     kind = _kind_for(context.draft_type)
@@ -696,6 +839,15 @@ def recognise_bridge_payload(
         accepted_here = False
         refusals: list[tuple[str, tuple[str, ...], str]] = []
         for list_locator, records in _candidate_lists(block, locator):
+            if not _locator_fits(list_locator, len(records)):
+                refusals.append(
+                    (
+                        list_locator,
+                        _keys_of(records[0] if records else None),
+                        "locator_too_long_to_record",
+                    )
+                )
+                continue
             typed, refusal = _accept_list(records, context, kind)
             if refusal is not None:
                 refusals.append((list_locator, _keys_of(records[0] if records else None), refusal))
