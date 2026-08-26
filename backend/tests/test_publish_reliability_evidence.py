@@ -24,6 +24,7 @@ second.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
@@ -38,6 +39,7 @@ from hoops_gm.availability.reliability import (
     _source_snapshot,
     publish_reliability_cohorts,
 )
+from hoops_gm.core.config import Settings
 from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
 from hoops_gm.db.models import (
     DnpReason,
@@ -60,6 +62,7 @@ from hoops_gm.dev.publish_reliability_evidence import (
     REGULAR_SEASON_GAMES_PER_TEAM,
     REGULAR_SEASON_TEAMS,
     DerivationRefused,
+    main,
     publish_reliability_evidence,
     require_complete_regular_season,
     schedule_from_played_games,
@@ -488,6 +491,92 @@ def test_the_reported_schedule_source_is_the_real_importers_on_the_skip_branch(
     assert result.schedule_source == recorded.source
 
 
+def test_the_reported_schedule_source_is_whatever_the_row_says_not_one_of_two_constants(
+    session: Session,
+) -> None:
+    """A third source string must survive to the report, or nothing is being read back.
+
+    The pair of branch tests above is weaker than it looks, and an independent
+    review demonstrated it: replacing the read-back with
+    ``DERIVED_SOURCE if derived else SCHEDULE_REFRESH_SOURCE`` leaves **all** of
+    them green. They pin that the two branches report two different strings that
+    happen to be right today - not that either was ever read out of
+    ``refresh_runs``. The comment on the code claims the stronger property, so the
+    claim was unpinned by exactly the tests written to pin it.
+
+    Name the defect: reporting a constant selected by the branch taken. Name the
+    reading in which the branch tests are green and that defect is present:
+    branch-derived constants, because ``DERIVED_SOURCE`` and
+    ``SCHEDULE_REFRESH_SOURCE`` exhaust the sources that reach ``nba-schedule``
+    *today*. That exhaustiveness is the accident this test removes: it stamps a
+    source that is neither, so any implementation not reading the database
+    reports one of two strings this test rejects.
+
+    This matters the moment a third producer writes that scope, which is not
+    hypothetical - the parameterisation of ``import_schedule`` on this branch is
+    what created the second one.
+    """
+
+    third_party = "some-other-importer:nba-schedule"
+    _backfilled_season(session)
+    _observations(session)
+
+    real = schedule_from_played_games(session, season=SEASON)
+    import_schedule(session, real, source=third_party)
+    session.commit()
+
+    result = publish_reliability_evidence(session, season=SEASON)
+
+    assert result.schedule_derived is False
+    assert result.schedule_source == third_party, (
+        "the report must carry the recorded source, not a constant the branch selects"
+    )
+    assert result.schedule_source not in {DERIVED_SOURCE, SCHEDULE_REFRESH_SOURCE}
+
+
+def test_the_command_prints_the_source_it_read_not_the_one_it_would_have_written(
+    session: Session,
+    settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The operator JSON is the artefact that lied, so the assertion belongs there.
+
+    The defect this test exists for was a hard-coded ``"schedule_source":
+    DERIVED_SOURCE`` in ``main``'s printed payload, announcing a derived source
+    beside ``schedule_derived: false``. An independent review restored that exact
+    line at its exact location and **all twenty-three tests stayed green**: every
+    assertion was on ``PublishResult``, a field introduced by the same commit, and
+    nothing in the repository called ``main`` at all.
+
+    So the fix's regression barrier did not exist at the defect's own location.
+    Pinning the dataclass and calling the command covered is the coverage-check
+    shape this project keeps finding - the mechanism that broke was never read.
+
+    ``main`` opens its own ``Database`` from ``--database-url``, so this seeds
+    through the fixture session, commits, and then lets the command connect
+    independently. That is also the only way the printed payload can be observed
+    the way an operator observes it.
+    """
+
+    _backfilled_season(session)
+    _observations(session)
+
+    real = schedule_from_played_games(session, season=SEASON)
+    import_schedule(session, real)
+    session.commit()
+
+    exit_code = main(["--database-url", settings.database_url, "--season", SEASON])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schedule_derived"] is False
+    assert payload["schedule_source"] == SCHEDULE_REFRESH_SOURCE, (
+        "the printed source must be the recorded one; this is the field that lied"
+    )
+    assert payload["schedule_source"] != DERIVED_SOURCE
+    assert payload["season"] == SEASON
+
+
 def test_record_refresh_still_relabels_which_is_why_the_publisher_skips(
     session: Session,
 ) -> None:
@@ -542,8 +631,9 @@ def test_record_refresh_still_relabels_which_is_why_the_publisher_skips(
     said otherwise.** It claimed the revert "also removed
     ``import_schedule(source=...)``". It did not: ``origin/main`` has
     ``import_schedule(session, parsed)``, this PR adds
-    ``source: str = SCHEDULE_REFRESH_SOURCE``, and line 315 of the publisher
-    passes ``source=DERIVED_SOURCE``. SCHEDULE/``nba-schedule`` is the only
+    ``source: str = SCHEDULE_REFRESH_SOURCE``, and this module's derive branch
+    passes ``import_schedule(session, parsed, source=DERIVED_SOURCE)``.
+    SCHEDULE/``nba-schedule`` is the only
     multi-source scope in the codebase and **this PR is what made it one**. The
     claim was inherited from a review of the tree rather than driven, and it is
     contradicted by the file it was written in.

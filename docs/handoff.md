@@ -25943,7 +25943,7 @@ first one sooner because it is my own file.** Driven:
 
 - `origin/main`: `def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCounts`
 - HEAD: `(session, parsed, *, source: str = SCHEDULE_REFRESH_SOURCE)`, `importers.py` at `+27/-3`
-- `dev/publish_reliability_evidence.py:315` calls it with `source=DERIVED_SOURCE`
+- `dev/publish_reliability_evidence.py` calls `import_schedule(session, parsed, source=DERIVED_SOURCE)`
 
 So two distinct sources still reach `record_refresh` for the SCHEDULE artifact, the cross-lane edit
 is still in the PR and still needs acceptance, and **the only thing preventing the relabel is the
@@ -25987,7 +25987,7 @@ covers several mechanisms, asserting the code is a coverage check, not a mechani
 
 ---
 
-## 2026-08-21 - backend - retraction: two claims in the entries above are false
+## 2026-08-26 - backend - retraction: two claims in the entries above are false
 
 **Retracting my own record, not correcting someone else's.** An independent review at `3e84520`
 read the entries above against the tree and found three prose defects. All three were real; two of
@@ -26027,3 +26027,92 @@ generalisation is unevidenced in either direction. That is an `architect` contra
 
 **Could not verify:** that no earlier entry in this file carries the same intent-versus-tree shape. I
 checked the entries this review named and the ones adjacent to them, not the whole file.
+
+
+---
+
+## 2026-08-26 - backend - the call-site count, and a check that was measuring a moving ref
+
+**Unit:** the reliability endpoint, PR #105. This entry covers the round after the revert.
+
+### An operator field that lied, in the code added to stop operator fields lying
+
+`main()` in `dev/publish_reliability_evidence.py` printed `"schedule_source": DERIVED_SOURCE` as a
+**hard-coded constant**. On the skip branch the command writes no schedule row at all, so the JSON an
+operator reads announced `schedule_derived: false` beside a *derived* source, while
+`refresh_runs.source` held `nba_api:ScheduleLeagueV2`. Well-formed, type-correct, and wrong - the
+`gameEt` shape, in new code, on the exact path added to protect that provenance. Fixed by reading the
+value back through `current_refresh` instead of inferring it from the branch taken.
+
+**Three mutation controls, because the first two tests I wrote did not exclude the defect.** An
+independent review constructed the falsifying reading and demonstrated it rather than asserting it:
+
+| mutation | before the fix round | after |
+|---|---|---|
+| `schedule_source=DERIVED_SOURCE` | 1 of 12 failed | 3 fail |
+| `schedule_source=(DERIVED_SOURCE if derived else "nba_api:ScheduleLeagueV2")` | **all 12 passed** | 1 fails |
+| `"schedule_source": DERIVED_SOURCE` restored verbatim in `main()` | **all 23 passed** | 1 fails |
+
+The second and third are the ones worth carrying. **Branch-derived constants passed every test**, so
+the pair pinned only *that the two branches differ*, not that either value was ever read from the
+database - which is the property the code comment claimed. And **the original defect, restored at its
+own location, left the whole file green**, because every assertion was on a dataclass field introduced
+by the same commit and nothing in the repository called `main` at all. A fix whose regression barrier
+is not at the defect's location is a coverage check wearing a mechanism check's name.
+
+Killed by two additions: a test that stamps an arbitrary **third** source string and asserts it
+survives to the report - removing the accident that two constants happened to exhaust the real
+sources - and a `capsys` test that calls `main()` and parses the printed JSON.
+
+### The blast radius, pinned as a count instead of described
+
+`tests/test_refresh_source_call_sites.py` walks the AST of every `record_refresh` call in `src` and
+asserts **exactly one** passes a non-constant `source`. Seven of eight pass a compile-time constant,
+and a scope whose source is a constant *cannot* receive a second value without an edit - a structural
+exclusion, not an observation. The eighth is `import_schedule`, parameterised by this PR, which is what
+made SCHEDULE/`nba-schedule` the only multi-source scope in the repository.
+
+`calendar/scoring_periods.py` is also `RefreshArtifactType.SCHEDULE` and would collide if the keys met.
+They cannot: `scoring_period_artifact_key` returns `f"league-scoring-periods:{league_id}"` against the
+literal `"nba-schedule"`. That was the reading in which the claim was false, so it is excluded rather
+than assumed.
+
+The primitive still cannot tell a legitimate second producer from a relabel. **The call-site count
+can**, and it is the thing that changed today. Two controls, each read back from disk before the run:
+turning a constant site into `str(SOURCE_KEY)` fails the count test *and* names the file in the
+parameterised test ID; pointing the walk at a non-existent package fails the vacuity guard, which is
+the reading in which `0 <= 1` holds trivially and the count means nothing.
+
+### The check that was measuring a moving reference
+
+The append-only check for this file compared against `origin/main`. It reported **containment: False**
+and there was no violation: `origin/main` had moved from `02ec617` to `c07aefb` when #106 merged, and
+main's handoff now carries entries this branch has never seen. **A branch's file stops being a
+superset of main's the moment main appends, which has nothing to do with whether the branch edited
+anything.**
+
+Compare against the **merge-base**. It is the last tree both agree on, so it is the only content this
+branch could have edited: `git merge-base origin/main HEAD`, then byte-prefix containment on that blob.
+Against `02ec617` this branch is `+23,264` bytes, containment true, zero CR.
+
+**The general shape: a control whose reference moves reports failures the subject did not cause.** It
+is the same family as a positive control run against a different query than the one under test - the
+control and the subject have to be looking at the same thing. This one would have trained someone to
+ignore the check, which is worse than not having it.
+
+**Also corrected in the retraction entry above** (both inside this branch's own appended region, both
+absent from the merge-base, so containment is preserved): a `:315` line reference that this branch's
+own docstring expansion had already moved to `:335`, replaced with the call expression itself; and a
+`2026-08-21` date on an entry retracting `2026-08-26` claims.
+
+### Could not verify
+
+- **Whether losing provenance in place matters for any artifact type other than SCHEDULE.** The count
+  test pins the blast radius at one scope; it does not make the primitive safe. `architect` has routed
+  the primitive fix to `data-engineer` as a joint unit with the cohort regeneration, triggered the next
+  time that manifest is regenerated for its own reasons.
+- **Whether `dev/seed_schedule_grid.py` stamping a fabricated grid with the real importer's source
+  matters.** Flagged by the review as unevidenced; it predates this branch, and I did not investigate.
+- **Whether the `else None` arm on the read-back is reachable.** It is required by mypy and unreachable
+  on both branches today, so `"schedule_source": null` cannot currently be produced. Untested.
+- **Whether CI has run this head.** `origin/main` moved mid-round; no rebase yet, by instruction.
