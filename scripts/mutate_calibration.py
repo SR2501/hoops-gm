@@ -236,10 +236,20 @@ reading the failing test names out of output that was already produced costs
 nothing, so it happens every time. `--catchers` controls detail only.
 
 **Pinned so the reporting cannot be quietly disarmed:** `pytest_argv` is the one
-place the child's arguments are built, it takes no reporting options, and
-`backend/tests/test_mutation_harness_integrity.py` asserts a flag can never be
-added there conditionally. A verdict therefore cannot depend on whether the
-detail was printed.
+place the child's arguments are built, and
+`test_both_modes_invoke_the_child_identically` runs the real CLI in **both**
+modes with the child intercepted and compares every invocation - argv, working
+directory and a copy of the environment - across the baseline *and* the mutation
+loop. A verdict therefore cannot depend on whether the detail was printed.
+
+That test is a measurement rather than a shape check, and it is the second
+version. The first asserted the property with an AST rule refusing conditionals
+inside `pytest_argv`; a reviewer walked through it with
+`*(["-k", ...] * flag)`, which contains no conditional node. The second version
+compared invocations but recorded the environment by reference and emptied
+`MUTATIONS`, so a divergence applied only during the mutation loop still passed.
+**Both holes are the same shape as the defect this file exists to report**: a
+check that passes while the thing it excludes is present.
 
 **What is mechanical here and what is not.** The counts are mechanical. Whether a
 catcher is *incidental* - a test that fails merely because a mutation was applied
@@ -715,32 +725,36 @@ FAILED_LINE = re.compile(r"^FAILED (.+?)(?: - |$)", re.MULTILINE)
 #: checked against.
 FAILED_TOTAL = re.compile(r"(\d+) failed")
 
-#: The header pytest prints above its short summary. Everything parsed for
-#: catchers is taken from **after the last occurrence** of this, and not from the
+#: The full separator line pytest prints above its short summary. Everything
+#: parsed for catchers is taken from **after the last match**, and not from the
 #: whole run.
 #:
-#: **Why, found by an independent reviewer rather than by me.** Scanning the
-#: whole output means a test that itself prints something shaped like pytest
-#: output - a captured stdout, an assertion payload quoting a summary, a
-#: traceback - contributes phantom `FAILED` lines and a phantom `N failed`. The
-#: reviewer drove exactly that: a planted `FAILED tests/fake.py::test_bogus` plus
-#: a planted `2 failed` made the parsed count and the reported count **agree** on
-#: a fabricated catcher, so the positive control passed while the data was wrong.
-#: That is the defect the control exists to exclude, present with the control
-#: green.
-SUMMARY_HEADER = "short test summary info"
+#: **Anchored on the whole line, not on the substring.** A first version matched
+#: the phrase anywhere; a second reviewer pointed out that a test emitting the
+#: phrase after the real summary would then win. The `=` runs and the line anchor
+#: are hard for a test's own output to produce by accident, and where it still
+#: could, the last real summary is what a failing run ends with.
+SUMMARY_SEPARATOR = re.compile(r"^=+ short test summary info =+$", re.MULTILINE)
+
+#: An errored run is not a caught mutation. Matched on pytest's own section
+#: header and its counts line, in both singular and plural: the previous check
+#: required the lowercase plural `errors` and so missed `1 error`, while its
+#: other arm matched the bare word `error` anywhere - which every test name
+#: containing `calibration_error` supplies.
+ERRORS_REPORTED = re.compile(r"^=+ ERRORS =+$|\b\d+ errors?\b", re.MULTILINE)
 
 
 def summary_block(out: str) -> str:
-    """The tail of the run from pytest's short-summary header onwards.
+    """The tail of the run from pytest's short-summary separator onwards.
 
-    ``rfind``, not ``find``: if a test prints the header itself, the real one is
-    still the last. Returns ``""`` when there is no header, which makes a
-    failing run with no summary parse as zero catchers against a non-``None``
-    count - an extraction failure, reported loudly, rather than a silent zero.
+    The **last** match, not the first: if a test prints something summary-shaped
+    on its way to failing, the real summary is still what the run ends with.
+    Returns ``""`` when there is no separator, which makes a failing run with no
+    summary parse as zero catchers against a non-``None`` count - an extraction
+    failure, reported loudly, rather than a silent zero.
     """
-    index = out.rfind(SUMMARY_HEADER)
-    return out[index:] if index != -1 else ""
+    matches = list(SUMMARY_SEPARATOR.finditer(out))
+    return out[matches[-1].start() :] if matches else ""
 
 
 def pytest_argv(tests: list[str]) -> list[str]:
@@ -773,13 +787,19 @@ def run(args: list[str]) -> tuple[int, str]:
         pytest_argv(args),
         cwd=SRC,
         env=ENV,
-        capture_output=True,
+        # **One interleaved stream, not two concatenated ones.** A reviewer
+        # found that appending all of stderr to all of stdout loses chronology,
+        # so a pytest-shaped block written to stderr lands *after* the real
+        # summary and becomes the block the catcher parser reads. Merging at the
+        # file-descriptor level keeps the real summary last because it was last.
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
         check=False,  # a non-zero rc is the signal, not an error
     )
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, proc.stdout or ""
 
 
 def failed_nodeids(out: str) -> list[str]:
@@ -819,7 +839,13 @@ def catcher_functions(nodeids: Iterable[str]) -> set[str]:
 
 
 def classify(rc: int, out: str) -> str:
-    if re.search(r"error|ERROR|INTERNALERROR", out) and "errors" in out:
+    # Errors are read from the summary block, on pytest's own section header and
+    # counts line. The previous form - `re.search("error|ERROR|INTERNALERROR")
+    # and "errors" in out` - was loose in both directions at once: the first arm
+    # matches every test name containing `calibration_error`, and the second
+    # requires the lowercase plural, so a run reporting `1 error` alongside
+    # failures was classified CAUGHT. Found by a second reviewer.
+    if ERRORS_REPORTED.search(summary_block(out)) or "INTERNALERROR" in out:
         return "HARNESS_FAILURE(collection/error)"
     if rc == 5:
         return "HARNESS_FAILURE(no tests collected)"

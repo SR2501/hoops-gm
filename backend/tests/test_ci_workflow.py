@@ -191,32 +191,42 @@ def _commands(step: dict[str, Any]) -> list[str]:
     return [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()]
 
 
-def _steps_invoking(jobs: dict[str, Any], job_name: str, prefix: str) -> list[dict[str, Any]]:
-    """Steps with a command line that *starts with* ``prefix``.
-
-    Starts-with rather than contains, because `echo "ruff check scripts"` and
-    `# ruff check scripts` both contain it while checking nothing. An
-    independent reviewer pointed out that the first version of these tests
-    accepted exactly that.
-    """
-    return [
-        step
-        for step in _steps(jobs, job_name)
-        if any(line.startswith(prefix) for line in _commands(step))
-    ]
+#: The exact command bodies the two `scripts/` gates must run.
+#:
+#: **Exact, not starts-with, and this is the third version of these tests.**
+#: Version one matched substrings, so `echo "ruff check scripts"` passed.
+#: Version two required a line to *start with* the executable, and a reviewer
+#: walked through it with `ruff check scripts --help`, `... || true` and
+#: `--exit-zero` - each starts correctly and checks nothing. Enumerating no-op
+#: suffixes is the same losing game as enumerating syntactic forms, so the
+#: command is pinned outright. Changing it is meant to cost an edit here.
+_SCRIPTS_RUFF_COMMANDS = ["ruff check scripts", "ruff format --check scripts"]
+_SCRIPTS_ESLINT_COMMANDS = ["../frontend/node_modules/.bin/eslint ."]
 
 
 def _assert_step_is_live(step: dict[str, Any], what: str) -> None:
     """A step can be neutered without touching its command.
 
-    ``if: ${{ false }}`` skips it and ``continue-on-error: true`` paints its
-    failure green, and a test that only reads ``run:`` sees neither. Both were
-    walked straight through the first version of these tests by a reviewer.
-    The job level is covered by ``test_code_gate_jobs_are_not_conditional``;
-    this is the step level.
+    ``if: ${{ false }}`` skips it, ``continue-on-error: true`` paints its
+    failure green, and a custom ``shell:`` can swallow the exit code
+    (``bash {0}; exit 0``). A test that only reads ``run:`` sees none of them,
+    and all three were walked through earlier versions of these tests. The job
+    level is covered by ``test_code_gate_jobs_are_not_conditional``; this is the
+    step level.
     """
     assert "if" not in step, f"{what} is conditional, so it is a gate that can be arranged away"
     assert not step.get("continue-on-error"), f"{what} is allowed to fail, so it gates nothing"
+    assert "shell" not in step, (
+        f"{what} overrides the shell; a custom shell can discard the exit code, "
+        f"which makes the command's presence say nothing about whether it gates"
+    )
+
+
+def _steps_running_exactly(
+    jobs: dict[str, Any], job_name: str, commands: list[str]
+) -> list[dict[str, Any]]:
+    """Steps whose command body is exactly ``commands``."""
+    return [step for step in _steps(jobs, job_name) if _commands(step) == commands]
 
 
 def test_the_backend_job_lints_scripts_and_not_only_backend(jobs: dict[str, Any]) -> None:
@@ -226,16 +236,15 @@ def test_the_backend_job_lints_scripts_and_not_only_backend(jobs: dict[str, Any]
     on purpose and `ruff` did not, so the harnesses several backlog items cite
     as their evidence sat outside the gate that evidence is for.
     """
-    checks = _steps_invoking(jobs, "backend", "ruff check scripts")
-    formats = _steps_invoking(jobs, "backend", "ruff format --check scripts")
+    steps = _steps_running_exactly(jobs, "backend", _SCRIPTS_RUFF_COMMANDS)
 
-    assert checks, (
-        "the backend job must lint `scripts/` with a real `ruff check scripts` "
-        "command; `ruff check .` with `working-directory: backend` has never "
-        "reached it"
+    assert steps, (
+        "the backend job must run exactly "
+        f"{_SCRIPTS_RUFF_COMMANDS}; `ruff check .` with "
+        "`working-directory: backend` has never reached `scripts/`, and a "
+        "command with anything appended is not this gate"
     )
-    assert formats, "the backend job must also format-check `scripts/`"
-    for step in {id(s): s for s in checks + formats}.values():
+    for step in steps:
         _assert_step_is_live(step, "the scripts lint step")
 
 
@@ -248,7 +257,7 @@ def test_the_scripts_lint_step_runs_from_the_repo_root(jobs: dict[str, Any]) -> 
     ancestry instead — so this asserts the directory, which is the thing that
     would silently change the rules if someone "tidied" the step.
     """
-    steps = _steps_invoking(jobs, "backend", "ruff check scripts")
+    steps = _steps_running_exactly(jobs, "backend", _SCRIPTS_RUFF_COMMANDS)
     assert steps, "no backend step lints scripts/"
 
     for step in steps:
@@ -263,23 +272,27 @@ def test_the_two_javascript_probes_are_linted_by_some_job(jobs: dict[str, Any]) 
 
     Not the frontend job, which lints `frontend/`; not the backend job, whose
     tools are Python. Searched across every job rather than pinned to one, so
-    moving the step somewhere sensible does not fail this — but the step it
-    finds must be a real, enabled eslint invocation scoped to `scripts/`, not a
-    string that mentions one.
+    moving the step somewhere sensible does not fail this — but the command and
+    the directory are both exact, because a step that merely mentions eslint is
+    what the two previous versions of this test accepted.
     """
-    found: list[tuple[str, dict[str, Any]]] = []
-    for job_name, job in jobs.items():
-        for step in job.get("steps", []):
-            directory = str(step.get("working-directory", ""))
-            for line in _commands(step):
-                invokes_eslint = line.split()[0].endswith("eslint") or line.startswith("npx eslint")
-                scoped = "scripts" in directory or "scripts" in line
-                if invokes_eslint and scoped:
-                    found.append((job_name, step))
+    found = [
+        (job_name, step)
+        for job_name, job in jobs.items()
+        for step in job.get("steps", [])
+        if _commands(step) == _SCRIPTS_ESLINT_COMMANDS
+    ]
 
-    assert found, "no job lints the JavaScript in scripts/ with a real eslint invocation"
+    assert found, (
+        f"no job runs exactly {_SCRIPTS_ESLINT_COMMANDS}; the JavaScript in "
+        "scripts/ is then linted by nothing"
+    )
     for job_name, step in found:
         _assert_step_is_live(step, f"the scripts eslint step in `{job_name}`")
+        assert str(step.get("working-directory", "")).endswith("scripts"), (
+            "eslint must run from `scripts/`, because flat config resolves its "
+            "`files` patterns relative to the config's base directory"
+        )
 
 
 # --- Per-run metrics -----------------------------------------------------
