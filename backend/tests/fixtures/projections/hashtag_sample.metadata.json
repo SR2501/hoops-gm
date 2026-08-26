@@ -1,7 +1,7 @@
 {
   "source": "hashtag_basketball",
   "season": "2026-27",
-  "evidence_date": "2026-09-24",
+  "evidence_date": "2026-08-26",
   "privacy_safe_fixture_sha256": "F56D710D53833240FF98A3677B398839F60657AA12F13F04DB6A68F91F0DDA21",
   "fixture_hash_canonicalization": "SHA-256 after CRLF-to-LF normalization, matching the Git blob on every checkout",
   "evidence_kind": "live-page contract observation, NOT a hashed artifact",

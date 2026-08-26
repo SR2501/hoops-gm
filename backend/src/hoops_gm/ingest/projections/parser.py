@@ -578,6 +578,21 @@ def _parse_composite_shooting_cell(
     encoding of a ratio we are about to store as volume, and ADR-002's
     separation is only kept by storing the components. It is used here for one
     thing — reconciliation — and then discarded.
+
+    **What reconciliation excludes, and the reading in which it passes anyway.**
+    It excludes a cell whose stated percentage and stated makes/attempts do not
+    describe the same player. It does *not* exclude a transposition between two
+    players with near-identical percentages *and* volumes, because it tests one
+    cell's internal consistency and knows nothing about whose row it is in.
+
+    Zero attempts is handled separately and was, until an independent review,
+    handled by not looking: with ``attempted == 0`` there is no ratio to
+    recompute, so a cell reading ``0.824 (0.0/0.0)`` was accepted and imported
+    as real zero volume. The source cannot render that — a printed percentage on
+    zero attempts is self-contradictory — so it is now refused. That is the
+    branch a paste opens when it keeps the percentage and drops the parenthesised
+    volume, and it lands on precisely the defect this column exists to prevent: a
+    category priced on no volume at all.
     """
     text = raw_value.strip()
     if not text:
@@ -647,6 +662,25 @@ def _parse_composite_shooting_cell(
                 row_number,
                 composite.made_field,
                 f"{composite.label} cell {raw_value!r} reports makes with zero attempts",
+                fatal=True,
+            )
+        )
+        return _FATAL
+    elif abs(stated_percentage) > _PERCENT_HALF_STEP:
+        # Zero attempts is the one branch where the ratio cannot be recomputed, so it
+        # is the one branch where a mangled cell could slip through unexamined. The
+        # source cannot render a non-zero percentage on zero attempts: the cell is
+        # self-contradictory on its face. Refusing here closes the hole a paste opens
+        # when it keeps the printed percentage and loses the parenthesised volume,
+        # which would otherwise import as a real 0.0/0.0 and price the category on no
+        # volume at all - the exact defect the composite column exists to prevent.
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"{composite.label} cell {raw_value!r} states a non-zero percentage on "
+                "zero attempts, which the source cannot render; the volume was probably "
+                "lost in transit",
                 fatal=True,
             )
         )

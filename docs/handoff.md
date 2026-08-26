@@ -26363,7 +26363,7 @@ this lane has caught by printing values rather than verdicts.
 - **The Postgres row-lock reasoning** for `session.commit()` before `main()` remains
   reasoned rather than exercised; both the reviewer and I have SQLite only.
 
-## 2026-08-23 - data-engineer - Hashtag projection profile: the committed profile could not parse the source, and the way it failed was silent
+## 2026-08-26 - data-engineer - Hashtag projection profile: the committed profile could not parse the source, and the way it failed was silent
 
 **What I did.** Verified the `hashtag-2026-27` projection profile against the live
 Hashtag Basketball projections page rather than against its own declaration, and
@@ -26487,3 +26487,98 @@ export to hash. The metadata says so in capitals; the field itself still does no
 
 6. **The `GP` forecast itself, in principle.** Nobody can verify a claim about an
    unplayed season before it is played. I built no check that pretends otherwise.
+
+## 2026-08-26 - data-engineer - Hashtag profile, review round: my drift detector was a false alarm on day one, and my verification module was wired to nothing
+
+**What I did.** Closed five findings from an independent exact-head review of
+`0c1a8e7`. Every one was in work I had already quoted as green. No model was
+fitted, no valuation computed, and `player_participation` was never read.
+
+**The one that matters most, because it is the rule I quoted at everyone else.**
+My live smoke test for the composite shooting cell required the percentage and
+the parenthesised volume to be adjacent in one text node:
+`>0.573 (10.5/18.3)<`. The live page renders them as two sibling spans with a
+hidden `<input>` between them. The pattern matched **zero** cells. So the source's
+*only* drift detector was red on day one, blaming Hashtag for a format change that
+had not happened - and the reconciliation loop beneath it, `for stated, made,
+attempted in composite[:25]`, iterated an empty list and **has never executed
+once**. I had run `pytest -m live_smoke --collect-only` and reported that the
+tests collect. Collection is not execution. **I checked that the question could be
+asked and never that it could return a non-empty answer**, which is precisely the
+false-zero habit I wrote into my own handoff entry that morning. The repair
+matches `<td>` fragments with tags stripped - the dialect a *paste* actually
+produces, which is what the parser consumes - and finds 60 cells, 0 reconciliation
+violations, worst err/bound ratio 0.889. The three tests are now **run**, not
+collected, and the header one was positive-controlled by mutating the pinned tuple
+and watching it go red.
+
+**A test named for a sequence that tested neither sequence nor rendering.**
+`test_the_header_sequence_has_not_drifted` was `for header in HEADERS: assert
+f">{header}<" in page` - per-token membership. It checks no order, no
+completeness, and cannot tell a rendered `<th>` from one of the sixteen *category
+checkbox labels*, which are `>OREB<` and `>FGM<` in the same document whether
+ticked or not. The reviewer added three invented headers to the pinned tuple and
+the live gate stayed green. Meanwhile `parser.py` compares the full tuple and
+would have refused the owner's next paste **with the drift detector reporting no
+drift** - the exact "column set is browser state" hazard my own adapter doc names
+as the primary risk for this source. Now extracts the `<th>` sequence and compares
+as an ordered, complete list; the page renders exactly 17.
+
+**I built a verification module and connected it to nothing.**
+`verify_projection_batch` had no caller in `src/` outside the re-export.
+`import_projection_csv` parsed, resolved identities and wrote rows without ever
+consulting it. A `DDRANK` TOT-mode paste - season totals under identical headers,
+which my own module docstring calls the defect that *actually happened* to the
+Basketball Monster adapter - passes every per-cell check, because composite ratios
+and the scoring identity are both scale-invariant, and imported silently with
+every counting category inflated roughly seventyfold. **A module whose own tests
+are green in both directions protects nothing if no path calls it**, and my
+adapter doc was already describing it as protection. Now wired, with
+`ProjectionVerificationError`.
+
+**Wiring it exposed a second decision I had not noticed I was making.** Blocking
+on *any* failure refused five existing `MANUAL` fixtures, all on
+`scoring_identity`, none on `value_shape`. The honest split is not importance but
+false positives: nothing legitimate trips a 60-point per-game ceiling, whereas the
+identity cross-checks columns a vendor may compute from separate models and round
+independently, and a source publishing to zero decimals would fail it while being
+correct. `IMPORT_BLOCKING_CHECKS = {"value_shape"}`, with the reasoning as a
+comment and a test pinning that the identity is reported and does **not** block.
+
+**Zero attempts was the branch that declined to look.** `0.824 (0.0/0.0)` imported
+cleanly as real zero volume: with no attempts there is no ratio to recompute, so
+neither reconciliation branch ran. The source cannot render a printed percentage
+on zero attempts, and that cell is what a paste produces when it keeps the
+percentage and drops the parenthesised half - landing straight on the
+volume-weighting bug the composite column exists to prevent. Now refused.
+
+**And a date that was a month in the future.** The fixture metadata and adapter
+doc both dated the observation `2026-09-24`; the profile said `2026-08-26`. For a
+claim whose entire provenance *is* a date - there is no artifact hash - carrying
+two dates for one observation, one of them impossible, makes "how stale is this?"
+unanswerable. All corrected to 2026-08-26, including the date on my previous
+handoff entry, which I had copied from the entries above it rather than read off
+the clock.
+
+**Verified at this head**, all from `backend`: `ruff check .` clean over **211
+files**, `ruff format --check .` **211 files already formatted**, bare `mypy`
+clean over **203 source files**, full suite **2062 passed, 40 deselected**, and
+the three Hashtag live-smoke tests **executed** against the live page: 3 passed.
+Base `28d0d88`; not rebased.
+
+**What I could not verify.**
+
+1. **Everything in the previous entry's list still stands** - no real paste seen,
+   429 of ~500 rows from one date and one page size, unknown header-repetition
+   period, unknown `GP` provenance, unrendered composite dialect for the seven
+   unticked categories, and the `GP` forecast unverifiable in principle.
+
+2. **That anyone reads `outcome.verification`.** The identity finding is now
+   reported rather than blocking, and nothing in the codebase consumes it. That is
+   the same shape as the defect I just fixed, one level down, and I am naming it
+   rather than letting the fix read as complete. It needs an owner.
+
+3. **That the review found everything of this kind.** Five findings in work I had
+   already quoted as green, three of them checks that could not fail. I have no
+   basis for believing the sixth does not exist, and the honest reading of a
+   first-pass yield this high is that the ratio has not converged.

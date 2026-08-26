@@ -5,7 +5,7 @@
 **Fixture:** `backend/tests/fixtures/projections/hashtag_sample.csv` (+ `.metadata.json`)
 **Contract tests:** `backend/tests/test_projection_importer.py::TestHashtagProjectionContract`
 **Verification checks:** `backend/src/hoops_gm/ingest/projections/verification.py`
-**Evidence date:** 2026-09-24
+**Evidence date:** 2026-08-26
 
 ---
 
@@ -125,9 +125,38 @@ and served season totals.
 | Column contract | exact header sequence match | `parser.py`, fail-closed |
 | Shooting volume present | composite cell decomposition | `parser.py` |
 | Cell internal consistency | stated % vs. stated makes/attempts, volume-aware bound | `parser.py` |
-| Per-game vs. season totals | `max(PTS) <= 60` | `verification.verify_value_shape` |
-| Volume belongs to its row | `2*FGM + 3PM + FTM == PTS` | `verification.verify_scoring_identity` |
-| Availability already baked in | cohort median vs. prior-season minutes per *played* game | `verification.verify_no_baked_in_availability` |
+| Percentage that outlived its volume | non-zero % on zero attempts is refused | `parser.py` |
+| Per-game vs. season totals | `max(PTS) <= 60` | `verify_value_shape`, called by `import_projection_csv` |
+| Volume belongs to its row | `2*FGM + 3PM + FTM == PTS` | `verify_scoring_identity`, called by `import_projection_csv` |
+| Availability already baked in | cohort median vs. prior-season minutes per *played* game | `verify_no_baked_in_availability` — **never runs on the import path**, see below |
+
+The first four run at parse time. The next two run **on the import path**:
+`import_projection_csv` calls `verify_projection_batch` after parsing and raises
+`ProjectionVerificationError` when a **blocking** check fails, so a season-totals
+paste is refused rather than persisted.
+
+Only `value_shape` blocks (`IMPORT_BLOCKING_CHECKS`). That is not a ranking of
+importance, it is which check has a legitimate false positive. No real per-game
+file trips a 60-point ceiling, so refusing on it is never wrong about a real
+source. The scoring identity cross-checks columns a vendor may compute from
+*separate* models and round independently — and it can only run at all where the
+source publishes attempts, since makes without attempts are dropped as an
+incomplete volume pair. A source publishing to zero decimals would fail it while
+being entirely correct, so it is reported on
+`ProjectionImportOutcome.verification` and left to the caller.
+
+That wiring was missing on first delivery and an independent review found it. The
+module was written, tested in both directions, and called by nothing — so a
+`DDRANK` TOT-mode paste imported silently with every counting category inflated
+roughly seventy-fold, while this document already described the check as
+protection. **A verification module that no import path consults does not protect
+an import path, however green its own tests are.**
+
+The last row is different and stays different. The importer holds no prior-season
+observations, so `verify_no_baked_in_availability` is recorded as `NOT_RUN` on
+every import. That is visible in `ProjectionImportOutcome.verification` and is
+deliberately *not* collapsed into the success of the call: an absent check and a
+passing check must not look the same.
 
 ### Not checkable — stated rather than papered over
 
@@ -287,9 +316,11 @@ touches. That is a change nobody asked for hiding inside a change someone did.
 - **The live smoke test is opt-in** and single-request. It exists to fail
   loudly on drift, not to keep the data fresh.
 - **Source down / returns garbage:** every failure mode is a loud refusal at
-  parse time. There is no partial-import path and no best-effort mapping:
-  header drift, an unparseable shooting cell, a non-reconciling percentage and
-  a repeated header row are each fatal.
+  parse **or import** time. There is no partial-import path and no best-effort
+  mapping: header drift, an unparseable shooting cell, a non-reconciling
+  percentage, a percentage stated on zero attempts and a repeated header row are
+  each fatal at parse time, and a batch whose values are not per-game is refused
+  at import time.
 - **The page is ASP.NET WebForms.** Any programmatic fetch must post
   `__VIEWSTATE`/`__EVENTVALIDATION` and — the trap — **must echo back every
   already-checked checkbox**, because ASP.NET does not post unchecked boxes.
