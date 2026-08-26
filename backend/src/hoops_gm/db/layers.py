@@ -156,8 +156,8 @@ PERMITTED_FLOWS: Final[frozenset[tuple[DataLayer, DataLayer]]] = frozenset(
         (DataLayer.VALUATION, DataLayer.TERMINAL),
         # Into the market: which player it is about, and nothing else of ours.
         # Layer granularity is too coarse to say that on its own — OBSERVATIONS
-        # is 29 tables and includes ``draft_events``, whose prices our own
-        # recommendations can have moved. Narrowed per-table by
+        # is the broadest layer and includes ``draft_events``, whose prices our
+        # own recommendations can have moved. Narrowed per-table by
         # :data:`MARKET_IDENTITY_SOURCES`.
         (DataLayer.OBSERVATIONS, DataLayer.MARKET),
         # Everything may be compared. Comparison feeds nothing.
@@ -414,8 +414,8 @@ IMPORT_TIME_LIMIT: Final = (
 #:
 #: ``(OBSERVATIONS, MARKET)`` exists so a published auction value can say which
 #: player it is about. Read at layer granularity it says much more than that:
-#: ``OBSERVATIONS`` holds 29 tables including ``draft_events`` — prices a human
-#: paid, which our own recommendations can have caused, which is why
+#: ``OBSERVATIONS`` is the broadest layer and includes ``draft_events`` — prices
+#: a human paid, which our own recommendations can have caused, which is why
 #: ``DraftToolUsage`` exists — and ``absence_splits``, an aggregate we compute.
 #: Seeding an AAV table from observed clearing prices is a tempting future
 #: feature and it is R38 through a side door: our output returning as somebody

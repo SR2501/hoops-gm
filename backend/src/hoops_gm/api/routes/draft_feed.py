@@ -200,6 +200,11 @@ class SourceOutcomeOut(BaseModel):
     #: Reported rather than raised: one source being down must not cost the
     #: owner the other one.
     unavailable: str | None
+    #: Offered by the source, before filtering. Reported next to
+    #: ``artifacts_examined`` so a zero can be read: many scanned with none
+    #: examined means the captures are for a different league, none scanned
+    #: means the bridge is not sending anything at all.
+    artifacts_scanned: int
     artifacts_examined: int
     rejected: dict[str, int]
     instants_recognised: int
@@ -210,13 +215,33 @@ class SourceOutcomeOut(BaseModel):
     notes: list[str]
 
 
-class AppliedOut(BaseModel):
+class AppliedEventOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     observation_id: int
     sequence: int
     player_label: str | None
     kind: str
+
+
+class AppliedOut(BaseModel):
+    """The outcome of an apply run, present only when one was asked for.
+
+    A nullable object rather than fields on the response, because "apply was
+    not requested" and "apply ran and appended nothing" are different facts and
+    a flat ``applied: []`` renders them identically. On draft night the second
+    means the feed has stopped keeping up and the first means nobody asked it
+    to, and a screen cannot tell them apart from an empty list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[AppliedEventOut]
+    skipped: list[str]
+    #: Set when application stopped early rather than finishing. An ordered
+    #: draft that meets an out-of-turn pick halts here, because skipping it
+    #: would desynchronise every pick after it.
+    halted: str | None
 
 
 class IngestResponse(BaseModel):
@@ -226,12 +251,8 @@ class IngestResponse(BaseModel):
     as_of: datetime
     context_unavailable: str | None
     sources: list[SourceOutcomeOut]
-    applied: list[AppliedOut]
-    skipped: list[str]
-    #: Set when application stopped early rather than finishing. An ordered
-    #: draft that meets an out-of-turn pick halts here, because skipping it
-    #: would desynchronise every pick after it.
-    halted: str | None
+    #: ``null`` when the request did not ask to apply.
+    applied: AppliedOut | None
     last_sequence: int
     status: FeedStatusResponse
 
@@ -425,7 +446,7 @@ def ingest_feed(
         client=_draft_pick_source(request),
         scan_limit=payload.scan_limit,
     )
-    applied = feed_service.ApplyOutcome()
+    applied: feed_service.ApplyOutcome | None = None
     if payload.apply and outcome.context_unavailable is None:
         applied = feed_service.apply_observations(session, draft)
 
@@ -438,6 +459,7 @@ def ingest_feed(
             SourceOutcomeOut(
                 transport=source.transport.value,
                 unavailable=source.unavailable,
+                artifacts_scanned=source.artifacts_scanned,
                 artifacts_examined=source.artifacts_examined,
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
@@ -449,17 +471,25 @@ def ingest_feed(
             )
             for source in outcome.sources
         ],
-        applied=[
-            AppliedOut(
-                observation_id=event.observation_id,
-                sequence=event.sequence,
-                player_label=event.player_label,
-                kind=event.kind.value,
+        applied=(
+            None
+            if applied is None
+            else AppliedOut(
+                events=[
+                    AppliedEventOut(
+                        observation_id=event.observation_id,
+                        sequence=event.sequence,
+                        player_label=event.player_label,
+                        kind=event.kind.value,
+                    )
+                    for event in applied.applied
+                ],
+                skipped=[
+                    f"{observation_id}: {reason}" for observation_id, reason in applied.skipped
+                ],
+                halted=applied.halted,
             )
-            for event in applied.applied
-        ],
-        skipped=[f"{observation_id}: {reason}" for observation_id, reason in applied.skipped],
-        halted=applied.halted,
+        ),
         last_sequence=status.last_sequence,
         status=_status_out(status),
     )

@@ -112,6 +112,13 @@ class SourceOutcome:
     #: not configured, league not linked, request failed. Published rather than
     #: raised, because one source being unavailable must not stop the other.
     unavailable: str | None = None
+    #: Artifacts the source offered, before any filtering. Published alongside
+    #: ``artifacts_examined`` because the two together separate "the bridge is
+    #: quiet" (0 scanned) from "the bridge is busy but none of it is this
+    #: league" (many scanned, 0 examined). One number cannot tell those apart,
+    #: and they call for opposite actions from the owner mid-draft: check the
+    #: userscript, or check the configured league id.
+    artifacts_scanned: int = 0
     artifacts_examined: int = 0
     #: Artifacts that were examined and rejected outright, by reason.
     rejected: dict[str, int] = field(default_factory=dict)
@@ -329,6 +336,7 @@ def ingest_bridge(
 
     return SourceOutcome(
         transport=SourceTransport.BRIDGE_CAPTURE,
+        artifacts_scanned=len(rows),
         artifacts_examined=examined,
         rejected=rejected,
         instants_recognised=recognised,
@@ -390,6 +398,7 @@ def ingest_official(
     )
     return SourceOutcome(
         transport=SourceTransport.OFFICIAL_HTTP,
+        artifacts_scanned=1,
         artifacts_examined=1,
         rejected={result.rejected: 1} if result.rejected else {},
         instants_recognised=result.recognised_count,
@@ -547,18 +556,24 @@ def apply_observations(
             continue
 
         key = normalize_key(row.player_label)
+        if key in seen_this_run:
+            # Two sources naming the same player in one run. The first has
+            # already been appended; this one is corroboration, not a second
+            # pick. Checked before ``held`` because ``held`` was updated by
+            # that append a moment ago and would otherwise absorb this row as
+            # "already_in_log" — which is the reason meaning *the owner typed
+            # it*, and conflating the two would delete the corroboration signal
+            # from the status screen at the moment it is worth something.
+            row.applied_event_sequence = held[key]
+            row.applied_at = stamp
+            row.skipped_reason = "duplicate_within_run"
+            skipped.append((row.id, "duplicate_within_run"))
+            continue
         if key in held:
             row.applied_event_sequence = held[key]
             row.applied_at = stamp
             row.skipped_reason = "already_in_log"
             skipped.append((row.id, "already_in_log"))
-            continue
-        if key in seen_this_run:
-            # Two sources naming the same player in one run. The first has
-            # already been appended; this one is corroboration, not a second
-            # pick, and the reconciliation report is where it is visible.
-            row.skipped_reason = "duplicate_within_run"
-            skipped.append((row.id, "duplicate_within_run"))
             continue
 
         try:
