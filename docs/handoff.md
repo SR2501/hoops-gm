@@ -24952,3 +24952,92 @@ formatted**, bare `mypy` clean over **196 source files**.
   breakdown behind the restriction table** - both carried forward from entry #8
   unchanged, still not run exhaustively, still conditional on a report I cannot
   check without a rebase window.
+
+
+---
+
+## 2026-08-23 - quant - calibration machinery: closing entry #9's audit item, and a hole in the fix that produced it
+
+Branch `sr2501-calibration-machinery`. **Blind unbroken.** Base verified: still
+behind `origin/main` at `193aa1e`; no rebase, freeze respected.
+
+### The audit item from entry #9 is closed, and it closed clean
+
+Entry #9 asked whether any *other* test in the module the mutation harness
+targets fails merely **because a mutation is applied** rather than because it
+was **detected**. That is the class entry #9 found one member of - by writing it
+myself - and "I found one member of that class by writing it" is not encouraging
+about the rest, which is why I would not leave it open.
+
+Answered mechanically rather than by reading the file: each of the 44 mutations
+was applied in turn and the **names of the failing tests** recorded, not merely
+the fact that something failed.
+
+**Zero false catches.** The only test in that module that asserts on text rather
+than behaviour - the one pinning the docstring sentence saying this unit's Code
+gate does not pre-discharge the Model gate - is a catcher for **none** of the 44,
+so it cannot fire incidentally. One mutation, M40, is caught only by a test that
+reads a declared-convention string, and that is **correct rather than
+incidental**: the declaration is exactly what M40 mutates.
+
+**The audit surfaced something the pass/fail total hides. 19 of the 44 mutations
+are pinned by exactly one test.** That is not a defect and I am not treating it
+as one. It is a fragility worth stating: delete any one of those tests and a
+mutation is silently unpinned while the harness carries on reporting `44 caught`.
+That is the same false-zero shape one level up from row 0.9's, and it is the
+reason `scripts/test_name_diff.py` exists and why a dropped test name goes in
+every one of these entries.
+
+### A hole in the fix that produced that audit, found before review reported it
+
+`_harness_mutations()` resolves `CAL`/`TEST`/`SYN` by walking the harness module
+top to bottom. A name assigned **twice** would resolve here to its *final* value
+while Python built `MUTATIONS` from the value in force at that point - so this
+reader would check the wrong file and cheerfully report every anchor present.
+
+Rebinding is now **refused rather than resolved**, with three cases driven red:
+rebound to another path, rebound to a non-literal, and rebound to the *same*
+value - refused too, because this reader cannot establish sameness without
+evaluating the module it is deliberately not executing.
+
+Worth naming why I missed it: the function already refuses f-strings,
+concatenations, nested tuples and non-literal fields. **It refused four exotic
+forms and missed the mundane one**, which is the shape of someone defending
+against the attacks he found interesting.
+
+### An inherited figure that was wrong by a factor of twenty
+
+I have been quoting a full-suite runtime of **about three hours** and using it to
+decide what was affordable to verify. Measured at this commit it is **9m23s**.
+I never checked it; it arrived in my notes and I planned around it. That is a
+smaller instance of the same unexamined inheritance this unit keeps recording,
+and it is the one that cost the most in decisions not taken.
+
+### Verified at this commit
+
+Full suite **1918 passed, 32 deselected in 563.37s**, against a prediction of
+**1918** stated before the run. `test_calibration_machinery.py` **127**;
+`test_mutation_harness_integrity.py` **4**; **44 mutations, 44 caught, 0
+survived, 0 harness failures**; from `backend/`: `ruff check .` clean,
+`ruff format --check .` **204 files already formatted**, bare `mypy` clean over
+**196 source files**.
+
+### What I could not verify
+
+- **That the catcher audit generalises to a 45th mutation.** It establishes that
+  none of *these* 44 is caught by an incidental test. A new mutation could be,
+  and nothing runs this audit automatically - it was a throwaway, so the next
+  person to add a mutation inherits the claim without the check. If that matters
+  it belongs in the harness as a mode, which is scope I did not take under a
+  freeze with a review in flight.
+- **That refusing rebinding is the last hole in the resolver.** I found this one
+  by asking what a reviewer would attack, which is a method that finds what I can
+  imagine being attacked.
+- **That 19-of-44 single-pinning is acceptable.** I am reporting it, not judging
+  it. Reducing it means writing a second test for each, and I do not know
+  whether that buys anything beyond making deletion louder - which
+  `test_name_diff.py` already does from the other side.
+- **`Band.observations` as the only decorative field**, and **the reason
+  breakdown behind the restriction table** - both carried forward unchanged from
+  entries #8 and #9, still not run exhaustively, still conditional on a report I
+  cannot check without a rebase window.
