@@ -38,11 +38,7 @@ from hoops_gm.availability.reliability import (
     _source_snapshot,
     publish_reliability_cohorts,
 )
-from hoops_gm.db.lineage import (
-    NBA_SCHEDULE_ARTIFACT_KEY,
-    LineageSourceConflict,
-    record_refresh,
-)
+from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, record_refresh
 from hoops_gm.db.models import (
     DnpReason,
     ExternalSource,
@@ -420,21 +416,43 @@ def test_publishing_over_a_real_schedule_does_not_relabel_where_it_came_from(
     assert run.scorecards
 
 
-def test_record_refresh_refuses_to_relabel_an_existing_version(session: Session) -> None:
-    """The primitive, so the hazard is closed for callers that are not this one.
+def test_record_refresh_still_relabels_which_is_why_the_publisher_skips(
+    session: Session,
+) -> None:
+    """Pins a defect this PR deliberately does **not** fix. Read the reason.
 
-    Skipping the derive step removes *this* command's collision. It does not
-    remove the collision: any two producers that agree on content and disagree
-    on source still meet here, and the next one will not have this command's
-    review attached. Refused rather than reconciled — a second row would make
-    ``current_refresh`` ambiguous, and choosing a winner would be lineage
-    inventing an answer it does not have.
+    ``record_refresh`` is idempotent on ``(artifact_type, artifact_key, version,
+    season)`` and assigns ``existing.source = source`` in place.
+    ``schedule_content_version`` hashes the ``team_schedule`` rows and does not
+    include ``source``, so two producers that agree on content and disagree on
+    source collide on one row: the last writer wins and the earlier provenance
+    is *gone* rather than ambiguous. This test asserts that this is what happens
+    today, so the defect is executable rather than only described.
 
-    The reading in which this passes and the defect is present: a caller that
-    catches ``ValueError`` broadly and continues. ``LineageSourceConflict``
-    subclasses ``ValueError`` deliberately, so such a caller swallows it — but
-    it swallows a refusal to write rather than absorbing a silent overwrite,
-    and the row it then reads is the un-relabelled one.
+    **Why it is not fixed here.** I fixed it, and then the Adapter gate refused
+    the fix, correctly. ``docs/adapters/nba-injury-report-cohort-2025-10-21--
+    2026-04-12.json`` fingerprints ``backend/src/hoops_gm/db/lineage.py`` among
+    its six source files, and ``test_cohort_evidence.py`` requires every live
+    manifest to describe code that still exists. Editing the file invalidates a
+    published provenance claim, and the only honest repair is regenerating that
+    manifest from the store it was derived from.
+
+    That regeneration is not available to this lane. The merged store exists
+    locally, but the generator refuses without ``--allow-fetch`` because three
+    reconciliation views have no capture in it, so the repair requires live
+    calls to ``stats.nba.com`` — on ``data-engineer``'s adapter, during a merge
+    freeze, against an upstream that has moved since 23 August. A regeneration
+    now could change the cohort's *content* for reasons that have nothing to do
+    with this change, republishing another lane's evidence with today's data.
+
+    So the hazard is closed where this PR created reach for it — the publisher
+    skips deriving when a real cohort is already current, which the test above
+    pins — and left open in the primitive, recorded here and in the handoff, to
+    be closed by a unit that owns the manifest regeneration alongside it.
+
+    **The reading in which this test passes and the defect is absent:** none —
+    it asserts the relabel directly. When the primitive is fixed, this test
+    fails, which is the intended signal and the point of writing it this way.
     """
 
     _backfilled_season(session)
@@ -443,37 +461,26 @@ def test_record_refresh_refuses_to_relabel_an_existing_version(session: Session)
     row = session.scalars(
         select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
     ).one()
-    version, source = row.version, row.source
+    version, original_source = row.version, row.source
+    assert original_source == SCHEDULE_REFRESH_SOURCE
 
-    with pytest.raises(LineageSourceConflict) as conflict:
-        record_refresh(
-            session,
-            artifact_type=RefreshArtifactType.SCHEDULE,
-            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
-            version=version,
-            source=DERIVED_SOURCE,
-            season=SEASON,
-        )
-    assert source in str(conflict.value)
-    assert DERIVED_SOURCE in str(conflict.value)
-
-    # No rollback between the two halves, deliberately: the refusal is raised
-    # before any mutation, so a session that continues sees the original row
-    # untouched. If the refusal ever moves after the assignment, this half
-    # fails on the source it reads back.
-    again = record_refresh(
+    relabelled = record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
         artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
         version=version,
-        source=source,
+        source=DERIVED_SOURCE,
         season=SEASON,
     )
-    assert again.source == source
-    schedule_rows = session.scalars(
+
+    # The defect, stated as an assertion: one row, and the real importer's
+    # provenance has been overwritten rather than recorded alongside.
+    assert relabelled.source == DERIVED_SOURCE
+    surviving = session.scalars(
         select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
     ).all()
-    assert [row.source for row in schedule_rows] == [source]
+    assert [r.source for r in surviving] == [DERIVED_SOURCE]
+    assert SCHEDULE_REFRESH_SOURCE not in {r.source for r in surviving}
 
 
 def test_the_refusal_a_backfilled_store_reaches_is_the_missing_refresh_cohort(

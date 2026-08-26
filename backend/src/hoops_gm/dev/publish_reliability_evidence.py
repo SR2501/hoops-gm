@@ -268,10 +268,18 @@ def publish_reliability_evidence(
     ``ingest/schedule_import.py`` and then this command silently *relabels* the
     lineage row: the derived cohort hashes to the same ``schedule_content_version``
     because the rows are identical, ``record_refresh`` is idempotent on that
-    version, and it overwrote ``source`` in place. The single surviving row then
-    claimed the schedule was derived from ``nba_games`` when it came from
+    version, and it overwrites ``source`` in place. The single surviving row then
+    claims the schedule was derived from ``nba_games`` when it came from
     ``ScheduleLeagueV2`` — a lie in the one row that answers "where did this
     schedule come from", with the true answer gone and no second row to notice.
+
+    **``record_refresh`` still does that**, and this skip is what keeps this
+    command away from it. Fixing the primitive edits a file fingerprinted by
+    ``docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json``, whose
+    only honest repair is a regeneration needing live ``stats.nba.com`` calls on
+    another lane's adapter. The open defect is pinned by
+    ``test_record_refresh_still_relabels_which_is_why_the_publisher_skips``. Do
+    not remove this skip on the assumption the primitive is safe.
 
     Skipping is the right behaviour independent of that bug. This command exists
     to make a *box-score-backfilled* store servable; a store that already has a

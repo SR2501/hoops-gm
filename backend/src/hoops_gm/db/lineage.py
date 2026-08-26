@@ -62,15 +62,6 @@ _DATE_ABSENCE_REASONS: frozenset[str] = frozenset(
 SCHEDULE_CONTENT_ALGORITHM = "team-schedule-content-v2"
 
 
-class LineageSourceConflict(ValueError):
-    """Two producers claim one artifact version under different sources.
-
-    A ``ValueError`` subclass so the existing ``except ValueError`` handlers
-    around lineage verification keep working; distinct so a caller that can
-    genuinely reconcile two producers is able to catch just this.
-    """
-
-
 class _SeasonNotSpecified:
     pass
 
@@ -584,31 +575,8 @@ def record_refresh(
         )
     )
     if existing is not None:
-        if existing.source != source:
-            # Two producers claim the same content fingerprint under different
-            # sources, and this row is the one that answers "where did this
-            # artifact come from". Overwriting in place — which is what this
-            # did until 2026-08-26 — keeps one row and reports whichever
-            # producer ran last, with no trace that the other ever wrote.
-            #
-            # This was invisible while every caller passed a per-artifact
-            # constant. `import_schedule` gained a `source=` parameter for the
-            # reliability publisher, which made two values possible for the
-            # SCHEDULE artifact, and an independent review drove the collision:
-            # a real `ScheduleLeagueV2` import followed by a derived publish
-            # relabelled the real cohort as derived, because identical rows
-            # hash identically and `version` does not include `source`.
-            #
-            # Refused rather than reconciled. A second row would make
-            # `current_refresh` ambiguous, and picking a winner here would be
-            # this function inventing a provenance answer it does not have.
-            raise LineageSourceConflict(
-                f"{artifact_type.value}:{artifact_key} version {version} for season "
-                f"{season_key} is already recorded as coming from {existing.source!r}; "
-                f"{source!r} claims the same content. Refusing to relabel: the recorded "
-                "source is the only answer to where these rows came from."
-            )
         existing.refreshed_at = when
+        existing.source = source
         if summary is not None:
             existing.summary = dict(summary)
         session.flush()
