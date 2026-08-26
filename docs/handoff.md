@@ -25812,3 +25812,90 @@ writing, so the union at merge should be **291**; 0 removed expected.
    repo head `0019` and I deliberately did not migrate it. Everything above ran on
    copies. The first run against the real store will also be its first migration.
 
+
+---
+
+**Added after an independent review, at 15c97b4, rebased onto  2ec617.**
+
+A non-`backend` reviewer at exact head returned five findings. Two were real
+defects; three were false claims in prose that the tests around them could not
+have caught. All five were driven before being accepted.
+
+The two that were defects. **A test named for the coverage check never reached
+it** - deleting a `team_schedule` row moves `schedule_content_version`, so
+`_require_current(SCHEDULE)` fires first and the input could only ever yield
+`reliability_not_current`, while the assertion accepted either code. Split into
+two tests, each pinning one code exactly, the coverage half now driven by an
+orphan FINAL game rather than a deletion. And **`record_refresh` relabelled
+lineage in place**: two producers that agree on content and disagree on source
+collide on one row, because `schedule_content_version` does not include
+`source`. Last writer won, and the true provenance was *gone* rather than
+ambiguous. This was latent before my change and my change activated it, by giving
+`import_schedule` a second possible source. Closed at both ends - the primitive
+now refuses with `LineageSourceConflict`, and the publisher skips deriving when
+a real cohort is already current.
+
+**What that second one says about my own controls.** I wrote a test asserting the
+SCHEDULE refresh row names this command. It passed. It would have passed just as
+happily on a row that had been *relabelled* from the real importer, because it
+asserted the source it expected to find rather than that no other source had ever
+claimed that row. Asserting the value you wrote is not the same as asserting
+nothing else wrote it, and only the second excludes a relabel.
+
+The two new tests were mutation-controlled **separately**, and the reason matters
+more than the result. Restoring the in-place assignment failed only the primitive
+test; forcing the publisher to always derive failed only the publisher test. A
+single control across both would have been satisfied by either, and I would have
+called one flag two exclusions.
+
+**A correction to the rebase guidance, which is the fifth instance of this shape.**
+The instruction was: `origin/main` now ends with a trailing newline, so expect
+**0 removed**; if you see 1, that is new. I saw **1**. It is not new, and the
+mechanism in the instruction is wrong - `origin/main` at `02ec617` does **not**
+end with a newline. Its final line is `  question 15.`, and appending after it
+necessarily rewrites that line, which `numstat` reports as one removal. Followed
+literally, the rule flags a correct append as suspicious.
+
+I did not settle this by re-reading the diff. `git show origin/main:docs/handoff.md`
+is **1,658,934 bytes and is a byte-prefix of HEAD**; HEAD is that plus a newline plus
+8,651 bytes of my entry. That is a direct proof of append-only, where `0 removed`
+is a proxy for it that fails exactly when the base lacks a trailing newline. I would
+replace the numstat rule with the prefix check: it is one command, it has no such
+blind spot, and unlike the entry count it also catches a swapped entry.
+
+**Answering the architect's volatility question, which is a gap rather than a
+field.** `compute_reliability_scorecards` computes **no availability-clumping
+quantity**. Enumerated at field level rather than by reading: `AvailabilityEvidence`
+carries exactly `overall`, `monthly_trend`, `back_to_back`, and a search of
+`reliability.py` for streak, gap, run-length, consecutive or interval returns
+nothing. `monthly_trend` is the closest and is a month-granularity proxy - it
+separates a January-February absence from evenly-spread misses, but not two 10-game
+absences inside one month from 10 scattered ones. So the owner's distinction, 60
+games in a steady rhythm versus 60 around one long absence, is **not currently
+computable from this endpoint**, and I have not built a proxy for it.
+
+There is a trap next to this. A casual reading finds `MinutesConsistency.
+coefficient_of_variation` and concludes volatility exists. That is volatility of
+**production**, not of **availability** - how much his minutes move on nights he
+plays, not whether the nights he plays arrive in clumps. The two are easy to
+mistake for each other and answer different questions.
+
+The other half of that question needs no work: nothing is collapsed.
+`PlayerReliabilityScorecard` keeps `availability` and `production` as separate
+sub-objects, the response mirrors that exactly, and `reliability.py` records
+`"composite_grade": "not defined"` in its own MODEL summary. A later
+risk-adjusted-valuation unit can combine them; nothing here has pre-combined them.
+
+**What I still could not verify, added to the list above.**
+
+7. **That refusing in `record_refresh` breaks no caller I did not run.** Existing
+   callers each pass a per-artifact constant, so none can collide, and re-recording
+   under the same source is still idempotent - I assert that explicitly. But the
+   refusal is in a shared primitive owned by this lane and used by others, and the
+   full suite is the only thing that has exercised the other call sites.
+
+8. **That skipping the derive step is right for a *partial* real schedule.** The
+   skip triggers on a current SCHEDULE cohort existing at all. A store holding a real
+   cohort that covers fewer games than `nba_games` does would be skipped and then
+   refused downstream by the exact-coverage check, which is a safe order but an
+   unhelpful message. I did not construct that store.
