@@ -26582,3 +26582,99 @@ Base `28d0d88`; not rebased.
    already quoted as green, three of them checks that could not fail. I have no
    basis for believing the sixth does not exist, and the honest reading of a
    first-pass yield this high is that the ratio has not converged.
+
+## 2026-08-26 - `data-engineer` - `verified=True` meant two things, so it is no longer a boolean
+
+**Unit:** `hashtag-projection-profile-verification` (continued). Base `28d0d88`;
+**not rebased** - three lanes ahead of me in the merge queue.
+
+**What changed.** `ColumnProfile.verified` was a bare boolean, and it silently
+carried two incompatible guarantees. Basketball Monster's `True` is pinned to the
+sha256 of an immutable file the owner holds. Hashtag's `True` is an observation of
+a live page that can change tomorrow. A consumer that wanted only the strong form
+had nothing to compare - the distinction existed solely as a capitalised sentence
+inside a free-text evidence string, which is documentation, and documentation is
+what the next consumer skips.
+
+`verification: VerificationStrength | None` replaces it and `verified` is derived
+(`verification is not None`). There is no boolean to set, so the strong form
+cannot be reached by default or by accident.
+
+**Three strengths, not the two I was asked for.** `MANUAL_PROFILE`'s schema is
+*defined here* rather than observed anywhere: its units are a decision, not a
+reading, so it excludes unit-misinterpretation by construction and excludes
+nothing about vendor drift because there is no vendor. Folding it into either
+vendor strength would have rebuilt the same one-name-two-meanings defect one level
+over. `OWNER_DEFINED_SCHEMA` is rejected at construction for any non-`MANUAL`
+source, so a vendor profile cannot borrow the strength that promises the fewest
+future failures.
+
+Each enum member's docstring names what it excludes **and** what it does not.
+`HASH_PINNED` proves the bytes have not moved, never that they were ever right.
+
+**The strength is inside the hashed profile definition,** not beside it, so a
+profile promoting itself from an observation to a hash pin moves
+`definition_sha256` and trips `_assert_profile_version`. I did not assume this: I
+removed the field, confirmed the removal was in the file, and watched two profiles
+differing in *nothing but strength* hash byte-identically -
+`7c7fe746...bab4ecac` on both sides. This is the same gap
+`composite_shooting_columns` had until earlier in this unit. All four profile
+versions bumped, because adding a field to the hashed definition **is** a
+definition change and the code's own invariant demands a bump over a silently
+moved hash.
+
+**A near-miss worth recording, because I caused it.** I rewrote the eight
+`verified=True` test constructors mechanically, mapping `verified_seasons=("*",)`
+to `OWNER_DEFINED_SCHEMA`. One of those eight was
+`test_external_profile_cannot_claim_wildcard_season_verification`, a deliberately
+*invalid* profile - and my rewrite made it invalid for a **different reason**, so
+it raised on my new vendor-strength rule instead of the wildcard rule it is named
+for. It failed loudly, which is the only reason I noticed. Had my new rule not
+existed, the same rewrite would have left a test passing for the wrong reason and
+looking untouched. **A bulk edit applied to a test suite silently changes what
+some of those tests test**, and the ones at risk are exactly the ones asserting
+that something is refused.
+
+**The 30-row vs 429-row divergence is a selection effect, not sampling noise.**
+Max `|d FT%|` is **0.0126** across the default 30 rows and **0.3040** across 429 -
+a factor of twenty-four. I checked the cause rather than inferring it: on the
+default page `R#` runs strictly ascending 1..30 and MPG spans only **29.7 to
+36.2**. Every visible row is a high-minute player, high minutes mean large attempt
+counts, and a `k/attempts` bound is tightest exactly there. The rows that stress
+the tolerance are structurally absent from the top of the table. **A 30-row
+reconciliation must never be quoted as a 500-row guarantee**, and the live smoke
+test - which runs against the default page - inherits this limit: it can detect
+that the dialect changed, and cannot certify the bound holds in the tail.
+
+**Registered rather than fixed.** `docs/backlog.md`'s `risk-adjusted-valuation`
+item now carries the obligation that nothing reads
+`ProjectionImportOutcome.verification`. That item must either consume it or state
+in its model card that it deliberately does not. Wiring a consumer is
+valuation-adjacent and belongs to `quant`, not to me; an explicit refusal is a
+finding, an unnoticed orphan is not.
+
+**Gates**, all from `working-directory: backend`, on the exact tree at `e9f718a`:
+`pytest` **2066 passed, 40 deselected** (679s); `ruff check .` clean on **211
+files**; `ruff format --check .` **211 already formatted**; `mypy` clean on **203
+source files**; `pytest -m live_smoke -k Hashtag` **3 passed, executed**.
+
+**Merge state, measured read-only.** `git merge-tree` against `origin/main`
+conflicts in **one file only** - `docs/handoff.md`, both sides appending at the
+tail. The other fourteen files I touch merge clean. GitHub's `CONFLICTING/DIRTY`
+on this PR is that append tail and not a code conflict.
+
+**What I could not verify.**
+
+1. **Everything in the previous two entries' lists still stands.**
+
+2. **That `hash_pinned` is the strongest thing worth having.** It proves an
+   artifact has not changed. It says nothing about whether the vendor's numbers
+   were right, and nothing about whether the owner pasted the file he thinks he
+   pasted. I have split one overstated claim into three honest ones; I have not
+   established that any of the three is sufficient for what `quant` will do next.
+
+3. **That the seven other bulk-rewritten test sites still test what they name.**
+   I audited them against my new rule, which can only fire on
+   `OWNER_DEFINED_SCHEMA` with a non-`MANUAL` source, and none of the seven can
+   trip it. That is an argument, not an observation - I did not re-derive each
+   test's intent from scratch.
