@@ -204,7 +204,7 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     whereItLives:
       'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, callable in-process only.',
     blocker:
-      'Blocked twice, and either alone is enough. (1) No route: reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — and no unit for that route is filed in docs/backlog.md, so the gap is unowned rather than queued. (2) No store the computation can run in: compute_reliability_scorecards raises ReliabilityInputError on a cohort with "no final games", and again on one without exact "team_schedule coverage". The store holding 2025-26 participation trips the second; the store this screen reads trips the first. Building the route alone would serve nothing.',
+      'Blocked twice, and either alone is enough. (1) No route: reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — and no unit for that route is filed in docs/backlog.md, so the gap is unowned rather than queued. (2) No store the computation can run in: compute_reliability_scorecards reads team_schedule before anything else, then refuses a window with "no final games". The store this screen reads has the schedule but no played games, so it reaches that refusal and stops there. The store holding 2025-26 participation never gets that far — it has no team_schedule table at all, so the computation fails on its first read, before any of its own checks run. Building the route alone would serve nothing.',
   },
   {
     id: 'back-to-back',

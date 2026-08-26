@@ -23206,3 +23206,99 @@ Nine agreement flags, each put to that test. Three failed.
   reading its zero delta as reassurance would be reading nothing. Not mine to
   change mid-freeze; filed with `architect`.
 
+## 2026-08-25 — frontend — the screen contradicted itself and every check agreed with both halves
+
+Correction to the two entries above, appended rather than edited. An
+independent review at the exact head found three defects, and one of them is a
+false sentence those entries state as their own justification. The false
+version stays on the record above; this is the retraction.
+
+### The correction
+
+The `observed-play-rate` row said the 2025-26 participation store trips
+`compute_reliability_scorecards`' exact `team_schedule coverage` refusal. **It
+cannot reach that check.** `reliability.py:462` selects from `team_schedule`
+before anything else; the coverage test is at `:508`, four refusals later. That
+store has no `team_schedule` table at all, so it fails on the first read.
+
+The screen said so itself, three rows below, in `monthly-trend`: *"the
+populated 2025-26 participation ledger has no team_schedule or refresh_runs
+table."* **Both sentences were rendered in the same table, and they cannot both
+be true.**
+
+It is not a pedantic citation error. "Blocked on exact coverage" describes a
+schedule that is present and partial — a reconciliation job. "No such table"
+describes an ingest that has never run against that store. The row exists
+specifically to tell a reader what would unblock it, and it named the smaller
+of the two.
+
+### Why nothing caught it
+
+Every check this unit carries passed on it, and each for a different reason:
+
+- **The unit test** required the blocker to contain the substrings `route` and
+  `store`. Both were present in the false sentence. The test constrained that a
+  second blocker was *named*, never that it was the *right* one.
+- **The browser probe** read the blocker cell and confirmed both words appeared.
+  Same constraint, one layer out.
+- **The three earlier review passes** each read the row and did not check it
+  against the backend's control flow.
+
+So this is not "the tests were thin". It is that **a screen can contradict
+itself and remain consistent with every check written against it**, because the
+checks were written against the same reading that produced the contradiction.
+It is the shape recorded in the entry above, arriving one level deeper than
+that entry looked: not agreement between screen and API, but agreement between
+two rows of the same screen, neither of which any check compared to the other.
+
+### What is now pinned
+
+A test that compares the rows to each other rather than to a wording: any
+evidence row mentioning both `2025-26` and `team_schedule` must state the table
+is absent, and none may attribute a coverage refusal to it. Driven — restoring
+the false sentence fails exactly that test and no other, with the mutation
+confirmed present in the file at `reliabilityModel.ts:207` before the run was
+read. 323 tests, 20 files, typecheck 0, lint 0, build 0.
+
+### Two other findings from the same review
+
+- **`SeasonNote` asserted an ordering nothing computes.** The copy said the
+  cohort describes "the upcoming season"; `describeSeasonSplit` compares two
+  strings for *inequality* and has no notion of which is later. With
+  `EVIDENCE_SEASON` bumped ahead of a not-yet-reimported cohort — a state its
+  own docstring says to expect — the screen would call a completed season
+  upcoming. Now states only the relation the comparison establishes.
+- **A layout flag could not report the answer it was named for.** It measured
+  `figure.getBoundingClientRect().width <= window.innerWidth` on a normal-flow
+  block, whose border-box width is set by its containing block, so it was true
+  by construction. The overflow it was named for is flex-item overflow one level
+  down. Replaced with `scrollWidth`/`clientWidth` on the bar list plus document
+  width against viewport, carrying the raw numbers rather than only a verdict.
+  Driven across 1440/600/320px: the page flag flips to true at 600 and below,
+  so it can now report both answers. **That is a fourth vacuous check in this
+  unit, found only because the review was asked to look for one.**
+
+### Could not verify
+
+- **`barsOverflowing` has not been made to fire.** The flex bars have a ~179px
+  content floor at this cohort size and the container never fell below 857px
+  across the three widths driven, so the sub-flag stayed false throughout. The
+  document-level flag is driven; this one is *reasoned, not driven*, and a
+  larger cohort is the state that would exercise it.
+- **How many of the remaining evidence rows disagree with each other.** I fixed
+  the contradiction review found and added a test for that specific pair. The
+  other rows were written in the same sitting under the same reading, and no
+  check compares any other pair. *Not audited.*
+- **A retrospective cost me an hour and belongs here because it is the same
+  shape as the bug.** Reading the probe payload, I asked PowerShell for
+  `layout.stripOverflow` and got `$null`, and read it as *the flag could not
+  measure*. It was an **absent property** — I had edited `scripts/` and was
+  running a stale copy in the session directory. PowerShell returns `$null` for
+  a field that does not exist and for a field measured as null, and the two are
+  indistinguishable at the call site. I then wrote a throwaway DOM probe to
+  diagnose it, and that probe reported the whole strip missing, because it had
+  no waiter and React renders after `load` — **a second blind reading produced
+  to explain the first.** Duplicate deleted; `scripts/reliability_probe.js` is
+  now the only copy and is committed so a reviewer can re-run it.
+
+

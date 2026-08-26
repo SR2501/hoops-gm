@@ -311,10 +311,15 @@ describe('AVAILABILITY_EVIDENCE', () => {
     //
     // But naming the route ALONE is the defect this test used to pin. The route
     // is a real blocker and it is not a sufficient one: compute_reliability_scorecards
-    // raises ReliabilityInputError on a cohort with "no final games", and again on
-    // one lacking exact "team_schedule coverage". The store holding 2025-26
-    // participation trips the second; the store this screen reads trips the
-    // first. A reader told only about the route concludes one unit unblocks these.
+    // reads team_schedule before anything else (reliability.py:462), refuses an
+    // empty schedule at :476, and refuses a window with "no final games" at :501.
+    // The store this screen reads has the schedule and no played games, so it
+    // reaches the "no final games" refusal. The store holding 2025-26 participation
+    // has no team_schedule table at all, so it fails on the first read, before any
+    // of those checks. (An earlier version of this comment said that store tripped
+    // the exact-coverage check at :508. It cannot reach :508, and the monthly-trend
+    // row said so three lines away on the same screen. Corrected after review.)
+    // A reader told only about the route concludes one unit unblocks these.
     // Two do. That is a guarantee that is true about one property being read as
     // true about another, which is the shape this whole screen exists to refuse.
     const notExposed = AVAILABILITY_EVIDENCE.filter((item) => item.status === 'not-exposed')
@@ -323,6 +328,32 @@ describe('AVAILABILITY_EVIDENCE', () => {
     for (const item of notExposed) {
       expect(item.blocker.toLowerCase(), `${item.id} names the route`).toContain('route')
       expect(item.blocker.toLowerCase(), `${item.id} names the store`).toContain('store')
+    }
+  })
+
+  it('says the same thing about the 2025-26 store in every row that mentions it', () => {
+    // Review found two rows on this screen contradicting each other: one said the
+    // 2025-26 participation store trips compute_reliability_scorecards' exact
+    // "team_schedule coverage" check, and another said that store has no
+    // team_schedule table at all. Both were rendered in the same table. A store
+    // with no such table cannot reach a coverage check — it fails on the first
+    // read — so the first sentence described a reconciliation job where the truth
+    // is an ingest that has never run. Same defect class as the rest of this
+    // screen: the numbers were right and a sentence about them was false.
+    //
+    // This pins the consistency rather than the wording. Any row that mentions
+    // the 2025-26 store AND its schedule table must state the table is absent,
+    // and none may attribute a coverage refusal to it.
+    const aboutTheStore = AVAILABILITY_EVIDENCE.filter(
+      (item) => item.blocker.includes('2025-26') && item.blocker.includes('team_schedule'),
+    )
+
+    expect(aboutTheStore.length).toBeGreaterThan(0)
+    for (const item of aboutTheStore) {
+      expect(item.blocker, `${item.id} states the table is absent`).toContain('no team_schedule')
+      expect(item.blocker, `${item.id} does not blame partial coverage`).not.toContain(
+        'team_schedule coverage',
+      )
     }
   })
 

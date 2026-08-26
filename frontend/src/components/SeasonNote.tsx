@@ -29,8 +29,8 @@ export function SeasonNote({ season, testId }: { season: string; testId: string 
         <>
           Cohort season <code>{split.loaded}</code>.{' '}
           <strong>This is not the season availability evidence reads ({split.evidence}).</strong>{' '}
-          Nothing in this panel is a durability observation — it describes the upcoming season
-          the cohort was imported for.
+          Nothing in this panel is a durability observation — it describes the season the cohort
+          was imported for.
         </>
       ) : (
         <>

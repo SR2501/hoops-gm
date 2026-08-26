@@ -225,10 +225,27 @@
       viewport: [window.innerWidth, window.innerHeight],
       documentHeight: document.documentElement.scrollHeight,
       screensToScroll: Number((document.documentElement.scrollHeight / window.innerHeight).toFixed(2)),
-      stripFitsWithoutScroll: (() => {
+      // Was: strip.getBoundingClientRect().width <= window.innerWidth. That is a
+      // normal-flow block whose border-box width is set by its containing block,
+      // so it was <= innerWidth by construction and could never report the other
+      // answer. The overflow it was named for is flex-item overflow one level
+      // down, which shows up as scrollWidth > clientWidth on .strip__bars and
+      // never as a wider rect on the <figure>. Raw numbers are carried so the
+      // margin is visible rather than only the verdict.
+      stripOverflow: (() => {
         const strip = byId('assumption-strip')
         if (!strip) return null
-        return strip.getBoundingClientRect().width <= window.innerWidth
+        const bars = strip.querySelector('.strip__bars')
+        if (!bars) return null
+        const doc = document.documentElement
+        return {
+          barsScrollWidth: bars.scrollWidth,
+          barsClientWidth: bars.clientWidth,
+          barsOverflowing: bars.scrollWidth > bars.clientWidth,
+          documentScrollWidth: doc.scrollWidth,
+          viewportWidth: window.innerWidth,
+          pageOverflowsHorizontally: doc.scrollWidth > window.innerWidth,
+        }
       })(),
     },
   }
