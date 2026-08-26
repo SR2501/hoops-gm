@@ -26800,3 +26800,182 @@ I checked my own and reasoned about the general form, but did not read anyone el
 append path. And R2's blind spot is demonstrated, not closed; closing it needs a check
 that walks the fixture for hazard shapes rather than walking the declarations, which is
 a different and much weaker test to write because the set of shapes is open.
+
+## 2026-08-26 - backend - draft feed: reading the board instead of typing it
+
+**Unit:** `draft-tracker-bridge-feed`. **Base verified on: `28d0d88`.** Not rebased -
+merge freeze respected; `origin/main` had moved to `02ec617` by the time I finished
+and I did not pull it.
+
+### What this is for
+
+At 7:14pm on Sunday 18 October someone takes Jokic and the board only knows what
+the owner types. He cannot think about value while he is being a keyboard. So the
+acceptance question I built against was not "does a row appear" but "could he stop
+typing", and that changed what the code does: it records provenance per instant,
+computes freshness on our clock, and refuses rather than guesses.
+
+### What landed
+
+`backend/src/hoops_gm/draft/feed/` - `observations` (types), `recognise` (fail-closed,
+seat-anchored reader), `reconcile` (freshness + independence guard), `service`
+(ingest, apply, status). `db/models/draft_feed.py` + migration `0020`. Two endpoints
+on the existing drafts prefix: `GET /drafts/{id}/feed`, `POST /drafts/{id}/feed/ingest`.
+Neither writes to Fantrax. Ingest appends through `draft_service` only, so every rule
+the tracker already enforces applies unchanged to a machine-fed pick.
+
+Three properties, each chosen against a specific way this project has been wrong before:
+
+1. **Provenance per instant.** A `frontend` probe once compared a screen against an
+   API and agreed because it had read one field into both sides. The independence
+   guard here requires distinct artifact keys *and* distinct transports before a
+   match is called an agreement; otherwise it goes to `unwitnessed_matches` and
+   `agreements` is empty. The property is named `witnessed_by_two_transports`, never
+   `agreed`, because the name is the claim.
+2. **Freshness on the server clock only.** `captured_at` is the browser's claim about
+   itself and is carried, displayed, published as `claim_skew_seconds`, and never
+   subtracted. A silent source reports `last_seen_at=None`/`silent=True`, not zero.
+3. **Refusal over guessing.** The recogniser walks for lists of dicts and accepts a
+   list only if *every* record resolves to a `fantrax_team_id` this draft has a seat
+   for. A wrong alias yields zero records and a visible unrecognised-shape count,
+   never a half-read list. A half-read board is worse than an empty one: it looks
+   correct.
+
+### Findings, in the order they were found
+
+**The central one, reported to the coordinator on day one rather than at the end:
+neither feed source has ever seen a real draft payload.** `getDraftPicks` has never
+returned a successful real response (`docs/adapters/fantrax-official.md` lines 4 and
+261-263; the parser's own docstring; `docs/handoff.md` line 184). `fantraxapi` 1.0.1
+models a "draft pick" as `round` + `year` + `origOwnerTeam` - a *tradeable future
+asset*, not a result. There is no draft-room fixture in `backend/tests/fixtures/` and
+no league id in this environment. **The honest expectation is that this recogniser
+may recognise nothing on 18 October.** It is built to emit nothing rather than
+garbage, and to say loudly that it read nothing. The single highest-value action
+before draft day is one mock draft with the userscript loaded, which produces the
+payload that turns every guessed key name in `FIELD_ALIASES` into a known one.
+
+**Fantrax signals errors in-band with HTTP 200.** Found by reading the pinned
+`fantraxapi._request` source: it checks `"pageError" in response_json` *after* the
+status check. An expired cookie therefore produced the same string on the screen as
+a Fantrax redesign. Both yield no picks; only one is fixed by logging in again, and
+draft night is the worst time to work out which. Now named
+`page_error:WARNING_NOT_LOGGED_IN`.
+
+**`duplicate_within_run` was unreachable.** `held` is updated on every apply, so a
+second source naming a player already fed in that run was recorded as
+`already_in_log` - the reason that means *the owner typed it*. That conflation would
+have deleted the corroboration signal from the status screen at the moment it was
+worth something. Both branches are now reachable and both link the sequence.
+
+**`applied: []` meant two different things.** "Apply was not requested" and "apply ran
+and appended nothing" serialised identically. On draft night the second means the feed
+has stopped keeping up. Now a nullable object.
+
+**"The bridge is quiet" and "the bridge is busy but for another league" both reported
+`artifacts_examined == 0`.** They call for opposite actions from the owner. Added
+`artifacts_scanned` alongside it.
+
+**Two comments in `db/layers.py` claimed OBSERVATIONS is "29 tables". It was 30 at
+`28d0d88`, before I added one.** The figure was already stale by one and nobody had
+noticed - which is precisely the rot `NAKED_IDENTIFIER_COLUMNS` exists to prevent for
+its own figure, and evidence that an unpinned count in prose does not survive. I
+removed the number rather than moving it, because the argument rests on *which* tables
+OBSERVATIONS holds, not how many. "The broadest layer" is checkable and I checked it:
+31 against 7 for the next largest.
+
+### Gates
+
+All commands run with **working directory `backend/`**, which is what every Python CI
+job declares. From the repo root the same commands report other lanes' files.
+
+One caution for the next lane, because I did it to myself: I drafted this table before
+the runs finished and wrote **335** for the ruff file count. The real number is **218**.
+Nothing would have caught that - a plausible figure in prose is not checked by anything,
+and I only found it because I re-ran the command rather than trusting my own note. Quote
+gates from the run, not from the draft.
+
+- `python -m ruff check .` - **All checks passed!** (it prints no file count; the
+  companion format run below reports 218 files in the same tree)
+- `python -m ruff format --check .` - **218 files already formatted**
+- `python -m mypy` (bare, as CI runs it) - **Success: no issues found in 209 source files**
+- `python -m pytest` (no extra flags; `addopts` already carries `-q`) -
+  **2070 passed, 38 deselected in 971.04s (0:16:11)**. The 38 deselected are
+  `live_smoke`, one of which is this unit's `getDraftPicks` probe.
+- `python scripts\test_name_diff.py origin/main HEAD` - **Nothing dropped**, 20 names added
+- `alembic upgrade head` / `downgrade 0019` / `upgrade head` on scratch SQLite, and the
+  same three steps on an isolated Postgres 16.9 database
+  (`postgresql+psycopg://qimember@127.0.0.1:55432/hgm_feed_check`), dropped afterwards.
+  After the second upgrade, `to_regclass('public.draft_feed_observations')` resolved and
+  the table carried 23 columns and 7 indexes. That the downgrade really dropped it is an
+  inference rather than a direct observation: the second `CREATE TABLE` succeeded, which
+  it could not have done against a surviving table.
+
+**Adapter gate, with a disagreement stated.** The gate asks for a recorded fixture plus
+a contract test. I did not commit a fixture, and I think committing one would have been
+wrong: there is no captured draft-room payload to record, and a synthesised file in
+`tests/fixtures/` would have needed a `captured_at` for something never captured -
+a hand-written mock wearing a recording's clothes, which is what ADR-006 rejects and
+what `test_every_manifest_entry_names_its_source_and_endpoint` would have forced me to
+write. Instead the contract test reads the **installed `fantraxapi` 1.0.1 source** and
+pins the four expressions the recogniser depends on (`params={"leagueId": league_id}`,
+`response_json["responses"]`, the positional `[r["data"] for r in ...]` comprehension,
+and `json_data = {"msgs":`), plus the version they were read from. That is a real
+third-party artifact drifting against a real dependency, not a restatement of our own
+constants. A live smoke test for `getDraftPicks` is marked `live_smoke`, deselected
+from the default run, and written to be informative on failure.
+
+**Mutation evidence.** Five mutants, each confirmed **present in the file** by grepping
+for a `MUTANT` marker with context before the run was read, then reverted:
+
+| Mutation | Killed by |
+|---|---|
+| `elif shared_artifacts:` -> `elif False:` | `test_one_artifact_read_into_both_sides_is_not_reported_as_agreement` |
+| age computed from `source_claimed_at` | `test_the_sources_own_timestamp_never_moves_the_age` |
+| seat anchor dropped from `_accept_list` | `test_one_unknown_team_refuses_the_whole_list` |
+| out-of-turn skips instead of halting | `test_an_out_of_turn_pick_halts_the_run_rather_than_being_skipped` |
+| wrong-league check removed | `test_a_capture_for_another_league_is_refused` |
+
+Each surviving test also has a positive control, because "asserts nothing was read"
+is satisfied by a recogniser that never reads anything.
+
+### Could not verify
+
+1. **That the recogniser fires on a real Fantrax draft room.** It has never seen one.
+   Every key name in `FIELD_ALIASES` is a guess inherited from `parse_draft_picks`.
+   The seat anchor means a wrong guess produces zero rows rather than wrong rows, so
+   the failure mode is safe - but "safe" here means "the board stays empty and the
+   owner keeps typing", which is the thing this unit exists to prevent.
+2. **What `getDraftPicks` actually returns.** Results, or tradeable future picks.
+   Unresolvable in this environment; the live smoke test is the only thing that can
+   settle it and it needs a league id nobody has configured here.
+3. **That the seat anchor excludes a prior season's draft for the same league.** It
+   does not. A correctly-read block about last year's draft, for a league whose team
+   ids are unchanged, would be accepted. I could not construct a check that separates
+   them from the payload alone - the discriminator would have to be a date field, and
+   every date field in this payload is one of the self-describing values this project
+   has already been burned by. Stated rather than papered over.
+4. **The Postgres path under load.** `alembic upgrade head` was exercised on an
+   isolated Postgres database. The feed's own tests ran on SQLite; they only touch
+   Postgres if `TEST_DATABASE_URL` is set, which it was not for the recorded run.
+   The unique constraint is exercised on SQLite, where an `IntegrityError` aborts the
+   flush rather than the transaction - the Postgres behaviour differs and `_store`'s
+   in-Python pre-check exists partly for that reason, but I did not observe it there.
+5. **That halting on an out-of-turn pick is the right call rather than merely the safe
+   one.** Skipping desynchronises silently; halting stops a live board. I chose the
+   loud failure. If the owner would rather have a partial board than a stopped one,
+   this is a decision that should be his and not mine.
+6. **Whether two sources are worth the complexity at all**, given finding 1. If the
+   official source never produces anything, the independence guard is machinery that
+   protects against a defect that cannot occur, and the honest simplification would be
+   to delete it. I have left it in because the guard costs nothing at runtime and the
+   alternative - adding it later, after the first time a screen reports corroboration
+   it did not have - is the pattern this project keeps paying for.
+
+### Incidental, not fixed
+
+`db/models/bridge.py` line 40 describes `raw_payload` as "Exact UTF-8 request body".
+It is the body of the bridge's POST to *our* endpoint (`routes/bridge.py` line 243),
+not the Fantrax request body. Technically true, momentarily misleading to anyone
+looking for the `msgs` block - which is exactly what someone extending this
+recogniser will be looking for. Not edited: another lane's file, during a freeze.

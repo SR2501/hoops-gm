@@ -1743,7 +1743,7 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker-bridge-feed` - Feeding the tracker from the bridge and official API
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-08-26. The tracker reads the board from the bridge and, where it answers, the official API. Provenance is recorded per instant, freshness is computed on the server clock, and a disagreement between the two sources is reported and never resolved. Open caveat: neither source has ever returned a real draft payload, so the recogniser is fail-closed by design and may recognise nothing until one mock draft is run with the userscript loaded.
 - **Depends on:** `draft-tracker-persistence`, `bridge-capture`, `fantrax-official-adapter`
 
 ### `draft-tracker` - Building the live draft tracker

@@ -212,6 +212,32 @@ Four duplicated names within Fantrax alone on 2026-08-17, including two
 
 ---
 
+### `getDraftPicks` is read with provenance, and may not be about a draft at all
+
+`get_draft_picks_with_provenance(league_id, *, max_age)` returns
+`(picks, payload_sha256, observed_at)` rather than just the picks. The digest is
+the SHA-256 of the exact bytes decoded; `observed_at` is when those bytes
+arrived, or on a cache hit when they *originally* arrived — not now.
+
+This exists for `hoops_gm.draft.feed`, which compares this source against the
+bridge. An agreement between two readings is only evidence of two readings if
+each can name the artifact it came from; without a real digest the feed would
+have to invent an identifier, and an invented identifier is how one read gets
+counted as two. `observed_at` is the same argument applied to time: a cache hit
+reported as fresh is a stale board that says it is live.
+
+**Two unknowns remain, and the feed is built to survive both.** First, the
+endpoint has still never returned a successful real payload (see "Not
+verified"). Second, `fantraxapi==1.0.1` models a "draft pick" as
+`round` + `year` + `origOwnerTeam` — that is a **tradeable future pick asset**,
+not a selection that happened. If `/fxea/general/getDraftPicks` shares that
+meaning, this endpoint corroborates nothing about a live draft board and the
+bridge is the only real feed. `parse_draft_picks` is therefore treated as a
+source that may legitimately return nothing useful, and the feed reports that
+as a silent source rather than as an error.
+
+---
+
 ## Throttling, retry and failure
 
 | Concern | Behaviour |
@@ -260,7 +286,11 @@ every setting as unavailable rather than reuse the historical snapshot.
 
 **`getDraftPicks` has not seen a successful real payload.** Its parser remains
 defensive and must be checked against both snake and auction responses before
-anything depends on it.
+anything depends on it. Beyond shape, its *meaning* is unconfirmed: the pinned
+`fantraxapi` models a draft pick as a tradeable future asset
+(`round`/`year`/`origOwnerTeam`), so this endpoint may describe pick ownership
+rather than pick results. `hoops_gm.draft.feed` consumes it on the assumption
+that it may be either, and never treats its silence as failure.
 
 **The "ROTI" segment of `HEAD_TO_HEAD_ROTI_MULTI_WIN` remains semantically
 unconfirmed.** See "Scoring type and category evidence" above — the mapping to

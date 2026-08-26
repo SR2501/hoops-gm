@@ -48,6 +48,44 @@ to need a migration.
 
 ---
 
+## The `/fxpa/req` envelope, read from `fantraxapi`'s own source
+
+Still unverified against a live response — this is what the pinned
+`fantraxapi==1.0.1` `_request` implementation **does**, which is evidence about
+the wire protocol without being evidence about any payload. It matters because
+the draft feed's bridge recogniser
+(`backend/src/hoops_gm/draft/feed/recognise.py`) reads bodies captured off this
+endpoint by the userscript, and had to decide what a body even looks like
+before it can decide whether it contains a draft.
+
+Four consequences, each pinned by
+`test_draft_feed.py::TestTheAdapterAssumptionsAreStillTrue`, which fails if the
+installed source stops containing the exact expression it was read from:
+
+1. **The method name travels in the request, not the response.** `_request`
+   builds `{"msgs": [m.msg_block(league_id) …]}`. `capture.js` records
+   responses, so the recogniser cannot ask "is this `getDraftPicks`" — it must
+   discriminate on content, and it does.
+2. **`leagueId` is on the query string.** So league attribution is a real,
+   checkable fact about a captured artifact rather than an inference, and the
+   recogniser rejects a body whose league is not this draft's league.
+3. **`msgs` is an array and `responses` is the matching array.** A recogniser
+   that looked only at `responses[0]` would silently miss a draft block batched
+   behind another call, so every element is scanned.
+4. **An error arrives as HTTP 200 with a `pageError` block.** `_request` checks
+   `if "pageError" in response_json` *after* the status check. The common cause
+   is an expired cookie. The recogniser names it as `page_error:<CODE>` rather
+   than folding it in with "unrecognised shape", because "you are logged out"
+   and "Fantrax changed its envelope" call for different actions and are
+   otherwise the same blank board at the moment there is least time to work out
+   which one is on screen.
+
+Note this is a **different** envelope from the official `/fxea/general/` API,
+which signals errors as `{"error": {…}}`, also with HTTP 200. Two Fantrax
+surfaces, two in-band error shapes, neither of them a status code.
+
+---
+
 ## Cookie storage and the re-login flow
 
 ### How it is stored
