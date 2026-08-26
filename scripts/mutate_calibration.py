@@ -275,8 +275,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M06 subgroup restriction widened from all to any",
         CAL,
-        "        if all(row.labels.get(key) == value for key, value in wanted)",
-        "        if any(row.labels.get(key) == value for key, value in wanted)",
+        "        (row for row in observations if all(row.labels.get(key) == value for key, value in wanted)),",
+        "        (row for row in observations if any(row.labels.get(key) == value for key, value in wanted)),",
     ),
     (
         "M07 distinct-probability grouping without the ulp rounding",
@@ -293,8 +293,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M09 population floor check never fires",
         CAL,
-        "            row.label for row in self.bins if row.observations < self.population_floor",
-        "            row.label for row in self.bins if False",
+        "        return tuple(row.label for row in self.bins if row.observations < self.population_floor)",
+        "        return tuple(row.label for row in self.bins if False)",
     ),
     (
         "M10 emitted probability always declared inside its Wilson interval",
@@ -339,8 +339,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M16 restrict() treats a missing label key as a match (review N02)",
         CAL,
-        "        if all(row.labels.get(key) == value for key, value in wanted)",
-        "        if all(row.labels.get(key, value) == value for key, value in wanted)",
+        "        (row for row in observations if all(row.labels.get(key) == value for key, value in wanted)),",
+        "        (row for row in observations if all(row.labels.get(key, value) == value for key, value in wanted)),",
     ),
     (
         "M17 Wilson z silently becomes the 90% constant (review N01)",
@@ -538,8 +538,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M40 the declared bootstrap unit stops mentioning the enforcement (review P4-2)",
         CAL,
-        '        "one observation id, resampled with replacement; duplicate ids are refused"',
-        '        "one observation id, resampled with replacement"',
+        '    "bootstrap_unit": ("one observation id, resampled with replacement; duplicate ids are refused"),',
+        '    "bootstrap_unit": ("one observation id, resampled with replacement"),',
     ),
     (
         "M41 duplicate detection keyed on object identity, not the id (review V02)",

@@ -197,9 +197,7 @@ DECLARED_CONVENTIONS: Final[Mapping[str, str]] = {
     "bin_gap_sign": "predicted mean - observed rate, per bin; positive over-predicts play",
     "expected_calibration_error": "observation-weighted mean absolute bin gap",
     "bootstrap_quantile": "Hyndman-Fan type 7, on the resampled difference distribution",
-    "bootstrap_unit": (
-        "one observation id, resampled with replacement; duplicate ids are refused"
-    ),
+    "bootstrap_unit": ("one observation id, resampled with replacement; duplicate ids are refused"),
     "duplicate_observations": "refused; the same forecast may not be counted twice",
 }
 
@@ -353,9 +351,7 @@ class CalibrationReport:
     def bins_below_population_floor(self) -> tuple[str, ...]:
         """v2 §8 condition 4: bins too thin to support an emitted probability."""
 
-        return tuple(
-            row.label for row in self.bins if row.observations < self.population_floor
-        )
+        return tuple(row.label for row in self.bins if row.observations < self.population_floor)
 
     @property
     def bins_outside_wilson_interval(self) -> tuple[str, ...]:
@@ -414,11 +410,7 @@ def wilson_interval(
     z_sq_over_n = z * z / n
     denominator = 1.0 + z_sq_over_n
     centre = (p_hat + z_sq_over_n / 2.0) / denominator
-    spread = (
-        z
-        / denominator
-        * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n))
-    )
+    spread = z / denominator * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4.0 * n * n))
     return max(0.0, centre - spread), min(1.0, centre + spread)
 
 
@@ -544,11 +536,7 @@ def restrict(
     inherited = dict(_inherited_restriction(observations))
     wanted = tuple(sorted((inherited | labels).items()))
     return RestrictedCohort(
-        (
-            row
-            for row in observations
-            if all(row.labels.get(key) == value for key, value in wanted)
-        ),
+        (row for row in observations if all(row.labels.get(key) == value for key, value in wanted)),
         wanted,
     )
 
