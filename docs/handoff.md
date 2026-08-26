@@ -25678,3 +25678,687 @@ formatted**. From **`scripts/`**: `eslint .` clean over **3 files**.
 **Next:** architect, for review and merge. This is a follow-up to #106, which
 merged before it. Nothing here changes a number a decision rests on; the Code
 gate is the only one that applies.
+## 2026-08-26 - backend - the reliability endpoint: five computed quantities given a route, and two false numbers found by driving it
+
+`compute_reliability_scorecards` was callable in-process only. `GET
+/api/v1/reliability/scorecards` now carries it. Against a fresh copy of the
+owner's real store at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, migrated
+`0016 -> 0019`: **HTTP 200, 596 scorecards, 3.12 MB, 4.9 s**, `openapi.json`
+**17 paths** where it listed 16. The evidence season is fixed in the contract at
+`2025-26` (architect ruling), named at the top level of the response and again in
+`lineage`, and is **not** a query parameter - a durability figure whose season is
+ambiguous is the `gameEt` shape.
+
+**One unit, not two,** because `_source_snapshot` requires that every final game
+in the window has exactly its two `team_schedule` rows - a join condition between
+two tables, not a property of either. "The rows landed" establishes nothing on its
+own, so `publish_reliability_evidence` derives the schedule and publishes the
+claim over it in one call, and the acceptance test calls the route over HTTP and
+asserts a non-empty scorecard.
+
+**The correction I was given was itself one refusal late, and this is the fourth
+recorded instance of right conclusion, wrong mechanism.** The merged screen said
+the store has "no `team_schedule` table at all"; the architect corrected that to
+the empty check at `reliability.py:476`. Driven read-only against a copy, the
+refusal actually reached is neither: `publish_reliability_cohorts` calls
+`_require_current(SCHEDULE)` at `:278` *before* `_source_snapshot` at `:284`, and
+`refresh_runs` is empty too, so the first refusal is
+`StaleReliabilityCohortError: no current schedule:nba-schedule cohort for season
+2025-26`. `:476` is only reachable once a schedule refresh exists. The live route
+returns that exact sentence with a remedy attached, verified at **HTTP 409** on an
+unpublished copy of the real store.
+
+**A count that named a table it had not counted.** `PublishResult` reported
+`team_schedule_rows_created` / `_updated` straight off `import_schedule`'s
+`ImportCounts`. `_persist_schedule_cohort:640` seeds that object from
+`import_games` *before* writing a single schedule row, so `updated` counted
+**nba_games**: the command printed `created 2460, updated 1230` for a table that
+holds 2,460 rows. Nothing was ill-formed - both integers were correct counts of
+real writes, the JSON validated, and the pair was wrong only if you knew which
+table each half came from. The pre-existing assertion checked `created` alone,
+where 2,460 coincidentally equals the row count, so it passed over the bug on
+every run. Replaced with one read-back of the table. The new test publishes
+**twice**, because a re-publish is the only reading that separates them: the
+importer then creates nothing and the old field reports 0 for a table still
+holding 2,460.
+
+**An endpoint whose output could not be rendered.** The first green run returned
+596 scorecards keyed on `player_id` alone. No other route could resolve them -
+the only endpoint carrying player names is `/leagues/{league_id}/projections/current`,
+which is league-scoped, and that store has **0 leagues**. Five quantities would
+have moved from "computed, not exposed" to "exposed, unusable". `player_name` is
+now joined in one query over the cohort ids, nullable rather than backfilled with
+a stringified id, with the null branch driven.
+
+**Independent check on the numbers themselves**, rather than on their shape: the
+lowest observed play rates over >=60 opportunities are Kyrie Irving 0/82, Damian
+Lillard 0/82, Tyrese Haliburton 0/82, Thomas Sorber 0/81 - four players who really
+did miss all of 2025-26 with ACL/Achilles injuries. A schema check could not have
+told me that, and a wrong join would very likely not have produced it.
+
+**Cross-lane edit, argued rather than assumed.** `import_schedule` gained a
+keyword-only `source=` defaulting to the existing constant. `_register_schedule_refresh`
+hardcoded `nba_api:ScheduleLeagueV2`; the 2025-26 games came from `LeagueGameFinder`
+and `BoxScoreSummaryV3` via `ingest/backfill.py`, so a derived cohort stamped that
+string would name an endpoint never called, in the row that answers "where did
+this schedule come from" long after the caller is gone. `ingest/` is
+`data-engineer`'s; the default preserves every existing caller's behaviour.
+Escalating rather than absorbing.
+
+**The store-opener census caught the new command on first contact,** which is what
+it is for. Classified `writes`, and the first reason written was wrong: I claimed
+exit 2 and a `DerivationRefused`. Driven, the answer is **exit 3**, `no such table:
+nba_games` - a fresh SQLite file has no schema, so the first read raises rather
+than returning empty. (Exit 2 is the *schema-present, no-games* input, which is a
+different store.) Corrected in place.
+
+**Frontend correction.** Five rows moved from `not-exposed` to a new `not-wired`
+status - "exposed, not on this screen" - because after this route ships,
+`not-exposed` is a false claim and the two states are unblocked by different
+people. `not-wired` is in `tallyEvidence`'s `onScreen` exclusion list, or an
+endpoint's mere existence would read as five rendered numbers. The false
+"no `team_schedule`" sentence is gone and a test now asserts its absence plus the
+empty-table wording. A `--not-wired` CSS variant was added: the sibling statuses
+are enumerated, and a status with no rule renders in body colour and stops reading
+as a badge.
+
+**Controls, each confirmed present in the file before the run was read.** Broke
+the claim reader's summary key `window_start`->`as_of_date`: **5 failed, 4 passed**.
+Unregistered the router: **9 failed**. Reverted `persisted_rows` to
+`counts.created`: **1 failed, 7 passed** - and the 7 include the pre-existing
+assertion, which is the evidence it could never have caught this. Note that
+`git checkout --` reverted the uncommitted *fix* along with the mutation; caught
+by re-reading the file rather than trusting the revert.
+
+**Verified at `d5954b3`, base `28d0d88` unrebased, from `backend`** unless stated:
+`ruff check .` clean, `ruff format .` **213 files**, `mypy src tests` clean over
+**192 source files**, new tests **10 + 8 = 18** passing, full suite **2050 passed,
+37 deselected** in 992 s at final head.
+From `frontend`: **324 passed / 20 files**, `lint` clean, `typecheck` clean,
+`build` clean. Handoff entries: base 289, mine 290, `origin/main` 290 at time of
+writing, so the union at merge should be **291**; 0 removed expected.
+
+**What I could not verify.**
+
+1. **That 3.12 MB and 4.9 s are acceptable for the screen that will consume this.**
+   It is a page load rather than a poll, which is the bar I set, but no frontend
+   calls it yet so nobody has rendered 596 rows of it. `compute` re-fingerprints
+   ~73k rows and holds SQLite's database-wide writer for roughly 3 s of that; on a
+   store being written concurrently that is a stall I have not observed because I
+   only ever drove it against an idle copy.
+
+2. **That the response omits nothing a consumer needs.** I added `player_name` only
+   because rendering was impossible without it, and I found that by looking at the
+   payload rather than by any check. There is no test that says "this response is
+   sufficient to draw the screen", and I do not know what such a test would assert.
+   The next thing found missing will be found the same way.
+
+3. ~~**That the full suite is green at `d5954b3`.**~~ **Closed after writing this
+   entry:** the full suite was re-run at final head - **2050 passed, 37 deselected,
+   992 s** - so no unrelated reader of `PublishResult` or the scorecard shape was
+   broken by the count and name fixes. Recorded rather than deleted, because the
+   gap was real when written: I had been ready to open a PR on the strength of a
+   2047-pass run taken at the commit *before* those two fixes.
+
+4. **That the `import_schedule` signature change is acceptable to `data-engineer`.**
+   I argued it and defaulted it, but the owner of that file has not seen it.
+
+5. **Whether `not-wired` belongs to me at all.** Leaving `not-exposed` in place
+   would have been a false claim the moment this merged, and the architect mandated
+   the correction, but `frontend` owns those files and a second lane editing them
+   during a freeze is exactly the collision the freeze exists to prevent.
+
+6. **That the owner's real store can serve this.** It is at alembic `0016` against
+   repo head `0019` and I deliberately did not migrate it. Everything above ran on
+   copies. The first run against the real store will also be its first migration.
+
+
+---
+
+**Added after an independent review, at 15c97b4, rebased onto  2ec617.**
+
+A non-`backend` reviewer at exact head returned five findings. Two were real
+defects; three were false claims in prose that the tests around them could not
+have caught. All five were driven before being accepted.
+
+The two that were defects. **A test named for the coverage check never reached
+it** - deleting a `team_schedule` row moves `schedule_content_version`, so
+`_require_current(SCHEDULE)` fires first and the input could only ever yield
+`reliability_not_current`, while the assertion accepted either code. Split into
+two tests, each pinning one code exactly, the coverage half now driven by an
+orphan FINAL game rather than a deletion. And **`record_refresh` relabelled
+lineage in place**: two producers that agree on content and disagree on source
+collide on one row, because `schedule_content_version` does not include
+`source`. Last writer won, and the true provenance was *gone* rather than
+ambiguous. This was latent before my change and my change activated it, by giving
+`import_schedule` a second possible source. Closed at both ends - the primitive
+now refuses with `LineageSourceConflict`, and the publisher skips deriving when
+a real cohort is already current.
+
+**What that second one says about my own controls.** I wrote a test asserting the
+SCHEDULE refresh row names this command. It passed. It would have passed just as
+happily on a row that had been *relabelled* from the real importer, because it
+asserted the source it expected to find rather than that no other source had ever
+claimed that row. Asserting the value you wrote is not the same as asserting
+nothing else wrote it, and only the second excludes a relabel.
+
+The two new tests were mutation-controlled **separately**, and the reason matters
+more than the result. Restoring the in-place assignment failed only the primitive
+test; forcing the publisher to always derive failed only the publisher test. A
+single control across both would have been satisfied by either, and I would have
+called one flag two exclusions.
+
+**A correction to the rebase guidance, which is the fifth instance of this shape.**
+The instruction was: `origin/main` now ends with a trailing newline, so expect
+**0 removed**; if you see 1, that is new. I saw **1**. It is not new, and the
+mechanism in the instruction is wrong - `origin/main` at `02ec617` does **not**
+end with a newline. Its final line is `  question 15.`, and appending after it
+necessarily rewrites that line, which `numstat` reports as one removal. Followed
+literally, the rule flags a correct append as suspicious.
+
+I did not settle this by re-reading the diff. `git show origin/main:docs/handoff.md`
+is **1,658,934 bytes and is a byte-prefix of HEAD**; HEAD is that plus a newline plus
+8,651 bytes of my entry. That is a direct proof of append-only, where `0 removed`
+is a proxy for it that fails exactly when the base lacks a trailing newline. I would
+replace the numstat rule with the prefix check: it is one command, it has no such
+blind spot, and unlike the entry count it also catches a swapped entry.
+
+**Answering the architect's volatility question, which is a gap rather than a
+field.** `compute_reliability_scorecards` computes **no availability-clumping
+quantity**. Enumerated at field level rather than by reading: `AvailabilityEvidence`
+carries exactly `overall`, `monthly_trend`, `back_to_back`, and a search of
+`reliability.py` for streak, gap, run-length, consecutive or interval returns
+nothing. `monthly_trend` is the closest and is a month-granularity proxy - it
+separates a January-February absence from evenly-spread misses, but not two 10-game
+absences inside one month from 10 scattered ones. So the owner's distinction, 60
+games in a steady rhythm versus 60 around one long absence, is **not currently
+computable from this endpoint**, and I have not built a proxy for it.
+
+There is a trap next to this. A casual reading finds `MinutesConsistency.
+coefficient_of_variation` and concludes volatility exists. That is volatility of
+**production**, not of **availability** - how much his minutes move on nights he
+plays, not whether the nights he plays arrive in clumps. The two are easy to
+mistake for each other and answer different questions.
+
+The other half of that question needs no work: nothing is collapsed.
+`PlayerReliabilityScorecard` keeps `availability` and `production` as separate
+sub-objects, the response mirrors that exactly, and `reliability.py` records
+`"composite_grade": "not defined"` in its own MODEL summary. A later
+risk-adjusted-valuation unit can combine them; nothing here has pre-combined them.
+
+**What I still could not verify, added to the list above.**
+
+7. **That refusing in `record_refresh` breaks no caller I did not run.** Existing
+   callers each pass a per-artifact constant, so none can collide, and re-recording
+   under the same source is still idempotent - I assert that explicitly. But the
+   refusal is in a shared primitive owned by this lane and used by others, and the
+   full suite is the only thing that has exercised the other call sites.
+
+8. **That skipping the derive step is right for a *partial* real schedule.** The
+   skip triggers on a current SCHEDULE cohort existing at all. A store holding a real
+   cohort that covers fewer games than `nba_games` does would be skipped and then
+   refused downstream by the exact-coverage check, which is a safe order but an
+   unhelpful message. I did not construct that store.
+
+### Late addition - the Adapter gate, and a false mechanism I wrote that then propagated
+
+`db/lineage.py` is fingerprinted by `docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json`,
+so the `record_refresh` fix could not land without regenerating that manifest. I recorded that the
+regeneration "requires live `stats.nba.com` calls" because `cohort_evidence` refused without
+`--allow-fetch`. **That mechanism is false and I disproved it myself.** The refusal came from letting
+`--raw-root` default to `backend/data/raw`, which does not exist. The captures are in the operator's
+payload store; pointed at it, the generator runs offline and exits 0 with all four reconciliation
+views agreed.
+
+Driven, with the control first because without it the comparison proves nothing: regenerating at an
+**unmodified** tree over the committed path leaves an **empty git diff**, so the manifest is exactly
+reproducible. With the primitive fixed, exactly **one** of 1656 leaves moves - the `db/lineage.py`
+fingerprint, `daf7d90d...` to `2e3d8eb9...`, the pair CI reported. Every cohort number identical.
+
+**The shape worth keeping is how the false claim travelled.** I put it in a docstring; the architect
+read the docstring and quoted it back to me as grounds for reversing a ruling that had been correct.
+Nothing was dishonest and no gate could have caught it, because a docstring is prose about the world
+rather than a claim about the code. A false mechanism in a comment is not inert - it is an assertion
+that will be cited later by someone with no cheap way to test it.
+
+**And feasibility was never the question.** That manifest is `data-engineer`'s artifact under the
+Adapter gate. A manifest regenerated by `backend` **passes its own fingerprint check by
+construction**, because the check compares the manifest against the tree that produced it. Green
+would mean the bytes agree, not that this lane was entitled to republish another lane's evidence, and
+no gate here distinguishes those. That is a gate that cannot see the thing that actually matters
+about the artifact it guards.
+
+**One control in this round proved nothing and I nearly read it as if it had.** A PowerShell regex
+meant to strip the refusal did not match; the file was unchanged, the tests passed, and "6 passed"
+would have read as a clean mutation control. The presence check printed before the result showed the
+mutation absent, which is the only reason I caught it. Confirming the mutation is *in the file* is
+not ceremony around the run - on this occasion it was the entire content of the check.
+
+### The defect is reachable, not latent - and `import_schedule(source=...)` is still here
+
+The architect verified at `ab633c7` that `import_schedule` had lost its `source=` parameter, and
+concluded the relabel defect had returned to latent and that the cross-lane edit needing
+`data-engineer` acceptance was "closed by deletion". **Both are false, and I should have caught the
+first one sooner because it is my own file.** Driven:
+
+- `origin/main`: `def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCounts`
+- HEAD: `(session, parsed, *, source: str = SCHEDULE_REFRESH_SOURCE)`, `importers.py` at `+27/-3`
+- `dev/publish_reliability_evidence.py` calls `import_schedule(session, parsed, source=DERIVED_SOURCE)`
+
+So two distinct sources still reach `record_refresh` for the SCHEDULE artifact, the cross-lane edit
+is still in the PR and still needs acceptance, and **the only thing preventing the relabel is the
+publisher skip** rather than an absence of reach.
+
+**And the hazard has two directions, of which the skip closes one.** Publish-after-import is closed:
+the derive branch runs only when the SCHEDULE scope is empty, so `record_refresh` must insert.
+Import-after-publish is **not** closed and cannot be closed from the publisher, because the relabel is
+performed by `import_schedule`. That direction is benign - the surviving label is *accurate*, since
+the real importer did just write those rows - so it destroys the weaker derived label rather than the
+true provenance. It is recorded rather than fixed, and the closure claim has been narrowed to the
+direction actually closed.
+
+### A stale cross-reference that was load-bearing
+
+`test_publish_reliability_evidence.py` carried the sentence *"the raise is asserted separately below,
+against the primitive, so that this test cannot pass by the collision having been made unreachable in
+some other way."* That was true of a fix which has since been reverted, and **the sentence outlived
+the code**: `LineageSourceConflict` occurs zero times in the repository, and the test "below" asserts
+the opposite. It survived a `git checkout` restore because reverting code does not revert prose about
+the code.
+
+The shape: a stale cross-reference is usually cosmetic, but this one **told a reader that an
+independent guard ruled out the failure mode the surrounding argument depends on**. Removing a fix
+leaves behind every sentence that assumed it, and those sentences are load-bearing exactly when they
+describe a guarantee rather than a mechanism.
+
+### An error code shared by several mechanisms pins none of them
+
+`test_refuses_when_a_schedule_row_is_deleted_under_the_published_claim` asserted only
+`reliability_not_current`, and its docstring said the deletion "moves the schedule fingerprint, and is
+caught there". The fingerprint does move, and **the code never gets as far as comparing it**:
+`verify_refresh` raises first on the completeness arithmetic (claims 6 persisted rows, fingerprints 5)
+and `_require_current` converts that to `cannot verify`.
+
+Driven with a control, disabling the completeness raise at `lineage.py:815`: `status_code == 409`
+**passed**, `error == "reliability_not_current"` **passed**, and only the newly added detail assertion
+failed - catching `registered s...` (the stale path) instead of `cannot verify...`. So the error code
+could not distinguish the two mechanisms and the docstring's claim was unpinned. **Where one code
+covers several mechanisms, asserting the code is a coverage check, not a mechanism check.**
+
+---
+
+## 2026-08-26 - backend - retraction: two claims in the entries above are false
+
+**Retracting my own record, not correcting someone else's.** An independent review at `3e84520`
+read the entries above against the tree and found three prose defects. All three were real; two of
+them are in this file, and the append-only rule means the honest repair is a retraction below rather
+than an edit above.
+
+**Retraction 1 - the primitive was never fixed.** Entries above (items around the `record_refresh`
+work) say the primitive now refuses to relabel. **It does not.** `LineageSourceConflict` does not
+exist at this HEAD and never reached `main`: it was written, it broke the injury-cohort manifest
+fingerprint through `db/lineage.py`, and it was reverted byte-for-byte. `record_refresh` still
+performs `existing.source = source` in place, silently, at `lineage.py`. The defect is **open**.
+It is pinned by `test_record_refresh_still_relabels_which_is_why_the_publisher_skips` in
+`backend/tests/test_publish_reliability_evidence.py` - a test whose name asserts a bug is present -
+and held off this command by the publisher's skip branch. **Do not remove that skip on the assumption
+the primitive is safe.**
+
+**Retraction 2 - it is live, not latent, and I made it so.** I also recorded that the revert removed
+`import_schedule(source=...)` and returned the defect to latent. **It did not.** `import_schedule`
+still carries `source: str = SCHEDULE_REFRESH_SOURCE` in `ingest/importers.py`, this PR added that
+parameter, and `publish_reliability_evidence` passes `source=DERIVED_SOURCE`. SCHEDULE /
+`nba-schedule` is the only artifact scope with two possible sources today, **and this PR is what
+made it one** - every other `record_refresh` call site passes a per-artifact constant. So the
+reachability the entries above deny is reachability this branch introduced. One ordering
+(publish-then-import) is not closed by the skip and cannot be closed from the publisher;
+`schedule_import.py` performs the relabel there. It is benign only because the surviving label is
+the *accurate* one and what is lost is the weaker derived label.
+
+**The shape both share.** Each entry recorded the change I made rather than the change that survived,
+and the two diverged when the revert landed. A handoff written from intent instead of from the tree
+is exactly the unexamined inheritance this project keeps finding, except self-inflicted, and it is the
+kind no gate catches - the tests were green under both false sentences because neither sentence was
+pinned by anything.
+
+**Open, and not mine to answer:** whether `record_refresh` losing provenance in place is a defect
+for any artifact type other than SCHEDULE. My reasoning is entirely about `import_schedule`, so the
+generalisation is unevidenced in either direction. That is an `architect` contract question.
+
+**Could not verify:** that no earlier entry in this file carries the same intent-versus-tree shape. I
+checked the entries this review named and the ones adjacent to them, not the whole file.
+
+
+---
+
+## 2026-08-26 - backend - the call-site count, and a check that was measuring a moving ref
+
+**Unit:** the reliability endpoint, PR #105. This entry covers the round after the revert.
+
+### An operator field that lied, in the code added to stop operator fields lying
+
+`main()` in `dev/publish_reliability_evidence.py` printed `"schedule_source": DERIVED_SOURCE` as a
+**hard-coded constant**. On the skip branch the command writes no schedule row at all, so the JSON an
+operator reads announced `schedule_derived: false` beside a *derived* source, while
+`refresh_runs.source` held `nba_api:ScheduleLeagueV2`. Well-formed, type-correct, and wrong - the
+`gameEt` shape, in new code, on the exact path added to protect that provenance. Fixed by reading the
+value back through `current_refresh` instead of inferring it from the branch taken.
+
+**Three mutation controls, because the first two tests I wrote did not exclude the defect.** An
+independent review constructed the falsifying reading and demonstrated it rather than asserting it:
+
+| mutation | before the fix round | after |
+|---|---|---|
+| `schedule_source=DERIVED_SOURCE` | 1 of 12 failed | 3 fail |
+| `schedule_source=(DERIVED_SOURCE if derived else "nba_api:ScheduleLeagueV2")` | **all 12 passed** | 1 fails |
+| `"schedule_source": DERIVED_SOURCE` restored verbatim in `main()` | **all 23 passed** | 1 fails |
+
+The second and third are the ones worth carrying. **Branch-derived constants passed every test**, so
+the pair pinned only *that the two branches differ*, not that either value was ever read from the
+database - which is the property the code comment claimed. And **the original defect, restored at its
+own location, left the whole file green**, because every assertion was on a dataclass field introduced
+by the same commit and nothing in the repository called `main` at all. A fix whose regression barrier
+is not at the defect's location is a coverage check wearing a mechanism check's name.
+
+Killed by two additions: a test that stamps an arbitrary **third** source string and asserts it
+survives to the report - removing the accident that two constants happened to exhaust the real
+sources - and a `capsys` test that calls `main()` and parses the printed JSON.
+
+### The blast radius, pinned as a count instead of described
+
+`tests/test_refresh_source_call_sites.py` walks the AST of every `record_refresh` call in `src` and
+asserts **exactly one** passes a non-constant `source`. Seven of eight pass a compile-time constant,
+and a scope whose source is a constant *cannot* receive a second value without an edit - a structural
+exclusion, not an observation. The eighth is `import_schedule`, parameterised by this PR, which is what
+made SCHEDULE/`nba-schedule` the only multi-source scope in the repository.
+
+`calendar/scoring_periods.py` is also `RefreshArtifactType.SCHEDULE` and would collide if the keys met.
+They cannot: `scoring_period_artifact_key` returns `f"league-scoring-periods:{league_id}"` against the
+literal `"nba-schedule"`. That was the reading in which the claim was false, so it is excluded rather
+than assumed.
+
+The primitive still cannot tell a legitimate second producer from a relabel. **The call-site count
+can**, and it is the thing that changed today. Two controls, each read back from disk before the run:
+turning a constant site into `str(SOURCE_KEY)` fails the count test *and* names the file in the
+parameterised test ID; pointing the walk at a non-existent package fails the vacuity guard, which is
+the reading in which `0 <= 1` holds trivially and the count means nothing.
+
+### The check that was measuring a moving reference
+
+The append-only check for this file compared against `origin/main`. It reported **containment: False**
+and there was no violation: `origin/main` had moved from `02ec617` to `c07aefb` when #106 merged, and
+main's handoff now carries entries this branch has never seen. **A branch's file stops being a
+superset of main's the moment main appends, which has nothing to do with whether the branch edited
+anything.**
+
+Compare against the **merge-base**. It is the last tree both agree on, so it is the only content this
+branch could have edited: `git merge-base origin/main HEAD`, then byte-prefix containment on that blob.
+Against `02ec617` this branch is `+23,264` bytes, containment true, zero CR.
+
+**The general shape: a control whose reference moves reports failures the subject did not cause.** It
+is the same family as a positive control run against a different query than the one under test - the
+control and the subject have to be looking at the same thing. This one would have trained someone to
+ignore the check, which is worse than not having it.
+
+**Also corrected in the retraction entry above** (both inside this branch's own appended region, both
+absent from the merge-base, so containment is preserved): a `:315` line reference that this branch's
+own docstring expansion had already moved to `:335`, replaced with the call expression itself; and a
+`2026-08-21` date on an entry retracting `2026-08-26` claims.
+
+### Could not verify
+
+- **Whether losing provenance in place matters for any artifact type other than SCHEDULE.** The count
+  test pins the blast radius at one scope; it does not make the primitive safe. `architect` has routed
+  the primitive fix to `data-engineer` as a joint unit with the cohort regeneration, triggered the next
+  time that manifest is regenerated for its own reasons.
+- **Whether `dev/seed_schedule_grid.py` stamping a fabricated grid with the real importer's source
+  matters.** Flagged by the review as unevidenced; it predates this branch, and I did not investigate.
+- **Whether the `else None` arm on the read-back is reachable.** It is required by mypy and unreachable
+  on both branches today, so `"schedule_source": null` cannot currently be produced. Untested.
+- **Whether CI has run this head.** `origin/main` moved mid-round; no rebase yet, by instruction.
+
+---
+
+## 2026-08-26 — `backend` — the invariant test had two false-greens, both demonstrated rather than argued
+
+A second exact-head review of `14acf4b` read the call-site test `architect` had just ruled into
+existence, and found that **the test written to close a hole had two of its own**. Both were shown by
+constructing a passing mutation, not by inspection, and both are now closed.
+
+**`_source_is_constant` classified any attribute access as constant.** The reasoning was that
+`SomeEnum.MEMBER` is a constant — true, and it does not say what I used it for. `self.x`, `config.x`,
+`parsed.x` and `release.source_version` all spell it the same way, and the last of those is read out
+of a loaded artifact at runtime. The reviewer put `source=release.source_version` at
+`schedule_context/service.py:219` and **all ten tests stayed green while a second scope genuinely
+became multi-source** — the exact defect the file exists to exclude, passing through the file's own
+definition of the thing it excludes. No call site passes an attribute today, so deleting the clause
+cost nothing; the enumeration is byte-identical before and after.
+
+**The call matcher compared the literal identifier `record_refresh`.** So
+`from hoops_gm.db.lineage import record_refresh as _register` was invisible, and — this is the part
+that matters — **the vacuity floor does not help, because an aliased site adds zero to the count.**
+A check whose blind spot is also invisible to its own guard is not conservative; it is silently
+permissive, and its failure mode is a green result. The matcher now resolves each module's local
+binding from its `ImportFrom` nodes, and separately reports any reference to that binding which is
+not the callee of a call — `functools.partial(record_refresh, source=...)` is the shape that would
+otherwise slip past a call-only walk.
+
+**Both mutations now fail and name their site**, `schedule_context/service.py-214-release.source_version-False`
+and `_control_alias.py-10-label-False`. The mutated line was printed back **from disk** before either
+run, which is not ceremony: the first attempt at the attribute control **did not apply** — the file
+uses double quotes and my replacement string used single ones — and it reported
+`CONTROL DID NOT APPLY: found 0` instead of a clean green. Without the presence check that run would
+have read as a passing control on an unmutated file, which is the same silent-regex failure this lane
+recorded three rounds ago.
+
+`test_record_refresh_is_reached_from_at_least_one_call_site` asserted `>= 8`. **The name understated
+its own check**, which is the mild inverse of the defect here, so the name moved rather than the
+assertion.
+
+**Documented, not changed:** the `session.commit()` before `main()` in
+`test_publish_reliability_evidence.py` is load-bearing. `main` connects as a second client, so on
+Postgres the fixture session would still hold row locks its writes block on — **it would hang there
+rather than fail, while passing on SQLite.** Nothing said so; now the docstring does.
+
+### Could not verify
+
+- **Whether any *other* checker in this repository resolves names loosely the same way.** The defect
+  is not specific to AST walks — it is any check whose matcher is narrower than the thing it claims
+  to cover, where the shortfall shows up as green. I looked only at the file I wrote.
+- **Whether the `Import`-form binding matters.** The matcher reads `ImportFrom` and also matches any
+  attribute named `record_refresh`, which covers `import hoops_gm.db.lineage as lineage` followed by
+  `lineage.record_refresh(...)`. I did not construct a mutation for that path, so it is reasoned,
+  not demonstrated — a weaker claim than the two above.
+- **Whether the earlier `mypy` file count I reported was ever right.** CI runs bare `mypy`
+  (config-driven, 206 files); `mypy src` reports 125. A previously logged "193" matches neither, so
+  one of my earlier gate quotes named a command I had not actually run. The gate is green under CI's
+  exact invocation.
+---
+
+## 2026-08-26 - backend - the fix for a false-green had the same false-green in it, one import form deeper
+
+A second independent review read `ae8c288` - the head that claimed to close the two
+false-greens in `test_refresh_source_call_sites.py` - and closed **one and a half** of them.
+
+**The blocking finding.** `_record_refresh_bindings` resolved import aliases, but filtered on
+`node.module == "hoops_gm.db.lineage"`. For a relative import, `from ..db.lineage import
+record_refresh as _register`, `node.module` is `"db.lineage"` with `level == 2`. The equality
+fails, the alias is never bound, and the call site is invisible to **both** walks. The reviewer
+wrote a new production module that records provenance with a runtime-varying source and got
+`9 passed, 1 skipped` - byte-identical to the control.
+
+**So the fix for "the matcher resolves names too narrowly" resolved names too narrowly.** The
+docstring in that same commit says *"a checker that resolves names loosely is not conservative,
+it is silently permissive"*, and the implementation under it left the relative form open. Writing
+the general principle down did not stop me implementing the specific case.
+
+**The vacuity floor does not rescue it, and the way it half-rescues is worse than not rescuing.**
+*Converting* an existing site to relative+alias drops the count and trips `>= 8`; *adding* one
+does not. And the conversion save is incidental and decays - the floor is 8 against exactly 8
+sites, so at 10 sites a converted site leaves 9 and goes green too. Its failure message says
+"walked up only 6", which invites the next maintainer to lower the floor rather than notice the
+alias. **A guard that fails with the wrong message trains the wrong repair.**
+
+The module filter is gone; the binding is on the imported name alone. Nothing else in this tree
+exports `record_refresh`, so it bought nothing, and over-inclusion is the correct direction of
+error here: a false alarm gets investigated, a false green does not.
+
+**Three more holes, all measured at zero live exposure, all closed anyway.**
+
+- `_module_level_constants` was **scope-blind**: it scanned `tree.body`, then trusted those names
+  anywhere in the file. A function-local rebind, a `global` rebind, a module-level `for` target
+  and - worst - **a function parameter of the same name** all shadowed a module literal and were
+  classified constant. The parameter case matters because parameterising `source=` is the exact
+  shape of the one legitimate variable-sourced site, so a second such function colliding with a
+  module literal would read as constant and the count would stay at 1. `SOURCE += os.environ[...]`
+  was the same function failing differently: `AugAssign` was handled by neither branch, so the
+  name stayed "bound exactly once".
+- The referenced-not-called walk saw only `ast.Name`, so `functools.partial(lineage.record_refresh,
+  ...)` and `_rr = lin.record_refresh` both passed clean. **The comment above it claimed to cover
+  "functools.partial, a decorator, a dict of writers"** - it covered the direct-name spelling of
+  those, and I wrote the comment describing the class while implementing one member of it.
+- The comment on the missing-keyword branch claimed to catch a *positional* source. `source` is
+  keyword-only in the real signature, so positional passing is a `TypeError` and the claim was
+  **vacuously true** - it named a defect that cannot occur while the branch's actual job,
+  `**kwargs` unpacking and omission, went undescribed.
+
+**Documented rather than fixed:** `getattr(lineage, "record_" + "refresh")` defeats the
+`"record_refresh" not in text` early-out entirely. Contrived, not worth gating, and now stated -
+an unstated assumption is how the previous two holes survived.
+
+**A false alarm I am leaving in place, with its repair named.** A constant *imported* from another
+module is rejected, because `_module_level_constants` reads `Assign`/`AnnAssign` only. That
+punishes the more disciplined refactor. The comment now says: resolve the import and allowlist the
+name; **do not widen `_source_is_constant`**, because loosening it is precisely the defect this
+file was rewritten twice to remove.
+
+**Controls.** All eight surviving mutations now fail, each naming its site; `getattr` passes as
+documented. The blocking one fails as
+`test_every_other_call_site_passes_a_compile_time_constant[availability/_probe.py-4-x-False]` -
+**naming the site, not tripping the floor**, which is the distinction the reviewer's own sibling
+case failed on. Converting a real site to a relative alias keeps the count at 8 with no floor
+trip, so the binding genuinely resolves rather than the count merely surviving. The enumeration is
+byte-identical before and after all four changes: 8 sites, 7 constant, 1 variable.
+
+**A fourth control-instrument failure, caught by printing the numbers instead of the verdict.**
+Re-deriving the backlog count, I ran a negative control expecting one `done` to flip to `pending`
+and the extractor to disagree with the header. It disagreed - but reported `0 done / 143 pending`,
+not the `53 / 90` I predicted. **`[regex]::Replace($text, $pattern, $replacement, 1)` does not
+replace one match.** The four-argument static overload takes `RegexOptions`, so `1` binds to
+`IgnoreCase` and every one of the 54 matches was replaced. A count-limited replace needs
+`[regex]::new($pattern).Replace($text, $replacement, 1)`.
+
+The control was still valid - the extractor demonstrably can say `False` - but **it fired by a
+mechanism other than the one I wrote**, and the only reason I know that is that the script prints
+the tallies rather than a bare pass/fail. Had it printed `AGREE: False` alone I would have
+recorded a correct verdict and an incorrect belief about what produced it. Same family as `gameEt`:
+an argument that is well-formed, accepted without error, and means something other than it appears
+to. **Printing the value beside the verdict is the same discipline as reading the mutated line back
+from disk, one level further in.**
+
+**The backlog recount is 54 done / 1 blocked / 89 pending / 144 total, and the measurement is
+vacuous.** `docs/backlog.md` is blob `44931747` in both the merge-base and this working tree - the
+same bytes twice - so the run validates the *extractor* and establishes nothing about this branch
+beyond "it did not touch the file". Stated rather than reported as agreement, because a control and
+a measurement over identical inputs is the moving-reference error's mirror image: **not a reference
+that moved, but a subject that never did.**
+
+### Could not verify
+
+- **Whether `getattr`-spelled indirection exists anywhere in this repository.** I documented the
+  early-out's limit without measuring its exposure; the reviewer did not measure it either.
+- **Module-level `AugAssign` exposure against the trusted constant names.** The mechanism is
+  demonstrated; the reviewer explicitly flagged that their exposure scan covered inner-scope
+  collisions only and did not enumerate this. Neither of us measured it, so it is closed on
+  mechanism, not on reach.
+- **The Postgres row-lock reasoning** documented last round for `session.commit()` before `main()`.
+  Both the reviewer and I only have SQLite locally. CI's Postgres job runs the same suite and is
+  green, which is consistent with the ordering being correct but does not exercise the reordered
+  form, so nothing here tests the claim itself.
+- **One unattributed working-tree blip** the reviewer saw: ` M backend/tests/fixtures/nba_static_teams.json`
+  appearing and vanishing during their run in a tree we were both using. Neither of us touched it.
+  It is absent now. Recorded because an unexplained mutation in a shared tree is exactly the thing
+  that should not be silently dropped.
+---
+
+## 2026-08-26 - backend - three fixes with no regression barrier, which is the same as no fixes
+
+A third independent review read `8ad253d` and returned no BLOCKING finding. It returned
+something worse, and the fact that it is not blocking is the interesting part.
+
+**The MEDIUM is the real finding. It restored the pre-fix form of three previous fixes -
+the scope-blindness fix, the relative-import fix, the attribute-walk fix - one at a time,
+and got `9 passed, 1 skipped` on each.** Every fix this file has received across three
+rounds was revertible in silence.
+
+The mechanism is that **every test in the file routed through a walk over the real
+`src/` tree**. So a fix could only be exercised if some production file happened to spell
+the defect it closes - and none do, which is precisely why the holes were latent rather
+than live. Green meant *"this repository does not currently contain the bad case"*, and it
+read identically to *"the fix works"*.
+
+**That is a coverage check wearing a mechanism check's name**, filed by this project once
+before against my own `schedule_source` fix, and I reproduced it three times without
+noticing. My own mutation controls did not catch it because I injected defects - which the
+walk then found - rather than reverting fixes, which nothing observed. **An injected-defect
+control and a reverted-fix control are different questions**, and I had been answering only
+the first while believing I had answered both.
+
+The fix is a split: `_sites_in_module(rel, text)` takes source directly, and `_call_sites()`
+maps it over `src/`. Seventeen new cases now hand the walk the defect in-hand, so a revert
+fails **in the function that was reverted** instead of waiting for someone to write the bad
+spelling for real. All six reversions now die, each naming its own barrier.
+
+**The HIGH: three more binders that are not `Name(Store)` nodes.** A store-only walk cannot
+see them, so all three classified a runtime value as a compile-time constant:
+
+- `case {"source": SOURCE}` - `ast.MatchAs`. **It reads like a comparison and it is a
+  rebind**, which is the sharpest of the three.
+- `except RuntimeError as SOURCE` - `ast.ExceptHandler.name` is a bare `str` field.
+- `globals()["SOURCE"] = os.environ[...]` - binds no name a walk could ever see.
+
+The first two join the walk. The third cannot be tracked by name because there is no name,
+so any module calling `globals()` or `vars()` now gets **no** trusted constants at all.
+Blunt, aimed at a construct absent from `src/`, and the right direction: its failure mode is
+a false alarm, which gets investigated.
+
+**A positive control on the predicate, which was missing and would have made everything
+vacuous.** Every "this is not a constant" assertion is satisfied by a `_source_is_constant`
+that returns `False` unconditionally. `test_a_genuine_module_constant_is_still_accepted`
+excludes that reading. **Seventeen negative cases and no positive one is not a strong test
+suite, it is an unfalsifiable one** - and I built the first sixteen before noticing.
+
+**The enumeration is byte-identical across the refactor**: 8 sites, 7 constant, 1 variable
+at `ingest/importers.py:952`, same files and same line numbers. That is the control showing
+the split preserved behaviour on the real tree rather than merely still passing.
+
+**My mutation driver committed the defect it exists to exclude.** It confirmed a mutation
+had landed by looking for `replacement.split("\n")[0]` - the replacement's *first* line. For
+a multi-line mutation whose first line is unchanged, that string is in the original file
+too, so the presence check passed without the mutation existing **and printed an unmodified
+line as evidence of modification**. M-F reported `if isinstance(arg, ast.Name):` - a line I
+had not touched. The check now requires the full replacement present and prints the line
+that is absent from the original, which reports `if isinstance(arg, ast.Attribute):`.
+
+The test still died, so the verdict was right and the evidence for it was fake. **A control
+that reaches the correct conclusion through a broken instrument is not a weaker control, it
+is an unrelated event that happened to agree** - and this is the fourth instrument failure
+this lane has caught by printing values rather than verdicts.
+
+### Could not verify
+
+- **Whether `match`, `except ... as`, or `globals()` shadowing of a module constant exists
+  anywhere in `src/` today.** Closed on mechanism, demonstrated on synthetic source. The
+  reviewer demonstrated the false-greens but did not enumerate live exposure, and neither
+  did I.
+- **Whether the `globals()`/`vars()` distrust is reachable at all.** No module under `src/`
+  calls either, so the branch is closed before it is reachable and its cost today is zero -
+  but that also means nothing in the real tree exercises it. Only the synthetic case does.
+- **`setattr(sys.modules[__name__], "SOURCE", ...)`** is the same defect as the `globals()`
+  case in a spelling I did not close. Named rather than fixed, because an unstated
+  assumption is how the previous holes survived.
+- **`getattr(lineage, "record_" + "refresh")`** still defeats the substring early-out
+  wholesale. Unchanged from last round, still documented, still not gated, exposure still
+  unmeasured by anyone.
+- **The Postgres row-lock reasoning** for `session.commit()` before `main()` remains
+  reasoned rather than exercised; both the reviewer and I have SQLite only.

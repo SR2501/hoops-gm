@@ -1642,6 +1642,16 @@ a:focus-visible {
   color: var(--pending);
 }
 
+/* Reachable over HTTP; this screen has not been taught to call it. Closer to
+   arriving than `not-exposed`, and the accent hue says so — the remaining work
+   is on this side of the wire, not the backend's. Enumerated here rather than
+   left to inherit `.evidence__status`, which sets no colour at all: a status
+   with no rule renders in the table's body colour and reads as unremarkable
+   prose, which is the opposite of what a status badge is for. */
+.evidence__status--not-wired {
+  color: var(--accent);
+}
+
 /* Nobody has defined the quantity. Muted, because there is nothing to chase. */
 .evidence__status--not-defined {
   color: var(--text-muted);

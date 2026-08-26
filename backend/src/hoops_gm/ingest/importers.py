@@ -554,8 +554,29 @@ def import_games(session: Session, records: Sequence[NbaGameRecord]) -> ImportCo
     return counts
 
 
-def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCounts:
+#: What ``import_schedule`` stamps on the refresh row when the caller does not
+#: say otherwise: the schedule endpoint this importer was written for.
+SCHEDULE_REFRESH_SOURCE = "nba_api:ScheduleLeagueV2"
+
+
+def import_schedule(
+    session: Session,
+    parsed: ScheduleParseResult,
+    *,
+    source: str = SCHEDULE_REFRESH_SOURCE,
+) -> ImportCounts:
     """Write one parsed season's schedule and register its refresh cohort.
+
+    ``source`` names where the cohort came from and is written verbatim to
+    ``refresh_runs.source``. It is a parameter rather than a constant because
+    a ``ScheduleParseResult`` is a value, and this importer cannot tell which
+    producer built it: a cohort derived from an already-ingested ``nba_games``
+    ledger is a legitimate input, and stamping it ``nba_api:ScheduleLeagueV2``
+    would name an endpoint that was never called. That is a self-describing
+    field that lies about itself, and the lineage row is exactly where such a
+    lie is least recoverable — it is the row that answers "where did this
+    schedule come from" long after the caller is gone. The default preserves
+    the string every existing caller already wrote.
 
     Takes the whole :class:`ScheduleParseResult`, not just its games, because
     the completeness evidence lives on the result: how many regular-season
@@ -605,7 +626,7 @@ def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCoun
     # writes inside a savepoint so a caller may catch SourceContractError and
     # still safely commit unrelated outer-transaction work.
     with session.begin_nested():
-        return _persist_schedule_cohort(session, parsed, teams=teams)
+        return _persist_schedule_cohort(session, parsed, teams=teams, source=source)
 
 
 def _persist_schedule_cohort(
@@ -613,6 +634,7 @@ def _persist_schedule_cohort(
     parsed: ScheduleParseResult,
     *,
     teams: dict[int, int],
+    source: str,
 ) -> ImportCounts:
     season = parsed.season
     counts = import_games(session, [record.game for record in parsed.games])
@@ -665,6 +687,7 @@ def _persist_schedule_cohort(
         session,
         parsed,
         persisted_team_row_count=persisted_team_row_count,
+        source=source,
     )
     session.flush()
     return counts
@@ -872,6 +895,7 @@ def _register_schedule_refresh(
     parsed: ScheduleParseResult,
     *,
     persisted_team_row_count: int,
+    source: str,
 ) -> None:
     """Stamp the schedule refresh cohort for the season just imported.
 
@@ -930,7 +954,7 @@ def _register_schedule_refresh(
         artifact_type=RefreshArtifactType.SCHEDULE,
         artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
         version=version,
-        source="nba_api:ScheduleLeagueV2",
+        source=source,
         season=parsed.season,
         summary={
             # Kept flat as well as inside the completeness block: existing

@@ -93,6 +93,25 @@ def test_record_refresh_creates_a_row(session: Any) -> None:
 
 
 def test_record_refresh_is_idempotent_by_type_key_and_version(session: Any) -> None:
+    """Re-recording one artifact version touches a single row rather than adding one.
+
+    **The ``second.source == "second-run"`` assertion below is a known open
+    defect, not a property worth preserving.** It establishes idempotence by
+    re-recording under a *different* ``source`` and asserting the second value
+    wins. ``version`` is a content fingerprint that
+    does not include ``source``, so two producers agreeing on content collide on
+    this row and the earlier provenance is destroyed rather than made ambiguous.
+
+    It is written down here as an expectation, which is why anyone fixing the
+    primitive will see this test fail and should not assume they have broken
+    something. The defect is pinned with its full reasoning by
+    ``test_publish_reliability_evidence.py::``
+    ``test_record_refresh_still_relabels_which_is_why_the_publisher_skips`` —
+    recorded there rather than here because that is the file whose command has
+    reach for it. This pointer exists because a reader looking for a *lineage*
+    defect searches the *lineage* tests first, finds nothing, and concludes it
+    was never written down.
+    """
     first = record_refresh(
         session,
         artifact_type=RefreshArtifactType.SCHEDULE,
