@@ -50,7 +50,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from hoops_gm.availability.reliability import publish_reliability_cohorts
+from hoops_gm.availability.reliability import ReliabilityCohortClaim, publish_reliability_cohorts
 from hoops_gm.core.config import Settings
 from hoops_gm.db.models.enums import GameStatus, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
@@ -83,16 +83,20 @@ class DerivationRefused(RuntimeError):
 
 @dataclass(frozen=True)
 class PublishResult:
+    """What was derived, and the exact claim a run may now be computed from.
+
+    The claim is carried whole rather than re-flattened into version strings,
+    because ``compute_reliability_scorecards`` takes a
+    :class:`ReliabilityCohortClaim` and a caller that had to rebuild one from
+    parts would be a second reader of the same producer — the split that let
+    ``schedule_grid`` read keys its producer never wrote.
+    """
+
     season: str
-    season_type: SeasonType
     games: int
     team_schedule_rows_created: int
     team_schedule_rows_updated: int
-    schedule_version: str
-    source_version: str
-    derivation_version: str
-    window_start: date
-    as_of_date: date
+    claim: ReliabilityCohortClaim
 
 
 def require_complete_regular_season(session: Session, *, season: str) -> list[NbaGame]:
@@ -252,15 +256,10 @@ def publish_reliability_evidence(
     )
     return PublishResult(
         season=season,
-        season_type=claim.season_type,
         games=len(parsed.games),
         team_schedule_rows_created=counts.created,
         team_schedule_rows_updated=counts.updated,
-        schedule_version=claim.schedule_version,
-        source_version=claim.source_version,
-        derivation_version=claim.derivation_version,
-        window_start=claim.window_start,
-        as_of_date=claim.as_of_date,
+        claim=claim,
     )
 
 
@@ -309,15 +308,15 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "database_url": redacted_url(args.database_url),
                 "season": result.season,
-                "season_type": result.season_type.value,
+                "season_type": result.claim.season_type.value,
                 "games": result.games,
                 "team_schedule_rows_created": result.team_schedule_rows_created,
                 "team_schedule_rows_updated": result.team_schedule_rows_updated,
-                "schedule_version": result.schedule_version,
-                "source_version": result.source_version,
-                "derivation_version": result.derivation_version,
-                "window_start": result.window_start.isoformat(),
-                "as_of_date": result.as_of_date.isoformat(),
+                "schedule_version": result.claim.schedule_version,
+                "source_version": result.claim.source_version,
+                "derivation_version": result.claim.derivation_version,
+                "window_start": result.claim.window_start.isoformat(),
+                "as_of_date": result.claim.as_of_date.isoformat(),
                 "schedule_source": DERIVED_SOURCE,
             },
             indent=2,

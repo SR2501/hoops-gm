@@ -59,6 +59,18 @@ import type { AssumptionState, ProjectionsModel } from './projectionsModel'
 export type EvidenceStatus =
   /** Computed by the backend today, but no route carries it to a browser. */
   | 'not-exposed'
+  /**
+   * Carried by a route, but this screen does not call it yet.
+   *
+   * Split out from `not-exposed` on 2026-08-26, when
+   * `GET /api/v1/reliability/scorecards` shipped and made "computed, not
+   * exposed" false for five rows at once. Folding the two together would have
+   * been the cheaper edit and the wrong one: they are unblocked by different
+   * people. `not-exposed` is a backend unit; this is a wiring unit on this
+   * screen, and a reader who cannot tell them apart cannot tell whose queue a
+   * row is in — which is the whole reason this table has a status column.
+   */
+  | 'not-wired'
   /** No such quantity exists, by a decision that was argued and recorded. */
   | 'not-defined'
   /** Deliberately blocked upstream; the block is the finding, not an oversight. */
@@ -103,6 +115,7 @@ export interface EvidenceItem {
 
 export const EVIDENCE_STATUS_LABELS: Record<EvidenceStatus, string> = {
   'not-exposed': 'computed, not exposed',
+  'not-wired': 'exposed, not on this screen',
   'not-defined': 'not defined',
   blocked: 'deliberately blocked',
 }
@@ -165,6 +178,7 @@ export function describeSeasonSplit(loadedSeason: string): SeasonSplit {
 export interface EvidenceTally {
   total: number
   notExposed: number
+  notWired: number
   notDefined: number
   blocked: number
   onScreen: number
@@ -174,13 +188,22 @@ export function tallyEvidence(items: readonly EvidenceItem[] = AVAILABILITY_EVID
   return {
     total: items.length,
     notExposed: items.filter((item) => item.status === 'not-exposed').length,
+    notWired: items.filter((item) => item.status === 'not-wired').length,
     notDefined: items.filter((item) => item.status === 'not-defined').length,
     blocked: items.filter((item) => item.status === 'blocked').length,
-    // Every status in the closed set means "not here". If a fourth status is
+    // Every status in the closed set means "not here". If a further status is
     // ever added for a quantity that *has* arrived, this stops being zero by
     // construction rather than by editing a sentence.
+    //
+    // `not-wired` was added to this list when the reliability route shipped,
+    // and adding it here was the load-bearing half of that edit: a quantity
+    // that a route now carries is still not on this screen, and letting it
+    // fall through to `onScreen` would have turned an endpoint's existence
+    // into a claim that five numbers were rendered. That is the exact
+    // substitution — a guarantee about one property read as a guarantee about
+    // another — this screen exists to refuse.
     onScreen: items.filter(
-      (item) => !['not-exposed', 'not-defined', 'blocked'].includes(item.status),
+      (item) => !['not-exposed', 'not-wired', 'not-defined', 'blocked'].includes(item.status),
     ).length,
   }
 }
@@ -197,61 +220,62 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
   {
     id: 'observed-play-rate',
     quantity: 'Observed play / non-play rate',
-    status: 'not-exposed',
+    status: 'not-wired',
     season: '2025-26',
     purpose:
       'Of the games we directly observed, how often he suited up. Not a complete availability rate: missing rows are never counted as absences.',
     whereItLives:
-      'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, callable in-process only.',
+      'compute_reliability_scorecards in backend/src/hoops_gm/availability/reliability.py, served by GET /api/v1/reliability/scorecards.',
     blocker:
-      'Blocked twice, and either alone is enough. (1) No route: reliability-metrics closed with "no schema, API, or UI" — done as a computation, not as a contract — and no unit for that route is filed in docs/backlog.md, so the gap is unowned rather than queued. (2) No store the computation can run in: compute_reliability_scorecards reads team_schedule before anything else, then refuses a window with "no final games". The store this screen reads has the schedule but no played games, so it reaches that refusal and stops there. The store holding 2025-26 participation never gets that far — it has no team_schedule table at all, so the computation fails on its first read, before any of its own checks run. Building the route alone would serve nothing.',
+      'The route shipped on 2026-08-26 and this screen does not call it yet. What that route needs from a store is worth stating, because the previous version of this row got it wrong twice: compute_reliability_scorecards requires team_schedule rows, final games, and an exact two-rows-per-game join between them, all in the store it reads. The 2025-26 participation store has 43,037 rows and 1,230 final games and served none of this, and the reason was never a missing table — team_schedule is present and empty, refresh_runs is present and empty, and the first refusal reached is "no current schedule:nba-schedule cohort", with the empty-schedule refusal immediately behind it. python -m hoops_gm.dev.publish_reliability_evidence fills both. Verified against a copy of that store, read-only.',
   },
   {
     id: 'back-to-back',
     quantity: 'Back-to-back sit evidence',
-    status: 'not-exposed',
+    status: 'not-wired',
     season: '2025-26',
     purpose:
       'Whether he sits the second night of a back-to-back, from direct observation rather than reputation.',
     whereItLives:
       'The same scorecard, but the quantity has two halves with different footings: which nights are back-to-backs is pure calendar (build_schedule_density, no model), whereas whether he sat one is an observation that needs the participation ledger. The calendar half being model-free says nothing about the half that carries the meaning.',
     blocker:
-      'Blocked on the same two — no route, and no store the computation can run in. The calendar half additionally needs each game attributable to two dated team calendars, counted below; but that limit bounds the calendar half only, and the sit half stays blocked by the store regardless.',
+      'On the route, and unwired on this screen, like the rest of the scorecard. The calendar half additionally needs each game attributable to two dated team calendars, counted below; that limit bounds the calendar half only, and the sit half depends on the participation ledger regardless. Note that this row is the reason the publisher refuses a ledger short of 1,230 games: is_back_to_back is set from the gap to the previous game, so a missing played game silently becomes a day of rest rather than a missing row.',
   },
   {
     id: 'monthly-trend',
     quantity: 'Availability trend by month',
-    status: 'not-exposed',
+    status: 'not-wired',
     season: '2025-26',
     purpose:
       'Whether the missed games cluster — a bad November and a clean spring is a different asset from steady attrition.',
     whereItLives:
       'The same scorecard, grouped by calendar month. No slope, smoothing or direction label is fitted, by design.',
     blocker:
-      'Blocked on the same two — no route, and no store the computation can run in: the populated 2025-26 participation ledger has no team_schedule or refresh_runs table, and the store this screen reads has no played games. Neither is sufficient alone.',
+      'On the route, and unwired on this screen. The store half is the same as the row above: the 2025-26 store has team_schedule and refresh_runs as empty tables rather than absent ones, so what it needs is a publish rather than a migration.',
   },
   {
     id: 'minutes-consistency',
     quantity: 'Minutes consistency',
-    status: 'not-exposed',
+    status: 'not-wired',
     season: '2025-26',
     purpose:
       'How stable his minutes are in the games he does play, which is a different question from whether he plays.',
     whereItLives:
       'The same scorecard: sample standard deviation over mean minutes, null below two observations.',
     blocker:
-      'Blocked on the same two — no route, and no store the computation can run in. One call produces every quantity on this scorecard, so it refuses as a whole or returns as a whole.',
+      'On the route, and unwired on this screen. One call produces every quantity on this scorecard, so it refuses as a whole or returns as a whole — which is also why one fetch will wire all five of these rows at once.',
   },
   {
     id: 'category-dispersion',
     quantity: 'Per-category dispersion',
-    status: 'not-exposed',
+    status: 'not-wired',
     season: '2025-26',
     purpose:
       'Empirical p20/p80 and sample SD per category, so a category line can be read as a range rather than a point.',
     whereItLives:
       'The same scorecard. These are historical lower and upper observations, explicitly not predictive intervals.',
-    blocker: 'Blocked on the same two — no route, and no store the computation can run in.',
+    blocker:
+      'On the route, and unwired on this screen. The response omits the per-observation row ids the in-process dataclass carries — about 70,000 integers on a full season — and carries counts instead, so a per-player evidence drill-down would need its own route rather than this one.',
   },
   {
     id: 'composite-grade',
@@ -272,9 +296,9 @@ export const AVAILABILITY_EVIDENCE: readonly EvidenceItem[] = [
     season: '2026-27 rosters read through 2025-26 evidence — two seasons in one number.',
     purpose: 'How much of your own roster is carrying availability risk at once.',
     whereItLives:
-      'Nowhere, and it needs two things this build has neither of: a roster, and a per-player durability measure to sum over one.',
+      'Nowhere, and it needs two things: a roster, and a per-player durability measure to sum over one. The second arrived on 2026-08-26.',
     blocker:
-      'Blocked on both inputs at once: no endpoint on this backend serves a league roster, and no durability quantity above has landed to sum. Either alone leaves it unbuildable.',
+      'Blocked on the roster. No endpoint on this backend serves a league roster, and until one does there is nothing to sum the reliability scorecards over. This row previously said both inputs were missing; one of them has since landed, which is why it now names one blocker rather than two — a row that keeps claiming the harder version of its own problem is the failure this table exists to avoid.',
   },
   {
     id: 'p-play',

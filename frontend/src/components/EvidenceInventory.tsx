@@ -32,6 +32,7 @@ export function EvidenceInventory({
       <p className="evidence__tally" data-testid="evidence-tally">
         <strong data-testid="evidence-tally-onscreen">{tally.onScreen}</strong> of{' '}
         <strong>{tally.total}</strong> availability quantities are on this screen.{' '}
+        {tally.notWired} are served by an endpoint this screen does not call yet,{' '}
         {tally.notExposed} are computed by the backend and carried by no route, {tally.notDefined}{' '}
         have never been defined, and {tally.blocked} is deliberately held. The table says which is
         which, and what is blocking each.

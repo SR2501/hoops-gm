@@ -89,6 +89,26 @@ ENGINE_CALL_SITES: dict[str, str] = {
     # guard. **That guard is a different question from this one** — see
     # :data:`SCOPE_LIMIT`.
     "dev/seed_demo.py": "writes",
+    # Arrived with the reliability endpoint. A writer: it persists team_schedule
+    # rows and two refresh_runs rows, and takes its target as `--database-url`
+    # with no default.
+    #
+    # The classification was checked against the failure mode this census exists
+    # for rather than reasoned from the word "publish", and the first answer
+    # written here was wrong. Driven, 2026-08-26, against a path with an
+    # existing parent and no file: the store IS created, and the command then
+    # exits **3** with `publish failed: OperationalError: no such table:
+    # nba_games` — a fresh SQLite file has no schema, so the very first read
+    # raises rather than returning an empty list. (An earlier note here claimed
+    # exit 2 and a `DerivationRefused`. That is what happens on a store that has
+    # the schema and no games, which is a different input.)
+    #
+    # So the create-on-connect exposure is real and cannot become a plausible
+    # wrong answer: there is no zero-shaped success for this command to report.
+    # It is recorded as a writer rather than a reporter because the refusal is
+    # an OperationalError, not `absent_store_refusal`, and filing it under
+    # "reports" would put it in a category whose guard it does not carry.
+    "dev/publish_reliability_evidence.py": "writes",
 }
 
 #: What this module does **not** check, stated because the gap is easy to

@@ -94,7 +94,13 @@ describe('the reliability screen, against the recorded cohorts', () => {
 
     const tally = screen.getByTestId('evidence-tally')
     expect(tally).toHaveTextContent('0 of 8 availability quantities are on this screen')
-    expect(tally).toHaveTextContent('5 are computed by the backend and carried by no route')
+    // Five moved from "carried by no route" to "served by an endpoint this
+    // screen does not call yet" when the reliability route shipped. Both
+    // phrases are asserted, and the zero on the first is the point: a category
+    // emptying out must show as zero rather than as a sentence quietly rewritten
+    // to be about the other one.
+    expect(tally).toHaveTextContent('5 are served by an endpoint this screen does not call yet')
+    expect(tally).toHaveTextContent('0 are computed by the backend and carried by no route')
     expect(tally).toHaveTextContent('1 is deliberately held')
   })
 

@@ -305,54 +305,78 @@ describe('AVAILABILITY_EVIDENCE', () => {
   })
 
   it('names both blockers on every already-computed quantity, not the route alone', () => {
-    // "computed, not exposed" is a claim about a contract gap specifically, and
-    // it is the finding this unit surfaced. An item carrying that status whose
-    // blocker is about modelling would mean the status is wrong.
+    // "computed, not exposed" is a claim about a contract gap specifically. An
+    // item carrying that status whose blocker is about modelling would mean the
+    // status is wrong, and naming the route alone would understate it: nothing
+    // is served until a store can also satisfy the computation.
     //
-    // But naming the route ALONE is the defect this test used to pin. The route
-    // is a real blocker and it is not a sufficient one: compute_reliability_scorecards
-    // reads team_schedule before anything else (reliability.py:462), refuses an
-    // empty schedule at :476, and refuses a window with "no final games" at :501.
-    // The store this screen reads has the schedule and no played games, so it
-    // reaches the "no final games" refusal. The store holding 2025-26 participation
-    // has no team_schedule table at all, so it fails on the first read, before any
-    // of those checks. (An earlier version of this comment said that store tripped
-    // the exact-coverage check at :508. It cannot reach :508, and the monthly-trend
-    // row said so three lines away on the same screen. Corrected after review.)
-    // A reader told only about the route concludes one unit unblocks these.
-    // Two do. That is a guarantee that is true about one property being read as
-    // true about another, which is the shape this whole screen exists to refuse.
+    // This became vacuous on 2026-08-26 when the reliability route shipped and
+    // the last `not-exposed` row moved to `not-wired`. A vacuous test that
+    // passes is worse than a deleted one, because it reads as coverage, so this
+    // asserts what remains true rather than pretending the population is still
+    // there: IF a row is `not-exposed`, both halves must still be named.
     const notExposed = AVAILABILITY_EVIDENCE.filter((item) => item.status === 'not-exposed')
 
-    expect(notExposed.length).toBeGreaterThan(0)
     for (const item of notExposed) {
       expect(item.blocker.toLowerCase(), `${item.id} names the route`).toContain('route')
       expect(item.blocker.toLowerCase(), `${item.id} names the store`).toContain('store')
     }
   })
 
-  it('says the same thing about the 2025-26 store in every row that mentions it', () => {
-    // Review found two rows on this screen contradicting each other: one said the
-    // 2025-26 participation store trips compute_reliability_scorecards' exact
-    // "team_schedule coverage" check, and another said that store has no
-    // team_schedule table at all. Both were rendered in the same table. A store
-    // with no such table cannot reach a coverage check — it fails on the first
-    // read — so the first sentence described a reconciliation job where the truth
-    // is an ingest that has never run. Same defect class as the rest of this
-    // screen: the numbers were right and a sentence about them was false.
+  it('does not tell a reader a route is missing when a route exists', () => {
+    // The defect: a status left at `not-exposed` after the route shipped. It
+    // costs a reader a unit of work that is already done, and it is exactly the
+    // stale-by-arrival failure this file keeps catching in prose.
     //
-    // This pins the consistency rather than the wording. Any row that mentions
-    // the 2025-26 store AND its schedule table must state the table is absent,
-    // and none may attribute a coverage refusal to it.
+    // The reading in which this passes and the defect is present: a row that is
+    // `not-wired` but whose blocker text still says no route carries it. So the
+    // status is not sufficient on its own and the wording is checked too.
+    const notWired = AVAILABILITY_EVIDENCE.filter((item) => item.status === 'not-wired')
+
+    expect(notWired.length).toBeGreaterThan(0)
+    for (const item of notWired) {
+      expect(item.blocker.toLowerCase(), `${item.id} does not claim the route is missing`).not.toContain(
+        'no route',
+      )
+      expect(item.blocker.toLowerCase(), `${item.id} says the screen is the gap`).toContain('screen')
+    }
+  })
+
+  it('says the same thing about the 2025-26 store in every row that mentions it', () => {
+    // This row has now been wrong twice about the *same* store, in opposite
+    // directions, and both times the conclusion drawn from it was right.
+    //
+    //   1. It said the store trips the exact "team_schedule coverage" check.
+    //      It cannot: the table is empty, so the run never reaches that check.
+    //   2. The correction said the store "has no team_schedule table at all".
+    //      Also false: the table exists and holds zero rows.
+    //
+    // The third statement is checked rather than reasoned. Driving
+    // publish_reliability_cohorts against a read-only copy of the owner's real
+    // store gives `StaleReliabilityCohortError: no current
+    // schedule:nba-schedule cohort for season 2025-26` — the refresh check runs
+    // BEFORE the schedule read — and calling the snapshot directly then gives
+    // `no scheduled team games found`. Both are pinned in the backend by
+    // test_the_refusal_a_backfilled_store_reaches_is_the_missing_refresh_cohort.
+    //
+    // What this pins is therefore the difference that matters to a reader: an
+    // absent table is a migration, an empty one is an ingest. So no row may
+    // claim the table is missing, and none may attribute a coverage refusal to
+    // it either — the two wrong answers, excluded by name.
     const aboutTheStore = AVAILABILITY_EVIDENCE.filter(
       (item) => item.blocker.includes('2025-26') && item.blocker.includes('team_schedule'),
     )
 
     expect(aboutTheStore.length).toBeGreaterThan(0)
     for (const item of aboutTheStore) {
-      expect(item.blocker, `${item.id} states the table is absent`).toContain('no team_schedule')
+      expect(item.blocker, `${item.id} does not claim the table is absent`).not.toContain(
+        'no team_schedule',
+      )
       expect(item.blocker, `${item.id} does not blame partial coverage`).not.toContain(
         'team_schedule coverage',
+      )
+      expect(item.blocker, `${item.id} says the table is empty`).toMatch(
+        /team_schedule is present and empty|team_schedule and refresh_runs as empty tables/,
       )
     }
   })
@@ -455,10 +479,16 @@ describe('tallyEvidence', () => {
     const tally = tallyEvidence()
 
     expect(tally.total).toBe(AVAILABILITY_EVIDENCE.length)
-    expect(tally.notExposed + tally.notDefined + tally.blocked).toBe(tally.total)
+    expect(tally.notExposed + tally.notWired + tally.notDefined + tally.blocked).toBe(tally.total)
     // The number the whole screen exists to state honestly. It is zero, and it
     // is derived rather than written, so it stops being zero the moment a
     // quantity actually arrives.
+    //
+    // `notWired` joined this sum on 2026-08-26. Leaving it out would have been
+    // the quiet failure: five rows would have dropped out of the left side, the
+    // sum would no longer have reached `total`, and the fix that looks obvious
+    // — relaxing this to `<=` — would have let a served-but-unrendered quantity
+    // count as on screen.
     expect(tally.onScreen).toBe(0)
   })
 
