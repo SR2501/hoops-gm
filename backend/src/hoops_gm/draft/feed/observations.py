@@ -178,6 +178,12 @@ class RecognitionResult:
     #: that the draft's snapshotted format disagrees with what the source is
     #: actually publishing — which is worth knowing before it matters.
     coerced_to_kind: int = 0
+    #: The names of the fields dropped, deduplicated across this artifact. The
+    #: count above says *how many* records lost something; this says *what*, and
+    #: only this can tell "an auction's ordinals were discarded, which is
+    #: expected" from "every price was discarded on a draft we think is a
+    #: snake", which is not.
+    fields_dropped: tuple[str, ...] = field(default_factory=tuple)
     #: Fields the recogniser deliberately did not read, named so an absence is
     #: distinguishable from an oversight.
     notes: tuple[str, ...] = field(default_factory=tuple)

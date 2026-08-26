@@ -27400,3 +27400,147 @@ CLEAN` on a PR whose gates never ran. **`failure` with zero failed steps and
 `CLEAN` with zero runs are the same non-event wearing different colours.** The
 field that discriminates is neither - it is whether any step exists. Recorded
 because a merge decision was nearly made on each of them in the same hour.
+
+## 2026-08-26 - backend - draft feed: round four, and the asymmetry underneath it
+
+Fourth independent review of `draft-tracker-bridge-feed`, read at exact head
+`f085b01`. Six findings, all real, all with executed probes. **Two of them were
+inside round three's own fixes**, which makes it four rounds out of four where a
+defect lived inside the previous round's repair. Recording the pattern as well as
+the fixes, because the pattern is the more useful artefact.
+
+### The structural cause, which is the real finding
+
+This package has **two recognisers with different admission rules**, and three
+rounds of my own reasoning generalised from one to both.
+
+`recognise_bridge_payload` guesses at an arbitrary JSON block, so it is defended:
+`_accept_list` applies a seat anchor, a player identity check,
+`player_identity_is_the_seat`, `_has_draft_coordinate`, and
+`duplicate_player_in_list`. `recognise_official_draft_picks` reads an
+already-typed `FantraxDraftPick` and applies **only** the seat anchor and a name
+check. No coordinate rule at all.
+
+Every docstring I wrote that argued "the coordinate rule refuses that payload
+before an instant exists" was therefore true of one path and asserted for both.
+That is not six unrelated bugs; it is one omission generating claims that are
+half true, and it would have kept generating them. The asymmetry is now stated in
+`recognise_official_draft_picks`' own docstring, at the place where the next
+person is most likely to make the same inference.
+
+### What was wrong, and what changed
+
+**1 (High). `every_instant_coerced` told the owner to ignore a real signal.** I
+had removed the property's causal claim on the grounds that the disaster it was
+named for -- an auction log read under a snake snapshot, every price silently
+stripped -- could not reach an instant. On the bridge path that is true. On the
+official path there is no coordinate rule, so it is reachable: the reviewer drove
+a priced payload under a snake context and got two instants, every amount gone,
+the flag `True`, and a docstring reading **"Do not treat this as evidence the
+board is lying."** The one published signal that catches a wrong format snapshot,
+on the only source that could show it, annotated as noise.
+
+The fix is not to restore the old causal claim, which was false in the other
+direction. `every_instant_coerced` is also `True` for a perfectly healthy
+auction, so the *rate* genuinely cannot discriminate. What discriminates is the
+**direction** of the loss, which was being computed and thrown away.
+`_fields_dropped_for_kind` now returns the field **names** rather than a bool,
+and they are published as `fields_dropped` on `RecognitionResult`, on
+`SourceOutcome` and on the API. `("amount",)` on a draft recorded as a snake
+means every pick carried a price, and a real snake has none to carry --
+`parse_draft_picks` reads `auction_amount` only from `amount`, `bid` or `salary`.
+Dropped ordinals on an auction are the expected shape and mean nothing is wrong.
+Same flag, opposite meaning, and only the names separate them.
+
+**2 (Medium). Three docstrings pointed at a field that did not exist.** Having
+deleted the diagnosis, I replaced it three times with "read `fields_dropped`".
+There was no such field anywhere -- `_fields_dropped_for_kind` was a private bool
+predicate that enumerated nothing. The entire stated remedy resolved to nothing.
+Fixing finding 1 by publishing the names is what makes those three sentences
+true; they were a promise written before the thing promised.
+
+**3 (Medium). A reopened draft reported itself permanently halted.** The round-3
+fix stamps `blocked_reason = "draft_closed"` on pending rows. A close is voidable
+(`draft.service.record_void`), and the clear only runs inside
+`apply_observations`, which only a caller passing `apply=true` reaches. A screen
+polling `GET /drafts/{id}/feed` never runs it. So after a void the board showed
+the one string that means "stuck for ever" on a draft that was live again. The
+reviewer confirmed the reading was clean before my commit and present after: I
+removed one stale reason by manufacturing another. `feed_status` now filters
+`draft_closed` against the draft's actual status rather than trusting the stamp.
+
+**4 (Medium). The coordinate gate admitted records the sort cannot order.**
+Round three tightened `_has_draft_coordinate` from presence to parseability,
+which fixed `{"round": "N/A"}` and left `{"round": 1, "pick": "N/A"}`.
+`_apply_order` needs `overall_pick`, or round **and** pick-in-round, so a
+half-ordinal record still fell into the arrival-order fallback. Driven end to end
+it halted the board on `draft_pick_out_of_turn` -- deterministically, so it never
+self-heals, and with the blame attached to turn order rather than to the payload.
+The gate now requires exactly what the sort requires. A board numbering rounds
+but not picks within them is refused, deliberately: both readings apply zero
+picks, and a named `record_missing_draft_coordinate` count says which payload was
+unreadable while an out-of-turn halt does not.
+
+**5 (Medium). One of my round-3 tests did not exclude the defect it named.** It
+was written for "the clear must sit above the closed-draft return". The reviewer
+moved the clear back below the return and **all 59 tests passed**: the stamp loop
+overwrites every pending row anyway, so the two orderings are indistinguishable.
+The assertion was satisfied by the other half of the fix. The clear's position is
+genuinely not load-bearing, so the comment claiming it was has been removed
+rather than a test invented to defend it, and the test now pins a transition that
+is real. The reopen path from finding 3 is what actually needed a test.
+
+**6 (Low).** The keeper-gap test's docstring claimed "end to end" while its
+assertions stopped at recognition. The claim was true -- the reviewer drove it --
+but untested, so a later apply-layer guard would have falsified it with no red
+test. It now applies.
+
+### Tests
+
+61 in `test_draft_feed.py`, up from 59. Two net new:
+`test_a_reopened_draft_does_not_keep_reporting_itself_closed` and
+`test_the_official_path_has_no_coordinate_rule_and_reports_the_loss_by_name`.
+The coordinate test gained the half-ordinal case and a second positive control,
+and its old positive control `{"round": 1}` had to change -- **the tightened gate
+refuses it**, which is worth knowing before someone reads the diff and assumes a
+test was weakened.
+
+### Gates
+
+All from `backend/`, which is the `working-directory` every Python CI job
+declares. From the repo root the same commands report other lanes' files.
+
+- `python -m ruff check .` - All checks passed
+- `python -m ruff format --check .` - 218 files already formatted
+- `python -m mypy` - Success, 209 source files
+- `python -m pytest tests/test_draft_feed.py` - 61 passed
+- Six mutations, each confirmed **present in the file** by marker count before
+  the run was read. All six killed, zero markers left behind.
+
+One mutation initially reported `ANCHOR NOT FOUND` because `ruff format` had
+rewrapped the line the harness was anchored to. The harness declined to report a
+verdict for it rather than counting it as killed, which is the only reason the
+6/6 above means anything.
+
+### Could not verify
+
+- **Whether the recogniser fires at all on a real draft-room payload.** Unchanged
+  and unchangeable here. `getDraftPicks` has never returned a verified real
+  payload, no draft-room fixture exists anywhere, and `/fxpa/req` captures are
+  method-anonymous by construction because `capture.js` records responses while
+  the method name lives in the request body. *Not disproved, unestablished.*
+- **Whether the tightened coordinate gate now refuses a legitimate board.** It
+  refuses strictly more than the previous version: a snake log numbering rounds
+  but not picks within them used to be accepted and now is not. The change trades
+  a misattributed halt for a named refusal, which is the better failure, but
+  whether any real board looks like that is unknown. This remains the sharpest
+  live risk in the unit.
+- **Whether four rounds is convergence.** Round four found two defects inside
+  round three's fixes, so the base rate is unbroken. A fifth round finding
+  nothing would be the first actual evidence of convergence; nothing here
+  establishes it, and the fixes above are exactly the kind of change that has
+  carried a defect every previous time.
+- **Whether `fields_dropped` is read by anything.** Nothing consumes it yet --
+  `grep` over `frontend/src` finds no reference to it or to
+  `every_instant_coerced`. It is published and correct and currently unread,
+  which also means the round-3 rename could not have broken a TS consumer.

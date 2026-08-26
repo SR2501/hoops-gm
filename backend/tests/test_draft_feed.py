@@ -1571,20 +1571,27 @@ def test_a_closed_draft_with_a_backlog_says_so_rather_than_looking_queued(
     assert status.blocked == ("draft_closed",)
 
 
-def test_a_reason_from_the_live_draft_does_not_outlive_it(session: Session) -> None:
-    """Excludes: a stale halt reason surviving for ever behind a closed draft.
+def test_a_reopened_draft_does_not_keep_reporting_itself_closed(session: Session) -> None:
+    """Excludes: ``draft_closed`` outliving the close it describes.
 
-    ``blocked_reason`` is cleared at the start of every apply run so it is
-    always a fact about the most recent one. The closed-draft branch returns
-    early, and if that return precedes the clear then whatever reason was set
-    while the draft was live is frozen on the row permanently — a real *past*
-    reason presented as a current one, which is the stale-reason defect this
-    field was extracted from ``skipped_reason`` to avoid.
+    The close is voidable — ``draft.service.record_void`` exists precisely so a
+    draft closed by mistake at 11pm can be reopened. ``draft_closed`` is stamped
+    on every pending row by ``apply_observations``, which is reachable only from
+    ``POST /drafts/{id}/feed/ingest`` with ``apply=true``. A live screen polls
+    ``GET /drafts/{id}/feed``, which never runs it. So without a status filter on
+    the read side, a reopened draft reports the one string that means
+    "permanently halted", for ever, on a draft that is live again.
+
+    This defect did not pre-exist: it was introduced by the fix that added the
+    stamp, which removed one stale reason by manufacturing another. A review
+    demonstrated it by deleting the stamp loop and watching the false reading
+    disappear.
 
     A reading in which the flag is true while the defect is present: asserting
-    only that ``blocked`` is non-empty after closing, which holds for the stale
-    value too. So this pins the *content*: after the close the reason must be
-    ``draft_closed``, not the ordering problem that preceded it.
+    only that ``blocked == ("draft_closed",)`` *while* closed, which is correct
+    behaviour and holds either way. The load-bearing assertion is the one after
+    the void, with no intervening ``apply_observations`` — because an apply run
+    would clear the stamp itself and hide exactly the gap being tested.
     """
     league = _league(session)
     teams = _teams(session, league, ["t1", "t2"])
@@ -1599,28 +1606,85 @@ def test_a_reason_from_the_live_draft_does_not_outlive_it(session: Session) -> N
     assert feed_service.apply_observations(session, draft).halted == "draft_pick_out_of_turn"
     assert feed_service.feed_status(session, draft, now=NOW).blocked == ("draft_pick_out_of_turn",)
 
-    draft_service.record_close(session, draft)
+    state = draft_service.record_close(session, draft)
     assert feed_service.apply_observations(session, draft).halted == "draft_closed"
+    closed = feed_service.feed_status(session, draft, now=NOW)
+    assert closed.pending_count == 1
+    assert closed.blocked == ("draft_closed",)
+
+    # Reopen, and read the status the way a polling board does: without an
+    # apply run in between.
+    draft_service.record_void(session, draft, supersedes_sequence=state.last_sequence)
+    reopened = feed_service.feed_status(session, draft, now=NOW)
+    assert reopened.pending_count == 1
+    assert reopened.blocked == ()
+
+
+def test_a_reason_from_the_live_draft_does_not_outlive_it(session: Session) -> None:
+    """Excludes: a stale halt reason presented as a current one.
+
+    ``blocked_reason`` is cleared at the start of every apply run so it is
+    always a fact about the most recent one. Here a real out-of-turn halt is
+    recorded, the blocking observation is then resolved, and the reason must be
+    gone — a *past* reason presented as a current one is the stale-reason defect
+    this field was extracted from ``skipped_reason`` to avoid.
+
+    A reading in which the flag is true while the defect is present: asserting
+    only that ``blocked`` is non-empty at the first step, which holds for a
+    stale value too. So this pins the transition to empty on a run that
+    succeeds.
+
+    **Note what this does not pin.** An earlier version asserted the close
+    transition instead, and a review showed that assertion was satisfied by the
+    stamp loop rather than by the clear it was written for: moving the clear
+    below the closed-draft return left all 59 tests passing. The clear's
+    position is genuinely not load-bearing, so no test here claims it is.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 2}],
+        dedupe_key="out-of-turn",
+    )
+    feed_service.ingest(session, draft)
+
+    assert feed_service.apply_observations(session, draft).halted == "draft_pick_out_of_turn"
+    assert feed_service.feed_status(session, draft, now=NOW).blocked == ("draft_pick_out_of_turn",)
+
+    # The pick that was missing arrives, so the run that was blocked succeeds.
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": EDWARDS, "overallPick": 1}],
+        dedupe_key="the-missing-one",
+    )
+    feed_service.ingest(session, draft)
+    assert feed_service.apply_observations(session, draft).halted is None
+
     after = feed_service.feed_status(session, draft, now=NOW)
-    assert after.pending_count == 1
-    assert after.blocked == ("draft_closed",)
+    assert after.pending_count == 0
+    assert after.blocked == ()
 
 
 def test_a_coordinate_the_reader_cannot_parse_does_not_satisfy_the_rule() -> None:
-    """Excludes: the gate and the reader disagreeing on what a coordinate is.
+    """Excludes: the gate admitting a record the sort cannot order.
 
-    ``_has_draft_coordinate`` used to test presence while ``_instant_from``
-    tests parseability. A record carrying ``{"round": "N/A"}`` therefore passed
-    "every record carries the coordinate its kind is defined by" and produced an
-    instant with every ordinal ``None`` — a record admitted *because* of a field
-    whose value was then discarded. Those rows land in the unordered fallback
-    bucket of ``_apply_order`` and apply in arrival order, which is precisely
-    what sorting on the coordinate exists to prevent.
+    Two reviews moved this line. ``_has_draft_coordinate`` first tested
+    presence, so ``{"round": "N/A"}`` passed "every record carries the
+    coordinate its kind is defined by" and produced an instant with every
+    ordinal ``None``. Tightening it to parseability fixed that and left the
+    nearer case: ``{"round": 1, "pick": "N/A"}`` parses, but ``_apply_order``
+    needs ``overall_pick`` or *both* round and pick-in-round, so it still fell
+    into the arrival-order bucket the sort exists to avoid.
 
     A reading in which the flag is true while the defect is present: asserting
-    the list is accepted and the instants exist, which was true before the fix
-    and is exactly the harm. So this asserts the list is **refused**, and names
-    the reason.
+    only that the unparseable records are refused, which was already true after
+    the previous fix and says nothing about the half-ordinal record. So the
+    third case below is the one that carries this test, and the positive
+    control is a *fully* ordered record — deliberately not ``{"round": 1}``,
+    which this rule now refuses and which the previous version of this test
+    used as its control.
     """
     result = recognise_bridge_payload(
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
@@ -1649,17 +1713,49 @@ def test_a_coordinate_the_reader_cannot_parse_does_not_satisfy_the_rule() -> Non
     assert priced.instants == ()
     assert [shape.reason for shape in priced.unrecognised] == ["record_missing_draft_coordinate"]
 
-    # Positive control: the same shape with a readable coordinate is accepted,
-    # so the rule above is not "refuse everything that mentions a round".
+    # A round with no usable pick-in-round parses but does not order. Refused,
+    # so the failure is a named unreadable-payload count rather than a halt on
+    # ``draft_pick_out_of_turn``, which blames the turn order for a payload
+    # problem.
+    half = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "round": 1, "pick": "N/A"}]
+        ),
+        dedupe_key="half-ordinal",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert half.instants == ()
+    assert [shape.reason for shape in half.unrecognised] == ["record_missing_draft_coordinate"]
+
+    # Positive control: a record the sort can actually order is accepted, so
+    # the rule above is not "refuse everything that mentions a round".
     ok = recognise_bridge_payload(
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-        body_json=_envelope([{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "round": 1}]),
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "round": 1, "pick": 1}]
+        ),
         dedupe_key="readable-round",
         received_at=NOW,
         captured_at=None,
         context=_context(),
     )
     assert [instant.player_label for instant in ok.instants] == [JOKIC]
+
+    # Second positive control, the other orderable shape.
+    overall = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1}]
+        ),
+        dedupe_key="readable-overall",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert [instant.player_label for instant in overall.instants] == [JOKIC]
 
 
 def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(
@@ -1705,6 +1801,142 @@ def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(
         Decimal("22.00"),
     ]
 
+    # "End to end" in the docstring above means the log, not just recognition.
+    # A review pointed out the claim stopped at the recogniser, so an apply-layer
+    # guard added later would have falsified it with no red test. It does not
+    # stop there: these become real ``draft_events``.
+    applied = feed_service.apply_observations(session, draft)
+    assert applied.halted is None
+    assert [event.player_label for event in applied.applied] == [JOKIC, EDWARDS]
+    assert [event.kind for event in applied.applied] == [InstantKind.SALE, InstantKind.SALE]
+
+
+def test_the_official_path_has_no_coordinate_rule_and_reports_the_loss_by_name(
+    session: Session,
+) -> None:
+    """Excludes: reasoning about the bridge's coordinate rule applied to both.
+
+    Three docstrings in this package argued that the format-snapshot disaster —
+    an auction log read under a snake snapshot, every price stripped — *cannot
+    reach an instant*, because ``record_missing_draft_coordinate`` refuses the
+    list first. That holds for ``recognise_bridge_payload``.
+    ``recognise_official_draft_picks`` has no such rule: no ``_accept_list``, no
+    ``_has_draft_coordinate``. On the official source the case is reachable, and
+    a docstring built on the opposite told the owner to ignore it.
+
+    A reading in which the flag is true while the defect is present: asserting
+    ``every_instant_coerced`` is ``True`` here, which it also is for a perfectly
+    healthy auction and therefore excludes nothing. The discriminating
+    assertion is ``fields_dropped``, because the *direction* of the loss is what
+    separates "ordinals discarded from an auction, expected" from "every price
+    discarded from a draft we think is a snake, which has no prices to carry".
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    _draft(session, league, teams)  # snake, per the league
+
+    priced = [
+        FantraxDraftPick(
+            team_id="t1",
+            round_number=None,
+            pick_number=None,
+            overall_pick=None,
+            player_id="p-jokic",
+            player_name=JOKIC,
+            auction_amount=41.10,
+        ),
+        FantraxDraftPick(
+            team_id="t2",
+            round_number=None,
+            pick_number=None,
+            overall_pick=None,
+            player_id="p-edwards",
+            player_name=EDWARDS,
+            auction_amount=22.00,
+        ),
+    ]
+    official = recognise_official_draft_picks(
+        priced,
+        artifact_key="sha256:test",
+        received_at=NOW,
+        context=_context(),  # snake
+    )
+
+    # Reachable: instants exist, every price is gone, nothing was refused.
+    assert len(official.instants) == 2
+    assert official.unrecognised == ()
+    assert [instant.amount for instant in official.instants] == [None, None]
+    assert official.coerced_to_kind == 2
+    # The discriminating fact, and the one a screen can act on.
+    assert official.fields_dropped == ("amount",)
+
+    # The same content on the bridge path *is* refused — which is what made the
+    # deleted claim true there and only there.
+    bridge = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {"teamId": "t1", "playerId": "p-jokic", "playerName": JOKIC, "winningBid": 41.10},
+                {
+                    "teamId": "t2",
+                    "playerId": "p-edwards",
+                    "playerName": EDWARDS,
+                    "winningBid": 22.00,
+                },
+            ]
+        ),
+        dedupe_key="priced-under-snake",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),  # snake
+    )
+    assert bridge.instants == ()
+    assert [shape.reason for shape in bridge.unrecognised] == ["record_missing_draft_coordinate"]
+
+    # Positive control: a healthy snake on the official path drops nothing, so
+    # ``fields_dropped`` is not "always populated". ``parse_draft_picks`` reads
+    # ``auction_amount`` only from amount/bid/salary, so a real snake has none.
+    healthy = recognise_official_draft_picks(
+        [
+            FantraxDraftPick(
+                team_id="t1",
+                round_number=1,
+                pick_number=1,
+                overall_pick=1,
+                player_id="p-jokic",
+                player_name=JOKIC,
+                auction_amount=None,
+            )
+        ],
+        artifact_key="sha256:test",
+        received_at=NOW,
+        context=_context(),
+    )
+    assert healthy.fields_dropped == ()
+    assert healthy.coerced_to_kind == 0
+
+    # Second control, the benign direction: a correctly-recorded auction drops
+    # ordinals. Same flag, opposite meaning — which is the whole argument for
+    # publishing the names rather than the count.
+    auction = recognise_official_draft_picks(
+        [
+            FantraxDraftPick(
+                team_id="t1",
+                round_number=1,
+                pick_number=1,
+                overall_pick=1,
+                player_id="p-jokic",
+                player_name=JOKIC,
+                auction_amount=41.10,
+            )
+        ],
+        artifact_key="sha256:test",
+        received_at=NOW,
+        context=_context(draft_type=DraftType.AUCTION),
+    )
+    assert auction.fields_dropped == ("overall_pick", "pick_in_round", "round_number")
+    assert auction.coerced_to_kind == 1
+
 
 def test_a_field_dropped_from_all_of_them_is_reported_apart_from_one_stray(
     session: Session,
@@ -1740,6 +1972,10 @@ def test_a_field_dropped_from_all_of_them_is_reported_apart_from_one_stray(
     assert total.instants_recognised == 2
     assert total.coerced_to_kind == 2
     assert total.every_instant_coerced is True
+    # The names survive the service layer, not just the recogniser — this is the
+    # only field that says which way the loss went, so it has to reach the
+    # outcome a screen reads.
+    assert total.fields_dropped == ("amount",)
 
     # The benign case: one stray field among several clean records. Same
     # counter, non-zero, and deliberately *not* flagged.
@@ -1760,6 +1996,7 @@ def test_a_field_dropped_from_all_of_them_is_reported_apart_from_one_stray(
     assert sporadic.instants_recognised == 3
     assert sporadic.coerced_to_kind == 1
     assert sporadic.every_instant_coerced is False
+    assert sporadic.fields_dropped == ("amount",)
 
     # The falsification, pinned. A *correctly* recorded auction whose records
     # carry ordinals alongside the price — which is what the official adapter
@@ -1786,6 +2023,9 @@ def test_a_field_dropped_from_all_of_them_is_reported_apart_from_one_stray(
     healthy_auction = feed_service.ingest(session, draft3).sources[0]
     assert healthy_auction.instants_recognised == 2
     assert healthy_auction.every_instant_coerced is True
+    # Same flag as the first case, opposite meaning, and only this tells them
+    # apart: there the amount was discarded, here the ordinals were.
+    assert healthy_auction.fields_dropped == ("overall_pick",)
     stored = feed_service.load_observations(session, draft3)
     assert [row.amount for row in stored] == [Decimal("61.00"), Decimal("44.00")]
 

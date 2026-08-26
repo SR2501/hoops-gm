@@ -160,6 +160,12 @@ class SourceOutcome:
     #: that the draft's snapshotted format disagrees with what the source
     #: publishes, which is worth seeing before it becomes a wrong board.
     coerced_to_kind: int = 0
+    #: The names of the dropped fields, deduplicated across every artifact this
+    #: source contributed. Read this before reacting to
+    #: :attr:`every_instant_coerced` — the count cannot distinguish an auction's
+    #: ordinals being discarded, which is the expected shape, from every price
+    #: being discarded on a draft recorded as a snake, which is not.
+    fields_dropped: tuple[str, ...] = ()
     #: Instants the database refused. Zero is the expected value; a non-zero one
     #: means a recognised record could not be represented, and is published
     #: rather than raised so the rest of the run still lands.
@@ -184,8 +190,7 @@ class SourceOutcome:
         ``format_snapshot_suspect`` and its docstring said a total coercion rate
         was the signature of our own format snapshot being wrong — an auction
         recorded as a snake, every price stripped, the board quietly showing a
-        priceless auction. An independent review falsified that in both
-        directions:
+        priceless auction. Two readings falsify that as a *cause*:
 
         * **It fires on correct configurations.** For the official source in a
           correctly-recorded auction, ``parse_draft_picks`` fills the ordinals
@@ -194,19 +199,36 @@ class SourceOutcome:
           league whose format record is right, with nothing lost. A snake keeper
           league whose board rows carry a salary column does the same on the
           bridge path.
-        * **It cannot fire in the case it was named for.** An auction log read
-          under a snake snapshot carries prices and no ordinals, so
-          ``record_missing_draft_coordinate`` refuses the whole list before a
-          single instant exists — and this property requires
+        * **On the bridge path it cannot fire in the case it was named for.**
+          An auction log read under a snake snapshot carries prices and no
+          ordinals, so ``record_missing_draft_coordinate`` refuses the whole
+          list before a single instant exists — and this property requires
           ``instants_recognised > 0``.
 
-        So the honest reading is the narrow one: *the same field was dropped
-        from all of them*, which is worth surfacing because it distinguishes a
-        stray field on one record from something systematic, but the systematic
-        thing is most often "this source consistently carries the other format's
-        field" and that is not an error at all. **Do not treat this as evidence
-        the board is lying.** The fields it dropped are enumerated per artifact
-        in ``fields_dropped``; read those.
+        **That second bullet is true of the bridge path only, and a review
+        found it here asserted for both.** :func:`recognise_official_draft_picks
+        <hoops_gm.draft.feed.recognise.recognise_official_draft_picks>` applies
+        no coordinate rule at all, so on ``OFFICIAL_HTTP`` the named case *is*
+        reachable: it yields instants with every price gone and this property
+        ``True``. The previous wording — "not an error at all", "do not treat
+        this as evidence the board is lying" — therefore told the owner to
+        ignore the one published signal that catches a wrong format snapshot on
+        the only source that could show it.
+
+        So read the rate together with :attr:`fields_dropped`, which names the
+        direction of the loss:
+
+        * ``"amount"`` dropped on a draft recorded as a **snake** means every
+          pick carried a price. A real snake has none to carry —
+          ``parse_draft_picks`` reads ``auction_amount`` only from ``amount``,
+          ``bid`` or ``salary`` — so this is either the named case or a keeper
+          roster being read as a draft, and both want a human before draft
+          night. It does not say which; it says look.
+        * Ordinals dropped on a draft recorded as an **auction** are the
+          expected shape and mean nothing is wrong.
+
+        Not evidence on its own, and not nothing either. The direction is in
+        :attr:`fields_dropped`.
         """
         return self.instants_recognised > 0 and self.coerced_to_kind == self.instants_recognised
 
@@ -408,6 +430,7 @@ def ingest_bridge(
     examined = 0
     snapshots = 0
     coerced = 0
+    dropped_names: set[str] = set()
     rejected_rows = 0
 
     for row in rows:
@@ -442,6 +465,7 @@ def ingest_bridge(
         recognised += result.recognised_count
         unrecognised.extend(result.unrecognised)
         coerced += result.coerced_to_kind
+        dropped_names.update(result.fields_dropped)
         stored, seen, refused = _store(
             session,
             draft,
@@ -480,6 +504,7 @@ def ingest_bridge(
         artifacts_examined=examined,
         snapshots_for_this_league=snapshots,
         coerced_to_kind=coerced,
+        fields_dropped=tuple(sorted(dropped_names)),
         observations_rejected=rejected_rows,
         rejected=rejected,
         instants_recognised=recognised,
@@ -540,6 +565,7 @@ def ingest_official(
         artifacts_scanned=1,
         artifacts_examined=1,
         coerced_to_kind=result.coerced_to_kind,
+        fields_dropped=result.fields_dropped,
         observations_rejected=refused,
         rejected={result.rejected: 1} if result.rejected else {},
         instants_recognised=result.recognised_count,
@@ -679,11 +705,13 @@ def apply_observations(
     # fact about *this* run. A sticky value would recreate, in a second field,
     # the exact defect that removing it from ``skipped_reason`` fixed.
     #
-    # This clearing has to stay *above* the closed-draft return below. It used
-    # to sit under it, and an independent review showed the consequence: a halt
-    # recorded while the draft was open stayed on the row for ever once the
-    # draft closed, because every later run returned before reaching the clear.
-    # That is precisely the stale-reason defect in a new field.
+    # This clear used to carry a comment insisting it had to sit *above* the
+    # closed-draft return. It does not, and a review proved it by moving it
+    # below and watching all 59 tests pass: the stamp loop in that branch
+    # overwrites every pending row anyway, so the two orderings are
+    # indistinguishable. Above is still the right place — it keeps "clear, then
+    # decide" in one reading order — but nothing depends on it, and the comment
+    # that said otherwise was a guarantee no test could have held it to.
     for row in pending:
         row.blocked_reason = None
 
@@ -955,10 +983,28 @@ def feed_status(
     pending = sum(
         1 for row in rows if row.applied_event_sequence is None and row.skipped_reason is None
     )
-    blocked = tuple(
-        sorted({row.blocked_reason for row in rows if row.blocked_reason}),
-    )
     state = draft_service.load_state(session, draft)
+    # ``draft_closed`` is a claim about the draft's *current* status, so it is
+    # filtered against the status rather than trusted as a stamp. The stamp is
+    # written by ``apply_observations``, which only a caller passing
+    # ``apply=true`` reaches; a screen polling this endpoint never runs it and
+    # so can never clear it. A close is voidable (``draft.service``: "Void that
+    # event to reopen it"), and without this filter a reopened draft reported
+    # the one string that means "permanently halted" on every pending row, for
+    # ever. That false reading was introduced by the fix that added the stamp —
+    # eliminating one stale reason by manufacturing another.
+    blocked = tuple(
+        sorted(
+            {
+                row.blocked_reason
+                for row in rows
+                if row.blocked_reason
+                and not (
+                    row.blocked_reason == "draft_closed" and state.status is not DraftStatus.CLOSED
+                )
+            }
+        ),
+    )
 
     return FeedStatus(
         draft_id=draft.id,

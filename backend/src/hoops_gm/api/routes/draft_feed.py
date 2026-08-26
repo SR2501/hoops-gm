@@ -245,15 +245,26 @@ class SourceOutcomeOut(BaseModel):
     #: the seat and the player are the parts a board needs.
     #:
     #: A non-zero value has two readings and this count does not choose between
-    #: them. Neither does ``every_instant_coerced`` — read ``fields_dropped``.
+    #: them. Neither does ``every_instant_coerced``. ``fields_dropped`` below
+    #: does.
     coerced_to_kind: int
+    #: The names of the fields that were dropped, deduplicated across this
+    #: source's artifacts — ``amount``, or any of the three ordinals. **This is
+    #: the field that makes the two counts above readable.** ``["amount"]`` on a
+    #: draft recorded as a snake means every pick carried a price, and a real
+    #: snake has none to carry; dropped ordinals on an auction are the expected
+    #: shape and mean nothing is wrong.
+    fields_dropped: list[str]
     #: True when *every* recognised instant had a field stripped by its kind.
     #: **A rate, not a diagnosis.** It reads ``True`` for several correct
     #: configurations — notably any correctly-recorded auction from the official
     #: source, where ordinals and amount arrive on the same row as a matter of
-    #: course — so it is not evidence that the board is wrong. It distinguishes
-    #: "one stray field" from "the same field on all of them"; to find out which
-    #: field and why, read ``fields_dropped`` on the artifacts.
+    #: course. It also reads ``True`` for the format-snapshot disaster it was
+    #: once named for, but only on the official source, which applies no
+    #: coordinate rule; the bridge refuses that payload before an instant
+    #: exists. So it distinguishes "one stray field" from "the same field on all
+    #: of them" and nothing more — pair it with ``fields_dropped``, which says
+    #: which way the loss went.
     every_instant_coerced: bool
     #: Recognised instants the database refused. Expected to be zero. Non-zero
     #: means a record we thought we understood could not be represented, and it
@@ -534,6 +545,7 @@ def ingest_feed(
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
                 coerced_to_kind=source.coerced_to_kind,
+                fields_dropped=list(source.fields_dropped),
                 every_instant_coerced=source.every_instant_coerced,
                 observations_rejected=source.observations_rejected,
                 observations_written=source.observations_written,

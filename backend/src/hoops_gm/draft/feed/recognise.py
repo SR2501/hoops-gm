@@ -365,22 +365,32 @@ def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
     team — a roster, a keeper, a watchlist — but it is not a record of a pick,
     and this module has no way to order it if it were.
 
-    **The coercion here has to match the reader's.** This gate and
-    :func:`_instant_from` must agree on what counts, or a record passes "every
-    record carries its coordinate" and then yields an instant with no
-    coordinate at all. An independent review demonstrated it with
-    ``{"round": "N/A"}`` and ``{"round": "-"}``: both satisfied a bare presence
-    test, both produced instants with every ordinal ``None``, and both then
-    landed in the unordered fallback bucket of :func:`_apply_order` — the
-    arrival-order path the sort exists to avoid. So presence is not the test;
-    parsing to a usable value is.
+    **The test is orderability, not presence, and not parseability either.**
+    Two successive reviews moved this line. It first tested presence, and
+    ``{"round": "N/A"}`` passed it while :func:`_instant_from` discarded the
+    value — a record admitted *because* of a field that was then thrown away.
+    Tightening it to parseability fixed that case and left a nearer one:
+    ``{"round": 1, "pick": "N/A"}`` parses, so it passed, but
+    :func:`~hoops_gm.draft.feed.service._apply_order` needs ``overall_pick``,
+    or ``round_number`` **and** ``pick_in_round``, so the row still landed in
+    the arrival-order fallback bucket the sort exists to avoid. A review drove
+    two such records in the wrong order and the board halted on
+    ``draft_pick_out_of_turn`` — zero picks applied, deterministically, with
+    the blame attached to turn order rather than to the payload that caused it.
+
+    So this gate requires exactly what the sort requires. A snake board that
+    numbers its rounds but not the picks within them is now **refused**, and
+    that is deliberate: both readings apply zero picks, and a named
+    ``record_missing_draft_coordinate`` count says which payload was unreadable
+    while an out-of-turn halt does not.
     """
     if kind is InstantKind.SALE:
         return _as_amount(_first(record, "amount")) is not None
+    if _as_int(_first(record, "overall_pick")) is not None:
+        return True
     return (
-        _as_int(_first(record, "overall_pick")) is not None
-        or _as_int(_first(record, "round_number")) is not None
-        or _as_int(_first(record, "pick_in_round")) is not None
+        _as_int(_first(record, "round_number")) is not None
+        and _as_int(_first(record, "pick_in_round")) is not None
     )
 
 
@@ -461,14 +471,23 @@ def _instant_from(
     )
 
 
-def _fields_dropped_for_kind(record: dict[str, Any], kind: InstantKind) -> bool:
-    """Whether this record carried a field its ``kind`` forbids."""
+_ORDINAL_FIELDS = ("overall_pick", "round_number", "pick_in_round")
+
+
+def _fields_dropped_for_kind(record: dict[str, Any], kind: InstantKind) -> tuple[str, ...]:
+    """The fields this record carried that its ``kind`` forbids, **by name**.
+
+    Named rather than counted because the direction of the loss carries all the
+    diagnostic value and the count carries none. A dropped ordinal on an
+    auction is the expected shape; a dropped *amount* on a draft recorded as a
+    snake means the source published a price for a format that has none. Those
+    two produce an identical count and want opposite reactions, which is why
+    :attr:`~hoops_gm.draft.feed.service.SourceOutcome.every_instant_coerced`
+    cannot be read on its own.
+    """
     if kind is InstantKind.SELECTION:
-        return _as_amount(_first(record, "amount")) is not None
-    return any(
-        _as_int(_first(record, field)) is not None
-        for field in ("overall_pick", "round_number", "pick_in_round")
-    )
+        return ("amount",) if _as_amount(_first(record, "amount")) is not None else ()
+    return tuple(name for name in _ORDINAL_FIELDS if _as_int(_first(record, name)) is not None)
 
 
 def _kind_for(draft_type: DraftType) -> InstantKind:
@@ -599,6 +618,7 @@ def recognise_bridge_payload(
     unrecognised: list[UnrecognisedShape] = []
     kind = _kind_for(context.draft_type)
     coerced = 0
+    dropped_names: set[str] = set()
 
     for index, entry in enumerate(body_json["responses"]):
         locator = f"responses[{index}]"
@@ -619,8 +639,10 @@ def recognise_bridge_payload(
                 continue
             accepted_here = True
             for position, record in enumerate(typed):
-                if _fields_dropped_for_kind(record, kind):
+                dropped = _fields_dropped_for_kind(record, kind)
+                if dropped:
                     coerced += 1
+                    dropped_names.update(dropped)
                 instants.append(
                     _instant_from(
                         record,
@@ -660,6 +682,7 @@ def recognise_bridge_payload(
         instants=tuple(instants),
         unrecognised=tuple(unrecognised),
         coerced_to_kind=coerced,
+        fields_dropped=tuple(sorted(dropped_names)),
         notes=(
             "The RPC method name is in the request body, which the userscript "
             "never captures, so this recogniser discriminates on content.",
@@ -685,6 +708,20 @@ def recognise_official_draft_picks(
     The seat anchor is applied here too, for the same reason and with the same
     fail-closed direction: a pick naming a team id this draft does not have a
     seat for is dropped and counted, not attributed.
+
+    **This recogniser is deliberately weaker than
+    :func:`recognise_bridge_payload`, and reasoning written about that one does
+    not transfer.** It applies the seat anchor and a player-name check and
+    nothing else — no :func:`_accept_list`, so no
+    :func:`_has_draft_coordinate`, no ``duplicate_player_in_list``, no
+    ``player_identity_is_the_seat``. It can afford to be, because the shape is
+    already typed by ``parse_draft_picks`` rather than guessed from an
+    arbitrary JSON block. The consequence is that the *bridge* recogniser
+    refuses a payload whose coordinates are missing while this one accepts it
+    and reports the loss instead. A round of review found three docstrings in
+    this package that argued from "the coordinate rule refuses that" without
+    noticing the argument held on one path only; if you are about to write a
+    fourth, name the path.
     """
     anchor_failure = context.anchor_failure()
     if anchor_failure is not None:
@@ -695,6 +732,7 @@ def recognise_official_draft_picks(
     unanchored = 0
     unnamed = 0
     coerced = 0
+    dropped_names: set[str] = set()
     for index, pick in enumerate(picks):
         if pick.team_id not in context.team_external_ids:
             unanchored += 1
@@ -713,10 +751,22 @@ def recognise_official_draft_picks(
         if kind is InstantKind.SELECTION:
             if amount is not None:
                 coerced += 1
+                dropped_names.add("amount")
             amount = None
-        elif overall_pick is not None or round_number is not None or pick_in_round is not None:
-            coerced += 1
-            overall_pick = round_number = pick_in_round = None
+        else:
+            ordinals = tuple(
+                name
+                for name, value in (
+                    ("overall_pick", overall_pick),
+                    ("round_number", round_number),
+                    ("pick_in_round", pick_in_round),
+                )
+                if value is not None
+            )
+            if ordinals:
+                coerced += 1
+                dropped_names.update(ordinals)
+                overall_pick = round_number = pick_in_round = None
         instants.append(
             ObservedInstant(
                 kind=kind,
@@ -764,5 +814,6 @@ def recognise_official_draft_picks(
         instants=tuple(instants),
         unrecognised=tuple(unrecognised),
         coerced_to_kind=coerced,
+        fields_dropped=tuple(sorted(dropped_names)),
         notes=("getDraftPicks has never returned a verified real payload; see the module docs.",),
     )
