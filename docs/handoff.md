@@ -25772,8 +25772,8 @@ by re-reading the file rather than trusting the revert.
 
 **Verified at `d5954b3`, base `28d0d88` unrebased, from `backend`** unless stated:
 `ruff check .` clean, `ruff format .` **213 files**, `mypy src tests` clean over
-**192 source files**, new tests **10 + 8 = 18** passing, full suite at the previous
-commit **2047 passed, 37 deselected** with the single census failure now closed.
+**192 source files**, new tests **10 + 8 = 18** passing, full suite **2050 passed,
+37 deselected** in 992 s at final head.
 From `frontend`: **324 passed / 20 files**, `lint` clean, `typecheck` clean,
 `build` clean. Handoff entries: base 289, mine 290, `origin/main` 290 at time of
 writing, so the union at merge should be **291**; 0 removed expected.
@@ -25793,12 +25793,12 @@ writing, so the union at merge should be **291**; 0 removed expected.
    sufficient to draw the screen", and I do not know what such a test would assert.
    The next thing found missing will be found the same way.
 
-3. **That the full suite is green at `d5954b3`.** The 2047-pass run was at the
-   commit before the count and name fixes; since then I have run the three affected
-   files plus lint, format and mypy. An 11.5-minute suite was not re-run after every
-   edit, so an unrelated file that reads `PublishResult` or the scorecard shape
-   would not have been caught. `git grep` finds no other reader, which is weaker
-   evidence than running it.
+3. ~~**That the full suite is green at `d5954b3`.**~~ **Closed after writing this
+   entry:** the full suite was re-run at final head - **2050 passed, 37 deselected,
+   992 s** - so no unrelated reader of `PublishResult` or the scorecard shape was
+   broken by the count and name fixes. Recorded rather than deleted, because the
+   gap was real when written: I had been ready to open a PR on the strength of a
+   2047-pass run taken at the commit *before* those two fixes.
 
 4. **That the `import_schedule` signature change is acceptable to `data-engineer`.**
    I argued it and defaulted it, but the owner of that file has not seen it.
@@ -25811,3 +25811,4 @@ writing, so the union at merge should be **291**; 0 removed expected.
 6. **That the owner's real store can serve this.** It is at alembic `0016` against
    repo head `0019` and I deliberately did not migrate it. Everything above ran on
    copies. The first run against the real store will also be its first migration.
+
