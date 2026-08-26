@@ -91,8 +91,13 @@ class SourceFreshness:
     age_seconds: float | None
     instant_count: int
     #: True when the source has produced nothing, or nothing recently enough.
-    #: Judged against ``contact_at`` when contact is known, otherwise against
-    #: ``last_seen_at`` — never a mixture, and ``contact_is_known`` says which.
+    #: **Read this with ``instant_count``.** When the source has produced at
+    #: least one instant, ``silent`` is judged against ``contact_at`` if contact
+    #: is known and against ``last_seen_at`` otherwise, and ``contact_is_known``
+    #: says which. When ``instant_count`` is zero, ``silent`` is unconditionally
+    #: True no matter how recent contact is — so the triple
+    #: ``contact_is_known=True, contact_age_seconds=20.0, silent=True`` is
+    #: consistent, not a contradiction. See :func:`freshness_of` for why.
     silent: bool
     #: The threshold ``silent`` was judged against, so the screen can say what
     #: "quiet" meant rather than hard-coding a matching number of its own.
@@ -137,12 +142,23 @@ def freshness_of(
     construction and never copies between instants.
 
     ``contact_at`` is optional proof the transport is alive that did not come
-    from a draft instant — for the bridge, that a capture landed at all. When
-    given it is what ``silent`` is judged against, because a bridge capturing
-    continuously through a four-minute deliberation is not silent, it is
-    waiting, and reporting those identically trains the owner to dismiss the
-    one indicator that matters. It must be evidence *this* transport produced;
-    the caller records it, this function only measures it.
+    from a draft instant — for the bridge, that a capture landed at all. It
+    suppresses ``silent`` **only for a transport that has produced at least one
+    instant**, because a bridge capturing continuously through a four-minute
+    deliberation is not silent, it is waiting, and reporting those identically
+    trains the owner to dismiss the one indicator that matters.
+
+    For a transport that has produced **no** instants, contact does not
+    suppress anything and ``silent`` stays True however recent it is. That
+    asymmetry is deliberate and was a defect once: a bridge capturing page HTML
+    from a service-worker-served draft room lands captures continuously while
+    the recogniser reads nothing from them, so a feed that had never read a
+    single pick reported ``silent=False``. Suppressing a false alarm is worth
+    little; issuing a false all-clear on draft night is the thing this whole
+    module exists to prevent.
+
+    ``contact_at`` must be evidence *this* transport produced; the caller
+    records it, this function only measures it.
     """
     mine = [instant for instant in instants if instant.provenance.transport is transport]
     contact_age = (now - contact_at).total_seconds() if contact_at is not None else None

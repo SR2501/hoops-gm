@@ -303,8 +303,21 @@ def _accept_list(
       coordinate its ``kind`` is defined by: an ordinal for a snake selection,
       an amount for an auction sale. A roster row records *that* a player is on
       a team; a pick record records *where in the draft* he was taken, and
-      without that this module cannot order the board anyway. This is the
-      strongest of the three and the one that excludes keepers.
+      without that this module cannot order the board anyway.
+
+      **This rule is strong on the snake path and weak on the auction path, and
+      the difference is not cosmetic.** Under ``SELECTION`` it does exclude a
+      keeper roster, because a roster row carries no ordinal. Under ``SALE`` it
+      very largely does not: the amount aliases include ``salary`` and ``bid``
+      (:data:`FIELD_ALIASES`), and ``salary`` is the *defining field of a keeper
+      roster row* while ``bid`` is the defining field of a FAAB waiver claim.
+      An independent review drove a priced auction keeper roster end to end and
+      it became two real ``draft_events``. **A priced keeper roster and an
+      auction sale log are the same tuple**, so there is no structural
+      discriminator between them for this module to key on, and this rule does
+      not supply one. Said plainly here because an earlier version of this
+      docstring claimed it did — and a stated protection that does not exist is
+      worse than a known gap, since it is what stops the next reader looking.
     * ``duplicate_player_in_list`` — a pick log never contains the same player
       twice; a bid history contains little else. Cheap, and structural.
     * ``player_identity_is_the_seat`` — a record whose player id equals its own
@@ -351,13 +364,23 @@ def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
     *what it cost*. A record carrying neither may well be about a player on a
     team — a roster, a keeper, a watchlist — but it is not a record of a pick,
     and this module has no way to order it if it were.
+
+    **The coercion here has to match the reader's.** This gate and
+    :func:`_instant_from` must agree on what counts, or a record passes "every
+    record carries its coordinate" and then yields an instant with no
+    coordinate at all. An independent review demonstrated it with
+    ``{"round": "N/A"}`` and ``{"round": "-"}``: both satisfied a bare presence
+    test, both produced instants with every ordinal ``None``, and both then
+    landed in the unordered fallback bucket of :func:`_apply_order` — the
+    arrival-order path the sort exists to avoid. So presence is not the test;
+    parsing to a usable value is.
     """
     if kind is InstantKind.SALE:
-        return _first(record, "amount") is not None
+        return _as_amount(_first(record, "amount")) is not None
     return (
-        _first(record, "overall_pick") is not None
-        or _first(record, "round_number") is not None
-        or _first(record, "pick_in_round") is not None
+        _as_int(_first(record, "overall_pick")) is not None
+        or _as_int(_first(record, "round_number")) is not None
+        or _as_int(_first(record, "pick_in_round")) is not None
     )
 
 

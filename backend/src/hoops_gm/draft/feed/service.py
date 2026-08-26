@@ -176,24 +176,37 @@ class SourceOutcome:
     notes: tuple[str, ...] = ()
 
     @property
-    def format_snapshot_suspect(self) -> bool:
-        """Whether coercion looks like *our* format record being wrong.
+    def every_instant_coerced(self) -> bool:
+        """Whether *every* recognised instant had a field stripped by its kind.
 
-        ``coerced_to_kind`` has two readings and the count alone cannot separate
-        them, which is the assumption most likely to be wrong at 7:14pm:
+        **This measures a rate. It does not identify a cause, and an earlier
+        version of it claimed to.** That version was called
+        ``format_snapshot_suspect`` and its docstring said a total coercion rate
+        was the signature of our own format snapshot being wrong — an auction
+        recorded as a snake, every price stripped, the board quietly showing a
+        priceless auction. An independent review falsified that in both
+        directions:
 
-        * Fantrax sends a harmless extra field on some records. Coercion is
-          correct and the rate is **sporadic**.
-        * The draft's snapshotted format is wrong — the league is an auction and
-          we recorded it as snake. Coercion then strips the amount from *every*
-          record and the board silently shows an auction as a priceless snake
-          draft. The rate is **total**.
+        * **It fires on correct configurations.** For the official source in a
+          correctly-recorded auction, ``parse_draft_picks`` fills the ordinals
+          and the amount from the same row as a matter of course, so every pick
+          carries both and every pick is coerced — permanently ``True`` for a
+          league whose format record is right, with nothing lost. A snake keeper
+          league whose board rows carry a salary column does the same on the
+          bridge path.
+        * **It cannot fire in the case it was named for.** An auction log read
+          under a snake snapshot carries prices and no ordinals, so
+          ``record_missing_draft_coordinate`` refuses the whole list before a
+          single instant exists — and this property requires
+          ``instants_recognised > 0``.
 
-        ``kind`` is taken from our snapshot, not from the payload, so the second
-        reading is the one where the authoritative side is the broken side. A
-        total, one-directional rate is the signature that separates them, so it
-        is published as its own flag rather than left for a reader to infer from
-        two numbers that happen to be equal.
+        So the honest reading is the narrow one: *the same field was dropped
+        from all of them*, which is worth surfacing because it distinguishes a
+        stray field on one record from something systematic, but the systematic
+        thing is most often "this source consistently carries the other format's
+        field" and that is not an error at all. **Do not treat this as evidence
+        the board is lying.** The fields it dropped are enumerated per artifact
+        in ``fields_dropped``; read those.
         """
         return self.instants_recognised > 0 and self.coerced_to_kind == self.instants_recognised
 
@@ -654,10 +667,7 @@ def apply_observations(
     """
     stamp = now or datetime.now(UTC)
     state = draft_service.load_state(session, draft)
-    if state.status is DraftStatus.CLOSED:
-        return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
 
-    held = _held_keys(state)
     pending = [
         row
         for row in load_observations(session, draft)
@@ -668,8 +678,30 @@ def apply_observations(
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
     # fact about *this* run. A sticky value would recreate, in a second field,
     # the exact defect that removing it from ``skipped_reason`` fixed.
+    #
+    # This clearing has to stay *above* the closed-draft return below. It used
+    # to sit under it, and an independent review showed the consequence: a halt
+    # recorded while the draft was open stayed on the row for ever once the
+    # draft closed, because every later run returned before reaching the clear.
+    # That is precisely the stale-reason defect in a new field.
     for row in pending:
         row.blocked_reason = None
+
+    if state.status is DraftStatus.CLOSED:
+        # A closed draft with a pending backlog is the likeliest permanent halt
+        # in this system, not an exotic one: the owner closes the draft at the
+        # end of the night, the userscript keeps capturing, and ``ingest`` keeps
+        # writing observations that can now never apply. That is exactly the
+        # "stuck, or merely queued?" question ``blocked_reason`` was added to
+        # answer, so it must be recorded on the rows rather than returned only
+        # to whichever caller happened to trigger this run — a client that only
+        # polls the status endpoint sees the backlog but never the reason.
+        for row in pending:
+            row.blocked_reason = "draft_closed"
+        session.flush()
+        return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
+
+    held = _held_keys(state)
 
     applied: list[AppliedEvent] = []
     skipped: list[tuple[int, str]] = []

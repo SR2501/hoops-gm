@@ -245,14 +245,16 @@ class SourceOutcomeOut(BaseModel):
     #: the seat and the player are the parts a board needs.
     #:
     #: A non-zero value has two readings and this count does not choose between
-    #: them — see ``format_snapshot_suspect``, which does.
+    #: them. Neither does ``every_instant_coerced`` — read ``fields_dropped``.
     coerced_to_kind: int
-    #: True when *every* recognised instant was coerced, which is the signature
-    #: of our own format record being wrong rather than of an unexpected extra
-    #: field. The dangerous reading: the league is an auction, we recorded it as
-    #: snake, and the board is showing an auction with no prices. Sporadic
-    #: coercion is benign; total coercion is a configuration error.
-    format_snapshot_suspect: bool
+    #: True when *every* recognised instant had a field stripped by its kind.
+    #: **A rate, not a diagnosis.** It reads ``True`` for several correct
+    #: configurations — notably any correctly-recorded auction from the official
+    #: source, where ordinals and amount arrive on the same row as a matter of
+    #: course — so it is not evidence that the board is wrong. It distinguishes
+    #: "one stray field" from "the same field on all of them"; to find out which
+    #: field and why, read ``fields_dropped`` on the artifacts.
+    every_instant_coerced: bool
     #: Recognised instants the database refused. Expected to be zero. Non-zero
     #: means a record we thought we understood could not be represented, and it
     #: is counted rather than raised so one bad row does not cost the run.
@@ -532,7 +534,7 @@ def ingest_feed(
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
                 coerced_to_kind=source.coerced_to_kind,
-                format_snapshot_suspect=source.format_snapshot_suspect,
+                every_instant_coerced=source.every_instant_coerced,
                 observations_rejected=source.observations_rejected,
                 observations_written=source.observations_written,
                 observations_already_present=source.observations_already_present,

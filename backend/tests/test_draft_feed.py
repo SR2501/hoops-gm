@@ -1535,26 +1535,199 @@ def test_a_permanent_halt_is_visible_to_a_client_that_only_polls(
     assert healthy.pending_count == 0
 
 
-def test_total_coercion_is_reported_differently_from_the_occasional_stray_field(
+def test_a_closed_draft_with_a_backlog_says_so_rather_than_looking_queued(
     session: Session,
 ) -> None:
-    """Excludes: our own format record being wrong and reading as a Fantrax quirk.
+    """Excludes: the likeliest permanent halt there is, showing as a live queue.
 
-    ``coerced_to_kind`` has two readings. Sporadic coercion means the source
-    sent an extra field and dropping it was right. **Total** coercion means the
-    ``kind`` we are coercing *to* is wrong — the league is an auction, we
-    snapshotted it as snake, and every price is being stripped on the way in.
-    The board then shows an auction as a priceless snake draft, and the count
-    alone cannot tell the owner which of the two he is looking at.
+    The end of draft night is not an exotic state. The owner closes the draft,
+    the userscript keeps capturing, ``ingest`` keeps writing observations, and
+    every apply run returns ``draft_closed`` before it can touch a row. The
+    status endpoint then shows a pending backlog with no reason — exactly the
+    "stuck, or merely queued?" question ``blocked_reason`` was added to answer,
+    unanswered in the one case most likely to occur.
 
-    A reading in which a bare count is true while the defect is present: any
-    non-zero value at all, which is why the count is not the flag. The rate is.
+    A reading in which the flag is true while the defect is present: asserting
+    ``halted == "draft_closed"`` on the ingest response, which was already true
+    and which a polling board never sees. So this asserts the reason reaches
+    ``feed_status``, which is the only surface a live screen reads.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    draft_service.record_close(session, draft)
+
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="after-the-bell",
+    )
+    feed_service.ingest(session, draft)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.halted == "draft_closed"
+    status = feed_service.feed_status(session, draft, now=NOW)
+    assert status.pending_count == 1
+    assert status.blocked == ("draft_closed",)
+
+
+def test_a_reason_from_the_live_draft_does_not_outlive_it(session: Session) -> None:
+    """Excludes: a stale halt reason surviving for ever behind a closed draft.
+
+    ``blocked_reason`` is cleared at the start of every apply run so it is
+    always a fact about the most recent one. The closed-draft branch returns
+    early, and if that return precedes the clear then whatever reason was set
+    while the draft was live is frozen on the row permanently — a real *past*
+    reason presented as a current one, which is the stale-reason defect this
+    field was extracted from ``skipped_reason`` to avoid.
+
+    A reading in which the flag is true while the defect is present: asserting
+    only that ``blocked`` is non-empty after closing, which holds for the stale
+    value too. So this pins the *content*: after the close the reason must be
+    ``draft_closed``, not the ordering problem that preceded it.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="out-of-turn",
+    )
+    feed_service.ingest(session, draft)
+
+    assert feed_service.apply_observations(session, draft).halted == "draft_pick_out_of_turn"
+    assert feed_service.feed_status(session, draft, now=NOW).blocked == ("draft_pick_out_of_turn",)
+
+    draft_service.record_close(session, draft)
+    assert feed_service.apply_observations(session, draft).halted == "draft_closed"
+    after = feed_service.feed_status(session, draft, now=NOW)
+    assert after.pending_count == 1
+    assert after.blocked == ("draft_closed",)
+
+
+def test_a_coordinate_the_reader_cannot_parse_does_not_satisfy_the_rule() -> None:
+    """Excludes: the gate and the reader disagreeing on what a coordinate is.
+
+    ``_has_draft_coordinate`` used to test presence while ``_instant_from``
+    tests parseability. A record carrying ``{"round": "N/A"}`` therefore passed
+    "every record carries the coordinate its kind is defined by" and produced an
+    instant with every ordinal ``None`` — a record admitted *because* of a field
+    whose value was then discarded. Those rows land in the unordered fallback
+    bucket of ``_apply_order`` and apply in arrival order, which is precisely
+    what sorting on the coordinate exists to prevent.
+
+    A reading in which the flag is true while the defect is present: asserting
+    the list is accepted and the instants exist, which was true before the fix
+    and is exactly the harm. So this asserts the list is **refused**, and names
+    the reason.
+    """
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "round": "N/A"}]
+        ),
+        dedupe_key="unparseable-round",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert result.instants == ()
+    assert [shape.reason for shape in result.unrecognised] == ["record_missing_draft_coordinate"]
+
+    # The auction half of the same defect: a price that is not a number.
+    priced = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": "-"}]
+        ),
+        dedupe_key="unparseable-price",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(draft_type=DraftType.AUCTION),
+    )
+    assert priced.instants == ()
+    assert [shape.reason for shape in priced.unrecognised] == ["record_missing_draft_coordinate"]
+
+    # Positive control: the same shape with a readable coordinate is accepted,
+    # so the rule above is not "refuse everything that mentions a round".
+    ok = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope([{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "round": 1}]),
+        dedupe_key="readable-round",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert [instant.player_label for instant in ok.instants] == [JOKIC]
+
+
+def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(
+    session: Session,
+) -> None:
+    """**Pins a gap rather than a guarantee.** Read the assertion, not the name.
+
+    ``record_missing_draft_coordinate`` excludes a keeper roster under
+    ``SELECTION``, because a roster row carries no ordinal. Under ``SALE`` it
+    very largely does not: the amount aliases include ``salary``, and ``salary``
+    is the defining field of a keeper roster row in an auction league. A priced
+    keeper roster and an auction sale log are **the same tuple**, so no
+    structural rule in this module can separate them.
+
+    This test asserts the gap is real and reachable end to end, so that nobody
+    reinstates the claim — which an earlier docstring made — that this rule
+    excludes keepers on the auction path. If someone later finds a genuine
+    discriminator, this test should fail and be deleted along with the fix.
+
+    **Not disproved, unestablished:** no real Fantrax auction payload has ever
+    been seen, so whether ``salary`` even appears in one is unknown. The gap is
+    named from the alias list, which is checkable; its frequency is not.
+    """
+    league = _league(session, draft_type=DraftType.AUCTION, budget=Decimal("200.00"))
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "salary": 30},
+            {"teamId": "t2", "playerId": "p2", "playerName": EDWARDS, "salary": 22},
+        ],
+        dedupe_key="keeper-roster",
+    )
+    outcome = feed_service.ingest(session, draft).sources[0]
+
+    # The gap, stated as an assertion: these are keepers and they are read as
+    # sales. Nothing in this module currently prevents it.
+    assert outcome.instants_recognised == 2
+    assert outcome.unrecognised == ()
+    assert [row.amount for row in feed_service.load_observations(session, draft)] == [
+        Decimal("30.00"),
+        Decimal("22.00"),
+    ]
+
+
+def test_a_field_dropped_from_all_of_them_is_reported_apart_from_one_stray(
+    session: Session,
+) -> None:
+    """Excludes: "one record was odd" and "all of them were" reading identically.
+
+    ``coerced_to_kind`` is a count, and a count of 1 among 3 and a count of 3
+    among 3 are different facts about a feed. ``every_instant_coerced``
+    separates them. A reading in which the bare count is true while that
+    distinction is lost: any non-zero value at all, which is why the count is
+    not the flag and the rate is.
+
+    **What this deliberately does not claim.** An earlier version of this test
+    asserted the flag was the signature of *our own format snapshot being
+    wrong* — an auction recorded as snake, every price stripped, the board
+    quietly priceless. An independent review falsified that in both directions
+    and the third case below pins the falsification, so the causal claim cannot
+    be reintroduced without a red test.
     """
     league = _league(session)
     teams = _teams(session, league, ["t1", "t2"])
     draft = _draft(session, league, teams)  # snake
 
-    # Every record priced: the signature of an auction recorded as a snake.
     _capture(
         session,
         records=[
@@ -1566,7 +1739,7 @@ def test_total_coercion_is_reported_differently_from_the_occasional_stray_field(
     total = feed_service.ingest(session, draft).sources[0]
     assert total.instants_recognised == 2
     assert total.coerced_to_kind == 2
-    assert total.format_snapshot_suspect is True
+    assert total.every_instant_coerced is True
 
     # The benign case: one stray field among several clean records. Same
     # counter, non-zero, and deliberately *not* flagged.
@@ -1586,7 +1759,35 @@ def test_total_coercion_is_reported_differently_from_the_occasional_stray_field(
     sporadic = feed_service.ingest(session, draft2).sources[0]
     assert sporadic.instants_recognised == 3
     assert sporadic.coerced_to_kind == 1
-    assert sporadic.format_snapshot_suspect is False
+    assert sporadic.every_instant_coerced is False
+
+    # The falsification, pinned. A *correctly* recorded auction whose records
+    # carry ordinals alongside the price — which is what the official adapter
+    # produces as a matter of course — is totally coerced and entirely healthy.
+    # Nothing is lost: the amount, which is what SALE is defined by, survives.
+    # So the flag cannot mean "the board may be lying".
+    league3 = _league(
+        session,
+        fantrax_league_id="league-three",
+        draft_type=DraftType.AUCTION,
+        budget=Decimal("200.00"),
+    )
+    teams3 = _teams(session, league3, ["t1", "t2"])
+    draft3 = _draft(session, league3, teams3)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerName": JOKIC, "overallPick": 1, "winningBid": 61},
+            {"teamId": "t2", "playerName": EDWARDS, "overallPick": 2, "winningBid": 44},
+        ],
+        dedupe_key="healthy-auction",
+        league_id="league-three",
+    )
+    healthy_auction = feed_service.ingest(session, draft3).sources[0]
+    assert healthy_auction.instants_recognised == 2
+    assert healthy_auction.every_instant_coerced is True
+    stored = feed_service.load_observations(session, draft3)
+    assert [row.amount for row in stored] == [Decimal("61.00"), Decimal("44.00")]
 
 
 def test_a_pick_already_in_the_log_is_linked_not_appended_twice(session: Session) -> None:
