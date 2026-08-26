@@ -26562,7 +26562,7 @@ the clock.
 
 **Verified at this head**, all from `backend`: `ruff check .` clean over **211
 files**, `ruff format --check .` **211 files already formatted**, bare `mypy`
-clean over **203 source files**, full suite **2062 passed, 40 deselected**, and
+clean over **203 source files**, full suite **2061 passed, 40 deselected**, and
 the three Hashtag live-smoke tests **executed** against the live page: 3 passed.
 Base `28d0d88`; not rebased.
 
