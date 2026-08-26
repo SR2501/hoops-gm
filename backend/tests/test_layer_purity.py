@@ -376,8 +376,28 @@ def test_the_flow_matrix_is_completely_decided() -> None:
     ``FLOW_MATRIX_SIZE`` is the ``SCAN_LIMIT`` pattern applied to the rule
     itself: an eighth layer changes the count and turns this red, so nobody can
     add one without deciding its fourteen new edges. An unlisted pair is
-    refused, which is the safe default — the pin is what makes it a *reviewed*
+    refused, which is the safe default - the pin is what makes it a *reviewed*
     default rather than an unnoticed one.
+
+    **The falsifying reading, and why it lands safe.** Name the defect this
+    excludes - "a layer arrives and its edges are never reviewed" - then name a
+    reading in which the assertion passes and the defect is present: add
+    ``SOURCE_PROJECTIONS``, read the failure message, and do the mechanical
+    half of what it says by editing ``42`` to ``56`` without touching
+    ``PERMITTED_FLOWS``. Green, fourteen edges undecided. The message even
+    volunteers that edit, which is the shape worth distrusting: a guard that
+    tells you how to silence it.
+
+    What saves it is not this pin. It is that ``flow_permitted`` is an
+    allowlist, so **an enum member cannot add a permission** - every undecided
+    edge is refused, and the first declared foreign key crossing it raises at
+    import. The residual defect is over-refusal, which is loud and immediate,
+    not a wrong number. That asymmetry is the reason an explicit
+    ``REFUSED_FLOWS`` with a written reason per edge was considered and not
+    built: it would convert fourteen silencing keystrokes into fourteen
+    authored lines a reviewer can see, but it buys no safety the allowlist
+    default does not already give, and twenty-five refusal reasons that mostly
+    read "backwards" is documentation nobody rereads.
     """
     pairs = [(a, b) for a in DataLayer for b in DataLayer if a is not b]
 
@@ -693,10 +713,30 @@ def test_the_scope_limits_are_stated() -> None:
     gap would leave the assertion untouched. That is inherent to the pattern,
     and it is why each constant names what remains uncovered.
 
+    **This test excludes deletion, not falsification, and the difference is
+    worth stating because it is the sharper failure.** Name the defect the
+    substring assertions exclude - "a scope limit was quietly removed" - then
+    name a reading in which they pass and the defect is present: rewrite
+    ``FLOW_SCAN_LIMIT`` to say that it *closes* over undeclared identifier
+    columns and Python-level copying. Every required substring is still there;
+    the sentence now means the reverse. So the assertion below proves the words
+    are present, never that they are true. Only the count and the reader do
+    that.
+
     The one number any of them states is checked rather than read, because a
     scope limit carrying a stale figure is worse than one carrying none: an
     earlier version of :data:`FLOW_SCAN_LIMIT` said sixteen on a heuristic
     nobody wrote down and review could not reproduce it.
+
+    ``NAKED_IDENTIFIER_COLUMNS`` has its own falsifying reading, and it is not
+    the same one. It is closed under the ``_id`` *spelling*, not under
+    "undeclared reference": a column called ``seed_auction_ref`` holding
+    another table's key would leave the count at ten while widening the gap the
+    count describes. That is the open-set shape this repository keeps getting
+    bitten by, and it is irreducible here - identifying a reference that
+    declares no foreign key is exactly what the absent key denies you. It is
+    why :data:`FLOW_SCAN_LIMIT` states prose *and* a number rather than
+    trusting the number alone.
     """
     assert "foreign keys" in FLOW_SCAN_LIMIT
     assert "undeclared identifier column" in FLOW_SCAN_LIMIT

@@ -23746,6 +23746,58 @@ than guessing, which is the one thing it got right first time, and the mixed
 case is handled explicitly. The script was deleted before the PR; the lesson is
 here because that is where it survives.
 
+### The falsifying-reading rule, applied to my own pins
+
+The architect's rule, adopted from #98's audit: **name the defect the flag
+excludes, then name a reading in which the flag is false and that defect is
+present. If you cannot construct that reading, the flag does not exclude the
+defect.** Applied to the three pins this unit rests on, it changed two of them
+and vindicated the third for a reason I had not written down.
+
+**`test_the_scope_limits_are_stated` excludes deletion, not falsification.** It
+asserts that `FLOW_SCAN_LIMIT` contains "foreign keys", "undeclared identifier
+column" and "Python". Rewrite the constant to say the check *closes* over
+undeclared identifier columns and Python-level copying, and every required
+substring is still present while the sentence means the reverse. Green, and the
+repository's stated ceiling on this guard is now a lie. **That is #98's defect
+exactly** - a substring assertion satisfied by a sentence asserting the
+opposite, where the words the test looks for are the words the false claim
+would naturally use. I have not fixed it, because a test cannot check that prose
+is true; I have written the falsifying reading into the docstring so the next
+reader meets it rather than reconstructs it.
+
+**`NAKED_IDENTIFIER_COLUMNS = 10` is closed under a spelling, not a concept.**
+It counts columns ending `_id` that declare no foreign key. A column named
+`seed_auction_ref` holding another table's key leaves the count at ten and
+widens the gap the count exists to describe. That is the open-set shape this
+repository keeps being bitten by, and here it is irreducible: identifying a
+reference that declares no key is precisely what the missing key denies you. It
+is the reason `FLOW_SCAN_LIMIT` states prose *and* a number instead of trusting
+the number.
+
+**`FLOW_MATRIX_SIZE = 42` has a falsifying reading, and it lands safe - which is
+the finding.** Add an eighth layer, read the failure message, and do the
+mechanical half of what it says: edit `42` to `56`, touch no edge. Green,
+fourteen edges undecided, and **the message volunteered that edit** - a guard
+that tells you how to silence it, the same shape as the frozen-literal test I
+deleted earlier in this unit.
+
+What saves it is not the pin. `flow_permitted` is a pure allowlist with no
+fallback, so **an enum member cannot add a permission**: every undecided edge is
+refused, and the first declared foreign key crossing one raises at import. The
+residual defect is over-refusal - loud, immediate, and not a wrong number. So
+the pin's job is to *notice*, and the safety comes from the default. The
+allowlist property is asserted rather than asserted-about, one line above, by
+`permitted == set(PERMITTED_FLOWS)`.
+
+I considered and rejected an explicit `REFUSED_FLOWS` carrying a written reason
+per edge, on the `SANCTIONED_STORE_OPENERS` pattern. It would convert fourteen
+silencing keystrokes into fourteen authored lines a reviewer can see, which is a
+real improvement in visibility - but it buys no safety the allowlist default
+does not already provide, it lands during a freeze, and twenty-five refusal
+reasons that mostly read "backwards" is documentation nobody rereads. Recorded
+here so the option is refusable again rather than rediscovered.
+
 ### What I could not verify
 
 - **That foreign keys capture every real flow.** They capture every flow the
@@ -23766,12 +23818,22 @@ here because that is where it survives.
   layer is a guess about future shape. I argued above why omitting it is worse,
   but the architect should overrule me if ADR-008's five names are meant to be
   exhaustive. *Reasoned.*
-- **That the `main` baseline is 1787.** I ran the full suite on this branch
-  (1831 passed) and subtracted my 44. I did not check out `f3e2c53` and measure
-  it. `scripts/test_name_diff.py origin/main HEAD` reports 22 added and **nothing
-  dropped**, which is the check that matters for #90's silent-deletion failure,
-  but the baseline figure itself is arithmetic. *Reasoned; the added/dropped
-  delta is driven.*
+- **~~That the `main` baseline is 1787.~~ Now measured, not inferred.** The
+  earlier version of this bullet subtracted my test *names* from a *case* count,
+  which is the wrong arithmetic in two units at once - this unit adds **40 test
+  names but 93 collected cases**, and the two are not interchangeable. Replaced
+  with a measurement: a throwaway worktree at `origin/main` (`5926850`) collects
+  **1803 selected / 37 deselected**; this branch collects **1896 selected / 37
+  deselected**. The difference is 93, exactly this unit's file, and the
+  deselected count is byte-identical. `scripts/test_name_diff.py origin/main
+  HEAD` reports **40 added and nothing dropped**, which is the check that
+  matters for #90's silent-deletion failure. *Driven.*
+- **That the exact-head review has run against the rebased head.** All three
+  reviews were taken before the rebase onto `5926850`. The rebase touched only
+  `docs/`, and the 41/62/5/0 figures were recounted unchanged afterwards, so I
+  expect no substantive difference - but "I expect" is the word that belongs in
+  this section, not in the one above. The fourth pass is commissioned against
+  the pushed head. *Not verified.*
 - **That the rank-4 collision survives contact with a tidier.** Nothing enforces
   that `MARKET` and `TERMINAL` stay equal - `test_market_and_terminal_are_mutually_unreachable`
   fails if they are separated, which is the protection, but I did not test that a
