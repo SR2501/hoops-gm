@@ -38,6 +38,11 @@ from hoops_gm.availability.reliability import (
     _source_snapshot,
     publish_reliability_cohorts,
 )
+from hoops_gm.db.lineage import (
+    NBA_SCHEDULE_ARTIFACT_KEY,
+    LineageSourceConflict,
+    record_refresh,
+)
 from hoops_gm.db.models import (
     DnpReason,
     ExternalSource,
@@ -356,6 +361,119 @@ def test_the_refresh_row_names_this_command_not_an_endpoint_it_never_called(
     }
     assert sources == {DERIVED_SOURCE}
     assert SCHEDULE_REFRESH_SOURCE not in sources
+
+
+def test_publishing_over_a_real_schedule_does_not_relabel_where_it_came_from(
+    session: Session,
+) -> None:
+    """The lineage row keeps the producer that actually fetched the rows.
+
+    The defect excluded: a store whose schedule came from ``ScheduleLeagueV2``
+    reports, after this command runs, that its schedule was derived from
+    ``nba_games``. That is a lie in the single row that answers "where did this
+    schedule come from", and the true answer is gone rather than ambiguous.
+
+    The mechanism, driven by an independent review before this test existed:
+    ``schedule_content_version`` hashes the ``team_schedule`` rows and does not
+    include ``source``, so a derived cohort over the same games produces the
+    *same* version; ``record_refresh`` was idempotent on
+    ``(artifact_type, artifact_key, version, season)`` and assigned
+    ``existing.source = source`` in place. One row, last writer wins. This was
+    invisible until ``import_schedule`` gained ``source=`` for this command,
+    because until then only one value was ever passed for a SCHEDULE row.
+
+    The reading in which this assertion holds and the defect is present: none
+    that I can construct — the assertion is on the recorded source itself, and
+    a relabel is exactly a change to that value. The weaker assertion this
+    replaces (that *some* SCHEDULE row exists) is satisfied by the relabelled
+    row, which is why row-existence checks never caught it.
+
+    Note what is *not* asserted: that a conflict raises. It does not raise here,
+    because the fix in ``publish_reliability_evidence`` is to skip deriving when
+    a real cohort is already current. The raise is asserted separately below,
+    against the primitive, so that this test cannot pass by the collision having
+    been made unreachable in some other way.
+    """
+
+    _backfilled_season(session)
+    _observations(session)
+
+    real = schedule_from_played_games(session, season=SEASON)
+    import_schedule(session, real)
+    before = _rows(session, TeamScheduleEntry)
+
+    result = publish_reliability_evidence(session, season=SEASON)
+
+    assert result.schedule_derived is False
+    assert result.team_schedule_rows == before
+    assert result.games == len(real.games)
+    sources = {
+        run.source
+        for run in session.scalars(
+            select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
+        )
+    }
+    assert sources == {SCHEDULE_REFRESH_SOURCE}
+    assert DERIVED_SOURCE not in sources
+    # And the claim it published over that real cohort still serves.
+    run = compute_reliability_scorecards(session, claim=result.claim)
+    assert run.scorecards
+
+
+def test_record_refresh_refuses_to_relabel_an_existing_version(session: Session) -> None:
+    """The primitive, so the hazard is closed for callers that are not this one.
+
+    Skipping the derive step removes *this* command's collision. It does not
+    remove the collision: any two producers that agree on content and disagree
+    on source still meet here, and the next one will not have this command's
+    review attached. Refused rather than reconciled — a second row would make
+    ``current_refresh`` ambiguous, and choosing a winner would be lineage
+    inventing an answer it does not have.
+
+    The reading in which this passes and the defect is present: a caller that
+    catches ``ValueError`` broadly and continues. ``LineageSourceConflict``
+    subclasses ``ValueError`` deliberately, so such a caller swallows it — but
+    it swallows a refusal to write rather than absorbing a silent overwrite,
+    and the row it then reads is the un-relabelled one.
+    """
+
+    _backfilled_season(session)
+    parsed = schedule_from_played_games(session, season=SEASON)
+    import_schedule(session, parsed)
+    row = session.scalars(
+        select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
+    ).one()
+    version, source = row.version, row.source
+
+    with pytest.raises(LineageSourceConflict) as conflict:
+        record_refresh(
+            session,
+            artifact_type=RefreshArtifactType.SCHEDULE,
+            artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+            version=version,
+            source=DERIVED_SOURCE,
+            season=SEASON,
+        )
+    assert source in str(conflict.value)
+    assert DERIVED_SOURCE in str(conflict.value)
+
+    # No rollback between the two halves, deliberately: the refusal is raised
+    # before any mutation, so a session that continues sees the original row
+    # untouched. If the refusal ever moves after the assignment, this half
+    # fails on the source it reads back.
+    again = record_refresh(
+        session,
+        artifact_type=RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        version=version,
+        source=source,
+        season=SEASON,
+    )
+    assert again.source == source
+    schedule_rows = session.scalars(
+        select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
+    ).all()
+    assert [row.source for row in schedule_rows] == [source]
 
 
 def test_the_refusal_a_backfilled_store_reaches_is_the_missing_refresh_cohort(

@@ -214,8 +214,15 @@ class PlayerReliabilityScorecardModel(BaseModel):
     in any sense that matters.
 
     It is ``str | None`` rather than ``str`` because the join can legitimately
-    miss: a scorecard is keyed on a ``player_game_logs`` row, and nothing in
-    the schema guarantees the ``players`` row still exists. A missing name is
+    miss, though not for the reason first written here. An earlier draft claimed
+    "nothing in the schema guarantees the ``players`` row still exists"; review
+    showed that is false — both ``player_game_logs.player_id`` and
+    ``player_participation.player_id`` are ``ForeignKey(..., ondelete="CASCADE")``
+    and ``db/session.py`` installs ``enable_sqlite_foreign_keys``, so a scorecard
+    keyed on a deleted player is unreachable rather than merely rare.
+
+    The real source of null is ``_player_names``, which excludes rows whose
+    ``full_name`` is empty — a present-but-blank name, not an absent row. It is
     reported as null rather than backfilled with the id in string form, which
     would be a placeholder indistinguishable from a real name downstream.
     """
@@ -334,6 +341,27 @@ def published_claim(session: Session, *, season: str) -> ReliabilityCohortClaim:
             f"the current {RELIABILITY_SOURCE_KEY} refresh for season {season!r} does not state "
             f"the cohort it published: {exc}",
         ) from exc
+
+    if window_start > as_of_date:
+        # Both dates parse, are real dates, and are timezone-free — every check
+        # of *form* passes. The claim is still incoherent, and `_source_snapshot`
+        # says so with a bare `ValueError`, which is neither of the two
+        # reliability exception types this route catches: it escaped both
+        # handlers and became a 500. Found by an independent review, which
+        # rewrote only `summary["window_start"]` on the current SOURCE row.
+        #
+        # Ordered here rather than by widening the handler to `except ValueError`,
+        # because this is the same defect class as every other check in this
+        # function — a summary that has been rewritten — and it belongs with
+        # them, reported as the same 409, rather than caught downstream where
+        # the message would name a window the caller never supplied.
+        raise _error(
+            409,
+            "reliability_incomplete_evidence",
+            f"the current {RELIABILITY_SOURCE_KEY} refresh for season {season!r} states a "
+            f"window that ends before it starts: window_start {window_start.isoformat()} is "
+            f"after as_of_date {as_of_date.isoformat()}",
+        )
 
     return ReliabilityCohortClaim(
         season=season,
@@ -485,11 +513,23 @@ def get_reliability_scorecards(
         raise _error(409, "reliability_inputs_refused", str(exc)) from exc
 
     if not run.scorecards:
-        # `compute_reliability_scorecards` returns an empty cohort rather than
-        # refusing when the window holds games and logs but no player resolves
-        # into either map. An empty list on a 200 would render as "nobody
-        # missed a game", which is the one reading this endpoint must never
-        # produce.
+        # Unreachable today, and deliberately kept. The comment that stood here
+        # claimed `compute_reliability_scorecards` "returns an empty cohort
+        # rather than refusing when the window holds games and logs but no
+        # player resolves into either map". An independent review showed that is
+        # false about `quant`'s function: `reliability.py:408` appends every log
+        # to `logs_by_player` unconditionally and `:427` unions the two maps,
+        # while `:521` already refuses an empty `snapshot.logs`. So non-empty
+        # logs imply non-empty scorecards, always, and no input reaches this
+        # branch.
+        #
+        # It stays because the property it guards belongs to a module this lane
+        # does not own and is not asserted anywhere in it: if a future filter
+        # between the log list and the player-id set makes an empty cohort
+        # reachable, the failure mode is a 200 carrying an empty list, which a
+        # reader would take as "nobody missed a game". A dead 409 costs one
+        # branch; that reading costs a draft decision. The claim is now about
+        # what this route refuses to serve, not about what `quant` returns.
         raise _error(
             409,
             "reliability_inputs_refused",

@@ -52,7 +52,8 @@ from sqlalchemy.orm import Session
 
 from hoops_gm.availability.reliability import ReliabilityCohortClaim, publish_reliability_cohorts
 from hoops_gm.core.config import Settings
-from hoops_gm.db.models.enums import GameStatus, SeasonType
+from hoops_gm.db.lineage import NBA_SCHEDULE_ARTIFACT_KEY, current_refresh
+from hoops_gm.db.models.enums import GameStatus, RefreshArtifactType, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
 from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
@@ -113,6 +114,7 @@ class PublishResult:
     season: str
     games: int
     team_schedule_rows: int
+    schedule_derived: bool
     claim: ReliabilityCohortClaim
 
 
@@ -260,11 +262,40 @@ def publish_reliability_evidence(
     completed season means the whole season. It is not defaulted to *today*:
     a date past the end of the season would resolve the same window while
     quietly making the source fingerprint depend on when the command was run.
+
+    **The derive step is skipped when a real schedule cohort already covers the
+    season.** An independent review found that without this, running the real
+    ``ingest/schedule_import.py`` and then this command silently *relabels* the
+    lineage row: the derived cohort hashes to the same ``schedule_content_version``
+    because the rows are identical, ``record_refresh`` is idempotent on that
+    version, and it overwrote ``source`` in place. The single surviving row then
+    claimed the schedule was derived from ``nba_games`` when it came from
+    ``ScheduleLeagueV2`` — a lie in the one row that answers "where did this
+    schedule come from", with the true answer gone and no second row to notice.
+
+    Skipping is the right behaviour independent of that bug. This command exists
+    to make a *box-score-backfilled* store servable; a store that already has a
+    real schedule needs only the SOURCE and MODEL halves, and a derived schedule
+    has strictly less provenance than the one it would overwrite.
     """
 
-    parsed = schedule_from_played_games(session, season=season)
-    import_schedule(session, parsed, source=DERIVED_SOURCE)
-    resolved_as_of = as_of_date or max(record.game.game_date for record in parsed.games)
+    existing_schedule = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
+    )
+    derived = existing_schedule is None
+    if derived:
+        parsed = schedule_from_played_games(session, season=season)
+        import_schedule(session, parsed, source=DERIVED_SOURCE)
+        last_game_date = max(record.game.game_date for record in parsed.games)
+        games = len(parsed.games)
+    else:
+        last_game_date = require_complete_regular_season(session, season=season)[-1].game_date
+        games = _rows_for_season(session, season)
+
+    resolved_as_of = as_of_date or last_game_date
     claim = publish_reliability_cohorts(
         session,
         season=season,
@@ -278,10 +309,17 @@ def publish_reliability_evidence(
     )
     return PublishResult(
         season=season,
-        games=len(parsed.games),
+        games=games,
         team_schedule_rows=persisted_rows or 0,
+        schedule_derived=derived,
         claim=claim,
     )
+
+
+def _rows_for_season(session: Session, season: str) -> int:
+    """Final regular-season game count, for the branch that derives nothing."""
+
+    return len(require_complete_regular_season(session, season=season))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -332,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
                 "season_type": result.claim.season_type.value,
                 "games": result.games,
                 "team_schedule_rows": result.team_schedule_rows,
+                "schedule_derived": result.schedule_derived,
                 "schedule_version": result.claim.schedule_version,
                 "source_version": result.claim.source_version,
                 "derivation_version": result.claim.derivation_version,

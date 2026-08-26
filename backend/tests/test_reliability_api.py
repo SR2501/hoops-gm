@@ -271,10 +271,16 @@ def test_a_scorecard_names_the_player_it_is_about(app: FastAPI, client: TestClie
 
     The reading in which this assertion is false and the defect present is a
     payload carrying ids alone, which is exactly what shipped for one commit.
-    The second half drives the null branch: a scorecard whose ``players`` row
-    has gone reports ``None`` rather than inventing a name, because a
-    stringified id in a name field is a placeholder no downstream reader can
-    tell from a real one.
+    The second half drives the null branch. It does so with a *blank*
+    ``full_name``, not a deleted ``players`` row — an earlier draft of this
+    docstring said "a scorecard whose ``players`` row has gone", which review
+    showed is unreachable: the ``player_game_logs`` and ``player_participation``
+    foreign keys are ``ondelete="CASCADE"`` and SQLite enforcement is on, so
+    deleting the player deletes the evidence the scorecard is built from. The
+    branch that genuinely produces null is the ``if full_name`` filter in
+    ``_player_names``. Either way the assertion is the same: report ``None``
+    rather than inventing a name, because a stringified id in a name field is a
+    placeholder no downstream reader can tell from a real one.
     """
 
     _serving_store(app)
@@ -430,15 +436,23 @@ def test_refuses_when_the_rows_moved_under_the_published_claim(
     assert _error_of(response) == "reliability_not_current"
 
 
-def test_refuses_a_final_game_missing_half_its_schedule_coverage(
+def test_refuses_when_a_schedule_row_is_deleted_under_the_published_claim(
     app: FastAPI, client: TestClient
 ) -> None:
-    """The join condition between ``team_schedule`` and ``nba_games``.
+    """Deleting a schedule row moves the schedule fingerprint, and is caught there.
 
-    This is the check that has no honest done-condition on either table alone:
-    the schedule row count is still even, every game is still final, and the
-    cohort is still incoherent. Deleting one row of a pair is exactly the state
-    an ingest closing green on rows-landed would leave behind.
+    This test previously claimed to drive the home/away coverage join at
+    ``reliability.py:508`` and accepted either ``reliability_not_current`` or
+    ``reliability_inputs_refused``. An independent review drove it: the input
+    only ever produces the **former**, because ``_require_current(SCHEDULE)`` at
+    ``:357`` runs before ``_source_snapshot`` at ``:383`` and a deleted row
+    changes ``schedule_content_version``. So the assertion could not fail for
+    the reason it named, and the docstring's "the schedule row count is still
+    even" was false as well — the fixture goes from 6 rows to 5.
+
+    Split into two tests rather than tightened in place, because both mechanisms
+    are real and each needs an input that reaches it. The coverage join is
+    driven by :func:`test_refuses_a_final_game_with_no_schedule_coverage_at_all`.
     """
 
     _serving_store(app)
@@ -457,4 +471,47 @@ def test_refuses_a_final_game_missing_half_its_schedule_coverage(
     response = client.get(URL)
 
     assert response.status_code == 409
-    assert _error_of(response) in {"reliability_not_current", "reliability_inputs_refused"}
+    assert _error_of(response) == "reliability_not_current"
+
+
+def test_refuses_a_final_game_with_no_schedule_coverage_at_all(
+    app: FastAPI, client: TestClient
+) -> None:
+    """The join condition between ``team_schedule`` and ``nba_games``.
+
+    This is the check with no honest done-condition on either table alone, and
+    the reason this unit was not split: a final game in the window must have
+    exactly its two schedule rows, which is a property of neither table.
+
+    The input has to be chosen so the *earlier* refusals do not fire first.
+    Adding a final ``nba_games`` row with no schedule rows leaves every existing
+    ``team_schedule`` row untouched, so ``schedule_content_version`` does not
+    move and ``_require_current(SCHEDULE)`` still passes — the request reaches
+    ``:508`` and is refused there. That is exactly the state an ingest closing
+    green on "rows landed" leaves behind: a game the schedule does not cover.
+    """
+
+    _serving_store(app)
+    with app.state.database.session() as session:
+        covered = session.scalars(select(NbaGame).order_by(NbaGame.game_date)).first()
+        assert covered is not None
+        session.add(
+            NbaGame(
+                season=EVIDENCE_SEASON,
+                season_type=SeasonType.REGULAR,
+                nba_game_id="0022599999",
+                game_date=covered.game_date,
+                status=GameStatus.FINAL,
+                home_team_id=covered.home_team_id,
+                away_team_id=covered.away_team_id,
+                home_score=101,
+                away_score=99,
+            )
+        )
+        session.commit()
+
+    response = client.get(URL)
+
+    assert response.status_code == 409
+    assert _error_of(response) == "reliability_inputs_refused", response.json()
+    assert "exact home/away" in response.json()["detail"]
