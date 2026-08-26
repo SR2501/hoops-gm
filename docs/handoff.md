@@ -27266,3 +27266,137 @@ blobs reports a spurious failure.
 Against `origin/main` the prefix is **False**, which is the merge freeze and not
 a violation: main has gained other lanes' entries this branch has not rebased
 onto. Stated so the next person running the check is not alarmed by it.
+
+## 2026-08-26 - draft feed: third review round, and a docstring that promised what the code did not deliver
+
+`backend` lane, unit `draft-tracker-bridge-feed`, PR #104. Third independent
+review, read at exact head `eb31a7a` by a non-`backend` agent. Six findings, all
+real, every one supported by a probe the reviewer actually ran rather than by
+argument. Fixed in `a074742`. Rebased onto `c07aefb` after the coordinator opened
+the window.
+
+### The finding worth reading if you read only one
+
+`record_missing_draft_coordinate` is the rule that makes this feed safe to fail:
+every record in a candidate list must carry the coordinate its `kind` is defined
+by, or the whole list is refused. Its docstring said it was "the strongest of the
+three and the one that excludes keepers".
+
+**That is true under `SELECTION` and very largely false under `SALE`**, which is
+the path where keepers actually have salaries. The amount aliases are
+`("amount", "bid", "salary", "price", "winningBid")` - and `salary` is the
+defining field of a keeper roster row, while `bid` is the defining field of a
+FAAB waiver claim. The reviewer drove a priced auction keeper roster end to end
+and it became two real `draft_events` rows at 30.00 and 22.00.
+
+A priced keeper roster and an auction sale log are **the same tuple**. There is
+no structural discriminator available to this module, so I did not invent one.
+The docstring now states the gap, and
+`test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path` pins it as a
+gap so the claim cannot be quietly reinstated.
+
+**A stated protection that does not exist is worse than a known gap**, because it
+is what stops the next reader from looking. That is the transferable part.
+
+### The other five
+
+- **`format_snapshot_suspect` named a cause it could not establish.** It claimed
+  a total coercion rate was the signature of *our own* format snapshot being
+  wrong. Falsified in both directions: it fires permanently on a correctly
+  recorded auction from the official source (ordinals and amount arrive on the
+  same row as a matter of course and nothing is lost), and it *cannot* fire in
+  the case it was named for, because an auction log read under a snake snapshot
+  is refused by the coordinate rule before a single instant exists. Renamed
+  `every_instant_coerced`, which is what it measures.
+- **A closed draft with a pending backlog showed as a healthy queue.** The
+  likeliest permanent halt in this system - the owner closes the draft, the
+  userscript keeps capturing, `ingest` keeps writing rows that can never apply -
+  returned `draft_closed` to the caller and left the polling endpoint showing a
+  backlog with no reason. Now recorded on the rows.
+- **`blocked_reason` was sticky behind a closed draft.** The closed-draft early
+  return preceded the clearing loop, so a reason set while the draft was live
+  froze on the row for ever. That is the stale-reason defect wearing a new field
+  name. The clear moved above the return.
+- **The coordinate gate tested presence; the reader tests parseability.** A
+  record carrying `{"round": "N/A"}` satisfied "every record carries its
+  coordinate" and then produced an instant with every ordinal `None`, landing in
+  the unordered fallback bucket of `_apply_order` - arrival-order application,
+  which is exactly what sorting on the coordinate exists to prevent. The gate now
+  uses the same `_as_int` / `_as_amount` coercers as the reader.
+  **This also answers an open question from the previous entry:** that fallback
+  bucket is *not* dead code on the bridge path. It was reachable.
+- **Two `reconcile.py` docstrings contradicted the code.** My own F6 fix had
+  falsified them and I did not update them - the second time in two rounds I have
+  left a docstring asserting a property I had just removed. `contact_is_known`
+  is a published field whose documented job is to tell a screen how to read
+  `silent`, and a frontend following the old text would have read
+  `contact_is_known=True, contact_age_seconds=20.0, silent=True` as an
+  inconsistent payload. It is consistent; the asymmetry is deliberate.
+
+### What the reviewer checked and did not call a defect
+
+Worth recording, because these were my own stated worries and three of them were
+unfounded:
+
+- `_CONTACT_SCAN_LIMIT = 50` **is not a hole.** Probed with 60 newer
+  non-matching RPC rows ahead of the matching one: contact is lost and the flag
+  degrades to the instant clock, which is the safe direction, and it can only
+  fail that way.
+- `RPC_CAPTURE_SOURCES` **matches `userscript/src/capture.js` exactly**, checked
+  against the JSDoc union, `PAGE_EVENT_SOURCES`, and both snapshot emitters.
+- `duplicate_player_in_list` **is the least risky of the three rules.** The
+  reviewer could construct no legitimate Fantrax pick log with a repeated player
+  identity. My worry about a drafted/dropped/re-drafted player was misplaced:
+  that is a transaction, not a draft record.
+- Editing the unmerged migration `0020` in place **is fine** - `0020` does not
+  exist off this branch.
+
+One asymmetry found and deliberately not fixed: `source` is not consulted on the
+ingest path, so a capture from an unknown source is refused as *proof of life*
+but still trusted as a *source of picks*. The weaker claim is gated harder than
+the stronger one. Named here rather than changed, because tightening it without
+a real payload would be another guess.
+
+### Gates
+
+All from `backend/`, which is the `working-directory` every Python CI job
+declares. From the repo root the same commands report other lanes' files and a
+number that was never this lane's to read.
+
+- `python -m ruff check .` - All checks passed
+- `python -m ruff format --check .` - 218 files already formatted
+- `python -m mypy` - Success, 209 source files
+- `python -m pytest tests/test_draft_feed.py` - 59 passed
+- Six mutations, each confirmed **present in the file** by marker count before
+  the run was read. All six killed, zero markers left behind.
+
+### Could not verify
+
+- **Whether the keeper gap matters in practice.** No real Fantrax auction payload
+  has ever been seen, so whether `salary` appears in one at all is unknown. The
+  gap is named from the alias list, which is checkable; its frequency is not.
+  *Not disproved, unestablished.*
+- **Whether the coordinate rule refuses a legitimate board.** Confirmed by the
+  reviewer that a snake log where only *some* records carry an ordinal is refused
+  entirely. Whether a real board looks like that is still unknown, and it remains
+  the sharpest live risk in the unit.
+- **Whether the recogniser fires at all on a real draft-room payload.** Unchanged
+  and unchangeable here. This is what the owner's mock-draft capture would settle.
+- **`begin_nested()` on Postgres.** The CI Postgres job was cancelled mid-run by
+  concurrency on my previous head, so the one dialect that path exists for is
+  still unverified by me at the time of writing.
+
+### A CI reading worth keeping
+
+My run on `2e06c89` reported `conclusion: failure`. It had **zero failed steps**,
+and **none of its ten jobs was ever assigned a runner**. Nothing had failed;
+nothing had run. Two obvious explanations were checked and both are false:
+`cancel-in-progress` did not do it, because the cancel at 15:43:06Z precedes the
+next commit at 15:52:52Z by ten minutes, and it was not a timeout, because
+`ci.yml` declares no `timeout-minutes` and the default is 360.
+
+The coordinator had independently found the mirror image: `mergeStateStatus:
+CLEAN` on a PR whose gates never ran. **`failure` with zero failed steps and
+`CLEAN` with zero runs are the same non-event wearing different colours.** The
+field that discriminates is neither - it is whether any step exists. Recorded
+because a merge decision was nearly made on each of them in the same hour.
