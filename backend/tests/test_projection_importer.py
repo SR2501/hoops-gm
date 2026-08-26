@@ -942,6 +942,72 @@ class TestHashtagProjectionContract:
         for invented in ("Nikola", "Jokic", "Wembanyama", "Doncic"):
             assert invented not in text, "no vendor row may be committed"
 
+    def test_every_declared_hazard_is_actually_present_in_the_fixture(self) -> None:
+        """Each ``deliberate_fixture_hazards`` entry is checked against the file.
+
+        Excluded defect: the metadata claims this fixture exercises a parser
+        hazard that it no longer contains, so a test suite reads as covering a
+        case that was quietly edited away.
+
+        The ``privacy_safe_fixture_sha256`` assertion above does not exclude
+        that. It covers every byte, so the fixture cannot drift *silently* —
+        but it fails on the bytes, and the person repairing it is looking at
+        the file, not at the claim about the file three keys away in a
+        different document. Update the hash and the stale declaration
+        survives. That is a discipline gap rather than a silent one, and this
+        turns it into a mechanical one.
+
+        A reading in which this passes and the defect is present: a detector
+        loose enough to match some *other* row would keep matching after its
+        intended row was removed. That is why each pattern below is the exact
+        rendered cell rather than its shape, and why each was verified by
+        deleting its row and watching this test fail — the patterns are
+        pinned by construction, not by inspection.
+        """
+        metadata = json.loads(
+            (FIXTURES / "hashtag_sample.metadata.json").read_text(encoding="utf-8")
+        )
+        text = load_bytes("hashtag_sample.csv").decode("utf-8")
+
+        # Keyed on the declaration's own words, so editing a declaration
+        # without editing its detector fails here rather than drifting apart.
+        detectors: tuple[tuple[str, str], ...] = (
+            ("repeated header row", r"(?m)^R#(?:,|\t|\s)"),
+            ("quoted multi-position cell", r'"[A-Z]{1,2},[A-Z]{1,2}"'),
+            ("zero-attempt free-throw cell", r"0\.000 \(0\.0/0\.0\)"),
+            ("low-volume shooting cell", r"0\.667 \(0\.2/0\.3\)"),
+        )
+
+        declared = metadata["deliberate_fixture_hazards"]
+        assert len(declared) == len(detectors), (
+            "a hazard was declared without a detector, or a detector outlived its "
+            "declaration; both ends must move together or this check stops covering "
+            f"the list it claims to cover - {len(declared)} declared, {len(detectors)} checked"
+        )
+
+        for phrase, pattern in detectors:
+            matching = [entry for entry in declared if phrase in entry.lower()]
+            assert len(matching) == 1, (
+                f"expected exactly one declaration mentioning {phrase!r}, found "
+                f"{len(matching)}; an ambiguous or missing declaration makes the "
+                "detector below check something the metadata no longer claims"
+            )
+            assert re.search(pattern, text), (
+                f"metadata declares {matching[0]!r} but the fixture no longer "
+                "contains it, so the parser case it exists to exercise is gone "
+                "while the declaration still advertises it"
+            )
+
+        # The repeated-header hazard is a *repeat*: one header line is the
+        # ordinary contract, not the hazard. Asserted separately because the
+        # detector above matches the leading header too, and would therefore
+        # pass on a fixture whose mid-table repeat had been deleted.
+        assert len(re.findall(r"(?m)^R#(?:,|\t|\s)", text)) >= 2, (
+            "the repeated-header hazard needs a header row *after* the first; "
+            "with only the leading header this fixture stops exercising the "
+            "mid-table repeat the live source emits roughly every 13 rows"
+        )
+
     def test_header_contract_is_pinned_exactly(self) -> None:
         """A differently-configured paste is refused, not best-effort mapped.
 
