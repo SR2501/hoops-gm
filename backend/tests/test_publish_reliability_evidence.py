@@ -384,11 +384,18 @@ def test_publishing_over_a_real_schedule_does_not_relabel_where_it_came_from(
     replaces (that *some* SCHEDULE row exists) is satisfied by the relabelled
     row, which is why row-existence checks never caught it.
 
-    Note what is *not* asserted: that a conflict raises. It does not raise here,
-    because the fix in ``publish_reliability_evidence`` is to skip deriving when
-    a real cohort is already current. The raise is asserted separately below,
-    against the primitive, so that this test cannot pass by the collision having
-    been made unreachable in some other way.
+    Note what is *not* asserted: that a conflict raises. **Nothing raises, here
+    or anywhere.** An earlier draft of this docstring said "the raise is asserted
+    separately below, against the primitive" — that was true of a fix which has
+    since been reverted, and the sentence outlived it. ``LineageSourceConflict``
+    occurs zero times in this repository. The test "below" asserts the
+    *opposite*: that the primitive still relabels.
+
+    That matters more than a stale cross-reference usually would, because the
+    sentence was load-bearing. It told a reader that an independent primitive
+    level guard ruled out the failure mode this test's argument depends on. No
+    such guard exists, so this test is the *only* thing standing between the
+    publisher and the relabel, and it should be read that way.
     """
 
     _backfilled_season(session)
@@ -414,6 +421,71 @@ def test_publishing_over_a_real_schedule_does_not_relabel_where_it_came_from(
     # And the claim it published over that real cohort still serves.
     run = compute_reliability_scorecards(session, claim=result.claim)
     assert run.scorecards
+
+
+def test_the_reported_schedule_source_is_the_one_the_database_holds(
+    session: Session,
+) -> None:
+    """The printed provenance must be read back, not assumed from the branch taken.
+
+    ``main`` used to print ``"schedule_source": DERIVED_SOURCE`` as a constant.
+    On the skip branch this command writes no schedule row at all, so the JSON
+    announced ``schedule_derived: false`` beside a derived source while
+    ``refresh_runs.source`` held ``nba_api:ScheduleLeagueV2`` — an operator-facing
+    field confidently describing something other than what it says, on the exact
+    path added to *protect* that provenance.
+
+    Same shape as the ``created 2460, updated 1230`` count this class's docstring
+    records, and found the same way: by comparing the reported value against the
+    store rather than against the code that produced it. An independent review
+    found it; no test touched ``main``'s output before this one.
+
+    Both branches are asserted, because a constant equal to the derived value is
+    already correct on the derive branch — checking only that branch is the
+    reading in which this test passes and the defect survives untouched.
+    """
+
+    _backfilled_season(session)
+    _observations(session)
+
+    derived_result = publish_reliability_evidence(session, season=SEASON)
+    assert derived_result.schedule_derived is True
+    assert derived_result.schedule_source == DERIVED_SOURCE
+
+    recorded = session.scalars(
+        select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
+    ).one()
+    assert derived_result.schedule_source == recorded.source, (
+        "the reported source must be the recorded one, not the branch's constant"
+    )
+
+
+def test_the_reported_schedule_source_is_the_real_importers_on_the_skip_branch(
+    session: Session,
+) -> None:
+    """The skip branch reports the importer that actually wrote the cohort.
+
+    This is the half that fails against a hard-coded ``DERIVED_SOURCE``: the
+    command skips deriving, writes no schedule row, and must report the
+    provenance already in the database rather than the one it would have written.
+    """
+
+    _backfilled_season(session)
+    _observations(session)
+
+    real = schedule_from_played_games(session, season=SEASON)
+    import_schedule(session, real)
+    session.commit()
+
+    result = publish_reliability_evidence(session, season=SEASON)
+
+    assert result.schedule_derived is False
+    assert result.schedule_source == SCHEDULE_REFRESH_SOURCE
+    assert result.schedule_source != DERIVED_SOURCE
+    recorded = session.scalars(
+        select(RefreshRun).where(RefreshRun.artifact_type == RefreshArtifactType.SCHEDULE)
+    ).one()
+    assert result.schedule_source == recorded.source
 
 
 def test_record_refresh_still_relabels_which_is_why_the_publisher_skips(
@@ -464,9 +536,20 @@ def test_record_refresh_still_relabels_which_is_why_the_publisher_skips(
     So the hazard is closed where this PR created reach for it — the publisher
     skips deriving when a real cohort is already current, which the test above
     pins — and left open in the primitive, recorded here and in the handoff, to
-    be closed by a unit that owns the manifest regeneration alongside it. The
-    revert also removed ``import_schedule(source=...)``, which is what made a
-    second source possible, so the defect is back to **latent** rather than live.
+    be closed by a unit that owns the manifest regeneration alongside it.
+
+    **The defect is reachable, not latent, and an earlier draft of this docstring
+    said otherwise.** It claimed the revert "also removed
+    ``import_schedule(source=...)``". It did not: ``origin/main`` has
+    ``import_schedule(session, parsed)``, this PR adds
+    ``source: str = SCHEDULE_REFRESH_SOURCE``, and line 315 of the publisher
+    passes ``source=DERIVED_SOURCE``. SCHEDULE/``nba-schedule`` is the only
+    multi-source scope in the codebase and **this PR is what made it one**. The
+    claim was inherited from a review of the tree rather than driven, and it is
+    contradicted by the file it was written in.
+
+    So what holds the defect off is the runtime skip below, in one of the two
+    orderings — not an absence of reach.
 
     **The reading in which this test passes and the defect is absent:** none —
     it asserts the relabel directly. When the primitive is fixed, this test

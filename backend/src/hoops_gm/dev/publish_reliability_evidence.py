@@ -115,6 +115,7 @@ class PublishResult:
     games: int
     team_schedule_rows: int
     schedule_derived: bool
+    schedule_source: str | None
     claim: ReliabilityCohortClaim
 
 
@@ -273,8 +274,27 @@ def publish_reliability_evidence(
     ``ScheduleLeagueV2`` — a lie in the one row that answers "where did this
     schedule come from", with the true answer gone and no second row to notice.
 
-    **``record_refresh`` still does that**, and this skip is what keeps this
-    command away from it. Fixing the primitive edits a file fingerprinted by
+    **``record_refresh`` still does that**, and this skip closes **one of the two
+    directions** in which this PR created reach for it. Being precise about which,
+    because an earlier draft claimed the hazard was simply "closed":
+
+    *Publish after a real import* — closed. The skip means the derive branch runs
+    only when the SCHEDULE scope for the season is empty, so ``record_refresh``
+    necessarily takes the insert path and there is nothing to overwrite.
+
+    *Real import after a publish* — **not closed, and it cannot be closed here.**
+    ``ingest/schedule_import.py`` calls ``import_schedule`` with the default
+    source; if a derived row already sits at the same content version it is
+    relabelled to ``ScheduleLeagueV2``. The relabel is performed by the importer,
+    not by this command, so no amount of skipping here prevents it.
+
+    That direction is left open deliberately, and it is the benign one: the
+    surviving label is *accurate*, because the real importer really did just
+    write those rows. What is lost is the weaker derived label, not the true
+    provenance — so it is not the "lie in the row" that motivated the finding
+    above. It is still a loss of history, and it is recorded rather than fixed.
+
+    Fixing the primitive edits a file fingerprinted by
     ``docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json``, so
     the fix cannot land without regenerating that manifest.
 
@@ -331,11 +351,23 @@ def publish_reliability_evidence(
         .select_from(TeamScheduleEntry)
         .where(TeamScheduleEntry.season == season)
     )
+    # Read the source back off the refresh row rather than reporting the constant
+    # this command *would* have written. On the skip branch it did not write one,
+    # and the recorded provenance is the real importer's. Printing DERIVED_SOURCE
+    # unconditionally made the operator-facing JSON claim a provenance the
+    # database contradicted, on the very path added to protect that provenance.
+    recorded = current_refresh(
+        session,
+        RefreshArtifactType.SCHEDULE,
+        artifact_key=NBA_SCHEDULE_ARTIFACT_KEY,
+        season=season,
+    )
     return PublishResult(
         season=season,
         games=games,
         team_schedule_rows=persisted_rows or 0,
         schedule_derived=derived,
+        schedule_source=recorded.source if recorded is not None else None,
         claim=claim,
     )
 
@@ -400,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
                 "derivation_version": result.claim.derivation_version,
                 "window_start": result.claim.window_start.isoformat(),
                 "as_of_date": result.claim.as_of_date.isoformat(),
-                "schedule_source": DERIVED_SOURCE,
+                "schedule_source": result.schedule_source,
             },
             indent=2,
         )

@@ -25933,3 +25933,97 @@ meant to strip the refusal did not match; the file was unchanged, the tests pass
 would have read as a clean mutation control. The presence check printed before the result showed the
 mutation absent, which is the only reason I caught it. Confirming the mutation is *in the file* is
 not ceremony around the run - on this occasion it was the entire content of the check.
+
+### The defect is reachable, not latent - and `import_schedule(source=...)` is still here
+
+The architect verified at `ab633c7` that `import_schedule` had lost its `source=` parameter, and
+concluded the relabel defect had returned to latent and that the cross-lane edit needing
+`data-engineer` acceptance was "closed by deletion". **Both are false, and I should have caught the
+first one sooner because it is my own file.** Driven:
+
+- `origin/main`: `def import_schedule(session: Session, parsed: ScheduleParseResult) -> ImportCounts`
+- HEAD: `(session, parsed, *, source: str = SCHEDULE_REFRESH_SOURCE)`, `importers.py` at `+27/-3`
+- `dev/publish_reliability_evidence.py:315` calls it with `source=DERIVED_SOURCE`
+
+So two distinct sources still reach `record_refresh` for the SCHEDULE artifact, the cross-lane edit
+is still in the PR and still needs acceptance, and **the only thing preventing the relabel is the
+publisher skip** rather than an absence of reach.
+
+**And the hazard has two directions, of which the skip closes one.** Publish-after-import is closed:
+the derive branch runs only when the SCHEDULE scope is empty, so `record_refresh` must insert.
+Import-after-publish is **not** closed and cannot be closed from the publisher, because the relabel is
+performed by `import_schedule`. That direction is benign - the surviving label is *accurate*, since
+the real importer did just write those rows - so it destroys the weaker derived label rather than the
+true provenance. It is recorded rather than fixed, and the closure claim has been narrowed to the
+direction actually closed.
+
+### A stale cross-reference that was load-bearing
+
+`test_publish_reliability_evidence.py` carried the sentence *"the raise is asserted separately below,
+against the primitive, so that this test cannot pass by the collision having been made unreachable in
+some other way."* That was true of a fix which has since been reverted, and **the sentence outlived
+the code**: `LineageSourceConflict` occurs zero times in the repository, and the test "below" asserts
+the opposite. It survived a `git checkout` restore because reverting code does not revert prose about
+the code.
+
+The shape: a stale cross-reference is usually cosmetic, but this one **told a reader that an
+independent guard ruled out the failure mode the surrounding argument depends on**. Removing a fix
+leaves behind every sentence that assumed it, and those sentences are load-bearing exactly when they
+describe a guarantee rather than a mechanism.
+
+### An error code shared by several mechanisms pins none of them
+
+`test_refuses_when_a_schedule_row_is_deleted_under_the_published_claim` asserted only
+`reliability_not_current`, and its docstring said the deletion "moves the schedule fingerprint, and is
+caught there". The fingerprint does move, and **the code never gets as far as comparing it**:
+`verify_refresh` raises first on the completeness arithmetic (claims 6 persisted rows, fingerprints 5)
+and `_require_current` converts that to `cannot verify`.
+
+Driven with a control, disabling the completeness raise at `lineage.py:815`: `status_code == 409`
+**passed**, `error == "reliability_not_current"` **passed**, and only the newly added detail assertion
+failed - catching `registered s...` (the stale path) instead of `cannot verify...`. So the error code
+could not distinguish the two mechanisms and the docstring's claim was unpinned. **Where one code
+covers several mechanisms, asserting the code is a coverage check, not a mechanism check.**
+
+---
+
+## 2026-08-21 - backend - retraction: two claims in the entries above are false
+
+**Retracting my own record, not correcting someone else's.** An independent review at `3e84520`
+read the entries above against the tree and found three prose defects. All three were real; two of
+them are in this file, and the append-only rule means the honest repair is a retraction below rather
+than an edit above.
+
+**Retraction 1 - the primitive was never fixed.** Entries above (items around the `record_refresh`
+work) say the primitive now refuses to relabel. **It does not.** `LineageSourceConflict` does not
+exist at this HEAD and never reached `main`: it was written, it broke the injury-cohort manifest
+fingerprint through `db/lineage.py`, and it was reverted byte-for-byte. `record_refresh` still
+performs `existing.source = source` in place, silently, at `lineage.py`. The defect is **open**.
+It is pinned by `test_record_refresh_still_relabels_which_is_why_the_publisher_skips` in
+`backend/tests/test_publish_reliability_evidence.py` - a test whose name asserts a bug is present -
+and held off this command by the publisher's skip branch. **Do not remove that skip on the assumption
+the primitive is safe.**
+
+**Retraction 2 - it is live, not latent, and I made it so.** I also recorded that the revert removed
+`import_schedule(source=...)` and returned the defect to latent. **It did not.** `import_schedule`
+still carries `source: str = SCHEDULE_REFRESH_SOURCE` in `ingest/importers.py`, this PR added that
+parameter, and `publish_reliability_evidence` passes `source=DERIVED_SOURCE`. SCHEDULE /
+`nba-schedule` is the only artifact scope with two possible sources today, **and this PR is what
+made it one** - every other `record_refresh` call site passes a per-artifact constant. So the
+reachability the entries above deny is reachability this branch introduced. One ordering
+(publish-then-import) is not closed by the skip and cannot be closed from the publisher;
+`schedule_import.py` performs the relabel there. It is benign only because the surviving label is
+the *accurate* one and what is lost is the weaker derived label.
+
+**The shape both share.** Each entry recorded the change I made rather than the change that survived,
+and the two diverged when the revert landed. A handoff written from intent instead of from the tree
+is exactly the unexamined inheritance this project keeps finding, except self-inflicted, and it is the
+kind no gate catches - the tests were green under both false sentences because neither sentence was
+pinned by anything.
+
+**Open, and not mine to answer:** whether `record_refresh` losing provenance in place is a defect
+for any artifact type other than SCHEDULE. My reasoning is entirely about `import_schedule`, so the
+generalisation is unevidenced in either direction. That is an `architect` contract question.
+
+**Could not verify:** that no earlier entry in this file carries the same intent-versus-tree shape. I
+checked the entries this review named and the ones adjacent to them, not the whole file.

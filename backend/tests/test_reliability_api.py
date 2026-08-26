@@ -439,16 +439,31 @@ def test_refuses_when_the_rows_moved_under_the_published_claim(
 def test_refuses_when_a_schedule_row_is_deleted_under_the_published_claim(
     app: FastAPI, client: TestClient
 ) -> None:
-    """Deleting a schedule row moves the schedule fingerprint, and is caught there.
+    """Deleting a schedule row refuses at the schedule cohort check, before the join.
+
+    **The refusal is real but an earlier draft named the wrong mechanism inside
+    it.** It said the deletion "moves the schedule fingerprint, and is caught
+    there". The fingerprint does move — and the code never gets as far as
+    comparing it. ``verify_refresh`` raises ``ValueError`` first on the
+    completeness arithmetic, because the stored evidence claims 6 persisted team
+    rows while 5 are present, and ``_require_current`` converts that to
+    ``cannot verify``. The ``is_current`` fingerprint comparison is unreachable
+    for this input.
+
+    Driven, not read: the response detail is ``cannot verify current
+    schedule:nba-schedule cohort for season 2025-26``, and an independent review
+    bypassed both the ``is_current`` and version comparisons with all tests still
+    passing. The detail is asserted below rather than only the error code,
+    because ``reliability_not_current`` is shared by at least three distinct
+    mechanisms and the code alone pins none of them.
 
     This test previously claimed to drive the home/away coverage join at
     ``reliability.py:508`` and accepted either ``reliability_not_current`` or
     ``reliability_inputs_refused``. An independent review drove it: the input
     only ever produces the **former**, because ``_require_current(SCHEDULE)`` at
-    ``:357`` runs before ``_source_snapshot`` at ``:383`` and a deleted row
-    changes ``schedule_content_version``. So the assertion could not fail for
-    the reason it named, and the docstring's "the schedule row count is still
-    even" was false as well — the fixture goes from 6 rows to 5.
+    ``:357`` runs before ``_source_snapshot`` at ``:383``. So the assertion could
+    not fail for the reason it named, and the docstring's "the schedule row count
+    is still even" was false as well — the fixture goes from 6 rows to 5.
 
     Split into two tests rather than tightened in place, because both mechanisms
     are real and each needs an input that reaches it. The coverage join is
@@ -472,6 +487,9 @@ def test_refuses_when_a_schedule_row_is_deleted_under_the_published_claim(
 
     assert response.status_code == 409
     assert _error_of(response) == "reliability_not_current"
+    assert response.json()["detail"] == (
+        "cannot verify current schedule:nba-schedule cohort for season 2025-26"
+    ), "the error code is shared by several mechanisms; the detail is what pins this one"
 
 
 def test_refuses_a_final_game_with_no_schedule_coverage_at_all(
