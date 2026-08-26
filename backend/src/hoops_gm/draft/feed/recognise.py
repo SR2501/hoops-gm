@@ -327,6 +327,28 @@ def recognise_bridge_payload(
         return RecognitionResult(rejected="wrong_league")
 
     if not isinstance(body_json, dict) or not isinstance(body_json.get("responses"), list):
+        # A Fantrax error arrives with HTTP 200 and a ``pageError`` block rather
+        # than a status code — ``fantraxapi``'s own ``_request`` checks for it
+        # after the status check, which is where the evidence for this comes
+        # from. Naming it is worth the branch: the common cause is an expired
+        # cookie, and "you are logged out" and "Fantrax changed its envelope"
+        # are otherwise the same string on the screen at the moment the owner
+        # has the least time to work out which one he is looking at.
+        page_error = body_json.get("pageError") if isinstance(body_json, dict) else None
+        if isinstance(page_error, dict):
+            code = page_error.get("code")
+            reason = f"page_error:{code}" if isinstance(code, str) and code else "page_error"
+            return RecognitionResult(
+                rejected=reason,
+                unrecognised=(
+                    UnrecognisedShape(
+                        keys=_keys_of(page_error),
+                        occurrences=1,
+                        example_locator="$.pageError",
+                        reason=reason,
+                    ),
+                ),
+            )
         return RecognitionResult(
             rejected="envelope_unrecognised",
             unrecognised=(

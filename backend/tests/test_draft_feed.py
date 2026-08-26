@@ -21,6 +21,7 @@ from __future__ import annotations
 import inspect
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from importlib.metadata import version
 from typing import Any
 
 import pytest
@@ -1228,33 +1229,72 @@ def test_the_envelope_shape_still_matches_the_pinned_client() -> None:
     """Excludes: this recogniser's envelope assumption rotting silently.
 
     There is no captured Fantrax draft-room response in this repository, so
-    there is nothing to record as a fixture of the real thing. What *is* real
-    is the pinned ``fantraxapi`` client, which talks to the same endpoint: it
-    posts ``leagueId`` as a query parameter and reads ``responses[i]["data"]``
-    out of the reply. Those two facts are exactly what ``recognise_bridge_
-    payload`` depends on, so reading them out of the installed source is a
-    genuine drift check rather than a restatement of our own constant.
+    there is nothing to record as a fixture of the real thing, and a synthesised
+    one committed to ``tests/fixtures`` would be a hand-written mock wearing a
+    recording's clothes — the manifest would have to carry a ``captured_at`` for
+    something never captured. What *is* a real artifact is the pinned
+    ``fantraxapi`` client, which talks to this exact endpoint. Reading the
+    expressions out of its installed source is a genuine drift check against a
+    third party rather than a restatement of our own constants.
 
-    What it does not exclude: that ``getDraftPicks`` returns draft *results*
-    rather than tradeable future pick assets. Nothing available here can settle
-    that. See ``docs/adapters/fantrax-official.md``.
+    What this does not exclude: that ``getDraftPicks`` returns draft *results*
+    rather than tradeable future pick assets. Nothing available here settles
+    that, and no amount of envelope checking will. See
+    ``docs/adapters/fantrax-official.md``.
     """
     fantraxapi = pytest.importorskip("fantraxapi.api")
-    source = inspect.getsource(fantraxapi)
+    source = inspect.getsource(fantraxapi._request)
 
-    assert '"leagueId"' in source, (
-        "The pinned client no longer passes leagueId as a query parameter, so "
-        "league_id_in() can no longer attribute a capture to a league."
+    assert version("fantraxapi") == "1.0.1", (
+        "The evidence below was read from 1.0.1. A different version needs "
+        "rereading rather than re-asserting."
     )
-    assert '"responses"' in source, (
-        "The pinned client no longer reads a 'responses' envelope, so the "
-        "recogniser's envelope assumption needs rechecking against it."
+
+    # The three facts recognise_bridge_payload actually depends on, quoted from
+    # the client rather than paraphrased.
+    assert 'params={"leagueId": league_id}' in source, (
+        "leagueId is no longer a query parameter, so league_id_in() can no "
+        "longer attribute a capture to a league and the pre-filter is void."
     )
-    assert '"data"' in source
-    assert '"msgs"' in source, (
-        "The request still batches msgs, which is why a captured response "
-        "cannot be attributed to an RPC method and discrimination is on content."
+    assert 'response_json["responses"]' in source, (
+        "The reply envelope is no longer keyed on 'responses'."
     )
+    assert '[r["data"] for r in response_json["responses"]]' in source, (
+        "The reply is no longer a positionally aligned list of {'data': ...} "
+        "blocks, which is what makes scanning every element correct."
+    )
+    assert 'json_data = {"msgs":' in source, (
+        "The request still batches msgs and still carries the method name in "
+        "the body, which the userscript does not capture - which is why this "
+        "recogniser discriminates on content and not on an RPC name."
+    )
+    assert '"pageError" in response_json' in source, (
+        "Fantrax no longer signals errors in-band with HTTP 200, so the "
+        "page_error branch in the recogniser may be dead."
+    )
+
+
+def test_a_logged_out_reply_is_named_rather_than_called_a_shape_change() -> None:
+    """Excludes: an expired cookie presenting as a Fantrax redesign.
+
+    Fantrax answers a logged-out request with HTTP 200 and a ``pageError``
+    block — read from ``fantraxapi._request``, which checks for it *after* the
+    status check for exactly this reason. Both states produce no picks. Only
+    one of them is fixed by logging in again, and on draft night the owner has
+    minutes, not an afternoon, to tell them apart.
+    """
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json={"pageError": {"code": "WARNING_NOT_LOGGED_IN", "title": "Not Logged In"}},
+        dedupe_key="k",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+
+    assert result.rejected == "page_error:WARNING_NOT_LOGGED_IN"
+    assert result.instants == ()
+    assert result.unrecognised[0].example_locator == "$.pageError"
 
 
 def test_the_recogniser_reads_every_response_in_the_batch() -> None:
