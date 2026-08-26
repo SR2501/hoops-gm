@@ -75,6 +75,15 @@ class SourceFreshness:
     ``age_seconds`` is ``None`` when ``last_seen_at`` is, and the two move
     together: there is no reading of this object in which a source looks
     current because it has never been heard from.
+
+    Two different clocks are reported, because they answer two different
+    questions and conflating them was a real defect here. ``last_seen_at`` is
+    the newest *draft instant* — "when did anything new happen". ``contact_at``
+    is the newest evidence the transport itself is alive — "is it still
+    listening". Between two picks in a live snake draft nothing new happens for
+    minutes at a time, so a single clock reports ``silent`` on a bridge that is
+    capturing perfectly, and an indicator that cries wolf during ordinary play
+    is one the owner learns to ignore before the moment it is true.
     """
 
     transport: SourceTransport
@@ -82,6 +91,8 @@ class SourceFreshness:
     age_seconds: float | None
     instant_count: int
     #: True when the source has produced nothing, or nothing recently enough.
+    #: Judged against ``contact_at`` when contact is known, otherwise against
+    #: ``last_seen_at`` — never a mixture, and ``contact_is_known`` says which.
     silent: bool
     #: The threshold ``silent`` was judged against, so the screen can say what
     #: "quiet" meant rather than hard-coding a matching number of its own.
@@ -94,6 +105,17 @@ class SourceFreshness:
     #: the two clocks is wrong and that is worth seeing before draft night,
     #: not because anything here acts on it.
     claim_skew_seconds: float | None = None
+    #: When this transport last showed evidence of being alive, independent of
+    #: whether it said anything new. ``None`` when the caller has no such
+    #: evidence — which is a different state from "it has been quiet", and
+    #: ``contact_is_known`` keeps them apart.
+    contact_at: datetime | None = None
+    contact_age_seconds: float | None = None
+    #: False means nobody supplied proof-of-life for this transport, so
+    #: ``silent`` fell back to the instant clock and will read True during an
+    #: ordinary gap between picks. Published so the screen can say which
+    #: question it is actually answering.
+    contact_is_known: bool = False
 
 
 def freshness_of(
@@ -102,6 +124,7 @@ def freshness_of(
     transport: SourceTransport,
     now: datetime,
     silence_threshold: timedelta,
+    contact_at: datetime | None = None,
 ) -> SourceFreshness:
     """Age of the newest instant this transport produced, on our clock.
 
@@ -112,16 +135,29 @@ def freshness_of(
     an instant carrying ``transport`` would have to have been produced by a
     different transport, which :mod:`hoops_gm.draft.feed.recognise` sets at
     construction and never copies between instants.
+
+    ``contact_at`` is optional proof the transport is alive that did not come
+    from a draft instant — for the bridge, that a capture landed at all. When
+    given it is what ``silent`` is judged against, because a bridge capturing
+    continuously through a four-minute deliberation is not silent, it is
+    waiting, and reporting those identically trains the owner to dismiss the
+    one indicator that matters. It must be evidence *this* transport produced;
+    the caller records it, this function only measures it.
     """
     mine = [instant for instant in instants if instant.provenance.transport is transport]
+    contact_age = (now - contact_at).total_seconds() if contact_at is not None else None
+    threshold = silence_threshold.total_seconds()
     if not mine:
         return SourceFreshness(
             transport=transport,
             last_seen_at=None,
             age_seconds=None,
             instant_count=0,
-            silent=True,
-            silence_threshold_seconds=silence_threshold.total_seconds(),
+            silent=contact_age > threshold if contact_age is not None else True,
+            silence_threshold_seconds=threshold,
+            contact_at=contact_at,
+            contact_age_seconds=contact_age,
+            contact_is_known=contact_at is not None,
         )
 
     newest = max(mine, key=lambda instant: instant.provenance.received_at)
@@ -134,10 +170,13 @@ def freshness_of(
         last_seen_at=last_seen_at,
         age_seconds=age,
         instant_count=len(mine),
-        silent=age > silence_threshold.total_seconds(),
-        silence_threshold_seconds=silence_threshold.total_seconds(),
+        silent=(contact_age if contact_age is not None else age) > threshold,
+        silence_threshold_seconds=threshold,
         source_claimed_at=claimed,
         claim_skew_seconds=skew,
+        contact_at=contact_at,
+        contact_age_seconds=contact_age,
+        contact_is_known=contact_at is not None,
     )
 
 
@@ -340,6 +379,7 @@ def reconcile(
     right_transport: SourceTransport = SourceTransport.OFFICIAL_HTTP,
     now: datetime,
     silence_threshold: timedelta = timedelta(minutes=2),
+    contact_at: dict[SourceTransport, datetime] | None = None,
 ) -> ReconciliationReport:
     """Compare two sources' readings. Detection only; nothing is resolved."""
     left_list = list(left)
@@ -393,6 +433,7 @@ def reconcile(
             transport=transport,
             now=now,
             silence_threshold=silence_threshold,
+            contact_at=(contact_at or {}).get(transport),
         )
         for transport in (left_transport, right_transport)
     )

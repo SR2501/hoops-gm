@@ -50,7 +50,7 @@ from hoops_gm.api.security import require_loopback_host
 from hoops_gm.db.models.draft import Draft
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed import service as feed_service
-from hoops_gm.draft.feed.observations import UnrecognisedShape
+from hoops_gm.draft.feed.observations import ObservedInstant, UnrecognisedShape
 from hoops_gm.draft.feed.reconcile import ReconciliationReport, SourceFreshness
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
@@ -81,6 +81,12 @@ class FreshnessOut(BaseModel):
     last_seen_at: datetime | None
     age_seconds: float | None
     instant_count: int
+    #: Whether this source is quiet. Judged against ``contact_at`` when
+    #: ``contact_is_known``, otherwise against ``last_seen_at``. The
+    #: distinction matters on draft night: a bridge that has captured within
+    #: the threshold but seen no new pick is waiting through a deliberation,
+    #: not broken, and reporting those two identically is how an indicator
+    #: becomes noise before the evening it is needed.
     silent: bool
     #: What "quiet" meant, so a screen states the threshold it was judged
     #: against instead of hard-coding a second one that can disagree.
@@ -91,6 +97,14 @@ class FreshnessOut(BaseModel):
     #: Source claim minus our receipt, in seconds. A large value means one of
     #: the two clocks is wrong; nothing here acts on it.
     claim_skew_seconds: float | None = None
+    #: When this transport last proved it was alive, regardless of whether it
+    #: said anything new. For the bridge this is the newest stored capture for
+    #: this league. ``null`` with ``contact_is_known=false`` means no such
+    #: evidence exists — which is what the official source always reports,
+    #: because its poll happens during ingest and is not recorded.
+    contact_at: datetime | None = None
+    contact_age_seconds: float | None = None
+    contact_is_known: bool = False
 
 
 class IndependenceOut(BaseModel):
@@ -217,6 +231,16 @@ class SourceOutcomeOut(BaseModel):
     snapshots_for_this_league: int
     rejected: dict[str, int]
     instants_recognised: int
+    #: Instants stored with a field nulled because their ``kind`` forbids it: a
+    #: price on a snake pick, ordinals on an auction sale. Storing the record
+    #: with the impossible field dropped is preferred to refusing it, because
+    #: the seat and the player are the parts a board needs. Non-zero here means
+    #: the source is publishing a shape we only partly understand.
+    coerced_to_kind: int
+    #: Recognised instants the database refused. Expected to be zero. Non-zero
+    #: means a record we thought we understood could not be represented, and it
+    #: is counted rather than raised so one bad row does not cost the run.
+    observations_rejected: int
     observations_written: int
     observations_already_present: int
     unrecognised: list[UnrecognisedOut]
@@ -291,6 +315,9 @@ def _freshness_out(freshness: SourceFreshness) -> FreshnessOut:
         silence_threshold_seconds=freshness.silence_threshold_seconds,
         source_claimed_at=freshness.source_claimed_at,
         claim_skew_seconds=freshness.claim_skew_seconds,
+        contact_at=freshness.contact_at,
+        contact_age_seconds=freshness.contact_age_seconds,
+        contact_is_known=freshness.contact_is_known,
     )
 
 
@@ -351,14 +378,28 @@ def _reconciliation_out(report: ReconciliationReport) -> ReconciliationOut:
             )
             for item in report.disagreements
         ],
-        only_bridge=[
-            instant.player_label or "" for instant in report.only_left if instant.player_label
-        ],
-        only_official=[
-            instant.player_label or "" for instant in report.only_right if instant.player_label
-        ],
+        only_bridge=[_one_sided_label(instant) for instant in report.only_left],
+        only_official=[_one_sided_label(instant) for instant in report.only_right],
         caveats=list(report.caveats),
     )
+
+
+def _one_sided_label(instant: ObservedInstant) -> str:
+    """How a one-sided reading is named on the screen.
+
+    Never returns an empty string and never drops the row. The previous form
+    filtered on ``if instant.player_label``, so an instant keyed on
+    ``player_external_id`` alone — a supported state, since ``matching_key``
+    prefers the external id and a record naming only ``playerId`` is accepted —
+    disappeared from a list whose entire purpose is making one-sided readings
+    visible. ``only_left`` would be non-empty while ``only_bridge`` rendered as
+    ``[]``, so "only one source saw this pick" read as "nothing to report".
+    """
+    if instant.player_label:
+        return instant.player_label
+    if instant.player_external_id:
+        return f"player id {instant.player_external_id}"
+    return f"unnamed instant at {instant.provenance.locator}"
 
 
 def _status_out(status: feed_service.FeedStatus) -> FeedStatusResponse:
@@ -473,6 +514,8 @@ def ingest_feed(
                 snapshots_for_this_league=source.snapshots_for_this_league,
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
+                coerced_to_kind=source.coerced_to_kind,
+                observations_rejected=source.observations_rejected,
                 observations_written=source.observations_written,
                 observations_already_present=source.observations_already_present,
                 unrecognised=[_unrecognised_out(shape) for shape in source.unrecognised],

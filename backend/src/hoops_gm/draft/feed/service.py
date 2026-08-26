@@ -34,11 +34,13 @@ owner would find out at pick 30 rather than pick 8.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models import (
@@ -78,6 +80,8 @@ from hoops_gm.draft.feed.reconcile import (
 from hoops_gm.draft.state import DraftLogError
 from hoops_gm.identity.names import normalize_key
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
+
+logger = logging.getLogger(__name__)
 
 #: How many stored captures one ingest examines, newest first.
 #:
@@ -141,6 +145,15 @@ class SourceOutcome:
     #: possibility, not a bug in this unit, and it has a different remedy from
     #: every other zero on this screen.
     snapshots_for_this_league: int = 0
+    #: Instants stored with a field dropped because their ``kind`` forbids it —
+    #: a price on a snake pick, ordinals on an auction sale. Non-zero is a hint
+    #: that the draft's snapshotted format disagrees with what the source
+    #: publishes, which is worth seeing before it becomes a wrong board.
+    coerced_to_kind: int = 0
+    #: Instants the database refused. Zero is the expected value; a non-zero one
+    #: means a recognised record could not be represented, and is published
+    #: rather than raised so the rest of the run still lands.
+    observations_rejected: int = 0
     #: Artifacts that were examined and rejected outright, by reason.
     rejected: dict[str, int] = field(default_factory=dict)
     instants_recognised: int = 0
@@ -250,17 +263,29 @@ def _store(
     participants: dict[str, int],
     existing: set[tuple[str, str, str]],
     bridge_payload_ids: dict[str, int] | None = None,
-) -> tuple[int, int]:
-    """Write recognised instants as observations. Returns ``(written, seen)``.
+) -> tuple[int, int, int]:
+    """Write recognised instants as observations.
+
+    Returns ``(written, already_present, rejected)``.
 
     Idempotent on ``(transport, artifact_key, locator)`` — checked in Python
     against a set read once, *and* backed by the unique constraint. The set
     alone would be a race and the constraint alone would abort the transaction
     on Postgres, so both are here: the set makes the ordinary re-ingest cheap
     and the constraint makes the guarantee real.
+
+    **Each row is written inside its own savepoint.** Not defensive
+    decoration: this table carries a CHECK tying ``kind`` to the fields it
+    permits, and an independent review found two ordinary payload shapes that
+    violated it. Those specific shapes are now conformed in the recogniser, but
+    the class of failure is the point — a single unexpected record must not
+    abort the flush and take every *other* observation of the run down with it,
+    returning 500 to the one screen the owner is relying on mid-draft. A bad
+    row is skipped and counted; the run continues.
     """
     written = 0
     already = 0
+    rejected_rows = 0
     for instant in result.instants:
         provenance = instant.provenance
         key = (provenance.transport.value, provenance.artifact_key, provenance.locator)
@@ -287,10 +312,23 @@ def _store(
             pick_in_round=instant.pick_in_round,
             amount=instant.amount,
         )
-        session.add(row)
+        try:
+            with session.begin_nested():
+                session.add(row)
+                session.flush()
+        except IntegrityError:
+            logger.warning(
+                "draft_feed.observation_rejected",
+                extra={
+                    "draft_id": draft.id,
+                    "transport": provenance.transport.value,
+                    "locator": provenance.locator,
+                },
+            )
+            rejected_rows += 1
+            continue
         written += 1
-    session.flush()
-    return written, already
+    return written, already, rejected_rows
 
 
 def _tally(counter: dict[str, int], reason: str) -> None:
@@ -324,6 +362,8 @@ def ingest_bridge(
     already = 0
     examined = 0
     snapshots = 0
+    coerced = 0
+    rejected_rows = 0
 
     for row in rows:
         # Cheap pre-filter on the URL, which carries the league id. Skipping
@@ -356,7 +396,8 @@ def ingest_bridge(
             _tally(rejected, result.rejected)
         recognised += result.recognised_count
         unrecognised.extend(result.unrecognised)
-        stored, seen = _store(
+        coerced += result.coerced_to_kind
+        stored, seen, refused = _store(
             session,
             draft,
             result,
@@ -366,6 +407,7 @@ def ingest_bridge(
         )
         written += stored
         already += seen
+        rejected_rows += refused
 
     notes: list[str] = [
         f"Scanned the {scan_limit} newest captures; older ones were not examined."
@@ -392,6 +434,8 @@ def ingest_bridge(
         artifacts_scanned=len(rows),
         artifacts_examined=examined,
         snapshots_for_this_league=snapshots,
+        coerced_to_kind=coerced,
+        observations_rejected=rejected_rows,
         rejected=rejected,
         instants_recognised=recognised,
         observations_written=written,
@@ -439,7 +483,7 @@ def ingest_official(
         received_at=observed_at,
         context=context,
     )
-    written, already = _store(
+    written, already, refused = _store(
         session,
         draft,
         result,
@@ -450,6 +494,8 @@ def ingest_official(
         transport=SourceTransport.OFFICIAL_HTTP,
         artifacts_scanned=1,
         artifacts_examined=1,
+        coerced_to_kind=result.coerced_to_kind,
+        observations_rejected=refused,
         rejected={result.rejected: 1} if result.rejected else {},
         instants_recognised=result.recognised_count,
         observations_written=written,
@@ -649,14 +695,26 @@ def apply_observations(
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
                 )
         except DraftLogError as error:
-            row.skipped_reason = f"{error.code}: {error}"
             skipped.append((row.id, error.code))
             if error.code == "draft_pick_out_of_turn":
                 # Stop rather than skip. Skipping would silently desynchronise
                 # every pick after this one and the owner would find out much
                 # later, which is the worst possible time.
+                #
+                # ``skipped_reason`` is deliberately *not* set on this branch.
+                # Nothing in this package ever clears it, so setting it would
+                # exclude the row from ``pending`` permanently: the owner types
+                # the pick this one was waiting behind, re-runs, and the
+                # observation that triggered the halt is silently gone — not
+                # applied, not pending, with ``pending_count == 0`` telling the
+                # screen there is nothing outstanding. Halting is supposed to
+                # be the recoverable choice; burning the row is what made it a
+                # skip with extra steps. A republishing bridge would usually
+                # heal it under a new key, but the official source republishes
+                # byte-identically and would not.
                 halted = error.code
                 break
+            row.skipped_reason = f"{error.code}: {error}"
             continue
 
         row.applied_event_sequence = state.last_sequence
@@ -700,6 +758,43 @@ class FeedStatus:
     last_sequence: int
 
 
+def _transport_contact(
+    session: Session,
+    context: RecognitionContext | str,
+) -> dict[SourceTransport, datetime]:
+    """Proof-of-life per transport, independent of any draft instant.
+
+    Only the bridge has any. A capture landing for this league is evidence the
+    userscript is running and Fantrax is being watched, whether or not it
+    contained a pick — and between two picks in a live draft it will not. This
+    is what stops the freshness indicator reading ``silent`` through every
+    ordinary deliberation and teaching the owner to dismiss it.
+
+    The defect this excludes is *a live bridge reported as silent*. For
+    ``silent=False`` to be wrong here — a dead bridge reported live — a
+    ``bridge_payloads`` row would have to appear with a recent ``created_at``
+    while the userscript is not running. Nothing else writes that table; the
+    only path is ``POST /bridge/payloads``, which is the userscript.
+
+    The official source deliberately gets nothing. Its poll happens inside
+    ``ingest_official`` and is not recorded anywhere, and inventing a contact
+    time from the status request would be proof of nothing but that the status
+    endpoint was called. It reports ``contact_is_known=False`` and falls back
+    to the instant clock, which is honest about what we know.
+    """
+    if isinstance(context, str):
+        return {}
+    newest = session.execute(
+        select(BridgePayload.created_at)
+        .where(BridgePayload.request_url.contains(context.fantrax_league_id))
+        .order_by(BridgePayload.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if newest is None:
+        return {}
+    return {SourceTransport.BRIDGE_CAPTURE: newest}
+
+
 def feed_status(
     session: Session,
     draft: Draft,
@@ -725,18 +820,26 @@ def feed_status(
     for instant in instants:
         by_transport[instant.provenance.transport].append(instant)
 
+    contact_at = _transport_contact(session, context)
     if instants:
         report = reconcile(
             by_transport[SourceTransport.BRIDGE_CAPTURE],
             by_transport[SourceTransport.OFFICIAL_HTTP],
             now=stamp,
             silence_threshold=silence_threshold,
+            contact_at=contact_at,
         )
         freshness = report.freshness
     else:
         report = None
         freshness = tuple(
-            freshness_of([], transport=transport, now=stamp, silence_threshold=silence_threshold)
+            freshness_of(
+                [],
+                transport=transport,
+                now=stamp,
+                silence_threshold=silence_threshold,
+                contact_at=contact_at.get(transport),
+            )
             for transport in (SourceTransport.BRIDGE_CAPTURE, SourceTransport.OFFICIAL_HTTP)
         )
 

@@ -171,6 +171,13 @@ class RecognitionResult:
     #: wrong URL, wrong league, undecodable envelope. ``None`` means the
     #: artifact was examined.
     rejected: str | None = None
+    #: Records that named a field their kind forbids, and so were stored with it
+    #: dropped. A snake pick carrying a price, or an auction sale carrying a
+    #: round and pick number. Counted rather than silent because the drop is a
+    #: real loss of information, and because a non-zero value is good evidence
+    #: that the draft's snapshotted format disagrees with what the source is
+    #: actually publishing — which is worth knowing before it matters.
+    coerced_to_kind: int = 0
     #: Fields the recogniser deliberately did not read, named so an absence is
     #: distinguishable from an oversight.
     notes: tuple[str, ...] = field(default_factory=tuple)

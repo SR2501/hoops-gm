@@ -26,12 +26,13 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.draft import Draft
 from hoops_gm.db.models.draft_feed import DraftFeedObservation
-from hoops_gm.db.models.enums import DraftToolUsage, DraftType
+from hoops_gm.db.models.enums import DraftFeedTransport, DraftToolUsage, DraftType
 from hoops_gm.db.models.league import FantasyTeam, League
 from hoops_gm.draft import service as draft_service
 from hoops_gm.draft.feed import (
@@ -39,10 +40,12 @@ from hoops_gm.draft.feed import (
     InstantProvenance,
     ObservedInstant,
     RecognitionContext,
+    RecognitionResult,
     SourceTransport,
     freshness_of,
     league_id_in,
     recognise_bridge_payload,
+    recognise_official_draft_picks,
     reconcile,
 )
 from hoops_gm.draft.feed import service as feed_service
@@ -541,18 +544,62 @@ def test_a_record_naming_no_player_refuses_the_list() -> None:
     A roster-budget block keys on ``teamId`` too, and every id in it resolves.
     The seat anchor alone therefore accepts it; the naming requirement is what
     stops a list of team-budget rows from becoming a list of picks.
+
+    **The ``budgetLeft`` case alone did not exclude this defect.** An
+    independent review pointed out that a team object's most ordinary field is
+    its *name*, and ``name``/``shortName``/``displayName`` were player-label
+    aliases — so a ``draftOrder`` or standings block, the likeliest list in any
+    draft-room batch, satisfied both the seat anchor and the naming requirement
+    and was read as a full board of picks attributed to the right seats. A
+    reading in which the old flag was true while the defect was present is
+    exactly this test's old body: a team record carrying no name key at all.
+    Both shapes are now checked, and they are the shapes that defeated it.
+    """
+    for record in (
+        {"teamId": "t1", "budgetLeft": 140},
+        {"teamId": "t1", "name": "Team Rocket"},
+        {"teamId": "t1", "shortName": "ROCK"},
+        {"teamId": "t1", "displayName": "Team Rocket", "rank": 3},
+    ):
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope([record]),
+            dedupe_key="k",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(),
+        )
+
+        assert result.instants == (), record
+        assert [shape.reason for shape in result.unrecognised] == ["record_names_no_player"], record
+
+
+def test_an_ambiguous_name_still_labels_a_record_a_player_key_identified() -> None:
+    """The other half of the split above, and the reason it is a split.
+
+    Narrowing the aliases could have been done by deleting ``name`` outright.
+    That would have cost a real capability: if Fantrax names the player under
+    ``name`` *and* supplies ``playerId``, the record is unambiguously about a
+    player and the board should show the name rather than an id. Acceptance
+    keys on the unambiguous field; display may then use the ambiguous one.
+
+    Excludes: the fix for the team-block defect silently downgrading readable
+    picks to id-only rows. A reading in which this passes while that defect is
+    present would need ``player_label`` to be non-empty without the ambiguous
+    key being consulted — impossible here, since ``name`` is the only name
+    present.
     """
     result = recognise_bridge_payload(
         url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
-        body_json=_envelope([{"teamId": "t1", "budgetLeft": 140}]),
+        body_json=_envelope([{"teamId": "t1", "playerId": "p-jokic", "name": JOKIC}]),
         dedupe_key="k",
         received_at=NOW,
         captured_at=None,
         context=_context(),
     )
 
-    assert result.instants == ()
-    assert [shape.reason for shape in result.unrecognised] == ["record_names_no_player"]
+    assert [instant.player_label for instant in result.instants] == [JOKIC]
+    assert [instant.player_external_id for instant in result.instants] == ["p-jokic"]
 
 
 def test_an_unreadable_envelope_is_reported_not_swallowed() -> None:
@@ -716,6 +763,115 @@ def test_one_sources_freshness_is_never_computed_from_anothers() -> None:
     assert bridge.age_seconds == 0.0
     assert bridge.silent is False
     assert official.age_seconds == 1800.0
+    assert official.silent is True
+
+
+def test_a_bridge_still_capturing_between_picks_is_not_called_silent() -> None:
+    """Excludes: the freshness indicator crying wolf through ordinary play.
+
+    A snake draft spends minutes at a time on one deliberation. Judging
+    ``silent`` on the newest *pick* means the bridge reports silent through
+    every one of them, so by the fourth round the owner has learned the
+    indicator is noise — and it is the single thing on the screen that has to
+    be believed the one time it is real. "Nothing new has happened" and "the
+    pipe has stopped" are different facts and are now carried by different
+    fields.
+
+    The reading in which ``silent=False`` would be true while the defect it
+    guards against (*a dead bridge reported as live*) is present would need a
+    ``bridge_payloads`` row appearing with a recent ``created_at`` while the
+    userscript is not running. Nothing else writes that table — the only path
+    is ``POST /bridge/payloads``. The paired assertion below pins the other
+    direction: contact older than the threshold still reads silent.
+    """
+    stale_pick = [
+        _instant(
+            transport=SourceTransport.BRIDGE_CAPTURE,
+            artifact_key="k",
+            player_label=JOKIC,
+            received_at=NOW - timedelta(minutes=6),
+        )
+    ]
+
+    without_contact = freshness_of(
+        stale_pick,
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        now=NOW,
+        silence_threshold=timedelta(minutes=2),
+    )
+    assert without_contact.silent is True
+    assert without_contact.contact_is_known is False
+
+    still_capturing = freshness_of(
+        stale_pick,
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        now=NOW,
+        silence_threshold=timedelta(minutes=2),
+        contact_at=NOW - timedelta(seconds=20),
+    )
+    assert still_capturing.silent is False
+    assert still_capturing.contact_is_known is True
+    assert still_capturing.contact_age_seconds == 20.0
+    # The pick clock is unchanged, so "no new pick for six minutes" is still
+    # readable. The fix adds a fact; it does not overwrite one.
+    assert still_capturing.age_seconds == 360.0
+
+    gone_quiet = freshness_of(
+        stale_pick,
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        now=NOW,
+        silence_threshold=timedelta(minutes=2),
+        contact_at=NOW - timedelta(minutes=5),
+    )
+    assert gone_quiet.silent is True
+
+
+def test_status_reads_the_bridges_proof_of_life_from_its_own_captures(
+    session: Session,
+) -> None:
+    """The end-to-end half of the test above: the contact time is real.
+
+    Excludes: the contact clock being wired to something that is not evidence
+    of the bridge running — the status request's own ``now``, say, which would
+    make every source permanently live. The capture here is deliberately for a
+    *different* endpoint and carries no picks, because that is the ordinary
+    case between selections: the userscript is polling, Fantrax is answering,
+    and no pick has landed.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+
+    blind = feed_service.feed_status(session, draft, now=NOW)
+    bridge_before = next(
+        item for item in blind.freshness if item.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    assert bridge_before.contact_is_known is False
+    assert bridge_before.silent is True
+
+    _capture(
+        session,
+        records=[],
+        dedupe_key="heartbeat",
+        created_at=NOW - timedelta(seconds=30),
+    )
+
+    status = feed_service.feed_status(session, draft, now=NOW)
+    bridge = next(
+        item for item in status.freshness if item.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    official = next(
+        item for item in status.freshness if item.transport is SourceTransport.OFFICIAL_HTTP
+    )
+
+    assert bridge.contact_is_known is True
+    assert bridge.contact_age_seconds == 30.0
+    assert bridge.silent is False
+    assert bridge.last_seen_at is None  # no pick has ever arrived
+    # The official source has no recorded poll and does not borrow the
+    # bridge's. Reporting it live on the strength of another pipe's traffic is
+    # precisely the one-read-as-two mistake this package exists to avoid.
+    assert official.contact_is_known is False
     assert official.silent is True
 
 
@@ -1037,6 +1193,56 @@ def test_an_out_of_turn_pick_halts_the_run_rather_than_being_skipped(session: Se
     assert draft_service.load_events(session, draft) == []
 
 
+def test_the_observation_that_halted_the_run_is_still_pending_afterwards(
+    session: Session,
+) -> None:
+    """Excludes: a halt burning the very observation it halted on.
+
+    Halting is only the *recoverable* choice if the row survives it. Nothing in
+    this package ever clears ``skipped_reason``, so setting it on the halting
+    branch removed the row from ``pending`` forever: the owner resolves the
+    ordering by hand, re-runs, and the pick that triggered the halt is gone —
+    not applied, not pending — while ``pending_count == 0`` tells the screen
+    there is nothing outstanding. That is a skip with extra steps and a louder
+    log line, which is exactly what halting was chosen over.
+
+    A reading in which ``halted`` is set while the defect is present is the
+    previous behaviour, which passed
+    ``test_an_out_of_turn_pick_halts_the_run_rather_than_being_skipped``
+    unchanged: that test asserts nothing survives the halt. So this asserts the
+    surviving row directly, both on the observation and on the count the status
+    endpoint publishes.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t2", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="capture-one",
+    )
+    feed_service.ingest(session, draft)
+
+    assert feed_service.apply_observations(session, draft).halted == "draft_pick_out_of_turn"
+
+    row = feed_service.load_observations(session, draft)[0]
+    assert row.skipped_reason is None
+    assert row.applied_event_sequence is None
+    assert feed_service.feed_status(session, draft, now=NOW).pending_count == 1
+
+    # And it is genuinely re-appliable: give seat 1 its pick by hand and the
+    # halted observation lands on the next run instead of being lost.
+    draft_service.record_pick(
+        session,
+        draft,
+        participant_id=draft.participants[0].id,
+        player_label=EDWARDS,
+    )
+    again = feed_service.apply_observations(session, draft)
+    assert again.halted is None
+    assert [event.player_label for event in again.applied] == [JOKIC]
+
+
 def test_a_pick_already_in_the_log_is_linked_not_appended_twice(session: Session) -> None:
     """Excludes: a pick the owner typed being appended again by the feed.
 
@@ -1100,6 +1306,185 @@ def test_an_auction_capture_records_the_price_exactly(session: Session) -> None:
     outcome = feed_service.apply_observations(session, draft)
     assert len(outcome.applied) == 1
     assert draft_service.load_events(session, draft)[0].amount == Decimal("41.10")
+
+
+def test_a_snake_pick_carrying_a_price_is_stored_without_the_price(session: Session) -> None:
+    """Excludes: one impossible field aborting the flush and losing the run.
+
+    ``draft_feed_observations`` carries a CHECK tying ``kind`` to the fields it
+    permits: a ``selection`` may not carry ``amount``, a ``sale`` may not carry
+    round/pick coordinates. ``salary`` is one of our own ``amount`` aliases, so
+    a snake-league payload that happens to carry a contract figure produced
+    ``kind=selection`` *with* an amount — a CHECK violation, raised on the
+    single flush that covered the whole artifact, so the endpoint returned 500
+    and stored **zero** observations from either source. The recogniser now
+    conforms each record to the kind the draft's own snapshotted format
+    dictates, and counts the loss rather than hiding it.
+
+    A reading in which "the row was stored" is true while the defect is present
+    would need the CHECK to be absent, so the CHECK itself is asserted
+    separately by ``test_the_kind_split_is_a_database_guarantee``.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": JOKIC, "overallPick": 1, "salary": 55.5}],
+        dedupe_key="capture-one",
+    )
+
+    outcome = feed_service.ingest(session, draft)
+
+    row = feed_service.load_observations(session, draft)[0]
+    assert row.kind is InstantKind.SELECTION
+    assert row.amount is None
+    assert row.overall_pick == 1
+    bridge = next(
+        source for source in outcome.sources if source.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    assert (bridge.observations_written, bridge.observations_rejected) == (1, 0)
+    # The loss is published rather than swallowed: a non-zero count here says
+    # the source is sending a shape we only partly understand.
+    assert bridge.coerced_to_kind == 1
+
+
+def test_an_auction_sale_carrying_ordinals_is_stored_without_them(session: Session) -> None:
+    """Excludes: the official source's ordinary shape killing every ingest.
+
+    ``parse_draft_picks`` populates round, pick and overall *and* the auction
+    amount from the same row unconditionally. In an auction league that is
+    ``kind=sale`` carrying draft coordinates — the other half of the CHECK — so
+    the corroborating source violated it not as an edge case but as a matter of
+    course, on its first successful call of the season.
+    """
+    league = _league(session, draft_type=DraftType.AUCTION, budget=Decimal("200.00"))
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+
+    result = recognise_official_draft_picks(
+        [
+            FantraxDraftPick(
+                team_id="t1",
+                round_number=1,
+                pick_number=1,
+                overall_pick=1,
+                player_id="p-jokic",
+                player_name=JOKIC,
+                auction_amount=41.10,
+            )
+        ],
+        artifact_key="sha256:test",
+        received_at=NOW,
+        context=_context(draft_type=DraftType.AUCTION),
+    )
+
+    assert result.coerced_to_kind == 1
+    instant = result.instants[0]
+    assert instant.kind is InstantKind.SALE
+    assert instant.amount == Decimal("41.10")
+    assert (instant.overall_pick, instant.round_number, instant.pick_in_round) == (
+        None,
+        None,
+        None,
+    )
+    # And it survives the CHECK, which is the part that was failing.
+    written, already, rejected = feed_service._store(
+        session,
+        draft,
+        result,
+        participants={"t1": draft.participants[0].id},
+        existing=set(),
+    )
+    assert (written, already, rejected) == (1, 0, 0)
+
+
+def test_the_kind_split_is_a_database_guarantee(session: Session) -> None:
+    """The positive control for the two tests above.
+
+    They assert that conformed rows *store*. If the CHECK did not exist, both
+    would pass with the recogniser's coercion removed, because there would be
+    nothing left to violate. This asserts the constraint is real, so the two
+    above are testing a conformance that matters.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    session.add(
+        DraftFeedObservation(
+            draft_id=draft.id,
+            transport=DraftFeedTransport.BRIDGE_CAPTURE,
+            artifact_key="a",
+            locator="l",
+            recogniser="test",
+            observed_at=NOW,
+            kind=InstantKind.SELECTION,
+            team_external_id="t1",
+            player_label=JOKIC,
+            amount=Decimal("41.10"),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+def test_one_unstorable_row_does_not_cost_the_rest_of_the_run(session: Session) -> None:
+    """Excludes: a single bad record returning 500 and storing nothing.
+
+    The two shapes above are conformed now, but the *class* of failure is the
+    point and it will recur the next time Fantrax sends something unforeseen.
+    One savepoint per row means a record the database refuses is counted and
+    skipped while every other observation of the run still lands. Mid-draft the
+    difference is a board missing one pick versus a board showing none.
+
+    The refusal is forced directly rather than through a payload, because every
+    payload shape we currently know how to produce is conformed — which is the
+    fix working, and would leave this untested if it were the only route in.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+
+    good = _instant(
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        artifact_key="artifact-a",
+        player_label=JOKIC,
+        locator="a[0]",
+    )
+    bad = ObservedInstant(
+        kind=InstantKind.SELECTION,
+        provenance=InstantProvenance(
+            transport=SourceTransport.BRIDGE_CAPTURE,
+            artifact_key="artifact-a",
+            recogniser="test",
+            received_at=NOW,
+            locator="a[1]",
+        ),
+        team_external_id="t1",
+        player_label=EDWARDS,
+        amount=Decimal("41.10"),
+    )
+    also_good = _instant(
+        transport=SourceTransport.BRIDGE_CAPTURE,
+        artifact_key="artifact-a",
+        player_label=HALIBURTON,
+        locator="a[2]",
+    )
+
+    written, already, rejected = feed_service._store(
+        session,
+        draft,
+        RecognitionResult(instants=(good, bad, also_good)),
+        participants={"t1": draft.participants[0].id},
+        existing=set(),
+    )
+
+    assert (written, already, rejected) == (2, 0, 1)
+    stored = sorted(
+        row.player_label or "" for row in feed_service.load_observations(session, draft)
+    )
+    assert stored == sorted([JOKIC, HALIBURTON])
 
 
 def test_a_draft_whose_seats_are_not_linked_is_refused_not_fed(session: Session) -> None:
@@ -1341,6 +1726,44 @@ def test_ingesting_without_apply_records_but_does_not_touch_the_log(
     assert body["applied"] is None
     assert body["status"]["pending_count"] == 1
     assert client.get(f"/api/v1/drafts/{draft.id}/events").json()["events"] == []
+
+
+def test_a_pick_only_one_source_saw_is_listed_even_without_a_name(
+    client: TestClient, session: Session
+) -> None:
+    """Excludes: a one-sided reading rendering as "nothing to report".
+
+    ``only_bridge`` and ``only_official`` exist to make one-sided readings
+    visible — a pick one source has and the other does not is the single most
+    useful thing a reconciliation can surface mid-draft. The response built
+    those lists with ``if instant.player_label``, which silently dropped every
+    instant identified by ``playerId`` alone. That is a supported state:
+    ``matching_key`` *prefers* the external id, and a record carrying
+    ``playerId`` with no player-specific name key is accepted. So the report
+    could hold a one-sided pick while the document rendered ``[]``, and the
+    screen would say the two sources agreed completely.
+
+    A reading in which the old flag (``only_bridge == []``) was true while the
+    defect was present is exactly that: one-sided, id-only. The list now names
+    the row by whatever it has, never by dropping it.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerId": "p-jokic"}],
+        dedupe_key="capture-one",
+    )
+    session.commit()
+
+    client.post(f"/api/v1/drafts/{draft.id}/feed/ingest", json={"apply": False})
+    body = client.get(f"/api/v1/drafts/{draft.id}/feed").json()
+
+    assert body["observation_count"] == 1
+    reconciliation = body["reconciliation"]
+    assert reconciliation["only_bridge"] == ["player id p-jokic"]
+    assert reconciliation["only_official"] == []
 
 
 def test_the_feed_endpoints_refuse_an_unknown_draft(client: TestClient) -> None:

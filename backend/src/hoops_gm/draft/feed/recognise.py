@@ -95,24 +95,46 @@ SNAPSHOT_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"rendered-view", "m
 
 #: Candidate key names, **not** verified names.
 #:
-#: Deliberately the same vocabulary
+#: Mostly the same vocabulary
 #: :func:`hoops_gm.ingest.fantrax_official.parsers.parse_draft_picks` already
 #: uses, so there is one list of guesses in this repository rather than two that
-#: can drift. Order is preference order within each field.
+#: can drift. Order is preference order within each field. The one deliberate
+#: divergence is ``player_label``, explained below.
 #:
 #: ``id`` is excluded from the team aliases on purpose. It is the most likely
 #: key name in any JSON on the internet and matching it would let an arbitrary
 #: list of objects be accepted the moment one of its ``id`` values collided with
 #: a Fantrax team id — which turns the anchor from a check into a coincidence.
+#:
+#: ``name``, ``shortName`` and ``displayName`` are excluded from
+#: ``player_label`` for exactly the same reason, and it took an independent
+#: review to see it. A **team** object carries those keys. So a ``draftOrder``
+#: or standings block — a list of this league's own teams, which is the single
+#: most likely list to appear anywhere in a draft-room batch — satisfied the
+#: seat anchor *perfectly* (every record resolves to a seat, because every
+#: record **is** a seat) and satisfied "names a player" with the team's own
+#: name. It was read as a full board of picks, one per seat, with
+#: ``player_label="Team Rocket"``. That is not the safe failure this module
+#: claims; it is the half-read board it exists to prevent, and with
+#: ``apply=true`` it would have become real ``draft_events``.
+#:
+#: They survive in :data:`AMBIGUOUS_NAME_ALIASES` as a *label of last resort*,
+#: usable only once the record has independently identified a player.
 FIELD_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "team_external_id": ("teamId", "fantasyTeamId", "franchiseId", "teamID"),
     "player_external_id": ("playerId", "scorerId", "fantasyPlayerId"),
-    "player_label": ("playerName", "name", "shortName", "displayName"),
+    "player_label": ("playerName", "scorerName", "playerFullName"),
     "amount": ("amount", "bid", "salary", "price", "winningBid"),
     "overall_pick": ("overallPick", "overall"),
     "round_number": ("round", "roundNumber"),
     "pick_in_round": ("pick", "pickNumber", "pickInRound"),
 }
+
+#: Names that could belong to a player *or* to a team, and so cannot identify
+#: one. Read only for display, and only on a record that some key in
+#: ``player_external_id`` or ``player_label`` has already established is about a
+#: player. Never sufficient on their own to accept a list.
+AMBIGUOUS_NAME_ALIASES: Final[tuple[str, ...]] = ("name", "shortName", "displayName")
 
 #: How deep into a response block the walk will go looking for record lists.
 #: Bounded because this runs on every capture during a live draft and an
@@ -245,8 +267,18 @@ def _accept_list(
     The three refusals are separate strings rather than one because they mean
     different things to whoever reads the status screen: a length refusal says
     "this is a different kind of collection", an anchor refusal says "the alias
-    is wrong or this is another league's data", and a naming refusal says "this
-    is about teams but not about players".
+    is wrong or this is another league's data", and an identification refusal
+    says "this is about teams but not about players".
+
+    **The seat anchor alone is not a check, and the reason is not obvious.** The
+    list that satisfies "every record resolves to a seat of this draft" most
+    perfectly is a list of this draft's seats — a ``draftOrder`` block, a
+    standings block, a budget table. Those are not exotic; in a draft-room
+    batch they are the *likeliest* lists present. So acceptance additionally
+    requires each record to identify a **player**, by a key that a team object
+    does not carry: an id under :data:`FIELD_ALIASES`\\ ``["player_external_id"]``
+    or a name under a player-specific key. A team's own ``name`` no longer
+    counts, which is what previously let a list of teams through.
     """
     if not records or len(records) > MAX_RECORD_LIST:
         return [], "list_length_out_of_range"
@@ -259,12 +291,42 @@ def _accept_list(
         team = _as_text(_first(record, "team_external_id"))
         if team is None or team not in context.team_external_ids:
             return [], "no_seat_anchor"
-        named = _as_text(_first(record, "player_external_id")) or _as_text(
-            _first(record, "player_label")
-        )
-        if named is None:
+        if _player_identity(record) is None:
             return [], "record_names_no_player"
     return typed, None
+
+
+def _player_identity(record: dict[str, Any]) -> str | None:
+    """The record's own claim to be about a player, or ``None``.
+
+    Only unambiguous keys count. :data:`AMBIGUOUS_NAME_ALIASES` is deliberately
+    not consulted here — that is the whole distinction, and consulting it would
+    restore the defect this split exists to remove.
+    """
+    return _as_text(_first(record, "player_external_id")) or _as_text(
+        _first(record, "player_label")
+    )
+
+
+def _player_label(record: dict[str, Any]) -> str | None:
+    """The best display name for a record already known to be about a player.
+
+    Falls back to an ambiguous key only when :func:`_player_identity` has
+    already succeeded, which is guaranteed by :func:`_accept_list` running
+    first. A record identified solely by ``playerId`` can therefore still show
+    a name on the board, without an ambiguous name ever being what let the list
+    in.
+    """
+    label = _as_text(_first(record, "player_label"))
+    if label is not None:
+        return label
+    for alias in AMBIGUOUS_NAME_ALIASES:
+        value = record.get(alias)
+        if value is not None:
+            text = _as_text(value)
+            if text is not None:
+                return text
+    return None
 
 
 def _instant_from(
@@ -273,16 +335,51 @@ def _instant_from(
     kind: InstantKind,
     provenance: InstantProvenance,
 ) -> ObservedInstant:
+    """Read one record into the shape its ``kind`` permits.
+
+    The forbidden fields are dropped rather than carried, because the storage
+    layer enforces the split as a CHECK constraint and a violated CHECK is not a
+    bad row — it aborts the flush, and with it every observation from the same
+    run. A snake-league pick carrying ``salary`` (one of our own aliases) or an
+    auction sale carrying a round and pick number (which
+    ``parse_draft_picks`` populates unconditionally, so the official source
+    produces it as a matter of course) would otherwise have made the first real
+    ingest of the season return 500 and store nothing at all.
+
+    ``kind`` comes from the draft's own snapshotted format, not from the
+    payload, so it is the authoritative side of the disagreement. Dropping is
+    still a loss and :class:`RecognitionResult` counts it.
+    """
+    amount = _as_amount(_first(record, "amount"))
+    overall_pick = _as_int(_first(record, "overall_pick"))
+    round_number = _as_int(_first(record, "round_number"))
+    pick_in_round = _as_int(_first(record, "pick_in_round"))
+
+    if kind is InstantKind.SELECTION:
+        amount = None
+    else:
+        overall_pick = round_number = pick_in_round = None
+
     return ObservedInstant(
         kind=kind,
         provenance=provenance,
         team_external_id=_as_text(_first(record, "team_external_id")),
-        player_label=_as_text(_first(record, "player_label")),
+        player_label=_player_label(record),
         player_external_id=_as_text(_first(record, "player_external_id")),
-        overall_pick=_as_int(_first(record, "overall_pick")),
-        round_number=_as_int(_first(record, "round_number")),
-        pick_in_round=_as_int(_first(record, "pick_in_round")),
-        amount=_as_amount(_first(record, "amount")),
+        overall_pick=overall_pick,
+        round_number=round_number,
+        pick_in_round=pick_in_round,
+        amount=amount,
+    )
+
+
+def _fields_dropped_for_kind(record: dict[str, Any], kind: InstantKind) -> bool:
+    """Whether this record carried a field its ``kind`` forbids."""
+    if kind is InstantKind.SELECTION:
+        return _as_amount(_first(record, "amount")) is not None
+    return any(
+        _as_int(_first(record, field)) is not None
+        for field in ("overall_pick", "round_number", "pick_in_round")
     )
 
 
@@ -403,6 +500,7 @@ def recognise_bridge_payload(
     instants: list[ObservedInstant] = []
     unrecognised: list[UnrecognisedShape] = []
     kind = _kind_for(context.draft_type)
+    coerced = 0
 
     for index, entry in enumerate(body_json["responses"]):
         locator = f"responses[{index}]"
@@ -423,6 +521,8 @@ def recognise_bridge_payload(
                 continue
             accepted_here = True
             for position, record in enumerate(typed):
+                if _fields_dropped_for_kind(record, kind):
+                    coerced += 1
                 instants.append(
                     _instant_from(
                         record,
@@ -461,6 +561,7 @@ def recognise_bridge_payload(
     return RecognitionResult(
         instants=tuple(instants),
         unrecognised=tuple(unrecognised),
+        coerced_to_kind=coerced,
         notes=(
             "The RPC method name is in the request body, which the userscript "
             "never captures, so this recogniser discriminates on content.",
@@ -495,6 +596,7 @@ def recognise_official_draft_picks(
     instants: list[ObservedInstant] = []
     unanchored = 0
     unnamed = 0
+    coerced = 0
     for index, pick in enumerate(picks):
         if pick.team_id not in context.team_external_ids:
             unanchored += 1
@@ -502,6 +604,21 @@ def recognise_official_draft_picks(
         if not (pick.player_id or pick.player_name):
             unnamed += 1
             continue
+        amount = _as_amount(pick.auction_amount)
+        overall_pick = pick.overall_pick
+        round_number = pick.round_number
+        pick_in_round = pick.pick_number
+        # ``parse_draft_picks`` fills the ordinals *and* the amount from the
+        # same row unconditionally, so an auction league's own results are the
+        # expected shape that violates the storage CHECK. Conform to the kind
+        # the draft's snapshotted format dictates, and count the loss.
+        if kind is InstantKind.SELECTION:
+            if amount is not None:
+                coerced += 1
+            amount = None
+        elif overall_pick is not None or round_number is not None or pick_in_round is not None:
+            coerced += 1
+            overall_pick = round_number = pick_in_round = None
         instants.append(
             ObservedInstant(
                 kind=kind,
@@ -519,10 +636,10 @@ def recognise_official_draft_picks(
                 team_external_id=pick.team_id,
                 player_label=pick.player_name,
                 player_external_id=pick.player_id,
-                overall_pick=pick.overall_pick,
-                round_number=pick.round_number,
-                pick_in_round=pick.pick_number,
-                amount=_as_amount(pick.auction_amount),
+                overall_pick=overall_pick,
+                round_number=round_number,
+                pick_in_round=pick_in_round,
+                amount=amount,
             )
         )
 
@@ -548,5 +665,6 @@ def recognise_official_draft_picks(
     return RecognitionResult(
         instants=tuple(instants),
         unrecognised=tuple(unrecognised),
+        coerced_to_kind=coerced,
         notes=("getDraftPicks has never returned a verified real payload; see the module docs.",),
     )
