@@ -1758,6 +1758,109 @@ def test_a_coordinate_the_reader_cannot_parse_does_not_satisfy_the_rule() -> Non
     assert [instant.player_label for instant in overall.instants] == [JOKIC]
 
 
+def test_a_coordinate_that_is_not_an_exact_position_is_refused_by_name() -> None:
+    """Excludes: the gate reporting a coordinate the payload never claimed.
+
+    A third review found ``_has_draft_coordinate`` was only ever as strict as
+    :func:`~hoops_gm.draft.feed.recognise._as_int`, which used a bare ``int()``.
+    ``overallPick: 1.9`` therefore produced **one instant at pick 1 with no
+    unrecognised shape** — not a refusal, and not the payload's own claim
+    either, but a position this module invented by truncation. ``0`` and
+    negatives parsed too, and were caught only by the database CHECK, arriving
+    as a generic ``observations_rejected`` rather than as the named count this
+    gate exists to produce.
+
+    A reading in which the flag is true while the defect is present: asserting
+    only ``instants == ()``. Storage refuses ``0`` anyway, so a test that
+    checked no pick *survived* would have passed before this fix on the ``0``
+    case and told us nothing. **The assertion that carries this test is the
+    reason string**, which distinguishes "refused here, by name" from "refused
+    two layers down, anonymously". The ``1.9`` case has no such fallback at
+    all: it was stored.
+
+    The positive control is ``2.0`` — an integral float, which is how JSON
+    routinely delivers a whole number — so this is not "refuse every number
+    that is not an int".
+    """
+    for label, pick in (("fractional", 1.9), ("zero", 0), ("negative", -2)):
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(
+                [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": pick}]
+            ),
+            dedupe_key=f"coordinate-{label}",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(),
+        )
+        assert result.instants == (), label
+        assert [shape.reason for shape in result.unrecognised] == [
+            "record_missing_draft_coordinate"
+        ], label
+
+    integral = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 2.0}]
+        ),
+        dedupe_key="coordinate-integral-float",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(),
+    )
+    assert [instant.overall_pick for instant in integral.instants] == [2]
+
+
+def test_a_non_finite_price_is_refused_rather_than_raising_or_being_believed() -> None:
+    """Excludes: an arbitrary captured value escaping the reader as an exception.
+
+    ``_as_amount`` promises "a Decimal or ``None``". ``Decimal("NaN")``
+    constructs successfully, so it passes the ``try`` and then raises
+    ``InvalidOperation`` on the ``> 0`` comparison one line outside it. A
+    review put ``"winningBid": "NaN"`` in a payload and recognition raised —
+    so the newest capture did not yield "zero records and a visible count", it
+    failed the ingest request that carried it.
+
+    ``Infinity`` is the case that review missed, and it is the worse one: it
+    never raises. It compares greater than zero, was returned as a **valid
+    price**, and would be carried to a ``Numeric(10, 2)`` column as a real
+    clearing price. A test written only against ``NaN`` would be satisfied by
+    catching ``InvalidOperation`` somewhere upstream and would leave
+    ``Infinity`` believed — so both are asserted here, and asserting the
+    *outcome* rather than the absence of an exception is what makes the
+    ``Infinity`` case visible at all.
+
+    The positive control is a real bid, so this is not "refuse every price".
+    """
+    for label, bid in (("nan", "NaN"), ("lower-nan", "nan"), ("inf", "Infinity")):
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(
+                [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": bid}]
+            ),
+            dedupe_key=f"price-{label}",
+            received_at=NOW,
+            captured_at=None,
+            context=_context(draft_type=DraftType.AUCTION),
+        )
+        assert result.instants == (), label
+        assert [shape.reason for shape in result.unrecognised] == [
+            "record_missing_draft_coordinate"
+        ], label
+
+    real = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "winningBid": "41.10"}]
+        ),
+        dedupe_key="price-real",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(draft_type=DraftType.AUCTION),
+    )
+    assert [instant.amount for instant in real.instants] == [Decimal("41.10")]
+
+
 def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(
     session: Session,
 ) -> None:
@@ -1809,6 +1912,72 @@ def test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path(
     assert applied.halted is None
     assert [event.player_label for event in applied.applied] == [JOKIC, EDWARDS]
     assert [event.kind for event in applied.applied] == [InstantKind.SALE, InstantKind.SALE]
+
+    # And the gap is now *reported*, not merely pinned here. A review asked
+    # where this limit was visible to someone who is not reading the suite; the
+    # honest answer was "nowhere", because every other channel reports a clean
+    # read on exactly these rows. Those three assertions are the reason the
+    # note has to exist, so they are made here rather than described.
+    assert outcome.fields_dropped == ()
+    assert outcome.coerced_to_kind == 0
+    assert any("keeper" in note for note in outcome.notes), outcome.notes
+
+
+def test_the_auction_keeper_note_is_conditioned_on_facts_not_on_a_guess(
+    session: Session,
+) -> None:
+    """Excludes: a note that fires on every scan, and so carries no information.
+
+    The note is not a classifier — a priced keeper row and a sale row are the
+    same tuple, so nothing here can mark *which* rows are suspect. It is a
+    statement about what this feed cannot know, conditioned on one fact it does
+    hold: this scan produced at least one sale.
+
+    **The assertion that carries this test is the second one**, an auction
+    league that read nothing. A note appended unconditionally would sit on the
+    board all draft night saying a feed that has read no sales might have
+    misread a keeper as one, and a caveat that is always present is read as
+    furniture.
+
+    The snake case below is a *weaker* check than it looks and is kept
+    deliberately, labelled. It cannot currently fail: ``_kind_for`` derives one
+    kind per scan from the draft type, so a snake context yields no ``SALE``
+    instants by construction and the note's own condition is unreachable there.
+    An earlier version of this test claimed the snake case was load-bearing; a
+    mutation dropping the draft-type clause from the condition **survived the
+    whole suite** and proved otherwise, which is why that clause is now gone.
+    What the snake case still guards is the day someone makes kind per-record:
+    on that day this assertion starts doing work, and it is cheaper to leave it
+    than to rediscover the coupling.
+    """
+    snake = _league(session, fantrax_league_id="LG-SNAKE", draft_type=DraftType.SNAKE)
+    snake_teams = _teams(session, snake, ["t1", "t2"])
+    snake_draft = _draft(session, snake, snake_teams)
+    assert snake.fantrax_league_id is not None
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerId": "p1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="snake-board",
+        league_id=snake.fantrax_league_id,
+    )
+    snake_outcome = feed_service.ingest(session, snake_draft).sources[0]
+    assert snake_outcome.instants_recognised == 1
+    assert not any("keeper" in note for note in snake_outcome.notes), snake_outcome.notes
+
+    # The condition is "sales were read", not "the league is an auction", so an
+    # auction that read nothing must stay silent. This is the discriminating
+    # case: it is the one a mutation can actually break.
+    quiet = _league(
+        session,
+        fantrax_league_id="LG-QUIET",
+        draft_type=DraftType.AUCTION,
+        budget=Decimal("200.00"),
+    )
+    quiet_teams = _teams(session, quiet, ["t1", "t2"])
+    quiet_draft = _draft(session, quiet, quiet_teams)
+    quiet_outcome = feed_service.ingest(session, quiet_draft).sources[0]
+    assert quiet_outcome.instants_recognised == 0
+    assert not any("keeper" in note for note in quiet_outcome.notes), quiet_outcome.notes
 
 
 def test_the_official_path_has_no_coordinate_rule_and_reports_the_loss_by_name(

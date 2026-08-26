@@ -432,6 +432,7 @@ def ingest_bridge(
     coerced = 0
     dropped_names: set[str] = set()
     rejected_rows = 0
+    sale_instants = 0
 
     for row in rows:
         # Cheap pre-filter on the URL, which carries the league id. Skipping
@@ -466,6 +467,7 @@ def ingest_bridge(
         unrecognised.extend(result.unrecognised)
         coerced += result.coerced_to_kind
         dropped_names.update(result.fields_dropped)
+        sale_instants += sum(1 for instant in result.instants if instant.kind is InstantKind.SALE)
         stored, seen, refused = _store(
             session,
             draft,
@@ -496,6 +498,38 @@ def ingest_bridge(
         notes.append(
             f"{snapshots} capture(s) for this league are page snapshots and were not "
             "read; only RPC bodies are."
+        )
+    if sale_instants:
+        # Non-heuristic by construction: conditioned only on a fact already
+        # established — this scan produced at least one SALE instant. It
+        # classifies no record and changes no outcome. Deliberately not a
+        # per-record guess: a priced keeper row and an auction sale row are the
+        # same tuple, so a rule that marked *some* of them would be inventing a
+        # classifier, which is the failure mode this package exists to avoid.
+        #
+        # **A sale instant is itself proof of an auction context**, so no
+        # draft-type test belongs here. :func:`~hoops_gm.draft.feed.recognise
+        # ._kind_for` derives one kind per scan from ``context.draft_type``, and
+        # a priced payload read under a snake context is *coerced* to
+        # ``SELECTION`` with its amounts dropped rather than admitted as a sale.
+        # An earlier version of this line also tested ``draft_type is AUCTION``.
+        # A mutation removing that clause **survived the whole suite**, which is
+        # what exposed it: not an untested branch but an unreachable one, and no
+        # test could have defended it because no input distinguishes the two
+        # readings. Redundancy removed rather than chased with a test.
+        #
+        # It exists at all because a review asked where this limit was visible
+        # to someone not reading the suite, and the honest answer was "nowhere":
+        # ``fields_dropped`` is empty for these rows, ``coerced_to_kind`` is
+        # zero, and no unrecognised shape is produced, so every other channel
+        # reports a clean read. On draft night the owner sees the board.
+        notes.append(
+            f"{sale_instants} sale(s) were read from bridge captures. In an auction "
+            "league a priced keeper row and a sale row are the same shape — "
+            "'salary' is an amount alias and is also the defining field of a "
+            "keeper roster — so this feed cannot tell them apart, and some of "
+            "these may not be draft sales. No real Fantrax auction payload has "
+            "ever been seen, so how often this happens is unknown."
         )
 
     return SourceOutcome(

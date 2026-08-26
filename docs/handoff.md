@@ -27544,3 +27544,121 @@ verdict for it rather than counting it as killed, which is the only reason the
   `grep` over `frontend/src` finds no reference to it or to
   `every_instant_coerced`. It is published and correct and currently unread,
   which also means the round-3 rename could not have broken a TS consumer.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round five
+
+Round five read `0813473`, the rebase onto `553df7a`. It returned three
+findings. Two were real and both predate every earlier review; one was
+withdrawn on evidence after I challenged it, and the challenge produced a
+correction to this unit's headline claim that is worth more than the finding
+would have been.
+
+**What round five did not find is the news.** Every round-four fix survived
+it -- including the `every_instant_coerced` High -- so for the first time in
+five rounds no defect was found inside the previous round's fixes. That is not
+a clean round and I am not reporting it as one, but the R2/R3/R4 shape did not
+recur.
+
+### The two real defects were in the type coercers, which no review had read
+
+Four rounds re-read `_has_draft_coordinate` and none read the two functions it
+delegates to. The gate was never stricter than they were.
+
+- `_as_amount` promised "a Decimal or `None`". `Decimal("NaN")` *constructs*,
+  so it cleared the `try` and then raised `InvalidOperation` on the `> 0`
+  comparison one line outside the handler. A captured `"winningBid": "NaN"`
+  made recognition raise instead of yielding zero records and a named count.
+  The reviewer found that. Running its neighbours found the worse half it had
+  missed: `Decimal("Infinity")` never raises, compares greater than zero
+  happily, and was returned as a **valid clearing price** bound for a
+  `Numeric(10, 2)` column. A fix written to the report -- catching
+  `InvalidOperation` upstream -- would have left `Infinity` believed. Both now
+  refused by `is_finite()`.
+- `_as_int` was a bare `int()`. `overallPick: 1.9` produced one instant at
+  **pick 1 with no unrecognised shape**: a board placing a pick at a position
+  no payload claimed, carrying a clean bill of health. `0` and negatives parsed
+  too and were caught only by the database CHECK, arriving as a generic
+  `observations_rejected` rather than the named `record_missing_draft_coordinate`
+  the gate promises. Now exact positive integers, with integral floats (`2.0`)
+  still accepted because that is how JSON delivers whole numbers.
+
+The tightening lives in the coercers rather than in the gate, so every caller
+gets it. Both are used in one role each -- `_as_int` only for coordinates,
+`_as_amount` only for prices -- which was checked before changing them, and is
+why the change is safe to make there. Widening either later would be wrong for
+a count and right for a position; the docstrings say so.
+
+### The withdrawn finding produced a better correction than the finding
+
+The reviewer rated "a priced keeper roster is read as auction sales" High. It
+is not a defect: it is a gap already pinned by a test whose docstring says so,
+because a priced keeper row and an auction sale row are the same tuple. I asked
+the reviewer to attack irreducibility rather than existence, and to say
+"withdrawn" in those words if that was its conclusion. It was: record count,
+URL, `dedupe_key`, alias fields and draft state were each checked as candidate
+discriminators and each fails.
+
+But its answer corrected this unit's headline claim, and the correction is
+right. **The seat anchor establishes a structural fact, not a semantic one.**
+The value read is one of this draft's configured team ids; that the field
+*means* "the team that drafted this player" is not established. So "never a
+pick attributed to the wrong seat" is true only as "never an *unconfigured*
+seat". Narrowed in the `recognise` module docstring. That is an overclaim
+removed, not a claim softened.
+
+### The gap was invisible on every channel, so it is now a note
+
+The reviewer's third question was where this limit is visible to someone not
+reading the suite. The answer was nowhere: on a keeper-as-sale read
+`fields_dropped` is empty, `coerced_to_kind` is zero, and no unrecognised shape
+is produced, so **every channel reports a clean read**. There is now a note on
+the response, conditioned only on a fact already held -- this scan produced at
+least one sale -- classifying no record and changing no outcome.
+
+### And my own fix shipped the defect I have criticised in three reviews
+
+The mutation harness reached six verdicts and killed five. **The survivor was
+the new note's own guard.** My test docstring claimed a snake-draft assertion
+carried it. It carried nothing: `_kind_for` derives one kind per scan from
+`draft_type`, so a snake context yields no `SALE` instants by construction and
+the draft-type clause in my condition was **unreachable, not untested**. No test
+could have defended it, because no input distinguishes the two readings.
+
+Removed the redundant clause rather than writing a test to dress it up, and
+relabelled the snake case in the test as the weak check it actually is -- kept
+deliberately, because it starts doing work the day anyone makes kind
+per-record. A check that excludes nothing while claiming to is the exact defect
+I have raised against three other pieces of work, committed here inside a fix
+for a finding about honesty of reporting.
+
+### Gates
+
+From `working-directory: backend`. `ruff check` clean; `ruff format --check`
+218 files; `mypy` 209 source files, no issues; `pytest tests/test_draft_feed.py`
+64 passed, up from 61. Mutations: 6/6 verdicts reached, 5/6 killed, 1 removed
+as an equivalent mutant, 0 `# MUTANT` markers left in either file.
+
+### Could not verify
+
+- **Whether F2 or F3 was ever reachable from a real Fantrax payload.** `NaN`
+  and fractional pick numbers are what an undocumented endpoint emits, but that
+  is an argument from the class of source, not evidence about this one. Both
+  were reachable from *arbitrary* JSON, which is what the bridge delivers, and
+  that is the whole basis for fixing them.
+- **Whether five rounds is convergence.** The R2/R3/R4 pattern did not recur,
+  which is the first evidence in either direction. But round five found two
+  defects that four rounds had walked past, so the reviews are still finding
+  things that were always there -- and the fixes above are exactly the kind of
+  change that has carried a defect every previous time. A sixth round reading
+  the coercer fixes and the note is running.
+- **Whether the auction note reads as furniture.** It is emitted on every scan
+  that reads a sale, which in a live auction is most of them. A caveat that is
+  always present is a caveat nobody sees. The alternative -- marking only some
+  rows -- requires a classifier that cannot exist, so this is the honest
+  version rather than the useful one, and I could not make it both.
+- **Whether the recogniser fires at all on a real draft-room payload.**
+  Unchanged and still the largest unknown in this unit. `getDraftPicks` has
+  never returned a verified real payload, no draft-room fixture exists, and
+  `/fxpa/req` captures are method-anonymous by construction. Not disproved,
+  unestablished. One mock draft with the userscript loaded turns every guess
+  here into a fixture.

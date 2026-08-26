@@ -50,12 +50,28 @@ The falsifiable form: *the defect excluded is "a wrong alias produces a record
 attributed to the wrong seat, or to no seat".* A reading where a block is
 accepted and that defect is present needs a payload in which a wrong alias
 nonetheless reads out a string that is exactly one of this league's Fantrax team
-ids, for **every** record in the list. What it does **not** exclude is a block
-that is correctly read and is not about this draft at all — a completed *prior*
-season's draft results for the same league would pass every check here. Nothing
-in the payload distinguishes those, so the caller's admission rules
-(:mod:`hoops_gm.draft.feed.service`) do the rest, and this limit is stated
-rather than papered over.
+ids, for **every** record in the list.
+
+**Read the scope of that carefully: an earlier wording overclaimed it, and a
+review caught the overclaim rather than a bug.** What the seat anchor
+establishes is *structural* — the value read is one of this draft's configured
+team ids. It does **not** establish the *semantic* claim that the field means
+"the team that drafted this player". A same-league record using ``teamId`` for
+some other role passes every check here and is attributed to a seat that is
+real, configured, and not necessarily the buyer. So "never the wrong seat" is
+true only in the sense of "never an *unconfigured* seat", and is not a
+guarantee that the row is about the draft at all.
+
+What this module therefore does **not** exclude is a block that is correctly
+read and is not about this draft: a completed *prior* season's draft results for
+the same league would pass every check here, and in an auction league a priced
+keeper roster is the same tuple as a sale (``salary`` is one of our own amount
+aliases and is the defining field of a keeper row), so no structural rule
+available here separates them. Nothing in the payload distinguishes those, so
+the caller's admission rules (:mod:`hoops_gm.draft.feed.service`) do what they
+can, the auction case is surfaced as a note on the response rather than left in
+a docstring nobody reads on draft night, and this limit is stated rather than
+papered over.
 """
 
 from __future__ import annotations
@@ -220,12 +236,37 @@ def _as_text(value: Any) -> str | None:
 
 
 def _as_int(value: Any) -> int | None:
+    """A draft coordinate: an exact, one-indexed ordinal, or ``None``.
+
+    Every call site is a coordinate — ``overall_pick``, ``round_number``,
+    ``pick_in_round`` — so this applies the coordinate's rules rather than a
+    general integer coercion's. Check that before widening it: the tightening
+    below is wrong for a count and right for a position.
+
+    **Exact, because truncating invents a coordinate instead of failing to read
+    one.** ``int(1.9)`` is ``1``. A review drove ``overallPick: 1.9`` through
+    the recogniser and got one instant at ``overall_pick == 1`` with **no
+    unrecognised shape reported** — a board placing a pick at a position no
+    payload claimed, carrying a clean bill of health. Two such rows, ``1.9``
+    and ``1.1``, collide on pick 1. A float that *is* integral (``2.0``, which
+    is how JSON often delivers a whole number) is still accepted.
+
+    **Positive, because the coordinate is one-indexed.** ``0`` and negatives
+    parsed here and were refused later by the database CHECK, surfacing as a
+    generic ``observations_rejected`` rather than the named
+    ``record_missing_draft_coordinate`` that :func:`_has_draft_coordinate`
+    promises. Same records refused either way; only one of the two tells the
+    owner which payload was unreadable.
+    """
     if value is None or isinstance(value, bool):
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, float) and not value.is_integer():
         return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _as_amount(value: Any) -> Decimal | None:
@@ -235,12 +276,28 @@ def _as_amount(value: Any) -> Decimal | None:
     ``41.100000000000001421...`` through the float constructor, and this number
     goes into ``draft_events.amount``, which is ``Numeric(10, 2)``. A clearing
     price is money and money does not round-trip through binary floating point.
+
+    **The non-finite check is load-bearing and the ``try`` does not cover it.**
+    ``Decimal("NaN")`` *constructs* — it is a valid Decimal — so it leaves the
+    ``try`` intact and then raises ``InvalidOperation`` on the ``> 0``
+    comparison below, one line outside the handler. A review put
+    ``"winningBid": "NaN"`` in a captured payload and recognition **raised**,
+    where the contract is that an unreadable field yields ``None`` and a named
+    count. ``Decimal("Infinity")`` is worse and was missed by that review: it
+    compares greater than zero perfectly happily, so it was returned as a
+    *valid price* and carried to a ``Numeric(10, 2)`` column.
+
+    This is a fail-closed reader of arbitrary JSON from an undocumented
+    endpoint. ``NaN`` and ``Infinity`` are exactly the kind of thing such a
+    source emits, and neither is a bid.
     """
     if value is None or isinstance(value, bool):
         return None
     try:
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not amount.is_finite():
         return None
     return amount if amount > 0 else None
 
@@ -383,6 +440,12 @@ def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
     that is deliberate: both readings apply zero picks, and a named
     ``record_missing_draft_coordinate`` count says which payload was unreadable
     while an out-of-turn halt does not.
+
+    A third review then moved the line again, without touching this function:
+    the gate is only as strict as :func:`_as_int`, which truncated ``1.9`` to
+    pick 1 and admitted ``0``. "Orderable" has to mean *exactly and validly*
+    ordered, or the gate reports a coordinate the payload never claimed. The
+    rule now lives in the coercer, where every caller gets it.
     """
     if kind is InstantKind.SALE:
         return _as_amount(_first(record, "amount")) is not None
