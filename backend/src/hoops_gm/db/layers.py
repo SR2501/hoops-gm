@@ -310,12 +310,29 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #: * A value read out of a market row in Python and written into a projection
 #:   row leaves no foreign key behind.
 #: * An identifier column that holds another table's key *without declaring a
-#:   foreign key* is structural, stored, and still invisible. This is not
-#:   hypothetical here - ``published_auction_values.source_player_id`` and
-#:   ``auction_value_imports.profile_id`` are two of the ten such columns in the
-#:   schema today. An ``expected_games.seed_published_auction_value_id INTEGER``
-#:   with no foreign key would be exactly the defect ADR-008 forbids and would
-#:   pass.
+#:   foreign key* is structural, stored, and still invisible. An
+#:   ``expected_games.seed_published_auction_value_id INTEGER`` with no foreign
+#:   key would be exactly the defect ADR-008 forbids and would pass.
+#:
+#: **No such column exists today, and an earlier version of this note said
+#: otherwise.** It claimed ``published_auction_values.source_player_id`` and
+#: ``auction_value_imports.profile_id`` were "two of the ten such columns in the
+#: schema today". A fourth review checked all ten and every one is a
+#: *foreign-system* identifier or a config profile name - nba_api's team and
+#: game ids, Fantrax's league, team and transaction ids, parse-profile names,
+#: and what an auction source called a player. Not one holds the key of another
+#: mapped table. The number of columns matching the defect described above is
+#: **zero**. The sentence that made this limit feel load-bearing was the one
+#: part of it that was false, which is worth leaving on the record: the count
+#: was reproducible and the claim it supported was not, and a reproducible
+#: number is exactly what makes an unsupported claim beside it look checked.
+#:
+#: So :data:`NAKED_IDENTIFIER_COLUMNS` is a tripwire on *arrival*, not a
+#: measurement of a live gap. It is keyed on the ``_id`` spelling, which is
+#: wrong in both directions: ``seed_auction_ref`` would be missed, and all ten
+#: it currently counts are false positives. It is kept because the alternative
+#: - inferring which columns are references - is precisely what the absent
+#: foreign key denies you.
 #:
 #: A third case belongs to :data:`GRAIN_LIMIT` rather than here, and is worth
 #: naming because it is live: ``draft_events`` sits at ``observations`` and
@@ -327,13 +344,15 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #:
 #: The reason to close the structural door anyway is that it fails on arrival.
 #: A new table declares its foreign keys at definition time, so the wrong
-#: lineage is rejected before a single row exists — which is the only moment
+#: lineage is rejected before a single row exists - which is the only moment
 #: fixing it is cheap.
 FLOW_SCAN_LIMIT: Final = (
     "declared foreign keys only; an undeclared identifier column or a value copied "
     "between layers in Python leaves no key. Ten columns ending _id carry no foreign "
-    "key today (count reproducible from Base.metadata; an earlier note said sixteen "
-    "on an unstated heuristic and review could not reproduce it)"
+    "key today, all of them foreign-system identifiers rather than references to a "
+    "mapped table, so the count is a tripwire on arrival and not a live gap (count "
+    "reproducible from Base.metadata; an earlier note said sixteen on an unstated "
+    "heuristic and review could not reproduce it)"
 )
 
 #: The size of the gap :data:`FLOW_SCAN_LIMIT` describes, pinned so it is checked.
@@ -344,6 +363,12 @@ FLOW_SCAN_LIMIT: Final = (
 #: reproduce it. ``test_the_scope_limits_are_stated`` recomputes this from
 #: ``Base.metadata``, so adding or removing an undeclared identifier column
 #: fails a test rather than quietly widening the gap the constant describes.
+#:
+#: What it counts is not what :data:`FLOW_SCAN_LIMIT` describes - see there.
+#: The next external id column added (``espn_player_id``, say) turns the test
+#: red with advice to consider making it a real foreign key, which will be the
+#: wrong advice, and the right repair will be to bump this number. That is a
+#: known cost of the spelling, accepted deliberately rather than by omission.
 NAKED_IDENTIFIER_COLUMNS: Final = 10
 
 #: What the import-time call does **not** see.

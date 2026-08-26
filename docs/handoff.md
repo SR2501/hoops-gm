@@ -23503,6 +23503,93 @@ against my own earlier framing: `projection_id -> projections` records that the
 assumption was stripped from that specific row, and deleting true lineage to make
 a check pass is the failure mode this repository already names.
 
+### The fourth review: I predicted the class, and it found seven
+
+I predicted round four would find the same class - a guard whose positive case
+is driven and whose reachability is never checked - and said zero would be the
+surprising result. **Seven findings, two blocking.** The rate is 10, 9, 10, 7.
+
+**The blocking pair are both mirrors of things I had already fixed once**,
+which is the specific pattern worth recording: closing a finding in one
+direction and mutation-proving it in that direction only.
+
+**1. The mirror of round three's mutation.** Round three found that rebinding
+`validate_layers` to the *assignment* half alone killed the flow check with 62
+tests green, and I closed it by parametrising over both halves. The reverse
+edit - deleting `validate_layer_assignment(metadata)` and leaving flow only -
+**left both arms green.** The assignment arm injects `del TABLE_LAYERS
+["players"]`, and `validate_layer_flow` resolves every table through
+`layer_of`, which raises `has no layer` for exactly that. So the arm had never
+needed the assignment half at all. What silently stopped running were the two
+branches only `validate_layer_assignment` has - the vanished check, and the
+stale market-identity check that round three added *because nothing drove it*.
+And the edit is plausible, not contrived: "the flow check already raises for an
+unassigned table" is true of the branch a reader would test and false of the
+other two. Now three arms; the third injects a `TABLE_LAYERS` entry naming an
+unmapped table, which `validate_layer_flow` structurally cannot reach because
+it iterates the foreign keys of *mapped* tables.
+
+**2. I committed on the migration side the exact error I congratulate myself
+for avoiding on the model side.** `test_the_model_and_migration_agree_on_the
+_layer_rank_check` has a docstring boasting that a first version compared the
+migration to a *helper call* rather than to the constraint the table carries -
+and then compared it to `0019`'s module-level `_LAYER_RANK_PAIRS` literal,
+never to what `upgrade()` does with that literal. Appending `+ " OR data_layer
+= 'market'"` at the call site leaves the literal untouched: green suite,
+Alembic does not compare CHECKs, and the one behavioural probe uses a row both
+expressions reject. The migrated store then accepts a `market` row at any rank
+while the models-created store refuses it - **the precise inversion of the
+guarantee in that test's own failure message.** It now compares against the
+constraint `sa.inspect` reads back from the database the migration built.
+
+**The one that was factually wrong rather than structurally weak.**
+`FLOW_SCAN_LIMIT` claimed `published_auction_values.source_player_id` and
+`auction_value_imports.profile_id` were "two of the ten such columns in the
+schema today". The reviewer checked all ten. **Every one is a foreign-system
+identifier or a config profile name** - nba_api ids, Fantrax ids, parse-profile
+names - and not one holds the key of another mapped table. The number of
+columns matching the defect I described is **zero**, not ten.
+
+That is worth more than the structural findings, because of *why* it survived
+three passes: the count beside it was reproducible. **A reproducible number
+makes an unsupported sentence next to it look checked.** I had hardened the
+number twice - it was the thing that had gone stale before, at "sixteen" - and
+never re-read the claim it was there to support. The constant now says the ten
+are external identifiers and the count is a tripwire on arrival rather than a
+measurement of a live gap, and that correction is itself pinned by an assertion
+so it cannot be quietly reverted.
+
+**The one whose failure mode was silent rather than safe.** `_SEED_ROWS_AT_0019
+= 41` could be silenced by appending a seed row and editing `41` to `42` - two
+keystroke-level edits, and the failure message named that escape hatch in the
+same breath as the remedy. The migrated-store tests cannot see it because they
+upgrade from an *empty* database, where adding a row to `0019` and adding a new
+migration are indistinguishable. Unlike `FLOW_MATRIX_SIZE`, which lands safe
+because `flow_permitted` is an allowlist, **the seed is not an allowlist, it is
+data** - and no test in this repository can observe the owner's stamped store,
+so after that edit nothing distinguishes a store that got the row from one that
+did not, permanently. Both seed pins are now **sha256 digests**. A digest has no
+single number to update; replacing one reads in a diff as what it is.
+
+The remaining three: the `data_layer` CHECK parser matched on prefix and suffix,
+so `data_layer = 'observations' OR data_layer = 'market'` parsed as a
+single-literal pin - a **false positive** in the scan that exists to detect
+exactly that drift, and worse than the `IN (...)` case it was hardened for
+because that one at least fails loudly; the fixture guard was keyed on tests
+*taking `migration_url`*, which a two-line inline of that fixture evades
+entirely, and is now keyed on what the body calls; and the enum CHECK was
+asserted structurally for `data_layer_registry` but not for `data_layer_flows`,
+which has **no rank CHECK to reject an unknown layer by accident** the way the
+registry does.
+
+All seven are closed. Six were mutation-proved with the reviewer's own concrete
+mutations, all caught, all restored and verified against git; the seventh is the
+prose correction, pinned by an added assertion. `_normalised_check` earns its
+place: Postgres reads that CHECK back as `data_layer::text = 'observations'::text`
+with no parentheses where the model has parentheses and no casts, so a raw
+string comparison would have failed the Postgres job for a reason unrelated to
+drift.
+
 ### The third review, and why I stopped predicting the rate would fall
 
 I commissioned a third review specifically *because* the finding rate had not
