@@ -284,11 +284,40 @@ from the published count — and **74 is exactly v3 §6's disputed figure.** An
 independent reviewer had brute-forced `c x (1 - a/b)` over the 23 published
 counts and found no route from 83 to 74; a reason table totalling 84 is a route,
 and it is the first explanation of §6's number that does not require an error.
-So §6 is very likely not wrong in arithmetic, only in *label*, and "correct 74
-to 73" would swap the base silently rather than resolve it. Until the extra row
-is explained — a row carrying two reason categories is the obvious candidate —
-the honest bound is the pair, **73 or 74 non-G-League (2.43x or 2.47x)** and
-**68 or 69 on health reasons (2.27x or 2.30x)**.
+
+**The mechanism is now known and it is not the one guessed here.**
+`scripts/cohort_predictor_crosses.py` (#97, on `main`) states that a reason
+breakdown is over the **canonical** selection while the published count is the
+**direct** one, the two differing by the participation join — 13,789 against
+13,598 cohort-wide. So the 84th row is not a double-categorised row; it is one
+canonical `doubtful` row with no participation outcome. That makes every bound
+below a **bracket derived from two committed integers and a subset relation**:
+exactly one canonical row is non-direct, and it either carries a given reason or
+does not.
+
+**And "health reasons" was never defined here, which a fifth review pass caught
+by computing a different pair from the same table.** It is not one restriction
+but at least three, so all of them are tabulated rather than one being chosen:
+
+| restriction | categories removed | canonical | direct bracket | vs floor of 30 |
+|---|---|---|---|---|
+| non-G-League | G League (10) | 74 | **[73, 74]** | 2.43x – 2.47x |
+| health, `Rest` excluded | + `Rest` (4) | 70 | **[69, 70]** | 2.30x – 2.33x |
+| health, `Rest` and `Reconditioning` excluded | + `Reconditioning` (1) | 69 | **[68, 69]** | 2.27x – 2.30x |
+| `Injury/Illness` alone | + `Concussion Protocol` (1) | 68 | **[67, 68]** | 2.23x – 2.27x |
+
+The reviewer read "health reasons" as row 2 and this card had meant row 3; both
+are defensible and neither was stated, which is the defect. **The lowest reading
+available on any definition is 67/30 = 2.23x**, so condition 6 clears by more
+than 2x however the line is drawn — but a floor quoted without its restriction
+is not a number a later reader can check, and that is what §6 does and what this
+card did.
+
+**None of these four rows is ground truth**, because every one of them is
+`Rest`-classification-dependent and stated reasons misclassify in both
+directions: 7 of 97 `Rest` rows in this cohort carry "Left Knee - Injury
+Management". Row 1 is the only one that does not require a health judgement at
+all, which is why it is the bound to quote.
 
 **And the 18.6% does not transfer across partitions**, which is a second thing I
 should have flagged when I used it: the direct held-out G League share is
@@ -341,7 +370,7 @@ Anticipated, not yet observed — nothing has been fitted.
 ## Gate status of the machinery this card depends on
 
 The calibration machinery (`hoops_gm.availability.calibration`, plus the
-synthetic generators and 40 driven mutations) is filed under the **Code gate**.
+synthetic generators and 44 driven mutations) is filed under the **Code gate**.
 That is the architect's ruling; the reasoning matters more than the verdict.
 
 **Why Code and not Model.** You cannot hold data out from a formula. The Model
@@ -349,7 +378,7 @@ gate's central requirement is a backtest against held-out data, and there is no
 estimate here to back-test — the module is a deterministic scorer, not an
 estimator. The honest discharge for such a thing is verification against
 analytically known values plus deliberate corruption, which is what the tests and
-`scripts/mutate_calibration.py` do: 40 mutations, each driven red.
+`scripts/mutate_calibration.py` do: 44 mutations, each driven red.
 
 **The argument on the other side, recorded because a reader will otherwise
 re-derive it.** An independent non-`quant` reviewer argued Code + Model, reading
@@ -385,6 +414,7 @@ because it survives only as prose and prose is deletable.
 | 0.4 | 2026-08-23 | Revised after the **fourth** independent review, blind still unbroken. Seven reviewer mutations survived a suite that had just caught 30; the survivor sequence across four passes is 4, 5, 4, 7 and **is not converging**, which is reported here rather than smoothed. Two findings differ in kind from the earlier ones. First, a **false guarantee** rather than a disclosed residual: both docstrings promised that multiplicity-changing container operations return a plain `list`, and `rc += list(rc)`, `rc.extend(list(rc))`, `rc[0:0] = list(rc)` - plus `append` and `insert` of a row taken from the cohort itself, which the review had recorded as refused because it tried them with a *foreign* row - all returned a `RestrictedCohort` with the marker true of every row and `n` doubled. That inflation is exactly what moves condition 5's Wilson half-width from 0.1052 to 0.0752 and manufactures a guarantee this card says cannot be issued blind. The repair is **not** a longer list of dunders: duplicate `observation_id`s are now refused where the cohort becomes a number, which covers routes nobody enumerated, including direct construction. (The review's headline payload, `rc *= 2`, is **false** - it returns a plain `list`, because defining `__mul__` at Python level makes the in-place operator fall back to it. The route is closed by an accident nothing recorded, which is its own argument for checking at the report.) Second, a **declared convention the code did not implement**: `bootstrap_unit` claimed resampling by observation id while the loop resampled row positions and never read the id - harmless only while ids are unique, and otherwise producing an interval that is **too narrow**, the direction that makes condition 2 easier for the candidate. Duplicate ids are refused there too, so the declaration is now true. `bootstrap_quantile` (Hyndman-Fan type 7) was declared and pinned by nothing; substituting the floor rule left every test green while moving `interval_high`, which `candidate_beats_baseline` reads, and it is now pinned against hand-computed values. A numeral error that four review passes read without recomputing is also corrected: the duplicated `doubtful` half-width is 0.0752, not 0.0745 - the latter is the Wald `1/sqrt(2)` scaling, which a Wilson interval does not obey. Mutations: 40, all caught. | None — no result exists. |
 | 0.5 | 2026-08-23 | **Label correction, arising from a `data-engineer` lane's reviewer and applying equally to this card.** v3 §6 calls its ~74 a health-reasons floor; it removes G League and nothing else, leaving `Rest` - a coach's decision on the same footing as the Two-Way recall whose removal it endorses. This card's own ~68 / 2.25x had the identical defect, adopting §6's label while doing §6's arithmetic, and the test asserting it was named `..._health_only_floor_...` and is renamed to `..._non_g_league_floor_...`. **A one-row reconciliation must happen before the label is corrected**, because that row is the entire disagreement: the reported held-out reason breakdown (`Injury/Illness 68, G League 10, Rest 4, Concussion Protocol 1, Reconditioning 1`) sums to **84** against a published held-out `doubtful` count of **83**, so non-G-League is 74 from the breakdown and 73 from the published count - and **74 is exactly the figure being corrected**. That is the first explanation of §6's number that does not require an error, and it means “correct 74 to 73” would swap the base rather than resolve it. Until the extra row is explained, the honest bound is a pair: 73 or 74 non-G-League, 68 or 69 on health reasons. Separately, **the 18.6% does not transfer across partitions** - the direct held-out G League share is 10/83 = 12.05% - so this card's estimate was five rows low as a non-G-League figure, and the transfer was an assumption it stated nowhere. No verdict moves: condition 6 clears by more than 2x on every reading. Machinery unchanged; mutations still 40, all caught. | None — no result exists. |
 | 0.6 | 2026-08-23 | **Row 0.5's mechanism was wrong and the answer was already committed.** Row 0.5 called the 84-vs-83 gap unexplained and guessed a double-categorised row. `scripts/cohort_predictor_crosses.py`, merged to `main` in #97, states the real reason in its own docstring: the reason breakdown is over the **canonical** selection and the published 83 is the **direct** count, and the two populations differ by the participation join - 13,789 against 13,598 cohort-wide. So the 84th row is not a double-count; it is **one canonical held-out `doubtful` row with no participation outcome attached**. That makes the pair *derived* rather than a hedge: direct non-G-League is bracketed in **[73, 74]** because exactly one canonical row is non-direct and it is either G League or not - two committed integers and a subset relation, no join and no outcome. The numbers in row 0.5 were right; its account of why was not. **And it sharpens what v3 §6 got wrong:** 74 is not a rival base for the direct count, it is the **canonical** non-G-League count reported as though it were the direct one - so §6's sentence carries *two* population errors, canonical-for-direct and non-G-League-for-health, and only the second was being corrected. **This was mine to catch**: the script was on `main` before I wrote row 0.5, and I inherited the coordinator's framing that the breakdown and the published count described one population instead of checking it - the same unexamined inheritance row 0.5 exists to record. Machinery unchanged; mutations still 40, all caught. | None — no result exists. |
+| 0.7 | 2026-08-23 | **Revised after the fifth independent review, blind still unbroken. The survivor sequence is 4, 5, 4, 7, 4 - still not converging.** The headline finding is a **gate reported from the wrong command**: this card claimed mypy clean while the checking run was `mypy src` (121 files) and the gate CI runs is bare `mypy` (195 files, tests included). Under the real command the branch had **five errors** and would have failed CI. `gates.md` already records an incident of exactly this shape in this repository - `mypy --strict` run on a script and reported as strict-clean while eighteen unannotated test functions sat outside the checked path - so this is a second instance of a **named, documented** failure mode, and the precedent matters more than the five errors. Fixed, and every gate is now quoted with its file count so a narrower run cannot be reported as the wider one. **Three further survivors share a generator distinct from the earlier passes: a guard exists and is correct, and the only test pinning it uses the one input on which a broken guard still returns the right answer.** Duplicate detection was keyed on `observation_id` but every test duplicated *the same object*, so `id(row)` passes the whole suite while the realistic bug - two instances sharing an id from a join - goes through. `Band.observations` was read by no assertion anywhere, so a band reporting the whole cohort's size survived: **a field no assertion reads is not data, it is decoration.** And `bands_from_labels`, a second public place where the cohort becomes a number, had no duplicate check at all - the pass-four rule applied at the one site its author thought of, which is the dunder enumeration it replaced, one level up. **A claim about CPython was also wrong in both directions:** the `*=` docstring credited `__mul__` with closing the route, when `__rmul__` fills the same slot and either alone suffices; and *both* parties measured it with `delattr`, which cannot model “this method was never defined” and produced two different wrong matrices. The sound experiment builds fresh classes and is now a test. **Finally the `doubtful` restriction table:** “health reasons” was three restrictions wearing one name, so all four are tabulated as brackets rather than one being chosen, and the reviewer's arithmetic objection is answered by row 0.6's canonical-versus-direct mechanism - 74 and 73 are the ends of one bracket, not rival bases. Lowest reading on any definition is 67/30 = 2.23x, so condition 6 still clears by more than 2x. Mutations: **44**, all caught. | None — no result exists. |
 
 **The next entry in this table must state the date the blind was broken and under
 which pre-registration version.** A results row that does not is not admissible.
