@@ -25041,3 +25041,89 @@ survived, 0 harness failures**; from `backend/`: `ruff check .` clean,
   breakdown behind the restriction table** - both carried forward unchanged from
   entries #8 and #9, still not run exhaustively, still conditional on a report I
   cannot check without a rebase window.
+
+
+## 2026-08-23 - quant - calibration machinery: sixth and seventh reviews closed
+
+**What I did.** Closed eleven survivors across two independent review passes on
+`backend/src/hoops_gm/availability/calibration.py` and its harness. No model was
+fitted and no participation outcome was read; the blind is intact.
+
+**The finding worth carrying, because it is not about this module.** Handoff #10
+recorded a hole its author found before review: the mutation-harness reader
+resolved a rebound path constant to the wrong file and would then have validated
+41 anchors against a file the harness never touches, reporting every anchor
+present. That was fixed - for the one form that had been driven. The reviewer
+walked four more straight through the fix: a tuple unpack, a walrus, a
+`globals()[...]` store, and an assignment nested in an `if` **that he had already
+reported in the previous pass**. So the fix to the fix reproduced the generator it
+was fixing, inside one commit cycle. **A guard that works by enumerating
+syntactic forms is always one form behind.** The repair is a predicate over a
+single `ast.walk` - every `Name` with `ctx=Store`, which is the same node for
+tuple, walrus, `for`, `with ... as`, comprehension and augmented targets alike -
+plus a blunt refusal of `globals`/`locals`/`vars`/`setattr`/`exec`/`eval`, since
+dynamic rebinding leaves no store to count. Seven evasions driven red, control
+green.
+
+**A false generalisation, and it was in the durable artefact.** The model card
+says *no CI job lints `scripts/`*, which is true. The test-file docstring and
+`docs/backlog.md` said `scripts/` is *linted, type-checked and executed* by no
+job, and that every Python job declares a working directory. Both clauses are
+false: `ci.yml` runs `scripts/backlog_graph.py` (line 142),
+`scripts/check_no_secrets.py` (354) and `scripts/run_metrics.py` (93, 98, 292,
+297) across four jobs, and the `backlog-graph` and `secrets` jobs declare no
+working directory at all. The careful wording sat in the prose and the false one
+in the test file, which is the artefact a later reader inherits. The compounding
+part: handoff #9's stated reason for not auditing those jobs was that none of them
+covers a file I touch - false for three of them, so **the audit skipped exactly
+the jobs that would have refuted its own generalisation, on the strength of that
+generalisation.** Both were run by hand and pass, so there is no red CI; the
+conclusion was correct by luck rather than by the reasoning given.
+
+**Four published fields no assertion read, one a headline metric.** Pass five's
+rule - a field no assertion reads is not data, it is decoration - had been applied
+only to the field that was driven. An exhaustive audit of all 41 fields of the
+seven emitted dataclasses found four more, every one reachable in `to_dict()` and
+therefore *published*: `CalibrationReport.plays`, `CalibrationBin.plays`,
+`BrierComparison.seed`, and `brier_score`. `brier_score` could be **doubled** with
+the entire suite green - a reported section 7 number wrong by 100%, strictly worse
+than the internal field that produced the rule.
+
+**Declaration twins.** A test asserting a `DECLARED_CONVENTIONS` string verifies
+that the sentence is right, not that the code obeys it; `bootstrap_unit` declared
+id-resampling while the code resampled positions and a string-asserting test
+passed throughout. All ten conventions were driven by mutating the implementation.
+All ten are caught, and the seven with no standing mutation are now permanent
+(D01-D07). `bin_gap_sign` is caught by exactly one test, which is the point: every
+other consumer takes `abs()` and symmetrises the declaration away.
+
+**Verified at this commit**, from `backend` unless stated: module tests **131**,
+harness-integrity tests **4**, `ruff check .` clean, `ruff format --check .`
+**204 files already formatted**, bare `mypy` clean over **196 source files**,
+**55 mutations, 55 caught, 0 survived, 0 harness failures**, full suite **1918
+passed, 32 deselected**. Backlog header recomputes unchanged.
+
+**What I could not verify.**
+
+1. **That the survivor sequence has converged. It has not: 4, 5, 4, 7, 4, 8, 3.**
+   A rising count is evidence the mutations are getting better, not that the code
+   is getting worse - but it is also the shape that, sustained, says the module is
+   not ready. Both readings remain live and I am not picking the flattering one.
+   Each pass has found a *new generator* rather than a repeat, which is the part I
+   cannot distinguish from an improving reviewer.
+
+2. **That the decorative-field audit is exhaustive beyond what was driven.** Four
+   fields were found by inspecting all 41 and confirmed by mutation. A field that
+   is read by an assertion which would pass on a wrong value is still decoration,
+   and that is a different question I did not ask.
+
+3. **That `ast.walk` over `Name` stores covers every rebinding route.** It covers
+   every route that produces a store node, and the opaque calls are refused
+   wholesale. A module that rebinds through an import, a decorator, or a metaclass
+   would still resolve silently. I chose refusal over enumeration precisely because
+   I cannot enumerate this, but the residual is real rather than closed.
+
+4. **That the ten `DECLARED_CONVENTIONS` are the right ten.** I verified each
+   declaration is pinned by a mutation of the behaviour it describes. Whether some
+   property of this machinery *should* be declared and is not is a question no
+   audit of the existing list can answer.

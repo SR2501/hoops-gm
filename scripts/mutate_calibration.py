@@ -565,6 +565,85 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         '    assert observed[(True, False)] == (False, False), "__mul__ alone closes it"',
         '    assert observed[(True, False)] == (True, True), "__mul__ alone closes it"',
     ),
+    (
+        "X01 report.plays becomes the row count (published field, no reader)",
+        CAL,
+        "        plays=plays,\n        predicted_mean=predicted_mean,",
+        "        plays=len(rows),\n        predicted_mean=predicted_mean,",
+    ),
+    (
+        "X02 headline brier_score doubled (published section 7 metric)",
+        CAL,
+        "        brier_score=brier,",
+        "        brier_score=brier * 2.0,",
+    ),
+    (
+        "X04 bin.plays becomes the bin size (plays/observations reads as 1.0)",
+        CAL,
+        "        observations=count,\n        plays=plays,",
+        "        observations=count,\n        plays=count,",
+    ),
+    (
+        "X06 recorded bootstrap seed is not the seed used",
+        CAL,
+        "        resamples=resamples,\n        seed=seed,",
+        "        resamples=resamples,\n        seed=0,",
+    ),
+    #
+    # D01-D07: declaration twins. Every entry in DECLARED_CONVENTIONS states a
+    # property of the implementation, and a test that reads the *declaration*
+    # verifies only that the string says the right thing. `bootstrap_unit`
+    # declared id-resampling while the code resampled positions, and a
+    # string-asserting test passed throughout. So each convention needs a
+    # mutation attacking the behaviour it describes, not the sentence.
+    # `bootstrap_quantile`, `bootstrap_unit` and `duplicate_observations`
+    # already had theirs (M39, M38, M31/M32); these are the other seven.
+    (
+        "D01 wilson_interval takes the continuity-corrected arm it declares it does not",
+        CAL,
+        "    p_hat = plays / n\n    z_sq_over_n",
+        "    p_hat = (plays - 0.5) / n\n    z_sq_over_n",
+    ),
+    (
+        "D02 wilson_z_95 stops being the 95% two-sided normal quantile",
+        CAL,
+        "WILSON_Z_95: Final = 1.959963984540054",
+        "WILSON_Z_95: Final = 2.5",
+    ),
+    (
+        "D03 predictions are grouped at a different rounding than declared",
+        CAL,
+        "grouped.setdefault(round(row.predicted, decimals), []).append(row)",
+        "grouped.setdefault(round(row.predicted, 1), []).append(row)",
+    ),
+    (
+        "D04 log-loss clip is far wider than the declared 1e-15",
+        CAL,
+        "LOG_LOSS_CLIP: Final = 1e-15",
+        "LOG_LOSS_CLIP: Final = 1e-3",
+    ),
+    (
+        "D05 calibration-in-the-large sign reversed (declared positive over-predicts)",
+        CAL,
+        '"""Signed CITL error. Positive over-predicts play. v2 \u00a78 condition 3."""\n\n'
+        "        return self.predicted_mean - self.observed_rate",
+        '"""Signed CITL error. Positive over-predicts play. v2 \u00a78 condition 3."""\n\n'
+        "        return self.observed_rate - self.predicted_mean",
+    ),
+    (
+        "D06 per-bin gap sign reversed (survived a whole suite once: consumers take abs)",
+        CAL,
+        "        return self.predicted_mean - self.observed_rate\n\n"
+        "    def to_dict(self) -> dict[str, object]:",
+        "        return self.observed_rate - self.predicted_mean\n\n"
+        "    def to_dict(self) -> dict[str, object]:",
+    ),
+    (
+        "D07 ECE becomes an unweighted mean, not the declared observation-weighted one",
+        CAL,
+        "ece = sum(gap * count for gap, count in gaps) / total",
+        "ece = sum(gap for gap, _c in gaps) / len(gaps)",
+    ),
 ]
 
 

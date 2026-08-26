@@ -2449,3 +2449,104 @@ def test_the_doubtful_restriction_table_is_a_bracket_not_a_pair_of_bases() -> No
     assert lowest / floor > 2.0
     assert round(lowest / floor, 2) == 2.23
     assert round(bracket("G League")[1] / floor, 2) == 2.47
+
+
+# ---------------------------------------------------------------------------
+# Published fields no assertion reads.
+#
+# Pass five established the rule - a field no assertion reads is not data, it is
+# decoration - by driving `Band.observations`, whose value could be replaced with
+# a constant while 127 tests stayed green. The rule was then applied to the one
+# field that had been driven. Pass six audited all 41 fields of the seven emitted
+# dataclasses and found four more, every one of them reachable in `to_dict()`, so
+# every one of them a *published* number: `CalibrationReport.plays`,
+# `CalibrationReport.brier_score`, `CalibrationBin.plays` and
+# `BrierComparison.seed`.
+#
+# `brier_score` is the one that matters. It is a headline section 7 metric, it can
+# be doubled without a single test noticing, and a reported number wrong by 100%
+# is strictly worse than the internal field that produced the rule. The others are
+# quieter and not harmless: `plays` set to the observation count makes plays per
+# observation read as 1.0, and a recorded `seed` that is not the seed used breaks
+# reproducibility of every interval built from it while still printing a seed.
+#
+# The cohort below is sized so each mutation's substitute is a *different* number
+# from the truth, which is the whole requirement: a field is pinned only by an
+# input on which the wrong value differs from the right one. Four rows, all
+# emitting 0.5, two of which play. plays 2, observations 4, and the constant each
+# mutation would substitute is 4.
+# ---------------------------------------------------------------------------
+
+
+def _half_and_half() -> list[CalibrationObservation]:
+    return [
+        CalibrationObservation(observation_id=f"h{index}", predicted=0.5, played=index < 2)
+        for index in range(4)
+    ]
+
+
+def test_the_reports_play_count_is_the_plays_not_the_row_count() -> None:
+    """`CalibrationReport.plays` survived being replaced by `len(rows)`."""
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.observations == 4
+    assert report.plays == 2, "plays is the number that played, not the number of rows"
+    assert report.to_dict()["plays"] == 2
+
+
+def test_the_reported_brier_score_is_the_computed_one() -> None:
+    """`brier_score` survived being doubled. It is a headline section 7 metric.
+
+    Every row emits 0.5 and squared error is 0.25 whether the row played or not,
+    so the Brier score is exactly 0.25 by hand - no tolerance argument, and no
+    dependence on how the rows are binned.
+    """
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    assert report.brier_score == pytest.approx(0.25)
+    assert report.to_dict()["brier_score"] == pytest.approx(0.25)
+
+
+def test_a_bins_play_count_is_the_plays_not_the_bin_size() -> None:
+    """`CalibrationBin.plays` survived being replaced by the bin's row count."""
+
+    report = build_calibration_report(
+        _half_and_half(),
+        provenance=Provenance.PREREGISTERED_V2,
+        binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
+    )
+    (only_bin,) = report.bins
+    assert only_bin.observations == 4
+    assert only_bin.plays == 2
+    assert only_bin.plays / only_bin.observations == pytest.approx(only_bin.observed_rate)
+
+
+def test_the_recorded_seed_is_the_seed_that_was_used() -> None:
+    """`BrierComparison.seed` survived being replaced by 0.
+
+    Driven rather than asserted: the same pairs bootstrapped under two seeds give
+    two different intervals, so a report that misrecords its seed cannot be
+    reproduced from what it published. The second half of the test is what makes
+    the first half matter - without it, `seed` could be any label at all.
+    """
+
+    rows = _half_and_half()
+    pairs = _paired(rows, baseline=0.9)
+    first = paired_bootstrap_brier(pairs, resamples=64, seed=7)
+    assert first.seed == 7
+    assert first.to_dict()["seed"] == 7
+
+    second = paired_bootstrap_brier(pairs, resamples=64, seed=0)
+    assert second.seed == 0
+    assert (first.interval_low, first.interval_high) != (
+        second.interval_low,
+        second.interval_high,
+    ), "seeds that produce identical intervals cannot pin the recorded seed"
