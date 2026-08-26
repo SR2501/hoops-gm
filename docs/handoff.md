@@ -25678,3 +25678,136 @@ formatted**. From **`scripts/`**: `eslint .` clean over **3 files**.
 **Next:** architect, for review and merge. This is a follow-up to #106, which
 merged before it. Nothing here changes a number a decision rests on; the Code
 gate is the only one that applies.
+## 2026-08-26 - backend - the reliability endpoint: five computed quantities given a route, and two false numbers found by driving it
+
+`compute_reliability_scorecards` was callable in-process only. `GET
+/api/v1/reliability/scorecards` now carries it. Against a fresh copy of the
+owner's real store at `C:\Users\steverones\hoops-gm-data\hoops_gm.db`, migrated
+`0016 -> 0019`: **HTTP 200, 596 scorecards, 3.12 MB, 4.9 s**, `openapi.json`
+**17 paths** where it listed 16. The evidence season is fixed in the contract at
+`2025-26` (architect ruling), named at the top level of the response and again in
+`lineage`, and is **not** a query parameter - a durability figure whose season is
+ambiguous is the `gameEt` shape.
+
+**One unit, not two,** because `_source_snapshot` requires that every final game
+in the window has exactly its two `team_schedule` rows - a join condition between
+two tables, not a property of either. "The rows landed" establishes nothing on its
+own, so `publish_reliability_evidence` derives the schedule and publishes the
+claim over it in one call, and the acceptance test calls the route over HTTP and
+asserts a non-empty scorecard.
+
+**The correction I was given was itself one refusal late, and this is the fourth
+recorded instance of right conclusion, wrong mechanism.** The merged screen said
+the store has "no `team_schedule` table at all"; the architect corrected that to
+the empty check at `reliability.py:476`. Driven read-only against a copy, the
+refusal actually reached is neither: `publish_reliability_cohorts` calls
+`_require_current(SCHEDULE)` at `:278` *before* `_source_snapshot` at `:284`, and
+`refresh_runs` is empty too, so the first refusal is
+`StaleReliabilityCohortError: no current schedule:nba-schedule cohort for season
+2025-26`. `:476` is only reachable once a schedule refresh exists. The live route
+returns that exact sentence with a remedy attached, verified at **HTTP 409** on an
+unpublished copy of the real store.
+
+**A count that named a table it had not counted.** `PublishResult` reported
+`team_schedule_rows_created` / `_updated` straight off `import_schedule`'s
+`ImportCounts`. `_persist_schedule_cohort:640` seeds that object from
+`import_games` *before* writing a single schedule row, so `updated` counted
+**nba_games**: the command printed `created 2460, updated 1230` for a table that
+holds 2,460 rows. Nothing was ill-formed - both integers were correct counts of
+real writes, the JSON validated, and the pair was wrong only if you knew which
+table each half came from. The pre-existing assertion checked `created` alone,
+where 2,460 coincidentally equals the row count, so it passed over the bug on
+every run. Replaced with one read-back of the table. The new test publishes
+**twice**, because a re-publish is the only reading that separates them: the
+importer then creates nothing and the old field reports 0 for a table still
+holding 2,460.
+
+**An endpoint whose output could not be rendered.** The first green run returned
+596 scorecards keyed on `player_id` alone. No other route could resolve them -
+the only endpoint carrying player names is `/leagues/{league_id}/projections/current`,
+which is league-scoped, and that store has **0 leagues**. Five quantities would
+have moved from "computed, not exposed" to "exposed, unusable". `player_name` is
+now joined in one query over the cohort ids, nullable rather than backfilled with
+a stringified id, with the null branch driven.
+
+**Independent check on the numbers themselves**, rather than on their shape: the
+lowest observed play rates over >=60 opportunities are Kyrie Irving 0/82, Damian
+Lillard 0/82, Tyrese Haliburton 0/82, Thomas Sorber 0/81 - four players who really
+did miss all of 2025-26 with ACL/Achilles injuries. A schema check could not have
+told me that, and a wrong join would very likely not have produced it.
+
+**Cross-lane edit, argued rather than assumed.** `import_schedule` gained a
+keyword-only `source=` defaulting to the existing constant. `_register_schedule_refresh`
+hardcoded `nba_api:ScheduleLeagueV2`; the 2025-26 games came from `LeagueGameFinder`
+and `BoxScoreSummaryV3` via `ingest/backfill.py`, so a derived cohort stamped that
+string would name an endpoint never called, in the row that answers "where did
+this schedule come from" long after the caller is gone. `ingest/` is
+`data-engineer`'s; the default preserves every existing caller's behaviour.
+Escalating rather than absorbing.
+
+**The store-opener census caught the new command on first contact,** which is what
+it is for. Classified `writes`, and the first reason written was wrong: I claimed
+exit 2 and a `DerivationRefused`. Driven, the answer is **exit 3**, `no such table:
+nba_games` - a fresh SQLite file has no schema, so the first read raises rather
+than returning empty. (Exit 2 is the *schema-present, no-games* input, which is a
+different store.) Corrected in place.
+
+**Frontend correction.** Five rows moved from `not-exposed` to a new `not-wired`
+status - "exposed, not on this screen" - because after this route ships,
+`not-exposed` is a false claim and the two states are unblocked by different
+people. `not-wired` is in `tallyEvidence`'s `onScreen` exclusion list, or an
+endpoint's mere existence would read as five rendered numbers. The false
+"no `team_schedule`" sentence is gone and a test now asserts its absence plus the
+empty-table wording. A `--not-wired` CSS variant was added: the sibling statuses
+are enumerated, and a status with no rule renders in body colour and stops reading
+as a badge.
+
+**Controls, each confirmed present in the file before the run was read.** Broke
+the claim reader's summary key `window_start`->`as_of_date`: **5 failed, 4 passed**.
+Unregistered the router: **9 failed**. Reverted `persisted_rows` to
+`counts.created`: **1 failed, 7 passed** - and the 7 include the pre-existing
+assertion, which is the evidence it could never have caught this. Note that
+`git checkout --` reverted the uncommitted *fix* along with the mutation; caught
+by re-reading the file rather than trusting the revert.
+
+**Verified at `d5954b3`, base `28d0d88` unrebased, from `backend`** unless stated:
+`ruff check .` clean, `ruff format .` **213 files**, `mypy src tests` clean over
+**192 source files**, new tests **10 + 8 = 18** passing, full suite at the previous
+commit **2047 passed, 37 deselected** with the single census failure now closed.
+From `frontend`: **324 passed / 20 files**, `lint` clean, `typecheck` clean,
+`build` clean. Handoff entries: base 289, mine 290, `origin/main` 290 at time of
+writing, so the union at merge should be **291**; 0 removed expected.
+
+**What I could not verify.**
+
+1. **That 3.12 MB and 4.9 s are acceptable for the screen that will consume this.**
+   It is a page load rather than a poll, which is the bar I set, but no frontend
+   calls it yet so nobody has rendered 596 rows of it. `compute` re-fingerprints
+   ~73k rows and holds SQLite's database-wide writer for roughly 3 s of that; on a
+   store being written concurrently that is a stall I have not observed because I
+   only ever drove it against an idle copy.
+
+2. **That the response omits nothing a consumer needs.** I added `player_name` only
+   because rendering was impossible without it, and I found that by looking at the
+   payload rather than by any check. There is no test that says "this response is
+   sufficient to draw the screen", and I do not know what such a test would assert.
+   The next thing found missing will be found the same way.
+
+3. **That the full suite is green at `d5954b3`.** The 2047-pass run was at the
+   commit before the count and name fixes; since then I have run the three affected
+   files plus lint, format and mypy. An 11.5-minute suite was not re-run after every
+   edit, so an unrelated file that reads `PublishResult` or the scorecard shape
+   would not have been caught. `git grep` finds no other reader, which is weaker
+   evidence than running it.
+
+4. **That the `import_schedule` signature change is acceptable to `data-engineer`.**
+   I argued it and defaulted it, but the owner of that file has not seen it.
+
+5. **Whether `not-wired` belongs to me at all.** Leaving `not-exposed` in place
+   would have been a false claim the moment this merged, and the architect mandated
+   the correction, but `frontend` owns those files and a second lane editing them
+   during a freeze is exactly the collision the freeze exists to prevent.
+
+6. **That the owner's real store can serve this.** It is at alembic `0016` against
+   repo head `0019` and I deliberately did not migrate it. Everything above ran on
+   copies. The first run against the real store will also be its first migration.
