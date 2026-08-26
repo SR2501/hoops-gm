@@ -46,3 +46,71 @@ In exchange, every number stays decomposable. "Why is he ranked here?" always re
 ## What would flip this
 
 A source publishing genuinely decomposed outputs — per-game production and its availability assumption as separate fields. Those may be imported into their respective layers. The rule is about the *aggregate*, not the publisher.
+
+
+## Amendments
+
+### 2026-08-25 - a rank cannot express clause 3 (`Proposed`)
+
+**Status: Proposed.** Written by `architect` on the `backend` lane's argument.
+The decision is unchanged; what changed is the discovery that clause 3 is **not
+expressible** by the construction everyone reaches for first.
+
+Clause 3 says no ranking, AAV or composite value may be an input to any earlier
+layer. The obvious implementation is a rank: order the layers, refuse any flow
+from a higher number to a lower one. It is cheap, idiomatic, and wrong.
+
+> **No total order can express "A must not reach B" while also placing A before
+> B.**
+
+Driven on `f3e2c53`: a rank permits `valuation -> market`, `availability ->
+market` and `projections -> market`, because `MARKET` must sit late enough to
+consume valuation and therefore sits later than all three. Each of those edges is
+R38 - our own fused value returning as somebody else's evidence, which is the
+circularity this ADR exists to prevent.
+
+**Implementers: use an explicit permitted-edge set, not a rank.** `LAYER_RANK`
+survives only as a descriptive label. `FLOW_MATRIX_SIZE` is asserted so an eighth
+layer forces every new edge through review rather than defaulting.
+
+**The default is what protects; the assertion only notices.** `flow_permitted` is
+a pure allowlist with no fallback, so an enum member cannot add a permission and
+every undecided edge is refused. The residual is **over**-refusal - loud,
+immediate, at import - rather than a wrong number.
+
+### Rejected: an explicit `REFUSED_FLOWS` set with a reason per edge
+
+It converts silencing keystrokes into authored lines a reviewer can see, which is
+real. It buys no safety the allowlist default does not already give, and
+twenty-five reasons that mostly read "backwards" is documentation nobody rereads.
+Recorded so it is refusable again rather than rediscovered.
+
+### What this ratifies, at its real size
+
+`main` was **not** violating clause 3 when this landed: 39 mapped tables, 62
+declared foreign keys, **zero flowing backwards**, only 5 cross-layer and all
+five identity.
+
+But "assigns nothing" would be the wrong summary. **Three of thirty-nine tables
+already recorded a layer** - `absence_splits` at `observations`,
+`auction_value_sources` and `published_auction_values` at `market` - each by an
+ad-hoc CHECK on a string column. **The repository had independently reached for
+this idea three times without a shared vocabulary.** This amendment ratifies a
+concept that had already emerged, which is also why `MARKET` is in the enum.
+
+### What this cannot see
+
+Pinned as assertions in `test_layer_purity.py` rather than left in prose.
+
+- **`FLOW_SCAN_LIMIT`** - the set is closed under *declared foreign keys*, not
+  under Python. A value copied between layers in application code leaves no key
+  and is invisible. **10** `_id`-suffixed columns have no declared FK.
+- **`GRAIN_LIMIT`** - assignment is per-table. `draft_events.amount` is a live
+  R38 case, a market quantity on a non-market table, and this cannot see it.
+  Column granularity is what comes next.
+
+### What would flip this
+
+A layer vocabulary where every pair's permission follows from position - if one
+is ever found, the edge set becomes redundant. Nobody has proposed one, and
+clause 3's shape is the reason to doubt it exists.
