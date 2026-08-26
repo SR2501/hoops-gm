@@ -54,7 +54,26 @@ KNOWN_VARIABLE_SOURCED = {
 
 
 def _module_level_constants(tree: ast.Module) -> set[str]:
-    """Names bound exactly once at module level to a literal."""
+    """Names bound exactly once at module level to a literal, and nowhere else.
+
+    "And nowhere else" is load-bearing and was missing. An earlier version scanned
+    ``tree.body`` and then trusted the resulting names anywhere in the file, which is
+    scope-blind: a function-local ``SOURCE = release.source_version``, a
+    ``global SOURCE`` rebind, a module-level ``for SOURCE in [...]`` target, or - worst -
+    **a function parameter named ``SOURCE``** all shadow a module literal and were
+    classified constant. A review demonstrated all four passing.
+
+    The parameter case is the one that matters: parameterising ``source=`` is the exact
+    shape of the single legitimate variable-sourced site, so a second such function whose
+    parameter happens to collide with a module literal would be counted constant and the
+    count test would stay at 1.
+
+    ``SOURCE += os.environ["X"]`` is the same function failing differently - ``AugAssign``
+    was handled by neither branch, so the name stayed "bound exactly once".
+
+    Rejecting a shadowed name costs a false alarm, which gets investigated. Accepting one
+    costs a green, which does not.
+    """
 
     counts: dict[str, int] = {}
     literal: set[str] = set()
@@ -70,7 +89,34 @@ def _module_level_constants(tree: ast.Module) -> set[str]:
                 counts[target.id] = counts.get(target.id, 0) + 1
                 if isinstance(value, ast.Constant):
                     literal.add(target.id)
-    return {name for name in literal if counts[name] == 1}
+
+    module_level_assigns = {
+        id(target)
+        for node in tree.body
+        if isinstance(node, ast.Assign | ast.AnnAssign)
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+    }
+
+    # Every other binding of the name, at any depth: parameters, for-targets, with-items,
+    # comprehensions, walruses, imports, nested def/class names, augmented assignment.
+    shadowed: set[str] = set()
+    for walked in ast.walk(tree):
+        if isinstance(walked, ast.Name) and isinstance(walked.ctx, ast.Store | ast.Del):
+            if id(walked) not in module_level_assigns:
+                shadowed.add(walked.id)
+        elif isinstance(walked, ast.arg):
+            shadowed.add(walked.arg)
+        elif isinstance(walked, ast.AugAssign) and isinstance(walked.target, ast.Name):
+            shadowed.add(walked.target.id)
+        elif isinstance(walked, ast.Global | ast.Nonlocal):
+            shadowed.update(walked.names)
+        elif isinstance(walked, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            shadowed.add(walked.name)
+        elif isinstance(walked, ast.Import | ast.ImportFrom):
+            for alias in walked.names:
+                shadowed.add(alias.asname or alias.name.split(".")[0])
+
+    return {name for name in literal if counts[name] == 1 and name not in shadowed}
 
 
 def _source_is_constant(arg: ast.expr, constants: set[str]) -> bool:
@@ -88,6 +134,15 @@ def _source_is_constant(arg: ast.expr, constants: set[str]) -> bool:
     # No call site passes an attribute today, so this costs nothing. If an enum-sourced
     # site ever appears, it should be added here deliberately - which is this module's
     # whole point.
+    #
+    # **Known false alarm, and how to repair it correctly.** A constant imported from
+    # another module - ``from hoops_gm.ingest.nba.schedule import SOURCE`` - is rejected,
+    # because ``_module_level_constants`` reads ``Assign``/``AnnAssign`` only. Such a name
+    # is arguably *more* structurally constant than a locally retyped literal, so this
+    # check punishes the more disciplined refactor. If that bites, **resolve the import
+    # and allowlist the specific name**. Do not widen this predicate: loosening it is
+    # exactly the defect this function was rewritten to remove, and a permissive
+    # ``_source_is_constant`` fails green.
     return False
 
 
@@ -99,11 +154,27 @@ def _record_refresh_bindings(tree: ast.Module) -> set[str]:
     the vacuity floor does not help because an aliased site adds zero to the count. A
     review demonstrated exactly that with a bare parameter as the source and all ten
     tests green.
+
+    **The first fix for that was itself incomplete, in the same direction.** It filtered
+    on ``node.module == "hoops_gm.db.lineage"``, and for a relative import
+    ``from ..db.lineage import record_refresh as _register`` the module is ``"db.lineage"``
+    with ``level == 2``, so the equality fails and the binding is never recorded. A second
+    review built that module and got ``9 passed, 1 skipped`` - byte-identical to the
+    control - from a new production file writing provenance with a runtime-varying source.
+    Relative imports are ordinary here; ``ingest/schedule_import.py`` uses one.
+
+    The floor does not rescue this either. Converting an *existing* site to relative+alias
+    drops the count and trips ``>= 8``; **adding** one does not, and the conversion case
+    decays to nothing as soon as the repository has more than eight call sites.
+
+    So the module filter is gone. No other module in this tree exports ``record_refresh``,
+    so it bought nothing, and over-inclusion is the right direction of error for this file:
+    a false alarm gets investigated, a false green does not.
     """
 
     names = {"record_refresh"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "hoops_gm.db.lineage":
+        if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name == "record_refresh":
                     names.add(alias.asname or alias.name)
@@ -116,6 +187,10 @@ def _call_sites() -> list[tuple[str, int, str, bool]]:
     sites: list[tuple[str, int, str, bool]] = []
     for path in sorted(SRC.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
+        # Stated rather than assumed: this early-out is defeatable. A call spelled
+        # ``getattr(lineage, "record_" + "refresh")(source=x)`` skips the file wholesale.
+        # That is contrived enough not to gate on, but the limit belongs in writing -
+        # an unstated assumption is how the previous two holes in this file survived.
         if "record_refresh" not in text:
             continue
         tree = ast.parse(text)
@@ -136,8 +211,12 @@ def _call_sites() -> list[tuple[str, int, str, bool]]:
             called_here.add(id(func))
             source = next((k.value for k in node.keywords if k.arg == "source"), None)
             if source is None:
-                # A positional or absent source is worse than a variable one:
-                # nothing here can tell what it is. Fail loudly rather than skip.
+                # ``source`` is keyword-only in the real signature, so a *positional*
+                # source is a TypeError rather than a hole here - an earlier version of
+                # this comment claimed to catch something that cannot happen, which is
+                # true vacuously and therefore says nothing. What this branch actually
+                # catches is ``**kwargs`` unpacking and outright omission: nothing here
+                # can tell what the source is, so it fails loudly rather than skipping.
                 sites.append((rel, node.lineno, "<not a keyword argument>", False))
                 continue
             sites.append(
@@ -145,11 +224,22 @@ def _call_sites() -> list[tuple[str, int, str, bool]]:
             )
 
         # The primitive handed somewhere rather than called: functools.partial, a
-        # decorator, a dict of writers. The source cannot be resolved from here, so it
-        # is reported as non-constant rather than passed over in silence.
+        # decorator, a dict of writers. The source cannot be resolved from here, so it is
+        # reported as non-constant rather than passed over in silence.
+        #
+        # Both spellings are covered. An earlier version walked only ``ast.Name``, so it
+        # missed the attribute form - ``functools.partial(lineage.record_refresh, ...)``
+        # and ``_rr = lin.record_refresh`` both passed clean, because the attribute node
+        # is neither a call's callee nor a Name. Neither spelling occurs in this tree
+        # today (``functools.partial`` and ``import hoops_gm`` are both absent under
+        # ``src/``), so this is a hole closed before it was reachable.
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and node.id in bindings and id(node) not in called_here:
+            if id(node) in called_here:
+                continue
+            if isinstance(node, ast.Name) and node.id in bindings:
                 sites.append((rel, node.lineno, f"<{node.id} referenced, not called>", False))
+            elif isinstance(node, ast.Attribute) and node.attr == "record_refresh":
+                sites.append((rel, node.lineno, "<record_refresh referenced, not called>", False))
     return sites
 
 

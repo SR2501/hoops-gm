@@ -26173,3 +26173,109 @@ rather than fail, while passing on SQLite.** Nothing said so; now the docstring 
   (config-driven, 206 files); `mypy src` reports 125. A previously logged "193" matches neither, so
   one of my earlier gate quotes named a command I had not actually run. The gate is green under CI's
   exact invocation.
+---
+
+## 2026-08-26 - backend - the fix for a false-green had the same false-green in it, one import form deeper
+
+A second independent review read `ae8c288` - the head that claimed to close the two
+false-greens in `test_refresh_source_call_sites.py` - and closed **one and a half** of them.
+
+**The blocking finding.** `_record_refresh_bindings` resolved import aliases, but filtered on
+`node.module == "hoops_gm.db.lineage"`. For a relative import, `from ..db.lineage import
+record_refresh as _register`, `node.module` is `"db.lineage"` with `level == 2`. The equality
+fails, the alias is never bound, and the call site is invisible to **both** walks. The reviewer
+wrote a new production module that records provenance with a runtime-varying source and got
+`9 passed, 1 skipped` - byte-identical to the control.
+
+**So the fix for "the matcher resolves names too narrowly" resolved names too narrowly.** The
+docstring in that same commit says *"a checker that resolves names loosely is not conservative,
+it is silently permissive"*, and the implementation under it left the relative form open. Writing
+the general principle down did not stop me implementing the specific case.
+
+**The vacuity floor does not rescue it, and the way it half-rescues is worse than not rescuing.**
+*Converting* an existing site to relative+alias drops the count and trips `>= 8`; *adding* one
+does not. And the conversion save is incidental and decays - the floor is 8 against exactly 8
+sites, so at 10 sites a converted site leaves 9 and goes green too. Its failure message says
+"walked up only 6", which invites the next maintainer to lower the floor rather than notice the
+alias. **A guard that fails with the wrong message trains the wrong repair.**
+
+The module filter is gone; the binding is on the imported name alone. Nothing else in this tree
+exports `record_refresh`, so it bought nothing, and over-inclusion is the correct direction of
+error here: a false alarm gets investigated, a false green does not.
+
+**Three more holes, all measured at zero live exposure, all closed anyway.**
+
+- `_module_level_constants` was **scope-blind**: it scanned `tree.body`, then trusted those names
+  anywhere in the file. A function-local rebind, a `global` rebind, a module-level `for` target
+  and - worst - **a function parameter of the same name** all shadowed a module literal and were
+  classified constant. The parameter case matters because parameterising `source=` is the exact
+  shape of the one legitimate variable-sourced site, so a second such function colliding with a
+  module literal would read as constant and the count would stay at 1. `SOURCE += os.environ[...]`
+  was the same function failing differently: `AugAssign` was handled by neither branch, so the
+  name stayed "bound exactly once".
+- The referenced-not-called walk saw only `ast.Name`, so `functools.partial(lineage.record_refresh,
+  ...)` and `_rr = lin.record_refresh` both passed clean. **The comment above it claimed to cover
+  "functools.partial, a decorator, a dict of writers"** - it covered the direct-name spelling of
+  those, and I wrote the comment describing the class while implementing one member of it.
+- The comment on the missing-keyword branch claimed to catch a *positional* source. `source` is
+  keyword-only in the real signature, so positional passing is a `TypeError` and the claim was
+  **vacuously true** - it named a defect that cannot occur while the branch's actual job,
+  `**kwargs` unpacking and omission, went undescribed.
+
+**Documented rather than fixed:** `getattr(lineage, "record_" + "refresh")` defeats the
+`"record_refresh" not in text` early-out entirely. Contrived, not worth gating, and now stated -
+an unstated assumption is how the previous two holes survived.
+
+**A false alarm I am leaving in place, with its repair named.** A constant *imported* from another
+module is rejected, because `_module_level_constants` reads `Assign`/`AnnAssign` only. That
+punishes the more disciplined refactor. The comment now says: resolve the import and allowlist the
+name; **do not widen `_source_is_constant`**, because loosening it is precisely the defect this
+file was rewritten twice to remove.
+
+**Controls.** All eight surviving mutations now fail, each naming its site; `getattr` passes as
+documented. The blocking one fails as
+`test_every_other_call_site_passes_a_compile_time_constant[availability/_probe.py-4-x-False]` -
+**naming the site, not tripping the floor**, which is the distinction the reviewer's own sibling
+case failed on. Converting a real site to a relative alias keeps the count at 8 with no floor
+trip, so the binding genuinely resolves rather than the count merely surviving. The enumeration is
+byte-identical before and after all four changes: 8 sites, 7 constant, 1 variable.
+
+**A fourth control-instrument failure, caught by printing the numbers instead of the verdict.**
+Re-deriving the backlog count, I ran a negative control expecting one `done` to flip to `pending`
+and the extractor to disagree with the header. It disagreed - but reported `0 done / 143 pending`,
+not the `53 / 90` I predicted. **`[regex]::Replace($text, $pattern, $replacement, 1)` does not
+replace one match.** The four-argument static overload takes `RegexOptions`, so `1` binds to
+`IgnoreCase` and every one of the 54 matches was replaced. A count-limited replace needs
+`[regex]::new($pattern).Replace($text, $replacement, 1)`.
+
+The control was still valid - the extractor demonstrably can say `False` - but **it fired by a
+mechanism other than the one I wrote**, and the only reason I know that is that the script prints
+the tallies rather than a bare pass/fail. Had it printed `AGREE: False` alone I would have
+recorded a correct verdict and an incorrect belief about what produced it. Same family as `gameEt`:
+an argument that is well-formed, accepted without error, and means something other than it appears
+to. **Printing the value beside the verdict is the same discipline as reading the mutated line back
+from disk, one level further in.**
+
+**The backlog recount is 54 done / 1 blocked / 89 pending / 144 total, and the measurement is
+vacuous.** `docs/backlog.md` is blob `44931747` in both the merge-base and this working tree - the
+same bytes twice - so the run validates the *extractor* and establishes nothing about this branch
+beyond "it did not touch the file". Stated rather than reported as agreement, because a control and
+a measurement over identical inputs is the moving-reference error's mirror image: **not a reference
+that moved, but a subject that never did.**
+
+### Could not verify
+
+- **Whether `getattr`-spelled indirection exists anywhere in this repository.** I documented the
+  early-out's limit without measuring its exposure; the reviewer did not measure it either.
+- **Module-level `AugAssign` exposure against the trusted constant names.** The mechanism is
+  demonstrated; the reviewer explicitly flagged that their exposure scan covered inner-scope
+  collisions only and did not enumerate this. Neither of us measured it, so it is closed on
+  mechanism, not on reach.
+- **The Postgres row-lock reasoning** documented last round for `session.commit()` before `main()`.
+  Both the reviewer and I only have SQLite locally. CI's Postgres job runs the same suite and is
+  green, which is consistent with the ordering being correct but does not exercise the reordered
+  form, so nothing here tests the claim itself.
+- **One unattributed working-tree blip** the reviewer saw: ` M backend/tests/fixtures/nba_static_teams.json`
+  appearing and vanishing during their run in a tree we were both using. Neither of us touched it.
+  It is absent now. Recorded because an unexplained mutation in a shared tree is exactly the thing
+  that should not be silently dropped.
