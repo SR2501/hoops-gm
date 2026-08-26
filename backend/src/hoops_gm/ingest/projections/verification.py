@@ -32,7 +32,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.projections.models import ProjectionSourceRow
@@ -76,7 +76,7 @@ MIN_GAMES_FOR_BAKED_IN_CHECK = 20
 MIN_COHORT_FOR_BAKED_IN_CHECK = 25
 
 
-class VerificationOutcome(str, Enum):
+class VerificationOutcome(StrEnum):
     """Whether a check ran, and what it concluded."""
 
     PASSED = "passed"
@@ -238,15 +238,12 @@ def verify_scoring_identity(rows: Sequence[ProjectionSourceRow]) -> Verification
     )
     residuals: list[tuple[str, float]] = []
     for row in rows:
-        parts = (
-            row.field_goals_made_per_game,
-            row.three_pointers_made_per_game,
-            row.free_throws_made_per_game,
-            row.points_per_game,
-        )
-        if any(part is None for part in parts):
+        fgm = row.field_goals_made_per_game
+        tpm = row.three_pointers_made_per_game
+        ftm = row.free_throws_made_per_game
+        pts = row.points_per_game
+        if fgm is None or tpm is None or ftm is None or pts is None:
             continue
-        fgm, tpm, ftm, pts = parts  # type: ignore[misc]
         residuals.append((row.player_name, abs(2 * fgm + tpm + ftm - pts)))
 
     if not residuals:

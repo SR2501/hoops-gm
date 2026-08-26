@@ -151,7 +151,9 @@ def parse_projection_csv(
     missing_required = [
         field
         for field in profile.required_production_fields
-        if field not in stat_headers and field not in derived_fields and field not in composite_fields
+        if field not in stat_headers
+        and field not in derived_fields
+        and field not in composite_fields
     ]
     if missing_required:
         raise ProjectionProfileError(

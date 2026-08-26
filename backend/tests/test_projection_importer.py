@@ -772,8 +772,7 @@ class TestHashtagProjectionContract:
 
         canonical = fixture_bytes.replace(b"\r\n", b"\n")
         assert (
-            hashlib.sha256(canonical).hexdigest().upper()
-            == metadata["privacy_safe_fixture_sha256"]
+            hashlib.sha256(canonical).hexdigest().upper() == metadata["privacy_safe_fixture_sha256"]
         )
         assert "private_export_sha256" not in metadata, (
             "Hashtag has no export to hash; a key implying otherwise would make this "
@@ -813,9 +812,7 @@ class TestHashtagProjectionContract:
         for dropped in ("BLK", "TREB", "FT%"):
             mangled = [h for h in HASHTAG_2026_27_HEADERS if h != dropped]
             with pytest.raises(ProjectionProfileError, match="drifted"):
-                parse_projection_csv(
-                    ",".join(mangled) + "\n", HASHTAG_PROFILE, season="2026-27"
-                )
+                parse_projection_csv(",".join(mangled) + "\n", HASHTAG_PROFILE, season="2026-27")
 
     def test_composite_shooting_cells_yield_volume_not_just_percentage(self) -> None:
         """The finding this unit exists for.
@@ -829,9 +826,7 @@ class TestHashtagProjectionContract:
         90%-on-one-attempt free-throw shooter pricing identically to a
         90%-on-eight.
         """
-        result = parse_projection_csv(
-            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
-        )
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
 
         alpha = next(row for row in result.rows if row.player_name == "Player Alpha")
         assert alpha.field_goals_made_per_game == 10.5
@@ -858,9 +853,7 @@ class TestHashtagProjectionContract:
         corrupted = clean.replace("0.574 (10.5/18.3)", "0.474 (10.5/18.3)")
         assert corrupted != clean, "the mutation must be present in the text under test"
         result = parse_projection_csv(corrupted, HASHTAG_PROFILE, season="2026-27")
-        assert any(
-            issue.fatal and "does not reconcile" in issue.message for issue in result.issues
-        )
+        assert any(issue.fatal and "does not reconcile" in issue.message for issue in result.issues)
 
     def test_tolerance_is_volume_weighted_in_both_directions(self) -> None:
         """Loose where volume is thin, strict where volume is heavy.
@@ -881,9 +874,7 @@ class TestHashtagProjectionContract:
         assert "0.667 (0.2/0.3)" in clean
         assert not [
             issue
-            for issue in parse_projection_csv(
-                clean, HASHTAG_PROFILE, season="2026-27"
-            ).issues
+            for issue in parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").issues
             if "does not reconcile" in issue.message
         ]
 
@@ -893,9 +884,7 @@ class TestHashtagProjectionContract:
         assert nudged != clean
         assert any(
             issue.fatal and "does not reconcile" in issue.message
-            for issue in parse_projection_csv(
-                nudged, HASHTAG_PROFILE, season="2026-27"
-            ).issues
+            for issue in parse_projection_csv(nudged, HASHTAG_PROFILE, season="2026-27").issues
         )
 
     def test_repeated_header_rows_are_rejected_loudly(self) -> None:
@@ -905,9 +894,7 @@ class TestHashtagProjectionContract:
         unparsable stats, which surfaces as a scatter of numeric errors rather
         than as the structural artefact it is.
         """
-        result = parse_projection_csv(
-            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
-        )
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
 
         assert result.rejected_count == 1
         assert any(
@@ -925,17 +912,13 @@ class TestHashtagProjectionContract:
         aggregate of unestablished provenance and must not re-enter valuation
         as though it were a projection.
         """
-        result = parse_projection_csv(
-            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
-        )
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
 
         assert set(result.ignored_terminal_headers) == {"R#", "ADP", "TOTAL"}
         assert "TOTAL" not in result.resolved_headers.values()
 
     def test_multi_position_cell_survives_its_embedded_comma(self) -> None:
-        result = parse_projection_csv(
-            load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27"
-        )
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
 
         delta = next(row for row in result.rows if row.player_name == "Player Epsilon")
         assert delta.position == "SG,SF"

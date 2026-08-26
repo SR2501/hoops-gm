@@ -26362,3 +26362,128 @@ this lane has caught by printing values rather than verdicts.
   unmeasured by anyone.
 - **The Postgres row-lock reasoning** for `session.commit()` before `main()` remains
   reasoned rather than exercised; both the reviewer and I have SQLite only.
+
+## 2026-08-23 - data-engineer - Hashtag projection profile: the committed profile could not parse the source, and the way it failed was silent
+
+**What I did.** Verified the `hashtag-2026-27` projection profile against the live
+Hashtag Basketball projections page rather than against its own declaration, and
+replaced it. `backend/src/hoops_gm/ingest/projections/verification.py` is new;
+`profiles.py`, `parser.py` and `importer.py` changed; the committed fixture was
+replaced because it was fiction. No model was fitted, no valuation was computed,
+and `player_participation` was never read - the injury-conversion blind is intact.
+
+**The finding that justified the unit.** Hashtag publishes makes and attempts
+*inside* the percentage cell: `0.573 (10.5/18.3)`. The committed v1 profile
+declared `FG%` and `FT%` as `percentage_fallback_aliases`, whose documented
+semantics are *the source published no volume*. That is true of the **header** and
+false of the **cell**. So the profile was not merely unverified, it was wrong in
+the one direction that produces no symptom: a repaired import would have parsed
+cleanly, emitted a fallback warning nobody reads, and discarded every shooting
+volume in the file - which is `AGENTS.md`'s *single most common bug in homebrew
+fantasy tools*, a 90%-on-one-attempt FT shooter pricing identically to
+90%-on-eight. `CompositeShootingColumn` now extracts the volume and reconciles it
+against the printed percentage, and the profile validator refuses any field
+declared as both composite and percentage-fallback, because the two declarations
+contradict each other and v1 held one of them.
+
+**The profile hash did not cover the contract it claims to pin.** Found while
+wiring composite provenance into `_build_profile_lineage`: `_profile_definition`
+omitted `composite_shooting_columns`, so a profile decomposing `FG%` into *free
+throws* hashed identically to one decomposing it into field goals. A hash that
+does not cover the thing it is trusted for is worse than no hash, because absence
+invites checking and a green hash ends the question.
+
+**I declined to build the check my brief asked for, and the architect accepted the
+correction.** The brief framed scoring format as load-bearing: import 9-cat
+believing 8-cat and every dollar is wrong. That is false for per-category rates -
+a rebound is a rebound in both, and the category set changes which rates get
+*valued*, not what any rate *is*. The only column whose meaning depends on format
+is `TOTAL`, and ADR-008 already forbids importing it. So the response is **refuse
+the column, not verify the format**: refusal can fail, and a format check against
+a vendor's self-description cannot. Three spellings were added to
+`TERMINAL_HEADER_ALIASES`.
+
+**`MPG <= 48` does not separate per-game from season totals.** I proposed it,
+then measured it: Hashtag's `DDRANK` TOT mode leaves `MPG` at 35.1 for Jokic while
+`PTS` goes 28.4 to 2042.6, under **identical header text**. A mixed-basis table
+whose headers are honest about nothing. `PTS <= 60` separates cleanly and is what
+the shape check uses; the minutes reading is pinned as a passing test named
+`test_minutes_would_not_have_caught_it` so the discarded idea cannot quietly
+return.
+
+**The scoring identity is scale-invariant and is documented as unable to do the
+job it looks like it does.** `2*FGM + 3PM + FTM = PTS` still holds after
+multiplying every column by 72, so it passes with the season-totals defect fully
+present - confirmed empirically this session, identity `PASSED` at residual 0.00
+on a batch the shape check `FAILED`. That sentence is in the docstring, not only
+here, and `test_the_scoring_identity_cannot_detect_a_scale_error` means promoting
+it back requires deleting a passing test.
+
+**Games played: I refused the forecast and built the checkable half.** Whether
+Hashtag's `GP` is *right* is a claim about an unplayed season and no check can
+fail on it. Whether `GP` is already folded into the rates is the ADR-002 line and
+is checkable: cohort median of projected MPG against prior-season observed MPG
+**per played game** from `player_game_logs`, direction stated in advance,
+threshold 0.93, minimum 20 GP, minimum 25-player cohort, and **never a per-row
+gate**. `VerificationOutcome.NOT_RUN` exists so a cohort too small to look at
+cannot be read as clean.
+
+**A false zero, caught only by the positive control.** `normalize_name()` returns
+a `NormalizedName` object, not a string, so every dict lookup in the baked-in
+cohort missed and the cohort came back empty - which reads exactly like *no
+defect*. Checking the answer would never have found it; running the same
+extraction against a case known to be non-zero found it immediately. It also
+strips digits, so test players `P0..P39` collapsed to one key.
+
+**Tolerance is volume-weighted, which is the same principle as the category.**
+`(0.05 + 0.05*p)/attempts + 0.0005`, derived by propagating display rounding
+rather than tuned: **0 violations across 429 live rows**, worst ratio 0.915. Flat
+bounds on the same data: 0.01 gives **257/429** false alarms, 0.02 gives 161,
+0.05 gives 59.
+
+**Verified at this head**, all from `backend`: `ruff check .` **All checks
+passed** over 211 files, `ruff format --check .` **211 files already formatted**,
+bare `mypy` clean over **203 source files**, `pytest -m live_smoke
+--collect-only` collects the three new Hashtag contract tests, full suite
+**2057 passed, 37 deselected**. Base verified on `28d0d88`; not rebased, the
+merge window is the architect's to open.
+
+**Two things handed up as decisions rather than taken.** (1) ADP is recorded as
+three-valued evidence but does **not** enter `score_evidence`, because adding a
+signal re-normalises weights tuned without it and would shift every existing
+confidence score including matches this unit never touches. (2) `verified=True`
+now carries two strengths under one name - BBM's is a file hash, Hashtag's is a
+live-page contract observation with no hash, because the source publishes no
+export to hash. The metadata says so in capitals; the field itself still does not.
+
+**What I could not verify.**
+
+1. **I have never seen the owner's actual paste.** Everything here is from the
+   rendered page. A copy-paste out of a browser can carry different whitespace,
+   different decimal marks, or a column set the user reconfigured - and the column
+   set is **browser state, not a vendor contract**: 16 checkboxes, 9 ticked by
+   default, and a paste carries the values while carrying none of the
+   configuration. The exact header pinning fails closed on that, loudly, which is
+   the behaviour I chose but not the behaviour I confirmed against a real paste.
+
+2. **429 rows of roughly 500, from one date and one page size.** The 30-row
+   default sample said max `|dFT%|` was 0.0126; at 429 rows it is **0.3040**. The
+   architect's warning that low-minute players are where my shape bound is weakest
+   was correct, and I do not know what the remaining ~70 rows do. Do not read a
+   429-row reconciliation as a 500-row guarantee.
+
+3. **Whether header repetition varies by page size.** At 900 I observed 32
+   repeated header rows interleaved roughly every 13. `_is_repeated_header_row`
+   skips them by content, not by position, so the period does not matter - but I
+   only ever saw one period.
+
+4. **The composite cell dialect for the 7 unticked categories.** They were never
+   rendered. If a user ticks `3P%`, I do not know whether it arrives composite,
+   bare, or blank.
+
+5. **Hashtag's `GP` provenance.** Unknown - whether it is their own forecast, a
+   vendor feed, or a prior-season figure. The baked-in check works cohort-level on
+   the *rates* and does not depend on knowing, which is why it survives the gap.
+
+6. **The `GP` forecast itself, in principle.** Nobody can verify a claim about an
+   unplayed season before it is played. I built no check that pretends otherwise.

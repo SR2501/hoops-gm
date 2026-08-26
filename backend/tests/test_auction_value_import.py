@@ -1508,9 +1508,7 @@ def test_hashtag_projections_can_now_be_imported(seeded_players: Session) -> Non
     # satisfy the assertion above and be exactly the silent defect this
     # profile was rewritten to close.
     projections = seeded_players.scalars(
-        select(Projection).where(
-            Projection.projection_import_id == outcome.projection_import.id
-        )
+        select(Projection).where(Projection.projection_import_id == outcome.projection_import.id)
     ).all()
     assert projections
     assert all(row.field_goals_attempted_per_game is not None for row in projections)

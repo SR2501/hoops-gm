@@ -30,6 +30,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import re
 from pathlib import Path
 from typing import ClassVar
 
@@ -70,6 +71,7 @@ from hoops_gm.ingest.nba import (
 )
 from hoops_gm.ingest.projections import (
     BASKETBALL_MONSTER_PROFILE,
+    HASHTAG_2026_27_HEADERS,
     ProjectionProfileError,
     parse_projection_csv,
 )
@@ -1475,3 +1477,112 @@ class TestInjuryReportCurrentSeasonIsAlive:
             body, report_timestamp=candidate, source_url=report_url(candidate)
         )
         assert len(result.entries) > 0, f"no entries parsed from the report for {candidate}"
+
+
+# --------------------------------------------------------------------------
+# Hashtag Basketball projections
+# --------------------------------------------------------------------------
+
+HASHTAG_PROJECTIONS_URL = "https://hashtagbasketball.com/fantasy-basketball-projections"
+
+
+@pytest.mark.live_smoke
+class TestHashtagProjectionContractIsAlive:
+    """The only thing that can detect Hashtag drift.
+
+    This profile is verified against a *live-page contract observation*, not
+    against a hashed artifact -- Hashtag publishes no export, so there is no
+    file to pin. That makes the offline contract test structurally weaker here
+    than it is for Basketball Monster: the fixture is synthetic, so it will
+    keep passing forever no matter what the vendor does.
+
+    These tests are therefore not the optional half of the Adapter gate for
+    this source. They are the *only* half that can fail for the right reason.
+    """
+
+    @staticmethod
+    def _page() -> str:
+        import urllib.request
+
+        request = urllib.request.Request(
+            HASHTAG_PROJECTIONS_URL,
+            headers={"User-Agent": "hoops-gm adapter smoke test"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body: str = response.read().decode("utf-8", errors="replace")
+        return body
+
+    def test_the_header_sequence_has_not_drifted(self) -> None:
+        """FAILS IF: the profile's pinned header contract no longer describes the page.
+
+        Every header in ``HASHTAG_2026_27_HEADERS`` must still be rendered. If
+        this goes red, ``hashtag-2026-27`` must be re-verified against the page
+        before anything imports through it -- a partial match is exactly the
+        silent failure the exact-sequence pin exists to prevent.
+        """
+        page = self._page()
+
+        # Positive control on the extractor before trusting any absence: if
+        # this fails, the page did not arrive and the header assertions below
+        # would report a vendor change that did not happen.
+        assert "hashtag" in page.lower(), "the page did not load; absences below prove nothing"
+        assert len(page) > 50_000, f"page is implausibly small ({len(page)} chars)"
+
+        for header in HASHTAG_2026_27_HEADERS:
+            assert f">{header}<" in page, (
+                f"header {header!r} is no longer rendered; the pinned contract in "
+                "hashtag-2026-27 is stale and the profile must be re-verified"
+            )
+
+    def test_shooting_cells_still_carry_volume_inside_the_percentage(self) -> None:
+        """FAILS IF: Hashtag stops publishing makes/attempts inside FG%/FT%.
+
+        This is the finding the profile is built on. If the composite cell
+        becomes a bare percentage, every shooting volume disappears and the
+        importer must refuse the file rather than fall back to percentages --
+        a percentage without volume is the single most common bug in homebrew
+        fantasy tools (AGENTS.md), not a graceful degradation.
+        """
+        page = self._page()
+        composite = re.findall(r">\s*(0?\.\d{3})\s*\((\d+\.?\d*)/(\d+\.?\d*)\)\s*<", page)
+
+        assert composite, (
+            "no 'percentage (makes/attempts)' cells found; either the page did not "
+            "load or Hashtag changed its shooting cell format, in which case "
+            "CompositeShootingColumn no longer describes the source"
+        )
+
+        # And the volume actually reconciles against the stated percentage, so
+        # a format that merely *looks* composite is not accepted.
+        for stated, made, attempted in composite[:25]:
+            if float(attempted) == 0:
+                continue
+            assert abs(float(made) / float(attempted) - float(stated)) < 0.05, (
+                f"composite cell {stated} ({made}/{attempted}) does not reconcile; "
+                "the parenthesised figures may no longer be makes and attempts"
+            )
+
+    def test_no_csv_export_has_appeared(self) -> None:
+        """FAILS IF: Hashtag adds an export, which would be good news.
+
+        The whole reason this profile's evidence is weaker than Basketball
+        Monster's is that there is no artifact to hash. If an export appears,
+        this profile should be re-verified against it and its
+        ``verification_evidence`` upgraded.
+
+        Written as an assertion rather than a comment because a comment saying
+        "no export exists" survives the day one does -- the same reasoning that
+        kept ``test_hashtag_projections_cannot_currently_be_imported`` around
+        until the day it could be inverted.
+        """
+        page = self._page()
+        assert "hashtag" in page.lower(), "the page did not load; the absence below is not real"
+        assert "TREB" in page, "positive control failed; the extractor sees nothing"
+
+        for token in ("csv", "export", "download"):
+            assert token not in page.lower(), (
+                f"{token!r} now appears on the projections page. If Hashtag has added "
+                "an export, hashtag-2026-27 can be upgraded from a live-page contract "
+                "observation to a hashed artifact -- see docs/adapters/"
+                "hashtag-projections.md"
+            )
