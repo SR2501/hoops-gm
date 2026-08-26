@@ -259,6 +259,45 @@ def test_the_route_serves_scorecards_computed_from_the_store_it_reads(
     assert body["lineage"]["source_version"] == claim.source_version
 
 
+def test_a_scorecard_names_the_player_it_is_about(app: FastAPI, client: TestClient) -> None:
+    """596 opaque integers are not an exposed quantity.
+
+    The defect excluded: a consumer receives the cohort and cannot render a
+    single row of it. This is not hypothetical — when this route first returned
+    200 against the owner's real store it produced 596 scorecards keyed only on
+    ``player_id``, and no other route could resolve them. The one endpoint
+    carrying player names, ``/leagues/{league_id}/projections/current``, is
+    league-scoped, and that store has zero leagues.
+
+    The reading in which this assertion is false and the defect present is a
+    payload carrying ids alone, which is exactly what shipped for one commit.
+    The second half drives the null branch: a scorecard whose ``players`` row
+    has gone reports ``None`` rather than inventing a name, because a
+    stringified id in a name field is a placeholder no downstream reader can
+    tell from a real one.
+    """
+
+    _serving_store(app)
+
+    body = client.get(URL).json()
+
+    by_name = {card["player_name"]: card for card in body["scorecards"]}
+    assert set(by_name) == {"Iron Man", "Glass Cannon"}
+    assert by_name["Glass Cannon"]["production"]["played_games"] == 1
+
+    with app.state.database.session() as session:
+        orphaned = session.scalars(select(Player).where(Player.full_name == "Glass Cannon")).one()
+        orphaned.full_name = ""
+        session.commit()
+
+    after = client.get(URL).json()
+    nameless = [card for card in after["scorecards"] if card["player_name"] is None]
+    assert len(nameless) == 1, (
+        "a scorecard with no resolvable name did not report null, so the name "
+        "is not being joined and the assertion above excludes nothing"
+    )
+
+
 def test_the_season_the_evidence_is_from_is_named_rather_than_inferred(
     app: FastAPI, client: TestClient
 ) -> None:

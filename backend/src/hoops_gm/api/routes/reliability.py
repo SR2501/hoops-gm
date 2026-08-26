@@ -43,6 +43,7 @@ from typing import Final
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from hoops_gm.api.deps import SessionDep
@@ -62,6 +63,7 @@ from hoops_gm.availability.reliability import (
 )
 from hoops_gm.db.lineage import current_refresh
 from hoops_gm.db.models.enums import RefreshArtifactType, SeasonType
+from hoops_gm.db.models.identity import Player
 
 router = APIRouter(prefix="/reliability", tags=["reliability"])
 
@@ -201,7 +203,25 @@ class ReliabilityLineageModel(BaseModel):
 
 
 class PlayerReliabilityScorecardModel(BaseModel):
+    """One player's evidence, with the name needed to render it.
+
+    ``player_name`` is resolved here rather than left to the caller because
+    there is nowhere else to get it. At the time this shipped the only route
+    carrying player names was ``/leagues/{league_id}/projections/current``,
+    which is league-scoped, and the owner's store has zero leagues — so a
+    consumer holding 596 ``player_id`` integers had no way to turn any of them
+    into a person. An endpoint whose output cannot be rendered is not exposed
+    in any sense that matters.
+
+    It is ``str | None`` rather than ``str`` because the join can legitimately
+    miss: a scorecard is keyed on a ``player_game_logs`` row, and nothing in
+    the schema guarantees the ``players`` row still exists. A missing name is
+    reported as null rather than backfilled with the id in string form, which
+    would be a placeholder indistinguishable from a real name downstream.
+    """
+
     player_id: int
+    player_name: str | None
     availability: AvailabilityEvidenceModel
     production: ProductionConsistencyModel
 
@@ -346,10 +366,13 @@ def _rate(evidence: RateEvidence) -> ObservedRateEvidence:
     )
 
 
-def _scorecard(card: PlayerReliabilityScorecard) -> PlayerReliabilityScorecardModel:
+def _scorecard(
+    card: PlayerReliabilityScorecard, names: Mapping[int, str]
+) -> PlayerReliabilityScorecardModel:
     production = card.production
     return PlayerReliabilityScorecardModel(
         player_id=card.player_id,
+        player_name=names.get(card.player_id),
         availability=AvailabilityEvidenceModel(
             overall=_rate(card.availability.overall),
             monthly_trend=[
@@ -383,7 +406,7 @@ def _scorecard(card: PlayerReliabilityScorecard) -> PlayerReliabilityScorecardMo
     )
 
 
-def _response(run: ReliabilityRun) -> ReliabilityScorecardsResponse:
+def _response(run: ReliabilityRun, names: Mapping[int, str]) -> ReliabilityScorecardsResponse:
     lineage = run.lineage
     return ReliabilityScorecardsResponse(
         season=lineage.season,
@@ -407,8 +430,23 @@ def _response(run: ReliabilityRun) -> ReliabilityScorecardsResponse:
             player_game_logs=run.player_game_logs,
             participation_rows=run.participation_rows,
         ),
-        scorecards=[_scorecard(card) for card in run.scorecards],
+        scorecards=[_scorecard(card, names) for card in run.scorecards],
     )
+
+
+def _player_names(session: Session, run: ReliabilityRun) -> Mapping[int, str]:
+    """Names for exactly the players in ``run``, in one query.
+
+    Restricted to the scorecard ids rather than loading the whole ``players``
+    table: the store this serves holds every NBA player ever ingested, while a
+    single season's cohort is ~600 of them.
+    """
+
+    ids = {card.player_id for card in run.scorecards}
+    if not ids:
+        return {}
+    rows = session.execute(select(Player.id, Player.full_name).where(Player.id.in_(ids))).all()
+    return {player_id: full_name for player_id, full_name in rows if full_name}
 
 
 @router.get(
@@ -463,4 +501,4 @@ def get_reliability_scorecards(
     # no-op writes. Nothing here is persisted, so release them without
     # committing.
     session.rollback()
-    return _response(run)
+    return _response(run, _player_names(session, run))

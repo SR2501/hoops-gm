@@ -221,7 +221,7 @@ def test_a_backfilled_store_cannot_serve_reliability_until_this_command_runs(
     result = publish_reliability_evidence(session, season=SEASON)
 
     assert result.games == REGULAR_SEASON_GAMES
-    assert result.team_schedule_rows_created == REGULAR_SEASON_GAMES * 2
+    assert result.team_schedule_rows == REGULAR_SEASON_GAMES * 2
     assert result.claim.as_of_date == LAST_GAME_DAY
     assert result.claim.window_start == OPENING_DAY
 
@@ -272,6 +272,48 @@ def test_derived_schedule_import_does_not_blank_the_scores_it_walks_over(
         "carrying scores through is not what keeps the ledger intact and the "
         "assertion above excludes nothing"
     )
+
+
+def test_the_row_count_names_the_table_it_counted(session: Session) -> None:
+    """A count that survives a re-publish, because it counts rows and not writes.
+
+    The defect this excludes, found on the owner's real store on 2026-08-26:
+    ``PublishResult`` reported ``team_schedule_rows_created`` and
+    ``team_schedule_rows_updated`` straight off ``import_schedule``'s
+    ``ImportCounts``, and ``_persist_schedule_cohort`` seeds that object from
+    ``import_games`` before it writes a single ``team_schedule`` row. So
+    ``updated`` counted **nba_games**. The printed pair was ``created 2460,
+    updated 1230`` for a table holding 2,460 rows — two tables summed under a
+    name claiming one of them, every integer individually correct.
+
+    The reading in which the old flag is false and the defect present is the
+    **second** publish, which is why this test runs it twice. On a first run
+    ``created`` is 2,460 and coincidentally equals the table count, so an
+    assertion on ``created`` alone passes over the bug — the pre-existing test
+    at :func:`test_a_backfilled_store_cannot_serve_reliability_until_this_command_runs`
+    did exactly that. On a re-publish every row already exists, so the
+    importer creates nothing: the old field would report **0** rows for a table
+    that still holds 2,460. Read back from the table, the number does not move.
+    """
+
+    _backfilled_season(session)
+    _observations(session)
+
+    first = publish_reliability_evidence(session, season=SEASON)
+    second = publish_reliability_evidence(session, season=SEASON)
+
+    persisted = _rows(session, TeamScheduleEntry)
+
+    assert persisted == REGULAR_SEASON_GAMES * 2
+    assert first.team_schedule_rows == persisted
+    assert second.team_schedule_rows == persisted, (
+        "the re-published count moved while the table did not, so it is "
+        "counting writes rather than rows and names a table it did not count"
+    )
+
+    # The other half of the same lie: whatever this number is, it must not be
+    # the game count wearing a schedule label.
+    assert first.team_schedule_rows != _rows(session, NbaGame)
 
 
 def test_refuses_a_ledger_that_is_one_game_short(session: Session) -> None:

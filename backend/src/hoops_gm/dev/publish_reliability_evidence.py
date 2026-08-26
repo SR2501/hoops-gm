@@ -46,7 +46,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -54,6 +54,7 @@ from hoops_gm.availability.reliability import ReliabilityCohortClaim, publish_re
 from hoops_gm.core.config import Settings
 from hoops_gm.db.models.enums import GameStatus, SeasonType
 from hoops_gm.db.models.identity import NbaTeam
+from hoops_gm.db.models.schedule import TeamScheduleEntry
 from hoops_gm.db.models.stats import NbaGame
 from hoops_gm.db.session import Database
 from hoops_gm.dev.seed_schedule_grid import redacted_url
@@ -90,12 +91,28 @@ class PublishResult:
     :class:`ReliabilityCohortClaim` and a caller that had to rebuild one from
     parts would be a second reader of the same producer — the split that let
     ``schedule_grid`` read keys its producer never wrote.
+
+    ``team_schedule_rows`` is counted back out of the table rather than taken
+    from :class:`ImportCounts`. It was originally a ``created``/``updated``
+    pair read straight off the importer's return value, and that pair was a
+    lie: ``_persist_schedule_cohort`` seeds its counts from ``import_games``
+    before it touches ``team_schedule``, so ``updated`` counted **nba_games**
+    rows. On the owner's real store it printed ``created 2460, updated 1230``
+    for a table that ends up holding 2,460 rows — two tables summed into one
+    object under a name that claims one of them.
+
+    Nothing about that was ill-formed: both integers were correct counts of
+    real writes, the JSON validated, and the number was wrong only if you knew
+    which table each half came from. It is the same shape as ``gameEt`` — a
+    self-describing field that is confidently, checkably about something other
+    than what it says — and it was caught by comparing the printed number to
+    ``select count(*) from team_schedule``, which is what
+    ``test_the_row_count_names_the_table_it_counted`` now does every run.
     """
 
     season: str
     games: int
-    team_schedule_rows_created: int
-    team_schedule_rows_updated: int
+    team_schedule_rows: int
     claim: ReliabilityCohortClaim
 
 
@@ -246,7 +263,7 @@ def publish_reliability_evidence(
     """
 
     parsed = schedule_from_played_games(session, season=season)
-    counts = import_schedule(session, parsed, source=DERIVED_SOURCE)
+    import_schedule(session, parsed, source=DERIVED_SOURCE)
     resolved_as_of = as_of_date or max(record.game.game_date for record in parsed.games)
     claim = publish_reliability_cohorts(
         session,
@@ -254,11 +271,15 @@ def publish_reliability_evidence(
         as_of_date=resolved_as_of,
         refreshed_at=published_at or datetime.now(UTC),
     )
+    persisted_rows = session.scalar(
+        select(func.count())
+        .select_from(TeamScheduleEntry)
+        .where(TeamScheduleEntry.season == season)
+    )
     return PublishResult(
         season=season,
         games=len(parsed.games),
-        team_schedule_rows_created=counts.created,
-        team_schedule_rows_updated=counts.updated,
+        team_schedule_rows=persisted_rows or 0,
         claim=claim,
     )
 
@@ -310,8 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                 "season": result.season,
                 "season_type": result.claim.season_type.value,
                 "games": result.games,
-                "team_schedule_rows_created": result.team_schedule_rows_created,
-                "team_schedule_rows_updated": result.team_schedule_rows_updated,
+                "team_schedule_rows": result.team_schedule_rows,
                 "schedule_version": result.claim.schedule_version,
                 "source_version": result.claim.source_version,
                 "derivation_version": result.claim.derivation_version,
