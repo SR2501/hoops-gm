@@ -100,9 +100,7 @@ def _summarise(observed: Sequence[tuple[str, float | None]]) -> list[Metric]:
     total is of durations recorded. Those are different questions and the
     distinction is deliberate.
     """
-    metrics = [
-        Metric(key, round(value, 1), "ms") for key, value in observed if value is not None
-    ]
+    metrics = [Metric(key, round(value, 1), "ms") for key, value in observed if value is not None]
     total = sum(value for _, value in observed if value is not None)
 
     # Counted from the elements actually present, never read off the report's
@@ -247,9 +245,10 @@ def render_report(
             continue
         previous = baseline.get(key) if baseline else None
         previous_value = previous.value if previous else None
+        previous_cell = _format(previous_value, entry.unit) if previous_value is not None else "n/a"
         out.append(
-            f"| `{key}` | {_format(previous_value, entry.unit) if previous_value is not None else 'n/a'}"
-            f" | {_format(entry.value, entry.unit)} | {_delta(previous_value, entry.value, entry.unit)} |"
+            f"| `{key}` | {previous_cell} | {_format(entry.value, entry.unit)}"
+            f" | {_delta(previous_value, entry.value, entry.unit)} |"
         )
     out.append("")
 

@@ -1,0 +1,43 @@
+# Ruff for everything outside `backend/` — which today means `scripts/`.
+#
+# **Why this file exists.** `backend/pyproject.toml` deliberately type-checks the
+# repo's scripts (`[tool.mypy] files = ["src", "tests", "../scripts"]`, with a
+# comment saying why) but does **not** lint them: `[tool.ruff] src = [...]` only
+# controls isort's first-party resolution, and file discovery comes from the path
+# on the command line. `ci.yml`'s backend job runs `ruff check .` with
+# `working-directory: backend`, which never reaches `../scripts`. So fifteen
+# tools whose entire job is catching this project's defects were type-checked,
+# tested only where somebody happened to put a test in `backend/tests/`, and
+# linted by nothing.
+#
+# **Why a config file rather than just a longer CI command.** `ruff check
+# ../scripts` run from `backend` does pick up the backend rule set today, but
+# only because ruff falls back to the configuration discovered from the *current
+# working directory* when a file has no config in its own ancestry. That is
+# coverage contingent on a `cd`, which is the same class of fragility as a gate
+# quoted without its working directory. With this file, `scripts/` has a config
+# in its ancestry and the rule set no longer depends on where ruff was invoked.
+#
+# `extend`, not a copy: the rule set has exactly one home, in
+# `backend/pyproject.toml`. Files under `backend/` are unaffected — ruff resolves
+# hierarchically and the nearer config wins.
+extend = "backend/pyproject.toml"
+
+[lint.extend-per-file-ignores]
+# **`extend-per-file-ignores`, not `per-file-ignores`**: the plain key would
+# replace the inherited table and silently drop backend's `alembic/versions/*`
+# exemption.
+#
+# The mutation harnesses store, as string literals, **verbatim copies of lines
+# from the modules they mutate**. An anchor is matched with `str.count(old) == 1`
+# and must be byte-identical to its target, so wrapping one to satisfy E501 does
+# not shorten a line — it breaks the harness, and the harness's own report for a
+# broken anchor (`anchor found 0 times`) is a harness failure rather than a
+# survivor. Seven such anchors in `mutate_calibration.py` and one in
+# `mutate_aav.py` exceed 100 characters because the source lines they copy do.
+#
+# This is not a style exemption. These strings are data about another file, and
+# the formatter and the linter have no more business reflowing them than they
+# would a recorded fixture. `backend/tests/test_mutation_harness_integrity.py`
+# is what checks them, by matching each against its target.
+"scripts/mutate_*.py" = ["E501"]

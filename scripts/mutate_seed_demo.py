@@ -29,7 +29,7 @@ attribution:
   the two seeders is precisely what composing them at the shell does, and it is
   the only mutation that distinguishes "one atomic session" from "the refusal
   happened to fire before anything was written".
-* **M08–M11** cover the real-store gap found on 2026-08-23. M08 and M09 are the
+* **M08-M11** cover the real-store gap found on 2026-08-23. M08 and M09 are the
   two signals separately, because either can occur without the other and a
   single test planting both would survive deleting one. M10 removes the call
   rather than the check, which is the failure a reader would not see by reading

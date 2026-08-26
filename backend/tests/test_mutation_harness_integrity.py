@@ -17,30 +17,52 @@ assertion fails with `anchor found 0 times`.
 Living here, they never run under the harness (it runs one named module) and
 still run in CI.
 
-**What `scripts/` coverage actually is, stated carefully because the first
-version of this paragraph was a false generalisation and an independent
-reviewer caught it.** No CI job **lints or type-checks** `scripts/`, and
-`mutate_calibration.py` specifically is **executed by no job** — which is what
-makes the harness's own correctness depend on somebody remembering to run it,
-and is the whole reason these tests exist. What is *not* true, and what the
-earlier wording claimed, is that `scripts/` is untouched by CI: `ci.yml` runs
-`scripts/backlog_graph.py` (line 142), `scripts/check_no_secrets.py` (354) and
-`scripts/run_metrics.py` (93, 98, 292, 297) across four jobs. Nor is it true
-that every Python job declares a working directory — `backlog-graph` and
-`secrets` declare none. The narrow claim carries the design decision on its own;
-the broad one was reached by generalising from the one job that had been read.
+**What `scripts/` coverage actually is, stated carefully because this paragraph
+has now been wrong twice.** The first version was a false generalisation and an
+independent reviewer caught it. The correction narrowed the claim and kept a
+false conjunct: it said no CI job **lints or type-checks** `scripts/`, and the
+type-check half was already untrue when it was written. `backend/pyproject.toml`
+sets `[tool.mypy] files = ["src", "tests", "../scripts"]` deliberately, with a
+comment saying why, and `ci.yml`'s backend job runs a bare `mypy` — so
+`scripts/` has been type-checked in CI all along. Driven rather than argued: a
+deliberate `return "not an int"` planted in `scripts/predict_union.py` makes
+that bare `mypy` report `..\\scripts\\predict_union.py:123: error` and fail,
+across 201 source files.
 
-**Scope, stated so it is not over-read:** these tests establish that every anchor
-still matches its target exactly once and that every replacement is a real
-change. They do **not** run the mutations, do not establish that any mutation is
-caught, and do not lint or type-check the harness. Its verdicts remain ungated.
+As of 2026-08-26 the lint half is closed too: a repo-root `ruff.toml` extends the
+backend rule set over `scripts/`, and the backend job runs `ruff check scripts`
+and `ruff format --check scripts` from the repo root. `scripts/eslint.config.js`
+covers the two JavaScript probes, which no gate reached at all.
+
+What remains true, and is the reason these tests exist: **`mutate_calibration.py`
+is executed by no job.** Its verdicts are ungated, so the harness's own
+correctness still depends on somebody remembering to run it.
+
+What was never true, and is worth keeping visible because the false version is
+what a later reader inherits: that `scripts/` is untouched by CI. `ci.yml` runs
+`scripts/backlog_graph.py` (line 142), `scripts/check_no_secrets.py` (354) and
+`scripts/run_metrics.py` (93, 98, 292, 297) across four jobs. Nor is it true that
+every Python job declares a working directory — `backlog-graph` and `secrets`
+declare none.
+
+**Scope, stated so it is not over-read:** the anchor tests here establish that
+every anchor still matches its target exactly once and that every replacement is
+a real change. They do **not** run the mutations and do not establish that any
+mutation is caught. The catcher tests below establish that the harness reads its
+own output correctly; they do not establish that any particular catcher is a
+genuine detector, which is a reading rather than a measurement.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
 from collections import Counter
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -249,3 +271,271 @@ def test_the_mutation_count_the_model_card_cites_is_pinned_here() -> None:
         "names; the count and the names both survive that, so a detector can be "
         "replaced by a duplicate of another with nothing here noticing"
     )
+
+
+# --- The catcher report ------------------------------------------------------
+#
+# `55 caught, 0 survived` says every mutation was detected. It does not say **by
+# what**, and the difference is the whole of handoff #9's near-miss: an anchor
+# test inside the module the harness runs fires on every mutation *alongside* the
+# real detector, so the printed output stays byte-identical to a healthy one
+# while discriminating nothing.
+#
+# The harness now reads the failing test names out of output it already produced,
+# on every run. These tests cover the reading. They are here rather than in
+# `test_calibration_machinery.py` for the reason this whole file exists.
+
+
+@pytest.fixture(scope="module")
+def harness() -> ModuleType:
+    """Import the harness for its pure functions.
+
+    **Importing is safe and is checked rather than assumed** - see
+    `test_the_harness_does_nothing_destructive_at_import_time` below. The anchor
+    reader above still parses instead, because it has to work on a harness that
+    is broken; these tests exercise functions, which requires the real ones.
+    """
+    spec = importlib.util.spec_from_file_location("mutate_calibration", _MUTATION_HARNESS)
+    assert spec and spec.loader, f"cannot load {_MUTATION_HARNESS}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+#: A real `pytest` short-summary block, recorded from this repository's own
+#: `backend` with the exact arguments the harness passes - not invented, because
+#: a fixture written from memory tests the memory. Note the parametrised test:
+#: **four** `FAILED` lines for **three** functions.
+_RECORDED_SUMMARY = """\
+=========================== short test summary info ===========================
+FAILED tests/_tmp_catcher_probe.py::test_control_fails_one - assert 1 == 2
+FAILED tests/_tmp_catcher_probe.py::test_control_fails_two - ValueError: boom
+FAILED tests/_tmp_catcher_probe.py::test_control_parametrised[1] - assert 1 =...
+FAILED tests/_tmp_catcher_probe.py::test_control_parametrised[2] - assert 2 =...
+4 failed, 1 passed in 0.16s
+"""
+
+_RECORDED_GREEN = "131 passed in 12.02s\n"
+
+
+def test_the_harness_does_nothing_destructive_at_import_time(harness: ModuleType) -> None:
+    """The precondition for the fixture above, driven rather than believed.
+
+    This module's whole job is overwriting source files in place. Importing it
+    is only acceptable while every destructive path sits behind the
+    `if __name__ == "__main__"` guard, so that is asserted here rather than
+    left as a comment somebody later invalidates.
+    """
+    tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
+    top_level_calls = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    ]
+
+    assert not top_level_calls, (
+        "the harness makes a call at module scope; importing it would run that, "
+        "and this module writes to source files"
+    )
+    assert harness.MUTATIONS, "importing the harness produced no mutations"
+
+
+def test_failed_lines_are_read_as_node_ids(harness: ModuleType) -> None:
+    assert harness.failed_nodeids(_RECORDED_SUMMARY) == [
+        "tests/_tmp_catcher_probe.py::test_control_fails_one",
+        "tests/_tmp_catcher_probe.py::test_control_fails_two",
+        "tests/_tmp_catcher_probe.py::test_control_parametrised[1]",
+        "tests/_tmp_catcher_probe.py::test_control_parametrised[2]",
+    ]
+
+
+def test_catchers_are_counted_per_function_not_per_parametrised_case(
+    harness: ModuleType,
+) -> None:
+    """Four `FAILED` lines, three catchers, and the difference is load-bearing.
+
+    The unit of pinning has to be the unit of *deletion*. A mutation caught by
+    three cases of one parametrised test is pinned by one test, not three:
+    delete that function and the mutation is unpinned completely. The target
+    module has seven parametrised tests, so counting node ids would understate
+    single-pinning on real data rather than on a hypothetical.
+    """
+    catchers = harness.catcher_functions(harness.failed_nodeids(_RECORDED_SUMMARY))
+
+    assert catchers == {
+        "test_control_fails_one",
+        "test_control_fails_two",
+        "test_control_parametrised",
+    }
+
+
+def test_a_class_nested_node_id_reduces_to_the_function(harness: ModuleType) -> None:
+    assert harness.catcher_functions(["tests/x.py::TestGroup::test_y[case-3]"]) == {"test_y"}
+
+
+def test_the_extractor_agrees_with_pytests_own_count(harness: ModuleType) -> None:
+    """The control that runs on every mutation, driven here on a known input."""
+    assert len(harness.failed_nodeids(_RECORDED_SUMMARY)) == harness.reported_failures(
+        _RECORDED_SUMMARY
+    )
+
+
+def test_the_extractor_control_can_actually_fail(harness: ModuleType) -> None:
+    """A control never seen to fire is not a control.
+
+    A parsed zero and a genuinely uncaught mutation are indistinguishable in the
+    output, and this repository produced four false zeros in one day from
+    trusting one. So the disagreement case is driven: drop a `FAILED` line and
+    keep the total, which is exactly the shape of a parser that has fallen
+    behind pytest's format.
+    """
+    doctored = _RECORDED_SUMMARY.replace(
+        "FAILED tests/_tmp_catcher_probe.py::test_control_fails_one - assert 1 == 2\n", ""
+    )
+
+    assert len(harness.failed_nodeids(doctored)) == 3
+    assert harness.reported_failures(doctored) == 4
+    assert len(harness.failed_nodeids(doctored)) != harness.reported_failures(doctored)
+
+
+def test_a_green_run_yields_no_catchers_and_no_count(harness: ModuleType) -> None:
+    """The negative control on the same extractor, on output with no failures."""
+    assert harness.failed_nodeids(_RECORDED_GREEN) == []
+    assert harness.reported_failures(_RECORDED_GREEN) is None
+
+
+def test_the_child_arguments_cannot_depend_on_what_is_being_reported(
+    harness: ModuleType,
+) -> None:
+    """A shape check on `pytest_argv`, kept as a cheap tripwire and no more.
+
+    **This assertion is not what establishes the invariant**, and saying so is
+    the point. An independent reviewer defeated the version that relied on it:
+
+        *(["-k", "test_one_thing"] * _REPORT_DETAIL)
+
+    contains no `If` or `IfExp`, leaves the signature untouched, adds no second
+    quiet flag - and changes the argv completely, turning CAUGHT into SURVIVED
+    for most mutations. **A guard that enumerates syntactic forms is always one
+    form behind**, which this repository has now derived three times.
+
+    `test_both_modes_invoke_the_child_identically` is the binding check: it runs
+    the real CLI in both modes and compares the invocation itself.
+    """
+    tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
+    built = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "pytest_argv"
+    ]
+    assert len(built) == 1, "pytest_argv is the one place the child's argv is built"
+
+    signature = built[0].args
+    assert [arg.arg for arg in signature.args] == ["tests"], (
+        "pytest_argv must take the test paths and nothing else; an option "
+        "parameter is how a reporting flag reaches the child"
+    )
+
+
+def test_both_modes_invoke_the_child_identically(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "The reporting path cannot alter a verdict", driven rather than shaped.
+
+    The real CLI runs twice - once plain, once with `--catchers` - with the
+    child intercepted and `MUTATIONS` emptied so nothing is written to disk.
+    Every argument, the working directory and the environment must match. Any
+    route by which the detail flag reaches the child fails here whatever syntax
+    it uses, because this compares the invocation rather than the source that
+    produced it.
+    """
+    calls: list[tuple[list[str], object, object]] = []
+
+    class _Completed:
+        returncode = 0
+        stdout = "131 passed in 12.02s\n"
+        stderr = ""
+
+    def _fake_run(argv: list[str], **kwargs: object) -> _Completed:
+        calls.append((list(argv), kwargs.get("cwd"), kwargs.get("env")))
+        return _Completed()
+
+    # Patched on the harness module, so only its own lookups are affected.
+    monkeypatch.setattr(harness, "subprocess", SimpleNamespace(run=_fake_run))
+    # Emptied so `main` runs its baseline and then mutates nothing: this test
+    # must never write to a source file.
+    monkeypatch.setattr(harness, "MUTATIONS", [])
+
+    assert harness.main([]) == 0
+    assert harness.main(["--catchers"]) == 0
+    capsys.readouterr()
+
+    assert len(calls) == 2, "each mode should have invoked the child exactly once"
+    assert calls[0] == calls[1], (
+        "the plain run and the --catchers run invoked pytest differently; the "
+        "catcher report must read output the child already produced, never "
+        "change what the child does"
+    )
+
+
+def test_catchers_are_read_only_from_the_short_summary_block(harness: ModuleType) -> None:
+    """A test that prints pytest-shaped output must not become a catcher.
+
+    Found by an independent reviewer, who drove it: scanning the whole run means
+    a captured stdout, an assertion payload or a traceback quoting a summary
+    contributes a phantom `FAILED` line **and** a phantom count, so the parsed
+    and reported numbers agree on fabricated data. The positive control passes
+    while the defect it exists to exclude is present - which is the exact shape
+    this unit is about, found in the unit's own fix.
+    """
+    noisy = (
+        "tests/test_calibration_machinery.py::test_something\n"
+        "  captured stdout:\n"
+        "  FAILED tests/fake.py::test_bogus\n"
+        "  2 failed\n"
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py::test_real - assert 1 == 2\n"
+        "1 failed, 130 passed in 11.90s\n"
+    )
+
+    assert harness.failed_nodeids(noisy) == ["tests/test_calibration_machinery.py::test_real"]
+    assert harness.reported_failures(noisy) == 1
+    assert harness.catcher_functions(harness.failed_nodeids(noisy)) == {"test_real"}
+
+
+def test_a_parameter_id_containing_a_double_colon_still_yields_the_function(
+    harness: ModuleType,
+) -> None:
+    """The other order of these two splits is wrong and looks right.
+
+    Splitting on `::` before stripping `[...]` turns `test_real[a::b]` into
+    `b]`. Explicit pytest ids may contain `::`; none in the target module does
+    today, which is why this was invisible rather than harmless.
+    """
+    assert harness.catcher_functions(["tests/x.py::test_real[a::b]"]) == {"test_real"}
+
+
+def test_the_harness_never_adds_a_second_quiet_flag(harness: ModuleType) -> None:
+    """`-qq` exits 0 while deleting the `N passed` line the baseline check reads.
+
+    `backend/pyproject.toml` already sets `-q` in `addopts`, so one more from
+    here is `-qq` - and the harness refuses to mutate unless it can parse
+    `N passed` from a green baseline. It would then refuse every time, which is
+    at least loud; the worse reading is a future edit that also relaxes the
+    baseline check.
+    """
+    argv = harness.pytest_argv(["tests/test_calibration_machinery.py"])
+
+    assert "-q" not in argv and "-qq" not in argv
+    assert argv[1:3] == ["-m", "pytest"]
+    assert "tests/test_calibration_machinery.py" in argv
+
+
+def test_the_report_survives_a_run_that_caught_nothing(harness: ModuleType) -> None:
+    """An empty report must say so rather than raising on `most_common(1)[0]`.
+
+    Reachable in the case that matters most - every mutation surviving - where
+    an exception would replace the finding with a traceback.
+    """
+    harness.report_catchers({}, detail=True)

@@ -110,7 +110,123 @@ def test_a_pure_addition_is_clean(
     exit_code = _run_in(repo, ["HEAD~1", "HEAD", "--path", "tests"], differ)
 
     assert exit_code == 0
-    assert "Nothing dropped." in capsys.readouterr().out
+    assert "Nothing dropped in tests." in capsys.readouterr().out
+
+
+# --- the scope, which is the half that reads as confirmation -----------------
+
+
+def test_the_success_sentence_names_the_scope_it_covers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], differ: ModuleType
+) -> None:
+    """The unchanged sentence was true of a directory the reader may not have touched.
+
+    `"No change to the set of test names"` with the scope only in a
+    parenthetical on the base line is an all-clear over nothing when the scope
+    is wrong - and unlike a wrong *base*, which produces an alarming `DROPPED`
+    list that gets investigated, this one reads as confirmation and ends the
+    investigation.
+    """
+    repo = _repo_with_tests(
+        tmp_path, before="def test_kept() -> None: ...\n", after="def test_kept() -> None: ...\n"
+    )
+
+    exit_code = _run_in(repo, ["HEAD~1", "HEAD", "--path", "tests"], differ)
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No change to the set of test names in tests." in out
+
+
+def test_changed_test_files_outside_the_scope_are_reported_as_unread(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], differ: ModuleType
+) -> None:
+    """The motivating case: 58 vitest tests added, and a clean report about pytest.
+
+    The frontend suite is invisible to this tool under every `--path` - the
+    names are `it(...)` strings, not `def test_*`, and the files are not `.py`.
+    So the honest output is not a name diff of them but a statement that they
+    changed and were not read.
+    """
+    repo = _repo_with_tests(
+        tmp_path,
+        before="def test_kept() -> None: ...\n",
+        after="def test_kept() -> None: ...\n",
+        also={
+            "frontend/src/DraftBoard.test.tsx": "it('renders', () => {})\n",
+            "frontend/src/Scorecard.spec.ts": "it('renders', () => {})\n",
+        },
+    )
+
+    exit_code = _run_in(repo, ["HEAD~1", "HEAD", "--path", "tests"], differ)
+    out = capsys.readouterr().out
+
+    assert exit_code == 0, "an unread file is reported, never gated on"
+    assert "NOT READ (2)" in out
+    assert "frontend/src/DraftBoard.test.tsx" in out
+    assert "frontend/src/Scorecard.spec.ts" in out
+
+
+def test_a_change_entirely_inside_the_scope_reports_nothing_unread(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], differ: ModuleType
+) -> None:
+    """The other half of the control.
+
+    A warning that fires on every run is one nobody reads, and a check whose
+    negative case was never driven is a check that might always fire.
+    """
+    repo = _repo_with_tests(
+        tmp_path,
+        before="def test_kept() -> None: ...\n",
+        after="def test_kept() -> None: ...\ndef test_added() -> None: ...\n",
+    )
+
+    exit_code = _run_in(repo, ["HEAD~1", "HEAD", "--path", "tests"], differ)
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "NOT READ" not in out
+
+
+def test_an_untracked_new_test_file_outside_the_scope_is_still_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], differ: ModuleType
+) -> None:
+    """`git diff` alone cannot see a brand-new file, which is the common case.
+
+    Comparing against the working tree is the mode that catches a loss before
+    it is committed; a newly written frontend test is exactly the change whose
+    absence from this tool's reading is worth saying out loud.
+    """
+    repo = _repo_with_tests(
+        tmp_path, before="def test_kept() -> None: ...\n", after="def test_kept() -> None: ...\n"
+    )
+    (repo / "frontend" / "src").mkdir(parents=True)
+    (repo / "frontend" / "src" / "StockWatch.test.tsx").write_text("it('x', () => {})\n", "utf-8")
+
+    exit_code = _run_in(repo, ["HEAD", "--path", "tests"], differ)
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "StockWatch.test.tsx" in out
+
+
+def test_an_unread_file_is_reported_alongside_a_drop_not_instead_of_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], differ: ModuleType
+) -> None:
+    """The two reports answer different questions and neither replaces the other."""
+    repo = _repo_with_tests(
+        tmp_path,
+        before="def test_kept() -> None: ...\ndef test_doomed() -> None: ...\n",
+        after="def test_kept() -> None: ...\n",
+        also={"frontend/src/Trade.test.tsx": "it('x', () => {})\n"},
+    )
+
+    exit_code = _run_in(repo, ["HEAD~1", "HEAD", "--path", "tests"], differ)
+    out = capsys.readouterr().out
+
+    assert exit_code == 1, "the exit code still depends only on dropped names"
+    assert "test_doomed" in out
+    assert "Trade.test.tsx" in out
 
 
 def test_a_rename_is_shown_as_both_halves_rather_than_judged(
@@ -205,8 +321,15 @@ def test_it_reads_this_repository_and_finds_hundreds(differ: ModuleType) -> None
 # --- helpers -----------------------------------------------------------------
 
 
-def _repo_with_tests(root: Path, *, before: str, after: str) -> Path:
-    """A throwaway repo with two commits, so `HEAD~1` and `HEAD` both resolve."""
+def _repo_with_tests(
+    root: Path, *, before: str, after: str, also: dict[str, str] | None = None
+) -> Path:
+    """A throwaway repo with two commits, so `HEAD~1` and `HEAD` both resolve.
+
+    ``also`` writes extra files in the *second* commit only, so they appear in
+    the base..ref diff. That is how the out-of-scope cases are driven: the
+    interesting change is one that touches files this tool never reads.
+    """
     (root / "tests").mkdir(parents=True)
     sample = root / "tests" / "test_sample.py"
 
@@ -222,6 +345,10 @@ def _repo_with_tests(root: Path, *, before: str, after: str) -> Path:
     run("git", "commit", "-q", "-m", "before")
 
     sample.write_text(after, encoding="utf-8")
+    for relative, content in (also or {}).items():
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
     run("git", "add", "-A")
     # `--allow-empty`: two of these fixtures deliberately commit identical
     # content, because what varies is the *working tree* afterwards. Without it
