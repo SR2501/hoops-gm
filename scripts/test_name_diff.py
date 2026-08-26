@@ -116,8 +116,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         before = _names_at_ref(args.base, args.path)
-        after = _names_in_worktree(args.path) if args.ref is None else _names_at_ref(
-            args.ref, args.path
+        after = (
+            _names_in_worktree(args.path)
+            if args.ref is None
+            else _names_at_ref(args.ref, args.path)
         )
     except subprocess.CalledProcessError as exc:
         print(exc.stderr.decode("utf-8", errors="replace").strip(), file=sys.stderr)

@@ -81,9 +81,7 @@ class Rule:
 RULES: list[Rule] = [
     Rule(
         "Fantrax session cookie",
-        re.compile(
-            r"FANTRAXUSER[\"']?\s*[=:]\s*(?P<quote>[\"'])?(?P<value>[A-Za-z0-9._\-]{16,})"
-        ),
+        re.compile(r"FANTRAXUSER[\"']?\s*[=:]\s*(?P<quote>[\"'])?(?P<value>[A-Za-z0-9._\-]{16,})"),
         suppressible=True,
     ),
     Rule(
@@ -163,9 +161,12 @@ def scan_line(line: str) -> list[str]:
         for match in rule.pattern.finditer(line):
             groups = match.groupdict()
             value = groups.get("value")
-            if rule.suppressible and value is not None:
-                if is_code_reference(value, quoted=bool(groups.get("quote"))):
-                    continue
+            if (
+                rule.suppressible
+                and value is not None
+                and is_code_reference(value, quoted=bool(groups.get("quote")))
+            ):
+                continue
             found.append(rule.label)
             break
     return found

@@ -9,7 +9,7 @@ able to check it cheaply. This script is the cheap check.
 It answers four questions, each a subcommand:
 
 ``rates``
-    Which columns is the cited ``r² 0.726–0.947`` drawn from? Re-derives the
+    Which columns is the cited ``r² 0.726-0.947`` drawn from? Re-derives the
     crudest baseline in ``docs/models/consensus-reproducibility.md`` — last
     season's per-game line carried forward, no modelling — and reports rates,
     minutes and games as three separate channels.
@@ -109,8 +109,18 @@ RATE_CATEGORIES: dict[str, str] = {
 }
 
 LOG_COLUMNS = (
-    "MIN", "PTS", "REB", "AST", "STL", "BLK", "TOV",
-    "FG3M", "FGM", "FGA", "FTM", "FTA",
+    "MIN",
+    "PTS",
+    "REB",
+    "AST",
+    "STL",
+    "BLK",
+    "TOV",
+    "FG3M",
+    "FGM",
+    "FGA",
+    "FTM",
+    "FTA",
 )
 
 #: Cohorts are selected on **our** observed minutes at every threshold, never on
@@ -308,8 +318,7 @@ def cmd_rates() -> int:
     print(" | ".join([f"{'cohort':>14}"] + [f"{key:>5}" for key in order]))
     for label, row_out in results.items():
         cells = [f"{label:>14}"] + [
-            (f"{row_out[key]:.3f}" if key in row_out else "  -  ").rjust(5)
-            for key in order
+            (f"{row_out[key]:.3f}" if key in row_out else "  -  ").rjust(5) for key in order
         ]
         print(" | ".join(cells))
 
@@ -365,7 +374,8 @@ def cmd_divisor() -> int:
 
     exact = sum(1 for games, minutes, _ in usable if on_grid(minutes / games, 0))
     control = sum(
-        1 for i, (_, minutes, _) in enumerate(usable)
+        1
+        for i, (_, minutes, _) in enumerate(usable)
         if on_grid(minutes / max(shuffled[i] / 30.0, 1.0), 1)
     )
     exact_pct = 100.0 * exact / n
@@ -387,7 +397,7 @@ def cmd_divisor() -> int:
     print()
     print("share landing on a short-decimal grid, by divisor")
     print(f"{'column':>14} | {'TOTAL 1dp':>9} | {'/games':>7} | {'/min x36':>8} | {'shuffled':>8}")
-    counting = [name for name in BASKETBALL_MONSTER_PROFILE.expected_headers or ()]
+    counting = list(BASKETBALL_MONSTER_PROFILE.expected_headers or ())
     for header in counting:
         if header in ("player_id", "first_name", "last_name", "games", "comments"):
             continue
@@ -401,12 +411,9 @@ def cmd_divisor() -> int:
         if any(math.isnan(value) for value in totals):
             continue
         t1 = sum(1 for value in totals if on_grid(value, 1))
-        by_games = sum(
-            1 for i, value in enumerate(totals) if on_grid(value / usable[i][0], 1)
-        )
+        by_games = sum(1 for i, value in enumerate(totals) if on_grid(value / usable[i][0], 1))
         by_minutes = sum(
-            1 for i, value in enumerate(totals)
-            if on_grid(36.0 * value / usable[i][1], 1)
+            1 for i, value in enumerate(totals) if on_grid(36.0 * value / usable[i][1], 1)
         )
         by_shuffled = sum(
             1 for i, value in enumerate(totals) if on_grid(36.0 * value / shuffled[i], 1)
@@ -435,7 +442,10 @@ def cmd_concentration() -> int:
     ]
     print(f"rows carrying both columns: {len(pairs)}")
     print()
-    print(f"{'column':>18} | {'cohort':>16} | {'n':>4} | {'distinct':>8} | {'top2':>6} | {'eff. levels':>11}")
+    print(
+        f"{'column':>18} | {'cohort':>16} | {'n':>4} | {'distinct':>8}"
+        f" | {'top2':>6} | {'eff. levels':>11}"
+    )
     for label, floor in (("whole file", None), ("their MPG >= 20", 20.0)):
         pool = pairs if floor is None else [pair for pair in pairs if pair[1] >= floor]
         if len(pool) < MIN_COHORT:
@@ -527,10 +537,15 @@ def cmd_leak_scan(base: str) -> int:
 
     diff = subprocess.run(
         ["git", "--no-pager", "diff", base, "--", "docs/"],
-        cwd=REPO, capture_output=True, text=True, encoding="utf-8", check=True,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     ).stdout
     added = "\n".join(
-        line[1:] for line in diff.splitlines()
+        line[1:]
+        for line in diff.splitlines()
         if line.startswith("+") and not line.startswith("+++")
     )
     print(f"text under test: {len(added)} chars of added documentation lines")
@@ -546,8 +561,7 @@ def cmd_leak_scan(base: str) -> int:
         lowered = text.lower()
         hits.extend(f"numeric {value!r}" for value in numbers if value in tokens)
         hits.extend(
-            f"paid name {name!r}" for name in names
-            if re.search(rf"\b{re.escape(name)}\b", lowered)
+            f"paid name {name!r}" for name in names if re.search(rf"\b{re.escape(name)}\b", lowered)
         )
         return hits
 

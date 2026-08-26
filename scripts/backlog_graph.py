@@ -76,9 +76,7 @@ TOKEN_RE = re.compile(r"`([^`]+)`")
 #: ``**45 done - 1 blocked - 84 pending - 130 total**``, the file's own headline
 #: count. It is a claim about the file, in the file, and nothing checked it until
 #: this parser did — which is why it has been wrong repeatedly.
-HEADER_RE = re.compile(
-    r"^\*\*(\d+) done - (\d+) blocked - (\d+) pending - (\d+) total\*\*$"
-)
+HEADER_RE = re.compile(r"^\*\*(\d+) done - (\d+) blocked - (\d+) pending - (\d+) total\*\*$")
 
 DONE = "done"
 KNOWN_STATUSES = frozenset({DONE, "pending", "blocked"})
@@ -166,9 +164,7 @@ def parse_backlog(text: str) -> tuple[list[Item], list[Defect]]:
     return items, defects
 
 
-def _parse_status(
-    body: Sequence[str], slug: str, line: int, defects: list[Defect]
-) -> str:
+def _parse_status(body: Sequence[str], slug: str, line: int, defects: list[Defect]) -> str:
     found = [match for match in map(STATUS_RE.match, body) if match]
     if len(found) > 1:
         defects.append(
@@ -203,9 +199,7 @@ def _parse_status(
             )
         return status
 
-    defects.append(
-        Defect("missing-status", f"`{slug}` has no '- [ ] **status**' marker", line)
-    )
+    defects.append(Defect("missing-status", f"`{slug}` has no '- [ ] **status**' marker", line))
     return "unknown"
 
 
@@ -247,7 +241,9 @@ def _check_header(lines: Sequence[str], items: Sequence[Item], defects: list[Def
     if not items:
         return
 
-    found = [(index + 1, match) for index, line in enumerate(lines) if (match := HEADER_RE.match(line))]
+    found = [
+        (index + 1, match) for index, line in enumerate(lines) if (match := HEADER_RE.match(line))
+    ]
     if not found:
         defects.append(
             Defect(
@@ -279,7 +275,11 @@ def _check_header(lines: Sequence[str], items: Sequence[Item], defects: list[Def
         "pending": int(match.group(3)),
     }
     observed = {status: counts[status] for status in claimed}
-    wrong = [f"{s}: claims {claimed[s]}, file has {observed[s]}" for s in sorted(claimed) if claimed[s] != observed[s]]
+    wrong = [
+        f"{s}: claims {claimed[s]}, file has {observed[s]}"
+        for s in sorted(claimed)
+        if claimed[s] != observed[s]
+    ]
     if int(match.group(4)) != len(items):
         wrong.append(f"total: claims {match.group(4)}, file has {len(items)}")
 
@@ -392,7 +392,7 @@ def _find_cycles(by_slug: Mapping[str, Item]) -> list[Defect]:
             advanced = False
             for nxt in edges:
                 if colour[nxt] == GREY:
-                    cycle = tuple(path[path.index(nxt) :]) + (nxt,)
+                    cycle = (*path[path.index(nxt) :], nxt)
                     if cycle not in seen:
                         seen.add(cycle)
                         defects.append(
@@ -495,7 +495,7 @@ def _longest_chains(
                 candidate = memo[child]
                 if len(candidate) > len(best):
                     best = candidate
-            memo[slug] = (slug,) + best
+            memo[slug] = (slug, *best)
 
     return memo
 
@@ -658,11 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     defects = list(defects) + find_defects(items)
 
     fatal = {d.kind for d in defects} & {"no-items", "duplicate-slug", "cycle"}
-    analysis = (
-        Analysis((), (), (), ())
-        if fatal
-        else analyse(items, chain_limit=args.chain_limit)
-    )
+    analysis = Analysis((), (), (), ()) if fatal else analyse(items, chain_limit=args.chain_limit)
 
     report = render_report(items, defects, analysis, source)
     print(report)
