@@ -6,12 +6,22 @@ are data, and the parser that reads them is a pure function, so both stay
 testable offline (the same reason ``ingest/nba/parsers.py`` never imports
 SQLAlchemy).
 
-FantasyPros and Hashtag remain unverified parse-preview examples. Basketball
-Monster is different: its 2026-27 profile is pinned to owner-provided private
-evidence from a real paid export. Only the evidence hashes and exact structural
-contract live here; paid rows and private paths never enter the repository.
-The profile intentionally accepts one exact header sequence rather than
-layering guessed aliases over the proven contract.
+FantasyPros remains an unverified parse-preview example. The other three profiles
+are verified to *different strengths*, and :class:`VerificationStrength` puts that
+distinction in the **value** rather than in prose. It used to live only in prose:
+``verified=True`` meant "hash-pinned to an immutable file" for Basketball Monster
+and "observed against a live page" for Hashtag, and a consumer reading the field
+could not tell which. That is the ``gameEt`` shape — a self-describing value that
+is well-formed, type-correct and quietly means two things — so the strength is now
+a value a consumer can compare, and ``verified`` is *derived* from it. There is no
+way to obtain the strong form by accident, because there is no way to be verified
+without naming which kind of verification you mean.
+
+Only evidence hashes and exact structural contracts live here; paid rows and
+private paths never enter the repository.
+
+Both vendor profiles intentionally accept one exact header sequence rather than
+layering guessed aliases over a proven contract.
 
 ``MANUAL_PROFILE`` carries no such uncertainty: it expects the canonical field
 names directly (a spreadsheet the owner builds or converts by hand), and is
@@ -34,15 +44,18 @@ __all__ = [
     "BASKETBALL_MONSTER_PROFILE",
     "CANONICAL_STAT_FIELDS",
     "FANTASYPROS_PROFILE",
+    "HASHTAG_2026_27_HEADERS",
     "HASHTAG_PROFILE",
     "MANUAL_PROFILE",
     "PROFILES_BY_SOURCE",
     "PROJECTION_IMPORT_SOURCES",
     "TERMINAL_HEADER_ALIASES",
     "ColumnProfile",
+    "CompositeShootingColumn",
     "DerivedStatColumn",
     "StatColumn",
     "ValueShape",
+    "VerificationStrength",
     "normalize_header",
     "resolve_header",
 ]
@@ -85,6 +98,81 @@ class DerivedStatColumn:
     terms: tuple[tuple[str, float], ...]
 
 
+@dataclass(frozen=True)
+class CompositeShootingColumn:
+    """One source column carrying a percentage *and* its makes/attempts.
+
+    Hashtag Basketball renders a shooting category as a single cell —
+    ``0.573 (10.5/18.3)`` — so the volume that makes a percentage category
+    weightable is present, but nested inside the column that looks like a
+    bare percentage. Read as a percentage the cell is a dead end; read as a
+    composite it yields both canonical volume fields.
+
+    This exists because the alternative is the single most common bug in
+    homebrew fantasy tools (``AGENTS.md``): treating FG%/FT% as a rate and
+    pricing a 90%-on-one-attempt shooter identically to a 90%-on-eight.
+    Before this type, ``HASHTAG_PROFILE`` routed both of its shooting columns
+    through :attr:`ColumnProfile.percentage_fallback_aliases`, whose whole
+    meaning is "the source published no volume" — a true statement about the
+    *header* and a false one about the *cell*.
+
+    ``stated_percentage`` is never imported as a rate. It is retained only so
+    the parser can reconcile it against ``made / attempted`` and fail loudly
+    when a paste has been mangled, which is the one independent check this
+    format affords.
+    """
+
+    made_field: str
+    attempted_field: str
+    aliases: tuple[str, ...]
+    shape: ValueShape
+    #: Human label used in issue messages ("field goal", "free throw").
+    label: str
+
+
+class VerificationStrength(StrEnum):
+    """*How* a profile was checked, not merely *whether* it was.
+
+    ``verified: bool`` answered the second question and was routinely read as
+    answering the first. Basketball Monster's ``True`` is pinned to the sha256
+    of an immutable file; Hashtag's ``True`` is an observation of a live page
+    that can change tomorrow. One name, two guarantees, and a downstream
+    consumer that wanted only the strong one had to encode that preference as a
+    comment. It is now expressible as a comparison.
+
+    The three members are not a ranking with a single axis. They differ in
+    *what could go wrong next*, which is the only property a consumer can act
+    on.
+    """
+
+    #: Pinned to the hash of an immutable artifact the owner holds. Excludes
+    #: silent vendor drift: if the file changes, the hash stops matching and
+    #: the mismatch is mechanical.
+    #:
+    #: It does **not** exclude the file having been wrong when it was hashed.
+    #: A hash proves the bytes have not moved, never that they were ever right.
+    HASH_PINNED = "hash_pinned"
+
+    #: Observed against a live source that publishes no artifact to pin.
+    #: Excludes the profile having been written from a *guess* about the
+    #: source's shape - the contract was read off the real thing.
+    #:
+    #: It does **not** exclude drift after the observation date, because there
+    #: is nothing to re-hash. Only a live smoke test can notice, so a profile
+    #: at this strength without one is asserting a date, not a contract.
+    LIVE_CONTRACT_OBSERVED = "live_contract_observed"
+
+    #: The schema is defined by this repository rather than observed from a
+    #: vendor, so its units are a decision and not a reading. Excludes the
+    #: whole class of unit-misinterpretation defects by construction: there is
+    #: no external party whose meaning could differ from ours.
+    #:
+    #: It does **not** exclude the *file the owner hands us* disagreeing with
+    #: the schema. It verifies the contract we publish, not the data pasted
+    #: into it.
+    OWNER_DEFINED_SCHEMA = "owner_defined_schema"
+
+
 #: Every per-game rate field a projection row can carry. Mirrors the columns
 #: on ``db.models.projections.Projection`` exactly; ``test_projections.py``
 #: asserts the two stay in step, the same discipline
@@ -124,16 +212,20 @@ SHOOTING_PAIRS: tuple[tuple[str, str, str], ...] = (
 TERMINAL_HEADER_ALIASES: tuple[str, ...] = (
     "rank",
     "ranking",
+    "r#",
     "overall rank",
     "ros rank",
     "rest of season rank",
     "tier",
+    "adp",
+    "average draft position",
     "aav",
     "auction value",
     "dollar value",
     "composite",
     "composite value",
     "fantasy value",
+    "total",
     "expected games",
     "expected_games",
 )
@@ -166,6 +258,10 @@ class ColumnProfile:
     games_played_aliases: tuple[str, ...] = ()
     stat_columns: tuple[StatColumn, ...] = field(default_factory=tuple)
     derived_stat_columns: tuple[DerivedStatColumn, ...] = field(default_factory=tuple)
+    #: Source columns carrying ``percentage (makes/attempts)`` in one cell.
+    #: Each supplies two canonical volume fields; see
+    #: :class:`CompositeShootingColumn`.
+    composite_shooting_columns: tuple[CompositeShootingColumn, ...] = field(default_factory=tuple)
     #: Canonical production fields whose headers form this source profile's
     #: minimum schema signature. Vendor exports must expose all of them; the
     #: generic manual profile instead accepts any one recognized production
@@ -182,14 +278,26 @@ class ColumnProfile:
     expected_headers: tuple[str, ...] = ()
     #: Source fields deliberately excluded from projection quantities.
     ignored_source_headers: tuple[str, ...] = ()
-    #: Whether this mapping has been checked against a real downloaded file.
-    #: ``False`` for every vendor profile below; see the module docstring.
-    verified: bool = False
+    #: How this mapping was checked, or ``None`` if it has not been. Naming a
+    #: strength is the *only* way to be verified: there is no boolean to set,
+    #: so the strong form cannot be reached by accident or by default.
+    verification: VerificationStrength | None = None
     #: Exact seasons covered by the evidence. ``"*"`` is reserved for the
     #: owner-controlled canonical manual schema, whose units are encoded in its
     #: column names rather than inferred from an external export.
     verified_seasons: tuple[str, ...] = ()
     verification_evidence: str | None = None
+
+    @property
+    def verified(self) -> bool:
+        """Whether this profile may import production at *any* strength.
+
+        Derived, never stored. The gate that gates importing legitimately
+        accepts all three strengths, so it wants this question; a consumer
+        deciding how much to *trust* a number wants :attr:`verification` and
+        should not be able to get here by mistake.
+        """
+        return self.verification is not None
 
     def __post_init__(self) -> None:
         if not self.profile_id.strip() or not self.version.strip():
@@ -202,7 +310,7 @@ class ColumnProfile:
             raise ValueError(
                 f"{self.source.value} is not an isolated projection-provider namespace"
             )
-        if self.verified and (
+        if self.verification is not None and (
             not self.verified_seasons
             or not self.verification_evidence
             or not self.verification_evidence.strip()
@@ -210,8 +318,18 @@ class ColumnProfile:
             raise ValueError(
                 f"{self.display_name} marks itself verified without season scope and evidence"
             )
-        if not self.verified and self.verified_seasons:
-            raise ValueError(f"{self.display_name} declares verified seasons while verified=False")
+        if self.verification is None and self.verified_seasons:
+            raise ValueError(
+                f"{self.display_name} declares verified seasons without a verification strength"
+            )
+        if (
+            self.verification is VerificationStrength.OWNER_DEFINED_SCHEMA
+            and self.source is not ExternalSource.MANUAL
+        ):
+            raise ValueError(
+                f"{self.display_name} claims an owner-defined schema for external source "
+                f"{self.source.value}; a vendor's shape is observed, never defined here"
+            )
         if "*" in self.verified_seasons and not (
             self.source is ExternalSource.MANUAL and self.profile_id == "manual-canonical"
         ):
@@ -234,6 +352,12 @@ class ColumnProfile:
         )
         mapped_aliases.update(
             {
+                f"composite shooting {column.made_field}": column.aliases
+                for column in self.composite_shooting_columns
+            }
+        )
+        mapped_aliases.update(
+            {
                 f"percentage fallback {field}": aliases
                 for field, aliases in self.percentage_fallback_aliases.items()
             }
@@ -247,6 +371,37 @@ class ColumnProfile:
                 )
 
         fields = [column.field for column in self.stat_columns]
+        composite_fields: list[str] = []
+        known_pairs = {(made, attempted) for made, attempted, _ in SHOOTING_PAIRS}
+        for composite in self.composite_shooting_columns:
+            if (composite.made_field, composite.attempted_field) not in known_pairs:
+                raise ValueError(
+                    f"{self.display_name} declares composite shooting column "
+                    f"{composite.made_field}/{composite.attempted_field}, which is not a "
+                    "recognised makes/attempts pair"
+                )
+            composite_fields.extend((composite.made_field, composite.attempted_field))
+        if len(composite_fields) != len(set(composite_fields)):
+            raise ValueError(
+                f"{self.display_name} profile decomposes a production field more than once"
+            )
+        composite_overlap = set(fields) & set(composite_fields)
+        if composite_overlap:
+            raise ValueError(
+                f"{self.display_name} profile both maps and decomposes production fields: "
+                f"{composite_overlap}"
+            )
+        # A composite column *supplies* the volume that a percentage fallback
+        # declares missing. Declaring both for one field would mean the profile
+        # asserts the source did and did not publish volume for the same
+        # category, and the parser would have to pick — so it is refused here.
+        fallback_conflict = set(self.percentage_fallback_aliases) & set(composite_fields)
+        if fallback_conflict:
+            raise ValueError(
+                f"{self.display_name} declares {fallback_conflict} as both a composite "
+                "shooting column and a percentage-only fallback"
+            )
+        fields.extend(composite_fields)
         if len(fields) != len(set(fields)):
             raise ValueError(f"{self.display_name} profile maps a production field more than once")
         derived_fields = [column.field for column in self.derived_stat_columns]
@@ -364,7 +519,7 @@ def resolve_header(fieldnames: list[str], aliases: tuple[str, ...]) -> str | Non
 
 MANUAL_PROFILE = ColumnProfile(
     profile_id="manual-canonical",
-    version="1",
+    version="2",
     source=ExternalSource.MANUAL,
     display_name="Manual / generic",
     name_aliases=("player_name", "player", "name"),
@@ -375,16 +530,19 @@ MANUAL_PROFILE = ColumnProfile(
         StatColumn(field=canonical, aliases=(canonical,), shape=ValueShape.PER_GAME)
         for canonical in CANONICAL_STAT_FIELDS
     ),
-    verified=True,
+    verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
     verified_seasons=("*",),
     verification_evidence=(
-        "owner-controlled hoops-gm canonical schema v1; per-game units are explicit in headers"
+        "owner-controlled hoops-gm canonical schema v1; per-game units are explicit in headers. "
+        "This is not an observation of anything external: the schema is defined here, so there "
+        "is no vendor whose meaning could drift from ours. It says nothing about whether a "
+        "given hand-built file actually conforms."
     ),
 )
 
 FANTASYPROS_PROFILE = ColumnProfile(
     profile_id="fantasypros-unverified-example",
-    version="1",
+    version="2",
     source=ExternalSource.FANTASYPROS,
     display_name="FantasyPros",
     name_aliases=("player", "player name"),
@@ -413,45 +571,108 @@ FANTASYPROS_PROFILE = ColumnProfile(
         "field_goals_made_per_game": ("fg%", "fg pct"),
         "free_throws_made_per_game": ("ft%", "ft pct"),
     },
-    verified=False,
+    # Deliberately no ``verification``: this profile is a parse-preview example
+    # whose aliases were guessed, never read off a real FantasyPros export.
+)
+
+#: The exact header sequence Hashtag Basketball's projections table renders in
+#: its **default** configuration, observed live on 2026-08-26.
+#:
+#: This is pinned exactly, and the reason is the opposite of the usual one.
+#: Hashtag's column set is not a vendor contract at all — it is *browser state*.
+#: The page carries 16 category checkboxes and a ``DDRANK`` selector; the
+#: default checked set is exactly the nine categories below, but ``CBFGM``,
+#: ``CBFTM``, ``CBOREB``, ``CBDREB``, ``CB3PP``, ``CBATO`` and ``CBDD`` are all
+#: available and unchecked. A copy-paste carries the *values* and none of the
+#: configuration that produced them.
+#:
+#: So an exact pin is the only honest contract: a paste taken under a different
+#: configuration is refused loudly rather than mapped on a best-effort basis
+#: into a projection that silently means something else.
+HASHTAG_2026_27_HEADERS: tuple[str, ...] = (
+    "R#",
+    "PLAYER",
+    "ADP",
+    "POS",
+    "TEAM",
+    "GP",
+    "MPG",
+    "FG%",
+    "FT%",
+    "3PM",
+    "PTS",
+    "TREB",
+    "AST",
+    "STL",
+    "BLK",
+    "TO",
+    "TOTAL",
 )
 
 HASHTAG_PROFILE = ColumnProfile(
-    profile_id="hashtag-unverified-example",
-    version="1",
+    profile_id="hashtag-2026-27",
+    version="3",
     source=ExternalSource.HASHTAG,
-    display_name="Hashtag Basketball",
-    name_aliases=("player", "name"),
+    display_name="Hashtag Basketball 2026-27",
+    name_aliases=("player",),
     team_aliases=("team",),
-    position_aliases=("pos", "position"),
-    games_played_aliases=("gp", "games"),
+    position_aliases=("pos",),
+    games_played_aliases=("gp",),
     stat_columns=(
-        StatColumn("minutes_per_game", ("mpg", "min"), ValueShape.PER_GAME),
+        StatColumn("minutes_per_game", ("mpg",), ValueShape.PER_GAME),
         StatColumn("points_per_game", ("pts",), ValueShape.PER_GAME),
-        StatColumn("offensive_rebounds_per_game", ("oreb", "orb"), ValueShape.PER_GAME),
-        StatColumn("defensive_rebounds_per_game", ("dreb", "drb"), ValueShape.PER_GAME),
-        StatColumn("rebounds_per_game", ("reb", "trb"), ValueShape.PER_GAME),
+        StatColumn("rebounds_per_game", ("treb",), ValueShape.PER_GAME),
         StatColumn("assists_per_game", ("ast",), ValueShape.PER_GAME),
-        StatColumn("steals_per_game", ("stl", "st"), ValueShape.PER_GAME),
+        StatColumn("steals_per_game", ("stl",), ValueShape.PER_GAME),
         StatColumn("blocks_per_game", ("blk",), ValueShape.PER_GAME),
-        StatColumn("turnovers_per_game", ("to", "tov"), ValueShape.PER_GAME),
-        StatColumn("field_goals_made_per_game", ("fgm",), ValueShape.PER_GAME),
-        StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
-        StatColumn("three_pointers_made_per_game", ("3pm", "3ptm"), ValueShape.PER_GAME),
-        StatColumn("three_pointers_attempted_per_game", ("3pa", "3pta"), ValueShape.PER_GAME),
-        StatColumn("free_throws_made_per_game", ("ftm",), ValueShape.PER_GAME),
-        StatColumn("free_throws_attempted_per_game", ("fta",), ValueShape.PER_GAME),
+        StatColumn("turnovers_per_game", ("to",), ValueShape.PER_GAME),
+        StatColumn("three_pointers_made_per_game", ("3pm",), ValueShape.PER_GAME),
+    ),
+    # FG% and FT% cells read "0.573 (10.5/18.3)": the volume is present, nested
+    # inside the percentage column. Version 1 of this profile declared both as
+    # percentage-only fallbacks and therefore discarded every shooting volume
+    # the source publishes.
+    composite_shooting_columns=(
+        CompositeShootingColumn(
+            made_field="field_goals_made_per_game",
+            attempted_field="field_goals_attempted_per_game",
+            aliases=("fg%",),
+            shape=ValueShape.PER_GAME,
+            label="field goal",
+        ),
+        CompositeShootingColumn(
+            made_field="free_throws_made_per_game",
+            attempted_field="free_throws_attempted_per_game",
+            aliases=("ft%",),
+            shape=ValueShape.PER_GAME,
+            label="free throw",
+        ),
     ),
     required_production_fields=(
         "points_per_game",
         "rebounds_per_game",
         "assists_per_game",
+        "steals_per_game",
+        "blocks_per_game",
+        "turnovers_per_game",
+        "three_pointers_made_per_game",
+        "field_goals_made_per_game",
+        "field_goals_attempted_per_game",
+        "free_throws_made_per_game",
+        "free_throws_attempted_per_game",
     ),
-    percentage_fallback_aliases={
-        "field_goals_made_per_game": ("fg%",),
-        "free_throws_made_per_game": ("ft%",),
-    },
-    verified=False,
+    expected_headers=HASHTAG_2026_27_HEADERS,
+    verification=VerificationStrength.LIVE_CONTRACT_OBSERVED,
+    verified_seasons=("2026-27",),
+    verification_evidence=(
+        "live-page contract observed 2026-08-26 at "
+        "hashtagbasketball.com/fantasy-basketball-projections: 17-header default "
+        "configuration, composite 'pct (makes/attempts)' shooting cells, and 429 of "
+        "429 rows reconciling on FG%=FGM/FGA, FT%=FTM/FTA and PTS=2*FGM+3PM+FTM "
+        "within display-rounding bounds. The source publishes no export, so there is "
+        "no artifact to hash and nothing can detect drift after this date except the "
+        "live smoke test in tests/test_live_smoke.py."
+    ),
 )
 
 BASKETBALL_MONSTER_2026_27_HEADERS: tuple[str, ...] = (
@@ -481,7 +702,7 @@ BASKETBALL_MONSTER_2026_27_HEADERS: tuple[str, ...] = (
 
 BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     profile_id="basketball-monster-2026-27",
-    version="1",
+    version="2",
     source=ExternalSource.BASKETBALL_MONSTER,
     display_name="Basketball Monster 2026-27",
     external_id_aliases=("player_id",),
@@ -561,7 +782,7 @@ BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     ),
     expected_headers=BASKETBALL_MONSTER_2026_27_HEADERS,
     ignored_source_headers=("technicals", "double_doubles", "triple_doubles", "comments"),
-    verified=True,
+    verification=VerificationStrength.HASH_PINNED,
     verified_seasons=("2026-27",),
     verification_evidence=(
         "private paid export sha256 "

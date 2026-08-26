@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import math
+import re
 
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.projections.models import (
@@ -30,6 +31,7 @@ from hoops_gm.ingest.projections.profiles import (
     SHOOTING_PAIRS,
     TERMINAL_HEADER_ALIASES,
     ColumnProfile,
+    CompositeShootingColumn,
     StatColumn,
     ValueShape,
     normalize_header,
@@ -43,6 +45,19 @@ __all__ = ["ProjectionProfileError", "parse_projection_csv"]
 #: would flag "8.0 made, 7.95 attempted" as impossible when it is a rounding
 #: artefact, not a real inconsistency.
 _EPSILON = 1e-6
+
+#: Half-width of the rounding interval for a value displayed to one decimal.
+_DISPLAY_HALF_STEP = 0.05
+
+#: Half-width of the rounding interval for a percentage displayed to three
+#: decimals.
+_PERCENT_HALF_STEP = 0.0005
+
+#: ``percentage (makes/attempts)`` in a single cell, e.g. ``0.573 (10.5/18.3)``.
+_COMPOSITE_SHOOTING_CELL = re.compile(
+    r"^\s*(?P<pct>[-+]?[0-9]*\.?[0-9]+)\s*\(\s*"
+    r"(?P<made>[-+]?[0-9]*\.?[0-9]+)\s*/\s*(?P<attempted>[-+]?[0-9]*\.?[0-9]+)\s*\)\s*$"
+)
 
 #: Games-played sanity bound. Generous enough to cover a full 82-game season
 #: plus play-in and playoffs without inventing a games-played ceiling that
@@ -121,18 +136,31 @@ def parse_projection_csv(
         header = resolve_header(fieldnames, stat_column.aliases)
         if header is not None:
             stat_headers[stat_column.field] = header
+    composite_headers: dict[str, str] = {}
+    for composite in profile.composite_shooting_columns:
+        header = resolve_header(fieldnames, composite.aliases)
+        if header is not None:
+            composite_headers[composite.made_field] = header
+    composite_fields = {
+        field
+        for composite in profile.composite_shooting_columns
+        if composite.made_field in composite_headers
+        for field in (composite.made_field, composite.attempted_field)
+    }
     derived_fields = {derived.field for derived in profile.derived_stat_columns}
     missing_required = [
         field
         for field in profile.required_production_fields
-        if field not in stat_headers and field not in derived_fields
+        if field not in stat_headers
+        and field not in derived_fields
+        and field not in composite_fields
     ]
     if missing_required:
         raise ProjectionProfileError(
             f"{profile.display_name} file is missing required production columns "
             f"{missing_required}; the source schema changed or the wrong profile was selected"
         )
-    if not stat_headers:
+    if not stat_headers and not composite_headers:
         raise ProjectionProfileError(
             f"{profile.display_name} file has no recognized production columns; "
             "refusing to create all-null projections"
@@ -161,6 +189,11 @@ def parse_projection_csv(
     if games_played_header:
         resolved_headers["assumed_games_played"] = games_played_header
     resolved_headers.update(stat_headers)
+    for composite in profile.composite_shooting_columns:
+        header = composite_headers.get(composite.made_field)
+        if header is not None:
+            resolved_headers[composite.made_field] = header
+            resolved_headers[composite.attempted_field] = header
 
     terminal_aliases = {normalize_header(alias) for alias in TERMINAL_HEADER_ALIASES}
     ignored_terminal_headers = [
@@ -187,6 +220,19 @@ def parse_projection_csv(
             continue
         if not any(value.strip() for value in raw_row.values()):
             continue  # a fully blank trailing line is not a data row at all
+
+        if _is_repeated_header_row(fieldnames, raw_row):
+            result.total_rows += 1
+            result.issues.append(
+                RowIssue(
+                    row_number,
+                    None,
+                    "row repeats the file's header text; the source re-emits its header "
+                    "periodically and a paste carries those rows through",
+                    fatal=True,
+                )
+            )
+            continue
 
         result.total_rows += 1
         row_fatal = False
@@ -273,6 +319,27 @@ def parse_projection_csv(
             else:
                 values[stat_column.field] = parsed
 
+        for composite in profile.composite_shooting_columns:
+            header = composite_headers.get(composite.made_field)
+            if header is None:
+                values.setdefault(composite.made_field, None)
+                values.setdefault(composite.attempted_field, None)
+                continue
+            decomposed = _parse_composite_shooting_cell(
+                raw.get(header) or "",
+                composite=composite,
+                assumed_games_played=assumed_games_played,
+                row_number=row_number,
+                header=header,
+                issues=result.issues,
+            )
+            if isinstance(decomposed, _Fatal):
+                row_fatal = True
+                values[composite.made_field] = None
+                values[composite.attempted_field] = None
+            else:
+                values[composite.made_field], values[composite.attempted_field] = decomposed
+
         if _derive_stat_values(
             values=values,
             profile=profile,
@@ -337,6 +404,38 @@ def parse_projection_csv(
             "file contains no usable projection rows" + (f": {reasons}" if reasons else "")
         )
     return result
+
+
+def _is_repeated_header_row(fieldnames: list[str], raw_row: dict[str, str]) -> bool:
+    """Whether a data row is actually a repeat of the file's own header.
+
+    Hashtag Basketball re-emits its header every twelve or thirteen rows —
+    32 times in a 429-row page — and a copy-paste carries those rows through
+    as data. Left alone they parse as a player literally named ``PLAYER``
+    with unparsable stats, which surfaces as a scatter of per-row numeric
+    errors rather than as the structural thing it is.
+
+    Matching is on the *majority* of columns rather than all of them: the
+    repeated row is a rendering artefact and need not reproduce every cell.
+
+    Defect excluded: header rows entering the projection layer as players.
+
+    Reading in which this passes and the defect is present: a source whose
+    repeated header uses different text from its first header row (an
+    abbreviated re-header, say) is not detected here — this compares against
+    ``fieldnames``, so it only catches a repeat of the header the file
+    actually declared. It also cannot catch a *data* row for a real player
+    whose values happen to be header-like, which is why it demands a majority
+    match rather than any single cell.
+    """
+    if not fieldnames:
+        return False
+    matches = sum(
+        1
+        for header in fieldnames
+        if normalize_header(raw_row.get(header, "")) == normalize_header(header)
+    )
+    return matches * 2 > len(fieldnames)
 
 
 def _reject_duplicate_normalized_headers(fieldnames: list[str]) -> None:
@@ -432,6 +531,177 @@ def _parse_stat_value(
         )
         return _FATAL
     return transformed
+
+
+def _percentage_reconciliation_bound(stated_percentage: float, attempted: float) -> float:
+    """Worst-case ``|made/attempted - stated_percentage|`` from display rounding.
+
+    Every published figure is rounded before we see it: makes and attempts to
+    one decimal, the percentage to three. Propagating those three intervals
+    through the ratio gives ``(half + p*half)/attempted + percent_half``.
+
+    **The bound has to scale with volume, and that is the whole point.** A flat
+    tolerance is wrong in both directions here, measured on 429 live rows: at a
+    fixed 0.01 it flags 257 of them, because a player projected for 0.3 free
+    throw attempts has a rounding interval wider than a third of his own
+    percentage, while at a tolerance loose enough to admit him it would wave
+    through a genuinely mangled cell for a high-volume shooter. Volume-weighting
+    the *check* is the same principle as volume-weighting the *category*.
+
+    Defect excluded: a composite shooting cell whose stated percentage and
+    stated makes/attempts do not describe the same player — a shifted paste, a
+    transposed column, an FG cell carrying FT volume.
+
+    Reading in which this passes and the defect is present: a transposition
+    between two players with near-identical percentages *and* near-identical
+    attempt volumes reconciles fine, because the check tests internal
+    consistency of one cell and knows nothing about which row it belongs to.
+    It bounds cell corruption, not row misattribution.
+    """
+    return (
+        _DISPLAY_HALF_STEP + abs(stated_percentage) * _DISPLAY_HALF_STEP
+    ) / attempted + _PERCENT_HALF_STEP
+
+
+def _parse_composite_shooting_cell(
+    raw_value: str,
+    *,
+    composite: CompositeShootingColumn,
+    assumed_games_played: float | None,
+    row_number: int,
+    header: str,
+    issues: list[RowIssue],
+) -> tuple[float | None, float | None] | _Fatal:
+    """Split ``pct (makes/attempts)`` into two canonical volume rates.
+
+    The stated percentage is deliberately *not* returned: it is a redundant
+    encoding of a ratio we are about to store as volume, and ADR-002's
+    separation is only kept by storing the components. It is used here for one
+    thing — reconciliation — and then discarded.
+
+    **What reconciliation excludes, and the reading in which it passes anyway.**
+    It excludes a cell whose stated percentage and stated makes/attempts do not
+    describe the same player. It does *not* exclude a transposition between two
+    players with near-identical percentages *and* volumes, because it tests one
+    cell's internal consistency and knows nothing about whose row it is in.
+
+    Zero attempts is handled separately and was, until an independent review,
+    handled by not looking: with ``attempted == 0`` there is no ratio to
+    recompute, so a cell reading ``0.824 (0.0/0.0)`` was accepted and imported
+    as real zero volume. The source cannot render that — a printed percentage on
+    zero attempts is self-contradictory — so it is now refused. That is the
+    branch a paste opens when it keeps the percentage and drops the parenthesised
+    volume, and it lands on precisely the defect this column exists to prevent: a
+    category priced on no volume at all.
+    """
+    text = raw_value.strip()
+    if not text:
+        return (None, None)
+
+    match = _COMPOSITE_SHOOTING_CELL.match(text)
+    if match is None:
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"column {header!r} value {raw_value!r} is not a "
+                "'percentage (makes/attempts)' cell; the source's shooting format "
+                "changed, or this paste came from a different column configuration",
+                fatal=True,
+            )
+        )
+        return _FATAL
+
+    try:
+        stated_percentage = float(match.group("pct"))
+        made = float(match.group("made"))
+        attempted = float(match.group("attempted"))
+    except ValueError as exc:  # pragma: no cover - regex already constrains this
+        issues.append(
+            RowIssue(row_number, composite.made_field, f"unparsable {header!r}: {exc}", fatal=True)
+        )
+        return _FATAL
+
+    if not all(math.isfinite(value) for value in (stated_percentage, made, attempted)):
+        issues.append(
+            RowIssue(
+                row_number, composite.made_field, f"non-finite value in {header!r}", fatal=True
+            )
+        )
+        return _FATAL
+    if made < 0 or attempted < 0:
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"negative {composite.label} volume in {header!r}: {raw_value!r}",
+                fatal=True,
+            )
+        )
+        return _FATAL
+
+    if attempted > 0:
+        error = abs(made / attempted - stated_percentage)
+        bound = _percentage_reconciliation_bound(stated_percentage, attempted)
+        if error > bound:
+            issues.append(
+                RowIssue(
+                    row_number,
+                    composite.made_field,
+                    f"{composite.label} cell {raw_value!r} does not reconcile: "
+                    f"{made}/{attempted} is {made / attempted:.4f} but the source states "
+                    f"{stated_percentage:.4f} (off by {error:.4f}, display-rounding bound "
+                    f"{bound:.4f})",
+                    fatal=True,
+                )
+            )
+            return _FATAL
+    elif made > 0:
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"{composite.label} cell {raw_value!r} reports makes with zero attempts",
+                fatal=True,
+            )
+        )
+        return _FATAL
+    elif abs(stated_percentage) > _PERCENT_HALF_STEP:
+        # Zero attempts is the one branch where the ratio cannot be recomputed, so it
+        # is the one branch where a mangled cell could slip through unexamined. The
+        # source cannot render a non-zero percentage on zero attempts: the cell is
+        # self-contradictory on its face. Refusing here closes the hole a paste opens
+        # when it keeps the printed percentage and loses the parenthesised volume,
+        # which would otherwise import as a real 0.0/0.0 and price the category on no
+        # volume at all - the exact defect the composite column exists to prevent.
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"{composite.label} cell {raw_value!r} states a non-zero percentage on "
+                "zero attempts, which the source cannot render; the volume was probably "
+                "lost in transit",
+                fatal=True,
+            )
+        )
+        return _FATAL
+
+    if composite.shape is ValueShape.PER_GAME:
+        return (made, attempted)
+
+    if assumed_games_played is None or assumed_games_played <= 0:
+        issues.append(
+            RowIssue(
+                row_number,
+                composite.made_field,
+                f"{composite.label} volume given as a season total but no valid "
+                "games-played figure was available to convert it; left null rather "
+                "than guessed",
+                fatal=False,
+            )
+        )
+        return (None, None)
+    return (made / assumed_games_played, attempted / assumed_games_played)
 
 
 def _derive_stat_values(

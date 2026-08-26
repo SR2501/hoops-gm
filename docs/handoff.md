@@ -26362,3 +26362,441 @@ this lane has caught by printing values rather than verdicts.
   unmeasured by anyone.
 - **The Postgres row-lock reasoning** for `session.commit()` before `main()` remains
   reasoned rather than exercised; both the reviewer and I have SQLite only.
+
+## 2026-08-26 - data-engineer - Hashtag projection profile: the committed profile could not parse the source, and the way it failed was silent
+
+**What I did.** Verified the `hashtag-2026-27` projection profile against the live
+Hashtag Basketball projections page rather than against its own declaration, and
+replaced it. `backend/src/hoops_gm/ingest/projections/verification.py` is new;
+`profiles.py`, `parser.py` and `importer.py` changed; the committed fixture was
+replaced because it was fiction. No model was fitted, no valuation was computed,
+and `player_participation` was never read - the injury-conversion blind is intact.
+
+**The finding that justified the unit.** Hashtag publishes makes and attempts
+*inside* the percentage cell: `0.573 (10.5/18.3)`. The committed v1 profile
+declared `FG%` and `FT%` as `percentage_fallback_aliases`, whose documented
+semantics are *the source published no volume*. That is true of the **header** and
+false of the **cell**. So the profile was not merely unverified, it was wrong in
+the one direction that produces no symptom: a repaired import would have parsed
+cleanly, emitted a fallback warning nobody reads, and discarded every shooting
+volume in the file - which is `AGENTS.md`'s *single most common bug in homebrew
+fantasy tools*, a 90%-on-one-attempt FT shooter pricing identically to
+90%-on-eight. `CompositeShootingColumn` now extracts the volume and reconciles it
+against the printed percentage, and the profile validator refuses any field
+declared as both composite and percentage-fallback, because the two declarations
+contradict each other and v1 held one of them.
+
+**The profile hash did not cover the contract it claims to pin.** Found while
+wiring composite provenance into `_build_profile_lineage`: `_profile_definition`
+omitted `composite_shooting_columns`, so a profile decomposing `FG%` into *free
+throws* hashed identically to one decomposing it into field goals. A hash that
+does not cover the thing it is trusted for is worse than no hash, because absence
+invites checking and a green hash ends the question.
+
+**I declined to build the check my brief asked for, and the architect accepted the
+correction.** The brief framed scoring format as load-bearing: import 9-cat
+believing 8-cat and every dollar is wrong. That is false for per-category rates -
+a rebound is a rebound in both, and the category set changes which rates get
+*valued*, not what any rate *is*. The only column whose meaning depends on format
+is `TOTAL`, and ADR-008 already forbids importing it. So the response is **refuse
+the column, not verify the format**: refusal can fail, and a format check against
+a vendor's self-description cannot. Three spellings were added to
+`TERMINAL_HEADER_ALIASES`.
+
+**`MPG <= 48` does not separate per-game from season totals.** I proposed it,
+then measured it: Hashtag's `DDRANK` TOT mode leaves `MPG` at 35.1 for Jokic while
+`PTS` goes 28.4 to 2042.6, under **identical header text**. A mixed-basis table
+whose headers are honest about nothing. `PTS <= 60` separates cleanly and is what
+the shape check uses; the minutes reading is pinned as a passing test named
+`test_minutes_would_not_have_caught_it` so the discarded idea cannot quietly
+return.
+
+**The scoring identity is scale-invariant and is documented as unable to do the
+job it looks like it does.** `2*FGM + 3PM + FTM = PTS` still holds after
+multiplying every column by 72, so it passes with the season-totals defect fully
+present - confirmed empirically this session, identity `PASSED` at residual 0.00
+on a batch the shape check `FAILED`. That sentence is in the docstring, not only
+here, and `test_the_scoring_identity_cannot_detect_a_scale_error` means promoting
+it back requires deleting a passing test.
+
+**Games played: I refused the forecast and built the checkable half.** Whether
+Hashtag's `GP` is *right* is a claim about an unplayed season and no check can
+fail on it. Whether `GP` is already folded into the rates is the ADR-002 line and
+is checkable: cohort median of projected MPG against prior-season observed MPG
+**per played game** from `player_game_logs`, direction stated in advance,
+threshold 0.93, minimum 20 GP, minimum 25-player cohort, and **never a per-row
+gate**. `VerificationOutcome.NOT_RUN` exists so a cohort too small to look at
+cannot be read as clean.
+
+**A false zero, caught only by the positive control.** `normalize_name()` returns
+a `NormalizedName` object, not a string, so every dict lookup in the baked-in
+cohort missed and the cohort came back empty - which reads exactly like *no
+defect*. Checking the answer would never have found it; running the same
+extraction against a case known to be non-zero found it immediately. It also
+strips digits, so test players `P0..P39` collapsed to one key.
+
+**Tolerance is volume-weighted, which is the same principle as the category.**
+`(0.05 + 0.05*p)/attempts + 0.0005`, derived by propagating display rounding
+rather than tuned: **0 violations across 429 live rows**, worst ratio 0.915. Flat
+bounds on the same data: 0.01 gives **257/429** false alarms, 0.02 gives 161,
+0.05 gives 59.
+
+**Verified at this head**, all from `backend`: `ruff check .` **All checks
+passed** over 211 files, `ruff format --check .` **211 files already formatted**,
+bare `mypy` clean over **203 source files**, `pytest -m live_smoke
+--collect-only` collects the three new Hashtag contract tests, full suite
+**2057 passed, 37 deselected**. Base verified on `28d0d88`; not rebased, the
+merge window is the architect's to open.
+
+**Two things handed up as decisions rather than taken.** (1) ADP is recorded as
+three-valued evidence but does **not** enter `score_evidence`, because adding a
+signal re-normalises weights tuned without it and would shift every existing
+confidence score including matches this unit never touches. (2) `verified=True`
+now carries two strengths under one name - BBM's is a file hash, Hashtag's is a
+live-page contract observation with no hash, because the source publishes no
+export to hash. The metadata says so in capitals; the field itself still does not.
+
+**What I could not verify.**
+
+1. **I have never seen the owner's actual paste.** Everything here is from the
+   rendered page. A copy-paste out of a browser can carry different whitespace,
+   different decimal marks, or a column set the user reconfigured - and the column
+   set is **browser state, not a vendor contract**: 16 checkboxes, 9 ticked by
+   default, and a paste carries the values while carrying none of the
+   configuration. The exact header pinning fails closed on that, loudly, which is
+   the behaviour I chose but not the behaviour I confirmed against a real paste.
+
+2. **429 rows of roughly 500, from one date and one page size.** The 30-row
+   default sample said max `|dFT%|` was 0.0126; at 429 rows it is **0.3040**. The
+   architect's warning that low-minute players are where my shape bound is weakest
+   was correct, and I do not know what the remaining ~70 rows do. Do not read a
+   429-row reconciliation as a 500-row guarantee.
+
+3. **Whether header repetition varies by page size.** At 900 I observed 32
+   repeated header rows interleaved roughly every 13. `_is_repeated_header_row`
+   skips them by content, not by position, so the period does not matter - but I
+   only ever saw one period.
+
+4. **The composite cell dialect for the 7 unticked categories.** They were never
+   rendered. If a user ticks `3P%`, I do not know whether it arrives composite,
+   bare, or blank.
+
+5. **Hashtag's `GP` provenance.** Unknown - whether it is their own forecast, a
+   vendor feed, or a prior-season figure. The baked-in check works cohort-level on
+   the *rates* and does not depend on knowing, which is why it survives the gap.
+
+6. **The `GP` forecast itself, in principle.** Nobody can verify a claim about an
+   unplayed season before it is played. I built no check that pretends otherwise.
+
+## 2026-08-26 - data-engineer - Hashtag profile, review round: my drift detector was a false alarm on day one, and my verification module was wired to nothing
+
+**What I did.** Closed five findings from an independent exact-head review of
+`0c1a8e7`. Every one was in work I had already quoted as green. No model was
+fitted, no valuation computed, and `player_participation` was never read.
+
+**The one that matters most, because it is the rule I quoted at everyone else.**
+My live smoke test for the composite shooting cell required the percentage and
+the parenthesised volume to be adjacent in one text node:
+`>0.573 (10.5/18.3)<`. The live page renders them as two sibling spans with a
+hidden `<input>` between them. The pattern matched **zero** cells. So the source's
+*only* drift detector was red on day one, blaming Hashtag for a format change that
+had not happened - and the reconciliation loop beneath it, `for stated, made,
+attempted in composite[:25]`, iterated an empty list and **has never executed
+once**. I had run `pytest -m live_smoke --collect-only` and reported that the
+tests collect. Collection is not execution. **I checked that the question could be
+asked and never that it could return a non-empty answer**, which is precisely the
+false-zero habit I wrote into my own handoff entry that morning. The repair
+matches `<td>` fragments with tags stripped - the dialect a *paste* actually
+produces, which is what the parser consumes - and finds 60 cells, 0 reconciliation
+violations, worst err/bound ratio 0.889. The three tests are now **run**, not
+collected, and the header one was positive-controlled by mutating the pinned tuple
+and watching it go red.
+
+**A test named for a sequence that tested neither sequence nor rendering.**
+`test_the_header_sequence_has_not_drifted` was `for header in HEADERS: assert
+f">{header}<" in page` - per-token membership. It checks no order, no
+completeness, and cannot tell a rendered `<th>` from one of the sixteen *category
+checkbox labels*, which are `>OREB<` and `>FGM<` in the same document whether
+ticked or not. The reviewer added three invented headers to the pinned tuple and
+the live gate stayed green. Meanwhile `parser.py` compares the full tuple and
+would have refused the owner's next paste **with the drift detector reporting no
+drift** - the exact "column set is browser state" hazard my own adapter doc names
+as the primary risk for this source. Now extracts the `<th>` sequence and compares
+as an ordered, complete list; the page renders exactly 17.
+
+**I built a verification module and connected it to nothing.**
+`verify_projection_batch` had no caller in `src/` outside the re-export.
+`import_projection_csv` parsed, resolved identities and wrote rows without ever
+consulting it. A `DDRANK` TOT-mode paste - season totals under identical headers,
+which my own module docstring calls the defect that *actually happened* to the
+Basketball Monster adapter - passes every per-cell check, because composite ratios
+and the scoring identity are both scale-invariant, and imported silently with
+every counting category inflated roughly seventyfold. **A module whose own tests
+are green in both directions protects nothing if no path calls it**, and my
+adapter doc was already describing it as protection. Now wired, with
+`ProjectionVerificationError`.
+
+**Wiring it exposed a second decision I had not noticed I was making.** Blocking
+on *any* failure refused five existing `MANUAL` fixtures, all on
+`scoring_identity`, none on `value_shape`. The honest split is not importance but
+false positives: nothing legitimate trips a 60-point per-game ceiling, whereas the
+identity cross-checks columns a vendor may compute from separate models and round
+independently, and a source publishing to zero decimals would fail it while being
+correct. `IMPORT_BLOCKING_CHECKS = {"value_shape"}`, with the reasoning as a
+comment and a test pinning that the identity is reported and does **not** block.
+
+**Zero attempts was the branch that declined to look.** `0.824 (0.0/0.0)` imported
+cleanly as real zero volume: with no attempts there is no ratio to recompute, so
+neither reconciliation branch ran. The source cannot render a printed percentage
+on zero attempts, and that cell is what a paste produces when it keeps the
+percentage and drops the parenthesised half - landing straight on the
+volume-weighting bug the composite column exists to prevent. Now refused.
+
+**And a date that was a month in the future.** The fixture metadata and adapter
+doc both dated the observation `2026-09-24`; the profile said `2026-08-26`. For a
+claim whose entire provenance *is* a date - there is no artifact hash - carrying
+two dates for one observation, one of them impossible, makes "how stale is this?"
+unanswerable. All corrected to 2026-08-26, including the date on my previous
+handoff entry, which I had copied from the entries above it rather than read off
+the clock.
+
+**Verified at this head**, all from `backend`: `ruff check .` clean over **211
+files**, `ruff format --check .` **211 files already formatted**, bare `mypy`
+clean over **203 source files**, full suite **2061 passed, 40 deselected**, and
+the three Hashtag live-smoke tests **executed** against the live page: 3 passed.
+Base `28d0d88`; not rebased.
+
+**What I could not verify.**
+
+1. **Everything in the previous entry's list still stands** - no real paste seen,
+   429 of ~500 rows from one date and one page size, unknown header-repetition
+   period, unknown `GP` provenance, unrendered composite dialect for the seven
+   unticked categories, and the `GP` forecast unverifiable in principle.
+
+2. **That anyone reads `outcome.verification`.** The identity finding is now
+   reported rather than blocking, and nothing in the codebase consumes it. That is
+   the same shape as the defect I just fixed, one level down, and I am naming it
+   rather than letting the fix read as complete. It needs an owner.
+
+3. **That the review found everything of this kind.** Five findings in work I had
+   already quoted as green, three of them checks that could not fail. I have no
+   basis for believing the sixth does not exist, and the honest reading of a
+   first-pass yield this high is that the ratio has not converged.
+
+## 2026-08-26 - `data-engineer` - `verified=True` meant two things, so it is no longer a boolean
+
+**Unit:** `hashtag-projection-profile-verification` (continued). Base `28d0d88`;
+**not rebased** - three lanes ahead of me in the merge queue.
+
+**What changed.** `ColumnProfile.verified` was a bare boolean, and it silently
+carried two incompatible guarantees. Basketball Monster's `True` is pinned to the
+sha256 of an immutable file the owner holds. Hashtag's `True` is an observation of
+a live page that can change tomorrow. A consumer that wanted only the strong form
+had nothing to compare - the distinction existed solely as a capitalised sentence
+inside a free-text evidence string, which is documentation, and documentation is
+what the next consumer skips.
+
+`verification: VerificationStrength | None` replaces it and `verified` is derived
+(`verification is not None`). There is no boolean to set, so the strong form
+cannot be reached by default or by accident.
+
+**Three strengths, not the two I was asked for.** `MANUAL_PROFILE`'s schema is
+*defined here* rather than observed anywhere: its units are a decision, not a
+reading, so it excludes unit-misinterpretation by construction and excludes
+nothing about vendor drift because there is no vendor. Folding it into either
+vendor strength would have rebuilt the same one-name-two-meanings defect one level
+over. `OWNER_DEFINED_SCHEMA` is rejected at construction for any non-`MANUAL`
+source, so a vendor profile cannot borrow the strength that promises the fewest
+future failures.
+
+Each enum member's docstring names what it excludes **and** what it does not.
+`HASH_PINNED` proves the bytes have not moved, never that they were ever right.
+
+**The strength is inside the hashed profile definition,** not beside it, so a
+profile promoting itself from an observation to a hash pin moves
+`definition_sha256` and trips `_assert_profile_version`. I did not assume this: I
+removed the field, confirmed the removal was in the file, and watched two profiles
+differing in *nothing but strength* hash byte-identically -
+`7c7fe746...bab4ecac` on both sides. This is the same gap
+`composite_shooting_columns` had until earlier in this unit. All four profile
+versions bumped, because adding a field to the hashed definition **is** a
+definition change and the code's own invariant demands a bump over a silently
+moved hash.
+
+**A near-miss worth recording, because I caused it.** I rewrote the eight
+`verified=True` test constructors mechanically, mapping `verified_seasons=("*",)`
+to `OWNER_DEFINED_SCHEMA`. One of those eight was
+`test_external_profile_cannot_claim_wildcard_season_verification`, a deliberately
+*invalid* profile - and my rewrite made it invalid for a **different reason**, so
+it raised on my new vendor-strength rule instead of the wildcard rule it is named
+for. It failed loudly, which is the only reason I noticed. Had my new rule not
+existed, the same rewrite would have left a test passing for the wrong reason and
+looking untouched. **A bulk edit applied to a test suite silently changes what
+some of those tests test**, and the ones at risk are exactly the ones asserting
+that something is refused.
+
+**The 30-row vs 429-row divergence is a selection effect, not sampling noise.**
+Max `|d FT%|` is **0.0126** across the default 30 rows and **0.3040** across 429 -
+a factor of twenty-four. I checked the cause rather than inferring it: on the
+default page `R#` runs strictly ascending 1..30 and MPG spans only **29.7 to
+36.2**. Every visible row is a high-minute player, high minutes mean large attempt
+counts, and a `k/attempts` bound is tightest exactly there. The rows that stress
+the tolerance are structurally absent from the top of the table. **A 30-row
+reconciliation must never be quoted as a 500-row guarantee**, and the live smoke
+test - which runs against the default page - inherits this limit: it can detect
+that the dialect changed, and cannot certify the bound holds in the tail.
+
+**Registered rather than fixed.** `docs/backlog.md`'s `risk-adjusted-valuation`
+item now carries the obligation that nothing reads
+`ProjectionImportOutcome.verification`. That item must either consume it or state
+in its model card that it deliberately does not. Wiring a consumer is
+valuation-adjacent and belongs to `quant`, not to me; an explicit refusal is a
+finding, an unnoticed orphan is not.
+
+**Gates**, all from `working-directory: backend`, on the exact tree at `e9f718a`:
+`pytest` **2066 passed, 40 deselected** (679s); `ruff check .` clean on **211
+files**; `ruff format --check .` **211 already formatted**; `mypy` clean on **203
+source files**; `pytest -m live_smoke -k Hashtag` **3 passed, executed**.
+
+**Merge state, measured read-only.** `git merge-tree` against `origin/main`
+conflicts in **one file only** - `docs/handoff.md`, both sides appending at the
+tail. The other fourteen files I touch merge clean. GitHub's `CONFLICTING/DIRTY`
+on this PR is that append tail and not a code conflict.
+
+**What I could not verify.**
+
+1. **Everything in the previous two entries' lists still stands.**
+
+2. **That `hash_pinned` is the strongest thing worth having.** It proves an
+   artifact has not changed. It says nothing about whether the vendor's numbers
+   were right, and nothing about whether the owner pasted the file he thinks he
+   pasted. I have split one overstated claim into three honest ones; I have not
+   established that any of the three is sufficient for what `quant` will do next.
+
+3. **That the seven other bulk-rewritten test sites still test what they name.**
+   I audited them against my new rule, which can only fire on
+   `OWNER_DEFINED_SCHEMA` with a non-`MANUAL` source, and none of the seven can
+   trip it. That is an argument, not an observation - I did not re-derive each
+   test's intent from scratch.
+
+## 2026-08-26 - `data-engineer` - the fixture's hazard declarations were true by inspection, and are now true by construction
+
+`hashtag_sample.metadata.json` declares four parser hazards it deliberately
+carries: a mid-table repeated header row, a quoted multi-position cell, a
+zero-attempt free-throw cell, and a low-volume shooting cell. All four were
+present. Nothing checked that they stayed present.
+
+**The gap was narrower than "ungated", and stating it at the right strength is
+what made the fix proportionate.** `privacy_safe_fixture_sha256` covers every
+byte, so the fixture cannot drift *silently* - any edit fails the hash
+assertion. What the hash does not do is check the *claim*: it fails on the
+bytes, and the person repairing it is looking at the file, not at the sentence
+about the file three keys away in a different document. Update the hash and a
+stale declaration survives. A discipline gap, not a silent one.
+
+I established that rather than assuming it: removed the zero-attempt cell,
+confirmed the mutation was in the file, ran the class, and got **exactly one
+failure - the hash test**. The hazard-specific behaviour was not asserted
+anywhere.
+
+`test_every_declared_hazard_is_actually_present_in_the_fixture` now keys each
+detector to its declaration's own words, so editing a declaration without
+editing its detector fails here rather than the two drifting apart, and asserts
+the counts match **in both directions** so a fifth declaration cannot be added
+without a check.
+
+**Each assert was proved capable of failing before I trusted it.** A passing
+check is indistinguishable from a check that cannot fail, so I mutated all four
+hazards in turn plus the count guard, and confirmed the unmutated baseline
+still exits 0:
+
+    baseline (unmutated)          exit=0
+    repeated header row           exit=1  CAUGHT
+    quoted multi-position         exit=1  CAUGHT
+    zero-attempt FT cell          exit=1  CAUGHT
+    low-volume shooting cell      exit=1  CAUGHT
+    5th declaration, no detector  exit=1  CAUGHT
+
+That also closes a `could not verify` I filed earlier the same day, where I had
+mutated one hazard and inferred the other three from test names.
+
+**The repeated-header detector needed a second assertion, and the first one
+would have passed while the defect was present.** `^R#` matches the *leading*
+header, which is the ordinary contract rather than the hazard, so a fixture
+whose mid-table repeat had been deleted still matched it. The count assertion
+(`>= 2`) is the one that actually excludes the defect; the membership one does
+not. Same shape as the PTS identity being scale-invariant: a check that looks
+like it covers the case and is blind to exactly the mutation that matters.
+
+**Could not verify:** that the four hazards are the *right* four. They are the
+ones I observed on one page-size setting on one date, and a dialect quirk the
+live source emits rarely - or only for the seven categories I never rendered -
+would be absent from the fixture and absent from this list, so this test would
+pass while the fixture under-covers the source. It pins what I saw, not what
+exists.
+
+Environment, new: `[IO.File]::ReadAllText` resolves relative paths against the
+.NET process working directory, which PowerShell's `cd` does not update. It
+failed loudly here; the same call as `WriteAllText`, with a path that exists in
+both locations, writes to the wrong file and returns success. Use absolute
+paths for `[IO.File]`.
+
+## 2026-08-26 - `data-engineer` - Rebase onto `c72b207`: a healed generator, an over-broad guard, and what reversion actually measured
+
+Rebased `hashtag-projection-profile-verification` a second time (`553df7a` -> `c72b207`)
+after #105 landed. Three things worth recording, none of them about the unit itself.
+
+**`docs/handoff.md` on `main` lost its trailing newline again.** The instance was
+healed at `c07aefb` and recorded closed; the condition that produces it was not.
+`c72b207` ends `b' and I have SQLite only.'` with no terminator. My splice resolver
+refuses on that condition, so the rebase stopped on the first conflict instead of
+producing a plausible file.
+
+**And my refusal message was wrong in my own favour.** It said my heading "would land
+mid-line". It would not. My appended tail begins with `\n`, so the heading sits at a
+line start whether or not upstream is healed. Tested rather than reasoned, with a
+positive control on the extractor first so the zeros meant something:
+
+    positive control, isolated heading            -> counted 1
+    A. appended text begins "\n" (my tail)        -> counted 1
+    B. appended text begins "##" directly         -> counted 0   b'y.## 2026-08-26 - ...'
+    C. upstream healed, either form               -> counted 1
+
+The hazard is real and it is narrower than I first said: it costs an entry only for a
+lane whose appended text starts directly with `##`, which is exactly what
+`open(f, 'a').write("## ...")` produces and is the natural way to write it. The entry
+is still in the file and is invisible to `^## \d{4}-` forever after.
+
+The resolver now heals instead of refusing, because a guard that stops work without
+repairing the cause just relocates the outage to the next lane. The heal is asserted
+to be exactly one byte (`len(result) == len(main) + 1 + len(tail)`), and it shows up
+in the append-only arithmetic as `+23,364` against a 23,363-byte tail.
+
+**Reversion measured something different from what its first number suggested.** A
+sweep of 14 mutations reported 10 leaving the whole file green, which read as alarming
+and was not. Deleting a test's own assertion is green by construction unless some other
+test independently covers the property, so the sweep alone cannot separate a vacuous
+green from a real hole. The experiment that separates them is deleting the assert *and*
+introducing the defect it names:
+
+    R1  drop a detector, keep its declaration        4/4 RED    not half-revertible
+    R2  drop a detector AND its declaration          4/4 GREEN  the declared blind spot
+    R3  delete or weaken each assert, no defect      6/6 GREEN  uninterpretable alone
+    R4  delete each assert AND inject its defect     5 RED, 2 GREEN
+
+Of the four asserts, three turn out to have independent coverage
+(`test_fixture_is_synthetic_and_declares_its_weaker_evidence` catches all three), and
+one is the sole guard: the `len(declared) == len(detectors)` pairing, against a hazard
+declared with no detector. Both greens in R4 are that same assert, deleted and inverted.
+GREEN there is what a load-bearing, unduplicated check looks like, not a defect.
+
+The blind spot is now stated more precisely than it was: the pairing is enforced in the
+direction declaration -> detector only. Nothing enforces fixture -> declaration, so a
+hazard sitting in the fixture that nobody declares and nobody detects changes no bytes
+and fires nothing.
+
+**Could not verify.** Whether any other lane's appender writes `##` as its first byte -
+I checked my own and reasoned about the general form, but did not read anyone else's
+append path. And R2's blind spot is demonstrated, not closed; closing it needs a check
+that walks the fixture for hazard shapes rather than walking the declarations, which is
+a different and much weaker test to write because the set of shapes is open.

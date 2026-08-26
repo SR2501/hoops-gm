@@ -66,10 +66,16 @@ from hoops_gm.ingest.projections.profiles import (
     ColumnProfile,
     ValueShape,
 )
+from hoops_gm.ingest.projections.verification import (
+    IMPORT_BLOCKING_CHECKS,
+    VerificationReport,
+    verify_projection_batch,
+)
 
 __all__ = [
     "ProjectionEncodingError",
     "ProjectionImportOutcome",
+    "ProjectionVerificationError",
     "build_player_targets",
     "get_or_create_projection_source",
     "import_projection_csv",
@@ -84,6 +90,25 @@ _SESSION_LOCK_LISTENER_KEY = "projection_import_lock_listener"
 
 class ProjectionEncodingError(ValueError):
     """Raw projection bytes are not valid UTF-8/UTF-8-with-BOM."""
+
+
+class ProjectionVerificationError(ValueError):
+    """A parsed batch is internally well-formed but is not what it claims to be.
+
+    Distinct from :class:`ProjectionProfileError`, which means the file cannot be
+    read under this profile at all. This one means it *was* read, every cell was
+    valid, and the batch as a whole still describes something other than the
+    per-game projections the profile declares — the season-totals paste being the
+    case that motivated it.
+
+    It exists because the checks that detect that were, on first delivery, written
+    and tested and then wired to nothing. A verification module that no import path
+    calls does not protect an import path, however green its own tests are.
+    """
+
+    def __init__(self, message: str, report: VerificationReport) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 def _content_checksum(content: bytes) -> str:
@@ -336,8 +361,32 @@ def _profile_definition(profile: ColumnProfile) -> dict[str, object]:
         "percentage_fallback_aliases": {
             field: list(aliases) for field, aliases in profile.percentage_fallback_aliases.items()
         },
+        # Composite columns must be in the hashed definition, not merely in the
+        # profile object. They decide which canonical field each half of a
+        # ``pct (makes/attempts)`` cell becomes, so a definition that omitted
+        # them would hash identically whether ``FG%`` decomposed into field
+        # goals or into free throws. A hash that does not cover the contract it
+        # claims to pin is worse than no hash, because it is trusted.
+        "composite_shooting_columns": [
+            {
+                "made_field": column.made_field,
+                "attempted_field": column.attempted_field,
+                "aliases": list(column.aliases),
+                "shape": column.shape.value,
+            }
+            for column in profile.composite_shooting_columns
+        ],
         "expected_headers": list(profile.expected_headers),
         "ignored_source_headers": list(profile.ignored_source_headers),
+        # Inside the *definition* rather than beside it, so the strength is
+        # covered by ``definition_sha256`` and persisted in the existing JSON
+        # column with no migration. A profile that quietly promoted itself from
+        # a live observation to a hash pin would otherwise keep its old hash,
+        # which is the same gap ``composite_shooting_columns`` had until this
+        # unit found it.
+        "verification_strength": (
+            profile.verification.value if profile.verification is not None else None
+        ),
     }
 
 
@@ -454,9 +503,36 @@ def _build_profile_lineage(
     definition_sha256: str,
 ) -> dict[str, object]:
     columns_by_field = {column.field: column for column in profile.stat_columns}
+    #: Fields that reach the row via decomposition of a composite cell rather
+    #: than via a column of their own. Their lineage is materially different
+    #: and is recorded as such: the source header they came from is shared
+    #: with their sibling, and the value was extracted from inside it.
+    composites_by_field = {
+        field: composite
+        for composite in profile.composite_shooting_columns
+        for field in (composite.made_field, composite.attempted_field)
+    }
     field_transforms: dict[str, object] = {}
     for canonical_field, source_header in parsed.resolved_headers.items():
-        if canonical_field in CANONICAL_STAT_FIELDS:
+        composite = composites_by_field.get(canonical_field)
+        if composite is not None:
+            component = "makes" if canonical_field == composite.made_field else "attempts"
+            field_transforms[canonical_field] = {
+                "source_header": source_header,
+                "source_unit": composite.shape.value,
+                "output_unit": ValueShape.PER_GAME.value,
+                "transform": (
+                    f"decompose_composite_shooting_cell[{component}]"
+                    if composite.shape is ValueShape.PER_GAME
+                    else f"decompose_composite_shooting_cell[{component}]"
+                    "+divide_by_assumed_games_played"
+                ),
+                "extracted_from": (
+                    "the parenthesised volume inside the percentage cell, not a column of its own"
+                ),
+                "reconciled_against": "the stated percentage in the same cell",
+            }
+        elif canonical_field in CANONICAL_STAT_FIELDS:
             column = columns_by_field[canonical_field]
             field_transforms[canonical_field] = {
                 "source_header": source_header,
@@ -950,6 +1026,13 @@ class ProjectionImportOutcome:
     #: has this available before deciding whether a percentage-only column or
     #: an unconverted season-total warning needs a human's attention.
     parse_result: ProjectionParseResult
+    #: The post-parse verification report. Reaching this object at all means no
+    #: check *failed* — a failure raises. It is carried anyway because
+    #: ``NOT_RUN`` is not a pass: the baked-in-availability check is always
+    #: ``NOT_RUN`` here, since the importer holds no prior-season observations,
+    #: and a caller must be able to see that rather than infer a clean bill from
+    #: a successful return.
+    verification: VerificationReport
 
 
 def import_projection_csv(
@@ -1019,6 +1102,17 @@ def import_projection_csv(
         )
 
     parsed = parse_projection_csv(csv_text, resolved_profile, season=season)
+    verification = verify_projection_batch(resolved_profile.profile_id, parsed.rows)
+    blocking = [
+        finding for finding in verification.failures if finding.check in IMPORT_BLOCKING_CHECKS
+    ]
+    if blocking:
+        detail = "; ".join(f"{finding.check}: {finding.detail}" for finding in blocking)
+        raise ProjectionVerificationError(
+            f"projection batch for {source.value} season {season} failed post-parse "
+            f"verification and was not imported - {detail}",
+            verification,
+        )
     profile_definition = _profile_definition(resolved_profile)
     profile_definition_sha256 = _profile_definition_sha256(
         resolved_profile,
@@ -1086,4 +1180,5 @@ def import_projection_csv(
         counts=counts,
         identity_report=identity_report,
         parse_result=parsed,
+        verification=verification,
     )

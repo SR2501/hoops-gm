@@ -16,8 +16,11 @@ and CSV dialect while containing no paid player rows or private path.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,18 +50,27 @@ from hoops_gm.ingest.projections import (
     BASKETBALL_MONSTER_PROFILE,
     CANONICAL_STAT_FIELDS,
     FANTASYPROS_PROFILE,
+    HASHTAG_2026_27_HEADERS,
     HASHTAG_PROFILE,
+    IMPORT_BLOCKING_CHECKS,
     MANUAL_PROFILE,
     ColumnProfile,
     DerivedStatColumn,
     ProjectionEncodingError,
     ProjectionProfileError,
+    ProjectionVerificationError,
     StatColumn,
     ValueShape,
+    VerificationOutcome,
+    VerificationStrength,
     build_player_targets,
     get_or_create_projection_source,
     import_projection_csv,
     parse_projection_csv,
+)
+from hoops_gm.ingest.projections.importer import (
+    _profile_definition,
+    _profile_definition_sha256,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "projections"
@@ -236,6 +248,10 @@ def test_custom_profile_cannot_map_terminal_columns_into_earlier_layers(
 
 
 def test_external_profile_cannot_claim_wildcard_season_verification() -> None:
+    # HASH_PINNED, not OWNER_DEFINED_SCHEMA, so the *wildcard* rule is the one
+    # that fires. A vendor claiming the owner-defined schema is rejected by a
+    # different rule, and using it here would have made this test pass for a
+    # reason unrelated to the one it is named for.
     with pytest.raises(ValueError, match="wildcard season verification"):
         ColumnProfile(
             profile_id="vendor-wildcard",
@@ -244,7 +260,7 @@ def test_external_profile_cannot_claim_wildcard_season_verification() -> None:
             display_name="invalid vendor wildcard",
             name_aliases=("Player",),
             stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("*",),
             verification_evidence="one real export cannot verify every season",
         )
@@ -258,7 +274,7 @@ def test_manual_wildcard_profile_identity_cannot_be_forged(session: Session) -> 
         display_name="forged manual profile",
         name_aliases=("Player",),
         stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
         verified_seasons=("*",),
         verification_evidence="caller assertion without canonical schema evidence",
     )
@@ -288,7 +304,7 @@ def test_verified_profile_requires_nonblank_evidence() -> None:
             stat_columns=(
                 StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
             ),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="   ",
         )
@@ -305,7 +321,7 @@ def test_identity_anchor_namespace_cannot_be_used_for_projection_csvs() -> None:
             stat_columns=(
                 StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
             ),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="not relevant because the namespace is forbidden",
         )
@@ -578,7 +594,7 @@ def test_self_attested_custom_profile_cannot_enter_production(
         display_name="self-attested FantasyPros",
         name_aliases=("Player",),
         stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2026-27",),
         verification_evidence="caller says this is real",
     )
@@ -678,7 +694,7 @@ def test_percentage_exclusion_is_persisted_in_import_lineage(
             StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
         ),
         percentage_fallback_aliases={"field_goals_made_per_game": ("fg%",)},
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2026-27",),
         verification_evidence="recorded fixture fixture://ratio-evidence-v1",
     )
@@ -742,15 +758,435 @@ def test_fantasypros_profile_resolves_headers_and_flags_percentage_only() -> Non
     )
 
 
-def test_hashtag_profile_resolves_full_shooting_volume() -> None:
-    result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+@pytest.mark.adapter_contract
+class TestVerificationStrengthIsAValueNotAComment:
+    """``verified=True`` used to mean two different guarantees under one name.
 
-    assert result.rejected_count == 0
-    beta = next(row for row in result.rows if row.player_name == "Player Beta")
-    assert beta.field_goals_made_per_game == 6.1
-    assert beta.field_goals_attempted_per_game == 13.2
-    assert beta.offensive_rebounds_per_game == 1.0
-    assert beta.defensive_rebounds_per_game == 3.5
+    Basketball Monster's was pinned to the sha256 of an immutable file;
+    Hashtag's was an observation of a live page that can change tomorrow. A
+    consumer that wanted only the strong form could not express that as a
+    comparison, because there was nothing to compare - only a capitalised note
+    in a free-text evidence string, which is documentation, and documentation
+    is what the next consumer skips.
+
+    These tests exist so the distinction cannot quietly collapse back into a
+    boolean.
+    """
+
+    def test_the_three_strengths_are_distinct_values(self) -> None:
+        """Excludes: a strength that is decorative because everything shares one.
+
+        False-pass reading: three distinct values that no caller ever branches
+        on are still decorative. This asserts the vocabulary exists, not that
+        anyone uses it - see the hash test below for the part with teeth.
+        """
+        assert BASKETBALL_MONSTER_PROFILE.verification is VerificationStrength.HASH_PINNED
+        assert HASHTAG_PROFILE.verification is VerificationStrength.LIVE_CONTRACT_OBSERVED
+        assert MANUAL_PROFILE.verification is VerificationStrength.OWNER_DEFINED_SCHEMA
+        assert FANTASYPROS_PROFILE.verification is None
+
+        strengths = {
+            BASKETBALL_MONSTER_PROFILE.verification,
+            HASHTAG_PROFILE.verification,
+            MANUAL_PROFILE.verification,
+        }
+        assert len(strengths) == 3, "two profiles collapsed onto one strength"
+
+    def test_a_consumer_can_select_only_the_hash_pinned_form(self) -> None:
+        """Excludes: the ruling being satisfied in name while staying unusable.
+
+        The whole point is that "only trust the strong form" becomes a
+        comparison. If this filter cannot be written, the split bought nothing.
+        """
+        every = (
+            MANUAL_PROFILE,
+            FANTASYPROS_PROFILE,
+            HASHTAG_PROFILE,
+            BASKETBALL_MONSTER_PROFILE,
+        )
+        pinned = [p for p in every if p.verification is VerificationStrength.HASH_PINNED]
+
+        assert [p.profile_id for p in pinned] == ["basketball-monster-2026-27"]
+        # And the weaker-but-still-verified profile is excluded by the filter
+        # while remaining importable, which is the distinction that did not
+        # exist before: verified for the gate, not pinned for the consumer.
+        assert HASHTAG_PROFILE.verified is True
+        assert HASHTAG_PROFILE not in pinned
+
+    def test_verified_cannot_be_set_without_naming_a_strength(self) -> None:
+        """Excludes: reaching the strong form by accident or by default.
+
+        There is no ``verified=`` keyword any more, so a profile author cannot
+        assert verification without answering "of what kind". This asserts the
+        constructor genuinely rejects it rather than silently ignoring it.
+        """
+        with pytest.raises(TypeError):
+            ColumnProfile(
+                profile_id="boolean-nostalgia",
+                version="1",
+                source=ExternalSource.MANUAL,
+                display_name="Boolean nostalgia",
+                name_aliases=("player_name",),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+                verified=True,  # type: ignore[call-arg]
+                verified_seasons=("*",),
+                verification_evidence="a boolean is not a strength",
+            )
+
+    def test_a_vendor_may_not_claim_the_owner_defined_schema(self) -> None:
+        """Excludes: a vendor profile borrowing the one strength it cannot have.
+
+        ``OWNER_DEFINED_SCHEMA`` means "no external party's meaning can differ
+        from ours", which is false for anything we did not define. Without this
+        an author could silence a real uncertainty by picking the label that
+        promises the fewest future failures.
+        """
+        with pytest.raises(ValueError, match="observed, never defined here"):
+            ColumnProfile(
+                profile_id="hashtag-overreach",
+                version="1",
+                source=ExternalSource.HASHTAG,
+                display_name="Hashtag overreach",
+                name_aliases=("PLAYER",),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+                verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
+                verified_seasons=("2026-27",),
+                verification_evidence="claiming a schema we do not define",
+            )
+
+    def test_the_strength_is_covered_by_the_profile_definition_hash(self) -> None:
+        """Excludes: a profile promoting its own strength without moving its hash.
+
+        This is the exact gap ``composite_shooting_columns`` had until this
+        unit found it: a field that changes the contract's meaning while
+        ``definition_sha256`` stays put, so ``_assert_profile_version`` sees no
+        change and the promotion lands silently on an existing version row.
+
+        Positive control is built in - the two hashes below are computed from
+        profiles identical in every respect *except* the strength, so if the
+        field were absent from the definition they would be equal and this test
+        would fail rather than vacuously pass.
+        """
+
+        def build(strength: VerificationStrength) -> ColumnProfile:
+            return ColumnProfile(
+                profile_id="strength-hash-probe",
+                version="1",
+                source=ExternalSource.HASHTAG,
+                display_name="Strength hash probe",
+                name_aliases=("PLAYER",),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
+                verification=strength,
+                verified_seasons=("2026-27",),
+                verification_evidence="identical evidence on purpose",
+            )
+
+        observed = build(VerificationStrength.LIVE_CONTRACT_OBSERVED)
+        pinned = build(VerificationStrength.HASH_PINNED)
+
+        observed_definition = _profile_definition(observed)
+        pinned_definition = _profile_definition(pinned)
+
+        # Asserted first and deliberately: these two profiles differ in nothing
+        # but the strength, so if the field were absent from the definition the
+        # hashes would be *equal* and this is the line that says so. The value
+        # assertions below only explain why they differ; they would trip first
+        # on a removal and hide which property actually failed.
+        assert _profile_definition_sha256(
+            observed, observed_definition
+        ) != _profile_definition_sha256(pinned, pinned_definition)
+        assert observed_definition != pinned_definition
+        assert observed_definition["verification_strength"] == "live_contract_observed"
+        assert pinned_definition["verification_strength"] == "hash_pinned"
+
+
+@pytest.mark.adapter_contract
+class TestHashtagProjectionContract:
+    """The contract Hashtag Basketball actually renders, and its limits.
+
+    This class is the adapter gate for Hashtag. It is deliberately more
+    suspicious than a mapping test, because the failure this profile guards
+    against does not look like a failure: a Hashtag import that silently
+    dropped shooting volume would produce a complete-looking projection set
+    in which every percentage category was priced on no volume at all.
+    """
+
+    def test_fixture_is_synthetic_and_declares_its_weaker_evidence(self) -> None:
+        """The fixture is pinned, and its evidence does not overclaim.
+
+        Basketball Monster's fixture is backed by the hash of a real paid
+        export. Hashtag's cannot be: the source publishes no export, so there
+        is no artifact to hash. Both metadata files carry a
+        ``privacy_safe_fixture_sha256``, which makes them look equivalent at a
+        glance, and they are not. The asymmetry is asserted here so that a
+        reader comparing the two files sees the difference stated rather than
+        inferring parity from a shared key name.
+        """
+        fixture_bytes = load_bytes("hashtag_sample.csv")
+        metadata = json.loads(
+            (FIXTURES / "hashtag_sample.metadata.json").read_text(encoding="utf-8")
+        )
+
+        canonical = fixture_bytes.replace(b"\r\n", b"\n")
+        assert (
+            hashlib.sha256(canonical).hexdigest().upper() == metadata["privacy_safe_fixture_sha256"]
+        )
+        assert "private_export_sha256" not in metadata, (
+            "Hashtag has no export to hash; a key implying otherwise would make this "
+            "fixture's evidence look as strong as Basketball Monster's"
+        )
+        assert metadata["evidence_kind"].startswith("live-page contract observation")
+        assert metadata["why_no_source_hash"]
+
+        text = fixture_bytes.decode("utf-8")
+        for invented in ("Nikola", "Jokic", "Wembanyama", "Doncic"):
+            assert invented not in text, "no vendor row may be committed"
+
+    def test_every_declared_hazard_is_actually_present_in_the_fixture(self) -> None:
+        """Each ``deliberate_fixture_hazards`` entry is checked against the file.
+
+        Excluded defect: the metadata claims this fixture exercises a parser
+        hazard that it no longer contains, so a test suite reads as covering a
+        case that was quietly edited away.
+
+        The ``privacy_safe_fixture_sha256`` assertion above does not exclude
+        that. It covers every byte, so the fixture cannot drift *silently* —
+        but it fails on the bytes, and the person repairing it is looking at
+        the file, not at the claim about the file three keys away in a
+        different document. Update the hash and the stale declaration
+        survives. That is a discipline gap rather than a silent one, and this
+        turns it into a mechanical one.
+
+        A reading in which this passes and the defect is present: a detector
+        loose enough to match some *other* row would keep matching after its
+        intended row was removed. That is why each pattern below is the exact
+        rendered cell rather than its shape, and why each was verified by
+        deleting its row and watching this test fail — the patterns are
+        pinned by construction, not by inspection.
+        """
+        metadata = json.loads(
+            (FIXTURES / "hashtag_sample.metadata.json").read_text(encoding="utf-8")
+        )
+        text = load_bytes("hashtag_sample.csv").decode("utf-8")
+
+        # Keyed on the declaration's own words, so editing a declaration
+        # without editing its detector fails here rather than drifting apart.
+        detectors: tuple[tuple[str, str], ...] = (
+            ("repeated header row", r"(?m)^R#(?:,|\t|\s)"),
+            ("quoted multi-position cell", r'"[A-Z]{1,2},[A-Z]{1,2}"'),
+            ("zero-attempt free-throw cell", r"0\.000 \(0\.0/0\.0\)"),
+            ("low-volume shooting cell", r"0\.667 \(0\.2/0\.3\)"),
+        )
+
+        declared = metadata["deliberate_fixture_hazards"]
+        assert len(declared) == len(detectors), (
+            "a hazard was declared without a detector, or a detector outlived its "
+            "declaration; both ends must move together or this check stops covering "
+            f"the list it claims to cover - {len(declared)} declared, {len(detectors)} checked"
+        )
+
+        for phrase, pattern in detectors:
+            matching = [entry for entry in declared if phrase in entry.lower()]
+            assert len(matching) == 1, (
+                f"expected exactly one declaration mentioning {phrase!r}, found "
+                f"{len(matching)}; an ambiguous or missing declaration makes the "
+                "detector below check something the metadata no longer claims"
+            )
+            assert re.search(pattern, text), (
+                f"metadata declares {matching[0]!r} but the fixture no longer "
+                "contains it, so the parser case it exists to exercise is gone "
+                "while the declaration still advertises it"
+            )
+
+        # The repeated-header hazard is a *repeat*: one header line is the
+        # ordinary contract, not the hazard. Asserted separately because the
+        # detector above matches the leading header too, and would therefore
+        # pass on a fixture whose mid-table repeat had been deleted.
+        assert len(re.findall(r"(?m)^R#(?:,|\t|\s)", text)) >= 2, (
+            "the repeated-header hazard needs a header row *after* the first; "
+            "with only the leading header this fixture stops exercising the "
+            "mid-table repeat the live source emits roughly every 13 rows"
+        )
+
+    def test_header_contract_is_pinned_exactly(self) -> None:
+        """A differently-configured paste is refused, not best-effort mapped.
+
+        Hashtag's column set is *browser state*, not a vendor contract: the
+        page carries sixteen category checkboxes and renders whichever are
+        ticked. A paste therefore carries values and none of the configuration
+        that produced them. Nine categories happen to be checked by default,
+        which is why the default paste looks like a stable contract and is not
+        one.
+
+        Defect excluded: a paste made with a different category selection
+        mapping partially onto this profile and importing a subset of columns
+        as though it were the whole thing.
+
+        Reading in which this passes and the defect is present: a paste whose
+        selection differs in a column this profile already ignores as terminal
+        evidence. Toggling the vendor's composite ``TOTAL`` off changes the
+        header sequence and so is caught, but the check is a sequence
+        comparison and cannot distinguish a column that matters from one that
+        does not.
+        """
+        header = load("hashtag_sample.csv").splitlines()[0]
+        assert header.split(",") == list(HASHTAG_2026_27_HEADERS)
+
+        for dropped in ("BLK", "TREB", "FT%"):
+            mangled = [h for h in HASHTAG_2026_27_HEADERS if h != dropped]
+            with pytest.raises(ProjectionProfileError, match="drifted"):
+                parse_projection_csv(",".join(mangled) + "\n", HASHTAG_PROFILE, season="2026-27")
+
+    def test_composite_shooting_cells_yield_volume_not_just_percentage(self) -> None:
+        """The finding this unit exists for.
+
+        Hashtag nests makes and attempts inside the percentage cell:
+        ``0.573 (10.5/18.3)``. The profile's first version declared both
+        shooting columns as percentage-only fallbacks, whose documented
+        meaning is "the source published no volume". That was true of the
+        header and false of the cell, and the consequence is
+        ``AGENTS.md``'s single most common bug in homebrew fantasy tools: a
+        90%-on-one-attempt free-throw shooter pricing identically to a
+        90%-on-eight.
+        """
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+
+        alpha = next(row for row in result.rows if row.player_name == "Player Alpha")
+        assert alpha.field_goals_made_per_game == 10.5
+        assert alpha.field_goals_attempted_per_game == 18.3
+        assert alpha.free_throws_made_per_game == 5.6
+        assert alpha.free_throws_attempted_per_game == 6.8
+
+        # Volume must be present for every row, including the fringe ones,
+        # because those are exactly the rows a percentage-only import
+        # mis-prices most severely.
+        for row in result.rows:
+            assert row.field_goals_attempted_per_game is not None
+            assert row.free_throws_attempted_per_game is not None
+
+    def test_a_percentage_that_contradicts_its_own_volume_is_refused(self) -> None:
+        """Positive control on the reconciliation, not just on the happy path.
+
+        A check that has only ever been run against clean input has not been
+        shown to be capable of failing.
+        """
+        clean = load("hashtag_sample.csv")
+        assert parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").rows
+
+        corrupted = clean.replace("0.574 (10.5/18.3)", "0.474 (10.5/18.3)")
+        assert corrupted != clean, "the mutation must be present in the text under test"
+        result = parse_projection_csv(corrupted, HASHTAG_PROFILE, season="2026-27")
+        assert any(issue.fatal and "does not reconcile" in issue.message for issue in result.issues)
+
+    def test_tolerance_is_volume_weighted_in_both_directions(self) -> None:
+        """Loose where volume is thin, strict where volume is heavy.
+
+        A flat tolerance is wrong in both directions, which is why this is a
+        single test rather than two: at a tolerance tight enough to catch the
+        high-volume corruption below, the legitimate low-volume cell in the
+        fixture would be a false alarm.
+        """
+        clean = load("hashtag_sample.csv")
+
+        # Thin volume: 0.2/0.3 rounds to 0.667, and the true ratio can sit
+        # anywhere in a wide interval. This must be accepted. Asserted against
+        # reconciliation issues specifically rather than against
+        # ``rejected_count``, which is 1 for this fixture by design — the
+        # repeated header row. A coarser assertion would couple this check to
+        # an unrelated hazard and report the wrong cause when it broke.
+        assert "0.667 (0.2/0.3)" in clean
+        assert not [
+            issue
+            for issue in parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").issues
+            if "does not reconcile" in issue.message
+        ]
+
+        # Heavy volume: the same absolute error that is invisible at 0.3
+        # attempts is decisive at 18.3.
+        nudged = clean.replace("0.574 (10.5/18.3)", "0.590 (10.5/18.3)")
+        assert nudged != clean
+        assert any(
+            issue.fatal and "does not reconcile" in issue.message
+            for issue in parse_projection_csv(nudged, HASHTAG_PROFILE, season="2026-27").issues
+        )
+
+    def test_a_percentage_that_survived_its_lost_volume_is_refused(self) -> None:
+        """FAILS IF: a composite cell states a percentage on zero attempts.
+
+        Zero attempts is the one branch where the ratio cannot be recomputed,
+        so it was the one branch where the reconciliation declined to look. An
+        independent review found that ``0.824 (0.0/0.0)`` imported cleanly as
+        real zero volume: the source cannot render that, so the cell is
+        self-contradictory on its face, and it is exactly what a paste produces
+        when it keeps the printed percentage and drops the parenthesised half.
+
+        Defect excluded: a shooting category priced on no volume at all while
+        the file reports a healthy percentage — the ``AGENTS.md`` bug this
+        whole column exists to close, reintroduced through the branch that did
+        not check.
+
+        Reading in which this passes and the defect is present: a paste that
+        loses *both* halves, leaving the cell blank. That parses to
+        ``(None, None)`` and is caught downstream by
+        ``required_production_fields``, not here — a genuinely empty cell and a
+        corrupted one are different defects and only the second is this
+        check's.
+        """
+        clean = load("hashtag_sample.csv")
+
+        # Positive control on the extraction before trusting the refusal: the
+        # untouched fixture must contain a legitimate all-zero shooting cell,
+        # or the mutation below is not testing the branch it claims to.
+        assert "0.000 (0.0/0.0)" in clean
+        assert not [
+            issue
+            for issue in parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").issues
+            if "zero attempts" in issue.message
+        ], "a legitimately empty shooting line must still be accepted"
+
+        stripped = clean.replace("0.000 (0.0/0.0)", "0.824 (0.0/0.0)")
+        assert stripped != clean
+        assert any(
+            issue.fatal and "zero attempts" in issue.message
+            for issue in parse_projection_csv(stripped, HASHTAG_PROFILE, season="2026-27").issues
+        )
+
+    def test_repeated_header_rows_are_rejected_loudly(self) -> None:
+        """The live page re-emits its header roughly every thirteen rows.
+
+        Left alone these parse as a player named ``PLAYER`` carrying
+        unparsable stats, which surfaces as a scatter of numeric errors rather
+        than as the structural artefact it is.
+        """
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+
+        assert result.rejected_count == 1
+        assert any(
+            issue.fatal and "repeats the file's header text" in issue.message
+            for issue in result.issues
+        )
+        assert not any(row.player_name == "PLAYER" for row in result.rows)
+
+    def test_vendor_composite_and_market_columns_are_refused_as_evidence(self) -> None:
+        """``TOTAL``, ``R#`` and ``ADP`` are read and discarded, per ADR-008.
+
+        ``TOTAL`` is the one column whose meaning genuinely depends on the
+        vendor's scoring format, and refusing it is a stronger response than
+        trying to verify a self-declared format. ``ADP`` is a market
+        aggregate of unestablished provenance and must not re-enter valuation
+        as though it were a projection.
+        """
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+
+        assert set(result.ignored_terminal_headers) == {"R#", "ADP", "TOTAL"}
+        assert "TOTAL" not in result.resolved_headers.values()
+
+    def test_multi_position_cell_survives_its_embedded_comma(self) -> None:
+        result = parse_projection_csv(load("hashtag_sample.csv"), HASHTAG_PROFILE, season="2026-27")
+
+        delta = next(row for row in result.rows if row.player_name == "Player Epsilon")
+        assert delta.position == "SG,SF"
+        assert delta.team == "PHX"
 
 
 # --------------------------------------------------------------------------
@@ -1395,7 +1831,7 @@ def test_replaying_older_season_does_not_rewind_current_crosswalk(
         name_aliases=("player_name",),
         external_id_aliases=("source_id",),
         stat_columns=(StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2025-26", "2026-27"),
         verification_evidence="test-only exact source-id fixture",
     )
@@ -1463,7 +1899,7 @@ def test_profile_lineage_is_immutable_and_versioned(
             name_aliases=("player_name",),
             games_played_aliases=("GP",),
             stat_columns=(StatColumn("points_per_game", aliases, ValueShape.SEASON_TOTAL),),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="recorded fixture fixture://season-total-v1",
         )
@@ -1875,6 +2311,197 @@ def test_terminal_columns_are_ignored_and_never_persisted(
         "composite_value",
         "expected_games",
     }.isdisjoint(projection_columns)
+
+
+def test_a_season_totals_paste_is_refused_by_the_importer_not_only_by_a_module(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: post-parse verification is not wired to the import path.
+
+    Hashtag's ``DDRANK`` control has a TOT mode that renders season totals under
+    **identical header text**, leaving ``MPG`` per-game while ``PTS`` becomes a
+    season sum. Every per-cell check still passes on such a file: the composite
+    ratios are scale-invariant, the scoring identity is scale-invariant, and
+    ``GP`` is unchanged. Only the batch-level shape check separates the two, and
+    on first delivery that check was written, tested, and called by nothing —
+    so the file imported silently with every counting category inflated roughly
+    seventy-fold.
+
+    Defect excluded: a verification module whose own tests are green while no
+    import path consults it.
+
+    Reading in which this passes and the defect is present: a season-totals file
+    whose players all project under the per-game ceiling anyway — a batch of
+    deep-bench players at 0.4 points per game would still be under 60 after
+    multiplying by 80. The check is a ceiling on implausible magnitude, not a
+    proof of basis, and it gets weaker exactly where the players are least
+    valuable.
+    """
+    per_game = load("hashtag_sample.csv")
+    lines = per_game.splitlines()
+    header = lines[0].split(",")
+    games_index = header.index("GP")
+    counting_indexes = [
+        header.index(column) for column in ("3PM", "PTS", "TREB", "AST", "STL", "BLK", "TO")
+    ]
+    composite_indexes = [header.index(column) for column in ("FG%", "FT%")]
+
+    scaled: list[str] = [lines[0]]
+    for line in lines[1:]:
+        cells = next(csv.reader([line]))
+        if len(cells) != len(header):
+            scaled.append(line)
+            continue
+        try:
+            games = float(cells[games_index])
+            totals = [float(cells[index]) for index in counting_indexes]
+        except ValueError:
+            scaled.append(line)
+            continue
+        for index, value in zip(counting_indexes, totals, strict=True):
+            cells[index] = f"{value * games:.1f}"
+        for index in composite_indexes:
+            match = re.match(r"^(0?\.\d{3}) \((\d+\.?\d*)/(\d+\.?\d*)\)$", cells[index])
+            assert match is not None, f"fixture cell {cells[index]!r} is not composite"
+            # Scaled with extra precision on purpose. The reconciliation bound
+            # tightens as attempts grow, so rounding season-total volumes to the
+            # source's one decimal would make *display rounding* the thing that
+            # fails and this test would stop proving anything about basis.
+            cells[index] = (
+                f"{match.group(1)} ({float(match.group(2)) * games:.4f}"
+                f"/{float(match.group(3)) * games:.4f})"
+            )
+        buffer = io.StringIO()
+        csv.writer(buffer, lineterminator="").writerow(cells)
+        scaled.append(buffer.getvalue())
+    season_totals = "\n".join(scaled) + "\n"
+
+    # Positive control on the mutation: the per-game original must import, or a
+    # refusal below would prove nothing about basis.
+    clean = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.HASHTAG,
+        display_name="Hashtag projections",
+        season="2026-27",
+        csv_bytes=per_game.encode("utf-8"),
+        profile=HASHTAG_PROFILE,
+    )
+    assert clean.parse_result.rows
+    assert season_totals != per_game
+
+    with pytest.raises(ProjectionVerificationError) as refused:
+        import_projection_csv(
+            seeded_players,
+            source=ExternalSource.HASHTAG,
+            display_name="Hashtag projections",
+            season="2026-27",
+            csv_bytes=season_totals.encode("utf-8"),
+            profile=HASHTAG_PROFILE,
+        )
+
+    assert "value_shape" in str(refused.value)
+    assert [finding.check for finding in refused.value.report.failures] == ["value_shape"]
+
+    # And the reason only one check caught it: every other signal in the file is
+    # scale-invariant. The scoring identity holds exactly on a batch that is
+    # seventy times too large, which is why it must never be promoted into the
+    # role the shape check plays here.
+    outcomes = {finding.check: finding.outcome for finding in refused.value.report.findings}
+    assert outcomes["scoring_identity"] is VerificationOutcome.PASSED
+
+
+def test_a_successful_import_still_reports_the_check_it_could_not_run(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: a clean return is read as every check having passed.
+
+    ``import_projection_csv`` holds no prior-season observations, so the
+    baked-in-availability check can never run there. It is recorded as
+    ``NOT_RUN`` rather than omitted, because an absent check and a passing
+    check must not look the same to a caller — which is the same defect class
+    the whole verification module exists to catch, one level up.
+    """
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.HASHTAG,
+        display_name="Hashtag projections",
+        season="2026-27",
+        csv_bytes=load("hashtag_sample.csv").encode("utf-8"),
+        profile=HASHTAG_PROFILE,
+    )
+
+    assert outcome.verification.passed
+    outcomes = {finding.check: finding.outcome for finding in outcome.verification.findings}
+    assert outcomes["value_shape"] is VerificationOutcome.PASSED
+    assert outcomes["baked_in_availability"] is VerificationOutcome.NOT_RUN
+
+
+def test_an_identity_failure_is_reported_but_does_not_block_the_import(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: the scoring identity silently becomes an import gate, or vanishes.
+
+    Only ``value_shape`` may refuse an import. The distinction is not importance
+    but false positives: no legitimate per-game file trips a 60-point ceiling,
+    whereas the scoring identity cross-checks columns a vendor may compute from
+    *separate* models and round independently, so a real source can fail it
+    while being entirely correct.
+
+    Defect excluded: an import path that either blocks on a check with a
+    legitimate false positive, or drops that check's finding so a caller cannot
+    see it.
+
+    Reading in which this passes and a defect is present: the finding is
+    recorded and nobody reads it. Nothing here makes a caller act on
+    ``outcome.verification``, and a batch whose columns genuinely contradict
+    each other still imports. This test pins the *reporting*, not any response
+    to it.
+
+    Note the attempts columns: makes without attempts are dropped as an
+    incomplete volume pair, which nulls the makes and takes the identity check
+    to ``NOT_RUN``. So the identity can only ever run on a source that publishes
+    attempts — narrower than it looks.
+    """
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(
+            b"player_name,field_goals_made_per_game,field_goals_attempted_per_game,"
+            b"three_pointers_made_per_game,free_throws_made_per_game,"
+            b"free_throws_attempted_per_game,points_per_game\n"
+            b"Player Alpha,5.0,10.0,2.0,3.0,4.0,15.0\n"
+        ),
+        raw_payload_ref="raw://projection-import/identity",
+    )
+
+    # Positive control on the construction: 2*5 + 2 + 3 = 15, so this row is
+    # consistent and the check must be quiet. If this is not PASSED, the
+    # contrast below is not about the identity at all.
+    consistent = {finding.check: finding.outcome for finding in outcome.verification.findings}
+    assert consistent["scoring_identity"] is VerificationOutcome.PASSED
+
+    broken = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(
+            b"player_name,field_goals_made_per_game,field_goals_attempted_per_game,"
+            b"three_pointers_made_per_game,free_throws_made_per_game,"
+            b"free_throws_attempted_per_game,points_per_game\n"
+            b"Player Alpha,5.0,10.0,2.0,3.0,4.0,22.0\n"
+        ),
+        raw_payload_ref="raw://projection-import/identity-broken",
+    )
+
+    outcomes = {finding.check: finding.outcome for finding in broken.verification.findings}
+    assert outcomes["scoring_identity"] is VerificationOutcome.FAILED
+    assert outcomes["value_shape"] is VerificationOutcome.PASSED
+    assert not broken.verification.passed, "the report must not call this clean"
+    assert broken.projection_import.id is not None, "but the import must still have happened"
+    assert "scoring_identity" not in IMPORT_BLOCKING_CHECKS
 
 
 def test_source_games_played_assumption_never_becomes_a_projection_column(

@@ -30,6 +30,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import re
 from pathlib import Path
 from typing import ClassVar
 
@@ -70,9 +71,11 @@ from hoops_gm.ingest.nba import (
 )
 from hoops_gm.ingest.projections import (
     BASKETBALL_MONSTER_PROFILE,
+    HASHTAG_2026_27_HEADERS,
     ProjectionProfileError,
     parse_projection_csv,
 )
+from hoops_gm.ingest.projections.parser import _percentage_reconciliation_bound
 from hoops_gm.ingest.record_fixtures import (
     FIXTURE_COHORT_SEASON,
     FIXTURE_CURRENT_SEASON,
@@ -1475,3 +1478,182 @@ class TestInjuryReportCurrentSeasonIsAlive:
             body, report_timestamp=candidate, source_url=report_url(candidate)
         )
         assert len(result.entries) > 0, f"no entries parsed from the report for {candidate}"
+
+
+# --------------------------------------------------------------------------
+# Hashtag Basketball projections
+# --------------------------------------------------------------------------
+
+HASHTAG_PROJECTIONS_URL = "https://hashtagbasketball.com/fantasy-basketball-projections"
+
+
+@pytest.mark.live_smoke
+class TestHashtagProjectionContractIsAlive:
+    """The only thing that can detect Hashtag drift.
+
+    This profile is verified against a *live-page contract observation*, not
+    against a hashed artifact -- Hashtag publishes no export, so there is no
+    file to pin. That makes the offline contract test structurally weaker here
+    than it is for Basketball Monster: the fixture is synthetic, so it will
+    keep passing forever no matter what the vendor does.
+
+    These tests are therefore not the optional half of the Adapter gate for
+    this source. They are the *only* half that can fail for the right reason.
+    """
+
+    @staticmethod
+    def _page() -> str:
+        import urllib.request
+
+        request = urllib.request.Request(
+            HASHTAG_PROJECTIONS_URL,
+            headers={"User-Agent": "hoops-gm adapter smoke test"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body: str = response.read().decode("utf-8", errors="replace")
+        return body
+
+    @staticmethod
+    def _cell_texts(page: str) -> list[str]:
+        """Every ``<td>`` collapsed to the text a copy-paste would produce.
+
+        The parser consumes a *paste*, not markup, so the contract that matters
+        is what the cell looks like once the tags are gone. Matching raw HTML
+        instead was the original mistake here: the first version of this test
+        required the percentage and the parenthesised volume to be adjacent
+        inside one text node, and on the live page they are two sibling spans
+        with a hidden input between them. It matched **zero** cells, so it
+        failed while claiming Hashtag had changed its format, and the
+        reconciliation loop underneath it never executed once.
+        """
+        return [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip()
+            for fragment in re.findall(r"<td\b[^>]*>(.*?)</td>", page, re.S)
+        ]
+
+    def test_the_header_sequence_has_not_drifted(self) -> None:
+        """FAILS IF: the page's rendered column sequence stops matching the pinned one.
+
+        Compares the ``<th>`` sequence as an **ordered, complete list**, because
+        the profile pins ``expected_headers`` as a tuple and ``parse_projection_csv``
+        refuses on order as well as membership.
+
+        A per-token ``f">{header}<" in page`` membership test -- which is what
+        this was until an independent review broke it -- cannot do that job. It
+        checks no ordering and no completeness, and it cannot distinguish a
+        rendered table column from one of the sixteen *category checkbox labels*,
+        which are ``>OREB<`` and ``>FGM<`` in the same document whether ticked or
+        not. Three invented headers were added to the pinned tuple and this test
+        stayed green. Meanwhile the owner's next paste would have been refused by
+        the parser with the drift detector reporting no drift, which is the
+        "column set is browser state, not a vendor contract" risk this source's
+        adapter doc names as its primary one.
+        """
+        page = self._page()
+
+        # Positive control on the extractor before trusting any comparison: if
+        # the page did not arrive, or renders no table at all, the sequence
+        # assertion below would report a vendor change that did not happen.
+        assert "hashtag" in page.lower(), (
+            "the page did not load; the comparison below proves nothing"
+        )
+        assert len(page) > 50_000, f"page is implausibly small ({len(page)} chars)"
+        headers = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", fragment)).strip()
+            for fragment in re.findall(r"<th\b[^>]*>(.*?)</th>", page, re.S)
+        ]
+        assert headers, "no <th> elements found; the extractor is broken, not the vendor"
+
+        assert tuple(headers) == tuple(HASHTAG_2026_27_HEADERS), (
+            f"the rendered column sequence is {headers!r} but hashtag-2026-27 pins "
+            f"{list(HASHTAG_2026_27_HEADERS)!r}. The profile must be re-verified against "
+            "the page before anything imports through it -- and check the category "
+            "checkboxes first, because the default tick set is browser state and a "
+            "change there looks identical to a vendor change here"
+        )
+
+    def test_shooting_cells_still_carry_volume_inside_the_percentage(self) -> None:
+        """FAILS IF: Hashtag stops publishing makes/attempts inside FG%/FT%.
+
+        This is the finding the profile is built on. If the composite cell
+        becomes a bare percentage, every shooting volume disappears and the
+        importer must refuse the file rather than fall back to percentages --
+        a percentage without volume is the single most common bug in homebrew
+        fantasy tools (AGENTS.md), not a graceful degradation.
+        """
+        page = self._page()
+        cells = self._cell_texts(page)
+
+        # Positive control on the extractor, not on the answer. A zero here is
+        # only evidence about the vendor if the same extraction can return a
+        # non-zero on a case known to be non-empty -- and the first version of
+        # this test returned zero for its own reasons while blaming Hashtag.
+        assert len(cells) > 100, (
+            f"only {len(cells)} table cells extracted; the extractor is broken, so "
+            "any absence below is about this test rather than about the source"
+        )
+
+        composite = [
+            match.groups()
+            for match in (
+                re.match(r"^(0?\.\d{3})\s*\((\d+\.?\d*)/(\d+\.?\d*)\)$", cell) for cell in cells
+            )
+            if match is not None
+        ]
+        assert composite, (
+            f"no 'percentage (makes/attempts)' cells among {len(cells)} extracted cells; "
+            "Hashtag changed its shooting cell format, and CompositeShootingColumn no "
+            "longer describes the source"
+        )
+
+        # And the volume actually reconciles against the stated percentage, so a
+        # format that merely *looks* composite is not accepted. Reconciled with
+        # the importer's own volume-aware bound rather than a flat tolerance:
+        # a flat 0.05 produces 59 false alarms in 429 rows, and is only safe
+        # here by accident, because the first page is rank-ordered onto the
+        # highest-volume players.
+        for stated, made, attempted in composite:
+            if float(attempted) == 0:
+                continue
+            error = abs(float(made) / float(attempted) - float(stated))
+            bound = _percentage_reconciliation_bound(float(stated), float(attempted))
+            assert error <= bound, (
+                f"composite cell {stated} ({made}/{attempted}) does not reconcile "
+                f"(off by {error:.4f}, display-rounding bound {bound:.4f}); the "
+                "parenthesised figures may no longer be makes and attempts"
+            )
+
+    def test_no_csv_export_has_appeared(self) -> None:
+        """FAILS IF: Hashtag adds an export, which would be good news.
+
+        The whole reason this profile's evidence is weaker than Basketball
+        Monster's is that there is no artifact to hash. If an export appears,
+        this profile should be re-verified against it and its
+        ``verification_evidence`` upgraded.
+
+        Written as an assertion rather than a comment because a comment saying
+        "no export exists" survives the day one does -- the same reasoning that
+        kept ``test_hashtag_projections_cannot_currently_be_imported`` around
+        until the day it could be inverted.
+
+        Scoped to the page's own controls rather than the whole document. A
+        document-wide substring scan for ``export``/``download`` also covers
+        third-party analytics and script markup, so any vendor's bundle
+        acquiring one of those tokens would fail this gate with a message
+        telling the reader Hashtag had shipped an export it had not.
+        """
+        page = self._page()
+        assert "hashtag" in page.lower(), "the page did not load; the absence below is not real"
+        assert "TREB" in page, "positive control failed; the extractor sees nothing"
+
+        controls = re.findall(r"<(?:a|button|input)\b[^>]*>", page, re.I)
+        assert controls, "no links or buttons found; the extractor is broken, not the vendor"
+
+        for token in ("csv", "export", "download"):
+            offenders = [control for control in controls if token in control.lower()]
+            assert not offenders, (
+                f"{token!r} now appears in a page control ({offenders[0][:120]!r}). If "
+                "Hashtag has added an export, hashtag-2026-27 can be upgraded from a "
+                "live-page contract observation to a hashed artifact -- see "
+                "docs/adapters/hashtag-projections.md"
+            )

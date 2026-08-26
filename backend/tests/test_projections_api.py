@@ -230,7 +230,11 @@ def test_current_projections_serves_the_imported_cohort_with_its_lineage(
     assert lineage["source"] == "basketball_monster"
     assert lineage["season"] == SEASON
     assert lineage["profile_id"] == "basketball-monster-2026-27"
-    assert lineage["profile_version"] == "1"
+    # Bumped 1 -> 2 when ``verification_strength`` entered the hashed profile
+    # definition. Kept as a literal on purpose: this assertion is the alarm
+    # that makes a version bump visible, and replacing it with
+    # ``BASKETBALL_MONSTER_PROFILE.version`` would silence exactly that.
+    assert lineage["profile_version"] == "2"
     assert lineage["original_filename"] == BBM_FIXTURE
     assert lineage["projection_count"] == 2
     assert (lineage["row_count"], lineage["matched_count"], lineage["rejected_count"]) == (2, 2, 0)

@@ -62,7 +62,11 @@ from hoops_gm.db.models.market import (
     AuctionValueSourceInput,
     PublishedAuctionValue,
 )
-from hoops_gm.db.models.projections import ProjectionImport, ProjectionProfileVersion
+from hoops_gm.db.models.projections import (
+    Projection,
+    ProjectionImport,
+    ProjectionProfileVersion,
+)
 from hoops_gm.identity.names import normalize_name
 from hoops_gm.ingest.auction_values.importer import (
     AuctionImportOutcome,
@@ -88,6 +92,7 @@ from hoops_gm.ingest.auction_values.profiles import (
 )
 from hoops_gm.ingest.projections import (
     BASKETBALL_MONSTER_PROFILE,
+    FANTASYPROS_PROFILE,
     HASHTAG_PROFILE,
     ProjectionProfileError,
     get_or_create_projection_source,
@@ -1394,16 +1399,18 @@ def test_the_database_refuses_an_empty_derivation_evidence(session: Session) -> 
 def import_projections(session: Session, source: ExternalSource) -> None:
     """Import a real projection file, so the guard tests against data we hold.
 
-    Only Basketball Monster is wired here, and the reason is a finding rather
-    than an omission: the projection importer refuses any profile that is not
-    verified for the season, and Basketball Monster's is the only vendor
-    profile that is. ``test_hashtag_projections_cannot_currently_be_imported``
-    pins that, so the day it changes, the reason this helper is narrow becomes
-    visible instead of quietly obsolete.
+    Basketball Monster and Hashtag are both wired. Hashtag was added the day
+    its profile was verified; before that this helper was deliberately narrow
+    and ``test_hashtag_projections_can_now_be_imported`` (previously
+    ``..._cannot_currently_be_imported``) pinned the reason, so the narrowness
+    became visible rather than quietly obsolete when it changed.
     """
     if source is ExternalSource.BASKETBALL_MONSTER:
         payload = (PROJECTION_FIXTURES / "basketball_monster_sample.csv").read_bytes()
         profile = BASKETBALL_MONSTER_PROFILE
+    elif source is ExternalSource.HASHTAG:
+        payload = (PROJECTION_FIXTURES / "hashtag_sample.csv").read_bytes()
+        profile = HASHTAG_PROFILE
     else:  # pragma: no cover - guarded by the assertion below
         raise AssertionError(f"no verified projection profile wired for {source}")
     assert payload.strip(), "projection fixture is empty, so importing it would prove nothing"
@@ -1421,13 +1428,15 @@ def import_projections(session: Session, source: ExternalSource) -> None:
 def record_projection_import(session: Session, source: ExternalSource) -> ProjectionImport:
     """Record that we hold an imported file from ``source``, without a CSV.
 
-    Used only for Hashtag, because Hashtag projections cannot be imported
-    through the production path today (see the test immediately below). The
-    guard under test is a query over ``projection_sources`` joined to
-    ``projection_imports``, so this constructs exactly the state that query
-    reads and nothing more — but it is a hand-built row, and hand-built rows
-    can be shaped in ways no producer can write. It is therefore used for the
-    Hashtag case alone; the headline circularity test drives a real import.
+    Kept for cases that need the state without the file. Hashtag no longer
+    needs it — its profile is verified and ``import_projections`` now
+    drives a real import — but the helper is retained because a hand-built row
+    is still the only way to construct the "we hold an import from a source we
+    have no fixture for" state.
+
+    A hand-built row can be shaped in ways no producer can write, so anything
+    relying on it is weaker evidence than a real import, and callers should
+    prefer ``import_projections`` wherever a fixture exists.
     """
     source_row = get_or_create_projection_source(
         session, source=source, display_name=f"{source.value} projections"
@@ -1467,25 +1476,62 @@ def record_projection_import(session: Session, source: ExternalSource) -> Projec
     return projection_import
 
 
-def test_hashtag_projections_cannot_currently_be_imported(seeded_players: Session) -> None:
-    """Why the Hashtag guard test builds its state by hand.
+def test_hashtag_projections_can_now_be_imported(seeded_players: Session) -> None:
+    """This test used to assert the opposite, and the reversal is the point.
 
-    The projection importer refuses an unverified profile outright, and
-    Hashtag's is unverified. So the "guard fires on Hashtag" case cannot be
-    driven through the production path *today* — not because the guard is
-    untestable, but because the upstream it depends on is closed.
+    Its previous form — ``test_hashtag_projections_cannot_currently_be_imported``
+    — pinned the fact that the projection importer refused Hashtag's unverified
+    profile, and said so explicitly rather than leaving it as a comment,
+    "because a comment saying 'this is unavailable' survives the day it becomes
+    available". That day is this commit: the Hashtag profile has been verified
+    against the source's live column contract and now imports.
 
-    Pinned as a test rather than left as a comment, because a comment saying
-    "this is unavailable" survives the day it becomes available.
+    Keeping the test and inverting it, rather than deleting it, preserves the
+    thing that mattered: the two helpers below (``import_projections`` and
+    ``record_projection_import``) were shaped around Hashtag being closed, and
+    this test is what makes their narrowness visible instead of quietly
+    obsolete.
+    """
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.HASHTAG,
+        display_name="Hashtag projections",
+        season="2026-27",
+        csv_bytes=(PROJECTION_FIXTURES / "hashtag_sample.csv").read_bytes(),
+        profile=HASHTAG_PROFILE,
+    )
+
+    assert outcome.parse_result.rows
+
+    # And the volume the old profile would have discarded is present. An
+    # import that "succeeded" while every attempts figure was null would
+    # satisfy the assertion above and be exactly the silent defect this
+    # profile was rewritten to close.
+    projections = seeded_players.scalars(
+        select(Projection).where(Projection.projection_import_id == outcome.projection_import.id)
+    ).all()
+    assert projections
+    assert all(row.field_goals_attempted_per_game is not None for row in projections)
+    assert all(row.free_throws_attempted_per_game is not None for row in projections)
+
+
+def test_an_unverified_profile_is_still_refused(seeded_players: Session) -> None:
+    """The refusal itself must still work, now that Hashtag no longer exercises it.
+
+    With Hashtag verified, the "unverified profile is refused" path lost its
+    only caller in this module. Left alone, the guard would be untested here
+    and the previous test's inversion would look like the guard had been
+    relaxed rather than satisfied. FantasyPros is the remaining unverified
+    vendor profile, so it takes over the role.
     """
     with pytest.raises(ProjectionProfileError, match="not verified"):
         import_projection_csv(
             seeded_players,
-            source=ExternalSource.HASHTAG,
-            display_name="Hashtag projections",
+            source=ExternalSource.FANTASYPROS,
+            display_name="FantasyPros projections",
             season="2026-27",
-            csv_bytes=(PROJECTION_FIXTURES / "hashtag_sample.csv").read_bytes(),
-            profile=HASHTAG_PROFILE,
+            csv_bytes=(PROJECTION_FIXTURES / "fantasypros_sample.csv").read_bytes(),
+            profile=FANTASYPROS_PROFILE,
         )
 
 
@@ -1565,12 +1611,18 @@ def test_the_guard_fires_on_hashtag_the_day_we_import_hashtag_projections(
     Hashtag is the primary seed. This test exists so that the day someone adds
     Hashtag projections and this fires, the failure is recognisable as the
     design rather than as a regression.
+
+    **That day has arrived**, and this test now drives it through the real
+    import path rather than a hand-built row. Hashtag's auction values are
+    computed from Hashtag's own projections, so holding both makes its AAV a
+    restatement of an input we already have rather than independent market
+    evidence. The guard is doing its job by refusing it.
     """
     session = seeded_players
     source_row = register_auction_value_source(session, source_for("hashtag_basketball"))
     assert not assess_source_independence(session, source_row)
 
-    record_projection_import(session, ExternalSource.HASHTAG)
+    import_projections(session, ExternalSource.HASHTAG)
 
     findings = assess_source_independence(session, source_row)
     assert [f.code for f in findings] == [CIRCULAR_LINEAGE]
