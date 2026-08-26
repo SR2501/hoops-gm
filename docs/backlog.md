@@ -2268,6 +2268,8 @@ Durability scorecards, B2B sit patterns, availability trend charts, and a roster
 
 Durability discount/premium layered over raw value. Separate total-value and per-game-value views so the fragile-star tradeoff is explicit rather than hidden in one number.
 
+**Carries a registered obligation from `hashtag-projection-profile-verification` (2026-08-26).** `ProjectionImportOutcome.verification` reports per-source findings — including `scoring_identity` failures and every check that returned `NOT_RUN` — and **nothing in the codebase reads it**. This item must either consume it or state in its model card that it deliberately does not. An unread field and a field nobody needs look identical from the outside, and this project has now found that shape three times in a week; an explicit refusal is a finding, an unnoticed orphan is not. The `NOT_RUN` findings matter most: a clean return is not a clean bill, and the most common reason a check does not run is that the source did not publish what it needs.
+
 ### `schedule-cohort-fingerprint-list` - Restoring what the injury cohort manifest watches
 
 - [ ] **pending**

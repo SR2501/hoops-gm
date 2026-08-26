@@ -6,16 +6,19 @@ are data, and the parser that reads them is a pure function, so both stay
 testable offline (the same reason ``ingest/nba/parsers.py`` never imports
 SQLAlchemy).
 
-FantasyPros remains an unverified parse-preview example. Basketball Monster and
-Hashtag Basketball are verified, and they are verified to *different strengths*
-— a distinction this module records rather than flattens. Basketball Monster's
-2026-27 profile is pinned to owner-provided private evidence from a real paid
-export, and its ``verification_evidence`` carries that file's hash. Hashtag
-publishes no export at all: its projections are an HTML table, the owner's input
-is a copy-paste, and there is no immutable artifact to hash, so its evidence
-records a *contract* observation and says so explicitly. Only evidence hashes and
-exact structural contracts live here; paid rows and private paths never enter the
-repository.
+FantasyPros remains an unverified parse-preview example. The other three profiles
+are verified to *different strengths*, and :class:`VerificationStrength` puts that
+distinction in the **value** rather than in prose. It used to live only in prose:
+``verified=True`` meant "hash-pinned to an immutable file" for Basketball Monster
+and "observed against a live page" for Hashtag, and a consumer reading the field
+could not tell which. That is the ``gameEt`` shape — a self-describing value that
+is well-formed, type-correct and quietly means two things — so the strength is now
+a value a consumer can compare, and ``verified`` is *derived* from it. There is no
+way to obtain the strong form by accident, because there is no way to be verified
+without naming which kind of verification you mean.
+
+Only evidence hashes and exact structural contracts live here; paid rows and
+private paths never enter the repository.
 
 Both vendor profiles intentionally accept one exact header sequence rather than
 layering guessed aliases over a proven contract.
@@ -52,6 +55,7 @@ __all__ = [
     "DerivedStatColumn",
     "StatColumn",
     "ValueShape",
+    "VerificationStrength",
     "normalize_header",
     "resolve_header",
 ]
@@ -124,6 +128,49 @@ class CompositeShootingColumn:
     shape: ValueShape
     #: Human label used in issue messages ("field goal", "free throw").
     label: str
+
+
+class VerificationStrength(StrEnum):
+    """*How* a profile was checked, not merely *whether* it was.
+
+    ``verified: bool`` answered the second question and was routinely read as
+    answering the first. Basketball Monster's ``True`` is pinned to the sha256
+    of an immutable file; Hashtag's ``True`` is an observation of a live page
+    that can change tomorrow. One name, two guarantees, and a downstream
+    consumer that wanted only the strong one had to encode that preference as a
+    comment. It is now expressible as a comparison.
+
+    The three members are not a ranking with a single axis. They differ in
+    *what could go wrong next*, which is the only property a consumer can act
+    on.
+    """
+
+    #: Pinned to the hash of an immutable artifact the owner holds. Excludes
+    #: silent vendor drift: if the file changes, the hash stops matching and
+    #: the mismatch is mechanical.
+    #:
+    #: It does **not** exclude the file having been wrong when it was hashed.
+    #: A hash proves the bytes have not moved, never that they were ever right.
+    HASH_PINNED = "hash_pinned"
+
+    #: Observed against a live source that publishes no artifact to pin.
+    #: Excludes the profile having been written from a *guess* about the
+    #: source's shape - the contract was read off the real thing.
+    #:
+    #: It does **not** exclude drift after the observation date, because there
+    #: is nothing to re-hash. Only a live smoke test can notice, so a profile
+    #: at this strength without one is asserting a date, not a contract.
+    LIVE_CONTRACT_OBSERVED = "live_contract_observed"
+
+    #: The schema is defined by this repository rather than observed from a
+    #: vendor, so its units are a decision and not a reading. Excludes the
+    #: whole class of unit-misinterpretation defects by construction: there is
+    #: no external party whose meaning could differ from ours.
+    #:
+    #: It does **not** exclude the *file the owner hands us* disagreeing with
+    #: the schema. It verifies the contract we publish, not the data pasted
+    #: into it.
+    OWNER_DEFINED_SCHEMA = "owner_defined_schema"
 
 
 #: Every per-game rate field a projection row can carry. Mirrors the columns
@@ -231,14 +278,26 @@ class ColumnProfile:
     expected_headers: tuple[str, ...] = ()
     #: Source fields deliberately excluded from projection quantities.
     ignored_source_headers: tuple[str, ...] = ()
-    #: Whether this mapping has been checked against a real downloaded file.
-    #: ``False`` for every vendor profile below; see the module docstring.
-    verified: bool = False
+    #: How this mapping was checked, or ``None`` if it has not been. Naming a
+    #: strength is the *only* way to be verified: there is no boolean to set,
+    #: so the strong form cannot be reached by accident or by default.
+    verification: VerificationStrength | None = None
     #: Exact seasons covered by the evidence. ``"*"`` is reserved for the
     #: owner-controlled canonical manual schema, whose units are encoded in its
     #: column names rather than inferred from an external export.
     verified_seasons: tuple[str, ...] = ()
     verification_evidence: str | None = None
+
+    @property
+    def verified(self) -> bool:
+        """Whether this profile may import production at *any* strength.
+
+        Derived, never stored. The gate that gates importing legitimately
+        accepts all three strengths, so it wants this question; a consumer
+        deciding how much to *trust* a number wants :attr:`verification` and
+        should not be able to get here by mistake.
+        """
+        return self.verification is not None
 
     def __post_init__(self) -> None:
         if not self.profile_id.strip() or not self.version.strip():
@@ -251,7 +310,7 @@ class ColumnProfile:
             raise ValueError(
                 f"{self.source.value} is not an isolated projection-provider namespace"
             )
-        if self.verified and (
+        if self.verification is not None and (
             not self.verified_seasons
             or not self.verification_evidence
             or not self.verification_evidence.strip()
@@ -259,8 +318,18 @@ class ColumnProfile:
             raise ValueError(
                 f"{self.display_name} marks itself verified without season scope and evidence"
             )
-        if not self.verified and self.verified_seasons:
-            raise ValueError(f"{self.display_name} declares verified seasons while verified=False")
+        if self.verification is None and self.verified_seasons:
+            raise ValueError(
+                f"{self.display_name} declares verified seasons without a verification strength"
+            )
+        if (
+            self.verification is VerificationStrength.OWNER_DEFINED_SCHEMA
+            and self.source is not ExternalSource.MANUAL
+        ):
+            raise ValueError(
+                f"{self.display_name} claims an owner-defined schema for external source "
+                f"{self.source.value}; a vendor's shape is observed, never defined here"
+            )
         if "*" in self.verified_seasons and not (
             self.source is ExternalSource.MANUAL and self.profile_id == "manual-canonical"
         ):
@@ -450,7 +519,7 @@ def resolve_header(fieldnames: list[str], aliases: tuple[str, ...]) -> str | Non
 
 MANUAL_PROFILE = ColumnProfile(
     profile_id="manual-canonical",
-    version="1",
+    version="2",
     source=ExternalSource.MANUAL,
     display_name="Manual / generic",
     name_aliases=("player_name", "player", "name"),
@@ -461,16 +530,19 @@ MANUAL_PROFILE = ColumnProfile(
         StatColumn(field=canonical, aliases=(canonical,), shape=ValueShape.PER_GAME)
         for canonical in CANONICAL_STAT_FIELDS
     ),
-    verified=True,
+    verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
     verified_seasons=("*",),
     verification_evidence=(
-        "owner-controlled hoops-gm canonical schema v1; per-game units are explicit in headers"
+        "owner-controlled hoops-gm canonical schema v1; per-game units are explicit in headers. "
+        "This is not an observation of anything external: the schema is defined here, so there "
+        "is no vendor whose meaning could drift from ours. It says nothing about whether a "
+        "given hand-built file actually conforms."
     ),
 )
 
 FANTASYPROS_PROFILE = ColumnProfile(
     profile_id="fantasypros-unverified-example",
-    version="1",
+    version="2",
     source=ExternalSource.FANTASYPROS,
     display_name="FantasyPros",
     name_aliases=("player", "player name"),
@@ -499,7 +571,8 @@ FANTASYPROS_PROFILE = ColumnProfile(
         "field_goals_made_per_game": ("fg%", "fg pct"),
         "free_throws_made_per_game": ("ft%", "ft pct"),
     },
-    verified=False,
+    # Deliberately no ``verification``: this profile is a parse-preview example
+    # whose aliases were guessed, never read off a real FantasyPros export.
 )
 
 #: The exact header sequence Hashtag Basketball's projections table renders in
@@ -538,7 +611,7 @@ HASHTAG_2026_27_HEADERS: tuple[str, ...] = (
 
 HASHTAG_PROFILE = ColumnProfile(
     profile_id="hashtag-2026-27",
-    version="2",
+    version="3",
     source=ExternalSource.HASHTAG,
     display_name="Hashtag Basketball 2026-27",
     name_aliases=("player",),
@@ -589,18 +662,16 @@ HASHTAG_PROFILE = ColumnProfile(
         "free_throws_attempted_per_game",
     ),
     expected_headers=HASHTAG_2026_27_HEADERS,
-    verified=True,
+    verification=VerificationStrength.LIVE_CONTRACT_OBSERVED,
     verified_seasons=("2026-27",),
     verification_evidence=(
         "live-page contract observed 2026-08-26 at "
         "hashtagbasketball.com/fantasy-basketball-projections: 17-header default "
         "configuration, composite 'pct (makes/attempts)' shooting cells, and 429 of "
         "429 rows reconciling on FG%=FGM/FGA, FT%=FTM/FTA and PTS=2*FGM+3PM+FTM "
-        "within display-rounding bounds. THIS IS A WEAKER CLAIM THAN THE "
-        "BASKETBALL MONSTER PROFILE'S: that one hashes an immutable downloaded "
-        "file, this one has no artifact to hash because the source publishes no "
-        "export and the owner's input is a copy-paste whose bytes depend on his "
-        "spreadsheet. Contract verified; artifact not pinned."
+        "within display-rounding bounds. The source publishes no export, so there is "
+        "no artifact to hash and nothing can detect drift after this date except the "
+        "live smoke test in tests/test_live_smoke.py."
     ),
 )
 
@@ -631,7 +702,7 @@ BASKETBALL_MONSTER_2026_27_HEADERS: tuple[str, ...] = (
 
 BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     profile_id="basketball-monster-2026-27",
-    version="1",
+    version="2",
     source=ExternalSource.BASKETBALL_MONSTER,
     display_name="Basketball Monster 2026-27",
     external_id_aliases=("player_id",),
@@ -711,7 +782,7 @@ BASKETBALL_MONSTER_PROFILE = ColumnProfile(
     ),
     expected_headers=BASKETBALL_MONSTER_2026_27_HEADERS,
     ignored_source_headers=("technicals", "double_doubles", "triple_doubles", "comments"),
-    verified=True,
+    verification=VerificationStrength.HASH_PINNED,
     verified_seasons=("2026-27",),
     verification_evidence=(
         "private paid export sha256 "
