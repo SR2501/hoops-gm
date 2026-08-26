@@ -26116,3 +26116,60 @@ own docstring expansion had already moved to `:335`, replaced with the call expr
 - **Whether the `else None` arm on the read-back is reachable.** It is required by mypy and unreachable
   on both branches today, so `"schedule_source": null` cannot currently be produced. Untested.
 - **Whether CI has run this head.** `origin/main` moved mid-round; no rebase yet, by instruction.
+
+---
+
+## 2026-08-26 — `backend` — the invariant test had two false-greens, both demonstrated rather than argued
+
+A second exact-head review of `14acf4b` read the call-site test `architect` had just ruled into
+existence, and found that **the test written to close a hole had two of its own**. Both were shown by
+constructing a passing mutation, not by inspection, and both are now closed.
+
+**`_source_is_constant` classified any attribute access as constant.** The reasoning was that
+`SomeEnum.MEMBER` is a constant — true, and it does not say what I used it for. `self.x`, `config.x`,
+`parsed.x` and `release.source_version` all spell it the same way, and the last of those is read out
+of a loaded artifact at runtime. The reviewer put `source=release.source_version` at
+`schedule_context/service.py:219` and **all ten tests stayed green while a second scope genuinely
+became multi-source** — the exact defect the file exists to exclude, passing through the file's own
+definition of the thing it excludes. No call site passes an attribute today, so deleting the clause
+cost nothing; the enumeration is byte-identical before and after.
+
+**The call matcher compared the literal identifier `record_refresh`.** So
+`from hoops_gm.db.lineage import record_refresh as _register` was invisible, and — this is the part
+that matters — **the vacuity floor does not help, because an aliased site adds zero to the count.**
+A check whose blind spot is also invisible to its own guard is not conservative; it is silently
+permissive, and its failure mode is a green result. The matcher now resolves each module's local
+binding from its `ImportFrom` nodes, and separately reports any reference to that binding which is
+not the callee of a call — `functools.partial(record_refresh, source=...)` is the shape that would
+otherwise slip past a call-only walk.
+
+**Both mutations now fail and name their site**, `schedule_context/service.py-214-release.source_version-False`
+and `_control_alias.py-10-label-False`. The mutated line was printed back **from disk** before either
+run, which is not ceremony: the first attempt at the attribute control **did not apply** — the file
+uses double quotes and my replacement string used single ones — and it reported
+`CONTROL DID NOT APPLY: found 0` instead of a clean green. Without the presence check that run would
+have read as a passing control on an unmutated file, which is the same silent-regex failure this lane
+recorded three rounds ago.
+
+`test_record_refresh_is_reached_from_at_least_one_call_site` asserted `>= 8`. **The name understated
+its own check**, which is the mild inverse of the defect here, so the name moved rather than the
+assertion.
+
+**Documented, not changed:** the `session.commit()` before `main()` in
+`test_publish_reliability_evidence.py` is load-bearing. `main` connects as a second client, so on
+Postgres the fixture session would still hold row locks its writes block on — **it would hang there
+rather than fail, while passing on SQLite.** Nothing said so; now the docstring does.
+
+### Could not verify
+
+- **Whether any *other* checker in this repository resolves names loosely the same way.** The defect
+  is not specific to AST walks — it is any check whose matcher is narrower than the thing it claims
+  to cover, where the shortfall shows up as green. I looked only at the file I wrote.
+- **Whether the `Import`-form binding matters.** The matcher reads `ImportFrom` and also matches any
+  attribute named `record_refresh`, which covers `import hoops_gm.db.lineage as lineage` followed by
+  `lineage.record_refresh(...)`. I did not construct a mutation for that path, so it is reasoned,
+  not demonstrated — a weaker claim than the two above.
+- **Whether the earlier `mypy` file count I reported was ever right.** CI runs bare `mypy`
+  (config-driven, 206 files); `mypy src` reports 125. A previously logged "193" matches neither, so
+  one of my earlier gate quotes named a command I had not actually run. The gate is green under CI's
+  exact invocation.

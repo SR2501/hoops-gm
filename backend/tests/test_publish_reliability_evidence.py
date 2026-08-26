@@ -556,6 +556,13 @@ def test_the_command_prints_the_source_it_read_not_the_one_it_would_have_written
     through the fixture session, commits, and then lets the command connect
     independently. That is also the only way the printed payload can be observed
     the way an operator observes it.
+
+    **The ``session.commit()`` below is load-bearing and not tidiness.** ``main``
+    connects as a second client, so uncommitted work is invisible to it - and on
+    Postgres, where CI runs this same suite, the fixture session would still hold
+    row locks that the command's own writes would block on. It would hang there
+    rather than fail, while passing on SQLite. Do not move the commit below the
+    ``main`` call, and do not assume the fixture session's state is visible.
     """
 
     _backfilled_season(session)
