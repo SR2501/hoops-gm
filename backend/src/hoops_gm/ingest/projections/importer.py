@@ -378,6 +378,15 @@ def _profile_definition(profile: ColumnProfile) -> dict[str, object]:
         ],
         "expected_headers": list(profile.expected_headers),
         "ignored_source_headers": list(profile.ignored_source_headers),
+        # Inside the *definition* rather than beside it, so the strength is
+        # covered by ``definition_sha256`` and persisted in the existing JSON
+        # column with no migration. A profile that quietly promoted itself from
+        # a live observation to a hash pin would otherwise keep its old hash,
+        # which is the same gap ``composite_shooting_columns`` had until this
+        # unit found it.
+        "verification_strength": (
+            profile.verification.value if profile.verification is not None else None
+        ),
     }
 
 

@@ -43,6 +43,7 @@ from hoops_gm.ingest.projections.profiles import (
     DerivedStatColumn,
     StatColumn,
     ValueShape,
+    VerificationStrength,
 )
 from hoops_gm.ingest.projections.verification import (
     IMPORT_BLOCKING_CHECKS,
@@ -79,6 +80,7 @@ __all__ = [
     "RowIssue",
     "StatColumn",
     "ValueShape",
+    "VerificationStrength",
     "VerificationFinding",
     "VerificationOutcome",
     "VerificationReport",
