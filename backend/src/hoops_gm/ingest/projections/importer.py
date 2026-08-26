@@ -482,9 +482,7 @@ def _build_profile_lineage(
     for canonical_field, source_header in parsed.resolved_headers.items():
         composite = composites_by_field.get(canonical_field)
         if composite is not None:
-            component = (
-                "makes" if canonical_field == composite.made_field else "attempts"
-            )
+            component = "makes" if canonical_field == composite.made_field else "attempts"
             field_transforms[canonical_field] = {
                 "source_header": source_header,
                 "source_unit": composite.shape.value,
@@ -496,8 +494,7 @@ def _build_profile_lineage(
                     "+divide_by_assumed_games_played"
                 ),
                 "extracted_from": (
-                    "the parenthesised volume inside the percentage cell, not a "
-                    "column of its own"
+                    "the parenthesised volume inside the percentage cell, not a column of its own"
                 ),
                 "reconciled_against": "the stated percentage in the same cell",
             }

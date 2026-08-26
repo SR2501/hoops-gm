@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**54 done - 1 blocked - 89 pending - 144 total**
+**55 done - 1 blocked - 88 pending - 144 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1972,25 +1972,33 @@ G-score per arXiv 2307.02188, absorbing both production variance and availabilit
 
 ### `hashtag-projection-profile-verification` - Verifying the Hashtag Basketball projection profile so it can be imported
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `csv-importer`
 
-Owned by `data-engineer`. `import_projection_csv` refuses any profile that is not
-verified, and Basketball Monster is currently the only verified profile — so **Hashtag
-projections cannot be imported today at all.** This item is the missing step, and it
-exists because `aav-source` went looking for the circularity guard's Hashtag arm and
-found it guarded a path that does not exist.
+Owned by `data-engineer`. Done: `HASHTAG_PROFILE` is v2 and `verified=True`, so
+`import_projection_csv` now accepts Hashtag projections. See
+`docs/adapters/hashtag-projections.md` for the verification record.
 
-Verify a real Hashtag projection export the way the BBM profile was verified: header
-aliases against an actual downloaded file, units and per-game-versus-total basis
-checked against an independent source rather than against the header's own claim, and
-a recorded fixture plus contract test per the Adapter gate.
+**The source publishes no CSV export.** The page is rendered HTML and the owner's
+workflow is copy-paste, so the BBM pattern - hash an immutable downloaded file -
+does not transfer. `verified=True` here means *the contract was observed on the
+live page*: header sequence, cell dialect, and three reconciliations. **That is a
+strictly weaker claim than BBM's file hash** and the metadata says so; the field
+name does not distinguish them.
 
-**Blocks `aav-blending`, not `aav-source`.** Seeding Hashtag *auction values* needs
-nothing from this; it is importing Hashtag *projections* that is refused. But the
-moment those projections are imported, the `aav-source` independence guard will
-correctly refuse Hashtag AAV as independent evidence — so whoever does this work
-should expect that refusal and read it as the guard working.
+**The defect the verification found was silent, not loud.** Hashtag publishes
+makes and attempts inside the percentage cell - `0.573 (10.5/18.3)` - while v1
+declared `FG%`/`FT%` as percentage-fallback, whose semantics are *no volume
+published*. A repaired import would have parsed cleanly and discarded every
+shooting volume, which is the volume-weighting bug `AGENTS.md` calls the most
+common in homebrew tools. `CompositeShootingColumn` extracts and reconciles it.
+
+**Scoring format is not verified, deliberately.** Per-category rates are
+format-independent; only `TOTAL` depends on format and ADR-008 already forbids it,
+so the profile refuses the column rather than checking a claim that cannot fail.
+
+**The `aav-source` independence guard now fires on Hashtag**, as that item
+predicted, and its test drives a real import rather than a hand-built row.
 
 ### `injury-conversion-cohort-population` - Populating a representative historical injury-report/participation cohort
 
