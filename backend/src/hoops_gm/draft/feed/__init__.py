@@ -28,8 +28,10 @@ from hoops_gm.draft.feed.observations import (
 )
 from hoops_gm.draft.feed.recognise import (
     FIELD_ALIASES,
+    SNAPSHOT_CAPTURE_SOURCES,
     RecognitionContext,
     league_id_in,
+    league_id_in_page_url,
     recognise_bridge_payload,
     recognise_official_draft_picks,
 )
@@ -46,6 +48,7 @@ from hoops_gm.draft.feed.reconcile import (
 
 __all__ = [
     "FIELD_ALIASES",
+    "SNAPSHOT_CAPTURE_SOURCES",
     "Disagreement",
     "InstantKind",
     "InstantProvenance",
@@ -61,6 +64,7 @@ __all__ = [
     "freshness_of",
     "group_by_transport",
     "league_id_in",
+    "league_id_in_page_url",
     "matching_key",
     "recognise_bridge_payload",
     "recognise_official_draft_picks",

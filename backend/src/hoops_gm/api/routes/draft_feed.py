@@ -206,6 +206,15 @@ class SourceOutcomeOut(BaseModel):
     #: means the bridge is not sending anything at all.
     artifacts_scanned: int
     artifacts_examined: int
+    #: Captures for this league that are page snapshots, not RPC bodies.
+    #:
+    #: A non-zero value with ``artifacts_examined == 0`` is the one reading of
+    #: "nothing was examined" that is not about the userscript being broken or
+    #: the league id being wrong: the bridge is capturing this draft, but only
+    #: as rendered HTML, which is not what the recogniser reads. It has a
+    #: different remedy from every other zero on this screen, so it gets its own
+    #: number rather than being inferred from the absence of one.
+    snapshots_for_this_league: int
     rejected: dict[str, int]
     instants_recognised: int
     observations_written: int
@@ -461,6 +470,7 @@ def ingest_feed(
                 unavailable=source.unavailable,
                 artifacts_scanned=source.artifacts_scanned,
                 artifacts_examined=source.artifacts_examined,
+                snapshots_for_this_league=source.snapshots_for_this_league,
                 rejected=dict(source.rejected),
                 instants_recognised=source.instants_recognised,
                 observations_written=source.observations_written,

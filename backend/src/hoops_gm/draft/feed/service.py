@@ -62,8 +62,10 @@ from hoops_gm.draft.feed.observations import (
     matching_key,
 )
 from hoops_gm.draft.feed.recognise import (
+    SNAPSHOT_CAPTURE_SOURCES,
     RecognitionContext,
     league_id_in,
+    league_id_in_page_url,
     recognise_bridge_payload,
     recognise_official_draft_picks,
 )
@@ -120,6 +122,25 @@ class SourceOutcome:
     #: userscript, or check the configured league id.
     artifacts_scanned: int = 0
     artifacts_examined: int = 0
+    #: Captures for this league that are page snapshots rather than RPC bodies,
+    #: and so cannot be read as picks however well the recogniser works.
+    #:
+    #: These are invisible to ``artifacts_examined`` by construction: a snapshot
+    #: is stored under the *page* URL, not ``/fxpa/req``, so the league
+    #: pre-filter skips it. Without this counter the status screen reports
+    #: "scanned 200, examined 0" for a bridge that is in fact capturing this
+    #: draft continuously — and the owner reads that as "the userscript is
+    #: broken" and goes looking in the wrong place. The userscript's README is
+    #: explicit that ``rendered-view`` "is never normalized or presented as the
+    #: JSON response the userscript could not observe"; this is the backend
+    #: saying the same thing back, on the screen, at the moment it costs money.
+    #:
+    #: A non-zero value here alongside ``artifacts_examined == 0`` means the
+    #: draft room's traffic is being served by Fantrax's service worker
+    #: (``fx-sw.js``) and never reaching page script. That is a known
+    #: possibility, not a bug in this unit, and it has a different remedy from
+    #: every other zero on this screen.
+    snapshots_for_this_league: int = 0
     #: Artifacts that were examined and rejected outright, by reason.
     rejected: dict[str, int] = field(default_factory=dict)
     instants_recognised: int = 0
@@ -302,6 +323,7 @@ def ingest_bridge(
     written = 0
     already = 0
     examined = 0
+    snapshots = 0
 
     for row in rows:
         # Cheap pre-filter on the URL, which carries the league id. Skipping
@@ -309,6 +331,17 @@ def ingest_bridge(
         # tallies about *draft* traffic instead of drowning them in every other
         # capture the bridge has ever stored.
         if league_id_in(row.request_url) != context.fantrax_league_id:
+            # ...but one class of skip is not noise. A page snapshot of this
+            # league is stored under the page URL, so it lands here rather than
+            # in the rejection tallies, and the owner sees a zero with no cause
+            # attached to it. Count it separately. This reads two recorded
+            # facts — the capture's own ``source`` label and the league id in
+            # its path — and asserts nothing about the snapshot's contents.
+            if (
+                row.source in SNAPSHOT_CAPTURE_SOURCES
+                and league_id_in_page_url(row.request_url) == context.fantrax_league_id
+            ):
+                snapshots += 1
             continue
         examined += 1
         result = recognise_bridge_payload(
@@ -334,21 +367,38 @@ def ingest_bridge(
         written += stored
         already += seen
 
+    notes: list[str] = [
+        f"Scanned the {scan_limit} newest captures; older ones were not examined."
+        if len(rows) >= scan_limit
+        else "Scanned every stored capture."
+    ]
+    if snapshots and examined == 0:
+        notes.append(
+            f"{snapshots} capture(s) for this league are page snapshots rather than "
+            "RPC bodies, and no RPC capture for this league was found. Rendered HTML "
+            "is not the JSON the recogniser reads, so this feed can see the draft "
+            "room being captured and still read nothing from it. The usual cause is "
+            "Fantrax serving the draft room from its service worker, where page "
+            "script cannot observe the response."
+        )
+    elif snapshots:
+        notes.append(
+            f"{snapshots} capture(s) for this league are page snapshots and were not "
+            "read; only RPC bodies are."
+        )
+
     return SourceOutcome(
         transport=SourceTransport.BRIDGE_CAPTURE,
         artifacts_scanned=len(rows),
         artifacts_examined=examined,
+        snapshots_for_this_league=snapshots,
         rejected=rejected,
         instants_recognised=recognised,
         observations_written=written,
         observations_already_present=already,
         unrecognised=_summarise(unrecognised),
         scan_truncated=len(rows) >= scan_limit,
-        notes=(
-            f"Scanned the {scan_limit} newest captures; older ones were not examined."
-            if len(rows) >= scan_limit
-            else "Scanned every stored capture.",
-        ),
+        notes=tuple(notes),
     )
 
 

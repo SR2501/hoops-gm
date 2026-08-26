@@ -82,6 +82,17 @@ from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 #: surface widen silently if Fantrax adds ``/fxpa/reqSomethingElse``.
 FXPA_REQ_PATHNAME: Final = "/fxpa/req"
 
+#: Bridge capture sources that carry rendered HTML rather than an RPC body.
+#:
+#: Read off ``userscript/src/capture.js``, where ``capturePageSnapshot`` labels
+#: its output ``manual-export`` and the settled-view watcher labels its output
+#: ``rendered-view``; the raw paths are ``fetch``, ``xhr`` and ``cache-storage``.
+#: The userscript README states the boundary in its own words: a rendered view
+#: "is never normalized or presented as the JSON response the userscript could
+#: not observe". This constant exists so the backend can *report* that
+#: distinction, never to blur it.
+SNAPSHOT_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"rendered-view", "manual-export"})
+
 #: Candidate key names, **not** verified names.
 #:
 #: Deliberately the same vocabulary
@@ -298,6 +309,34 @@ def league_id_in(url: str) -> str | None:
         text = value.strip()
         if text:
             return text
+    return None
+
+
+def league_id_in_page_url(url: str) -> str | None:
+    """The league id in a Fantrax *page* URL, as opposed to an RPC URL.
+
+    Page snapshots (``rendered-view``, ``manual-export``) are stored under the
+    URL of the page the owner was looking at — ``/fantasy/league/<id>/...`` —
+    not under ``/fxpa/req``. :func:`league_id_in` therefore returns ``None`` for
+    every one of them, which is correct for its own purpose and is exactly why
+    a snapshot of this league's draft room is otherwise indistinguishable from
+    a capture belonging to somebody else's league.
+
+    This exists only to attribute a snapshot to a league so the count can be
+    *reported*. Nothing reads a snapshot's contents. Rendered HTML is not the
+    RPC body and this module does not pretend otherwise.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    parts = [segment for segment in parsed.path.split("/") if segment]
+    # ``/fantasy/league/<id>/<view>`` — the id is the segment after "league".
+    for index, segment in enumerate(parts[:-1]):
+        if segment == "league":
+            candidate = parts[index + 1].strip()
+            if candidate:
+                return candidate
     return None
 
 

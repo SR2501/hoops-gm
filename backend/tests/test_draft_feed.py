@@ -178,6 +178,44 @@ def _capture(
     return row
 
 
+def _snapshot(
+    session: Session,
+    *,
+    dedupe_key: str,
+    league_id: str = LEAGUE,
+    source: str = "rendered-view",
+    view: str = "draft",
+    created_at: datetime = NOW,
+) -> BridgePayload:
+    """A page-snapshot capture, exactly as the userscript stores one.
+
+    ``source`` is one of the labels ``userscript/src/capture.js`` applies to
+    rendered HTML, and the URL is the *page* URL rather than ``/fxpa/req``,
+    because that is what ``capturePageSnapshot`` records. ``body_json`` is
+    ``None`` with ``body_parse_error`` set, which is what a ``JSON.parse`` of
+    HTML produces.
+    """
+    row = BridgePayload(
+        schema_name="hoops-gm.bridge-payload.v1",
+        source=source,
+        captured_at=created_at,
+        request_method="GET",
+        request_url=f"https://www.fantrax.com/fantasy/league/{league_id}/{view}",
+        response_status=200,
+        response_ok=True,
+        response_content_type="text/html",
+        body_raw="<html><body>draft board</body></html>",
+        body_json=None,
+        body_parse_error="Unexpected token < in JSON at position 0",
+        dedupe_key=dedupe_key,
+        raw_payload="{}",
+        created_at=created_at,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
 def _instant(
     *,
     transport: SourceTransport,
@@ -752,6 +790,102 @@ def test_a_busy_bridge_for_the_wrong_league_is_distinguishable_from_a_quiet_one(
 
     quiet = feed_service.ingest_bridge(session, draft, _context())
     assert (quiet.artifacts_scanned, quiet.artifacts_examined) == (0, 0)
+
+
+def test_a_draft_room_captured_only_as_html_is_reported_rather_than_skipped(
+    session: Session,
+) -> None:
+    """Excludes: a captured draft room that reads on the screen as no capture.
+
+    The defect: the bridge is capturing this league's draft continuously, but
+    only as ``rendered-view`` HTML, because Fantrax served the room from its
+    service worker and page script never saw the JSON. Those snapshots are
+    stored under the *page* URL, so ``league_id_in`` returns ``None`` and the
+    league pre-filter skips them before anything counts them. The owner sees
+    ``examined: 0`` and goes to check a userscript that is working perfectly.
+
+    The reading in which ``snapshots_for_this_league == 0`` would be false and
+    the defect present: a snapshot for this league stored under a page URL and
+    silently skipped — which is exactly the state this test constructs, and
+    which produced no visible number at all before this counter existed.
+
+    Nothing here reads the snapshot's contents. Rendered HTML is not the RPC
+    body and this asserts only that its *existence* is reported.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _snapshot(session, dedupe_key="snap-1", view="draft")
+    _snapshot(session, dedupe_key="snap-2", view="draft", source="manual-export")
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+
+    assert outcome.artifacts_examined == 0
+    assert outcome.artifacts_scanned == 2
+    assert outcome.snapshots_for_this_league == 2
+    assert feed_service.load_observations(session, draft) == []
+    joined = " ".join(outcome.notes)
+    assert "snapshot" in joined
+    assert "service worker" in joined
+
+
+def test_a_snapshot_for_another_league_is_not_counted_as_this_drafts(
+    session: Session,
+) -> None:
+    """Positive control for the counter above.
+
+    Excludes: a counter that increments on any snapshot at all, which would
+    report "your draft room is being captured as HTML" to an owner whose bridge
+    is in fact sitting on somebody else's league. That reading is the mirror of
+    the defect the previous test excludes and would be just as expensive: it
+    sends him to the service-worker explanation when the real fault is the
+    configured league id.
+
+    A raw RPC capture for this league is included alongside, so this also fails
+    if the snapshot branch has swallowed the ordinary path.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _snapshot(session, dedupe_key="snap-elsewhere", league_id="a-different-league")
+    _capture(
+        session,
+        records=[{"teamId": "t1", "playerName": JOKIC, "overallPick": 1}],
+        dedupe_key="real-rpc",
+    )
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+
+    assert outcome.snapshots_for_this_league == 0
+    assert outcome.artifacts_examined == 1
+    assert outcome.observations_written == 1
+
+
+def test_a_snapshot_of_this_league_is_not_mistaken_for_an_rpc_body(
+    session: Session,
+) -> None:
+    """Excludes: rendered HTML being read as though it were the JSON response.
+
+    The userscript README is explicit that a rendered view "is never normalized
+    or presented as the JSON response the userscript could not observe". This
+    pins the backend to the same boundary: a snapshot contributes nothing to
+    ``instants_recognised`` and writes no observation, however many of them
+    arrive. A recogniser that learned to scrape the HTML would fail here, which
+    is the intent — that would be a new source needing its own evidence, not a
+    quiet widening of this one.
+    """
+    league = _league(session)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    for index in range(5):
+        _snapshot(session, dedupe_key=f"snap-{index}")
+
+    outcome = feed_service.ingest_bridge(session, draft, _context())
+
+    assert outcome.instants_recognised == 0
+    assert outcome.observations_written == 0
+    assert outcome.rejected == {}
+    assert outcome.snapshots_for_this_league == 5
 
 
 def test_re_ingesting_the_same_capture_writes_nothing_new(session: Session) -> None:
