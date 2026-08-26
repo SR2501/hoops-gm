@@ -25277,3 +25277,284 @@ never that work stops without it - it is that days get spent on my guess.
   screen, auction pace, what he wants visible at his own nomination versus
   someone else's, budget habits, what would make him close the laptop, and
   question 15.
+
+---
+
+## 2026-08-26 - backend - repairing the verification toolchain: a stale audit, a check that read as confirmation, and a lint gap
+
+Branch `sr2501-verification-toolchain-repair`, base `28d0d88`. Freeze respected:
+no rebase, architect holds the window and this lane is last.
+
+**Changed:** three checks in `scripts/` that passed while not covering what they
+appeared to cover. `scripts/mutate_calibration.py` now reports which tests
+caught each mutation on every run; `scripts/test_name_diff.py` names its scope
+in its verdict and lists the changed test files it did not read; `scripts/` is
+under `ruff`, the two JavaScript probes are under `eslint`, and both new CI
+steps are pinned by tests.
+
+### 1. The claim that was stale, and the reason it could not have been noticed
+
+Entry #10 above records, in the present tense, *"Zero false catches"* and
+*"19 of the 44 mutations are pinned by exactly one test."* Both were true of
+`M01`-`M44`. Eleven more (`X01`, `X02`, `X04`, `X06`, `D01`-`D07`) were added
+afterwards and **none had ever been checked for either property.** The audit was
+a throwaway and had been deleted: `git grep catcher` returned three documents and
+zero scripts.
+
+**A precise, reproducible-sounding figure, about a set that changed underneath
+it, with nothing anywhere able to notice.** Entry #10's own "could not verify"
+said this would need to be a harness mode and that it was scope not taken under
+a freeze. Its reviewer called declining *"right for the commit and wrong as a
+standing position"*, and that is the position this entry closes.
+
+**It is not a mode.** It was going to be `--catchers`. A mode is opt-in, and the
+defect is precisely that nobody opted in - the reading that produced this staleness
+is *a lane adds M56, runs the default, sees `56 caught`, and never runs the
+audit.* **A fix whose failure mode is identical to the defect is not a fix.** The
+child's `pytest` invocation is unchanged, so reading failing test names out of
+output already produced costs nothing; it now happens every run, and `--catchers`
+controls detail only.
+
+**Re-measured over all 55: 27 pinned by exactly one test, 72 distinct tests
+catch something, widest catcher 5.** Both halves of the provenance, because a
+reviewer caught me giving only one: the **calibration target** is `28d0d88`
+unchanged, and the **harness** that measured it is this branch's, since
+`pytest_argv` and the extraction control do not exist at `28d0d88`. No test
+catches every mutation, so the anchor pathology entry #9 nearly shipped is
+absent - that is the mechanical half of "zero false catches". Whether a named
+catcher is *incidental* is a reading, and the report prints names rather than
+implying it decided.
+
+**A second discrepancy that is not the staleness.** Twenty of the original
+`M01`-`M44` are singly pinned today, against the nineteen recorded. See "could
+not verify" below.
+
+**The unit is now stated, because it silently matters.** Probing real pytest
+output before building on its shape showed a parametrised test emits one `FAILED`
+line per case. The target module has seven parametrised tests, and M26 produces
+six `FAILED` lines from three functions. Counting node ids would report a
+mutation caught by three cases of one test as three-pinned when deleting that one
+function unpins it entirely, so pinning counts **test functions** - the unit a
+later edit deletes.
+
+**The extractor is positive-controlled on every run rather than once.** Parsed
+`FAILED` lines must equal pytest's own `N failed`; a disagreement exits non-zero
+instead of recording a mutation as pinned by nobody. A parsed zero and a real
+zero are indistinguishable, and this project produced four false zeros in a day
+from trusting one.
+
+**"The reporting path cannot alter a verdict" is asserted, not asserted-about.**
+`pytest_argv` is the single place the child's argv is built, takes only the test
+paths, and an AST test refuses any conditional inside it - plus a test that it
+never adds `-q`, since `addopts` already supplies one and `-qq` deletes the
+`N passed` line the baseline check reads while still exiting 0.
+
+### 2. `test_name_diff.py` told a lane what it wanted to hear
+
+`python scripts/test_name_diff.py origin/main HEAD` reported *"No change to the
+set of test names"*, exit 0, no warning, while a PR added 58 vitest tests it
+never parsed. It defaults to `backend/tests` and reads `.py` only.
+
+**The inversion is the whole finding.** A wrong *base* gives a scary `DROPPED`
+list that reads as another lane's deletion, so you investigate. A right base with
+the wrong *scope* gives a clean report covering nothing you changed - and it
+reads as confirmation, so you stop.
+
+The tool already refused the vacuous case; only the *default* scope was a
+narrowing nobody passed, visible as one parenthetical against a sentence naming
+no scope. The sentence now carries the scope. Because a reworded sentence is
+still a sentence, changed files that look like tests and lie outside the scope
+are listed as `NOT READ`, with the statement that they were not examined -
+untracked ones included, since a brand-new frontend test is exactly the case
+`git diff` alone cannot see. Reporting only: the exit code still depends solely
+on dropped names.
+
+### 3. `scripts/` was type-checked but not linted - and the recorded version of that was wrong
+
+The brief corrected an overstated claim (that no CI job touches `scripts/`) and
+was itself right. But the wording that reached `docs/backlog.md` and the
+harness-integrity docstring was *"no CI job **lints or type-checks**
+`scripts/`"*, and **the type-check half was false when it was written.**
+`backend/pyproject.toml` sets `files = ["src", "tests", "../scripts"]`
+deliberately, with a comment saying why, and `ci.yml`'s backend job runs a bare
+`mypy`. Driven rather than argued: `return "not an int"` planted in
+`scripts/predict_union.py` makes that bare `mypy` fail across 201 source files.
+
+So the state was **type-checked yes, linted no, tested incidentally**, and
+`browser_probe.mjs` and `reliability_probe.js` were touched by no gate at all.
+
+Now: a repo-root `ruff.toml` extending the backend rule set, rather than only a
+longer CI command - `ruff check ../scripts` from `backend` does pick up the
+backend rules today, but only because ruff falls back to the config discovered
+from the cwd, which is coverage contingent on a `cd`. `scripts/eslint.config.js`
+imports nothing, because `scripts/` has no `node_modules`, and declares two
+environments because a Node CDP driver and a page-injected IIFE are different
+kinds of file.
+
+**Reported rather than performed silently, as asked:** 19 violations and **5 of
+13** Python files reformatted - not the wide rewrite this was expected to be,
+which is why it landed in one unit rather than split. Nothing looked substantive:
+13 `E501`, 2 `RUF005`, 2 `RUF002` en-dashes in prose, 1 `C416`, 1 `SIM102`.
+**Seven anchors in `mutate_calibration.py` and one in `mutate_aav.py` exceed 100
+characters because the source lines they copy verbatim do** - wrapping one does
+not shorten a line, it breaks the harness - so they are exempted with the reason
+stated, via `extend-per-file-ignores` so backend's alembic exemption is not
+replaced. `mutate_calibration.py` was not among the reformatted files, so no
+anchor moved.
+
+### The shape, rather than two stories
+
+The architect's brief gave me a count - *thirteen mutations added after the
+audit* - derived by subtraction rather than by counting. It is **eleven**
+(`M`x44 + `X`x4 + `D`x7 = 55). The claim I was sent to fix has the same
+provenance: a number that made a claim look checked. **And then I did it
+myself**, in this entry, twice - a full-suite prediction anchored on a figure
+measured at somebody else's commit, and a delta of my own tests I counted from
+memory rather than from the file. See "could not verify" item 5.
+
+**Three instances inside two days, every one a number about verification
+tooling.** Worth stating as a shape because the last time this project filed one
+as a story it recurred within 48 hours. The general form: *a figure that is
+precise is not thereby measured, and the precision is exactly what stops the
+reader asking which it was.* The cheap defence is not care - I was being careful
+- it is re-deriving the number at the commit you are actually on, by a mechanism
+other than the one that produced it.
+
+### An independent review, and three of its findings were in my own fix
+
+A non-`backend` reviewer read the exact head. Five findings, all acted on; the
+three worth carrying are the ones where **the check I had just written had the
+defect it was written to exclude.**
+
+**1. My "provably unchanged argv" was a shape check, and shape checks lose.** I
+asserted the invariant with an AST test refusing `ast.If`/`ast.IfExp` inside
+`pytest_argv`. He walked through it with `*(["-k", "test_one"] * _REPORT_DETAIL)`
+- no conditional node, signature untouched, no second quiet flag, argv completely
+different, and `--catchers` would then turn CAUGHT into SURVIVED for most
+mutations. **A guard that enumerates syntactic forms is always one form behind**,
+which this repository derived in entry #11 about somebody else's guard and which
+I then reproduced in mine within a day. The binding check is now
+`test_both_modes_invoke_the_child_identically`: it runs the real CLI in both
+modes with the child intercepted and `MUTATIONS` emptied, and compares the
+invocation itself. Driven - his exact evasion makes it red while the AST test
+stays green, which is the demonstration that the AST test was never the
+guarantee.
+
+**2. My positive control could agree on fabricated data.** `FAILED_LINE` scanned
+the whole run and `reported_failures` took the *first* `N failed` anywhere. A
+test printing pytest-shaped output - a captured stdout, an assertion payload, a
+traceback - contributes a phantom `FAILED` line **and** a phantom count, so the
+parsed and reported numbers agree while a nonexistent test is recorded as a
+catcher. That is the control passing with the defect it exists to exclude
+present. Both now read only from the last `short test summary info` block, and
+the count is the last match within it.
+
+**Worth stating precisely: the figures did not move.** 55/55/0/0, 27 singly
+pinned, 72 distinct catchers, widest 5 - identical before and after. So this
+removed a way to be wrong rather than corrected a wrong number, and I would not
+have known which without re-running.
+
+**3. `catcher_functions` split in the wrong order.** `nodeid.split("::")[-1]`
+before stripping `[...]` turns an explicit id `test_real[a::b]` into `b]`. No
+node id in the target module does that today, which is exactly why it was
+invisible rather than harmless.
+
+The other two: the three CI tests accepted `if: ${{ false }}`,
+`continue-on-error: true` and `echo "ruff check scripts"` - they read `run:`
+substrings and nothing else, so they pinned the *appearance* of the steps. They
+now reject a disabled step and require a command starting with the real
+executable; all five evasions driven red. And the model card row attributed
+"0 extraction failures" to `28d0d88`, a commit containing neither `pytest_argv`
+nor the extraction control - the target is `28d0d88`, the harness is this
+branch's, and the row now says both.
+
+### Verified at this commit
+
+From `backend/`: `ruff check .` clean, `ruff format --check .` **209 files
+already formatted**, bare `mypy` clean over **201 source files**. From the **repo
+root**: `ruff check scripts` clean, `ruff format --check scripts` **13 files
+already formatted**. From **`scripts/`**: `eslint .` clean over **3 files**.
+
+Harness, from the repo root: **55 mutations, 55 caught, 0 survived, 0 harness
+failures, 0 extraction failures**, baseline **131 passed**, every touched file
+restored and `git status` clean afterwards. Catchers: **27 singly pinned, 72
+distinct catchers, widest 5**.
+
+Tests: `test_mutation_harness_integrity.py` **4 -> 17**,
+`test_test_name_diff.py` **10 -> 15**, `test_ci_workflow.py` **32 -> 35**.
+Full suite **2053 passed, 37 deselected in 696.28s**, re-run at the
+review-fix head rather than carried over: the earlier run measured **2050** and
+review added three tests, so 2053 was predicted and then measured. The *first*
+prediction of that suite, **1937**, was wrong, and wrong in the way described
+below. Three of the new CI tests, three of the new harness tests and the two JS
+lint scopes were each **driven red** before being trusted; files restored by
+hash. After review, the reviewer's own argv evasion and all five CI-step
+evasions were driven red too.
+
+`scripts/test_name_diff.py origin/main HEAD` now names `backend/tests` in its
+verdict and lists the changed files outside it; with `--path frontend/src` it
+still exits 2.
+
+### What I could not verify
+
+1. **Why twenty of `M01`-`M44` are singly pinned when nineteen was recorded.**
+   Two candidates and I can separate neither from here. A test *modified* between
+   the two commits can drop a mutation from two catchers to one, and row 0.11
+   records at least one test being changed. Or the **counting unit** differed:
+   this figure counts test functions, and the throwaway's unit was never written
+   down. Resolving it means running the old harness against the old tree, which
+   the freeze puts out of reach and which I judged not worth a rebase window.
+   **The unit is now stated in the harness, so the next comparison is at least
+   between like and like.**
+2. **That the catcher report generalises to a 56th mutation.** Making it
+   always-on removes the "nobody ran the mode" reading. It does not remove
+   "nobody ran the harness": **no CI job executes `mutate_calibration.py`**, and
+   this unit did not change that. A lane can still add a mutation, never run the
+   harness, and cite these figures.
+3. **That "zero false catches" is now mechanically checked. It is not.** Only
+   the *universal* catcher - a test firing on every mutation - is decidable, and
+   that is the one reported. A test that fires incidentally on three unrelated
+   mutations is visible in the per-test table and invisible to any assertion.
+4. **That `ruff` closes the `scripts/` gap.** Lint and format are not execution.
+   Six of fifteen scripts still have no test, and `consensus_rederivation.py` is
+   one of them - its `C416` rewrite and two en-dash corrections are checked by
+   `ruff`, `mypy` and reading, by no test.
+5. **The full suite at this commit: run, and my prediction of it was wrong.**
+   Stated before the run: **1937**. Measured: **2050 passed, 37 deselected in
+   1017.37s**. The original prediction is left here rather than replaced,
+   because the way it was wrong is the finding.
+
+   Two errors, both the shape described above. First, I anchored on **1918
+   passed / 32 deselected** because that is the last figure in this log - and it
+   was measured at the *quant* lane's commit, two merges before my base. I
+   inherited a number instead of re-deriving it at the base I was actually on,
+   which is the identical move to the "about three hours" runtime entry #11
+   corrected by a factor of twenty. Second, I put my own delta at **19** tests
+   from per-file arithmetic; it is **18**, because I recorded
+   `test_test_name_diff.py` as having 10 tests after I had already written 9 in
+   a commit message. So `main` at `28d0d88` is **2032**, by arithmetic from
+   2050 and an independently measured delta rather than by measurement.
+
+   The delta was re-derived by a different mechanism than the one that got it
+   wrong: `scripts/test_name_diff.py origin/main HEAD` reports **ADDED (18)**,
+   nothing dropped, and all eighteen names reconcile one-for-one against the
+   tests I wrote. None is parametrised, so eighteen functions are eighteen
+   collected tests.
+
+   **Three instances of one shape now, not two.** The brief's *thirteen*, the
+   audit's *19 of 44*, and my own *1937* - and mine is in the entry that names
+   the shape, about the tooling the shape is about. It is not a hard mistake to
+   avoid once seen; it is a hard one to *notice*, because a wrong number that
+   was never checked reads exactly like a right one.
+6. **That the eslint step works on a GitHub runner.** It is verified locally
+   against `frontend/node_modules` installed by `npm ci`. The step borrows that
+   job's binary by relative path, which is a claim about the runner's layout I
+   have only checked on this machine.
+7. **Whether the `scripts/` reformat conflicts with the three other in-flight
+   lanes.** Unknowable until the rebase window opens.
+
+**Next:** architect, for the merge window. This lane is last by agreement. On
+rebase: `predict_union.py` before `git rebase`, and
+`git diff --numstat origin/main -- docs/handoff.md` expecting **0 removed** -
+this entry is appended and entries #10 and #11 are untouched. `docs/backlog.md`
+is corrected in place in two spots, both marked with the date and the mechanism.

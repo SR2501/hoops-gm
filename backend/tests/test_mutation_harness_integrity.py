@@ -17,23 +17,40 @@ assertion fails with `anchor found 0 times`.
 Living here, they never run under the harness (it runs one named module) and
 still run in CI.
 
-**What `scripts/` coverage actually is, stated carefully because the first
-version of this paragraph was a false generalisation and an independent
-reviewer caught it.** No CI job **lints or type-checks** `scripts/`, and
-`mutate_calibration.py` specifically is **executed by no job** — which is what
-makes the harness's own correctness depend on somebody remembering to run it,
-and is the whole reason these tests exist. What is *not* true, and what the
-earlier wording claimed, is that `scripts/` is untouched by CI: `ci.yml` runs
-`scripts/backlog_graph.py` (line 142), `scripts/check_no_secrets.py` (354) and
-`scripts/run_metrics.py` (93, 98, 292, 297) across four jobs. Nor is it true
-that every Python job declares a working directory — `backlog-graph` and
-`secrets` declare none. The narrow claim carries the design decision on its own;
-the broad one was reached by generalising from the one job that had been read.
+**What `scripts/` coverage actually is, stated carefully because this paragraph
+has now been wrong twice.** The first version was a false generalisation and an
+independent reviewer caught it. The correction narrowed the claim and kept a
+false conjunct: it said no CI job **lints or type-checks** `scripts/`, and the
+type-check half was already untrue when it was written. `backend/pyproject.toml`
+sets `[tool.mypy] files = ["src", "tests", "../scripts"]` deliberately, with a
+comment saying why, and `ci.yml`'s backend job runs a bare `mypy` — so
+`scripts/` has been type-checked in CI all along. Driven rather than argued: a
+deliberate `return "not an int"` planted in `scripts/predict_union.py` makes
+that bare `mypy` report `..\\scripts\\predict_union.py:123: error` and fail,
+across 201 source files.
 
-**Scope, stated so it is not over-read:** these tests establish that every anchor
-still matches its target exactly once and that every replacement is a real
-change. They do **not** run the mutations, do not establish that any mutation is
-caught, and do not lint or type-check the harness. Its verdicts remain ungated.
+As of 2026-08-26 the lint half is closed too: a repo-root `ruff.toml` extends the
+backend rule set over `scripts/`, and the backend job runs `ruff check scripts`
+and `ruff format --check scripts` from the repo root. `scripts/eslint.config.js`
+covers the two JavaScript probes, which no gate reached at all.
+
+What remains true, and is the reason these tests exist: **`mutate_calibration.py`
+is executed by no job.** Its verdicts are ungated, so the harness's own
+correctness still depends on somebody remembering to run it.
+
+What was never true, and is worth keeping visible because the false version is
+what a later reader inherits: that `scripts/` is untouched by CI. `ci.yml` runs
+`scripts/backlog_graph.py` (line 142), `scripts/check_no_secrets.py` (354) and
+`scripts/run_metrics.py` (93, 98, 292, 297) across four jobs. Nor is it true that
+every Python job declares a working directory — `backlog-graph` and `secrets`
+declare none.
+
+**Scope, stated so it is not over-read:** the anchor tests here establish that
+every anchor still matches its target exactly once and that every replacement is
+a real change. They do **not** run the mutations and do not establish that any
+mutation is caught. The catcher tests below establish that the harness reads its
+own output correctly; they do not establish that any particular catcher is a
+genuine detector, which is a reading rather than a measurement.
 """
 
 from __future__ import annotations
