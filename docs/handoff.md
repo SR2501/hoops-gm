@@ -24844,3 +24844,111 @@ backlog header recomputes unchanged; `test_name_diff.py origin/main` 101 added
 - **The reason breakdown behind the restriction table.** Still held only as
   reported; every bracket is conditional on it, and I still cannot run the
   script that would settle it without a rebase window.
+
+---
+
+## 2026-08-23 - quant - calibration machinery: closing my own "could not verify", and a near-miss that would have voided the mutation evidence
+
+Branch `sr2501-calibration-machinery`. **Blind unbroken.** No file added or
+changed here reads a participation outcome, a cohort database or a conversion
+rate. Base verified: still behind `origin/main` at `193aa1e`; no rebase, the
+freeze is respected.
+
+### Entry #8's first "could not verify" paid out within minutes, twice, in opposite directions
+
+I wrote that I could not rule out **a third command whose gate I was reporting
+narrowly**. Running that audit found two more.
+
+**The false pass.** `ruff format --check .` **is** a CI gate -
+`.github/workflows/ci.yml:62`, no `continue-on-error`. I had inherited a belief
+that it was not, and that belief was load-bearing: both of this unit's source
+files failed it, `main` passes, so the branch and only the branch would have
+broken CI. Formatting them then joined three lines and moved four mutation
+anchors - M06, M09, M16, M40. The harness reported those as **harness failures,
+not survivors**, which is the one distinction that stopped a formatting change
+reading as four passing tests.
+
+**The false alarm, which is the half I had not thought about.** Run from the
+**repository root**, those same commands report 15 lint errors and 13
+unformatted files. The backend job declares `working-directory: backend`, and
+from there everything is clean. So a gate quoted without its **working
+directory** is exactly as unquotable as one quoted without its file count - and
+this direction fails *loudly and wrongly*, which would have had me editing three
+other lanes' files during a merge freeze on the strength of a number that was
+never mine to read.
+
+**Recorded and deliberately not fixed: no CI job lints `scripts/` at all.** Every
+Python job in `ci.yml` scopes to `backend`, `frontend` or `userscript`. So
+`scripts/mutate_calibration.py` - the harness that produces this unit's only
+evidence that its detectors fire - sits **outside the gate that evidence is
+for**. It matches `main`'s existing practice (`frontend/src/test/fixtures/
+make_pending_date_payloads.py` is unformatted at repo root too), so it is a
+question for the architect rather than a defect of this branch.
+
+### The near-miss, which is the more important half of this entry
+
+The obvious response to "stale anchors are only caught by a manual run of an
+ungated harness" is to write the anchor check as tests. I did, and put them in
+`test_calibration_machinery.py` - **which is the module the harness runs.**
+
+While a mutation is applied, the mutated line no longer matches its own anchor,
+so the anchor test fails; and the harness scores **any** failure as CAUGHT. Every
+mutation of `calibration.py` would have been marked caught by the anchor test
+rather than by the detector it was written to exercise. The harness would have
+kept printing `44 caught, 0 survived` while establishing nothing at all.
+
+I drove it rather than arguing it: with M02 applied, the anchor assertion fails
+with `anchor found 0 times`. The four tests now live in
+`backend/tests/test_mutation_harness_integrity.py`, which the harness never runs
+and CI always does.
+
+**Why this one generalises past my module.** It is the false-zero shape in its
+most expensive location so far - not a detector that fails to fire, but a
+detector firing so reliably it drowns out the ones being measured, with the
+visible symptom being the *reassuring* number. The rule I would hand anyone
+running a mutation harness: **any test added to the module the harness targets
+makes the harness weaker, and the weakening is invisible in its output.**
+
+### Detectors driven, with the scope attached
+
+At this commit, these five pathologies are each detected and I drove every one;
+it says nothing about a sixth. A stale anchor (`anchor found 0 times`); a
+replacement identical to its anchor; two mutations sharing a name; the harness
+file missing - which **fails, never skips**, because a green skip reads as a pass
+in the summary line; and a mutation removed while the model card still says 44
+(`assert 43 == 44`).
+
+**One of the five was a driver failure first.** My payload for the last case
+prefixed a comment without removing the tuple, so `len(MUTATIONS)` never changed
+and the case passed. I reported it as a driver failure and rewrote it, because
+"a mutation that did not apply looks exactly like a guard that works" is a rule
+this harness states about itself in its own docstring, and it still caught its
+author.
+
+### Verified at this commit
+
+`test_calibration_machinery.py` **127**; `test_mutation_harness_integrity.py`
+**4**; **44 mutations, 44 caught, 0 survived, 0 harness failures**; from
+`backend`: `ruff check .` clean, `ruff format --check .` **204 files already
+formatted**, bare `mypy` clean over **196 source files**.
+
+### What I could not verify
+
+- **The full suite at this commit.** It takes about three hours and the last
+  full run was 1914 passed / 32 deselected at the previous head. Four tests were
+  added since, so the prediction is **1918**; I am recording the prediction here
+  rather than a result, and it is stated before the run rather than after.
+- **That the `ci.yml` audit is now exhaustive.** I checked every step of the
+  backend job and the working directory of every Python job. I did **not** check
+  the frontend, userscript, migrations, Postgres, secrets or backlog jobs
+  against what I run, because none of them covers a file I touch - which is a
+  reason, not a verification, and is the same reason I gave last time.
+- **That no other test in the suite weakens the harness the way the anchor tests
+  would have.** The harness runs exactly one module, and I have not audited that
+  module for other assertions that fail merely *because* a mutation is applied
+  rather than because it was detected. That class is real and I found one member
+  of it by writing it myself.
+- **That `Band.observations` was the only decorative field**, and **the reason
+  breakdown behind the restriction table** - both carried forward from entry #8
+  unchanged, still not run exhaustively, still conditional on a report I cannot
+  check without a rebase window.

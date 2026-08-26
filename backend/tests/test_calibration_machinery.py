@@ -464,9 +464,7 @@ def test_subgroup_restriction_exposes_the_status_the_pooled_table_masked() -> No
     assert restricted.observations == 83
     assert restricted.observed_rate == pytest.approx(75 / 83)
     assert restricted.calibration_in_the_large < -0.8
-    assert restricted.bins_outside_wilson_interval == tuple(
-        row.label for row in restricted.bins
-    )
+    assert restricted.bins_outside_wilson_interval == tuple(row.label for row in restricted.bins)
 
 
 # --- Provenance guard --------------------------------------------------------
@@ -581,9 +579,7 @@ def test_a_monotonic_reversal_across_declared_bands_is_detected() -> None:
         {"unlikely": 0.20, "uncertain": 0.50, "likely": 0.80},
         {"unlikely": 0.20, "uncertain": 0.80, "likely": 0.50},
     )
-    bands = bands_from_labels(
-        rows, label_key="group", order=("unlikely", "uncertain", "likely")
-    )
+    bands = bands_from_labels(rows, label_key="group", order=("unlikely", "uncertain", "likely"))
     assert detect_monotonic_reversals(bands) == (("uncertain", "likely"),)
 
 
@@ -592,9 +588,7 @@ def test_no_reversal_is_reported_when_predictions_and_outcomes_move_together() -
         {"unlikely": 200, "uncertain": 200, "likely": 200},
         {"unlikely": 0.2, "uncertain": 0.5, "likely": 0.8},
     )
-    bands = bands_from_labels(
-        rows, label_key="group", order=("unlikely", "uncertain", "likely")
-    )
+    bands = bands_from_labels(rows, label_key="group", order=("unlikely", "uncertain", "likely"))
     assert detect_monotonic_reversals(bands) == ()
 
 
@@ -616,9 +610,7 @@ def test_bands_are_summarised_in_the_declared_order_not_alphabetically() -> None
     assert [band.label for band in declared] == ["beta", "alpha", "gamma"]
     assert detect_monotonic_reversals(declared) == ()
 
-    alphabetical = bands_from_labels(
-        rows, label_key="group", order=("alpha", "beta", "gamma")
-    )
+    alphabetical = bands_from_labels(rows, label_key="group", order=("alpha", "beta", "gamma"))
     assert detect_monotonic_reversals(alphabetical) == (("beta", "gamma"),)
 
 
@@ -671,8 +663,7 @@ def test_distinct_probability_binning_survives_floating_point_drift() -> None:
 
     assert 0.1 + 0.2 != 0.3
     rows = [
-        CalibrationObservation(f"drift#{index}", 0.1 + 0.2, index % 2 == 0)
-        for index in range(30)
+        CalibrationObservation(f"drift#{index}", 0.1 + 0.2, index % 2 == 0) for index in range(30)
     ] + [CalibrationObservation(f"exact#{index}", 0.3, index % 2 == 0) for index in range(30)]
     report = build_calibration_report(
         rows,
@@ -798,7 +789,7 @@ def test_paired_bootstrap_records_the_correlation_caveat_beside_the_number() -> 
 
 
 def test_every_report_carries_its_provenance_version_and_conventions() -> None:
-    """"Version the output" — the Model gate bullet that does bite here."""
+    """ "Version the output" — the Model gate bullet that does bite here."""
 
     rows = perfectly_calibrated_cohort({"a": 40}, {"a": 0.5})
     payload = build_calibration_report(
@@ -1248,6 +1239,7 @@ def test_the_g_league_share_of_doubtful_implies_a_non_g_league_floor_near_sixty_
     assert round(float(health_only)) != 74
     assert headroom < 2.5
 
+
 def test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate() -> None:
     """The one sentence in the docstring that a later lane is most likely to need.
 
@@ -1273,6 +1265,7 @@ def test_the_module_says_its_own_gate_does_not_pre_discharge_the_model_gate() ->
     # silently re-derived by the next lane to read gates.md.
     assert "word collision" in docstring
     assert "reliability-metrics.md" in docstring
+
 
 # ---------------------------------------------------------------------------
 # Findings from the second independent review, at 471c061
@@ -1426,6 +1419,7 @@ def test_the_iteration_routes_that_strip_the_marker_are_named_not_denied(
     assert report.restriction is None, name
     assert report.observations == 83, name
 
+
 def test_verification_refuses_a_claim_the_rows_are_merely_silent_about() -> None:
     """M23, which I wrote and which then survived my own suite.
 
@@ -1460,6 +1454,7 @@ def test_verification_refuses_a_claim_the_rows_are_merely_silent_about() -> None
             provenance=Provenance.POST_HOC_DIAGNOSTIC,
             binning=BinningScheme.DISTINCT_EMITTED_PROBABILITY,
         )
+
 
 # ---------------------------------------------------------------------------
 # Findings from the third independent review, at 57e370d
@@ -1698,6 +1693,7 @@ def test_removal_leaves_a_marker_that_is_true_and_no_longer_complete() -> None:
     )
     assert report.observations == 81
     assert report.restriction == (("status", "doubtful"),)
+
 
 # --- Fourth review: multiplicity is enforced where the cohort becomes a number ---
 #
@@ -2029,6 +2025,7 @@ def test_verification_compares_label_values_by_equality_not_identity() -> None:
     assert report.observations == 40
     assert report.restriction == (("status", "doubtful"),)
 
+
 def test_the_bootstrap_refuses_a_duplicate_observation_id() -> None:
     """P4-2: a **declared convention the code did not implement**.
 
@@ -2135,12 +2132,8 @@ def test_the_bootstrap_endpoints_use_type_seven_and_not_the_floor_rule() -> None
     def floor_rule(sorted_values: list[float], probability: float) -> float:
         return sorted_values[math.floor(probability * (len(sorted_values) - 1))]
 
-    assert comparison.interval_low == pytest.approx(
-        type7_quantile(estimates, 0.025), abs=1e-12
-    )
-    assert comparison.interval_high == pytest.approx(
-        type7_quantile(estimates, 0.975), abs=1e-12
-    )
+    assert comparison.interval_low == pytest.approx(type7_quantile(estimates, 0.025), abs=1e-12)
+    assert comparison.interval_high == pytest.approx(type7_quantile(estimates, 0.975), abs=1e-12)
     assert comparison.interval_high != pytest.approx(floor_rule(estimates, 0.975), abs=1e-12)
     assert floor_rule(estimates, 0.975) < comparison.interval_high
 
@@ -2282,9 +2275,7 @@ def test_a_distinct_twin_with_a_distinct_id_is_accepted() -> None:
     assert report.observations == len(rows) + 1
 
 
-def test_band_observations_is_read_by_an_assertion_and_is_therefore_not_decoration() -> (
-    None
-):
+def test_band_observations_is_read_by_an_assertion_and_is_therefore_not_decoration() -> None:
     """V04 survived: `observations=count` -> `observations=len(observations)`.
 
     The band's own `n` was replaced by the size of the **whole cohort** and no
@@ -2303,9 +2294,7 @@ def test_band_observations_is_read_by_an_assertion_and_is_therefore_not_decorati
     """
 
     rows = _masked_band_cohort()
-    bands = bands_from_labels(
-        rows, label_key="band", order=("unlikely", "uncertain", "likely")
-    )
+    bands = bands_from_labels(rows, label_key="band", order=("unlikely", "uncertain", "likely"))
 
     by_label = {band.label: band.observations for band in bands}
     expected = {
@@ -2448,9 +2437,7 @@ def test_the_doubtful_restriction_table_is_a_bracket_not_a_pair_of_bases() -> No
     assert bracket("G League") == (73, 74)
     assert bracket("G League", "Rest") == (69, 70)
     assert bracket("G League", "Rest", "Reconditioning") == (68, 69)
-    assert bracket(
-        "G League", "Rest", "Reconditioning", "Concussion Protocol"
-    ) == (67, 68)
+    assert bracket("G League", "Rest", "Reconditioning", "Concussion Protocol") == (67, 68)
 
     # v3 section 6's disputed 74 is the canonical non-G-League count - the upper
     # end of the first bracket - not a rival estimate of the direct count.
