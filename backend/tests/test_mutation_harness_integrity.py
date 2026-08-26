@@ -39,8 +39,13 @@ caught, and do not lint or type-check the harness. Its verdicts remain ungated.
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
 from collections import Counter
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -249,3 +254,189 @@ def test_the_mutation_count_the_model_card_cites_is_pinned_here() -> None:
         "names; the count and the names both survive that, so a detector can be "
         "replaced by a duplicate of another with nothing here noticing"
     )
+
+
+# --- The catcher report ------------------------------------------------------
+#
+# `55 caught, 0 survived` says every mutation was detected. It does not say **by
+# what**, and the difference is the whole of handoff #9's near-miss: an anchor
+# test inside the module the harness runs fires on every mutation *alongside* the
+# real detector, so the printed output stays byte-identical to a healthy one
+# while discriminating nothing.
+#
+# The harness now reads the failing test names out of output it already produced,
+# on every run. These tests cover the reading. They are here rather than in
+# `test_calibration_machinery.py` for the reason this whole file exists.
+
+
+@pytest.fixture(scope="module")
+def harness() -> ModuleType:
+    """Import the harness for its pure functions.
+
+    **Importing is safe and is checked rather than assumed** - see
+    `test_the_harness_does_nothing_destructive_at_import_time` below. The anchor
+    reader above still parses instead, because it has to work on a harness that
+    is broken; these tests exercise functions, which requires the real ones.
+    """
+    spec = importlib.util.spec_from_file_location("mutate_calibration", _MUTATION_HARNESS)
+    assert spec and spec.loader, f"cannot load {_MUTATION_HARNESS}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+#: A real `pytest` short-summary block, recorded from this repository's own
+#: `backend` with the exact arguments the harness passes - not invented, because
+#: a fixture written from memory tests the memory. Note the parametrised test:
+#: **four** `FAILED` lines for **three** functions.
+_RECORDED_SUMMARY = """\
+=========================== short test summary info ===========================
+FAILED tests/_tmp_catcher_probe.py::test_control_fails_one - assert 1 == 2
+FAILED tests/_tmp_catcher_probe.py::test_control_fails_two - ValueError: boom
+FAILED tests/_tmp_catcher_probe.py::test_control_parametrised[1] - assert 1 =...
+FAILED tests/_tmp_catcher_probe.py::test_control_parametrised[2] - assert 2 =...
+4 failed, 1 passed in 0.16s
+"""
+
+_RECORDED_GREEN = "131 passed in 12.02s\n"
+
+
+def test_the_harness_does_nothing_destructive_at_import_time(harness: ModuleType) -> None:
+    """The precondition for the fixture above, driven rather than believed.
+
+    This module's whole job is overwriting source files in place. Importing it
+    is only acceptable while every destructive path sits behind the
+    `if __name__ == "__main__"` guard, so that is asserted here rather than
+    left as a comment somebody later invalidates.
+    """
+    tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
+    top_level_calls = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    ]
+
+    assert not top_level_calls, (
+        "the harness makes a call at module scope; importing it would run that, "
+        "and this module writes to source files"
+    )
+    assert harness.MUTATIONS, "importing the harness produced no mutations"
+
+
+def test_failed_lines_are_read_as_node_ids(harness: ModuleType) -> None:
+    assert harness.failed_nodeids(_RECORDED_SUMMARY) == [
+        "tests/_tmp_catcher_probe.py::test_control_fails_one",
+        "tests/_tmp_catcher_probe.py::test_control_fails_two",
+        "tests/_tmp_catcher_probe.py::test_control_parametrised[1]",
+        "tests/_tmp_catcher_probe.py::test_control_parametrised[2]",
+    ]
+
+
+def test_catchers_are_counted_per_function_not_per_parametrised_case(
+    harness: ModuleType,
+) -> None:
+    """Four `FAILED` lines, three catchers, and the difference is load-bearing.
+
+    The unit of pinning has to be the unit of *deletion*. A mutation caught by
+    three cases of one parametrised test is pinned by one test, not three:
+    delete that function and the mutation is unpinned completely. The target
+    module has seven parametrised tests, so counting node ids would understate
+    single-pinning on real data rather than on a hypothetical.
+    """
+    catchers = harness.catcher_functions(harness.failed_nodeids(_RECORDED_SUMMARY))
+
+    assert catchers == {
+        "test_control_fails_one",
+        "test_control_fails_two",
+        "test_control_parametrised",
+    }
+
+
+def test_a_class_nested_node_id_reduces_to_the_function(harness: ModuleType) -> None:
+    assert harness.catcher_functions(["tests/x.py::TestGroup::test_y[case-3]"]) == {"test_y"}
+
+
+def test_the_extractor_agrees_with_pytests_own_count(harness: ModuleType) -> None:
+    """The control that runs on every mutation, driven here on a known input."""
+    assert len(harness.failed_nodeids(_RECORDED_SUMMARY)) == harness.reported_failures(
+        _RECORDED_SUMMARY
+    )
+
+
+def test_the_extractor_control_can_actually_fail(harness: ModuleType) -> None:
+    """A control never seen to fire is not a control.
+
+    A parsed zero and a genuinely uncaught mutation are indistinguishable in the
+    output, and this repository produced four false zeros in one day from
+    trusting one. So the disagreement case is driven: drop a `FAILED` line and
+    keep the total, which is exactly the shape of a parser that has fallen
+    behind pytest's format.
+    """
+    doctored = _RECORDED_SUMMARY.replace(
+        "FAILED tests/_tmp_catcher_probe.py::test_control_fails_one - assert 1 == 2\n", ""
+    )
+
+    assert len(harness.failed_nodeids(doctored)) == 3
+    assert harness.reported_failures(doctored) == 4
+    assert len(harness.failed_nodeids(doctored)) != harness.reported_failures(doctored)
+
+
+def test_a_green_run_yields_no_catchers_and_no_count(harness: ModuleType) -> None:
+    """The negative control on the same extractor, on output with no failures."""
+    assert harness.failed_nodeids(_RECORDED_GREEN) == []
+    assert harness.reported_failures(_RECORDED_GREEN) is None
+
+
+def test_the_child_arguments_cannot_depend_on_what_is_being_reported(
+    harness: ModuleType,
+) -> None:
+    """ "The reporting path cannot alter a verdict" made checkable.
+
+    The catcher report reads output the child already produced. That claim holds
+    only while the child's arguments are fixed, so `pytest_argv` is the single
+    place they are built, it takes only the test paths, and nothing in it is
+    conditional. A flag added here on a `--catchers` branch would make a verdict
+    depend on whether the detail was printed.
+    """
+    tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
+    built = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "pytest_argv"
+    ]
+    assert len(built) == 1, "pytest_argv is the one place the child's argv is built"
+
+    signature = built[0].args
+    assert [arg.arg for arg in signature.args] == ["tests"], (
+        "pytest_argv must take the test paths and nothing else; an option "
+        "parameter is how a reporting flag reaches the child"
+    )
+    assert not any(isinstance(node, ast.If | ast.IfExp) for node in ast.walk(built[0])), (
+        "no argument may be conditional, or the argv stops being fixed"
+    )
+
+
+def test_the_harness_never_adds_a_second_quiet_flag(harness: ModuleType) -> None:
+    """`-qq` exits 0 while deleting the `N passed` line the baseline check reads.
+
+    `backend/pyproject.toml` already sets `-q` in `addopts`, so one more from
+    here is `-qq` - and the harness refuses to mutate unless it can parse
+    `N passed` from a green baseline. It would then refuse every time, which is
+    at least loud; the worse reading is a future edit that also relaxes the
+    baseline check.
+    """
+    argv = harness.pytest_argv(["tests/test_calibration_machinery.py"])
+
+    assert "-q" not in argv and "-qq" not in argv
+    assert argv[1:3] == ["-m", "pytest"]
+    assert "tests/test_calibration_machinery.py" in argv
+
+
+def test_the_report_survives_a_run_that_caught_nothing(harness: ModuleType) -> None:
+    """An empty report must say so rather than raising on `most_common(1)[0]`.
+
+    Reachable in the case that matters most - every mutation surviving - where
+    an exception would replace the finding with a traceback.
+    """
+    harness.report_catchers({}, detail=True)

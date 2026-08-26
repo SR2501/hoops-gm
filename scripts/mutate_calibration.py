@@ -205,14 +205,73 @@ One survivor is deliberately **not** here. Swapping the two steps in
 commutes, so no test can distinguish it - and adding it would install a
 permanent false survivor. An equivalent mutant in a mutation harness is worse
 than no mutation, because it trains its readers to expect a survivor.
+
+## Which tests caught it, reported on every run
+
+`44 caught, 0 survived` says every mutation was detected. It does not say **by
+what**, and the difference is the whole of handoff #9's near-miss: an anchor test
+placed inside the module this harness runs would have fired on every mutation in
+addition to the real detector, and the printed output would have been
+byte-identical to a healthy one.
+
+So each run also records, per mutation, **which test functions failed**, and
+reports two things the pass/fail total hides:
+
+* **how many mutations are pinned by exactly one test.** Delete that test and the
+  mutation is silently unpinned while the harness carries on reporting it caught.
+  Reported, never judged - reducing it means writing a second test for each, and
+  whether that buys anything beyond making deletion louder is a judgement
+  `scripts/test_name_diff.py` already addresses from the other side.
+* **the widest catcher** - the largest number of mutations any single test
+  accounts for. A test that catches *all* of them is the anchor pathology, and
+  that one is called out by name.
+
+**Why this is not a `--catchers` mode.** It was going to be. A mode is opt-in,
+and the defect being repaired here is precisely that nobody opted in: the
+original audit was a throwaway, it covered 44 mutations, eleven were added
+afterwards, and the finding *"zero false catches, 19 of 44 singly pinned"* sat on
+`main` in the present tense for all eleven. **A fix whose failure mode is
+identical to the defect is not a fix.** Since the pytest invocation is unchanged,
+reading the failing test names out of output that was already produced costs
+nothing, so it happens every time. `--catchers` controls detail only.
+
+**Pinned so the reporting cannot be quietly disarmed:** `pytest_argv` is the one
+place the child's arguments are built, it takes no reporting options, and
+`backend/tests/test_mutation_harness_integrity.py` asserts a flag can never be
+added there conditionally. A verdict therefore cannot depend on whether the
+detail was printed.
+
+**What is mechanical here and what is not.** The counts are mechanical. Whether a
+catcher is *incidental* - a test that fails merely because a mutation was applied
+rather than because it detected one - is a reading, and this prints the names so
+a human can make it. The one incidental shape that *is* mechanical, a test
+catching every mutation, is flagged.
+
+**The extractor is positive-controlled on every run, not once.** A parsed count
+of zero and a genuinely uncaught mutation look identical, and this repository has
+produced four false zeros in a day from that habit. So the number of `FAILED`
+lines parsed must equal the `N failed` pytest reported for itself; a disagreement
+is reported as an extraction failure and exits non-zero, rather than quietly
+recording a mutation as pinned by nothing.
+
+That control is also why catchers are counted per **test function** rather than
+per node id. The target module has seven parametrised tests, so one function can
+contribute several `FAILED` lines: comparing *functions* against `N failed` would
+disagree for a correct extraction, and counting *node ids* as catchers would
+report a mutation caught by three cases of one test as three-pinned when deleting
+that single function unpins it entirely. The function is the unit that gets
+deleted, so the function is the unit of pinning.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
 import sys
+from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -647,9 +706,36 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+#: pytest's short-summary line: `FAILED tests/x.py::test_y[case] - AssertionError`.
+#: The message is truncated by pytest and may contain anything, so the node id is
+#: taken as everything up to the first ` - ` separator.
+FAILED_LINE = re.compile(r"^FAILED (.+?)(?: - |$)", re.MULTILINE)
+
+#: pytest's own count of failures, which is what the parsed `FAILED` lines are
+#: checked against.
+FAILED_TOTAL = re.compile(r"(\d+) failed")
+
+
+def pytest_argv(tests: list[str]) -> list[str]:
+    """The child's arguments, built in exactly one place.
+
+    **This function takes no reporting options, and that is the point.** The
+    catcher report reads output the child already produced; if it could add a
+    flag, the argument that "the reporting path cannot alter a verdict" would be
+    a hope rather than a fact. `test_mutation_harness_integrity.py` asserts that
+    no flag here is conditional.
+
+    Note what is *not* passed: `-q`. `backend/pyproject.toml` already sets it in
+    `addopts`, and a second one makes `-qq`, which deletes the `N passed` line
+    while still exiting 0 - so the baseline check below would stop being able to
+    tell a green suite from a silent one.
+    """
+    return [sys.executable, "-m", "pytest", *tests, "--no-header", "-p", "no:cacheprovider"]
+
+
 def run(args: list[str]) -> tuple[int, str]:
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", *args, "--no-header", "-p", "no:cacheprovider"],
+        pytest_argv(args),
         cwd=SRC,
         env=ENV,
         capture_output=True,
@@ -659,6 +745,31 @@ def run(args: list[str]) -> tuple[int, str]:
         check=False,  # a non-zero rc is the signal, not an error
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def failed_nodeids(out: str) -> list[str]:
+    """Every node id pytest listed as failed, one per `FAILED` line."""
+    return [match.group(1).strip() for match in FAILED_LINE.finditer(out)]
+
+
+def reported_failures(out: str) -> int | None:
+    """pytest's own failure count, or ``None`` if it did not print one."""
+    match = FAILED_TOTAL.search(out)
+    return int(match.group(1)) if match else None
+
+
+def catcher_functions(nodeids: Iterable[str]) -> set[str]:
+    """Node ids reduced to test **function** names.
+
+    `tests/x.py::TestGroup::test_y[case-3]` becomes `test_y`. Parametrisation and
+    class nesting are dropped deliberately: the function is the thing a later
+    edit deletes, so it is the unit in which "pinned by exactly one test" is
+    worth counting. Counting node ids instead would report a mutation caught by
+    three cases of one parametrised test as three-pinned, when deleting that one
+    function unpins it completely - and this module has seven parametrised tests,
+    so that is not hypothetical.
+    """
+    return {nodeid.split("::")[-1].split("[")[0] for nodeid in nodeids}
 
 
 def classify(rc: int, out: str) -> str:
@@ -676,7 +787,68 @@ def classify(rc: int, out: str) -> str:
     return f"HARNESS_FAILURE(rc={rc})"
 
 
-def main() -> int:
+def report_catchers(catchers: dict[str, set[str]], *, detail: bool) -> None:
+    """What caught each mutation, and the two things the pass/fail total hides.
+
+    Printed on every run. The counts are mechanical; deciding whether a named
+    catcher is *incidental* is a reading, and this prints the names so a human
+    can make it rather than implying the tool already did.
+    """
+    if not catchers:
+        print("\ncatchers: nothing to report - no mutation was caught.")
+        return
+
+    per_test: Counter[str] = Counter()
+    for tests in catchers.values():
+        per_test.update(tests)
+    single = sorted(name for name, tests in catchers.items() if len(tests) == 1)
+    widest, widest_count = per_test.most_common(1)[0]
+
+    print(f"\n=== catchers over {len(catchers)} caught mutations ===")
+    print(
+        f"{len(single)} pinned by exactly one test; {len(per_test)} distinct tests caught something"
+    )
+    print(f"widest catcher: {widest} accounts for {widest_count}")
+
+    if widest_count == len(catchers):
+        print()
+        print(f"  WARNING: {widest} catches EVERY caught mutation. That is the shape of a")
+        print("  test that fails because a mutation was applied rather than because it was")
+        print("  detected - an anchor assertion living in the module this harness runs. It")
+        print("  fires alongside the real detectors, so the summary line above stays")
+        print("  reassuring while discriminating nothing. See handoff #9.")
+
+    if not detail:
+        print("\nRe-run with --catchers for the per-mutation names.")
+        return
+
+    print("\n--- pinned by exactly one test ---")
+    for name in single:
+        print(f"  {name}\n      {next(iter(catchers[name]))}")
+
+    print("\n--- mutations caught, by test ---")
+    for test, count in per_test.most_common():
+        print(f"  {count:>3}  {test}")
+
+    print("\n--- every mutation, with its catchers ---")
+    for name, tests in catchers.items():
+        print(f"  [{name}] {len(tests)}")
+        for test in sorted(tests):
+            print(f"      {test}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Mutation harness for the calibration machinery.")
+    parser.add_argument(
+        "--catchers",
+        action="store_true",
+        help=(
+            "print the per-mutation catcher names. The catcher data is collected "
+            "on every run either way; this only controls detail."
+        ),
+    )
+    args = parser.parse_args(argv)
+
     print("=== baseline ===")
     rc, out = run(TESTS)
     base = re.search(r"(\d+) passed", out)
@@ -689,6 +861,8 @@ def main() -> int:
     originals = {p: (SRC / p).read_text(encoding="utf-8") for p in {m[1] for m in MUTATIONS}}
 
     caught = survived = harness = 0
+    catchers: dict[str, set[str]] = {}
+    extraction_failures: list[str] = []
     for name, rel, old, new in MUTATIONS:
         path = SRC / rel
         text = originals[rel]
@@ -713,6 +887,18 @@ def main() -> int:
         print(f"[{name}] {verdict}")
         if verdict.startswith("CAUGHT"):
             caught += 1
+            # The verdict above is already decided and is never revisited here:
+            # reading the catchers is a strictly downstream step, so it cannot
+            # turn a survivor into a catch or the reverse. A failure to read
+            # them is recorded separately and fails the run on its own.
+            nodeids = failed_nodeids(out)
+            expected = reported_failures(out)
+            if expected is None or len(nodeids) != expected:
+                extraction_failures.append(
+                    f"[{name}] parsed {len(nodeids)} FAILED lines, pytest reported {expected}"
+                )
+            else:
+                catchers[name] = catcher_functions(nodeids)
         elif verdict == "SURVIVED":
             survived += 1
         else:
@@ -725,7 +911,21 @@ def main() -> int:
         f"\n=== {len(MUTATIONS)} mutations: {caught} caught, "
         f"{survived} survived, {harness} harness failures ==="
     )
-    return 0 if survived == 0 and harness == 0 else 1
+
+    report_catchers(catchers, detail=args.catchers)
+
+    if extraction_failures:
+        # Loud, because the alternative is recording a mutation as pinned by
+        # nothing when the truth is that nobody looked. A parsed zero and a real
+        # zero are indistinguishable, which is the habit that produced four
+        # false zeros here in one day.
+        print(f"\n=== {len(extraction_failures)} catcher extraction failures ===")
+        for line in extraction_failures:
+            print(f"  {line}")
+        print("  The FAILED lines parsed disagree with pytest's own count, so the")
+        print("  catcher figures above are incomplete. Fix the parser, not the report.")
+
+    return 0 if survived == 0 and harness == 0 and not extraction_failures else 1
 
 
 if __name__ == "__main__":
