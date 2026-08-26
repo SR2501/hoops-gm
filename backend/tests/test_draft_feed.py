@@ -64,6 +64,7 @@ from hoops_gm.draft.feed.recognise import (
     _player_label,
 )
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
+from hoops_gm.ingest.fantrax_official.parsers import parse_draft_picks
 
 LEAGUE = "abc123league"
 NOW = datetime(2026, 10, 18, 23, 14, tzinfo=UTC)
@@ -3614,3 +3615,255 @@ def test_the_recogniser_reads_every_response_in_the_batch() -> None:
 
     assert [instant.player_label for instant in result.instants] == [HALIBURTON]
     assert result.instants[0].provenance.locator.startswith("responses[1].data")
+
+
+def test_the_official_coercers_do_not_survive_the_parser_that_feeds_them() -> None:
+    """Excludes: believing round 7 closed the read-a-field asymmetry.
+
+    **This test documents a defect that is not fixed, and is deliberately
+    written to fail when it is.** The fix belongs in
+    ``hoops_gm.ingest.fantrax_official.parsers``, which this unit does not own.
+
+    Round 7 routed every field in ``recognise_official_draft_picks`` through the
+    same coercers as the bridge path. That is real, and it is bounded: the
+    coercers see values that ``parse_draft_picks`` has *already* converted with
+    a bare ``int()``/``float()`` and selected with a truthy ``or`` chain. By the
+    time they run, a fractional ordinal is an exact ``int`` and an invented
+    amount is an ordinary ``float`` — in range, correctly typed, and wrong.
+
+    So the asymmetry is closed at the typed-dataclass layer and open across the
+    raw source, and the discriminator is that the *bridge* reader, given the
+    identical raw record, refuses it. Each case below asserts that difference,
+    which is why a reader cannot dismiss this as the two paths being allowed to
+    differ: they differ **on the same bytes**.
+
+    When the parser is fixed, this test fails, and it should — the assertion to
+    change is the ``official`` side, and the bridge side is already right.
+    """
+    raw_cases: list[tuple[str, dict[str, object], DraftType, object]] = [
+        # A fractional ordinal truncates to a position the payload never claimed,
+        # colliding with whoever really holds that pick.
+        ("fractional ordinal", {"overallPick": 1.9}, DraftType.SNAKE, 1),
+        # Python's literal grammar, applied to a JSON string.
+        ("python-grammar ordinal", {"overallPick": "1_0"}, DraftType.SNAKE, 10),
+        # ``0`` is falsy, so a real zero is discarded for a sibling key.
+        ("zero ordinal falls through", {"overallPick": 0, "overall": 3}, DraftType.SNAKE, 3),
+    ]
+
+    for label, extra, draft_type, expected_ordinal in raw_cases:
+        record: dict[str, object] = {
+            "teamId": "t1",
+            "playerId": "p1",
+            "playerName": JOKIC,
+            **extra,
+        }
+        context = _context(draft_type=draft_type)
+
+        official = recognise_official_draft_picks(
+            parse_draft_picks({"draftPicks": [record]}),
+            artifact_key="sha256:seam",
+            received_at=NOW,
+            context=context,
+        )
+        bridge = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json={"responses": [{"data": {"draftPicks": [record]}}]},
+            dedupe_key="seam",
+            received_at=NOW,
+            captured_at=None,
+            context=context,
+        )
+
+        assert [i.overall_pick for i in official.instants] == [expected_ordinal], label
+        assert official.unrecognised == (), label
+        assert bridge.instants == (), label
+        assert [shape.reason for shape in bridge.unrecognised] == [
+            "record_missing_draft_coordinate"
+        ], label
+
+
+def test_an_auction_amount_the_payload_set_to_zero_is_not_replaced_by_a_sibling_bid() -> None:
+    """Excludes: believing a stored price came from the field that names it.
+
+    The same generator as the test above, on the field that carries money. A
+    payload saying ``amount: 0`` — a keeper at no cost, an unsold nomination —
+    is falsy, so ``parse_draft_picks`` moves on and reports the ``bid``
+    instead. The board then shows a player sold for ten dollars that the source
+    said cost nothing, with every channel reporting a clean read.
+
+    Fixing this is upstream; asserting it here is what makes it visible.
+    """
+    record: dict[str, object] = {
+        "teamId": "t1",
+        "playerId": "p1",
+        "playerName": JOKIC,
+        "amount": 0,
+        "bid": 10,
+    }
+    context = _context(draft_type=DraftType.AUCTION)
+
+    official = recognise_official_draft_picks(
+        parse_draft_picks({"draftPicks": [record]}),
+        artifact_key="sha256:seam",
+        received_at=NOW,
+        context=context,
+    )
+
+    assert [instant.amount for instant in official.instants] == [Decimal("10.0")]
+    assert official.unrecognised == ()
+
+
+def test_a_malformed_official_container_is_indistinguishable_from_an_empty_draft() -> None:
+    """Excludes: reading "no picks" as "the draft has not started".
+
+    On draft night these two mean opposite things and call for opposite
+    actions. An empty ``draftPicks`` list means nobody has picked yet and the
+    owner should wait; a missing key or a non-list means this reader did not
+    understand the response and the owner should look at the feed. Both arrive
+    here as zero picks, no rejection, and no unrecognised shape.
+
+    The bridge path has ``_accept_list`` and reports a named refusal for these.
+    The official path has no equivalent because ``parse_draft_picks`` returns
+    ``[]`` for all of them, and ``[]`` carries no reason. Upstream again, and
+    asserted here so it cannot be believed closed.
+    """
+    shapes: list[tuple[str, object]] = [
+        ("genuinely empty", {"draftPicks": []}),
+        ("key absent", {"unexpected": []}),
+        ("not a list", {"draftPicks": {}}),
+        ("row is not an object", {"draftPicks": [None]}),
+    ]
+
+    outcomes = set()
+    for label, payload in shapes:
+        result = recognise_official_draft_picks(
+            parse_draft_picks(payload),
+            artifact_key="sha256:seam",
+            received_at=NOW,
+            context=_context(),
+        )
+        outcomes.add((len(result.instants), result.rejected, result.unrecognised))
+        assert result.instants == (), label
+
+    # One outcome for four inputs is the defect: nothing downstream can tell
+    # them apart, because nothing upstream kept the difference.
+    assert outcomes == {(0, None, ())}
+
+
+def test_every_bound_is_asserted_where_no_other_cause_can_produce_the_refusal() -> None:
+    """Excludes: a guard that is correct, matches its column, and is never called.
+
+    **This test exists because the checks that were supposed to cover these
+    bounds were satisfied by the wrong cause.** The enumeration test proves each
+    ``MAX_*`` constant equals the column it describes; the per-rule mutations
+    prove particular coercions are wired. Neither covers *both*, and the gap was
+    recorded as a could-not-verify rather than measured -- wrongly, because it
+    was measurable.
+
+    Measuring it meant leaving every constant correct, so the enumeration test
+    stays green by construction, and widening only the ``limit=`` actually
+    passed at one production call site at a time. Six of nine sites turned the
+    behaviour suite red. **Three did not**, and they failed for one reason:
+
+        ``no_seat_anchor`` is produced by *two* independent mechanisms -- the
+        bound refusing the text, and the resulting text simply not being a
+        configured seat.
+
+    The existing assertion used an over-long team id that was *also* not a
+    configured seat, so both mechanisms were live and the outcome was the same
+    either way. Widening the bound to ten million kept it green.
+
+    So the rule this test applies, which is the project's review rule turned on
+    its own tests: **name the defect the assertion excludes, then name a reading
+    in which the assertion holds and the defect is present.** Here that reading
+    is "the id was never bounded, and was rejected for being an unknown seat".
+    The fix is to remove the alternative cause -- **configure the over-long id
+    as a real seat** -- so that anchoring at all can only mean the bound is gone.
+
+    Measured with the two limits widened and the constants left correct:
+    the official path anchored, reported nothing, and carried a **65-character
+    id into a ``String(64)`` column** -- silently truncated on SQLite and a
+    ``DataError`` outside ``IntegrityError`` on Postgres, which is the whole
+    ingest rather than the row. That is the ADR-001 divergence class, and no
+    test in the suite used a string long enough to expose it.
+    """
+    long_team = "t" * (MAX_EXTERNAL_ID_CHARS + 1)
+    long_label = "N" * (MAX_LABEL_CHARS + 1)
+
+    # The seat is genuinely configured, so "unknown seat" cannot explain a
+    # refusal. Only the bound can.
+    context = _context(team_ids=frozenset({long_team, "t1"}))
+
+    official = recognise_official_draft_picks(
+        [
+            FantraxDraftPick(
+                team_id=long_team,
+                player_id="p-jokic",
+                player_name=JOKIC,
+                overall_pick=1,
+            )
+        ],
+        artifact_key="sha256:bound",
+        received_at=NOW,
+        context=context,
+    )
+    assert official.instants == ()
+    assert [shape.reason for shape in official.unrecognised] == ["no_seat_anchor"]
+
+    bridge = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": long_team,
+                    "playerId": "p-jokic",
+                    "playerName": JOKIC,
+                    "overallPick": 1,
+                }
+            ]
+        ),
+        dedupe_key="bound",
+        received_at=NOW,
+        captured_at=None,
+        context=context,
+    )
+    assert bridge.instants == ()
+    assert [shape.reason for shape in bridge.unrecognised] == ["no_seat_anchor"]
+
+    # The third site: ``_player_identity`` falls back to the label when no
+    # external id is present. An over-long label must not become an identity,
+    # and the alternative cause here is "the record named nobody at all", so the
+    # discriminating record names a player *only* through the over-long label.
+    unidentified = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope([{"teamId": "t1", "playerName": long_label, "overallPick": 1}]),
+        dedupe_key="bound-label",
+        received_at=NOW,
+        captured_at=None,
+        context=context,
+    )
+    assert unidentified.instants == ()
+    assert "record_names_no_player" in [shape.reason for shape in unidentified.unrecognised]
+
+    # Control: the same three records at exactly the bound are accepted, so the
+    # assertions above are refusing on width and not on the shape of the record.
+    at_bound_team = "t" * MAX_EXTERNAL_ID_CHARS
+    healthy = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": at_bound_team,
+                    "playerName": "N" * MAX_LABEL_CHARS,
+                    "overallPick": 1,
+                }
+            ]
+        ),
+        dedupe_key="bound-ok",
+        received_at=NOW,
+        captured_at=None,
+        context=_context(team_ids=frozenset({at_bound_team})),
+    )
+    assert len(healthy.instants) == 1
+    assert healthy.unrecognised == ()
+    assert healthy.instants[0].team_external_id == at_bound_team

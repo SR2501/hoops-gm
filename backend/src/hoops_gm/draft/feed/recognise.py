@@ -1060,6 +1060,14 @@ def recognise_official_draft_picks(
     unverified in ``docs/adapters/fantrax-official.md``, and duplicating them
     would give this repository two guesses that can drift apart instead of one.
 
+    **That argument is about key names and does not extend to values.**
+    Inheriting the parser also inherits how it *converts* what it finds, and
+    that half is not free: see the falsified-justification note at the end of
+    this docstring. The two are separable in principle — this reader could take
+    the raw records and keep one set of key-name guesses — and doing so is the
+    only construction that closes the class. It is an architecture change across
+    two units, so it is escalated rather than made here.
+
     The seat anchor is applied here too, for the same reason and with the same
     fail-closed direction: a pick naming a team id this draft does not have a
     seat for is dropped and counted, not attributed.
@@ -1069,14 +1077,37 @@ def recognise_official_draft_picks(
     not transfer.** It applies the seat anchor and a player-name check and
     nothing else — no :func:`_accept_list`, so no
     :func:`_has_draft_coordinate`, no ``duplicate_player_in_list``, no
-    ``player_identity_is_the_seat``. It can afford to be, because the shape is
-    already typed by ``parse_draft_picks`` rather than guessed from an
-    arbitrary JSON block. The consequence is that the *bridge* recogniser
-    refuses a payload whose coordinates are missing while this one accepts it
-    and reports the loss instead. A round of review found three docstrings in
-    this package that argued from "the coordinate rule refuses that" without
-    noticing the argument held on one path only; if you are about to write a
-    fourth, name the path.
+    ``player_identity_is_the_seat``. The consequence is that the *bridge*
+    recogniser refuses a payload whose coordinates are missing while this one
+    accepts it and reports the loss instead. A round of review found three
+    docstrings in this package that argued from "the coordinate rule refuses
+    that" without noticing the argument held on one path only; if you are about
+    to write a fourth, name the path.
+
+    **What this docstring used to say, and why it was wrong.** It justified the
+    weakness with "it can afford to be, because the shape is already typed by
+    ``parse_draft_picks`` rather than guessed from an arbitrary JSON block".
+    Round 8 falsified that by execution. Being typed by that parser is not a
+    safety property, because the parser *normalises before this reader sees
+    anything*: it converts with a bare ``int()``/``float()``/``str()`` and
+    selects aliases with a truthy ``or`` chain. Measured, on the real chain::
+
+        {"overallPick": 1.9}              -> overall_pick=1     (bridge refuses)
+        {"overallPick": "1_0"}            -> overall_pick=10    (bridge refuses)
+        {"overallPick": 0, "overall": 3}  -> overall_pick=3     (bridge refuses)
+        {"amount": 0, "bid": 10}          -> amount=10.0        (bridge refuses)
+
+    Every one of those is *already* a plain, in-range, exactly-typed value by
+    the time the coercers above run, so they pass — and they pass **because**
+    the damage was done upstream, not in spite of it. The round-7 fix that
+    routed every field through the coercers is therefore real but bounded: it
+    closes the asymmetry at the typed-dataclass layer, and **not** across the
+    raw source. The coercers cannot recover information that no longer exists.
+
+    That defect lives in
+    :mod:`hoops_gm.ingest.fantrax_official.parsers`, which this unit does not
+    own, and it is filed rather than patched here. **Do not add a "the parser
+    validates that" clause to this docstring.** It does not.
     """
     anchor_failure = context.anchor_failure()
     if anchor_failure is not None:
