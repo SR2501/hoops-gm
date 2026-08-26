@@ -275,9 +275,25 @@ def publish_reliability_evidence(
 
     **``record_refresh`` still does that**, and this skip is what keeps this
     command away from it. Fixing the primitive edits a file fingerprinted by
-    ``docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json``, whose
-    only honest repair is a regeneration needing live ``stats.nba.com`` calls on
-    another lane's adapter. The open defect is pinned by
+    ``docs/adapters/nba-injury-report-cohort-2025-10-21--2026-04-12.json``, so
+    the fix cannot land without regenerating that manifest.
+
+    An earlier version of this docstring said that regeneration "needs live
+    ``stats.nba.com`` calls". **That is false and this lane disproved it.** The
+    generator refuses without ``--allow-fetch`` only when it cannot find the
+    recorded captures, and the refusal seen here came from letting ``--raw-root``
+    default to ``backend/data/raw``, which does not exist. Pointed at the real
+    capture store the regeneration runs offline: ``--out`` to the committed path
+    at an unmodified tree reproduces the manifest with an **empty git diff**, and
+    with the primitive fixed exactly **one** of 1656 leaves moves — the
+    ``db/lineage.py`` fingerprint. So the repair is available, and it is also
+    positive evidence that the lineage change does not touch the cohort.
+
+    It is not done here for a reason feasibility cannot settle: that manifest is
+    ``data-engineer``'s artifact under the Adapter gate, and a manifest this lane
+    regenerates **passes its own fingerprint check by construction**. Green would
+    say the bytes agree, not that ``backend`` was entitled to republish another
+    lane's evidence. The open defect is pinned by
     ``test_record_refresh_still_relabels_which_is_why_the_publisher_skips``. Do
     not remove this skip on the assumption the primitive is safe.
 
