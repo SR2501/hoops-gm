@@ -715,6 +715,33 @@ FAILED_LINE = re.compile(r"^FAILED (.+?)(?: - |$)", re.MULTILINE)
 #: checked against.
 FAILED_TOTAL = re.compile(r"(\d+) failed")
 
+#: The header pytest prints above its short summary. Everything parsed for
+#: catchers is taken from **after the last occurrence** of this, and not from the
+#: whole run.
+#:
+#: **Why, found by an independent reviewer rather than by me.** Scanning the
+#: whole output means a test that itself prints something shaped like pytest
+#: output - a captured stdout, an assertion payload quoting a summary, a
+#: traceback - contributes phantom `FAILED` lines and a phantom `N failed`. The
+#: reviewer drove exactly that: a planted `FAILED tests/fake.py::test_bogus` plus
+#: a planted `2 failed` made the parsed count and the reported count **agree** on
+#: a fabricated catcher, so the positive control passed while the data was wrong.
+#: That is the defect the control exists to exclude, present with the control
+#: green.
+SUMMARY_HEADER = "short test summary info"
+
+
+def summary_block(out: str) -> str:
+    """The tail of the run from pytest's short-summary header onwards.
+
+    ``rfind``, not ``find``: if a test prints the header itself, the real one is
+    still the last. Returns ``""`` when there is no header, which makes a
+    failing run with no summary parse as zero catchers against a non-``None``
+    count - an extraction failure, reported loudly, rather than a silent zero.
+    """
+    index = out.rfind(SUMMARY_HEADER)
+    return out[index:] if index != -1 else ""
+
 
 def pytest_argv(tests: list[str]) -> list[str]:
     """The child's arguments, built in exactly one place.
@@ -722,8 +749,16 @@ def pytest_argv(tests: list[str]) -> list[str]:
     **This function takes no reporting options, and that is the point.** The
     catcher report reads output the child already produced; if it could add a
     flag, the argument that "the reporting path cannot alter a verdict" would be
-    a hope rather than a fact. `test_mutation_harness_integrity.py` asserts that
-    no flag here is conditional.
+    a hope rather than a fact.
+
+    The binding check on that is
+    `test_both_modes_invoke_the_child_identically`, which runs the real CLI in
+    both modes with the child intercepted and compares the invocations. An
+    earlier version relied on an AST test refusing `if` inside this function; a
+    reviewer walked straight through it with `*(["-k", ...] * flag)`, which
+    contains no conditional node and changes the argv completely. **A guard that
+    works by enumerating syntactic forms is always one form behind** - the same
+    rule this repository derived twice before, applied here to my own guard.
 
     Note what is *not* passed: `-q`. `backend/pyproject.toml` already sets it in
     `addopts`, and a second one makes `-qq`, which deletes the `N passed` line
@@ -749,13 +784,18 @@ def run(args: list[str]) -> tuple[int, str]:
 
 def failed_nodeids(out: str) -> list[str]:
     """Every node id pytest listed as failed, one per `FAILED` line."""
-    return [match.group(1).strip() for match in FAILED_LINE.finditer(out)]
+    return [match.group(1).strip() for match in FAILED_LINE.finditer(summary_block(out))]
 
 
 def reported_failures(out: str) -> int | None:
-    """pytest's own failure count, or ``None`` if it did not print one."""
-    match = FAILED_TOTAL.search(out)
-    return int(match.group(1)) if match else None
+    """pytest's own failure count, or ``None`` if it did not print one.
+
+    Read from the summary block for the same reason the node ids are, and the
+    **last** match within it, because that is the final counts line rather than
+    anything a test emitted on its way there.
+    """
+    matches = FAILED_TOTAL.findall(summary_block(out))
+    return int(matches[-1]) if matches else None
 
 
 def catcher_functions(nodeids: Iterable[str]) -> set[str]:
@@ -768,8 +808,14 @@ def catcher_functions(nodeids: Iterable[str]) -> set[str]:
     three cases of one parametrised test as three-pinned, when deleting that one
     function unpins it completely - and this module has seven parametrised tests,
     so that is not hypothetical.
+
+    **The parameter id is stripped before the `::` split, not after.** A reviewer
+    found the other order wrong: an explicit pytest id may itself contain `::`,
+    so `tests/x.py::test_real[a::b]` split on `::` first yields `b]`. No node id
+    in the target module does that today, which is precisely why the order was
+    easy to get wrong and impossible to notice.
     """
-    return {nodeid.split("::")[-1].split("[")[0] for nodeid in nodeids}
+    return {nodeid.split("[")[0].split("::")[-1] for nodeid in nodeids}
 
 
 def classify(rc: int, out: str) -> str:

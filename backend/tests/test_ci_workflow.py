@@ -186,6 +186,39 @@ def _run_lines(jobs: dict[str, Any], job_name: str) -> str:
     return " ".join(str(step.get("run", "")) for step in _steps(jobs, job_name))
 
 
+def _commands(step: dict[str, Any]) -> list[str]:
+    """The non-blank command lines of a step, stripped."""
+    return [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()]
+
+
+def _steps_invoking(jobs: dict[str, Any], job_name: str, prefix: str) -> list[dict[str, Any]]:
+    """Steps with a command line that *starts with* ``prefix``.
+
+    Starts-with rather than contains, because `echo "ruff check scripts"` and
+    `# ruff check scripts` both contain it while checking nothing. An
+    independent reviewer pointed out that the first version of these tests
+    accepted exactly that.
+    """
+    return [
+        step
+        for step in _steps(jobs, job_name)
+        if any(line.startswith(prefix) for line in _commands(step))
+    ]
+
+
+def _assert_step_is_live(step: dict[str, Any], what: str) -> None:
+    """A step can be neutered without touching its command.
+
+    ``if: ${{ false }}`` skips it and ``continue-on-error: true`` paints its
+    failure green, and a test that only reads ``run:`` sees neither. Both were
+    walked straight through the first version of these tests by a reviewer.
+    The job level is covered by ``test_code_gate_jobs_are_not_conditional``;
+    this is the step level.
+    """
+    assert "if" not in step, f"{what} is conditional, so it is a gate that can be arranged away"
+    assert not step.get("continue-on-error"), f"{what} is allowed to fail, so it gates nothing"
+
+
 def test_the_backend_job_lints_scripts_and_not_only_backend(jobs: dict[str, Any]) -> None:
     """`ruff check .` from `backend` is not a claim about `scripts/`.
 
@@ -193,13 +226,17 @@ def test_the_backend_job_lints_scripts_and_not_only_backend(jobs: dict[str, Any]
     on purpose and `ruff` did not, so the harnesses several backlog items cite
     as their evidence sat outside the gate that evidence is for.
     """
-    commands = _run_lines(jobs, "backend")
+    checks = _steps_invoking(jobs, "backend", "ruff check scripts")
+    formats = _steps_invoking(jobs, "backend", "ruff format --check scripts")
 
-    assert "ruff check scripts" in commands, (
-        "the backend job must lint `scripts/` explicitly; `ruff check .` with "
-        "`working-directory: backend` has never reached it"
+    assert checks, (
+        "the backend job must lint `scripts/` with a real `ruff check scripts` "
+        "command; `ruff check .` with `working-directory: backend` has never "
+        "reached it"
     )
-    assert "ruff format --check scripts" in commands
+    assert formats, "the backend job must also format-check `scripts/`"
+    for step in {id(s): s for s in checks + formats}.values():
+        _assert_step_is_live(step, "the scripts lint step")
 
 
 def test_the_scripts_lint_step_runs_from_the_repo_root(jobs: dict[str, Any]) -> None:
@@ -211,9 +248,7 @@ def test_the_scripts_lint_step_runs_from_the_repo_root(jobs: dict[str, Any]) -> 
     ancestry instead — so this asserts the directory, which is the thing that
     would silently change the rules if someone "tidied" the step.
     """
-    steps = [
-        step for step in _steps(jobs, "backend") if "ruff check scripts" in str(step.get("run", ""))
-    ]
+    steps = _steps_invoking(jobs, "backend", "ruff check scripts")
     assert steps, "no backend step lints scripts/"
 
     for step in steps:
@@ -227,17 +262,24 @@ def test_the_two_javascript_probes_are_linted_by_some_job(jobs: dict[str, Any]) 
     """`browser_probe.mjs` and `reliability_probe.js` were covered by no gate.
 
     Not the frontend job, which lints `frontend/`; not the backend job, whose
-    tools are Python. Asserted across every job rather than against one, so
-    moving the step somewhere sensible does not fail this.
+    tools are Python. Searched across every job rather than pinned to one, so
+    moving the step somewhere sensible does not fail this — but the step it
+    finds must be a real, enabled eslint invocation scoped to `scripts/`, not a
+    string that mentions one.
     """
-    linted = any(
-        "eslint" in str(step.get("run", ""))
-        and "scripts" in f"{step.get('working-directory', '')}{step.get('run', '')}"
-        for job in jobs.values()
-        for step in job.get("steps", [])
-    )
+    found: list[tuple[str, dict[str, Any]]] = []
+    for job_name, job in jobs.items():
+        for step in job.get("steps", []):
+            directory = str(step.get("working-directory", ""))
+            for line in _commands(step):
+                invokes_eslint = line.split()[0].endswith("eslint") or line.startswith("npx eslint")
+                scoped = "scripts" in directory or "scripts" in line
+                if invokes_eslint and scoped:
+                    found.append((job_name, step))
 
-    assert linted, "no job lints the JavaScript in scripts/"
+    assert found, "no job lints the JavaScript in scripts/ with a real eslint invocation"
+    for job_name, step in found:
+        _assert_step_is_live(step, f"the scripts eslint step in `{job_name}`")
 
 
 # --- Per-run metrics -----------------------------------------------------

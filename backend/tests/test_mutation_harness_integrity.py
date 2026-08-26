@@ -60,7 +60,7 @@ import importlib.util
 import sys
 from collections import Counter
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -408,13 +408,20 @@ def test_a_green_run_yields_no_catchers_and_no_count(harness: ModuleType) -> Non
 def test_the_child_arguments_cannot_depend_on_what_is_being_reported(
     harness: ModuleType,
 ) -> None:
-    """ "The reporting path cannot alter a verdict" made checkable.
+    """A shape check on `pytest_argv`, kept as a cheap tripwire and no more.
 
-    The catcher report reads output the child already produced. That claim holds
-    only while the child's arguments are fixed, so `pytest_argv` is the single
-    place they are built, it takes only the test paths, and nothing in it is
-    conditional. A flag added here on a `--catchers` branch would make a verdict
-    depend on whether the detail was printed.
+    **This assertion is not what establishes the invariant**, and saying so is
+    the point. An independent reviewer defeated the version that relied on it:
+
+        *(["-k", "test_one_thing"] * _REPORT_DETAIL)
+
+    contains no `If` or `IfExp`, leaves the signature untouched, adds no second
+    quiet flag - and changes the argv completely, turning CAUGHT into SURVIVED
+    for most mutations. **A guard that enumerates syntactic forms is always one
+    form behind**, which this repository has now derived three times.
+
+    `test_both_modes_invoke_the_child_identically` is the binding check: it runs
+    the real CLI in both modes and compares the invocation itself.
     """
     tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
     built = [
@@ -429,9 +436,84 @@ def test_the_child_arguments_cannot_depend_on_what_is_being_reported(
         "pytest_argv must take the test paths and nothing else; an option "
         "parameter is how a reporting flag reaches the child"
     )
-    assert not any(isinstance(node, ast.If | ast.IfExp) for node in ast.walk(built[0])), (
-        "no argument may be conditional, or the argv stops being fixed"
+
+
+def test_both_modes_invoke_the_child_identically(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "The reporting path cannot alter a verdict", driven rather than shaped.
+
+    The real CLI runs twice - once plain, once with `--catchers` - with the
+    child intercepted and `MUTATIONS` emptied so nothing is written to disk.
+    Every argument, the working directory and the environment must match. Any
+    route by which the detail flag reaches the child fails here whatever syntax
+    it uses, because this compares the invocation rather than the source that
+    produced it.
+    """
+    calls: list[tuple[list[str], object, object]] = []
+
+    class _Completed:
+        returncode = 0
+        stdout = "131 passed in 12.02s\n"
+        stderr = ""
+
+    def _fake_run(argv: list[str], **kwargs: object) -> _Completed:
+        calls.append((list(argv), kwargs.get("cwd"), kwargs.get("env")))
+        return _Completed()
+
+    # Patched on the harness module, so only its own lookups are affected.
+    monkeypatch.setattr(harness, "subprocess", SimpleNamespace(run=_fake_run))
+    # Emptied so `main` runs its baseline and then mutates nothing: this test
+    # must never write to a source file.
+    monkeypatch.setattr(harness, "MUTATIONS", [])
+
+    assert harness.main([]) == 0
+    assert harness.main(["--catchers"]) == 0
+    capsys.readouterr()
+
+    assert len(calls) == 2, "each mode should have invoked the child exactly once"
+    assert calls[0] == calls[1], (
+        "the plain run and the --catchers run invoked pytest differently; the "
+        "catcher report must read output the child already produced, never "
+        "change what the child does"
     )
+
+
+def test_catchers_are_read_only_from_the_short_summary_block(harness: ModuleType) -> None:
+    """A test that prints pytest-shaped output must not become a catcher.
+
+    Found by an independent reviewer, who drove it: scanning the whole run means
+    a captured stdout, an assertion payload or a traceback quoting a summary
+    contributes a phantom `FAILED` line **and** a phantom count, so the parsed
+    and reported numbers agree on fabricated data. The positive control passes
+    while the defect it exists to exclude is present - which is the exact shape
+    this unit is about, found in the unit's own fix.
+    """
+    noisy = (
+        "tests/test_calibration_machinery.py::test_something\n"
+        "  captured stdout:\n"
+        "  FAILED tests/fake.py::test_bogus\n"
+        "  2 failed\n"
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py::test_real - assert 1 == 2\n"
+        "1 failed, 130 passed in 11.90s\n"
+    )
+
+    assert harness.failed_nodeids(noisy) == ["tests/test_calibration_machinery.py::test_real"]
+    assert harness.reported_failures(noisy) == 1
+    assert harness.catcher_functions(harness.failed_nodeids(noisy)) == {"test_real"}
+
+
+def test_a_parameter_id_containing_a_double_colon_still_yields_the_function(
+    harness: ModuleType,
+) -> None:
+    """The other order of these two splits is wrong and looks right.
+
+    Splitting on `::` before stripping `[...]` turns `test_real[a::b]` into
+    `b]`. Explicit pytest ids may contain `::`; none in the target module does
+    today, which is why this was invisible rather than harmless.
+    """
+    assert harness.catcher_functions(["tests/x.py::test_real[a::b]"]) == {"test_real"}
 
 
 def test_the_harness_never_adds_a_second_quiet_flag(harness: ModuleType) -> None:
