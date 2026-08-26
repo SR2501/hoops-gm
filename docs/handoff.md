@@ -25558,3 +25558,123 @@ rebase: `predict_union.py` before `git rebase`, and
 `git diff --numstat origin/main -- docs/handoff.md` expecting **0 removed** -
 this entry is appended and entries #10 and #11 are untouched. `docs/backlog.md`
 is corrected in place in two spots, both marked with the date and the mechanism.
+
+
+---
+
+## 2026-08-26 - backend - round two on the verification toolchain: all three of my own fixes were defeated
+
+Branch `sr2501-verification-toolchain-round-two`, base `c07aefb`.
+
+**This entry exists because #106 merged at `d13f874`, which is one commit before
+these fixes.** Handoff entry #291 is therefore on `main` and permanent, and three
+of its claims are wrong. They are corrected here by appending rather than by
+editing, per this file's own rule. The merged code has the defects below; this
+unit is the repair.
+
+### What #291 says that is false, stated before anything else
+
+1. *"`pytest_argv` is the single place the argv is built ... and an AST test
+   refuses any conditional inside it"* and the surrounding claim that this
+   established the reporting path cannot alter a verdict. **It did not.** The AST
+   rule was defeated in round 1, and its replacement was defeated in round 2.
+2. **`Tests: test_mutation_harness_integrity.py 4 -> 17`** is superseded: **4 ->
+   21** here.
+3. **`Full suite 2053 passed, 37 deselected`** is superseded: **2057 passed, 37
+   deselected in 675.45s** at this head, predicted as 2053 + 4 before the run.
+
+### The finding, which is not any one of the three defects
+
+The same independent reviewer re-read only what moved. **Every one of my three
+round-1 fixes was itself defeated.** Each closed the case that had been
+demonstrated to me and left the generalisation open - which is precisely the
+shape entry #11 recorded, in this same file, about somebody else's guard. I
+wrote that sentence into a docstring and then did it twice in a day.
+
+**1. The replacement for the AST test was also not binding.** Two holes, both
+driven. It recorded `kwargs["env"]` **by reference**, so both modes stored the
+same mutable dict and any divergence moved both recordings retroactively - the
+comparison was structurally incapable of failing. And it ran with `MUTATIONS`
+emptied, so only the **baseline** invocation was ever compared; a divergence
+applied only while a mutation was live passed cleanly. It now records
+`dict(env)` and runs one disposable mutation against `tmp_path`, comparing four
+invocations rather than two.
+
+**2. The summary-block fix was two-thirds of a fix.** Matching the *phrase*
+`short test summary info` and taking the last occurrence meant a test emitting
+that phrase after the real summary redirected the parse; the separator line is
+now anchored whole. And `run()` appended all of stderr to all of stdout, which
+destroys chronology - a pytest-shaped block on stderr lands after the real
+summary and becomes the block that is read. Merged at the file descriptor with
+`stderr=subprocess.STDOUT` instead.
+
+**3. A pre-existing hole in `classify` that the above made reachable.** The guard
+was `re.search("error|ERROR|INTERNALERROR", out) and "errors" in out` - loose in
+both directions at once. The first arm matches every test name containing
+`calibration_error`, of which the target module has several; the second requires
+the lowercase **plural**, so a run reporting `1 error` alongside failures was
+classified CAUGHT and its failures credited to the mutation. Now matched on
+pytest's own section header and counts line, with a control test proving an
+ordinary failure still reads as CAUGHT.
+
+**And the CI tests failed the same way a second time.** Requiring a command to
+*start with* the executable admits `ruff check scripts --help`, `... || true`,
+`--exit-zero`, and a `shell: bash {0}; exit 0` that discards the exit code.
+Enumerating no-op suffixes is the losing game again, so the command bodies are
+pinned outright and `shell` overrides are refused.
+
+### The rule I would hand the next lane
+
+**A fix verified against the reviewer's payload is verified against the
+reviewer's imagination.** Both rounds went the same way: he named a form, I
+closed that form, he named a sibling. The thing that finally worked in each case
+was replacing a check *on the shape of the code* with a check *on the observed
+behaviour* - compare the invocation, not the syntax that built it; pin the
+command body, not a prefix of it. **Where a property is observable, observe it;
+a syntactic proxy for a behavioural property will lose to the next form nobody
+thought of.**
+
+### Verified at this commit
+
+Evasions driven: **eleven against `ci.yml`, two against the harness, zero
+escaped**, both files restored byte-identically by hash.
+
+Harness: **55 mutations, 55 caught, 0 survived, 0 harness failures, 0 extraction
+failures**; 27 pinned by exactly one test, 72 distinct catchers, widest 5 -
+identical to #291's figures and **predicted before the run**, which matters
+because this unit changed `run()` and `classify()`, both in the verdict path.
+Baseline 131 passed; `backend/src` clean afterwards.
+
+Full suite **2057 passed, 37 deselected in 675.45s**. From `backend/`:
+`ruff check .` clean, `ruff format --check .` **209 files already formatted**,
+bare `mypy` clean over **201 source files**. From the **repo root**:
+`ruff check scripts` clean, `ruff format --check scripts` **13 files already
+formatted**. From **`scripts/`**: `eslint .` clean over **3 files**.
+`resolve_doc_conflicts.py` recomputes the backlog header unchanged and counts
+**292** dated entries.
+
+### What I could not verify
+
+1. **That round three would find nothing.** The sequence is 5 findings then 4,
+   and three of the second round's were in the first round's fixes. I have no
+   evidence the fixes in *this* entry are different in kind, and the honest
+   reading of two identical rounds is that a third would find something.
+2. **That pinning exact CI command bodies is the right trade.** It refuses
+   `--help` and `|| true`, and it will also refuse a legitimate edit - adding
+   `--output-format github`, say - until someone updates the test. That is
+   deliberate and it is a cost, not a free win.
+3. **That `classify` is now right, as opposed to less wrong.** I tightened one
+   arm that was demonstrably loose in both directions. I did not audit the rest
+   of it, and it is pre-existing code this unit only brushed against.
+4. **Whether the merged `d13f874` caused anything.** The defects are real but
+   their live impact at that commit was nil - the catcher figures are identical
+   before and after every fix in both rounds. They were latent holes, not wrong
+   numbers, and I can say that only because I re-ran rather than reasoned.
+5. Everything carried forward from #291's list: no CI job runs the harness;
+   "zero false catches" is still not mechanically checked, only the universal
+   catcher is; lint is not execution; and the twenty-versus-nineteen
+   single-pinning discrepancy in `M01`-`M44` remains unattributed.
+
+**Next:** architect, for review and merge. This is a follow-up to #106, which
+merged before it. Nothing here changes a number a decision rests on; the Code
+gate is the only one that applies.

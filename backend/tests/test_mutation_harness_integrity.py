@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -439,44 +440,78 @@ def test_the_child_arguments_cannot_depend_on_what_is_being_reported(
 
 
 def test_both_modes_invoke_the_child_identically(
-    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    harness: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """ "The reporting path cannot alter a verdict", driven rather than shaped.
 
     The real CLI runs twice - once plain, once with `--catchers` - with the
-    child intercepted and `MUTATIONS` emptied so nothing is written to disk.
-    Every argument, the working directory and the environment must match. Any
-    route by which the detail flag reaches the child fails here whatever syntax
-    it uses, because this compares the invocation rather than the source that
-    produced it.
+    child intercepted, and every invocation must match.
+
+    **This is the third version of this test, and the first two both passed
+    while the property was false.** Version one was an AST rule refusing
+    conditionals inside `pytest_argv`, defeated by `*(["-k", ...] * flag)`.
+    Version two compared invocations but had two holes a reviewer drove:
+
+    * it recorded `kwargs["env"]` **by reference**, so both modes stored the
+      same mutable dict and a change between them moved both recorded values
+      retroactively - the comparison could not fail. It now records `dict(env)`.
+    * it ran with `MUTATIONS` emptied, so only the **baseline** invocation was
+      ever compared. A divergence applied only while a mutation was live passed
+      cleanly. It now runs one disposable mutation against `tmp_path`, so the
+      loop's invocation is compared too.
+
+    The disposable mutation is why `SRC` is redirected: `main` writes the
+    mutated file in place, and this test must never touch a source file.
     """
-    calls: list[tuple[list[str], object, object]] = []
+    probe = tmp_path / "probe.txt"
+    probe.write_text("alpha\n", encoding="utf-8")
+
+    calls: list[tuple[list[str], object, dict[str, str] | None]] = []
+    green = "131 passed in 12.02s\n"
+    red = (
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py::test_real - assert 1 == 2\n"
+        "1 failed, 130 passed in 11.90s\n"
+    )
 
     class _Completed:
-        returncode = 0
-        stdout = "131 passed in 12.02s\n"
-        stderr = ""
+        def __init__(self, returncode: int, stdout: str) -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
 
     def _fake_run(argv: list[str], **kwargs: object) -> _Completed:
-        calls.append((list(argv), kwargs.get("cwd"), kwargs.get("env")))
-        return _Completed()
+        env = kwargs.get("env")
+        # A copy, so a later in-place mutation of the real ENV cannot make two
+        # different recordings compare equal.
+        recorded = dict(env) if isinstance(env, dict) else None
+        calls.append((list(argv), kwargs.get("cwd"), recorded))
+        # First call in each run is the baseline and must look green; the
+        # mutation that follows must look caught, so the catcher path is
+        # exercised rather than skipped.
+        return _Completed(0, green) if len(calls) % 2 == 1 else _Completed(1, red)
 
-    # Patched on the harness module, so only its own lookups are affected.
-    monkeypatch.setattr(harness, "subprocess", SimpleNamespace(run=_fake_run))
-    # Emptied so `main` runs its baseline and then mutates nothing: this test
-    # must never write to a source file.
-    monkeypatch.setattr(harness, "MUTATIONS", [])
+    monkeypatch.setattr(harness, "subprocess", SimpleNamespace(run=_fake_run, STDOUT=-2, PIPE=-1))
+    monkeypatch.setattr(harness, "SRC", tmp_path)
+    monkeypatch.setattr(
+        harness, "MUTATIONS", [("T01 disposable probe", "probe.txt", "alpha", "beta")]
+    )
 
     assert harness.main([]) == 0
     assert harness.main(["--catchers"]) == 0
     capsys.readouterr()
 
-    assert len(calls) == 2, "each mode should have invoked the child exactly once"
-    assert calls[0] == calls[1], (
+    assert len(calls) == 4, "each mode should run a baseline and one mutation"
+    plain, detailed = calls[:2], calls[2:]
+    assert plain == detailed, (
         "the plain run and the --catchers run invoked pytest differently; the "
         "catcher report must read output the child already produced, never "
         "change what the child does"
     )
+    assert probe.read_text(encoding="utf-8") == "alpha\n", "the mutation was not restored"
 
 
 def test_catchers_are_read_only_from_the_short_summary_block(harness: ModuleType) -> None:
@@ -514,6 +549,107 @@ def test_a_parameter_id_containing_a_double_colon_still_yields_the_function(
     today, which is why this was invisible rather than harmless.
     """
     assert harness.catcher_functions(["tests/x.py::test_real[a::b]"]) == {"test_real"}
+
+
+def test_the_summary_is_found_by_its_whole_line_not_by_the_phrase(
+    harness: ModuleType,
+) -> None:
+    """A test emitting the phrase after the real summary must not win.
+
+    The first version searched for the substring `short test summary info` and
+    took the last occurrence, so a test printing that phrase *after* pytest's
+    own summary redirected the whole parse. The separator line - the `=` runs
+    and the line anchors - is what is matched now.
+    """
+    spoofed = (
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py::test_real - assert 1 == 2\n"
+        "1 failed, 130 passed in 11.90s\n"
+        "note: see the short test summary info above\n"
+        "FAILED tests/fake.py::test_bogus\n"
+        "9 failed\n"
+    )
+
+    assert harness.failed_nodeids(spoofed) == [
+        "tests/test_calibration_machinery.py::test_real",
+        "tests/fake.py::test_bogus",
+    ], "both lines follow the real separator, so both are read and the count disagrees"
+    assert harness.reported_failures(spoofed) == 9
+    # The extraction control is what refuses this, loudly, rather than the
+    # parser silently picking one.
+    assert len(harness.failed_nodeids(spoofed)) != harness.reported_failures(spoofed)
+
+
+def test_a_run_reporting_errors_is_a_harness_failure_not_a_catch(
+    harness: ModuleType,
+) -> None:
+    """`1 error` alongside failures used to classify as CAUGHT.
+
+    The old guard was `re.search("error|ERROR|INTERNALERROR", out) and "errors"
+    in out` - loose in both directions at once. The first arm matches every test
+    name containing `calibration_error`, and the second requires the lowercase
+    **plural**, so a run with exactly one error slipped through and its
+    failures were credited to the mutation. Found by a second reviewer.
+    """
+    mixed = (
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py::test_real - assert 1 == 2\n"
+        "ERROR tests/test_calibration_machinery.py::test_broken\n"
+        "1 failed, 1 error, 129 passed in 11.90s\n"
+    )
+
+    assert harness.classify(1, mixed) == "HARNESS_FAILURE(collection/error)"
+
+
+def test_an_ordinary_failure_still_classifies_as_caught(harness: ModuleType) -> None:
+    """The control for the test above: the stricter guard must not swallow real catches.
+
+    A guard that refuses everything is as useless as one that refuses nothing,
+    and this module has seven parametrised tests whose names contain
+    `calibration_error` - exactly what the old first arm matched on.
+    """
+    ordinary = (
+        "=========================== short test summary info ===========================\n"
+        "FAILED tests/test_calibration_machinery.py"
+        "::test_expected_calibration_error_is_weighted_by_population_not_by_bin\n"
+        "1 failed, 130 passed in 11.90s\n"
+    )
+
+    assert harness.classify(1, ordinary) == "CAUGHT(1 failed)"
+
+
+def test_the_child_streams_are_merged_rather_than_concatenated(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Appending all of stderr to all of stdout loses chronology.
+
+    A reviewer found that a pytest-shaped block written to stderr then lands
+    *after* the real summary and becomes the block the catcher parser reads,
+    fabricating a catcher the count agrees with. Merging at the file descriptor
+    keeps the real summary last because it was last. Asserted on the actual
+    call rather than on the source.
+    """
+    seen: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = "131 passed in 12.02s\n"
+
+    def _fake_run(argv: list[str], **kwargs: object) -> _Completed:
+        seen.update(kwargs)
+        return _Completed()
+
+    monkeypatch.setattr(
+        harness,
+        "subprocess",
+        SimpleNamespace(run=_fake_run, STDOUT=subprocess.STDOUT, PIPE=subprocess.PIPE),
+    )
+
+    harness.run(["tests/test_calibration_machinery.py"])
+
+    assert seen.get("stderr") is subprocess.STDOUT, "stderr must be merged into stdout, in order"
+    assert seen.get("stdout") is subprocess.PIPE
+    assert "capture_output" not in seen, "capture_output and stderr= cannot both be given"
 
 
 def test_the_harness_never_adds_a_second_quiet_flag(harness: ModuleType) -> None:
