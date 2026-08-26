@@ -168,6 +168,78 @@ def test_the_backlog_graph_job_writes_to_the_step_summary(jobs: dict[str, Any]) 
     assert "GITHUB_STEP_SUMMARY" in commands
 
 
+# --- `scripts/` coverage --------------------------------------------------
+#
+# `scripts/` holds the tools this project uses to catch its own defects, and
+# until this commit they were type-checked by `backend/pyproject.toml`
+# (`files = ["src", "tests", "../scripts"]`, deliberately), executed only where
+# a lane happened to put a test in `backend/tests/`, and **linted by nothing** —
+# because `ruff check .` in the backend job runs with
+# `working-directory: backend` and never reaches `../scripts`.
+#
+# These tests pin the two steps that close it. A CI step is deletable in one
+# line and its absence is invisible in a green run, which is the same shape as
+# the deleted test function that `scripts/test_name_diff.py` exists for.
+
+
+def _run_lines(jobs: dict[str, Any], job_name: str) -> str:
+    return " ".join(str(step.get("run", "")) for step in _steps(jobs, job_name))
+
+
+def test_the_backend_job_lints_scripts_and_not_only_backend(jobs: dict[str, Any]) -> None:
+    """`ruff check .` from `backend` is not a claim about `scripts/`.
+
+    The narrow, checkable version of the finding: `mypy` covers `../scripts`
+    on purpose and `ruff` did not, so the harnesses several backlog items cite
+    as their evidence sat outside the gate that evidence is for.
+    """
+    commands = _run_lines(jobs, "backend")
+
+    assert "ruff check scripts" in commands, (
+        "the backend job must lint `scripts/` explicitly; `ruff check .` with "
+        "`working-directory: backend` has never reached it"
+    )
+    assert "ruff format --check scripts" in commands
+
+
+def test_the_scripts_lint_step_runs_from_the_repo_root(jobs: dict[str, Any]) -> None:
+    """The working directory is the load-bearing part, not the command.
+
+    `ruff check ../scripts` from `backend` picks up the backend rule set only
+    because ruff falls back to the configuration discovered from the current
+    working directory. Run from the repo root, `ruff.toml` is the config by
+    ancestry instead — so this asserts the directory, which is the thing that
+    would silently change the rules if someone "tidied" the step.
+    """
+    steps = [
+        step for step in _steps(jobs, "backend") if "ruff check scripts" in str(step.get("run", ""))
+    ]
+    assert steps, "no backend step lints scripts/"
+
+    for step in steps:
+        assert "workspace" in str(step.get("working-directory", "")), (
+            "the scripts lint step must override the job's `backend` working "
+            "directory to the repo root; otherwise `scripts` does not resolve"
+        )
+
+
+def test_the_two_javascript_probes_are_linted_by_some_job(jobs: dict[str, Any]) -> None:
+    """`browser_probe.mjs` and `reliability_probe.js` were covered by no gate.
+
+    Not the frontend job, which lints `frontend/`; not the backend job, whose
+    tools are Python. Asserted across every job rather than against one, so
+    moving the step somewhere sensible does not fail this.
+    """
+    linted = any(
+        "eslint" in str(step.get("run", ""))
+        and "scripts" in f"{step.get('working-directory', '')}{step.get('run', '')}"
+        for job in jobs.values()
+        for step in job.get("steps", [])
+    )
+
+    assert linted, "no job lints the JavaScript in scripts/"
+
+
 # --- Per-run metrics -----------------------------------------------------
 
 METRIC_JOBS = ["backend", "frontend"]

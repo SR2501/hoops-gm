@@ -61,6 +61,23 @@ jobs:
       - name: Format
         run: ruff format --check .
 
+      # `scripts/` is not under `backend/`, so neither step above has ever seen
+      # it. `backend/pyproject.toml` type-checks it deliberately
+      # (`files = ["src", "tests", "../scripts"]`) but nothing linted it, which
+      # left the repository's own defect-catching tools outside the gate that
+      # evidence is for.
+      #
+      # `working-directory` is overridden to the repo root rather than reaching
+      # up with `../scripts`, so the repo-root `ruff.toml` is the configuration
+      # in force by ancestry rather than by ruff's fallback to the cwd's config.
+      # A gate quoted without its working directory is the defect this step
+      # closes; running it from an implicit one would reintroduce it.
+      - name: Lint and format-check scripts/
+        working-directory: ${{ github.workspace }}
+        run: |
+          ruff check scripts
+          ruff format --check scripts
+
       - name: Type-check
         run: mypy
 
@@ -257,6 +274,20 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # The two JavaScript files in `scripts/` — `browser_probe.mjs` and
+      # `reliability_probe.js` — sit outside every project in this repository
+      # and so were covered by no gate at all: not this job, which lints
+      # `frontend/`, and not the backend job, whose tools are Python.
+      #
+      # Run from `scripts/` rather than as `../scripts` from here, because
+      # ESLint's flat config resolves `files` patterns relative to the config's
+      # base directory; run from `frontend/`, the targets sit outside it.
+      # `scripts/eslint.config.js` imports nothing, so it needs no install of
+      # its own and borrows this job's binary.
+      - name: Lint scripts/ JavaScript
+        working-directory: ${{ github.workspace }}/scripts
+        run: ../frontend/node_modules/.bin/eslint .
 
       - name: Type-check
         run: npm run typecheck
