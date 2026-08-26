@@ -39,6 +39,7 @@ from hoops_gm.ingest.projections.models import ProjectionSourceRow
 
 __all__ = [
     "COUNTING_STAT_PER_GAME_CEILING",
+    "IMPORT_BLOCKING_CHECKS",
     "PTS_IDENTITY_TOLERANCE",
     "BakedInAvailabilityReport",
     "VerificationFinding",
@@ -74,6 +75,27 @@ MIN_GAMES_FOR_BAKED_IN_CHECK = 20
 #: How many players must clear the floor before the cohort statistic is
 #: reported at all. Below this the median is not a cohort measurement.
 MIN_COHORT_FOR_BAKED_IN_CHECK = 25
+
+#: Which checks are allowed to *refuse* an import, as opposed to being recorded
+#: on the outcome for a caller to read.
+#:
+#: Only ``value_shape`` is here, and the distinction is not "which check is more
+#: important" — it is which check has a legitimate false positive.
+#:
+#: ``value_shape`` excludes the defect this whole module exists for: a batch on
+#: the wrong basis, which inflates every counting category by a factor of the
+#: games played and has no symptom whatsoever. No legitimate per-game projection
+#: trips a 60-point ceiling, so a refusal here is never wrong about a real file.
+#:
+#: ``scoring_identity`` is a cross-check between columns a source may compute
+#: *independently*. Vendors routinely blend a points projection from one model
+#: and shooting volumes from another, then round each to one decimal; the two
+#: need not reconcile to 0.25, and a source publishing to zero decimals would
+#: fail it outright. Blocking on it would refuse legitimate files on draft week,
+#: which is a loud failure in the wrong direction. It is still run, still
+#: reported, and still visible on ``ProjectionImportOutcome.verification`` — the
+#: caller decides.
+IMPORT_BLOCKING_CHECKS = frozenset({"value_shape"})
 
 
 class VerificationOutcome(StrEnum):

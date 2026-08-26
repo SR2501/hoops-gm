@@ -16,8 +16,11 @@ and CSV dialect while containing no paid player rows or private path.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,13 +52,16 @@ from hoops_gm.ingest.projections import (
     FANTASYPROS_PROFILE,
     HASHTAG_2026_27_HEADERS,
     HASHTAG_PROFILE,
+    IMPORT_BLOCKING_CHECKS,
     MANUAL_PROFILE,
     ColumnProfile,
     DerivedStatColumn,
     ProjectionEncodingError,
     ProjectionProfileError,
+    ProjectionVerificationError,
     StatColumn,
     ValueShape,
+    VerificationOutcome,
     build_player_targets,
     get_or_create_projection_source,
     import_projection_csv,
@@ -885,6 +891,47 @@ class TestHashtagProjectionContract:
         assert any(
             issue.fatal and "does not reconcile" in issue.message
             for issue in parse_projection_csv(nudged, HASHTAG_PROFILE, season="2026-27").issues
+        )
+
+    def test_a_percentage_that_survived_its_lost_volume_is_refused(self) -> None:
+        """FAILS IF: a composite cell states a percentage on zero attempts.
+
+        Zero attempts is the one branch where the ratio cannot be recomputed,
+        so it was the one branch where the reconciliation declined to look. An
+        independent review found that ``0.824 (0.0/0.0)`` imported cleanly as
+        real zero volume: the source cannot render that, so the cell is
+        self-contradictory on its face, and it is exactly what a paste produces
+        when it keeps the printed percentage and drops the parenthesised half.
+
+        Defect excluded: a shooting category priced on no volume at all while
+        the file reports a healthy percentage — the ``AGENTS.md`` bug this
+        whole column exists to close, reintroduced through the branch that did
+        not check.
+
+        Reading in which this passes and the defect is present: a paste that
+        loses *both* halves, leaving the cell blank. That parses to
+        ``(None, None)`` and is caught downstream by
+        ``required_production_fields``, not here — a genuinely empty cell and a
+        corrupted one are different defects and only the second is this
+        check's.
+        """
+        clean = load("hashtag_sample.csv")
+
+        # Positive control on the extraction before trusting the refusal: the
+        # untouched fixture must contain a legitimate all-zero shooting cell,
+        # or the mutation below is not testing the branch it claims to.
+        assert "0.000 (0.0/0.0)" in clean
+        assert not [
+            issue
+            for issue in parse_projection_csv(clean, HASHTAG_PROFILE, season="2026-27").issues
+            if "zero attempts" in issue.message
+        ], "a legitimately empty shooting line must still be accepted"
+
+        stripped = clean.replace("0.000 (0.0/0.0)", "0.824 (0.0/0.0)")
+        assert stripped != clean
+        assert any(
+            issue.fatal and "zero attempts" in issue.message
+            for issue in parse_projection_csv(stripped, HASHTAG_PROFILE, season="2026-27").issues
         )
 
     def test_repeated_header_rows_are_rejected_loudly(self) -> None:
@@ -2047,6 +2094,197 @@ def test_terminal_columns_are_ignored_and_never_persisted(
         "composite_value",
         "expected_games",
     }.isdisjoint(projection_columns)
+
+
+def test_a_season_totals_paste_is_refused_by_the_importer_not_only_by_a_module(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: post-parse verification is not wired to the import path.
+
+    Hashtag's ``DDRANK`` control has a TOT mode that renders season totals under
+    **identical header text**, leaving ``MPG`` per-game while ``PTS`` becomes a
+    season sum. Every per-cell check still passes on such a file: the composite
+    ratios are scale-invariant, the scoring identity is scale-invariant, and
+    ``GP`` is unchanged. Only the batch-level shape check separates the two, and
+    on first delivery that check was written, tested, and called by nothing —
+    so the file imported silently with every counting category inflated roughly
+    seventy-fold.
+
+    Defect excluded: a verification module whose own tests are green while no
+    import path consults it.
+
+    Reading in which this passes and the defect is present: a season-totals file
+    whose players all project under the per-game ceiling anyway — a batch of
+    deep-bench players at 0.4 points per game would still be under 60 after
+    multiplying by 80. The check is a ceiling on implausible magnitude, not a
+    proof of basis, and it gets weaker exactly where the players are least
+    valuable.
+    """
+    per_game = load("hashtag_sample.csv")
+    lines = per_game.splitlines()
+    header = lines[0].split(",")
+    games_index = header.index("GP")
+    counting_indexes = [
+        header.index(column) for column in ("3PM", "PTS", "TREB", "AST", "STL", "BLK", "TO")
+    ]
+    composite_indexes = [header.index(column) for column in ("FG%", "FT%")]
+
+    scaled: list[str] = [lines[0]]
+    for line in lines[1:]:
+        cells = next(csv.reader([line]))
+        if len(cells) != len(header):
+            scaled.append(line)
+            continue
+        try:
+            games = float(cells[games_index])
+            totals = [float(cells[index]) for index in counting_indexes]
+        except ValueError:
+            scaled.append(line)
+            continue
+        for index, value in zip(counting_indexes, totals, strict=True):
+            cells[index] = f"{value * games:.1f}"
+        for index in composite_indexes:
+            match = re.match(r"^(0?\.\d{3}) \((\d+\.?\d*)/(\d+\.?\d*)\)$", cells[index])
+            assert match is not None, f"fixture cell {cells[index]!r} is not composite"
+            # Scaled with extra precision on purpose. The reconciliation bound
+            # tightens as attempts grow, so rounding season-total volumes to the
+            # source's one decimal would make *display rounding* the thing that
+            # fails and this test would stop proving anything about basis.
+            cells[index] = (
+                f"{match.group(1)} ({float(match.group(2)) * games:.4f}"
+                f"/{float(match.group(3)) * games:.4f})"
+            )
+        buffer = io.StringIO()
+        csv.writer(buffer, lineterminator="").writerow(cells)
+        scaled.append(buffer.getvalue())
+    season_totals = "\n".join(scaled) + "\n"
+
+    # Positive control on the mutation: the per-game original must import, or a
+    # refusal below would prove nothing about basis.
+    clean = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.HASHTAG,
+        display_name="Hashtag projections",
+        season="2026-27",
+        csv_bytes=per_game.encode("utf-8"),
+        profile=HASHTAG_PROFILE,
+    )
+    assert clean.parse_result.rows
+    assert season_totals != per_game
+
+    with pytest.raises(ProjectionVerificationError) as refused:
+        import_projection_csv(
+            seeded_players,
+            source=ExternalSource.HASHTAG,
+            display_name="Hashtag projections",
+            season="2026-27",
+            csv_bytes=season_totals.encode("utf-8"),
+            profile=HASHTAG_PROFILE,
+        )
+
+    assert "value_shape" in str(refused.value)
+    assert [finding.check for finding in refused.value.report.failures] == ["value_shape"]
+
+    # And the reason only one check caught it: every other signal in the file is
+    # scale-invariant. The scoring identity holds exactly on a batch that is
+    # seventy times too large, which is why it must never be promoted into the
+    # role the shape check plays here.
+    outcomes = {finding.check: finding.outcome for finding in refused.value.report.findings}
+    assert outcomes["scoring_identity"] is VerificationOutcome.PASSED
+
+
+def test_a_successful_import_still_reports_the_check_it_could_not_run(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: a clean return is read as every check having passed.
+
+    ``import_projection_csv`` holds no prior-season observations, so the
+    baked-in-availability check can never run there. It is recorded as
+    ``NOT_RUN`` rather than omitted, because an absent check and a passing
+    check must not look the same to a caller — which is the same defect class
+    the whole verification module exists to catch, one level up.
+    """
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.HASHTAG,
+        display_name="Hashtag projections",
+        season="2026-27",
+        csv_bytes=load("hashtag_sample.csv").encode("utf-8"),
+        profile=HASHTAG_PROFILE,
+    )
+
+    assert outcome.verification.passed
+    outcomes = {finding.check: finding.outcome for finding in outcome.verification.findings}
+    assert outcomes["value_shape"] is VerificationOutcome.PASSED
+    assert outcomes["baked_in_availability"] is VerificationOutcome.NOT_RUN
+
+
+def test_an_identity_failure_is_reported_but_does_not_block_the_import(
+    seeded_players: Session,
+) -> None:
+    """FAILS IF: the scoring identity silently becomes an import gate, or vanishes.
+
+    Only ``value_shape`` may refuse an import. The distinction is not importance
+    but false positives: no legitimate per-game file trips a 60-point ceiling,
+    whereas the scoring identity cross-checks columns a vendor may compute from
+    *separate* models and round independently, so a real source can fail it
+    while being entirely correct.
+
+    Defect excluded: an import path that either blocks on a check with a
+    legitimate false positive, or drops that check's finding so a caller cannot
+    see it.
+
+    Reading in which this passes and a defect is present: the finding is
+    recorded and nobody reads it. Nothing here makes a caller act on
+    ``outcome.verification``, and a batch whose columns genuinely contradict
+    each other still imports. This test pins the *reporting*, not any response
+    to it.
+
+    Note the attempts columns: makes without attempts are dropped as an
+    incomplete volume pair, which nulls the makes and takes the identity check
+    to ``NOT_RUN``. So the identity can only ever run on a source that publishes
+    attempts — narrower than it looks.
+    """
+    outcome = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(
+            b"player_name,field_goals_made_per_game,field_goals_attempted_per_game,"
+            b"three_pointers_made_per_game,free_throws_made_per_game,"
+            b"free_throws_attempted_per_game,points_per_game\n"
+            b"Player Alpha,5.0,10.0,2.0,3.0,4.0,15.0\n"
+        ),
+        raw_payload_ref="raw://projection-import/identity",
+    )
+
+    # Positive control on the construction: 2*5 + 2 + 3 = 15, so this row is
+    # consistent and the check must be quiet. If this is not PASSED, the
+    # contrast below is not about the identity at all.
+    consistent = {finding.check: finding.outcome for finding in outcome.verification.findings}
+    assert consistent["scoring_identity"] is VerificationOutcome.PASSED
+
+    broken = import_projection_csv(
+        seeded_players,
+        source=ExternalSource.MANUAL,
+        display_name="Manual test source",
+        season="2026-27",
+        csv_bytes=(
+            b"player_name,field_goals_made_per_game,field_goals_attempted_per_game,"
+            b"three_pointers_made_per_game,free_throws_made_per_game,"
+            b"free_throws_attempted_per_game,points_per_game\n"
+            b"Player Alpha,5.0,10.0,2.0,3.0,4.0,22.0\n"
+        ),
+        raw_payload_ref="raw://projection-import/identity-broken",
+    )
+
+    outcomes = {finding.check: finding.outcome for finding in broken.verification.findings}
+    assert outcomes["scoring_identity"] is VerificationOutcome.FAILED
+    assert outcomes["value_shape"] is VerificationOutcome.PASSED
+    assert not broken.verification.passed, "the report must not call this clean"
+    assert broken.projection_import.id is not None, "but the import must still have happened"
+    assert "scoring_identity" not in IMPORT_BLOCKING_CHECKS
 
 
 def test_source_games_played_assumption_never_becomes_a_projection_column(
