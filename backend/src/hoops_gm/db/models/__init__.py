@@ -24,9 +24,17 @@ deliberately does not parse Fantrax data.
 Import every model here. Alembic autogenerate and ``Base.metadata`` both see
 only what has been imported, so a model missing from this list is a table that
 silently never gets a migration.
+
+Importing this module also **validates ADR-008 layer purity** — see the call to
+``validate_layers`` at the foot of the file. That placement is deliberate: this
+is the one point at which ``Base.metadata`` is complete, so it is the earliest
+moment a backwards flow can be refused, and refusing it here makes an unlayered
+table or a market-into-projections foreign key an ``ImportError`` rather than a
+test somebody might not have run.
 """
 
 from hoops_gm.db.base import Base
+from hoops_gm.db.layers import DataLayer, LayerViolation, validate_layers
 from hoops_gm.db.models.availability import (
     AbsenceSplit,
     AbsenceSplitComputationRun,
@@ -65,6 +73,7 @@ from hoops_gm.db.models.enums import (
 )
 from hoops_gm.db.models.identity import NbaTeam, Player, PlayerExternalId
 from hoops_gm.db.models.injury_report import InjuryReportEntry
+from hoops_gm.db.models.layers import DataLayerFlow, DataLayerRegistry
 from hoops_gm.db.models.league import (
     FantasyTeam,
     League,
@@ -111,6 +120,9 @@ __all__ = [
     "CategoryKind",
     "CategoryOutcome",
     "Conference",
+    "DataLayer",
+    "DataLayerFlow",
+    "DataLayerRegistry",
     "DnpReason",
     "Draft",
     "DraftEvent",
@@ -125,6 +137,7 @@ __all__ = [
     "GameStatus",
     "InjuryReportEntry",
     "InjuryReportStatus",
+    "LayerViolation",
     "League",
     "LeagueDeadlineCalendar",
     "LeagueScoringCategory",
@@ -164,3 +177,9 @@ __all__ = [
     "Transaction",
     "TransactionType",
 ]
+
+# ADR-008, enforced at the one moment ``Base.metadata`` is complete. A table
+# with no layer, or a foreign key from a later layer into an earlier one, is an
+# ImportError here rather than a finding in a test run somebody skipped —
+# "inexpressible rather than merely documented" is the whole instruction.
+validate_layers(Base.metadata)

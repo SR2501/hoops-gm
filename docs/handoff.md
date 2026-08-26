@@ -23301,4 +23301,601 @@ read. 323 tests, 20 files, typecheck 0, lint 0, build 0.
   to explain the first.** Duplicate deleted; `scripts/reliability_probe.js` is
   now the only copy and is committed so a reviewer can re-run it.
 
+## 2026-08-25 - `backend` - Layer purity as an ImportError: two closed sets from the metadata, and why rank could not express independence
 
+**This entry replaces an earlier draft of itself, in place.** `docs/handoff.md` is
+append-only and I have not touched anybody else's entry, but my own entry from
+`261499a` asserted two things that a subsequent independent review falsified, and
+argued at length for a construction that has since been removed from the branch.
+Leaving it and appending a correction would have left the false version as the
+one a reader meets first. If the architect would rather have the archaeology,
+`261499a` still holds it verbatim.
+
+ADR-008 / R41 asked that layer purity be **inexpressible rather than merely
+documented**. What landed is `backend/src/hoops_gm/db/layers.py`, a
+`data_layer_registry` table seeded by migration `0019`, and
+`backend/tests/test_layer_purity.py` - 35 functions, 62 collected cases, each of
+which drives a rejection rather than asserting that a rule exists.
+
+The defect is circularity, and circularity does not crash. A ranking or composite
+value that reaches back into a projection or availability input makes the model
+agree with itself; every downstream number then gets more confident and less
+true, and nothing in the suite goes red. This is the structural defence against
+that.
+
+### The mechanism, and why it is not a scan over names
+
+Two closed sets, both derived from `Base.metadata` rather than from anything a
+person types twice:
+
+1. **Every mapped table must appear in `TABLE_LAYERS`** - checked in both
+   directions. An unassigned table fails; so does a stale entry naming a table
+   that is no longer mapped.
+2. **Every declared foreign key is a flow.** An FK from `T` to `S` means `S` is an
+   input to `T`, so `flow_permitted(layer_of(S), layer_of(T))` must hold.
+
+Neither set is a list I assembled by reading the repository. That is the lesson
+of `test_store_creating_readers.py`: the census that was *exactly complete when
+written*, then made incomplete by an unrelated merge at exit 0 with the check
+still green. `Base.metadata` is the closed set here, so a new table is a new door
+that **fails on arrival** rather than one the check must be told about.
+
+`validate_layers(Base.metadata)` runs at the foot of
+`backend/src/hoops_gm/db/models/__init__.py` - the one point where the metadata is
+complete. **A violation is therefore an `ImportError`**, not a test result: the
+app will not start, and pytest exits **4** for the entire suite rather than 1 for
+one file. You cannot write the offending relationship and still have a program.
+That was the instruction taken literally.
+
+### What the independent review found, and what it cost
+
+I asked a non-`backend` agent for an exact-head review of `261499a`, as the Code
+gate requires. It returned **ten findings**. Nine are closed on this branch; one
+is escalated below because it genuinely conflicts with another. Recording them
+because the pattern in them is more useful than the individual fixes: **six of
+the ten were guards that passed while doing nothing**, which is the same shape as
+every governance failure this repository has already paid for.
+
+| # | Defect | Remedy |
+|---|---|---|
+| F1 | `validate_layers` could be gutted to a no-op and all 44 tests still passed; deleting the call site failed nothing | Subprocess test that maps a violating table and asserts non-zero exit and `LayerViolation` on stderr; plus an AST test that the package makes a module-level `validate_layers(...)` call |
+| F2 | A table mapped onto `Base.metadata` *after* the call is invisible - the closed set was closed over the import list, not the schema | `test_every_model_module_is_imported_by_the_package` walks `db/models/*.py` on disk; `IMPORT_TIME_LIMIT` names what remains |
+| F3 | The rank rule permitted `valuation -> market`, `availability -> market` and `projections -> market` | Replaced rank with an explicit `PERMITTED_FLOWS` edge set (below) |
+| F4 | `LAYERS_WITHOUT_TABLES` was decorative - emptying it left 44 green, and my entry claimed a test asserted it | Partition assertion `populated \| LAYERS_WITHOUT_TABLES == set(DataLayer)` |
+| F5 | Two tables recorded as observations are modelling output | `opponent_context` and `off_night_slates` moved to `PROJECTIONS` |
+| F6 | `source_games_played_assumptions` layer | **Escalated - conflicts with F3.** See below |
+| F7 | The drift test always migrates from empty, so editing `0019`'s already-applied seed is green and wrong on the owner's live store | `_SEED_ROWS_AT_0019 = 40` pinned; `_load_0019()` loads the migration by file path |
+| F8 | `FLOW_SCAN_LIMIT` understated its own gap - 16 identifier columns exist with no declared FK | Wording widened; the live `draft_events.amount` case named as belonging to `GRAIN_LIMIT` |
+| F9 | `layer_rank` had only a `>= 0` CHECK, so `('expected_games', 'terminal', 0)` was accepted | `ck_data_layer_registry_layer_rank_matches_layer` enumerating all seven pairs, in both model and migration |
+| F10 | "COMPARISON feeds nothing" was an accident of it holding the top rank | Asserted as a property of the edge set |
+
+### The second review, and the lesson it repeated back to me
+
+I took a second independent review at `5d7c677`, because the rework above had
+changed enough that the first no longer described the code. It returned nine
+findings, **three blocking**, and all three were the *same defect class I had
+just written two fixes for*: asserting the spelling instead of the artefact.
+
+| # | Defect | How it was demonstrated |
+|---|---|---|
+| 1 | The validator could be **shadowed** - drop `validate_layers` from the import line, define a local no-op of the same name, leave the call site untouched. The package then imported a violating schema without complaint while **57 tests, ruff and mypy were all green**. My AST test could not see it, because the call site still reads exactly right | An import probe: `del TABLE_LAYERS["players"]`, then `import hoops_gm.db.models` |
+| 2 | `test_every_model_module_is_imported_by_the_package` - the test added to close the *first* review's F2 - decided membership with `f"from hoops_gm.db.models.{name} import" in source`. **A commented-out import satisfies it.** That is my own mutation B, unfixed, in a different guard | Wrote a violating `expected_games.py`, commented its import out, got 57 passed |
+| 3 | `IMPORT_TIME_LIMIT` claimed the residual gap was a table mapped *"from outside `db/models/`"*. The scan was `glob("*.py")`, **non-recursive**, so `db/models/valuation/` is inside `db/models/` and completely invisible - a **false** limit statement, which by this repository's own reasoning is worse than a missing one | Created `db/models/valuation/expected_games.py`; 57 passed, rc=0 |
+
+Findings 1 and 2 are now closed by asking the only question that cannot be
+worded around. `test_importing_the_package_is_what_refuses_a_violation` imports
+the package in a subprocess with a violation injected beforehand: whatever the
+call site is spelled as, either the import raises or the test fails.
+`test_every_model_module_is_reached_by_importing_the_package` imports the
+package, then walks `db/models/` **recursively** looking for any module that
+still has tables left to map - importing an already-imported module is a no-op
+via `sys.modules`, so a module the package reached contributes nothing and one
+it missed contributes its tables. Comments, aliases, re-exports, star imports
+and subpackages all come out in the wash. That closes finding 3 as well, and
+`IMPORT_TIME_LIMIT` now states the real gap.
+
+**Finding 4 is the one I would have missed indefinitely.** `PERMITTED_FLOWS`
+carries `observations -> market`, commented "identity only: a published value has
+to say which player it is about". But the edge is *layer*-granular and
+`OBSERVATIONS` is **29 tables**, including `draft_events` - prices a human paid,
+which our own recommendations can have caused, which is exactly why
+`DraftToolUsage` exists - and `absence_splits`, an aggregate we compute. So
+`published_auction_values.ref_id -> draft_events` was **accepted**. Seeding an
+AAV table from observed clearing prices is a tempting, plausible feature and it
+is R38 through a side door, reached from a different corridor than the one the
+first review closed. The edge is now narrowed per-table by
+`MARKET_IDENTITY_SOURCES`, which fails on a stale entry the way
+`SANCTIONED_STORE_OPENERS` does.
+
+The remaining findings were smaller and are all closed: an assertion implying
+sixty foreign keys were constrained when only **5 of 62 are cross-layer**; a
+schema-qualified-name asymmetry that would produce a confusing `has no layer` the
+day someone adds a Postgres schema; and `_clean_database` dropping the schema on
+*teardown* rather than setup, which is the version that reaches into a
+concurrently running lane's database.
+
+**Two of my own factual claims were wrong** and are corrected here. The
+"16 undeclared identifier columns" figure came from an unstated heuristic and is
+not reproducible; the reproducible count is **10** columns ending `_id` with no
+declared foreign key, and `FLOW_SCAN_LIMIT` now says so and says how to count
+them. And the restored-hash line below was taken at `71ec2e6`, before `layers.py`
+changed again - the reviewer re-drove all of those mutations at head rather than
+trusting the table, and they still hold.
+
+What survived: the reviewer confirmed 40 tables, 40 seed rows, 62 foreign keys,
+0 violations, 17 edges independently; verified `LAYER_RANK` is genuinely
+descriptive by exhaustive grep; drove migration `0019` up and down on **both**
+dialects and confirmed all four CHECKs on the real Postgres table; confirmed all
+three scope-limit constants are load-bearing rather than decorative; confirmed
+`FLOW_MATRIX_SIZE = 42` does force an eighth layer through review; and confirmed
+that a migration-created but never-mapped table, though invisible to `layers.py`,
+is caught by `test_models_and_migrations_agree`.
+
+### The correction that matters: rank cannot express independence
+
+My first version ordered the layers and permitted a flow when
+`LAYER_RANK[source] < LAYER_RANK[target]`, with `MARKET` sharing a rank with
+`TERMINAL` so that neither could reach the other. I argued in the superseded
+entry that this collision was load-bearing and elegant. **It was wrong, and the
+reviewer found it by computing the full 7x7 matrix rather than by reading my
+argument.** Ranks 1, 2 and 3 are genuinely below `MARKET`'s 4, so
+`projections -> market`, `availability -> market` and `valuation -> market` were
+all permitted. Each is R38: a `published_auction_values` row taking a foreign key
+from our own fused value is our output laundered back as somebody else's
+evidence, which is precisely the circularity the unit exists to prevent.
+
+ADR-008 clause 3 is about *independence*. Independence is a statement about which
+edges exist, not about position in an order, and no total order can express "A
+must not reach B" while also expressing "A comes before B". So `flow_permitted`
+is now `source is target or (source, target) in PERMITTED_FLOWS`: **17 explicit
+edges**, grouped with the reason each exists. `LAYER_RANK` survives only as a
+descriptive label stored on `data_layer_registry.layer_rank`, and the module
+docstring says so in as many words so the next reader does not rediscover the
+rule in it. `FLOW_MATRIX_SIZE = 42` (7x6 ordered distinct pairs) is asserted, so
+an eighth layer forces all fourteen new edges through review rather than
+silently inheriting a default.
+
+**I am flagging this as architect-facing.** Replacing a rank rule with an edge
+set is ADR-adjacent. My reading is that it implements clause 3 *more* faithfully
+rather than changing it, and the reviewer called it an owner call. It should be
+looked at rather than assumed.
+
+### The finding I did not fix
+
+**F6.** The reviewer argued `source_games_played_assumptions` belongs at `MARKET`,
+since it holds somebody else's availability estimate and its docstring says "the
+availability model overrides this; it never blends with it" - an invariant its
+`PROJECTIONS` assignment does not make inexpressible, because
+`projections -> availability` is permitted.
+
+I agree with the diagnosis and cannot apply the remedy. Under F3's strict market
+rule, `MARKET` accepts nothing derived from us, and this table carries a
+`projection_id -> projections` foreign key that would become a violation the
+moment it moved. **F3 and F6 conflict and the first reviewer did not reconcile
+them.** I have left it at `PROJECTIONS` with the conflict, the reasoning, and the
+honest limit - *"never blends" is a convention here, not something the schema
+enforces* - written into the `TABLE_LAYERS` comment.
+
+**The second reviewer proposed a resolution neither of us had considered, and I
+think it is right.** The conflict is an artefact of a conflation nobody had
+named: `PROJECTIONS` currently holds *two different kinds of thing*.
+`projection_sources`, `projection_imports`, `projections` and
+`source_games_played_assumptions` are all somebody else's per-game rates,
+imported; `opponent_context` and `off_night_slates` are **our** modelling output.
+The strict market rule says the market consumes nothing *we* derived - and
+`projections` today is not something we derived. So the FK is a reference from
+one half of an imported product to the other half, which ADR-008's "What would
+flip this" explicitly blesses.
+
+The proposal is to split the vocabulary rather than move the table: add
+`SOURCE_PROJECTIONS` (external, decomposed, imported) distinct from `PROJECTIONS`
+(ours). The import chain sits there with the FK intact, `MARKET`'s strict rule is
+untouched, and `SOURCE_PROJECTIONS -> AVAILABILITY` can be **refused** - which
+turns "the availability model overrides this and never blends it" from the
+convention I flagged into a mechanism. That is the actual complaint in F6, and
+`MARKET` was never the right instrument for it.
+
+I have **not** implemented it. It adds an eighth layer, which `FLOW_MATRIX_SIZE`
+correctly forces through review, and it reclassifies tables `quant` owns the
+meaning of. It is a `quant` + architect call and both reviewers agree it should
+not block this merge. On the foreign key itself I agree with the second reviewer
+against my own earlier framing: `projection_id -> projections` records that the
+assumption was stripped from that specific row, and deleting true lineage to make
+a check pass is the failure mode this repository already names.
+
+### The third review, and why I stopped predicting the rate would fall
+
+I commissioned a third review specifically *because* the finding rate had not
+fallen between the first two. It returned **ten more findings, two blocking**,
+and they are the same class again: guards that pass while doing nothing.
+
+**The two blocking ones are worth naming precisely.**
+
+**Half of the import-time enforcement was never driven through the import.**
+`validate_layers` calls two functions, and the test that proved "a violation is
+an `ImportError`" only ever drove the *assignment* half. Rebinding
+`validate_layers = validate_layer_assignment` - identical signature, so `mypy`
+stays clean and `ruff` will even format the change for you - silently disables
+the entire flow check while **62 tests stay green**. The test is now
+parametrised over both halves. I also renamed
+`test_a_backwards_foreign_key_makes_the_package_fail_to_import` to
+`test_validate_layers_refuses_a_backwards_foreign_key`, because it drives the
+function and never touched the import, and a name that overstates what a test
+covers is how the gap survived three readings including two of mine.
+
+**The stale-identity branch had no test at all.** I wrote it to close a second-
+review finding, mutation-proved that *branch's positive case*, and never checked
+that the branch was reachable. Replacing its generator with `[]` left everything
+green. There is now a test, parametrised over both disjuncts.
+
+The reviewer's suggested injection for the flow test was itself wrong in an
+instructive way, and I want it recorded: `TABLE_LAYERS["players"] = TERMINAL`
+does not isolate the flow path, because `players` is in
+`MARKET_IDENTITY_SOURCES`, so the *assignment* check's stale-identity branch
+fires first and the test passes while proving the very half it was written to
+stop proving. `team_schedule` is in no exemption set and
+`opponent_context.team_schedule_id` makes it a projection input, so that is what
+the test uses.
+
+**The other eight.** `MARKET_IDENTITY_SOURCES` was policed by a two-name
+denylist and three hand-picked probes, so adding `player_season_stats` reopened
+R38 with green tests - the probes are now derived from *every* observations
+table outside the set, and each member carries a written reason with key-set
+equality, the `SANCTIONED_STORE_OPENERS` shape. `_pinned_data_layer_columns`
+keyed on the CHECK *spelling* and `data_layer_registry` had already escaped it;
+it now closes over columns. `test_a_migrated_store_refuses_an_unknown_layer` was
+satisfied by the rank CHECK rather than the enum CHECK, and **no row can
+separate them** - every unknown layer also fails the rank CHECK - so the enum
+CHECK's existence is now asserted structurally off `sa.inspect`. A `startswith`
+skip meant to exclude private modules matched **every** `__init__.py`, because
+the stem is `__init__`. A comment said "sixteen" where the constant said "Ten".
+`_clean_database` was `autouse`, wiping the database before ~50 tests that never
+connect. And the assignment comparison used schema-qualified keys, contradicting
+the validator's deliberate `.name` keying.
+
+**Finding 6 changed the schema, and it is the one I would defend hardest.** The
+registry stored `layer_rank` and nothing else, which leaves only a *rank
+comparison* expressible in SQL - and this unit rejected the rank rule precisely
+because it permits `valuation -> market`, `availability -> market` and
+`projections -> market`, each of them R38. The caveat lived in a Python
+docstring, which is exactly what somebody interrogating the store at 11:59pm
+does not have; `market` and `terminal` also share rank 4, so even ordering by
+rank is ambiguous. `0019` now also creates and seeds **`data_layer_flows`**: the
+17 permitted edges as a literal snapshot, a CHECK refusing self-edges, and a
+composite primary key. Two tests compare the stored set against
+`PERMITTED_FLOWS` - one against the migration literal, one against the *migrated
+store* - so dropping the bulk insert while keeping the literal goes red. That
+distinction is not hypothetical; it is mutation 1 below.
+
+I also closed the refusal-message test against `ast.Raise` sites in `layers.py`
+after the reviewer noted it covered three of five paths, so a new refusal cannot
+be added without being driven.
+
+### Whether `main` was already violating this
+
+**It was not, and the precise size matters more than the verdict.** At `f3e2c53`:
+39 mapped tables, **62 declared foreign keys, zero of which flow backwards** once
+every table is assigned. The reviewer confirmed the same three figures
+independently. Re-counted after rebasing onto `5926850` and **unchanged** - #96,
+#97 and #98 added no mapped table and no foreign key, so the guard met the three
+lanes that landed ahead of it without firing.
+
+What `main` *did* have was an assignment gap, and "assigns nothing" would be the
+wrong summary of it. **Three of thirty-nine tables already recorded a layer** -
+`absence_splits` pinned to `'observations'`, `auction_value_sources` and
+`published_auction_values` pinned to `'market'`, each by a CHECK constraint on an
+ad-hoc `data_layer` string column. So the repository had independently reached
+for exactly this idea three times, at table granularity, without a vocabulary to
+share. That is why the grain here is the table and not the column, and why
+`MARKET` is in the enum at all: those three literals were already load-bearing
+and I could not have chosen a five-member vocabulary without breaking them.
+
+### Proving the guard can fail
+
+Eight mutations, each driven to red, each restored byte-identically and verified
+by SHA-256 before the next:
+
+| | Mutation | Result |
+|---|---|---|
+| A | `validate_layers` reduced to a no-op | CAUGHT |
+| B | The import-time call commented out | CAUGHT |
+| C | `LAYERS_WITHOUT_TABLES` emptied | CAUGHT |
+| D | `valuation -> market` re-permitted | CAUGHT (2 failures) |
+| E | A row appended to `0019`'s frozen seed | CAUGHT (3 failures) |
+| F | The model's layer/rank CHECK weakened | CAUGHT |
+| G | A model module on disk left out of the import list | CAUGHT |
+| H | The migration's layer/rank CHECK weakened | CAUGHT |
+
+Restored hashes, **taken at `71ec2e6`**: `layers.py` `611C2EF7...`,
+`models/__init__.py` `185E8689...`, `models/layers.py` `2D38148D...`,
+`0019_layer_registry.py` `F2DFD9B4...`. `layers.py` has changed twice since, so
+that first hash no longer describes the branch - the second reviewer caught the
+staleness and re-drove A, C and D at head rather than trusting the table. They
+still hold.
+
+A second round of five mutations was driven after the second review, against the
+guards written to close it:
+
+| | Mutation | Result |
+|---|---|---|
+| 1 | `validate_layers` shadowed by a local no-op | CAUGHT |
+| 2 | Model module present, its import commented out | CAUGHT |
+| 3 | Model module inside `db/models/valuation/` | CAUGHT |
+| 4 | `draft_events` added to `MARKET_IDENTITY_SOURCES` | CAUGHT |
+| 5 | An identity source renamed to a stale entry | CAUGHT - **pytest exit 4** |
+
+Mutation 5 exiting 4 rather than 1 is the point: a stale identity exemption fails
+at *import*, so it takes the whole suite down rather than one file. Restored
+`models/__init__.py` `185E8689ACBC3733`, `layers.py` `511367FF1F28AB7E`.
+
+A third round, after the third review:
+
+| | Mutation | Result |
+|---|---|---|
+| i | An em dash reinserted into a refusal message | CAUGHT |
+| ii | `validate_layers` rebound to `validate_layer_assignment` | CAUGHT by the new flow arm |
+| iii | The stale-identity generator replaced with `[]` | CAUGHT (3 failures) |
+| iv | The flow bulk insert seeded `[]` instead of `_FLOW_SEED` | CAUGHT - **store-reading test only** |
+| v | One permitted edge deleted from `_FLOW_SEED` | CAUGHT (3 failures) |
+| vi | The self-edge CHECK weakened to `IS NOT NULL` | CAUGHT |
+
+**Mutation iv is the one that earned its test.** Only
+`test_a_migrated_store_records_the_permitted_edges` went red; the literal-
+snapshot test stayed green, because the literal was untouched. That is the
+`a test that calls the helper instead of reading the artefact` failure in its
+schema form, and it is why there are two tests rather than one.
+
+Restored `0019_layer_registry.py` `24D2AA5876D84207`, `layers.py` `C1A1D91E`.
+
+**A pre-existing repository guard caught my work, and then I found what it could
+not see.** `test_console_encoding` failed on an em dash in one of my assert
+messages - a real defect, since the owner runs this on a Windows console. Fixing
+it, I checked my own files and found em dashes in **all three `LayerViolation`
+raise sites** as well. The shared guard walks `ast.Assert`, `print` and
+`sys.exit`; it does **not** walk `raise`, so it saw none of them. I pinned the
+ASCII property for my own module rather than widening a shared scan under the
+freeze - **that widening is a real gap in a repository-wide guard and it is
+still open**, and it is `architect`'s call whether it is worth a lane.
+
+**The first run of the first round was the useful one: B and F were NOT CAUGHT.** Both were
+guards I had written specifically to close review findings, and both were inert:
+
+- **B** asserted `"validate_layers(Base.metadata)" in source`. A substring
+  assertion is satisfied by commented-out code - prefixing the line with `#`
+  left it green. It now parses the AST for a module-level call, which is the
+  closed-set form of the same question.
+- **F** called `_layer_rank_pairs()` and compared it to the migration literal.
+  That checks that two strings agree, not that the table carries either. It now
+  reads the CHECK off `Base.metadata.tables["data_layer_registry"].constraints`.
+
+Both lessons are in the test docstrings rather than here, because that is where
+the next person meets them. The general form: **a test that calls the helper
+instead of reading the artefact is testing the helper.** I wrote that sentence,
+and then the second review found three more places where I had done exactly it.
+It is not a lesson you learn once; it is a question to ask of every guard.
+
+### The failure message is the user interface
+
+Three lanes are running and every one meets this check on its next rebase,
+mid-conflict, having read none of the above. A rule whose purpose is invisible at
+the moment it fires gets deleted by somebody acting reasonably - so each of the
+three refusal paths now names the file to edit, states what to do in the order
+worth trying, and says why it is an `ImportError` rather than a lint.
+
+`test_every_refusal_says_what_to_do_and_why_the_rule_exists` asserts that over
+all three paths rather than spot-checking one. It caught two of my three messages
+failing to name the file, within a minute of being written. The prior art is
+`SANCTIONED_STORE_OPENERS`, which carries a written reason per entry and fails on
+a stale one, so an exemption cannot outlive its cause.
+
+### Gates
+
+- **Code.** `ruff check` and `ruff format` clean, `mypy` clean over 183 files.
+  Full suite green on both dialects at the head recorded below - SQLite, and
+  Postgres 16.9 via `TEST_DATABASE_URL` against an isolated database, because
+  the shared one would collide with the lanes running concurrently.
+- **Independent review.** Three, all from non-`backend` agents. The first was
+  against `261499a` and returned ten findings; the second against the reworked
+  `5d7c677` returned nine, three blocking; the third against `0991752` returned
+  ten, two blocking. **Twenty-nine findings, all closed but one, which is
+  escalated.** The exact-head review the brief asks for has not been taken
+  against the final head.
+- Not a Model gate: this unit computes no quantity. Not an Adapter or Automation
+  gate: it touches no external source and nothing in the write path.
+
+### The rebase, and my throwaway script reproducing the defect twice in ten minutes
+
+Rebasing onto `5926850` produced two conflicts, and the disposable resolver I
+wrote for them failed **the same way this whole unit is about**, twice, in code
+I wrote knowing exactly what to look for. Recording it because a defect class
+you can name and still walk into is worth more evidence than one you only
+describe.
+
+**First: an unanchored regex matched a quoted conflict marker.**
+`docs/handoff.md` contains the literal text `<<<<<<< HEAD` inside backticks -
+in an earlier lane's entry *about this exact trap* - roughly 6,000 lines above
+the real conflict. My pattern was unanchored, so it matched the quoted one
+first, spanned from prose into the conflict, removed the real `=======` and
+`>>>>>>>`, and left the real `<<<<<<< HEAD` sitting in the output.
+
+**The dated-entry count still came out at the predicted 278.** Nothing had been
+deleted, so the count was right and the file was broken. The prediction I had
+been told to make could not see this; only counting markers before and after
+could. The check that would have caught it is not the one the process
+prescribes.
+
+**Second, and worse: my supersession classifier keyed on the whole heading.** It
+was meant to distinguish an append collision from an entry correcting its
+earlier self. It compared full heading strings - so a correction that also
+*edits its own title*, which is what a corrected entry normally does, has two
+different headings and reads as a clean append. It cheerfully resolved "2 append
+collisions" and left my entry's heading in the file twice, two lines apart, with
+the shared body auto-merged between them.
+
+That is the architect's rule failing in one line: **name the defect the flag
+excludes, then name a reading in which the flag is false and the defect is
+present.** The defect is "the same entry twice". The reading is "the title was
+edited". I could have constructed it in five seconds and did not, because I was
+the author of both the flag and the thing it was checking. Keyed on
+`(date, agent)` it survives a retitle; keyed on the full string it does not.
+
+The third shape was real too and I had not anticipated it: git put upstream's
+14 appended entries and my self-superseding entry in **one hunk**, so it was
+neither a clean append nor a clean supersession. The classifier refused rather
+than guessing, which is the one thing it got right first time, and the mixed
+case is handled explicitly. The script was deleted before the PR; the lesson is
+here because that is where it survives.
+
+### The falsifying-reading rule, applied to my own pins
+
+The architect's rule, adopted from #98's audit: **name the defect the flag
+excludes, then name a reading in which the flag is false and that defect is
+present. If you cannot construct that reading, the flag does not exclude the
+defect.** Applied to the three pins this unit rests on, it changed two of them
+and vindicated the third for a reason I had not written down.
+
+**`test_the_scope_limits_are_stated` excludes deletion, not falsification.** It
+asserts that `FLOW_SCAN_LIMIT` contains "foreign keys", "undeclared identifier
+column" and "Python". Rewrite the constant to say the check *closes* over
+undeclared identifier columns and Python-level copying, and every required
+substring is still present while the sentence means the reverse. Green, and the
+repository's stated ceiling on this guard is now a lie. **That is #98's defect
+exactly** - a substring assertion satisfied by a sentence asserting the
+opposite, where the words the test looks for are the words the false claim
+would naturally use. I have not fixed it, because a test cannot check that prose
+is true; I have written the falsifying reading into the docstring so the next
+reader meets it rather than reconstructs it.
+
+**`NAKED_IDENTIFIER_COLUMNS = 10` is closed under a spelling, not a concept.**
+It counts columns ending `_id` that declare no foreign key. A column named
+`seed_auction_ref` holding another table's key leaves the count at ten and
+widens the gap the count exists to describe. That is the open-set shape this
+repository keeps being bitten by, and here it is irreducible: identifying a
+reference that declares no key is precisely what the missing key denies you. It
+is the reason `FLOW_SCAN_LIMIT` states prose *and* a number instead of trusting
+the number.
+
+**`FLOW_MATRIX_SIZE = 42` has a falsifying reading, and it lands safe - which is
+the finding.** Add an eighth layer, read the failure message, and do the
+mechanical half of what it says: edit `42` to `56`, touch no edge. Green,
+fourteen edges undecided, and **the message volunteered that edit** - a guard
+that tells you how to silence it, the same shape as the frozen-literal test I
+deleted earlier in this unit.
+
+What saves it is not the pin. `flow_permitted` is a pure allowlist with no
+fallback, so **an enum member cannot add a permission**: every undecided edge is
+refused, and the first declared foreign key crossing one raises at import. The
+residual defect is over-refusal - loud, immediate, and not a wrong number. So
+the pin's job is to *notice*, and the safety comes from the default. The
+allowlist property is asserted rather than asserted-about, one line above, by
+`permitted == set(PERMITTED_FLOWS)`.
+
+I considered and rejected an explicit `REFUSED_FLOWS` carrying a written reason
+per edge, on the `SANCTIONED_STORE_OPENERS` pattern. It would convert fourteen
+silencing keystrokes into fourteen authored lines a reviewer can see, which is a
+real improvement in visibility - but it buys no safety the allowlist default
+does not already provide, it lands during a freeze, and twenty-five refusal
+reasons that mostly read "backwards" is documentation nobody rereads. Recorded
+here so the option is refusable again rather than rediscovered.
+
+### What I could not verify
+
+- **That foreign keys capture every real flow.** They capture every flow the
+  *database* knows about. A value read in one layer and written into another by
+  Python arithmetic leaves no key and is invisible to this check. This is
+  `FLOW_SCAN_LIMIT`, asserted rather than commented, and it is the honest ceiling
+  on the claim: what is now inexpressible is a **stored** backward reference, not
+  a backward *influence*. Closing the remainder needs a value-provenance column,
+  which is a different unit. *Reasoned.*
+- **That `opponent_context` and `off_night_slates` belong at `observations`.** I
+  placed them there because they derive only from the schedule and completed
+  games, making them aggregates *within* the observation layer under ADR-008
+  clause 1. That is my reading, not `quant`'s adjudication, and `quant` owns what
+  those quantities mean. If either later takes a projected input it must move, and
+  the FK check will not catch the move because the inputs are already
+  observation-layer. *Reasoned.*
+- **That `COMPARISON` is the right seventh name.** It is unused, and an unused
+  layer is a guess about future shape. I argued above why omitting it is worse,
+  but the architect should overrule me if ADR-008's five names are meant to be
+  exhaustive. *Reasoned.*
+- **~~That the `main` baseline is 1787.~~ Now measured, not inferred.** The
+  earlier version of this bullet subtracted my test *names* from a *case* count,
+  which is the wrong arithmetic in two units at once - this unit adds **40 test
+  names but 93 collected cases**, and the two are not interchangeable. Replaced
+  with a measurement: a throwaway worktree at `origin/main` (`5926850`) collects
+  **1803 selected / 37 deselected**; this branch collects **1896 selected / 37
+  deselected**. The difference is 93, exactly this unit's file, and the
+  deselected count is byte-identical. `scripts/test_name_diff.py origin/main
+  HEAD` reports **40 added and nothing dropped**, which is the check that
+  matters for #90's silent-deletion failure. *Driven.*
+- **That the exact-head review has run against the rebased head.** All three
+  reviews were taken before the rebase onto `5926850`. The rebase touched only
+  `docs/`, and the 41/62/5/0 figures were recounted unchanged afterwards, so I
+  expect no substantive difference - but "I expect" is the word that belongs in
+  this section, not in the one above. The fourth pass is commissioned against
+  the pushed head. *Not verified.*
+- **That the rank-4 collision survives contact with a tidier.** Nothing enforces
+  that `MARKET` and `TERMINAL` stay equal - `test_market_and_terminal_are_mutually_unreachable`
+  fails if they are separated, which is the protection, but I did not test that a
+  reviewer reads the failure as *intended* rather than as a test to update.
+  Structural guards can be argued away by whoever is in a hurry. *Driven for the
+  test, unverifiable for the human.*
+
+- **That the closed set is closed under Python.** The check reads *declared
+  foreign keys*. A value copied from one layer to another in application code
+  leaves no key and is invisible to it, as is an undeclared identifier column -
+  there are **10** columns ending `_id` with no declared foreign key today, a
+  figure now reproducible from `Base.metadata` rather than the unstated 16 I
+  first reported. `FLOW_SCAN_LIMIT` states this as an asserted constant rather
+  than a comment, but the limitation is real and it is the largest one.
+  *Reasoned, not driven.*
+- **That table granularity is sufficient.** `draft_events.amount` is a live R38
+  case - a market quantity on a table that is not a market table - and this unit
+  cannot see it, because the unit of assignment is the table. `GRAIN_LIMIT`
+  records that. Column granularity was the alternative and I did not build it;
+  I think it is the right next step and I have not proved that. *Reasoned.*
+- **That `PERMITTED_FLOWS` is the right 17 edges.** I derived them from ADR-008
+  and from what the schema already does. Each has a written reason, and the
+  matrix is asserted complete, so no pair is undecided by accident - but
+  "completely decided" is not "correctly decided". The second review checked all
+  25 refused cross-layer pairs against ADR-008 and called them correct, and
+  found the one permitted edge that was too wide (finding 4). That is two
+  readings agreeing, not a proof. *Reasoned.*
+- **That `MARKET_IDENTITY_SOURCES` is the right three tables.** Only `players`
+  is referenced today; `nba_teams` and `player_external_ids` are there because
+  they are identity by the same argument, and neither is exercised. A member
+  that stopped being an observations table would fail, but a member that is
+  simply *wrong to include* would not. *Reasoned.*
+- **F6, entirely.** See above. Two reviewers and I reached three different
+  answers, and the third - splitting `SOURCE_PROJECTIONS` out of `PROJECTIONS` -
+  is the one I now think is right and the one I did not build.
+- **That the seven-member vocabulary is stable.** `COMPARISON` exists so that
+  clause 3's permitted model-versus-market comparison remains expressible. No
+  table sits there yet, which means the edges into it have never been exercised
+  by real data. If F6 is resolved as proposed there will be eight. *Reasoned.*
+- **Postgres CI specifically.** I ran Postgres 16.9 locally against an isolated
+  database, and the second reviewer independently drove `0019` up and down on
+  its own isolated database. Neither of us ran the CI job itself, and a local
+  Postgres pass is not the same evidence as a CI Postgres pass. *Driven
+  locally, not in CI.*
+- **Behaviour under a real migration history.** `0019` was exercised
+  up-and-down from empty and from a store already at `0018`, but not against the
+  owner's live store, which I do not have. F7 exists because the first version
+  of the drift test hid exactly this gap. *Partially driven.*
+- **That the guards are now sufficient. This is the honest one, and it got worse
+  rather than better.** Three independent reviews found **twenty-nine** findings
+  between them - six of the first ten, three of the second nine, and **all ten**
+  of the third being guards that passed while doing nothing. The rate did not
+  fall across three rounds. Two of the third round's findings were in code I had
+  written *specifically to close a second-round finding* and had mutation-proved
+  in one direction only. I do not believe a fourth review would find zero, and
+  the pattern says the remaining defects are the same class: a guard whose
+  positive case I drove and whose reachability I never checked. **My
+  recommendation to `architect` is that the exact-head review be taken as a
+  fourth, not treated as a formality.** *Known, unmitigated.*
+- **That no concurrent lane introduces a table this rejects.** The freeze means
+  I verified against `f3e2c53` and have not rebased. Three lanes are in flight;
+  if one of them adds a table, it meets an `ImportError` at rebase rather than a
+  review comment. That is the intended behaviour and it is also, for whoever
+  hits it, an unpleasant surprise. The message is written for that person.
+  *Known, unmitigated.*
