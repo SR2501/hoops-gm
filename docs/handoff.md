@@ -26678,3 +26678,65 @@ on this PR is that append tail and not a code conflict.
    `OWNER_DEFINED_SCHEMA` with a non-`MANUAL` source, and none of the seven can
    trip it. That is an argument, not an observation - I did not re-derive each
    test's intent from scratch.
+
+## 2026-08-26 - `data-engineer` - the fixture's hazard declarations were true by inspection, and are now true by construction
+
+`hashtag_sample.metadata.json` declares four parser hazards it deliberately
+carries: a mid-table repeated header row, a quoted multi-position cell, a
+zero-attempt free-throw cell, and a low-volume shooting cell. All four were
+present. Nothing checked that they stayed present.
+
+**The gap was narrower than "ungated", and stating it at the right strength is
+what made the fix proportionate.** `privacy_safe_fixture_sha256` covers every
+byte, so the fixture cannot drift *silently* - any edit fails the hash
+assertion. What the hash does not do is check the *claim*: it fails on the
+bytes, and the person repairing it is looking at the file, not at the sentence
+about the file three keys away in a different document. Update the hash and a
+stale declaration survives. A discipline gap, not a silent one.
+
+I established that rather than assuming it: removed the zero-attempt cell,
+confirmed the mutation was in the file, ran the class, and got **exactly one
+failure - the hash test**. The hazard-specific behaviour was not asserted
+anywhere.
+
+`test_every_declared_hazard_is_actually_present_in_the_fixture` now keys each
+detector to its declaration's own words, so editing a declaration without
+editing its detector fails here rather than the two drifting apart, and asserts
+the counts match **in both directions** so a fifth declaration cannot be added
+without a check.
+
+**Each assert was proved capable of failing before I trusted it.** A passing
+check is indistinguishable from a check that cannot fail, so I mutated all four
+hazards in turn plus the count guard, and confirmed the unmutated baseline
+still exits 0:
+
+    baseline (unmutated)          exit=0
+    repeated header row           exit=1  CAUGHT
+    quoted multi-position         exit=1  CAUGHT
+    zero-attempt FT cell          exit=1  CAUGHT
+    low-volume shooting cell      exit=1  CAUGHT
+    5th declaration, no detector  exit=1  CAUGHT
+
+That also closes a `could not verify` I filed earlier the same day, where I had
+mutated one hazard and inferred the other three from test names.
+
+**The repeated-header detector needed a second assertion, and the first one
+would have passed while the defect was present.** `^R#` matches the *leading*
+header, which is the ordinary contract rather than the hazard, so a fixture
+whose mid-table repeat had been deleted still matched it. The count assertion
+(`>= 2`) is the one that actually excludes the defect; the membership one does
+not. Same shape as the PTS identity being scale-invariant: a check that looks
+like it covers the case and is blind to exactly the mutation that matters.
+
+**Could not verify:** that the four hazards are the *right* four. They are the
+ones I observed on one page-size setting on one date, and a dialect quirk the
+live source emits rarely - or only for the seven categories I never rendered -
+would be absent from the fixture and absent from this list, so this test would
+pass while the fixture under-covers the source. It pins what I saw, not what
+exists.
+
+Environment, new: `[IO.File]::ReadAllText` resolves relative paths against the
+.NET process working directory, which PowerShell's `cd` does not update. It
+failed loudly here; the same call as `WriteAllText`, with a path that exists in
+both locations, writes to the wrong file and returns success. Use absolute
+paths for `[IO.File]`.
