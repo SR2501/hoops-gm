@@ -43,10 +43,21 @@ def _harness_mutations() -> list[tuple[str, str, str, str]]:
     resolved here; anything that is neither a string literal nor one of those
     names raises instead of being silently skipped, because a mutation this
     reader cannot resolve is a mutation this reader is not checking.
+
+    **Rebinding is refused rather than resolved.** `constants` is built by
+    walking the module top to bottom, so a name assigned twice would be read
+    here as its *final* value while Python built `MUTATIONS` from the value in
+    force at that point. The two agree today and would diverge silently — this
+    reader would then check the wrong file and report every anchor present.
+    That is the mis-resolution this function exists to refuse, so a rebound name
+    raises like any other unresolvable field. Found by its author before review,
+    which is worth saying because the same function already refuses four exotic
+    forms and missed the mundane one.
     """
     tree = ast.parse(_MUTATION_HARNESS.read_text(encoding="utf-8"))
 
     constants: dict[str, str] = {}
+    rebound: set[str] = set()
     mutations_node: ast.List | None = None
     for node in tree.body:
         if isinstance(node, ast.AnnAssign):
@@ -67,7 +78,12 @@ def _harness_mutations() -> list[tuple[str, str, str, str]]:
                     raise AssertionError("MUTATIONS is no longer a list literal")
                 mutations_node = value
             elif isinstance(value, ast.Constant) and isinstance(value.value, str):
+                if target.id in constants:
+                    rebound.add(target.id)
                 constants[target.id] = value.value
+            elif target.id in constants:
+                # Rebound to something this reader cannot evaluate at all.
+                rebound.add(target.id)
 
     if mutations_node is None:
         raise AssertionError(f"no MUTATIONS assignment found in {_MUTATION_HARNESS}")
@@ -81,6 +97,12 @@ def _harness_mutations() -> list[tuple[str, str, str, str]]:
             if isinstance(item, ast.Constant) and isinstance(item.value, str):
                 fields.append(item.value)
             elif isinstance(item, ast.Name) and item.id in constants:
+                if item.id in rebound:
+                    raise AssertionError(
+                        f"{item.id} is assigned more than once in {_MUTATION_HARNESS.name}; "
+                        "this reader would resolve it to the last value while Python used "
+                        "the one in force at the MUTATIONS literal"
+                    )
                 fields.append(constants[item.id])
             else:
                 raise AssertionError(
