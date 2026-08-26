@@ -1,0 +1,19 @@
+{
+  "source": "hashtag_basketball",
+  "season": "2026-27",
+  "evidence_date": "2026-09-24",
+  "privacy_safe_fixture_sha256": "F56D710D53833240FF98A3677B398839F60657AA12F13F04DB6A68F91F0DDA21",
+  "fixture_hash_canonicalization": "SHA-256 after CRLF-to-LF normalization, matching the Git blob on every checkout",
+  "evidence_kind": "live-page contract observation, NOT a hashed artifact",
+  "why_no_source_hash": "Hashtag Basketball publishes no export. The projections page is rendered HTML and the owner's input is a copy-paste of the table, so there is no immutable file to hash the way basketball_monster_sample.metadata.json hashes a paid export. This fixture's hash covers the committed synthetic file only; it is evidence that this fixture has not drifted, and it is NOT evidence about the vendor. That is a strictly weaker claim than the Basketball Monster fixture's, and the two must not be read as equivalent because they sit under similarly-named keys.",
+  "semantic_reconciliation": "429 data rows from a single 900-row page request reconciled: 0 unparseable percentage cells; FG%/FT% stated percentage vs. stated makes/attempts agreed within the volume-aware display-rounding bound on 429/429 rows (worst error/bound ratio 0.915); 2*FGM + 3PM + FTM reproduced PTS within 0.20 against an analytic bound of 0.25.",
+  "sample_scope": "429 of roughly 500 rostered players, from one page-size setting on one date. Not the full player universe, and not repeated across dates. Low-minute players are the weakest part of the sample and are also where the shape bound is loosest.",
+  "sanitization": "No vendor rows are committed. Every player name, team, position and figure below is invented. Only the exact header order, the composite 'percentage (makes/attempts)' cell dialect, the quoted multi-position field and the periodic repeated-header row derive from the observed live page.",
+  "deliberate_fixture_hazards": [
+    "A repeated header row mid-table, which the live source emits roughly every 13 rows.",
+    "A quoted multi-position cell ('SG,SF'), whose embedded comma breaks naive line splitting.",
+    "A zero-attempt free-throw cell ('0.000 (0.0/0.0)'), which must parse rather than divide by zero.",
+    "A low-volume shooting cell ('0.667 (0.2/0.3)'), where a flat percentage tolerance produces a false alarm and a volume-aware one does not."
+  ],
+  "what_this_fixture_replaced": "The previous hashtag_sample.csv was fiction: it declared an OREB/DREB split and seven standalone volume columns (FGM, FGA, 3PA, FTM, FTA and others) that Hashtag does not publish, and it used header names the source does not render. It passed its tests while recording a guess about the source's contract."
+}

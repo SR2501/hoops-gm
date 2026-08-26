@@ -336,6 +336,21 @@ def _profile_definition(profile: ColumnProfile) -> dict[str, object]:
         "percentage_fallback_aliases": {
             field: list(aliases) for field, aliases in profile.percentage_fallback_aliases.items()
         },
+        # Composite columns must be in the hashed definition, not merely in the
+        # profile object. They decide which canonical field each half of a
+        # ``pct (makes/attempts)`` cell becomes, so a definition that omitted
+        # them would hash identically whether ``FG%`` decomposed into field
+        # goals or into free throws. A hash that does not cover the contract it
+        # claims to pin is worse than no hash, because it is trusted.
+        "composite_shooting_columns": [
+            {
+                "made_field": column.made_field,
+                "attempted_field": column.attempted_field,
+                "aliases": list(column.aliases),
+                "shape": column.shape.value,
+            }
+            for column in profile.composite_shooting_columns
+        ],
         "expected_headers": list(profile.expected_headers),
         "ignored_source_headers": list(profile.ignored_source_headers),
     }
@@ -454,9 +469,39 @@ def _build_profile_lineage(
     definition_sha256: str,
 ) -> dict[str, object]:
     columns_by_field = {column.field: column for column in profile.stat_columns}
+    #: Fields that reach the row via decomposition of a composite cell rather
+    #: than via a column of their own. Their lineage is materially different
+    #: and is recorded as such: the source header they came from is shared
+    #: with their sibling, and the value was extracted from inside it.
+    composites_by_field = {
+        field: composite
+        for composite in profile.composite_shooting_columns
+        for field in (composite.made_field, composite.attempted_field)
+    }
     field_transforms: dict[str, object] = {}
     for canonical_field, source_header in parsed.resolved_headers.items():
-        if canonical_field in CANONICAL_STAT_FIELDS:
+        composite = composites_by_field.get(canonical_field)
+        if composite is not None:
+            component = (
+                "makes" if canonical_field == composite.made_field else "attempts"
+            )
+            field_transforms[canonical_field] = {
+                "source_header": source_header,
+                "source_unit": composite.shape.value,
+                "output_unit": ValueShape.PER_GAME.value,
+                "transform": (
+                    f"decompose_composite_shooting_cell[{component}]"
+                    if composite.shape is ValueShape.PER_GAME
+                    else f"decompose_composite_shooting_cell[{component}]"
+                    "+divide_by_assumed_games_played"
+                ),
+                "extracted_from": (
+                    "the parenthesised volume inside the percentage cell, not a "
+                    "column of its own"
+                ),
+                "reconciled_against": "the stated percentage in the same cell",
+            }
+        elif canonical_field in CANONICAL_STAT_FIELDS:
             column = columns_by_field[canonical_field]
             field_transforms[canonical_field] = {
                 "source_header": source_header,
