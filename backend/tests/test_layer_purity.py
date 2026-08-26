@@ -33,8 +33,10 @@ Where a test below says what review drove, that is why it is there.
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib.util
 import itertools
+import re
 import subprocess
 import sys
 import textwrap
@@ -618,6 +620,18 @@ def _pinned_data_layer_columns() -> dict[str, str]:
     is silently outside this scan - and that a future table pinning its layer
     with ``data_layer IN ('terminal')`` would be invisible to the agreement
     check that exists to catch exactly that drift.
+
+    **The match is a full match, and a fourth review is why.** The first
+    version tested ``startswith("data_layer = '")`` and ``endswith("'")``, then
+    took ``split("'")[1]``. ``data_layer = 'observations' OR data_layer =
+    'market'`` satisfies both ends and parses to ``observations``, so the table
+    would be reported as *readable and pinned to one layer* while the database
+    accepted two. That is strictly worse than the ``IN ('terminal')`` case this
+    scan was hardened for, because that one at least falls into ``unreadable``
+    and fails loudly: a false positive means ``GRAIN_LIMIT``'s "one layer per
+    table" is violated with the very check that exists to detect the drift
+    reporting agreement. Anything that is not exactly one pinned literal must
+    fall out of ``found`` and be caught as unreadable.
     """
     found: dict[str, str] = {}
     for table in Base.metadata.tables.values():
@@ -626,9 +640,9 @@ def _pinned_data_layer_columns() -> dict[str, str]:
         for constraint in table.constraints:
             if not isinstance(constraint, sa.CheckConstraint):
                 continue
-            expression = str(constraint.sqltext)
-            if expression.startswith("data_layer = '") and expression.endswith("'"):
-                found[table.name] = expression.split("'")[1]
+            match = re.fullmatch(r"data_layer = '([a-z_]+)'", str(constraint.sqltext).strip())
+            if match is not None:
+                found[table.name] = match.group(1)
     return found
 
 
@@ -741,6 +755,14 @@ def test_the_scope_limits_are_stated() -> None:
     assert "foreign keys" in FLOW_SCAN_LIMIT
     assert "undeclared identifier column" in FLOW_SCAN_LIMIT
     assert "Python" in FLOW_SCAN_LIMIT
+    assert "tripwire on arrival and not a live gap" in FLOW_SCAN_LIMIT, (
+        "FLOW_SCAN_LIMIT has stopped saying that the ten columns it counts are "
+        "foreign-system identifiers rather than live instances of the defect it "
+        "describes. An earlier version claimed two of them were live instances; a "
+        "fourth review checked all ten and none is. Do not reinstate that claim "
+        "without checking the columns again - a reproducible count sitting beside "
+        "an unsupported sentence is what made the sentence look checked."
+    )
     assert "when db.models finishes importing" in IMPORT_TIME_LIMIT
     assert "not by reading how the imports are spelled" in IMPORT_TIME_LIMIT
     assert "DeclarativeBase" in IMPORT_TIME_LIMIT
@@ -902,12 +924,14 @@ def test_every_refusal_says_what_to_do_and_why_the_rule_exists() -> None:
         )
 
 
-def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path) -> None:
+def test_the_model_and_migration_agree_on_the_layer_rank_check(
+    backend_dir: Path, alembic_config: Config, migration_url: str
+) -> None:
     """One constraint, written twice on purpose, so it has to be compared.
 
     ``models/layers.py`` builds the expression from ``LAYER_RANK``; ``0019``
-    carries it as a literal. That duplication is the review gate — the same
-    reasoning that keeps the seed rows literal — but a gate nobody checks is
+    carries it as a literal. That duplication is the review gate - the same
+    reasoning that keeps the seed rows literal - but a gate nobody checks is
     just drift with extra steps.
 
     It needs its own test because neither existing test sees a divergence:
@@ -919,8 +943,26 @@ def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path
 
     Read off ``__table__`` rather than from :func:`_layer_rank_pairs`. A first
     version called the helper and compared *that* to the migration, which still
-    passed when the constraint stopped using the helper — it was checking that
+    passed when the constraint stopped using the helper - it was checking that
     two strings agreed, not that the table carried either of them.
+
+    **And then read the migrated store, not the literal beside ``upgrade()``.**
+    A fourth review caught this test committing on the migration side the exact
+    error the paragraph above congratulates it for avoiding on the model side.
+    Comparing against ``_load_0019(backend_dir)._LAYER_RANK_PAIRS`` proves the
+    model agrees with a *string in the migration module*, never that
+    ``upgrade()`` passed that string to ``CheckConstraint`` unmodified.
+    Appending ``+ " OR data_layer = 'market'"`` at the call site left the
+    literal untouched and the suite green, while the migrated store accepted a
+    ``market`` row at any rank that the models-created store refuses - the
+    precise inversion of the guarantee in the message below. Alembic does not
+    compare CHECKs, and the behavioural probe uses one row that both
+    expressions reject.
+
+    So the primary comparison is against the constraint ``sa.inspect`` reads
+    back from the database the migration built. The literal comparison stays as
+    a secondary check: it is cheap, and it distinguishes "the call site was
+    edited" from "the literal was edited", which are different repairs.
     """
     table = Base.metadata.tables["data_layer_registry"]
     checks = {
@@ -935,11 +977,35 @@ def test_the_model_and_migration_agree_on_the_layer_rank_check(backend_dir: Path
         f"{sorted(checks)}. Without it a models-created store accepts a row whose "
         f"rank contradicts its layer."
     )
+
+    command.upgrade(alembic_config, "head")
+    engine = create_engine(migration_url)
+    try:
+        migrated = {
+            constraint["name"]: str(constraint["sqltext"])
+            for constraint in sa.inspect(engine).get_check_constraints("data_layer_registry")
+            if constraint["name"] is not None
+        }
+    finally:
+        engine.dispose()
+
+    assert name in migrated, (
+        f"the migrated store has no {name} constraint; found {sorted(migrated)}. "
+        f"Migration 0019 declares it, so either upgrade() stopped applying it or the "
+        f"constraint was renamed on one side only."
+    )
+    assert _normalised_check(migrated[name]) == _normalised_check(checks[name]), (
+        "the layer/rank CHECK on the mapped table and in the store migration 0019 "
+        "actually builds have diverged. A database created from the models would then "
+        "accept rows a migrated database refuses, and the registry's whole promise is "
+        "that the store answers correctly without the source tree.\n"
+        f"\nmodels:  {checks[name]}\nmigrated: {migrated[name]}"
+    )
     assert checks[name] == _load_0019(backend_dir)._LAYER_RANK_PAIRS, (
-        "the layer/rank CHECK on the mapped table and in migration 0019 have "
-        "diverged. A database created from the models would then accept rows a "
-        "migrated database refuses, and the registry's whole promise is that the "
-        "store answers correctly without the source tree."
+        "the mapped table's CHECK and migration 0019's _LAYER_RANK_PAIRS literal have "
+        "diverged, even though the migrated store agrees with the model. That means "
+        "upgrade() is no longer passing the literal through unmodified - repair the "
+        "call site in 0019, not this test."
     )
     for layer, rank in LAYER_RANK.items():
         assert f"data_layer = '{layer.value}' AND layer_rank = {rank}" in checks[name]
@@ -1010,6 +1076,11 @@ def test_validate_layers_refuses_a_backwards_foreign_key() -> None:
             ("players",),
         ),
         (
+            "assignment-only",
+            'layers.TABLE_LAYERS["retired_table"] = layers.DataLayer.OBSERVATIONS',
+            ("retired_table", "not mapped"),
+        ),
+        (
             "flow",
             'layers.TABLE_LAYERS["team_schedule"] = layers.DataLayer.TERMINAL',
             ("team_schedule", "opponent_context"),
@@ -1050,6 +1121,24 @@ def test_importing_the_package_is_what_refuses_a_violation(
     pass while proving the half it was written to stop proving.
     ``team_schedule`` is in no exemption set, and ``opponent_context
     .team_schedule_id`` makes it an input to a projection.
+
+    **Three arms, not two, and the third is the mirror of the second.** A
+    fourth review pointed out that the two-arm version was symmetrical only in
+    appearance. Deleting ``validate_layer_assignment(metadata)`` from
+    ``validate_layers`` - the exact reverse of the round-three mutation, and a
+    *plausible* edit, since "the flow check already raises for an unassigned
+    table" is true - left both original arms green. It is true because
+    ``validate_layer_flow`` resolves every table through ``layer_of``, which
+    raises ``has no layer`` for the ``del`` the first arm performs. So the
+    first arm never needed the assignment half at all.
+
+    What stops running under that edit are the two branches only
+    ``validate_layer_assignment`` has: the **vanished** check and the
+    **stale market-identity** check - the latter being the branch round three
+    added precisely because nothing drove it. The third arm is keyed on the
+    first of those: a ``TABLE_LAYERS`` entry naming a table that is not mapped
+    is structurally unreachable for ``validate_layer_flow``, which iterates the
+    foreign keys of *mapped* tables and so can never encounter it.
     """
     program = textwrap.dedent(
         f"""
@@ -1194,10 +1283,18 @@ def test_every_model_module_is_reached_by_importing_the_package() -> None:
 #: allowed to diverge the moment a ``0020`` adds a table: the code tracks the
 #: schema, the seed records what ``0019`` did. See
 #: :func:`test_the_0019_seed_is_a_frozen_snapshot`.
-_SEED_ROWS_AT_0019 = 41
+#:
+#: A **digest**, not a count. A count has a single number to update, and the
+#: failure message for a stale count inevitably names updating it - which
+#: silences the guard while leaving the defect fully present, undetectably and
+#: permanently, because no test can observe the owner's stamped store. The
+#: cardinality is kept in the message for readability only; the assertion is on
+#: the content. 41 rows at the time of writing.
+_SEED_DIGEST_AT_0019 = "e239b1382b702fe84d276b5740a13ebcd7ad2d1aaba9c8f7d51b5141ee4bb4d7"
 
 #: Edges migration ``0019`` seeded, pinned for the same reason as the rows.
-_FLOW_ROWS_AT_0019 = 17
+#: 17 edges at the time of writing.
+_FLOW_DIGEST_AT_0019 = "5e6c8cae24d8ea63b3538c3bd8fc8959e5b65b9f9d1ebf668837d346ca6db7e0"
 
 
 def _load_0019(backend_dir: Path) -> ModuleType:
@@ -1213,6 +1310,25 @@ def _load_0019(backend_dir: Path) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _normalised_check(expression: str) -> str:
+    """A CHECK expression comparable across dialects.
+
+    Postgres reads a constraint back with its own rendering: ``::text`` casts on
+    every literal, its own parenthesisation, and collapsed whitespace. SQLite
+    returns roughly what was written. Comparing raw text would make this a
+    portability test wearing a layer-purity test's name, and it would fail on
+    the Postgres CI job for a reason that has nothing to do with drift.
+
+    So strip the parts the dialect chose and keep the parts the author chose.
+    This is deliberately lossy in one direction only: it can make two different
+    expressions compare equal, never two identical ones compare unequal, so a
+    real divergence still fails.
+    """
+    stripped = re.sub(r"::\w+", "", expression)
+    stripped = stripped.replace("(", " ").replace(")", " ")
+    return " ".join(stripped.split())
 
 
 @pytest.fixture
@@ -1266,29 +1382,66 @@ def test_no_database_test_escapes_the_clean_fixture() -> None:
 
     The fixture stopped being ``autouse`` so it would not wipe a shared
     Postgres database on behalf of fifty tests that never connect. The cost of
-    that is a way to get it wrong: a new test taking ``migration_url`` alone
-    would talk to the store without the clean, and would pass or fail
-    depending on what ran before it. Reading the signatures closes the set -
-    it is the same closed-set-over-a-derived-domain shape as the rest of this
-    file, applied to the fixtures rather than to the schema.
+    that is a way to get it wrong: a new test that talks to the store without
+    the clean would pass or fail depending on what ran before it.
+
+    **Closed over the effect, not over a parameter name.** The first version
+    looked for tests taking ``migration_url`` without ``alembic_config``, which
+    is a guard keyed on a spelling - this repository's named recurring defect -
+    and a fourth review pointed out how short the escape route is. The
+    ``migration_url`` fixture is itself two lines (``test_database_url`` or a
+    tmp path), so the obvious thing a new author writes is to inline it and
+    never mention the name at all. ``offenders`` would be empty and the store
+    would be touched dirty.
+
+    So this asks what the body *does*: any ``test_``-prefixed function that
+    calls ``create_engine``, ``Session`` or ``command.upgrade`` anywhere inside
+    it must request ``alembic_config`` or ``_clean_database``. That set is
+    derived from the syntax tree rather than from a convention, and it covers
+    the inlined-URL case the parameter check could not see.
+
+    ``ast.AsyncFunctionDef`` is walked too, and keyword-only parameters are
+    counted, both of which the first version missed.
     """
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    offenders = [
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name.startswith("test_")
-        and "migration_url" in {argument.arg for argument in node.args.args}
-        and "alembic_config" not in {argument.arg for argument in node.args.args}
-    ]
+    touches_the_store = {"create_engine", "Session", "upgrade", "downgrade"}
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        parameters = {
+            argument.arg
+            for argument in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            )
+        }
+        if parameters & {"alembic_config", "_clean_database"}:
+            continue
+        called = {
+            inner.func.id if isinstance(inner.func, ast.Name) else inner.func.attr
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name | ast.Attribute)
+        }
+        if called & touches_the_store or "migration_url" in parameters:
+            offenders.append(node.name)
 
     assert offenders == [], (
-        f"these tests take migration_url without alembic_config: {offenders}.\n"
+        f"these tests reach the store without alembic_config or _clean_database: "
+        f"{offenders}.\n"
         f"\n"
-        f"_clean_database is reached through alembic_config, so they touch the "
-        f"store without it being emptied first and their result depends on "
-        f"what ran before. Add alembic_config to the signature, or request "
-        f"_clean_database explicitly."
+        f"_clean_database is reached through alembic_config, so they touch a store "
+        f"that was not emptied first and their result depends on what ran before - "
+        f"which against a shared TEST_DATABASE_URL means they depend on another "
+        f"lane. Add alembic_config to the signature, or request _clean_database "
+        f"explicitly.\n"
+        f"\n"
+        f"This is keyed on what the body calls ({sorted(touches_the_store)}), not on "
+        f"whether it takes migration_url, because inlining that fixture's two lines "
+        f"is the obvious way to end up here by accident."
     )
 
 
@@ -1352,14 +1505,43 @@ def test_the_0019_seed_is_a_frozen_snapshot(backend_dir: Path) -> None:
 
     So the seed's shape is pinned here as a historical fact. Editing it breaks
     this test and the failure says which route to take.
+
+    **Pinned by digest, not by cardinality, and a fourth review is why.** The
+    first version asserted ``len(seed) == 41``, and its own failure message
+    named the remedy and the escape hatch in the same breath. Appending a row
+    and changing ``41`` to ``42`` is two keystroke-level edits, satisfies every
+    assertion here, and the migrated-store tests cannot see it because they
+    upgrade from an **empty** database where both routes are indistinguishable.
+
+    That failure is **silent, not safe**, which is what makes it worse than the
+    other counted pins in this unit. ``FLOW_MATRIX_SIZE`` lands safe because
+    ``flow_permitted`` is an allowlist and an enum member cannot add a
+    permission. The seed is not an allowlist; it is data. No test in this
+    repository can observe the owner's stamped store, so after that edit no
+    gate - now or ever - distinguishes a store that received the row from one
+    that did not, and the registry's stated purpose of answering from a store
+    alone is defeated permanently and invisibly for the one store it exists to
+    serve.
+
+    A digest has no single number to update. Replacing it means replacing a
+    hash wholesale, which nobody does by accident and which reads in a diff as
+    exactly what it is: a claim that recorded history was wrong.
     """
     seed = _load_0019(backend_dir)._SEED
 
-    assert len(seed) == _SEED_ROWS_AT_0019, (
-        f"migration 0019's seed has {len(seed)} rows, not {_SEED_ROWS_AT_0019}. "
-        f"0019 is already applied on the owner's store and will not run again, "
-        f"so a row added here never reaches it. Add a new migration instead, and "
-        f"only change this number if you are correcting the historical record."
+    digest = hashlib.sha256(repr(seed).encode()).hexdigest()
+    assert digest == _SEED_DIGEST_AT_0019, (
+        f"migration 0019's seed is not the snapshot it was; sha256 is {digest}, "
+        f"not {_SEED_DIGEST_AT_0019} ({len(seed)} rows). 0019 is already applied on "
+        f"the owner's store and will not run again, so a row added, removed or "
+        f"reordered here never reaches it - the store keeps the old set forever "
+        f"and nothing else in this suite can see the difference, because every "
+        f"migrated-store test upgrades from an empty database where the two routes "
+        f"look identical.\n"
+        f"\n"
+        f"What to do: add a new migration that inserts the row. Only replace this "
+        f"digest if you are deliberately correcting the historical record, and say "
+        f"so in the commit message."
     )
     assert len({name for name, _, _ in seed}) == len(seed), "0019 seeds a table twice"
     for name, layer, rank in seed:
@@ -1371,10 +1553,18 @@ def test_the_0019_seed_is_a_frozen_snapshot(backend_dir: Path) -> None:
 
     flows = _load_0019(backend_dir)._FLOW_SEED
 
-    assert len(flows) == _FLOW_ROWS_AT_0019, (
-        f"migration 0019's flow seed has {len(flows)} edges, not {_FLOW_ROWS_AT_0019}. "
-        f"The same reasoning as the rows above: 0019 will not run again on the "
-        f"owner's store, so a permitted edge added here never reaches it."
+    flow_digest = hashlib.sha256(repr(flows).encode()).hexdigest()
+    assert flow_digest == _FLOW_DIGEST_AT_0019, (
+        f"migration 0019's flow seed is not the snapshot it was; sha256 is "
+        f"{flow_digest}, not {_FLOW_DIGEST_AT_0019} ({len(flows)} edges). The same "
+        f"reasoning as the rows above: 0019 will not run again on the owner's "
+        f"store, so an edge added here never reaches it, and no test can see the "
+        f"difference. Add a new migration.\n"
+        f"\n"
+        f"If you are changing the *rule* rather than correcting history, note that "
+        f"test_a_migrated_store_records_the_permitted_edges compares PERMITTED_FLOWS "
+        f"against the migrated store rather than against this literal, precisely so "
+        f"a later migration may legitimately change it."
     )
     assert len(set(flows)) == len(flows), "0019 seeds an edge twice"
     for source, target in flows:
@@ -1496,6 +1686,16 @@ def test_a_migrated_store_refuses_an_unknown_layer(
     the rank CHECK by construction. So the existence of the enum CHECK is
     asserted structurally, against the store the migration actually built,
     which is the thing that disappears when the flag is dropped.
+
+    A fourth review extended it to ``data_layer_flows``. The reasoning that
+    made the registry's structural assertion necessary applies identically
+    there and was nowhere written down, so replacing ``_layer_enum`` with a
+    plain ``String`` on ``source_layer`` and ``target_layer`` left the suite
+    green while the store's flow table accepted layers that do not exist -
+    and unlike the registry, that table has **no rank CHECK to fall back on**,
+    so nothing at all would reject them. ``models/layers.py`` argues the flow
+    table is what someone actually queries at 11:59pm; a table answering that
+    question must not hold a value the vocabulary has no name for.
     """
     command.upgrade(alembic_config, "head")
 
@@ -1511,6 +1711,19 @@ def test_a_migrated_store_refuses_an_unknown_layer(
             f"Without it any string is a layer, and the only thing rejecting 'vibes' "
             f"is the rank CHECK, which is a different guarantee."
         )
+
+        flow_names = {
+            constraint["name"]
+            for constraint in sa.inspect(engine).get_check_constraints("data_layer_flows")
+            if constraint["name"] is not None
+        }
+        for column in ("source_layer", "target_layer"):
+            assert f"ck_data_layer_flows_{column}" in flow_names, (
+                f"the migrated store has no enum CHECK on data_layer_flows.{column}; "
+                f"found {sorted(flow_names)}. Without it any string is a layer, and "
+                f"data_layer_flows has no rank CHECK to reject it by accident the way "
+                f"data_layer_registry does - so nothing would."
+            )
 
         with engine.connect() as connection, pytest.raises(IntegrityError):
             connection.execute(
