@@ -104,7 +104,19 @@ Pinned as assertions in `test_layer_purity.py` rather than left in prose.
 
 - **`FLOW_SCAN_LIMIT`** - the set is closed under *declared foreign keys*, not
   under Python. A value copied between layers in application code leaves no key
-  and is invisible. **10** `_id`-suffixed columns have no declared FK.
+  and is invisible. **10** `_id`-suffixed columns have no declared FK - and
+  **none of the ten is an instance of this defect**; all are foreign-system
+  identifiers or profile names. The limit is real and currently
+  un-instantiated.
+
+  That distinction was itself a defect. As first merged, the constant named two
+  of the ten as live instances. They were not, and **three review passes read
+  the sentence without checking it, because the reproducible count beside the
+  claim made the claim look checked.** Corrected in the fourth pass, by a
+  reviewer who drove the ten columns rather than reading the sentence. It is
+  worth knowing that an *asserted* limitation can be wrong in exactly the way
+  the assertion pattern is meant to prevent, and that a true number sitting
+  beside a false claim is what protected it.
 - **`GRAIN_LIMIT`** - assignment is per-table. `draft_events.amount` is a live
   R38 case, a market quantity on a non-market table, and this cannot see it.
   Column granularity is what comes next.
