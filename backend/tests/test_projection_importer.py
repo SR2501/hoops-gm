@@ -827,9 +827,7 @@ class TestVerificationStrengthIsAValueNotAComment:
                 source=ExternalSource.MANUAL,
                 display_name="Boolean nostalgia",
                 name_aliases=("player_name",),
-                stat_columns=(
-                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
-                ),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
                 verified=True,  # type: ignore[call-arg]
                 verified_seasons=("*",),
                 verification_evidence="a boolean is not a strength",
@@ -850,9 +848,7 @@ class TestVerificationStrengthIsAValueNotAComment:
                 source=ExternalSource.HASHTAG,
                 display_name="Hashtag overreach",
                 name_aliases=("PLAYER",),
-                stat_columns=(
-                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
-                ),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
                 verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
                 verified_seasons=("2026-27",),
                 verification_evidence="claiming a schema we do not define",
@@ -879,9 +875,7 @@ class TestVerificationStrengthIsAValueNotAComment:
                 source=ExternalSource.HASHTAG,
                 display_name="Strength hash probe",
                 name_aliases=("PLAYER",),
-                stat_columns=(
-                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
-                ),
+                stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
                 verification=strength,
                 verified_seasons=("2026-27",),
                 verification_evidence="identical evidence on purpose",
