@@ -15,33 +15,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from enum import StrEnum
 
+from hoops_gm.db.models.enums import DraftFeedInstantKind as InstantKind
+from hoops_gm.db.models.enums import DraftFeedTransport as SourceTransport
 from hoops_gm.identity.names import normalize_key
 
-
-class SourceTransport(StrEnum):
-    """How the bytes reached us.
-
-    Not "which endpoint" and not "which parser" — which *pipe*. Two claims that
-    travelled the same pipe are not independent of each other no matter how
-    differently they were parsed afterwards, and that is the question
-    :class:`~hoops_gm.draft.feed.reconcile.SourceIndependence` asks.
-    """
-
-    #: Stored by the userscript into ``bridge_payloads``. Observed traffic.
-    BRIDGE_CAPTURE = "bridge_capture"
-    #: Requested by us from ``/fxea/general/``. A read we initiated.
-    OFFICIAL_HTTP = "official_http"
-
-
-class InstantKind(StrEnum):
-    """The shape of the thing a source claims happened."""
-
-    #: An ordered-draft selection. Carries a coordinate, never a price.
-    SELECTION = "selection"
-    #: An auction lot clearing. Carries a price, never a coordinate.
-    SALE = "sale"
+#: The two enums live in :mod:`hoops_gm.db.models.enums` and are re-exported
+#: here under the names this package reads better with. One definition, so the
+#: value stored in ``draft_feed_observations.transport`` and the value the
+#: independence guard compares are the same object rather than two lists that
+#: can drift — the drift being invisible until the day a stored row stops
+#: matching a live reading.
+__all__ = [
+    "InstantKind",
+    "InstantProvenance",
+    "ObservedInstant",
+    "RecognitionResult",
+    "SourceTransport",
+    "UnrecognisedShape",
+    "matching_key",
+]
 
 
 @dataclass(frozen=True, slots=True)

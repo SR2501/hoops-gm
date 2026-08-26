@@ -43,6 +43,7 @@ from hoops_gm.db.models.availability import (
 from hoops_gm.db.models.bridge import BridgePayload
 from hoops_gm.db.models.deadline_calendar import LeagueDeadlineCalendar
 from hoops_gm.db.models.draft import Draft, DraftEvent, DraftParticipant
+from hoops_gm.db.models.draft_feed import DraftFeedObservation
 from hoops_gm.db.models.enums import (
     AuctionValueDerivation,
     AuctionValueInputKind,
@@ -53,6 +54,8 @@ from hoops_gm.db.models.enums import (
     Conference,
     DnpReason,
     DraftEventType,
+    DraftFeedInstantKind,
+    DraftFeedTransport,
     DraftStatus,
     DraftToolUsage,
     DraftType,
@@ -127,6 +130,9 @@ __all__ = [
     "Draft",
     "DraftEvent",
     "DraftEventType",
+    "DraftFeedInstantKind",
+    "DraftFeedObservation",
+    "DraftFeedTransport",
     "DraftParticipant",
     "DraftStatus",
     "DraftToolUsage",

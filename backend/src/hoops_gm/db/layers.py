@@ -252,6 +252,11 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     "drafts": DataLayer.OBSERVATIONS,
     "draft_participants": DataLayer.OBSERVATIONS,
     "draft_events": DataLayer.OBSERVATIONS,
+    # What a machine read off Fantrax about a draft, with the identity of the
+    # bytes it read it from. A claim, not a pick — kept at the same layer as
+    # the log it feeds because it is the same kind of thing: an observation of
+    # the outside world, with nothing computed in it.
+    "draft_feed_observations": DataLayer.OBSERVATIONS,
     # Raw transport and provenance.
     "bridge_payloads": DataLayer.OBSERVATIONS,
     "refresh_runs": DataLayer.OBSERVATIONS,
@@ -348,7 +353,7 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #: fixing it is cheap.
 FLOW_SCAN_LIMIT: Final = (
     "declared foreign keys only; an undeclared identifier column or a value copied "
-    "between layers in Python leaves no key. Ten columns ending _id carry no foreign "
+    "between layers in Python leaves no key. Twelve columns ending _id carry no foreign "
     "key today, all of them foreign-system identifiers rather than references to a "
     "mapped table, so the count is a tripwire on arrival and not a live gap (count "
     "reproducible from Base.metadata; an earlier note said sixteen on an unstated "
@@ -369,7 +374,7 @@ FLOW_SCAN_LIMIT: Final = (
 #: red with advice to consider making it a real foreign key, which will be the
 #: wrong advice, and the right repair will be to bump this number. That is a
 #: known cost of the spelling, accepted deliberately rather than by omission.
-NAKED_IDENTIFIER_COLUMNS: Final = 10
+NAKED_IDENTIFIER_COLUMNS: Final = 12
 
 #: What the import-time call does **not** see.
 #:

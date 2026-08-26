@@ -185,6 +185,30 @@ class FantraxOfficialClient:
         payload = self.fetch_json("getDraftPicks", self._league_params(league_id), max_age=max_age)
         return parse_draft_picks(payload)
 
+    def get_draft_picks_with_provenance(
+        self, league_id: str, *, max_age: timedelta | None = None
+    ) -> tuple[list[FantraxDraftPick], str, datetime]:
+        """Draft picks, plus the SHA-256 of the exact bytes they were read from.
+
+        The same shape ``get_league_info`` already needs, for the same reason
+        one step further on: ``hoops_gm.draft.feed`` compares this source
+        against the bridge, and an agreement between two readings is only
+        evidence of two readings if each one can name the artifact it came
+        from. Without the digest the feed would have to invent an identifier,
+        and an invented identifier is exactly how one read gets counted twice.
+
+        Returns ``(picks, payload_sha256, observed_at)``. ``observed_at`` is
+        the moment the bytes arrived — or, on a cache hit, when they originally
+        did, which is the honest answer and the one freshness must be computed
+        from.
+        """
+        payload, payload_sha256, observed_at = self._fetch_json_with_metadata(
+            "getDraftPicks",
+            self._league_params(league_id),
+            max_age=max_age,
+        )
+        return parse_draft_picks(payload), payload_sha256, observed_at
+
     # -- transport ---------------------------------------------------------
 
     def fetch_json(
