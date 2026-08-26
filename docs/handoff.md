@@ -26979,3 +26979,142 @@ It is the body of the bridge's POST to *our* endpoint (`routes/bridge.py` line 2
 not the Fantrax request body. Technically true, momentarily misleading to anyone
 looking for the `msgs` block - which is exactly what someone extending this
 recogniser will be looking for. Not edited: another lane's file, during a freeze.
+
+## 2026-08-26 - backend - draft feed: independent review outcome, and the one thing the owner can do that we cannot
+
+Follow-up to the `draft-tracker-bridge-feed` entry above. An independent
+exact-head review (non-`backend`) of `5e5b7f8` re-ran the suite against a clean
+`git archive` export and checked three claims that entry made.
+
+**Held.** The independence guard: it could not construct a path in which one
+artifact read into both sides reports as agreement, the key spaces being
+disjoint and the guard triple-checked. And the server-clock rule:
+`source_claimed_at` reaches storage and display only, never an arithmetic
+operation that produces an age.
+
+**Did not hold.** "Refusal over guessing." Two of the five findings were
+serious, and both were the same species of mistake the first entry warned
+about: a check that keys on something plausible rather than something real.
+
+1. **Critical.** `draft_feed_observations` carries a CHECK tying `kind` to the
+   fields it permits, and the recogniser read all seven fields regardless of
+   kind. `salary` is one of our own `amount` aliases, so a snake pick carrying
+   one produced `kind=selection` *with* an amount. Worse in the other
+   direction: `parse_draft_picks` populates round, pick, overall *and* the
+   auction amount from the same row unconditionally, so an auction league's
+   own official results are the expected shape that violates the CHECK - not
+   an edge case, the ordinary case. `_store` flushed once for the whole
+   artifact, so one such record returned 500 and stored **zero** observations
+   from either source. Records are now conformed to the kind the draft's own
+   snapshotted format dictates, the loss is counted as `coerced_to_kind` and
+   published, and each row is written inside its own savepoint so a refusal
+   costs one row rather than the run.
+2. **High.** `name`, `shortName` and `displayName` were `player_label`
+   aliases - which is exactly what a **team** object carries. A `draftOrder`
+   or standings block, the *likeliest* list in any draft-room batch, satisfied
+   the seat anchor perfectly (it is a list of this draft's seats) and was read
+   as a full board of picks. With `apply: true` those become real
+   `draft_events`. The test that claimed to exclude this used a team record
+   with **no name key at all**, so it passed throughout. Acceptance now
+   requires an unambiguous player key; ambiguous names may still supply a
+   display label once a record has identified itself as a player some other
+   way.
+3. **Medium.** The out-of-turn halt set `skipped_reason` before breaking, and
+   nothing in this package ever clears it - so the observation that triggered
+   the halt was dropped permanently and `pending_count == 0` said there was
+   nothing outstanding. Halting is only the recoverable choice if the row
+   survives it.
+4. **Low.** `only_bridge`/`only_official` filtered on `if instant.player_label`,
+   so an id-only instant seen by one source alone rendered as `[]` - "only one
+   source saw this pick" reading as "nothing to report".
+5. **Low.** `silent` was judged on the newest *pick*, so a bridge capturing
+   perfectly reported `silent: true` through every deliberation. An indicator
+   that cries wolf through ordinary play is one the owner has stopped
+   believing by round four. Proof-of-life is now a separate clock read from
+   `bridge_payloads`; the official source reports `contact_is_known: false`
+   rather than borrowing the bridge's traffic, because its poll happens during
+   ingest and is not recorded anywhere.
+
+Seven new tests, each naming the defect excluded and a reading in which the old
+flag was true while the defect was present. All seven mutation-verified: the
+`MUTANT` marker was grepped and confirmed present in the file *before* the run
+was read, and 0 markers remained afterwards.
+
+**What this says about the method, not just the code.** Every one of these got
+through a test suite whose tests each name a defect. Findings 1 and 2 were
+invisible because the *tests* encoded the same assumption the code did - the
+team-block test asserted refusal using a payload that had no name key, which is
+not the payload that defeats the guard. Naming the defect is necessary and it
+is not sufficient; the reading that must also be constructed is the one where
+the flag is true **and the defect is present**, and for both of these that
+reading was the test's own body.
+
+### `getDraftPicks`: not disproved, unestablished
+
+Stating this precisely because the project distinguishes the two. `fantraxapi`
+1.0.1 models a "draft pick" as `round` + `year` + `origOwnerTeam`, which is the
+shape of a **tradeable future asset**, not a selection that happened. If that
+is what the endpoint returns, the corroborating source corroborates nothing
+about a live draft. Nothing available in this environment settles it: no league
+id, no `FANTRAX_*` variables, both `.env` files absent, and no captured
+response. It is **not disproved and it is unestablished**, and the
+`live_smoke`-marked test exists to settle it the moment credentials exist.
+
+### Could not verify
+
+- Whether the recogniser fires on a real Fantrax draft-room payload. No
+  capture of one exists. Every key alias is a guess; the *anchor* is not (it
+  requires a `fantrax_team_id` already seated in this draft), which is why a
+  wrong guess yields zero records and a visible unrecognised-shape count rather
+  than a pick against the wrong seat.
+- Whether `getDraftPicks` returns results or future assets (above).
+- Whether halting on out-of-turn is right rather than merely safe. It is
+  arguably an owner decision and I made it as a lane.
+- Postgres was exercised for migration `0020` up/down/up on 16.9; the
+  savepoint behaviour added here was exercised on SQLite only.
+
+### The ask: one mock draft, as specifically as I can state it
+
+This is the highest-value thing available before 18 October and no agent can do
+it. It converts every guess above into a fixture.
+
+**What to do**, roughly 20-30 minutes:
+
+1. Start the backend on `http://127.0.0.1:8000` and leave it running.
+2. In `userscript/`, run `npm install` then `npm run build`.
+3. Open `http://127.0.0.1:8000/bridge/userscript.user.js` **by hand, in the
+   browser where Tampermonkey lives**. Not via `start <url>` or any OS-routed
+   opener - that uses the default browser, which may not be the paired one.
+4. Enter a Fantrax mock draft and let it run for **five or six picks**. It does
+   not need to finish.
+5. **Keep the Fantrax tab visible and focused the whole time.** After about
+   five minutes hidden, Chrome throttles timers to roughly once a minute and
+   stalls Fantrax's own polling - so a hidden tab produces a quiet capture log
+   that looks like a broken userscript.
+6. Then report two things, and only these two - no cookies, no secrets, no
+   request bodies: the **`source` values** present in `bridge_payloads`
+   (`fetch`/`xhr`/`cache-storage` vs `rendered-view`/`manual-export`), and the
+   **URL in the address bar** of the draft room.
+
+**Any league or must it be his?** Unknown, and worth saying rather than
+guessing. The recogniser needs seats linked to `fantrax_team_id`, which a mock
+against strangers will not have - but that affects the *tracker*, not the
+*capture*. For the purpose of this ask, any mock draft is useful, because what
+we need is the payload shape, and that arrives in `bridge_payloads` regardless
+of whether the draft is one we could track.
+
+**The one thing that could make it produce nothing:** the userscript matches
+`https://www.fantrax.com/fantasy/league/*`. If Fantrax serves its mock draft
+room from a path outside that - a lobby, a separate mock host - the script
+never loads and the capture log is empty for a reason that has nothing to do
+with any of this. That is why step 6 asks for the URL: it is five seconds of
+his time and it distinguishes "the recogniser cannot read it" from "the
+userscript was never there".
+
+**What each answer would mean.** Raw `fetch`/`xhr` rows: the RPC body is
+reachable and a real fixture is one export away. Only `rendered-view`: the
+draft room comes through the service worker, page script never sees the JSON,
+and this feed's bridge path cannot work as built - which would be a finding
+that changes the plan for the draft board, and is better known in October than
+on the 18th.
+
