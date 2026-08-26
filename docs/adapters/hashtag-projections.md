@@ -213,6 +213,66 @@ would wave through a genuinely mangled cell for a high-volume shooter.
 **Volume-weighting the check is the same principle as volume-weighting the
 category.**
 
+### The sample size is not a detail, and a small sample here is optimistic
+
+The default page renders 30 rows. On those 30, the largest observed
+`|Δ FT%|` — stated percentage minus makes/attempts — is **0.0126**. Across all
+**429** rows it is **0.3040**, a factor of twenty-four.
+
+**That gap is a selection effect, not sampling noise**, and the page ordering
+was checked rather than assumed. On the default page `R#` runs strictly
+ascending 1…30, so the rows are rank-ordered best-first, and their MPG spans
+only **29.7 to 36.2** — every one a high-minute player. Large minutes mean large
+attempt counts, and large attempt counts are precisely where a bound of the form
+`k/attempts` is tightest and best behaved. The rows that stress the tolerance —
+a player projected for 0.3 free-throw attempts, whose rounding interval is wider
+than a third of his own percentage — are structurally *absent* from the top of
+the table. A small sample here is not merely less evidence; it is evidence drawn
+entirely from the region where the check is under least strain.
+
+So: **a 30-row reconciliation must never be quoted as a 500-row guarantee**, and
+any future re-verification that cannot reach the full table should say which 30
+rows it saw. The live smoke test runs against the default page and therefore
+inherits this limit — it can detect that the *dialect* changed, and cannot
+certify the bound holds in the tail.
+
+---
+
+## `verified` is not one claim, and the profile no longer pretends it is
+
+`ColumnProfile.verification` is a `VerificationStrength`, and `verified` is
+derived from it (`verification is not None`). Before this unit the field was a
+bare boolean, and `verified=True` silently meant two incompatible things:
+
+| Profile | Strength | What it excludes | What it does not |
+|---|---|---|---|
+| Basketball Monster | `HASH_PINNED` | silent drift — the file's sha256 stops matching | the file having been wrong when hashed |
+| Hashtag | `LIVE_CONTRACT_OBSERVED` | the profile being a *guess* — the contract was read off the real page | drift after the observation date; only the live smoke test can notice |
+| Manual | `OWNER_DEFINED_SCHEMA` | unit misinterpretation, by construction — no external party's meaning can differ from ours | the file the owner actually hands us disagreeing with the schema |
+
+A consumer that should trust only the pinned form can now write that as a
+comparison. Previously the distinction existed only as a capitalised sentence
+inside a free-text `verification_evidence` string — which is documentation, and
+documentation is what the next consumer skips.
+
+**There are three strengths, not two.** The split was requested as
+`hash_pinned` vs `live_contract_observed`; forcing `MANUAL_PROFILE` into either
+would have rebuilt the same defect one level over, because its schema is
+*defined here* rather than observed anywhere. `OWNER_DEFINED_SCHEMA` is
+restricted to `ExternalSource.MANUAL` at construction, so a vendor profile
+cannot borrow the one strength that promises the fewest future failures.
+
+The strength lives **inside** the hashed profile definition, so promoting a
+profile from an observation to a hash pin moves `definition_sha256` and trips
+`_assert_profile_version`. Without that it would not: a test constructs two
+profiles differing in nothing but strength and asserts their hashes differ,
+and with the field removed from the definition those hashes are byte-identical.
+This is the same gap `composite_shooting_columns` had until this unit found it.
+
+All four profile versions were bumped, because adding a field to the hashed
+definition *is* a definition change and the code's own invariant demands a bump
+rather than a silently moved hash.
+
 ---
 
 ## Why the shape check is on points, not minutes

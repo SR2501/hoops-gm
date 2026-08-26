@@ -62,10 +62,15 @@ from hoops_gm.ingest.projections import (
     StatColumn,
     ValueShape,
     VerificationOutcome,
+    VerificationStrength,
     build_player_targets,
     get_or_create_projection_source,
     import_projection_csv,
     parse_projection_csv,
+)
+from hoops_gm.ingest.projections.importer import (
+    _profile_definition,
+    _profile_definition_sha256,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "projections"
@@ -243,6 +248,10 @@ def test_custom_profile_cannot_map_terminal_columns_into_earlier_layers(
 
 
 def test_external_profile_cannot_claim_wildcard_season_verification() -> None:
+    # HASH_PINNED, not OWNER_DEFINED_SCHEMA, so the *wildcard* rule is the one
+    # that fires. A vendor claiming the owner-defined schema is rejected by a
+    # different rule, and using it here would have made this test pass for a
+    # reason unrelated to the one it is named for.
     with pytest.raises(ValueError, match="wildcard season verification"):
         ColumnProfile(
             profile_id="vendor-wildcard",
@@ -251,7 +260,7 @@ def test_external_profile_cannot_claim_wildcard_season_verification() -> None:
             display_name="invalid vendor wildcard",
             name_aliases=("Player",),
             stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("*",),
             verification_evidence="one real export cannot verify every season",
         )
@@ -265,7 +274,7 @@ def test_manual_wildcard_profile_identity_cannot_be_forged(session: Session) -> 
         display_name="forged manual profile",
         name_aliases=("Player",),
         stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
         verified_seasons=("*",),
         verification_evidence="caller assertion without canonical schema evidence",
     )
@@ -295,7 +304,7 @@ def test_verified_profile_requires_nonblank_evidence() -> None:
             stat_columns=(
                 StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
             ),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="   ",
         )
@@ -312,7 +321,7 @@ def test_identity_anchor_namespace_cannot_be_used_for_projection_csvs() -> None:
             stat_columns=(
                 StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),
             ),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="not relevant because the namespace is forbidden",
         )
@@ -585,7 +594,7 @@ def test_self_attested_custom_profile_cannot_enter_production(
         display_name="self-attested FantasyPros",
         name_aliases=("Player",),
         stat_columns=(StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2026-27",),
         verification_evidence="caller says this is real",
     )
@@ -685,7 +694,7 @@ def test_percentage_exclusion_is_persisted_in_import_lineage(
             StatColumn("field_goals_attempted_per_game", ("fga",), ValueShape.PER_GAME),
         ),
         percentage_fallback_aliases={"field_goals_made_per_game": ("fg%",)},
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2026-27",),
         verification_evidence="recorded fixture fixture://ratio-evidence-v1",
     )
@@ -747,6 +756,154 @@ def test_fantasypros_profile_resolves_headers_and_flags_percentage_only() -> Non
         for issue in result.issues
         if issue.row_number == alpha.row_number
     )
+
+
+@pytest.mark.adapter_contract
+class TestVerificationStrengthIsAValueNotAComment:
+    """``verified=True`` used to mean two different guarantees under one name.
+
+    Basketball Monster's was pinned to the sha256 of an immutable file;
+    Hashtag's was an observation of a live page that can change tomorrow. A
+    consumer that wanted only the strong form could not express that as a
+    comparison, because there was nothing to compare - only a capitalised note
+    in a free-text evidence string, which is documentation, and documentation
+    is what the next consumer skips.
+
+    These tests exist so the distinction cannot quietly collapse back into a
+    boolean.
+    """
+
+    def test_the_three_strengths_are_distinct_values(self) -> None:
+        """Excludes: a strength that is decorative because everything shares one.
+
+        False-pass reading: three distinct values that no caller ever branches
+        on are still decorative. This asserts the vocabulary exists, not that
+        anyone uses it - see the hash test below for the part with teeth.
+        """
+        assert BASKETBALL_MONSTER_PROFILE.verification is VerificationStrength.HASH_PINNED
+        assert HASHTAG_PROFILE.verification is VerificationStrength.LIVE_CONTRACT_OBSERVED
+        assert MANUAL_PROFILE.verification is VerificationStrength.OWNER_DEFINED_SCHEMA
+        assert FANTASYPROS_PROFILE.verification is None
+
+        strengths = {
+            BASKETBALL_MONSTER_PROFILE.verification,
+            HASHTAG_PROFILE.verification,
+            MANUAL_PROFILE.verification,
+        }
+        assert len(strengths) == 3, "two profiles collapsed onto one strength"
+
+    def test_a_consumer_can_select_only_the_hash_pinned_form(self) -> None:
+        """Excludes: the ruling being satisfied in name while staying unusable.
+
+        The whole point is that "only trust the strong form" becomes a
+        comparison. If this filter cannot be written, the split bought nothing.
+        """
+        every = (
+            MANUAL_PROFILE,
+            FANTASYPROS_PROFILE,
+            HASHTAG_PROFILE,
+            BASKETBALL_MONSTER_PROFILE,
+        )
+        pinned = [p for p in every if p.verification is VerificationStrength.HASH_PINNED]
+
+        assert [p.profile_id for p in pinned] == ["basketball-monster-2026-27"]
+        # And the weaker-but-still-verified profile is excluded by the filter
+        # while remaining importable, which is the distinction that did not
+        # exist before: verified for the gate, not pinned for the consumer.
+        assert HASHTAG_PROFILE.verified is True
+        assert HASHTAG_PROFILE not in pinned
+
+    def test_verified_cannot_be_set_without_naming_a_strength(self) -> None:
+        """Excludes: reaching the strong form by accident or by default.
+
+        There is no ``verified=`` keyword any more, so a profile author cannot
+        assert verification without answering "of what kind". This asserts the
+        constructor genuinely rejects it rather than silently ignoring it.
+        """
+        with pytest.raises(TypeError):
+            ColumnProfile(
+                profile_id="boolean-nostalgia",
+                version="1",
+                source=ExternalSource.MANUAL,
+                display_name="Boolean nostalgia",
+                name_aliases=("player_name",),
+                stat_columns=(
+                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
+                ),
+                verified=True,  # type: ignore[call-arg]
+                verified_seasons=("*",),
+                verification_evidence="a boolean is not a strength",
+            )
+
+    def test_a_vendor_may_not_claim_the_owner_defined_schema(self) -> None:
+        """Excludes: a vendor profile borrowing the one strength it cannot have.
+
+        ``OWNER_DEFINED_SCHEMA`` means "no external party's meaning can differ
+        from ours", which is false for anything we did not define. Without this
+        an author could silence a real uncertainty by picking the label that
+        promises the fewest future failures.
+        """
+        with pytest.raises(ValueError, match="observed, never defined here"):
+            ColumnProfile(
+                profile_id="hashtag-overreach",
+                version="1",
+                source=ExternalSource.HASHTAG,
+                display_name="Hashtag overreach",
+                name_aliases=("PLAYER",),
+                stat_columns=(
+                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
+                ),
+                verification=VerificationStrength.OWNER_DEFINED_SCHEMA,
+                verified_seasons=("2026-27",),
+                verification_evidence="claiming a schema we do not define",
+            )
+
+    def test_the_strength_is_covered_by_the_profile_definition_hash(self) -> None:
+        """Excludes: a profile promoting its own strength without moving its hash.
+
+        This is the exact gap ``composite_shooting_columns`` had until this
+        unit found it: a field that changes the contract's meaning while
+        ``definition_sha256`` stays put, so ``_assert_profile_version`` sees no
+        change and the promotion lands silently on an existing version row.
+
+        Positive control is built in - the two hashes below are computed from
+        profiles identical in every respect *except* the strength, so if the
+        field were absent from the definition they would be equal and this test
+        would fail rather than vacuously pass.
+        """
+
+        def build(strength: VerificationStrength) -> ColumnProfile:
+            return ColumnProfile(
+                profile_id="strength-hash-probe",
+                version="1",
+                source=ExternalSource.HASHTAG,
+                display_name="Strength hash probe",
+                name_aliases=("PLAYER",),
+                stat_columns=(
+                    StatColumn("points_per_game", ("PTS",), ValueShape.PER_GAME),
+                ),
+                verification=strength,
+                verified_seasons=("2026-27",),
+                verification_evidence="identical evidence on purpose",
+            )
+
+        observed = build(VerificationStrength.LIVE_CONTRACT_OBSERVED)
+        pinned = build(VerificationStrength.HASH_PINNED)
+
+        observed_definition = _profile_definition(observed)
+        pinned_definition = _profile_definition(pinned)
+
+        # Asserted first and deliberately: these two profiles differ in nothing
+        # but the strength, so if the field were absent from the definition the
+        # hashes would be *equal* and this is the line that says so. The value
+        # assertions below only explain why they differ; they would trip first
+        # on a removal and hide which property actually failed.
+        assert _profile_definition_sha256(
+            observed, observed_definition
+        ) != _profile_definition_sha256(pinned, pinned_definition)
+        assert observed_definition != pinned_definition
+        assert observed_definition["verification_strength"] == "live_contract_observed"
+        assert pinned_definition["verification_strength"] == "hash_pinned"
 
 
 @pytest.mark.adapter_contract
@@ -1614,7 +1771,7 @@ def test_replaying_older_season_does_not_rewind_current_crosswalk(
         name_aliases=("player_name",),
         external_id_aliases=("source_id",),
         stat_columns=(StatColumn("points_per_game", ("points_per_game",), ValueShape.PER_GAME),),
-        verified=True,
+        verification=VerificationStrength.HASH_PINNED,
         verified_seasons=("2025-26", "2026-27"),
         verification_evidence="test-only exact source-id fixture",
     )
@@ -1682,7 +1839,7 @@ def test_profile_lineage_is_immutable_and_versioned(
             name_aliases=("player_name",),
             games_played_aliases=("GP",),
             stat_columns=(StatColumn("points_per_game", aliases, ValueShape.SEASON_TOTAL),),
-            verified=True,
+            verification=VerificationStrength.HASH_PINNED,
             verified_seasons=("2026-27",),
             verification_evidence="recorded fixture fixture://season-total-v1",
         )
