@@ -25214,3 +25214,66 @@ passed, 32 deselected**. Backlog header recomputes unchanged.
    declaration is pinned by a mutation of the behaviour it describes. Whether some
    property of this machinery *should* be declared and is not is a question no
    audit of the existing list can answer.
+
+
+## 2026-08-26 - `architect` - The owner described draft day, so it is a file now
+
+He has been asked three times for a one-page description of what draft day looks
+like, and each time said he had not written it. **This morning he wrote it, in a
+message, without calling it that.** `docs/what-draft-day-looks-like.md` is that
+message turned into a file - his words, my headings, every inference I added
+marked so he can strike it. **Status is `draft, unconfirmed`** and it must stay
+that way until he reads it.
+
+Recording it here because the alternative was leaving it in a chat window, and
+this session has already lost one uncommitted file permanently.
+
+### Four things in it that I would not have derived
+
+**1. The recommender is a portfolio constructor, not a ranker.** Everything
+planned ranks players by adjusted value. He needs it to say *"you already have
+three high-variance players; this is your fourth"*, which requires knowing the
+shape of the roster so far and not just the value of the next player.
+
+**2. An IR slot has two returns and only one was ever going to be modelled.**
+Deferred production is obvious. **Streaming capacity - an occupied IR slot frees
+an active roster slot** - is not, and it is the one he led with.
+
+**3. "Maximise expected games played" is the wrong objective.** In his words:
+*"You can't do that if you have fifteen healthy guys who are just pretty good and
+reliable."* **A fully healthy roster is not the safe outcome, it is an illiquid
+one**, and I would have built toward the naive target by default.
+
+**4. Availability has a ceiling on how much it may matter.** *Fifty games of an
+elite player is worth more than seventy or eighty of a role player.* That is a
+standing sanity check: a recommendation placing a durable role player above an
+elite fragile one has over-weighted availability.
+
+Also specific and actionable: **volatility of consistency is a toggleable
+dimension beside the nine categories, not a tenth category**, and sits alongside
+a weighted games-played toggle. Two quantities, both toggles, neither baked in.
+
+And the decision the whole tool exists to serve, stated plainly for the first
+time: **is sixty games of player X worth more or less than seventy games of
+player Y.**
+
+### Why this matters beyond its content
+
+Of four lanes I chose on 2026-08-26 from my own reading of the backlog, **the
+owner confirmed one and corrected another within an hour of seeing them
+described in his own terms.** That is roughly a coin flip on my judgement
+standing in for his, and it is the cost this page exists to remove. The cost was
+never that work stops without it - it is that days get spent on my guess.
+
+### What I could not verify
+
+- **That he agrees with any of it.** It is a capture, not a confirmation, and
+  the file says so in its first line. *Driven only in the sense that the words
+  are his; the headings, the structure and the consequences are mine.*
+- **That the five consequences in the file's last section follow.** They are
+  marked `[architect inference]` individually so each can be struck without
+  taking the quotations with it.
+- **What the questions file still asks and this does not answer**: the room, the
+  screen, auction pace, what he wants visible at his own nomination versus
+  someone else's, budget habits, what would make him close the laptop, and
+  question 15.
