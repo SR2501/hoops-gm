@@ -22572,3 +22572,733 @@ denied by the authorizer.
   True of this file today, not a guarantee about the package.
 * **That the crosses are correct rather than reproducible** — unchanged and
   structural, restated so it is not lost in a rebase entry.
+## 2026-08-25 - `frontend` - A dependency satisfied as a computation and unsatisfied as a contract, and a control that proved nothing while passing
+
+Unit `reliability-ui`, on base `f3e2c53`. Head `55b6334`.
+
+### 1. The backlog graph cannot distinguish *computed* from *reachable*
+
+`reliability-ui` depends on `reliability-metrics`, which is `done`. The
+dependency is real and the computation exists. **No route carries any of it**,
+so a frontend lane consuming that edge has nothing to consume.
+
+Three checks, each cheap and each independent of the others:
+
+- `docs/backlog.md:548`, the item's own done-text, ends *"no schema, API, or UI
+  was added."*
+- `docs/models/reliability-metrics.md` describes the metrics and names no
+  endpoint.
+- Live `GET /openapi.json` on the running demo returns **16 paths, zero matching
+  `reliability`**. This one is against a running process rather than a file,
+  which is why it is worth running even though the first two already answered.
+
+`architect` upheld this and filed it as a property of **every edge in
+`docs/backlog.md`**, not of mine: `backlog_graph.py` resolves names and reports
+readiness with no notion of *ready to be consumed by whom, across what
+boundary*. Its own output already disclaims being a statement that the backlog
+is accurate; this is the first concrete instance of what that covered.
+
+### 2. The evidence is not in the store the demo serves
+
+Found while looking for somewhere the metrics could be computed from. There are
+two stores and **neither is sufficient**:
+
+- The populated ledger at `C:\Users\steverones\hoops-gm-data\hoops_gm.db` holds
+  **43,037 participation rows for 2025-26** and has no `team_schedule` and no
+  `refresh_runs` table, so `compute_reliability_scorecards` cannot run there.
+- The demo serves **2026-27**, which has **zero played games** as of today.
+
+The gap is invisible from either side: each store looks fine on its own terms.
+
+This produced an owner-level ruling from `architect`, recorded because it now
+binds the endpoint rather than this screen: **reliability evidence reads
+2025-26**, because a 2026-27 cohort stays empty until late October, after draft
+day. It belongs in the endpoint contract, not a UI toggle - and **the season
+must be stated on the screen**, not in a tooltip. A durability figure whose
+season is ambiguous is the `gameEt` shape: well-formed, plausible, and silently
+about a different thing than the reader assumes.
+
+`EVIDENCE_SEASON` is therefore a literal in the frontend - it is a governance
+decision, not something on the wire - and `describeSeasonSplit` compares it
+against the season the payload actually returned, so a stale constant cannot sit
+silently beside a cohort that disagrees. Its return is a discriminated union
+rather than a boolean, because the `same` case means the season rolled over and
+the ruling needs revisiting, and a boolean would let a caller render nothing
+for it.
+
+### 3. A shared ADR-002 detector fired six times, all false, on prose
+
+`detectForbiddenProducts` run over the whole page reported **six** rate x games
+products. Every one was false. `renderedNumbers` walks text nodes, so digits
+inside *sentences* become rendered quantities: the lede's "a **70**-game player"
+supplies 70, and the inventory's "empirical p20/**p80**" supplies 80. Six
+genuine low-rate season totals - free throws made, offensive rebounds, threes,
+steals - land inside the 0.5 tolerance of those, because **a low per-game rate
+times a games count occupies the same 60-85 band this screen legitimately fills
+with games counts.**
+
+This is the second recorded instance of the same failure mode; `adr002.ts`'s own
+docstring already carries one (cell-boundary substrings).
+
+I did **not** loosen the tolerance, which would weaken it everywhere for a
+problem local to here. I scoped the detector to the assumptions panel and added
+an **exhaustive whitelist** over that region: every number in it must be
+accounted for by the payload. That is strictly stronger than the check it
+replaces, because it rejects any unaccounted number rather than only the product
+a test knew to look for.
+
+### 4. The control for that check passed while planting nothing
+
+The planted-product control read `firstRow.rates.points`. That field does not
+exist - it is `points_per_game`. The expression evaluated to `NaN`, stringified
+to `"NaN"`, planted **no digits at all**, and the control therefore proved the
+detector could fire on nothing. It looked green.
+
+`ProjectionRates` is `{ player_id: number } & Record<ProjectionRateField, number
+| null>`, so a bad key is a type error - but **the typecheck that would have
+caught it ran before these test files existed**. The ordering, not the type
+system, is what let it through. A control that cannot fail is worth less than no
+control, because it is counted as evidence.
+
+### 5. `scripts/test_name_diff.py` does not cover this suite
+
+It parses Python `test_*` functions. The frontend is vitest, so it is silent
+here - not wrong, just inapplicable, and a lane trusting it on a frontend PR
+would get a confident zero delta. I predicted the count by hand instead:
+263 -> 311, delta +48 (24 + 20 + 1 nav, then +3 in a later commit), matched
+exactly at each step.
+
+### 6. A probe field that read 0 beside eight correct readings
+
+My probe's row-count selector was `[data-testid^="evidence-"][data-testid$=""]`.
+A `$=""` suffix match matches **nothing**, so `inventoryRowCount` reported **0**
+in a payload where `statuses` correctly listed all eight rows and
+`seasonsStatedPerRow` correctly read 8. The blind field sat between two
+sighted ones and looked like a finding. Fixed to filter by `tagName === "TR"`;
+it now reads 8.
+
+The invariant-and-mover rule is what made this survivable: the same payload
+carried the eight statuses, so the zero was contradicted from inside its own
+reading rather than believed.
+
+### What the screen shows, and what it deliberately does not
+
+The one availability quantity genuinely on the wire is
+`source_games_played_assumptions` on `projections/current` - **60 players, all
+stated, 59 to 79 games, 11 distinct values**. It is *Basketball Monster's*
+assumption, and it is labelled as an assumption hoops-gm has neither measured
+nor validated, with the parsed value beside `assumed_games_played_raw` so a
+parse divergence would show. It is not multiplied by any rate: that would derive
+a season total, and derivation was scoped out.
+
+No median, mean or percentile - each needs an interpolation convention, and for
+an even cohort the usual one yields a value **no player was assigned**. A test
+asserts on the summary's *keys*, because adding one is a two-line change that
+looks like an improvement. No buckets: a bucket boundary is a threshold.
+
+Bars scale zero-based to the cohort's own maximum, not to 82 and not min-to-max.
+Min-to-max would render a 25% spread as a 100% one - the chart overstating data
+that is itself correct.
+
+Eight quantities are inventoried with the **blocker** named, not merely the
+missing unit. `p(play)` is not unbuilt-and-someone-is-slow; it is **deliberately
+held pending an owner decision on the preregistration**
+(`docs/backlog.md:2007`; `injury-status-conversion-preregistration-v3-PROPOSED.md`
+is `Proposed` and binds only when the owner binds it). A reader who sees "not
+built yet" concludes something different and less accurate than one who sees
+why.
+
+### On the framing
+
+I registered a disagreement with my own brief, which called this the most
+important screen in the project. It is not: **the unit that matters is the
+endpoint, and it is `backend`'s.** A screen that is mostly an honest gap report
+is worth shipping once; calling it the centrepiece after handing it over would
+be the rhetorical-convenience failure `AGENTS.md` warns about. `architect`
+upheld this and recorded it against his own brief.
+
+### What I could not verify
+
+- **That the 2025-26 ledger would actually satisfy `compute_reliability_scorecards`
+  if the two missing tables were added.** I confirmed the tables are absent and
+  that the function reads them. I did not construct them and run it. *Reasoned.*
+- **That the exhaustive whitelist covers a payload shape other than this
+  cohort's.** It is driven against the recorded 60-player fixture and the live
+  60-player demo, which happen to agree on cohort size. A cohort with a null
+  assumption mid-strip is covered by a unit test on the model but not through
+  the rendered region. *Partially driven.*
+- **Anything about how this reads on a second surface.** `surface-parity-tests`
+  is pending and blocked on three unbuilt items, so there is no second surface
+  to compare against and the convention is currently unenforced by anything but
+  me saying so. *Not driven.*
+- **That the page is usable at its measured height.** The probe reads
+  **3690px at 1440x900 - 4.1 screens**. The tally line puts the headline finding
+  in the first screen, but it does not reduce the total, and I have not watched
+  anyone try to read it under time pressure. *Measured, not validated.*
+- **That headless Edge renders this identically to the owner's real browser.**
+  Probed at `Edg/151.0.4129.101`, `--headless=new`. Never opened headed.
+  *Reasoned.*
+
+## 2026-08-25 - `frontend` - A probe that agreed on the number and was wrong about the thing
+
+Follow-up on the `reliability-ui` entry above, after independent review. Base
+`f3e2c53`. This one is worth more than anything in that entry.
+
+### An agreeing probe is not a checking probe
+
+I rendered `lineage.schedule.pending_game_ids.length` under the label **"Undated
+games"**, with prose explaining that a back-to-back is a claim about two dates
+so these games cannot be classified. Every word of that reasoning is sound. The
+number is not that quantity.
+
+`pending_game_ids` means **games the source published with teams not yet
+decided** - ADR-013, and the route's own docstring at
+`backend/src/hoops_gm/api/routes/schedule_grid.py:109`. The seeder serialises the
+same set as `games_pending_no_teams_assigned`. Undated games are a *separate*
+quantity, carried per game as `game_date === null` with a `date_absence_reason`
+beside it.
+
+**In this cohort all six pending games carry a date.** Checked against the live
+demo: `pending_game_ids` 6, `pending_games` 6, `game_date is null` **0**, every
+`date_absence_reason` empty. The true undated count is zero. The screen said
+six.
+
+This is the `gameEt` shape - a well-formed, plausible integer silently about a
+different thing than the reader is told - **on the screen whose entire stated
+purpose is to refuse that.** It is also the exact hazard `AGENTS.md` names:
+validation of form cannot catch errors of meaning. The field is a `number`, the
+count is correct for what it counts, and every type is right.
+
+### The part that generalises
+
+**My browser probe passed on this.** It carried an `undatedOnScreen: true`
+agreement flag that compared the number on the screen against the number from
+the API. They agreed, because I had read the same field into both sides.
+
+The invariant-and-mover discipline works one level down from where this failed.
+It catches *"I am blind"* and *"nothing moved"*. It cannot catch *"both ends of
+my comparison inherit the same misreading"*, because a probe written by whoever
+wrote the screen shares its assumptions by construction. **Agreement on a value
+says nothing about agreement on its meaning**, and a self-written probe can only
+ever check the former.
+
+What actually caught it was an independent reviewer reading the producer's
+docstring - a source outside both the screen and the probe. The reviewer also
+noted the repository *already* models this correctly:
+`buildScheduleGridModel(...).pending` splits `awaitingSource` / `dateFaulted` /
+`unreadableDate` / `placedCount`, and `ScheduleAbsenceReasons.recorded.test.tsx`
+asserts precisely that a null date and a pending game are different facts. I
+built a second, wrong reading of a field the codebase had already got right,
+which is its own lesson about reaching for a lineage counter instead of the
+model beside it.
+
+### My test pinned the error rather than catching it
+
+`ReliabilityPage.recorded.test.tsx` asserted `'2 scheduled games carry no date
+yet'` **verbatim** against a fixture whose two pending games both carry
+`2026-12-04`. The test was green, specific, and defending the bug. A test
+asserting the rendered string of a mislabelled quantity is indistinguishable
+from a test asserting the right thing, which is why "the tests are green" was
+never evidence here.
+
+The replacement drives a case the bug cannot survive: one pending game with a
+date, one without. A screen reading `pending_game_ids.length` for both rows
+reports 2 and 2 and fails. Confirmed by reverting the fix - **both** new
+assertions fail against the original line and pass against the corrected one.
+
+### The boundary caught my invented enum value, which is the system working
+
+My first version of that test set `date_absence_reason` to free text. The screen
+never rendered: `isSchedulePendingGame` enforces a **closed set**
+(`DATE_ABSENCE_REASONS` in `api/types.ts:139`) and cross-checks the reason
+against `game_date` in **both** directions, so a reason without an absence and
+an absence without a reason are both rejected. I had written the second. The
+correct value is `not_offered`.
+
+Worth recording as a success: someone deliberately closed that boundary, wrote
+down why, and it stopped a fabricated fixture from producing a plausible screen.
+
+### Two other claims that did not survive review
+
+- The `observed-play-rate` blocker asserted the backend route was **"a filed
+  unit"**. No such unit exists anywhere in `docs/backlog.md`. That converts an
+  *unowned* gap into a *queued* one, which is the precise distinction the
+  `blocker` field was added to preserve - and it fails the file's own header
+  promise that every claim is disprovable in ninety seconds. Corrected to state
+  that the gap is unowned and unfiled, which is the stronger finding.
+- The handoff entry above was originally dated **2026-08-23**. Every commit in
+  it is `2026-08-25`, and the code it describes records the architect's ruling
+  as 2026-08-25. In an append-only log ordered by date and cited by later
+  entries, a wrong date misplaces the record permanently. Corrected before
+  merge.
+
+### What I could not verify
+
+- **That no other screen reads `pending_game_ids` as an undated count.** I fixed
+  mine. `ScheduleAbsenceReasons` demonstrably gets it right. I did not audit
+  every consumer of the lineage block. *Partially driven.*
+- **That the corrected undated row has ever rendered non-zero against real
+  data.** It cannot today: the live cohort has zero undated games, so the
+  non-zero branch is driven only by a mutated fixture. The zero branch is what
+  the owner will actually see. *Driven in test, not in the browser.*
+- **Whether my other agreement flags share the same defect.** I checked this one
+  because review pointed at it. The remaining six compare screen values against
+  API values I selected, and the same "both ends inherit one misreading" failure
+  is available to every one of them. I have not re-derived each from the
+  producer's contract. *Not driven - and this is the honest residual risk in the
+  probe payload I reported.*
+
+## 2026-08-25 - `frontend` - The same error one level in: prose asserting properties of a quantity
+
+Third entry on `reliability-ui`, after a second review pass on the fix in the
+entry above. Base `f3e2c53`.
+
+### Fixing a misread field, and then asserting things about the right one
+
+My correction split the pending games into two rows - teams-undecided and
+undated - and then wrote prose around them that repeated the original mistake in
+a smaller way. Three claims, none derived from the payload:
+
+**"These are dated"** was false the moment any pending game lacked a date, and
+**my own new test constructed exactly that payload.** The test asserted only the
+leading substring, so it walked straight past the false clause it had created.
+A leading-substring assertion on a sentence is a test of the number and not of
+the sentence.
+
+**"for a different reason than a missing date would"** implied the two rows were
+disjoint. They are **strictly nested**: `undated` is a filter over
+`pending_games`, and `isPendingBlock` forces `pending_game_ids` to name exactly
+those same games, so `undated` is always a subset. In the mutated payload the
+screen showed 1 undated and 2 teams-undecided over a pending set of **2** - the
+undated game counted under both headings, presented as alternatives, so a reader
+adding them gets three blocked games out of two. Now stated as "**1** of those
+**2** also carries no date. This is a subset of the row above, not a further
+count."
+
+**"knockout fixtures whose brackets are undrawn"** was hard-coded. ADR-013 makes
+that a *falsifiable* reading rather than a definition - which is why
+`ScheduleLineage` renders `game_label` per game so an operator can check it. A
+hard-coded characterisation keeps asserting itself after it stops being true,
+which is the one thing ADR-013 asks a consumer to watch for. Now derived from
+the distinct `game_label` values on the wire, with a test that relabels the
+cohort `Play-In Tournament` and asserts the word "knockout" does **not** appear.
+
+The generalisation: **it is easier to fix a wrong number than to stop making
+claims about a right one.** Both rounds of this bug were sentences that were
+true of the cohort in front of me, written as properties of the quantity.
+
+### A control that passed because the mutation never happened
+
+While proving the label test could fail, I mutated the source with PowerShell
+`.Replace()` against a string containing a JS template literal. The backticks
+did not survive, **the replacement matched nothing, the file was unchanged, and
+the suite reported 23 passed** - which I could have read as "the test cannot
+detect this" or, worse, not read at all.
+
+This is the vacuous-control shape a second time in one unit, in a different
+disguise: the first planted a value that stringified to `NaN`, this one planted
+nothing at all. **A mutation-based control needs the mutation confirmed present
+before the result means anything.** Redone with a real edit and
+`Select-String` proving the mutated text was on line 220 first; both tests then
+failed, and both pass again on restore, with a further check that the only
+remaining occurrences of the word are in comments.
+
+### What I could not verify
+
+- **That `undated` can be non-zero on real data before draft day.** It is zero
+  in the live cohort and every non-zero rendering is driven by a mutated
+  fixture. *Driven in test only.*
+- **That the derived label list stays short enough to read.** It joins distinct
+  `game_label` values with no cap. Today that is one value across six games; a
+  cohort with many distinct labels would render a long sentence. Not defended.
+  *Reasoned.*
+- **Whether the remaining agreement flags in my probe share the defect the
+  second entry describes.** Still not re-derived from the producer's contract.
+  Unchanged and still the honest residual risk. *Not driven.*
+
+## 2026-08-25 - `frontend` - Third pass on one sentence, and the `null` that `!== ''` lets through
+
+Fourth and final entry on `reliability-ui`. Base `f3e2c53`.
+
+### `!== ''` is not an emptiness check when the field is nullable
+
+`game_label` is `string | null` in `api/types.ts`, and the boundary admits the
+`null` **on purpose** - the rationale is written into `endpoints.ts`: a null
+label is "a gap this screen can describe", so tolerate it. My filter tested only
+`game.game_label !== ''`, which is `true` for `null`. An unlabelled game was
+therefore counted as labelled, the "all labelled" branch fired on a cohort where
+nothing was labelled, and `String(null)` put the word **"null"** on the screen:
+
+    6 published games have no teams assigned yet, all labelled null.
+
+Driven, not reasoned: reverting the guard fails two tests with exactly that
+string. The mixed case is worse than the all-null case, because the count stays
+plausible while the quantifier goes false.
+
+The sibling consumer of the identical field gets this right -
+`ScheduleLineage.tsx`'s `describePendingGame` filters `part !== null && part !==
+''`. **This screen was the one consumer that diverged**, which is the argument
+for having looked at the other consumer before writing the second one.
+
+### Two quantifiers, both false in a way the count hides
+
+- **"All labelled X" when only some are labelled.** Coverage.
+- **"All labelled X, Y" when the cohort carries two labels.** Reads as though
+  every game carries both. Now ", labelled X and Y" - dropping the "all",
+  because no game is labelled both.
+
+Together with the `null` case that is **three** ways for one sentence to be
+false while its number is right. Each was found by someone asking what the
+sentence claims rather than whether the figure is correct, and none of them
+would have been caught by any check that looks at values.
+
+### Moved into the model, because a sentence with four branches is a function
+
+`describePendingLabels` now lives in `reliabilityModel.ts` and is unit-tested
+directly across six cases (none, all-null, null-beside-real, single label,
+two labels, partial coverage). Inside the route it was reachable only by
+constructing a whole `ScheduleGrid` and rendering a page, which is why the first
+two versions shipped with untested branches.
+
+### The tally of this unit, which is the finding
+
+The screen went to review three times. Every round found a real defect, and
+**none of them was in a number** - all three were in prose asserting a property
+of a quantity that was true of the cohort in front of me:
+
+1. A count labelled as a quantity it was not (`pending_game_ids` as "undated").
+2. Two nested sets presented as alternatives, so they could be summed.
+3. A quantifier that outran its evidence, three separate ways.
+
+The code gate cannot see any of these. Lint, types and 321 green tests were
+true at every one of those heads. **The only thing that caught them was a
+reader outside the lane checking claims against the producer's contract** - and
+in each case the correction came from a file that already existed and already
+said the right thing.
+
+If there is a generalisable rule: *a number you derive gets checked; a sentence
+you write about it does not.* This screen is almost entirely sentences about
+numbers, which is what an evidence screen is, so it carried an unusually high
+share of that risk and the review load should have been expected rather than
+surprising.
+
+### What I could not verify
+
+- **That `null` labels can arrive from today's producer.** They cannot:
+  `_optional_text` normalises to `""` and the response model types it `str`. But
+  the frontend contract declares it nullable, the boundary was closed around it
+  deliberately, and `SchedulePage.test.tsx` already drives `game_label: null`,
+  so the frontend treats it as live. Fixed as a live case. *Reasoned about
+  reachability, driven as behaviour.*
+- **That the pending-row assertion cannot be outrun again.** `toHaveTextContent`
+  is a substring check, so a newly appended trailing clause would still pass -
+  which is exactly how defect 2 survived. An exact `textContent` equality would
+  close it. Not done: the reviewer raised it as a residual limitation rather
+  than a defect, and I judged the change riskier than the risk. *Known and
+  accepted, not fixed.*
+- **Whether the remaining probe agreement flags share the defect described two
+  entries up.** Still not re-derived from the producer's contract. Unchanged
+  across three passes and still the honest residual risk in the payload I
+  report. *Not driven.*
+## 2026-08-25 — frontend — `reliability-ui`: a blocker that is true and not sufficient
+
+Prompted by `architect` relaying `data-engineer`'s `read_only_engine` finding —
+that a guarantee about **writes** was read as covering **reads**, and that the
+guarantee was real while its *applicability* went unchecked. Applied that test to
+my own labels rather than assuming they passed it. Two failed.
+
+**1. Four of five `not-exposed` rows named the route as their blocker, alone.**
+The route is a real blocker. It is not a sufficient one:
+`compute_reliability_scorecards` raises `ReliabilityInputError` on a cohort with
+`no final games`, and again on one lacking exact `team_schedule coverage`. The
+store holding 2025-26 participation trips the second; the store this screen reads
+trips the first. **One call produces every quantity on that scorecard**, so it
+refuses whole or returns whole - which is why the same two blockers bind all
+five rows. A reader told only about the route concludes one unit unblocks these.
+Two do, and one of them is unowned.
+
+The test was pinning it: `expect(item.blocker).toContain('route')` asserted the
+incomplete claim as the requirement. Now requires `route` **and** `store`.
+
+**2. `back-to-back` claimed "do not depend on any model" of a two-part quantity.**
+True of *which nights are back-to-backs* (`build_schedule_density`, pure
+calendar). False of *whether he sat one*, which is an observation. That is the
+`read_only_engine` shape exactly: a real guarantee about one half, read as a
+property of the whole, on the row where the model-free half is the half that
+does not carry the meaning. Now states both halves and says which one the
+guarantee covers.
+
+Cited the refusal **messages** rather than line numbers deliberately: a line
+number is a citation that goes silently wrong when the backend file moves, and
+these strings are greppable in seconds. A frontend test reading `backend/src` to
+verify them live would make the citation CI-falsifiable, and I did not add it -
+that is a new cross-module coupling and `architect` owns those.
+
+322 tests (was 321), 20 files, typecheck 0, lint 0, build 0. Both new checks
+driven: mutations confirmed *present in the file* before the run was read, then
+both assertions failed, then reverted.
+
+### Could not verify
+
+- **Whether the other six rows carry the same defect in a form I cannot see.**
+  I found these two by applying one specific test to eight rows. That test
+  catches "guarantee about one property read as another". It does not catch a
+  claim that is simply false, and nothing here re-derives each row's `purpose`
+  against its source. *Reasoned per row, driven for two.*
+- **That "no store the computation can run in" stays true.** It is true of both
+  stores *today*. It is a claim about the world rather than about code, so no
+  test on this screen can hold it - if `data-engineer` lands a store with both
+  tables and played games, this label goes stale silently and green. *Not
+  driven, and not drivable from here.*
+- **Anything at all in a browser.** These are prose changes to eight strings;
+  the probe reads a rendered page and would move, but I did not re-probe, so my
+  reported payload is from `ab8452f` and the wording it shows is one commit
+  stale. The rendered *structure* is unchanged. *Stated rather than measured.*
+## 2026-08-25 — frontend — a control that fired for the wrong reason
+
+Follow-up to the entry above, and the more useful half of it.
+
+After rewriting eight blocker strings I re-ran the browser probe against the
+previous reading. **It reported `control passed: differs`.** It was not evidence.
+The only fields that moved were `documentHeight` (3686 to 3785) and
+`screensToScroll` - the page got taller because the prose got longer. **Nothing
+in the probe read the blocker column at all.** Had the rewrite happened to be the
+same length, the reading would have been byte-identical and the control would
+have correctly reported blindness; instead it reported success, for a reason
+unrelated to the thing I changed.
+
+This is the third vacuous control in this unit and the worst of the three,
+because the first two *failed to fire* and this one *fired*. A control that
+cannot fail is recognisable once you look at it. A control that fires on a
+side-effect is indistinguishable from a working one at the point you read it.
+
+`--differs-from` answers *did any number move*. That is the right question for
+"am I blind", and it is the wrong question for "did the claim I edited change",
+because a page has many numbers and only some of them are the claim.
+
+Fixed by making the probe read the claim: `data-testid="evidence-blocker-<id>"`
+on the blocker cell, and two derived fields taken from the **rendered DOM**
+rather than re-imported from the model, so they can disagree with it -
+`notExposedBlockersNameRouteAndStore` (5 of 5 rows, route and store both true)
+and `backToBackNamesBothHalves` (calendar, observed, qualified). Driven:
+reverting one blocker to route-only flips `category-dispersion` to
+`store: false` in the browser reading, with the mutation confirmed present in
+the file before the run was read.
+
+322 tests, 20 files, typecheck 0, lint 0, build 0.
+
+### Could not verify
+
+- **How many of the remaining probe fields are decorative in the same way.** I
+  audited the two I had just edited. The others were written at the same time,
+  by me, under the same assumption that reading a value proves you can see it.
+  *Not audited.*
+- **That a length-preserving edit would now be caught.** I proved the new fields
+  flip on a semantic change; I did not construct a same-length rewrite to prove
+  the old failure mode is closed rather than merely papered over. *Reasoned, not
+  driven.*
+
+## 2026-08-25 — frontend — agreement on a value says nothing about agreement on its meaning
+
+The entry above left two things unverified: how many of the remaining probe
+fields were decorative, and whether a semantic change that preserved *shape*
+would be caught. This closes both. Rebased onto `193aa1e`; head `0fda7c0`
+plus this entry.
+
+### The shape
+
+**Agreement on a value says nothing about agreement on its meaning.** Two
+readings can match to the digit and still be about different quantities, and
+when they do, every check built on their agreement passes. This is not a story
+about one field. It is the reason a whole class of verification is weaker than
+it reads, and the class is large: an evidence screen is almost entirely
+sentences about numbers, and *a number you derive gets checked; a sentence you
+write about it does not.*
+
+The illustration was `pending_game_ids`, rendered under the label "Undated
+games" when the field means *teams not yet decided* — six pending, all six
+dated, zero undated. The probe agreed with the screen because I had read the
+same field into both ends of the comparison. But the illustration is not the
+finding, and filing it as one is how the previous record of this class failed
+to prevent its own recurrence.
+
+### Why invariant-and-mover does not close it
+
+Carrying an invariant and a mover distinguishes *nothing changed* from *I am
+blind*. Both are failures of **liveness**. A shared misreading is a failure of
+**reference** — the probe is live, the values move, and both ends are wrong
+together. The technique is structurally blind to it, and the blindness is worst
+exactly where the technique is cheapest: when the probe author is the screen
+author, the two ends share assumptions by construction.
+
+### The proposed rule, and why I would amend it
+
+`architect` proposed: *a probe's flags must be re-derived from the producer's
+contract, not from the consumer's reading of it.* Directionally right, and it
+would have caught the `pending_game_ids` case. It would have missed two of the
+three defects I then found, because it constrains **where you read** rather
+than **whether the two ends can disagree** — and one of my worst flags read the
+producer's contract correctly at both ends and never read the screen at all.
+
+The amendment I would make it, because it is checkable at write time by the
+person least able to see their own assumption:
+
+> **Name the defect the flag excludes. Then name a reading in which the flag is
+> false and that defect is present. If you cannot construct that reading, the
+> flag does not exclude the defect.**
+
+This is the falsifiability rule in `AGENTS.md` applied to a check rather than a
+claim. It subsumes the provenance rule — a flag reading one source at both ends
+has no falsifying reading — and it catches every failure this unit produced:
+three weak flags, one control that fired on a side-effect, and two controls that
+never applied.
+
+### What the audit found
+
+Nine agreement flags, each put to that test. Three failed.
+
+- **`undatedAndPendingAreDistinct` — the worst, and the most instructive.** It
+  compared two *API fields against each other* and never read the screen. It
+  asserted `0 !== 6`, a property of the payload, which is true whatever the page
+  renders. **The guard added against the founding defect was itself an instance
+  of the founding defect.** Rewritten to read both DOM rows, and to return
+  `null` rather than `true` when the two quantities coincide, because a flag
+  that cannot discriminate should say so instead of reporting success.
+- **`distinctMatchesApi` compared `Set.size === Set.size`.** Cardinality, not
+  identity: `{59,60}` passes against `{70,80}`. I have an entry in this file
+  dated 2026-08-21 whose title is *"Cardinality, which every previous fix
+  compared its way past"*, and then I wrote this. Knowing the failure mode by
+  name did not stop me reaching for it.
+- **`scheduleCountsOnScreen` / `teamsAndPeriodsOnScreen` used `.includes()`.**
+  Presence, not assignment — swapping *published* and *resolved* leaves both
+  digits on the page and the flag true. Rewritten to anchor each number to its
+  own label.
+
+### Controls driven, each confirmed present in the file before the run was read
+
+- **Reference:** reverted the undated row to `pending_game_ids.length`, the
+  exact founding defect. Screen renders *"6 of those 6 also carry no date"*;
+  new flag **false**, old API-vs-API flag would have been **true**.
+- **Cardinality:** mapped the assumption `65 → 66`. The cohort is odd-numbered
+  59…79, so every even value is absent — the set changes while cardinality
+  stays 11 and min/max stay 59/79. Old flag **true**, new flag **false**, min
+  and max correctly unmoved. This is the same-shape-different-content case the
+  entry above could not construct.
+- **Unit:** reverting a blocker to route-only fails 2 tests; removing
+  `participation` from the back-to-back claim fails 1.
+
+### Could not verify
+
+- **The four flags with genuinely independent provenance** — `barCountMatchesApi`,
+  `minMatchesApi`, `maxMatchesApi`, `pendingTeamsOnScreen`. Each reads DOM on one
+  side and HTTP on the other, and I can state a falsifying reading for each. But
+  I drove controls for two of the three defects, not for these. *Reasoned, not
+  driven.*
+- **That the amended rule is sufficient rather than merely better.** It catches
+  everything this unit got wrong, which is exactly the evidence you would expect
+  a rule derived from those failures to produce. It has not been tried against a
+  defect it was not built from.
+- **`scripts/test_name_diff.py` is silent on this unit's tests.** It parses
+  Python `test_*` and defaults to `backend/tests`; my 59 vitest tests are
+  invisible to it, so its exit 0 means *nothing changed in a place I did not
+  look*. Pointed at `frontend/src` it refuses as vacuous — the tool contains its
+  own fix, and only the default scope is the unpassed narrowing. A frontend lane
+  reading its zero delta as reassurance would be reading nothing. Not mine to
+  change mid-freeze; filed with `architect`.
+
+## 2026-08-25 — frontend — the screen contradicted itself and every check agreed with both halves
+
+Correction to the two entries above, appended rather than edited. An
+independent review at the exact head found three defects, and one of them is a
+false sentence those entries state as their own justification. The false
+version stays on the record above; this is the retraction.
+
+### The correction
+
+The `observed-play-rate` row said the 2025-26 participation store trips
+`compute_reliability_scorecards`' exact `team_schedule coverage` refusal. **It
+cannot reach that check.** `reliability.py:462` selects from `team_schedule`
+before anything else; the coverage test is at `:508`, four refusals later. That
+store has no `team_schedule` table at all, so it fails on the first read.
+
+The screen said so itself, three rows below, in `monthly-trend`: *"the
+populated 2025-26 participation ledger has no team_schedule or refresh_runs
+table."* **Both sentences were rendered in the same table, and they cannot both
+be true.**
+
+It is not a pedantic citation error. "Blocked on exact coverage" describes a
+schedule that is present and partial — a reconciliation job. "No such table"
+describes an ingest that has never run against that store. The row exists
+specifically to tell a reader what would unblock it, and it named the smaller
+of the two.
+
+### Why nothing caught it
+
+Every check this unit carries passed on it, and each for a different reason:
+
+- **The unit test** required the blocker to contain the substrings `route` and
+  `store`. Both were present in the false sentence. The test constrained that a
+  second blocker was *named*, never that it was the *right* one.
+- **The browser probe** read the blocker cell and confirmed both words appeared.
+  Same constraint, one layer out.
+- **The three earlier review passes** each read the row and did not check it
+  against the backend's control flow.
+
+So this is not "the tests were thin". It is that **a screen can contradict
+itself and remain consistent with every check written against it**, because the
+checks were written against the same reading that produced the contradiction.
+It is the shape recorded in the entry above, arriving one level deeper than
+that entry looked: not agreement between screen and API, but agreement between
+two rows of the same screen, neither of which any check compared to the other.
+
+### What is now pinned
+
+A test that compares the rows to each other rather than to a wording: any
+evidence row mentioning both `2025-26` and `team_schedule` must state the table
+is absent, and none may attribute a coverage refusal to it. Driven — restoring
+the false sentence fails exactly that test and no other, with the mutation
+confirmed present in the file at `reliabilityModel.ts:207` before the run was
+read. 323 tests, 20 files, typecheck 0, lint 0, build 0.
+
+### Two other findings from the same review
+
+- **`SeasonNote` asserted an ordering nothing computes.** The copy said the
+  cohort describes "the upcoming season"; `describeSeasonSplit` compares two
+  strings for *inequality* and has no notion of which is later. With
+  `EVIDENCE_SEASON` bumped ahead of a not-yet-reimported cohort — a state its
+  own docstring says to expect — the screen would call a completed season
+  upcoming. Now states only the relation the comparison establishes.
+- **A layout flag could not report the answer it was named for.** It measured
+  `figure.getBoundingClientRect().width <= window.innerWidth` on a normal-flow
+  block, whose border-box width is set by its containing block, so it was true
+  by construction. The overflow it was named for is flex-item overflow one level
+  down. Replaced with `scrollWidth`/`clientWidth` on the bar list plus document
+  width against viewport, carrying the raw numbers rather than only a verdict.
+  Driven across 1440/600/320px: the page flag flips to true at 600 and below,
+  so it can now report both answers. **That is a fourth vacuous check in this
+  unit, found only because the review was asked to look for one.**
+
+### Could not verify
+
+- **`barsOverflowing` has not been made to fire.** The flex bars have a ~179px
+  content floor at this cohort size and the container never fell below 857px
+  across the three widths driven, so the sub-flag stayed false throughout. The
+  document-level flag is driven; this one is *reasoned, not driven*, and a
+  larger cohort is the state that would exercise it.
+- **How many of the remaining evidence rows disagree with each other.** I fixed
+  the contradiction review found and added a test for that specific pair. The
+  other rows were written in the same sitting under the same reading, and no
+  check compares any other pair. *Not audited.*
+- **A retrospective cost me an hour and belongs here because it is the same
+  shape as the bug.** Reading the probe payload, I asked PowerShell for
+  `layout.stripOverflow` and got `$null`, and read it as *the flag could not
+  measure*. It was an **absent property** — I had edited `scripts/` and was
+  running a stale copy in the session directory. PowerShell returns `$null` for
+  a field that does not exist and for a field measured as null, and the two are
+  indistinguishable at the call site. I then wrote a throwaway DOM probe to
+  diagnose it, and that probe reported the whole strip missing, because it had
+  no waiter and React renders after `load` — **a second blind reading produced
+  to explain the first.** Duplicate deleted; `scripts/reliability_probe.js` is
+  now the only copy and is committed so a reviewer can re-run it.
+
+

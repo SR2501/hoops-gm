@@ -5,6 +5,7 @@ import { DraftPage } from './routes/DraftPage'
 import { DraftsPage } from './routes/DraftsPage'
 import { NotFoundPage } from './routes/NotFoundPage'
 import { ProjectionsPage } from './routes/ProjectionsPage'
+import { ReliabilityPage } from './routes/ReliabilityPage'
 import { SchedulePage } from './routes/SchedulePage'
 import { SystemPage } from './routes/SystemPage'
 
@@ -21,6 +22,7 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="schedule" element={<SchedulePage />} />
         <Route path="projections" element={<ProjectionsPage />} />
+        <Route path="reliability" element={<ReliabilityPage />} />
         <Route path="draft" element={<DraftsPage />} />
         <Route path="draft/:draftId" element={<DraftPage />} />
         <Route path="system" element={<SystemPage />} />

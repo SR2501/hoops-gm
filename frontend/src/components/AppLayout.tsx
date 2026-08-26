@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { to: '/draft', label: 'Draft' },
   { to: '/schedule', label: 'Schedule' },
   { to: '/projections', label: 'Projections' },
+  { to: '/reliability', label: 'Reliability' },
   { to: '/system', label: 'System' },
 ] as const
 
