@@ -388,6 +388,66 @@ touches. That is a change nobody asked for hiding inside a change someone did.
   parses fine and means something else. This produced four simultaneous zeros
   during this investigation before it was diagnosed.
 
+  **A working reference implementation**, recovered from the investigating
+  lane's session state on 2026-08-27 rather than left as prose. The paragraph
+  above says *what* must be echoed; this says *how* to obtain it, which is
+  roughly an afternoon of rediscovery and about forty lines. It is an operator
+  probe and hits a vendor: run it by hand, never from CI.
+
+  ```powershell
+  $ErrorActionPreference = 'Stop'
+  $url = "https://hashtagbasketball.com/fantasy-basketball-projections"
+
+  function Tok($html, $id) {
+      $m = [regex]::Match($html, 'id="' + $id + '"[^>]*value="([^"]*)"')
+      if ($m.Success) { $m.Groups[1].Value } else { "" }
+  }
+
+  function Build($html, $show, $rank) {
+      $b = [ordered]@{}
+      $b['__EVENTTARGET'] = ''
+      $b['__EVENTARGUMENT'] = ''
+      $b['__VIEWSTATE'] = (Tok $html '__VIEWSTATE')
+      $b['__VIEWSTATEGENERATOR'] = (Tok $html '__VIEWSTATEGENERATOR')
+      $b['__EVENTVALIDATION'] = (Tok $html '__EVENTVALIDATION')
+      foreach ($sel in [regex]::Matches($html, '(?s)<select[^>]*name="([^"]+)"[^>]*>(.*?)</select>')) {
+          $n = $sel.Groups[1].Value
+          $q = [regex]::Match($sel.Groups[2].Value, '<option[^>]*selected[^>]*value="([^"]*)"')
+          if (-not $q.Success) { $q = [regex]::Match($sel.Groups[2].Value, '<option[^>]*value="([^"]*)"[^>]*selected') }
+          $b[$n] = if ($q.Success) { $q.Groups[1].Value } else { '' }
+      }
+      # Checked checkboxes only - ASP.NET does not post unchecked boxes, and
+      # omitting the checked ones silently turns every category column off
+      # (observed: 17 -> 8).
+      foreach ($cb in [regex]::Matches($html, '<input[^>]*type="checkbox"[^>]*>')) {
+          if ($cb.Value -match 'checked') {
+              $n = [regex]::Match($cb.Value, 'name="([^"]+)"').Groups[1].Value
+              $b[$n] = 'on'
+          }
+      }
+      $b['ctl00$ContentPlaceHolder1$DDSHOW'] = $show
+      $b['ctl00$ContentPlaceHolder1$DDRANK'] = $rank
+      return $b
+  }
+
+  function Grab($rank, $show, $outfile) {
+      $r0 = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 90 -SessionVariable s -Headers @{"User-Agent" = "Mozilla/5.0" }
+      $body = Build $r0.Content $show $rank
+      $r1 = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 240 -WebSession $s -Method POST -Body $body -Headers @{"User-Agent" = "Mozilla/5.0"; "Referer" = $url }
+      $r1.Content | Set-Content $outfile -Encoding UTF8
+      $ths = [regex]::Matches($r1.Content, '(?s)<th[^>]*>(.*?)</th>') | ForEach-Object { ($_.Groups[1].Value -replace '<[^>]+>', '' -replace '\s+', ' ').Trim() }
+      $rows = [regex]::Matches($r1.Content, '(?s)<tr[^>]*>\s*(<td.*?)</tr>')
+      "[$rank/$show] th=$($ths.Count) [$($ths -join ',')] tr_with_td=$($rows.Count)"
+  }
+
+  Grab 'AVG' '900' (Join-Path $env:TEMP "ht_avg.html")
+  Grab 'TOT' '100' (Join-Path $env:TEMP "ht_tot.html")
+  ```
+
+  **Read the `th=` count it prints as the check, not the row count.** A
+  collapsed column set still returns rows, and 8 columns where 17 are expected
+  is the signature of the checkbox trap rather than of a vendor change.
+
 ---
 
 ## Sample scope — do not read this as a full guarantee
