@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**56 done - 1 blocked - 87 pending - 144 total**
+**56 done - 1 blocked - 88 pending - 145 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1746,10 +1746,18 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 - [x] **done** - Landed 2026-08-26. The tracker reads the board from the bridge and, where it answers, the official API. Provenance is recorded per instant, freshness is computed on the server clock, and a disagreement between the two sources is reported and never resolved. Ordering is by publication time rather than arrival, and where those two disagree about which reading is current the feed refuses both rather than preferring either clock. Open caveats: neither source has ever returned a real draft payload, so the recogniser is fail-closed by design and may recognise nothing until one mock draft is run with the userscript loaded; **a record whose player id is present but unreadable is counted at ingest and is not surfaced on `GET`, so the board can be silently short a player with every channel reading clean** (confirmed High, filed not fixed - the route is to carry it as `skipped_reason`, which crosses into the recogniser's contract); and whether the refusal above fires on real captures is unknown, because it depends on the userscript setting `captured_at` consistently.
 - **Depends on:** `draft-tracker-persistence`, `bridge-capture`, `fantrax-official-adapter`
 
+### `draft-feed-unreadable-id-surfacing` - Surfacing records whose player id cannot be read
+
+- [ ] **pending** - **Blocks `draft-tracker`.** Filed 2026-08-27 by `architect` after the owner named this exact failure as disqualifying. `unrecognised` reaches only the `POST` response; `_status_out` carries no such field, so a record whose `player_external_id` is present but unreadable is **counted at ingest and never surfaced on `GET`**. Driven at PR #104 head `7a66d4e`: `POST -> written 1, unrecognised [('player_external_id_unreadable', 1)]`; `GET -> observations 1, applied 1, pending 0, blocked (), skipped (), freshness bridge_capture silent: False`; board holds one player where two were captured. **A pick that happened, reported as nothing, with every channel reading clean and freshness asserting the transport is not silent.** Asked what would make him abandon the tool mid-auction, the owner answered *"it loses track of the draft - shows me picks that already happened or misses one"* - this is that, exactly. **The cheap fixes are all closed and were closed deliberately:** `player_external_id=None` is what the round-eleven identity work explicitly forbids; `blocked_reason` leaves the row pending and therefore an application candidate; re-running recognition at status time is two paths answering one question, which is the defect class PR #104 spent thirteen rounds removing. **The route is to change the recogniser's contract** so unreadable records arrive as instants carrying `skipped_reason` - surfaced on `GET`, never applied, never joining identity matching, and permanent, which is arguably correct for an id that cannot be read. That crosses into `data-engineer`'s file, so it is a joint unit. **Recorded as a dependency rather than a caveat on purpose:** a caveat is text, and this repository's own finding is that a rule with nothing executable connecting it to the code is not enforced. `backlog_graph.py` fails on a dangling edge; a paragraph does not.
+- **Depends on:** `draft-tracker-bridge-feed`
+
+The board must not be able to be marked done while a captured pick can vanish
+silently. Fix the surfacing, then close this item, then `draft-tracker` unblocks.
+
 ### `draft-tracker` - Building the live draft tracker
 
 - [ ] **pending** — *umbrella; the two landed halves are now `draft-tracker-persistence` and `draft-tracker-screen`, and only `draft-tracker-bridge-feed` is outstanding*
-- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
+- **Depends on:** `draft-tracker-persistence`, `draft-tracker-screen`, `draft-tracker-bridge-feed`, `draft-feed-unreadable-id-surfacing`, `bridge-capture`, `draft-format-abstraction`, `fantrax-official-adapter`, `frontend-skeleton`
 
 Live draft state for both snake and auction: pick-by-pick board or nomination board, plus roster construction view. Fed by the bridge and official API.
 
