@@ -28165,3 +28165,81 @@ site, but nothing proves a *correct and uncalled* coercer would be caught. I
 would rather leave that named than close it badly -- round eight found three
 live defects hiding behind a could-not-verify I had written myself, which is the
 argument against ever treating a remaining one as merely theoretical.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round ten: which readings are about the same player
+
+Tenth review round on PR #104, tenth finding. Two reported, one rejected with
+evidence and one accepted and widened.
+
+**Rejected.** The review said a stale reading is applied and the correction
+silently labelled a duplicate. Driven at the exact head: the correction carries
+`blocked_reason = "sources_disagree:amount:bridge_capture:...=Decimal('50.00'):log=Decimal('10.00')"`.
+The board keeps the first price because the feed cannot rewrite an append-only
+draft log -- and it says so, by name, with both values. The reviewer read
+`applied=()` from outside the call and never read `blocked_reason`. **`applied=()`
+is what a silent drop and a correctly-reported refusal look like from the same
+vantage point**, which is why that field alone cannot distinguish them. Same
+shape as the round-five withdrawal.
+
+**Accepted, and its quiet neighbour is worse than the case reported.**
+Reconciliation keys observations by `player_external_id` first and falls back to
+the normalised label (`observations.py:106-131`); the apply pass keyed on
+`normalize_key(player_label)` alone. Two rules for the same question.
+
+The reported case was the loud one -- two labels for one id, *disagreeing* on
+price, both applied, two seats. The neighbour beside it is the agreeing case and
+nothing reports it at all: two captures naming `p123` as "Nikola Jokic" and "The
+Joker", same seat, same $50, both applied, seat holds the player twice and
+`remaining_budget` reads **100.00 where 150.00 is correct**. One player, bought
+once, debited twice, nothing blocked, nothing skipped, nothing disagreeing. On
+draft night every subsequent bid is reasoned from a bank wrong by the price of a
+player. The standing "run the neighbours of the reported case" rule paying out
+again.
+
+The mirror direction is as bad and quieter still: `normalize_key` erases
+generational suffixes, so "Gary Payton II" keys to "gary payton". Two distinct
+players applied first-wins, and the second was filed `duplicate_within_run` -- **a
+pick that happened, reported as nothing**, the same shape as round six's
+truncated locator.
+
+Fixed as a generator, not two bounds: `_identity_conflicts` in `service.py`
+seeds `_contradicted_keys`, blocking both directions with a reason naming the
+signals. **Refusal, not merging** -- grouping readings on a shared id would be a
+cross-source identity claim this package is not entitled to make (ADR-008, R23),
+and the transitive closure of "shares an id or shares a label" would let two
+genuinely different ids become one through an intermediate label. Absence is not
+disagreement: a row with no external id cannot conflict with one that has it,
+which is `values_disagree`'s rule applied to identity rather than restated.
+
+Four tests. **Five mutations, 5/5 load-bearing** under the corrected control
+(delete the mechanism *and* inject the defect it names -- deleting an assertion
+alone is green by construction). Seeding removed reddens both directions; each
+direction disabled reddens only its own case; absence-treated-as-a-value reddens
+the absence control; over-refusal reddens the ordinary applying case. The two
+controls exist because a fix that blocked every key carrying an id would pass
+both defect tests while feeding nothing to the board -- and **a board that never
+fills looks exactly like a draft that has not started.**
+
+This is the same generator at a fifth successive depth: how the two recognisers
+admitted a list (round four), how they read a field (seven), what they read from
+at all (eight), whether a second reading agrees before being called
+corroboration (nine), and now which readings are about the same player. The
+coordinator's predictor -- *read whatever the last round's fixes now delegate
+to* -- is five for five.
+
+Also confirmed, not fixed: **`DraftParticipant` has no budget column.**
+`auction_budget` is one scalar on `Draft` copied from `League`, and
+`state.py:680-682` computes every seat's `remaining_budget` from it. The owner's
+stated budgets differ per team. **Not representable today.** Filed for the
+architect's sequencing rather than changed at round ten on a done unit.
+
+Gates, from `backend/`: ruff check clean over 225 files, `ruff format --check`
+225 already formatted, bare `mypy` clean over 216 source files (not `mypy .`,
+which selects 203 -- that discrepancy was the round-nine Low), `test_draft_feed.py`
+91 passed, full suite 2236 passed / 1 skipped / 41 deselected.
+
+Could not verify: two labels for one player arriving with **no** external id at
+all. There is no signal in the payload to detect that with and nothing here
+claims to. Still unestablished, and separately: whether the recogniser fires at
+all on a real Fantrax draft-room payload -- **not disproved, unestablished.** Ten
+rounds, ten findings; no convergence evidence stands.
