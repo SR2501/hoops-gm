@@ -2547,3 +2547,215 @@ So the thing I have spent all day telling four lanes - NOTHING IMPORTANT LIVES O
 THE LANE MECHANISM, which generalises: "IT IS A RACE BETWEEN DECIDING AND RECORDING - you decided it, said so, and the recording step is a separate action that has not happened yet." FILED IS A CLAIM ABOUT AN ARTEFACT AND I USED IT TO MEAN DECIDED.
 WHAT IS NOT LOST: the lanes have each appended their own findings to docs/handoff.md, committed, now 292+ entries. What lives only here is THE COORDINATOR LAYER - the five revisions of the append-only rule, the four lying summary fields, the merge-train architecture costs, and the record of which lane corrected me and how.
 ACTION: lands as a handoff entry plus backlog items when the queue is quiet. NOT during an open rebase window, because a commit from me conflicts the lane holding it - the same constraint the lane itself observed when it declined to file the item for me.
+## `c333` - MERGED #105 at 19:19:29Z - reliability endpoint - main c72b207
+
+**Status:** done
+
+Third merge of 2026-08-26, after FOUR review rounds and two holds on heads that were green on nine gates.
+VERIFIED BEFORE MERGE: head c3ce323, TWO CI runs both completed/success both run_attempt=1 with headSha matching (a duplicate trigger three seconds apart, NOT a retry - the discriminator is the attempt number, not the run count). failedSteps=0, gatesWithSteps=9, skipped=1, starved=0. Reviewed AT THE EXACT MERGED HEAD, review record issuecomment-5429787675, nothing reading it.
+POST-MERGE: backend/src/hoops_gm/db/lineage.py on main is STILL ce17d24f3d8e1c07446b37583938a965948ccbb3 - byte-identical to pre-merge. The adapter cohort fingerprint is untouched and this PR did not republish data-engineer artifact, exactly as ruled in c301.
+WHY IT MERGED WITH FIVE OPEN FINDINGS: 3 MEDIUM 2 LOW, all named in the PR body. Under the AMENDED rule (instance vs generator) it still merges, and the reason matters: THE GENERATOR HERE PRODUCES A WEAK TEST, NOT A PRODUCTION DEFECT. The enumeration output is BYTE-IDENTICAL ACROSS ALL FOUR ROUNDS - 8 sites, 7 constant, 1 variable at importers.py:952, same files, same line numbers - and NONE of the uncovered spellings exists under src/. Contrast #104, whose generator produces defects that reach the owner on draft night.
+TWO HOLDS THIS PR EARNED: ae8c288 was green on nine gates and carried a BLOCKING HIGH. 8ad253d was green and had three previous fixes revertible in silence. BOTH CAUGHT ONLY BY ASKING WHETHER A REVIEW WAS READING.
+
+## `c334` - GENERATOR FILED (not fixed): barriers follow the reviewer attention rather than the code surface
+
+**Status:** pending
+
+From #105 round 4, 2026-08-26. Filed rather than fixed under the amended stopping rule, because this generator produces TEST WEAKNESS and cannot reach production while src/ contains no instance.
+THE INSTANCES: deleting ast.MatchStar, ast.MatchMapping.rest, or the ast.Import-or-ImportFrom shadow branch each leaves 27 passed, 1 skipped. Also setattr(sys.modules[__name__], "SOURCE", ...) still reads as a compile-time constant - the globals() blanket does not reach it because the call is setattr.
+THE GENERATOR, in the lane own words: "I wrote barriers for the three binders THE PREVIOUS REVIEWER HAD DEMONSTRATED and not for the two I added on my own initiative. THE BARRIER FOLLOWED THE REVIEWER ATTENTION RATHER THAN THE CODE SURFACE."
+AND THE UNCOMFORTABLE PART, which the lane stated rather than hid: THE ROUND CONVENED TO FIX "FIXES ARE SILENTLY REVERTIBLE" SHIPPED THREE MORE SILENTLY-REVERTIBLE BRANCHES.
+PROPER FIX WHEN SOMEONE TAKES IT: enumerate binder forms FROM THE ast MODULE rather than from the list of defects anyone has demonstrated. That closes the class instead of the reported members.
+ALSO FILED: a parse error in _sites_in_module is swallowed (nothing under src/ fails to parse); and disabling the attribute-call arm leaves tests green because the referenced-not-called fallback reports the same site as non-constant - A CORRECT VERDICT REACHED BY A WEAKER PATH, not a wrong one.
+
+## `c335` - THE TRAILING-NEWLINE HAZARD RECURRED - it is a generator, not an instance
+
+**Status:** pending
+
+2026-08-26, second occurrence in one day. I CAUSED IT IN THE MORNING, #106 MERGE HEALED IT, AND #105 LANDING REINTRODUCED IT.
+DRIVEN: c07aefb endsNL=True (291 headings); 553df7a endsNL=True (292); c72b207 endsNL=FALSE (298). Main last 30 bytes: b"viewer and I have SQLite only."
+CONSEQUENCE, TESTED BY THE PROJECTION LANE RATHER THAN ASSERTED, with a positive control on the extractor first:
+  A. appended tail begins "\n## 2026-..."  -> counted=1, at line start
+  B. appended tail begins "## 2026-..."    -> counted=0, lands as b"y.## 2026-08-26 - ..."
+CASE B SILENTLY LOSES THE ENTRY - present in the file, invisible to predict_union.py ^## \d{4}-\d{2}-\d{2}, and COMPLETELY NORMAL IN A DIFF. And case B IS WHAT A NAIVE open(f,"a").write("## ...") PRODUCES, which is the natural way to write it.
+THIS IS A GENERATOR AND I TREATED IT AS AN INSTANCE. I recorded it healed in c291 and moved on. The real fix is either a CI check that docs/handoff.md ends with a newline, or a resolver that heals unconditionally. The projection lane resolver now HEALS and says so loudly, verified as exactly one byte: main is a verbatim prefix of HEAD, byte at position len(main) is b"\n", guarded by an assert that len(result) == len(main) + 1 + len(tail).
+AND THE LANE CAUGHT ITSELF OVER-CLAIMING: its refusal message said "my heading would land mid-line", and its own tail already began with \n so it was never at risk. GUARD FAILED CLOSED ON A CONDITION THAT DID NOT APPLY - right direction, wrong precision, and it said so before it left the session.
+
+## `c336` - SQUASH MERGES BREAK --is-ancestor: a false alarm with a confident mechanism
+
+**Status:** pending
+
+From the reliability lane 2026-08-26, verifying its own merge from the far side.
+git merge-base --is-ancestor c3ce323 origin/main returns FALSE ON A PERFECTLY CLEAN SQUASH MERGE. The commit is rewritten, so the head SHA - and EVERY SHA IN THE PR BODY AND BOTH REVIEW RECORDS - now names an object on no branch.
+WHY IT MATTERS: a lane verifying "did my work land" that way gets False and REASONABLY CONCLUDES THE MERGE FAILED OR WAS REVERTED. Same family as the 25,813 CRs appearing in docs/handoff.md after a rebase - a false alarm with a plausible mechanism behind it, which is harder to dismiss than a confusing one.
+THE CHECK THAT DOES NOT LIE: BLOB EQUALITY PER CHANGED FILE. The lane confirmed all 15 of its files byte-for-byte identical on main, 0 differ. COMPARE THE ARTEFACT, NOT THE POINTER TO IT - the same shape as append-only v6 comparing blobs rather than refs.
+Already noted in c208-era guidance that squash merges make rev-list --count and diff branch..main lie about preservation. THIS IS THE THIRD INSTRUMENT IN THAT FAMILY and the first with a clean positive alternative.
+
+## `c337` - A GUARD THAT ENUMERATES WHAT IT PROTECTS PROTECTS NOTHING ELSE, and its coverage is invisible in a green run
+
+**Status:** pending
+
+Named by the verification-toolchain lane 2026-08-26 after hitting it a third time in one day. THE REPAIR EVERY TIME IS TO ASSERT OVER THE THING ITSELF RATHER THAN OVER A LIST NAMING IT.
+THREE INSTANCES TODAY:
+(1) pytest_argv AST rule - named a form rather than the property, defeated by the next spelling.
+(2) The CI no-op suffix list.
+(3) test_code_gate_jobs_are_not_conditional ENUMERATES SIX JOB NAMES IN A LITERAL LIST. A newly added job is UNPROTECTED and the suite is green. Found because the lane drove seven mutations against its own new check and one escaped: "if: ${{ false }}" ON THE JOB disables the step without touching the step, and its test only checked the step. The existing guard WOULD have caught it - except its literal list did not contain the new job.
+WHY THE OBVIOUS FIX IS WRONG: adding doc-terminators to the list fixes THE INSTANCE and leaves THE GENERATOR. The next job added is unprotected until someone remembers. The lane instead asserted that THE JOB THAT ACTUALLY CONTAINS THE COMMAND is unconditional - no list, cannot fall behind one. Re-driven: 7 mutations, 0 escaped.
+FILED AND NOT FIXED: test_code_gate_jobs_are_not_conditional still protects six named jobs and silently protects no others. It is another lane test and the generator deserves its own unit.
+THE INVISIBILITY IS THE POINT: an enumerated guard reports green whether its list is complete or not, so ITS COVERAGE IS NOT OBSERVABLE FROM ITS RESULT. Same family as a statistic over nothing.
+
+## `c338` - REVERSION CONTROL REFINED: deleting an assert is green BY CONSTRUCTION - you must also inject the defect it names
+
+**Status:** pending
+
+From the projection lane 2026-08-26. A REFINEMENT OF THE REVERSION CONTROL I HAD BEEN PROPAGATING TO EVERY LANE, and it corrects a number I would have accepted.
+THE TRAP: the lane ran 14 mutations and 10 LEFT THE WHOLE FILE GREEN. It almost reported that headline. THE HEADLINE IS MEANINGLESS.
+  R1 drop a detector, KEEP its declaration     4/4 RED
+  R2 drop a detector AND its declaration       4/4 GREEN  (the declared blind spot)
+  R3 delete or weaken each assert, no defect   6/6 GREEN
+R3 IS UNINTERPRETABLE ON ITS OWN. DELETING A TEST OWN ASSERTION IS GREEN BY CONSTRUCTION unless something ELSE covers the property - so A VACUOUS GREEN AND A REAL HOLE ARE INDISTINGUISHABLE THERE.
+THE EXPERIMENT THAT SEPARATES THEM: delete the assert AND INJECT THE DEFECT IT NAMES.
+  R4a drop >=2 assert    + delete mid-table repeat    RED  (covered elsewhere)
+  R4b weaken >=2 to >=1  + delete mid-table repeat    RED
+  R4c drop presence      + strip declared hazard      RED
+  R4d drop pairing       + declare undetected hazard  GREEN  <- SOLE GUARD
+  R4e drop matching      + duplicate a declaration    RED
+  R4f invert pairing     + declare undetected hazard  GREEN  <- same sole guard, RAN NOT INFERRED
+  R4g undeclared hazard added to the fixture          RED
+THE HONEST STATEMENT IS THE OPPOSITE OF THE HEADLINE: of four asserts, THREE HAVE INDEPENDENT COVERAGE and ONE IS THE SOLE GUARD. GREEN AT R4d/R4f IS WHAT A LOAD-BEARING UNDUPLICATED CHECK LOOKS LIKE, NOT A DEFECT. None of the four is decorative.
+STILL OPEN, stated precisely: the pairing is enforced DECLARATION -> DETECTOR ONLY. Nothing enforces FIXTURE -> DECLARATION, so a hazard sitting in the fixture that nobody declares and nobody detects changes no bytes and fires nothing.
+
+## `c339` - THE LIVE-SMOKE GATE CONVERTS pytest EXIT 5 - NOTHING COLLECTED - INTO A GREEN
+
+**Status:** pending
+
+Found by the projection lane 2026-08-26 while checking whether two zero-step jobs were skipped or starved. PRE-EXISTING, not that lane.
+Adapter gate live smoke runs pytest -m live_smoke and TURNS EXIT CODE 5 (no tests collected) INTO SUCCESS WITH A ::notice::. SO THE LIVE HALF OF THE ADAPTER GATE REPORTS GREEN WHEN IT RUNS NOTHING.
+DRIVEN BOTH DIRECTIONS rather than asserted: pytest -m live_smoke --collect-only gives 40 of 2185 collected including the three Hashtag tests, so selection genuinely works today; pytest -m definitely_not_a_real_marker gives no tests collected exit=5, SO THE GREEN PATH IS REACHABLE.
+A MARKER RENAME WOULD EMPTY THAT JOB SILENTLY. Same generator as the if-false-on-the-job finding and the enumerated job list: THE GATE ANSWERS A QUESTION ADJACENT TO THE ONE IT NAMES.
+Also confirmed in the same check: the two zero-step jobs are CORRECT-BY-DESIGN, not starved - live smoke is if: workflow_dispatch || schedule, deliberately never on push or PR so a third party outage cannot look like a broken change. THAT DISTINCTION WAS CHECKED, NOT COUNTED.
+
+## `c340` - MERGED #107 at 20:59:59Z - projection profile verification - main b4e3958
+
+**Status:** done
+
+Fourth merge of 2026-08-26. THE LANE DECLINED ITS OWN MERGE WINDOW and was right to.
+WHY IT DECLINED: its last independent review was at 0c1a8e7, and blob-identity per file showed 885 insertions / 78 deletions across 10 files with ALL FIVE SOURCE FILES MOVED and 69 test names added. "The rebase was textual" was available and would have been TRUE AND MISLEADING. It applied the a074742 distinction to itself unprompted.
+THE REVIEW RETURNED RELEASE - no HIGH, no generators, nothing filed - AND THE LANE ATTACKED IT RATHER THAN RELAYING IT, on the grounds that A REVIEW THAT FINDS NOTHING IS THE SHAPE THAT NEEDS A CONTROL.
+TWO CONTROL FAILURES CAUGHT DURING THAT RE-RUN: (1) the first attempt died on parse_projection_csv() missing season - the same TypeError trap that faked a clean sheet in its neighbour probe that morning, caught by a baseline placed BEFORE the result was read. (2) The baseline came back 1 FATAL NOT 0, which briefly looked like the reviewer being wrong and was the DECLARED repeated-header hazard, a row-level rejection with 6 rows still parsed. A KNOWN NON-ZERO BASELINE IS WHAT MAKES THE DELTAS MEAN ANYTHING.
+AND IT VERIFIED THE SAFETY-RELEVANT CLAIM BY LINE NUMBER: verify_projection_batch at 1105, raise at 1111, every DB-writing helper first invoked from 1127 onward, and the session.flush() calls at 152/163/230/443/950/979/983 all INSIDE those helpers and unreachable before 1127. A BLOCKED BATCH TOUCHES NOTHING.
+POST-MERGE VERIFIED: docs/handoff.md on b4e3958 is 1,756,284 bytes, endsNL=TRUE, 0 CRLF, 303 headings. THE NEWLINE HAZARD IS CLOSED ON MAIN BY THIS LANE HEAL, not by luck.
+CI: two runs both attempt=1 completed/success on headSha a29567a, failedSteps=0, gatesWithSteps=9, skipped=1, starved=0.
+
+## `c341` - gh pr edit PRINTS THE URL ON CALL SUCCESS, NOT ON MUTATION
+
+**Status:** pending
+
+From the projection lane 2026-08-26. Third time in one day a command handed it a plausible artefact for work it had not necessarily done.
+gh pr edit printed the PR URL and exit=0. THAT IS NOT EVIDENCE THE BODY CHANGED - the URL is emitted on call success, not on mutation. Same family as collection-is-not-execution and as git update-index --cacheinfo erroring while the surrounding script produced a commit SHA.
+IT RE-READ THE BODY FROM THE API AND DIFFED IT AGAINST WHAT IT SENT. WORTH DOING, BECAUSE THE NAIVE ACCOUNTING DID NOT CLOSE: live was +56 bytes over what was written, two attempts to explain it gave 55 and 54, and one check printed "fully accounted for: False".
+THE RESIDUAL WAS REAL: PowerShell > REDIRECT APPENDS ITS OWN TRAILING CRLF TO THE CAPTURED FILE, so it was measuring its own capture artefact rather than GitHub content. With that named: residual 0, content byte-identical modulo line endings, full original preserved as a prefix.
+THE LESSON IN ITS OWN WORDS: "I was one keystroke from accepting +56 is probably just line endings. It was MOSTLY line endings, and A MOSTLY-CORRECT EXPLANATION OF A RESIDUAL IS HOW YOU RETIRE A DISCREPANCY THAT HAD SOMETHING IN IT."
+
+## `c342` - MY INSTRUCTION WAS DANGEROUS: resolve_doc_conflicts.py MUST NOT resolve a handoff rebase conflict
+
+**Status:** pending
+
+Found by the draft-tracker lane 2026-08-26. I TOLD FOUR LANES TO RUN THIS AFTER REBASING. My wording said "post-rebase hygiene", which is correct and is one comma away from the fatal reading.
+THE DEFECT: its UNION behaviour RE-DUPLICATES the accumulated file every iteration. Used as a merge driver on a docs/handoff.md rebase conflict it reached 2,078 DATED ENTRIES / 12 MB / 184,572 LINES - and THE REBASE REPORTED SUCCESS ON THE DESTROYED FILE. A green rebase over a 7x-inflated append-only log.
+CORRECT USE: post-rebase hygiene on the backlog header ONLY. NEVER as a merge driver for handoff.md.
+COMPANION, AND IT IS WORSE BECAUSE IT IS SILENT: GIT DOES NOT NORMALISE CRLF TO LF WHEN STAGING A CONFLICTED PATH, though a normal git add does - proved both directions by the lane. So a Windows rebase resolving docs/handoff.md commits A 26,542-LINE PHANTOM DIFF that looks exactly like a whole-file rewrite.
+THE CORRECT MERGE NEEDS NO HEURISTIC, because every version is a byte-prefix of the next: merged = ours + heal + theirs[len(base):] read from index stages :1: / :2: / :3:, REFUSING if base is not a byte-prefix of either side.
+THIS IS THE FIFTH REVISION OF MY HANDOFF GUIDANCE IN ONE DAY and the first where my instruction could have destroyed the artefact rather than mismeasured it.
+
+## `c343` - THE ENTRY COUNTER IS NOT FENCE-AWARE: a fenced example with a real date silently adds an entry
+
+**Status:** pending
+
+Found by the projection lane 2026-08-26 chasing a +2 residual it could have ignored. LOW severity, EVIDENCE-INTEGRITY class - nothing prices a player off it.
+MECHANISM: ^## \d{4}-\d{2}-\d{2} runs over RAW BYTES with NO FENCE STATE. docs/handoff.md line 12 holds the format template INSIDE A FENCED BLOCK and escapes counting ONLY because it spells the date as the literal YYYY-MM-DD placeholder.
+INJECTED AGAINST THE origin/main BLOB IN MEMORY, baseline 303, nothing written:
+  +0  the template as-is (YYYY-MM-DD) in a fence
+  +1  COUNTED - an example with a REAL date, in a fence, at column 0
+  +0  same example INDENTED ONE SPACE inside the fence
+  +0  a real date quoted inline mid-prose
+  control: ordinary prose +0
+SO A LANE DOCUMENTING THE FORMAT BY EXAMPLE INFLATES THE COUNT. That is a natural thing to write - the lane nearly wrote one itself describing the format to the next lane.
+WHY IT MATTERS DESPITE BEING LOW: this counter is behind EVERY 291->292 and 298->303 heading delta quoted as append-only evidence today. AN INFLATED COUNT WOULD HAVE READ AS A SUCCESSFUL APPEND, in the artefact class where confidence has been highest.
+MITIGATION IS ONE SPACE OF INDENTATION, demonstrated, no code change. Belongs as a line in the handoff own "Entry format" section - the one place a lane is guaranteed to look before appending.
+
+## `c344` - OWNER ANSWERED 14 OF 15 DRAFT-DAY QUESTIONS - and Q15 reordered the plan
+
+**Status:** done
+
+Captured 2026-08-26/27 at files/draft-day-ANSWERS-2026-08-26.md. THIS IS THE HIGHEST-VALUE ARTEFACT PRODUCED IN THE PROJECT and it took one hour.
+Q15, the one-thing-that-must-work: THE LIVE DRAFT BOARD WITH PICKS AND BUDGETS TRACKED AUTOMATICALLY.
+I HAD THE DEPENDENCY GRAPH ALL DAY AND NEVER ASKED WHICH END HE CARED ABOUT. draft-tracker deps read off main at b4e3958: draft-tracker-persistence DONE, draft-tracker-screen DONE, bridge-capture DONE, draft-format-abstraction DONE, fantrax-official-adapter DONE, frontend-skeleton DONE, draft-tracker-bridge-feed = PR #104, THE ONLY OPEN PR. SIX OF SEVEN DONE.
+THE BOARD DOES NOT SIT BEHIND THE NINE-ITEM VALUATION CHAIN. auction-budget-manager depends on draft-tracker, NOT THE REVERSE. I spent the day treating the valuation spine as the critical path for his priority; it is the critical path for a DIFFERENT priority.
+OTHER LOAD-BEARING ANSWERS:
+- Q3: TWO MINUTES PER PICK, not the 8-30 seconds I had been designing against. AN EVIDENCE PANEL IS AFFORDABLE.
+- Q1: "realtime awareness of draft status SO THAT I DO NOT NEED TO INPUT ALL OF THAT INFORMATION" - NO MANUAL FALLBACK EXISTS IN HIS PLAN.
+- Q2: remote, nobody sees his screen. NO DISCRETION CONSTRAINT.
+- Q7: tell me loudly, RED BANNER with categories named - but heart picks override. ADVISE EVERYWHERE, OVERRIDE NOWHERE.
+- Q11: "a little of both, we will refine as the mocks get worked" - THE TRUST FORK IS SETTLED BY OBSERVATION, WHICH MAKES AN EARLY MOCK THE DECIDING INSTRUMENT.
+- Q6 + Q14 EXPOSE A FORK THE PLAN DOES NOT ACCOUNT FOR: "if the system can manage the chaos for me and handles suggestions and lineup choices, then a lot of this is moot anyway", plus "not knowing when to cut someone proven to have been a bad pick". THE IN-SEASON LINEUP MANAGER IS CURRENTLY FIRST ON THE CUT LIST and two of his answers make it load-bearing.
+Q12 - what would make you close the laptop - REMAINS UNANSWERED.
+
+## `c345` - EIGHT UNITS THE OWNER NAMED THAT ARE NOT IN THE BACKLOG
+
+**Status:** pending
+
+From the draft-day answers 2026-08-26/27. NONE OF THESE EXIST AS BACKLOG ITEMS. Architect to sequence; do not build unasked.
+1. LIVE LEAGUE CATEGORY TABLE - every team ranked 1-to-N in every category on expected performance. HE ASKED FOR IT TWICE, in Q4 and Q9. punt-builds scores HIS roster; this is THE WHOLE ROOM. Most-requested missing thing across all answers.
+2. RIVAL-STRATEGY DETECTION - "a point in the draft where I am competing with another player who has stumbled into the same build strategy, this might mean we are both willing to overpay."
+3. POSITIONAL SCARCITY TIPPING POINTS - "as tier 1 point guards go off the board, top assist makers may be at a premium." Extended 2026-08-27: chasing categories CONCENTRATES you at a position and the players who then slip are underpriced.
+4. OUT-OF-POSITION PRODUCTION - a centre who passes, a guard who rebounds. DISTINCT from scarcity. He believes ADP already prices it - which, by his own tiebreaker rule, argues for using ADP as the CHECK rather than the SOURCE.
+5. AN AGENT TO TALK THROUGH CHOICES WITH, in the overlay or companion app. A DIFFERENT PRODUCT SURFACE FROM A DASHBOARD and arguably the biggest single thing he said.
+6. OVER-POLICING WARNING - his self-named bad habit: bidding defensively to push a price up and ACCIDENTALLY WINNING. Traces directly to Q7 red banner.
+7. PER-TEAM BUDGETS - "slightly different per team based on last years final totals." CONFIRMED NOT REPRESENTABLE: DraftParticipant at db/models/draft.py:146-191 HAS NO BUDGET COLUMN; auction_budget is one scalar on Draft and draft/state.py:680-682 derives EVERY seat remaining budget from it. SCHEMA CHANGE PLUS MIGRATION. Filed, not fixed - wrong trade inside the PR that must work on the 18th.
+8. PERSONAL BIAS FEEDBACK LOOP - from Q14, "not feeding back on my own bias". NOTHING TRACKS HIS OWN PAST DECISIONS AGAINST OUTCOMES. The only requested feature that IMPROVES WITH USE, and it cannot start until he has drafted once with the tool.
+
+## `c346` - THE COHORT MANIFEST OWN REPRODUCTION COMMAND IS SELF-DEFEATING
+
+**Status:** pending
+
+From the reliability lane pre-archive answer 2026-08-27. WORSE THAN UNDOCUMENTED - documented TWICE, in two files that contradict each other on the one variable that decides it. data-engineer to fix.
+HALF ONE: docs/handoff.md:25903-25922 records the mechanism and the correction - that regeneration was falsely claimed to need live stats.nba.com calls, and that the refusal came from --raw-root defaulting to backend/data/raw. BUT IT SAYS ONLY "the captures are in the operator payload store". NO LITERAL PATH.
+HALF TWO: docs/adapters/nba-injury-report-cohort-admissibility.md:250-256 has the path hoops-gm-data/data/raw, the counts (583 injury-report + 2,462 stats = 3,045), and the load-bearing detail that RawPayloadStore RESOLVES RELATIVE TO THE CURRENT WORKING DIRECTORY. Its fix: run from C:\Users\steverones\hoops-gm-data. NO FLAG.
+NEITHER FILE REFERENCES THE OTHER.
+THE TRAP: the manifest records the command that produced it at nba-injury-report-cohort-2025-10-21--2026-04-12.json:1327, AND REPLAYING IT REPRODUCES THE FAILURE. No --raw-root, and --out ../docs/adapters/... PINS CWD TO backend/, which is exactly where backfill.py:90 DEFAULT_RAW_ROOT = Path("data")/"raw" resolves to a directory that does not exist. AND THE ADMISSIBILITY DOC FIX DOES NOT RESCUE IT: run from hoops-gm-data and ../docs/adapters becomes C:\Users\steverones\docs\adapters, not the repository.
+FOLLOW EITHER DOCUMENT FAITHFULLY AND YOU FAIL. You need a fact neither states.
+FIX: add --raw-root C:\Users\steverones\hoops-gm-data\data\raw to the manifest reproduction block. ABSOLUTE, therefore cwd-independent, leaving --out working from backend/. DATA-ENGINEER OWNS IT - a manifest regenerated by another lane passes its own fingerprint check by construction.
+
+## `c347` - ENVIRONMENT TRAPS from the reliability lane pre-archive answer - the ones I did not have
+
+**Status:** pending
+
+2026-08-27. Category: things that FAILED AND WOULD LOOK REASONABLE TO TRY AGAIN. Its words: the category nobody writes down and always costs someone a day.
+CONTROLS THAT SILENTLY DO THE WRONG THING - the dangerous class, because they produce a green:
+- [regex]::Replace($t,$p,$r,1) DOES NOT REPLACE ONE MATCH. The 4-arg static overload takes RegexOptions, so 1 binds to IgnoreCase and ALL matches replace. Count-limited is [regex]::new($p).Replace($t,$r,1).
+- Select-Object -First n ZEROES $LASTEXITCODE. Any gate whose exit code is read through a pipe with -First reports success unconditionally. I REGISTERED THIS DAYS AGO AND STILL WALKED INTO IT while verifying this lane own work.
+- pytest -q on top of addopts gives -qq, which DELETES THE "N passed" LINE while exiting 0.
+- mypy src IS NOT THE GATE. CI runs BARE mypy (206 files, config-driven); mypy src sees 125. Every Python gate is working-directory: backend.
+- HOOPS_GM_DATABASE_URL IS SILENTLY SWALLOWED. The variable is DATABASE_URL. The prefixed name yields a DEFAULT, not an error, so you test against the wrong store and everything passes.
+THINGS THAT FAIL IN A WAY THAT LOOKS LIKE YOUR FAULT:
+- PowerShell has NO HEREDOC. python - @'...'@ opens an interactive REPL AND HANGS THE SHELL.
+- gh api ... | python -c "..." fails with "ScriptBlock should only be specified as a value of the Command parameter."
+- BACKTICKS IN A COMMIT MESSAGE are a PowerShell ParserError. Use git commit -F.
+- .git IS A FILE IN A WORKTREE, so Test-Path .git\rebase-merge is STRUCTURALLY ALWAYS False.
+- gh run list --json runAttempt IS REJECTED; the CLI field is attempt; THE API FIELD IS run_attempt. THREE DIFFERENT SPELLINGS ACROSS THREE SURFACES.
+ONE THAT INVALIDATES A WHOLE SUITE RUN WITH NO SIGN:
+- backend/tests/test_predict_union.py:21 READS THE LIVE docs/handoff.md OFF DISK and asserts from_disk >= from_git. Editing the handoff WHILE THE SUITE RUNS makes the run provisional - and "no other agent was in the tree" does not cover it, because the agent editing it was the lane itself. APPEND HANDOFF ENTRIES BEFORE STARTING THE SUITE, NEVER DURING.
+
+## `c348` - RE-DRIVING A LIFTED TOOL REPRODUCES ITS OBSERVATIONS, NOT ITS CONTRACT
+
+**Status:** done
+
+2026-08-27. I recovered a script from a lane temp directory, lifted it VERBATIM on the theory that unchanged was the safe option, verified it, and landed it. THE AUTHOR THEN DROVE IT AND FOUND IT COULD NOT FAIL.
+THE BLOCKING DEFECT: scripts/check_append_only.py HAD NO EXIT PATH ANYWHERE. sys was imported for argv alone. Driven in a scratch repo with the first line rewritten - an unambiguous append-only breach - it printed CONTAINMENT: False AND EXITED 0. As a personal probe that was correct, because whoever ran it read the output. AS A COMMITTED TOOL NAMED AFTER THE RULE IT ENFORCED NOTHING. And it composes with Select-Object zeroing $LASTEXITCODE, so a lane piping it through -First gets a green from an instrument already returning a constant green.
+TWO MORE, both false-reassurance: the truncated-control verdict was A HARDCODED STRING - "True and VACUOUS" printed whatever the computed value was, so a breach rendered "False   True and VACUOUS", the label contradicting the value beside it. And base[:200] SILENTLY BECOMES THE BASE when the base is 200 bytes or shorter, so the negative control DEGENERATES INTO A SECOND RUN OF THE POSITIVE CHECK.
+MY ERROR, IN THE LANE WORDS: "Your re-drive was real and it still could not catch this. Every one of those is a PRINTED VALUE. You verified the output and the defect is in the exit code, WHICH NOTHING PRINTED."
+SAME FAMILY AS --collect-only read as execution, conclusion read as a result, mergeStateStatus read as a gate. I WALKED INTO IT WHILE CONGRATULATING MYSELF FOR RECOVERING THE TOOL.
+AND THE INSTINCT I LACKED: the lane checked it BECAUSE I lifted it verbatim, on the theory that A VERBATIM LIFT CARRIES ASSUMPTIONS THAT WERE ONLY SAFE FOR THE ORIGINAL USE. I treated unchanged-but-for-formatting as safest. UNCHANGED IS PRECISELY WHAT CARRIES THE CONTRACT NOBODY WROTE DOWN.
+FIXED as v7: SystemExit(1); the controls computed values GATE rather than print; AN UN-RUNNABLE CONTROL IS A FAILURE NOT A SKIP; every label derived; the --controls flag removed because a flag makes the docstring instruction reachable-around; path as an argument.
+
