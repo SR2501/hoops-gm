@@ -558,3 +558,41 @@ def test_unreadable_files_are_reported_not_silently_passed(tmp_path: pathlib.Pat
     found, unread = module.surviving_markers()
     assert any("legacy.md" in entry for entry in unread), unread
     assert found == [], "a latin-1 file should not be claimed as scanned"
+
+
+def test_writes_preserve_lf_and_do_not_flip_the_file_to_crlf(tmp_path: pathlib.Path) -> None:
+    """A tool the lanes are told to run rewrote the whole append-only log.
+
+    `path.write_text(..., encoding="utf-8")` uses Python's text mode, which
+    translates every `\n` to `\r\n` on Windows. Running this script therefore
+    rewrote all 28,596 lines of `docs/handoff.md`.
+
+    **`core.autocrlf=true` does not save you, which is the part that made this
+    survive unnoticed.** Measured on 2026-08-27 in a repository with autocrlf
+    enabled: the staged blob kept its CRLF while `origin/main` was LF, and
+    `git diff --numstat` reported the entire log as changed. That reads exactly
+    like the catastrophic append-only breach the byte-prefix check exists to
+    detect - produced by the tool run to verify the append.
+
+    Asserted on the **bytes** of the written file. Reading it back as text
+    would normalise the newlines away and pass either way, which is the same
+    "validation of form cannot catch errors of meaning" shape recorded in
+    AGENTS.md.
+    """
+    module = _load(tmp_path)
+    resolver: Any = module
+
+    (tmp_path / "docs").mkdir()
+    backlog = tmp_path / "docs" / "backlog.md"
+    body = _backlog("### `a` - A\n\n- [x] **done**\n\n### `b` - B\n\n- [ ] **pending**\n")
+    backlog.write_bytes(body.encode("utf-8"))
+    assert backlog.read_bytes().count(b"\r\n") == 0, "fixture must start as LF"
+
+    resolver.resolve_backlog(backlog)
+
+    written = backlog.read_bytes()
+    assert written.count(b"\r\n") == 0, (
+        "the header recompute flipped the file to CRLF; on Windows this rewrites "
+        "every line of an append-only document and destroys the byte-prefix check"
+    )
+    assert written.count(b"\n") > 0, "the file should still have line endings at all"

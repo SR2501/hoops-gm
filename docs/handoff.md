@@ -28594,3 +28594,269 @@ signal. Finding three is a known unfixed High and the board can still be
 silently short a player. And thirteen rounds have produced thirteen findings:
 **no convergence evidence stands**, and the criterion I am stopping on is about
 the *kind* of thing being found, not about the unit having run out of depth.
+
+
+---
+
+## 2026-08-27 - backend - two verification tools, the coordinator register, and the work that sat unlanded overnight
+
+Branch `sr2501-verification-tools-and-register`, base `988909f`.
+
+**Changed:** landed `scripts/check_ci_gates.py` and
+`scripts/check_doc_terminators.py` with their tests and CI wiring, committed the
+coordinator register as `docs/governance/coordinator-register.md`, and promoted
+seven items out of it into `docs/backlog.md`.
+
+**All of this was built on 2026-08-26 and held for a merge window that never
+opened.** It survived only because it was written to session scratch rather than
+kept in a conversation, which is the same rule this unit is otherwise about. The
+architect asked what was still on disk rather than assuming, and the answer was
+"all of it" - but that was luck plus a habit, not a guarantee.
+
+### `check_ci_gates.py` - three summary fields lied on one day
+
+Each of these was read as a result and each was wrong: `mergeStateStatus=CLEAN`
+on a pull request with **zero** checks on its head; `conclusion=failure` on a run
+where **no job was ever assigned a runner** and no step failed;
+`conclusion=cancelled` on a run with six jobs green, four cancelled by
+supersession and **zero** failed steps. **A summary field is not a result**, and
+a summary over an empty or partial set summarises beautifully.
+
+It reports gate count, gate names, failed-step count and the
+**skipped-versus-starved split**. That split is the load-bearing part:
+`jobsWithRunner=9/10` cannot distinguish a job skipped by design from one starved
+of a runner, because neither has a runner, so a run with one starved and one
+skipped job reads identically to a clean one.
+
+Two properties worth naming because they were not in the brief and the tests
+found them:
+
+* **CodeQL is reported but not counted.** It registers as `PR #<n>`, so counting
+  it lets a head with no `CI` run at all report a non-zero check count - which is
+  the precise mechanism by which a pull request with zero gates looked healthier
+  than one being verified.
+* **The exit code is `failed_steps or starved`.** A starved job has no steps to
+  fail, so a failed-step count alone calls it clean. Both of the day's errors,
+  from opposite directions, in one condition.
+
+It refuses a short SHA **before querying**, because `?head_sha=` returns an empty
+set for one without complaining. The test asserts the API is *never called*
+rather than asserting the exit code, since refusing after querying would satisfy
+a return-code assertion and still be the trap. And it proves its own query works
+against the default-branch head before reporting an absence: if the control is
+empty too it reports **the query is broken** and exits 2. That is
+`predict_union.py` refusing an empty base, pointed at CI.
+
+### `check_doc_terminators.py` - a generator I watched get misfiled as an instance
+
+`docs/handoff.md` must end with a newline or its own entry count lies.
+`predict_union.py` anchors on `^## \d{4}-\d{2}-\d{2}`; append to an unterminated
+file and the heading is welded onto the last line, so the entry is **present in
+the file, invisible to the counter, and unremarkable in a diff**. Driven, with a
+positive control on the extractor first:
+
+    control, well-formed              -> 1 heading
+    terminated base + naive append    -> 1
+    UNTERMINATED base + naive append  -> 0
+
+`open(path, "a").write("## ...")` - the natural way to append - produces the
+second.
+
+**The three data points are the argument for a gate rather than a fix.**
+`c07aefb` terminated, `c72b207` not, `988909f` terminated again: it broke, healed
+incidentally on the next merge, was filed as self-healing, **re-broke on a
+different lane's merge**, and healed again. Two instance repairs already paid
+for, and nothing that fires on the commit that breaks it. This does, in its own
+job - not a step inside `secrets` or `backlog-graph`, because a job named for one
+check that silently performs another is a shape this repository keeps filing
+defects about.
+
+Controlled against the **real** broken commit rather than a fixture:
+`origin/main`'s `c72b207` bytes installed into a worktree, exit 1 naming the
+tail, then restored.
+
+### The gap that driving it found, which is the third instance of one generator
+
+Seven mutations driven against the terminator work; **six caught, one escaped.**
+`if: ${{ false }}` on the **job** disables the step without touching it, and my
+test only checked the step.
+
+`test_code_gate_jobs_are_not_conditional` would have covered it - except it
+enumerates job names in a **literal list**, and a job added later is not in that
+list. Adding `doc-terminators` to it would have fixed my instance and left the
+generator standing for the next job.
+
+So my test asserts that the job **actually containing the command** is
+unconditional. No list, so it cannot fall behind one. Re-driven: **7 mutations, 0
+escaped.**
+
+**That is the third instance today of one generator**, and it is worth stating as
+a class rather than three stories: `pytest_argv`'s AST rule enumerated syntactic
+forms and lost to `*(["-k", ...] * flag)`; the CI command check enumerated no-op
+suffixes and lost to `--help`, `|| true` and `--exit-zero`; this enumerated job
+names. **A guard that enumerates the things it protects protects nothing else,
+and its coverage is invisible in a green run.** The repair was the same all three
+times: assert over the thing itself rather than over a list naming it.
+
+### The coordinator register, and a number I got wrong twice
+
+`docs/governance/coordinator-register.md` is 320 entries of the coordination
+layer - rules, defects, published traps, near misses, and the record of who
+corrected whom. It lived in a session-scoped SQLite table, which meant *"nothing
+important lives only in a chat"* was being broken by the artefact enforcing it.
+
+**Not appended to `docs/handoff.md`**, deliberately: that file is the O(n^2)
+merge bottleneck this project already identified, it is the one file my rebase
+conflicted on yesterday, and it is now 1.87 MB. Adding 385 KB to solve a storage
+problem would make every future lane's rebase permanently worse.
+
+**How I got its contents wrong, three times, is in the file's own header**, and
+it is the most useful thing in this entry. I classified entries by regular
+expression on their headings; corrected, I found a `**Status:**` field;
+controlled it properly - every entry whose title reports a completed event does
+read `done` - and concluded 295 entries were open tasks. **The control was sound
+and the conclusion was still wrong**, because the field distinguishes done-events
+from non-done-events, which is not the property *"does somebody have to act on
+this"*. That property is recorded nowhere and only reading the entry reveals it.
+
+My drop list went 25 -> 12 across three passes and **every reduction came from
+opening the entry rather than from a better pattern.** The first pass would have
+deleted a published trap aimed at `availability-model` - item 2 on the draft-day
+chain - a rule already adopted into `gates.md`, and the observation that **4
+October is the real deadline while 18 October is only when the consequences
+arrive.** A better pattern would have produced a more confident wrong answer
+faster.
+
+All 12 drops and all 13 near-misses are listed with individual reasons, because
+**a deletion is the one operation that leaves no evidence**: everything else here
+can be diffed, and a thing never written cannot be.
+
+The transform carries a snapshot of the ids present during the removal pass, so a
+later rebuild names entries that arrived afterwards rather than including them
+under a header claiming they were read. Driven both ways.
+
+### The defect that nearly corrupted this very commit
+
+**`scripts/resolve_doc_conflicts.py` silently rewrote every line of
+`docs/handoff.md`, and it is the tool the lanes are told to run.**
+
+Both of its writes were `path.write_text(..., encoding="utf-8")`. Python's text
+mode translates `\n` to `\r\n` on Windows, so running the script converted all
+28,596 lines of the append-only log to CRLF. I found it because my own
+byte-prefix check came back **False** and I measured rather than assuming a
+stale base.
+
+**`core.autocrlf=true` does not save you, and that is why this survived.**
+Measured here with autocrlf enabled: the staged blob kept its CRLF while
+`origin/main` was LF, and `git diff --numstat` reported **28,782 added / 28,596
+removed** on a file to which I had appended 186 lines. That reads exactly like
+the catastrophic append-only breach every check in this area exists to detect -
+manufactured by the tool run to verify the append. `docs/backlog.md` behaves
+differently under the same conversion, which is worth knowing on its own: the
+file autocrlf does **not** normalise is the append-only one.
+
+Fixed with `newline="\n"` on both writes. After the fix the same recompute
+leaves both files pure LF, and this branch's diff is **186 added / 0 removed**
+on `handoff.md`.
+
+The test asserts on **bytes**. Reading the file back as text normalises the
+newlines away and would pass either way - `AGENTS.md`'s "validation of form
+cannot catch errors of meaning" in its cheapest possible form. Driven red by
+reverting the fix.
+
+**Scope, narrower than it looks:** I fixed the two writes in
+`resolve_doc_conflicts.py`. The three mutation harnesses use the same unguarded
+`write_text`, and their restore check compares `read_text` output, which is
+normalised on both sides - so a harness could rewrite its target's line endings
+and its own "not restored" assertion could not see it. **I have not established
+whether that happens**, and it is recorded below as a question rather than a
+finding.
+
+### The tool passed itself on a partial set, which is the defect it exists to catch
+
+Pointed at this branch's own pull request, `check_ci_gates.py` printed
+**`0 failed steps`** and exited **0** while three gates were still running.
+
+**`0 of 3 finished` and `0 of 11 failed` are the same number and opposite
+facts.** Every trap this tool was built for is a summary over an empty or
+partial set, and it had one of its own: `classify_job` read `conclusion` without
+reading `status`, so an unfinished job with no conclusion fell through as a
+plain value rather than being recognised as unfinished.
+
+It now counts jobs still running, reports them on their own line, and returns
+non-zero with **`NOT A VERDICT`** - so a caller checking only the exit status
+cannot read an in-flight run as a pass. The unfinished count is printed *before*
+the failure count, because it changes what that count means.
+
+Two tests, both driven: the unfinished case, and the control that a finished job
+is still classified by its conclusion - a guard calling everything unfinished
+would exit 1 forever, which is as useless as exiting 0 forever and considerably
+more irritating. The `_job` fixture now sets `status`, with a comment saying why:
+a fixture omitting a field the code reads is the fixture lying rather than the
+code failing.
+
+**Found by using the tool on itself.** I would not have found it by reading it.
+
+### Verified at this commit
+
+From `backend/`: `ruff check .` clean, `ruff format --check .` **227 files**,
+bare `mypy` clean over **220 source files**. From the repo root:
+`ruff check scripts` clean, `ruff format --check scripts` **15 files**.
+`backlog_graph.py` **152 items, zero defects, exit 0**;
+`resolve_doc_conflicts.py` recomputes the header to **57 done - 2 blocked - 93
+pending - 152 total**; `check_doc_terminators.py` exit 0.
+
+Tests: `test_check_ci_gates.py` **7**, `test_doc_terminators.py` **6**,
+`test_ci_workflow.py` **36**, and 110 passed across the five affected modules.
+**Fifteen mutations driven red across the two tools plus the CRLF fix and the partial-set fix, zero escaped**, every
+mutated file restored byte-identically by hash.
+
+### What I could not verify
+
+1. **The full suite at this commit.** Not run - `main` moved by 45 files and
+   18,752 lines overnight across #104, #105, #107 and #109, so a prediction
+   anchored on my 2057 is worthless and I am not going to state one dressed as a
+   measurement. The five modules my change touches pass; the rest is unmeasured.
+2. **That the register is complete as of today.** It is the **12:34 dump of 332
+   entries** from 2026-08-26. The architect reports having continued to add to
+   the source table since - roughly `c319` onward, including the entries about
+   this exchange. **Those are not in this file**, the growth guard reported 0 new
+   because it compares against the dump rather than against the table, and no
+   check here can see the difference. A second dump is the only remedy.
+3. **That the seven promoted backlog items are the right seven.** They came from
+   the entries the architect could recall, which is a sample rather than a
+   triage. `coordinator-register-triage` says so in those words and covers
+   reading the other 313.
+4. **That `test_code_gate_jobs_are_not_conditional`'s literal list is safe.** I
+   worked around it rather than fixing it - it is another lane's test and the
+   generator deserves its own unit. **It protects six named jobs and silently
+   protects no others**, which is a live gap, not a closed one.
+5. **The `live-smoke` job maps `pytest` exit 5 to green** (`ci.yml`, "No live
+   smoke tests yet"). That is deliberate and documented, and it sits in direct
+   tension with `mutate_calibration.py`, which classifies rc 5 as
+   `HARNESS_FAILURE(no tests collected)` on the grounds that a scan finding
+   nothing has not told you there is nothing. I did **not** find this and I am
+   not claiming it - it was attributed to me and I could not substantiate that
+   it was mine. Recording it because the tension is real and checkable, not
+   because I know who found it.
+6. **Whether the three mutation harnesses flip their targets' line endings -
+   answered, and the answer is "the guard is blind but the defect is currently
+   dormant".** They use the same unguarded `write_text`, and their restore
+   assertion compares `read_text` on both sides. Driven directly rather than by
+   running a six-minute harness: a pure-LF file put through
+   `write_text(read_text(f))` comes back with **CRLF**, the harness's own
+   `read_text(...) == text` assertion returns **True**, and the bytes are
+   **not** identical. So the guard cannot see the corruption it would cause.
+
+   It does not bite today only because `core.autocrlf=true` has already made the
+   working tree CRLF, so the conversion is a no-op on files that are already
+   CRLF - `calibration.py` measures 978 CRLF and 0 bare LF on disk. **That is
+   correct by luck, from a setting that has nothing to do with the harness**,
+   and a contributor with `autocrlf=false` would have every mutated file
+   silently rewritten while the restore assertion stayed green. Left unfixed
+   deliberately: it is a one-word change per call site, but it is three files I
+   have no other reason to touch in this branch, and the finding is worth more
+   recorded than bundled.
+
+**Next:** architect, for review and merge. Code gate only; nothing here produces
+a number a decision rests on.

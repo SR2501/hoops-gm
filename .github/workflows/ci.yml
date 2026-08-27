@@ -384,6 +384,30 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python scripts/check_no_secrets.py
 
+  doc-terminators:
+    name: Code gate — the append-only docs end with a newline
+    runs-on: ubuntu-latest
+    # Stdlib-only, like check_no_secrets.py and backlog_graph.py, so it cannot
+    # rot when a package moves.
+    #
+    # Its own job rather than a step inside `secrets` or `backlog-graph`,
+    # because a job named for one check that silently performs another is the
+    # shape this repository keeps filing defects about.
+    #
+    # **Why this is a gate.** `predict_union.py` counts dated entries with
+    # `^## \d{4}-\d{2}-\d{2}`, anchored at a line start. Appending to a file
+    # that does not end with a newline welds the heading onto the last line, so
+    # the entry is present, uncounted, and unremarkable in a diff. It happened
+    # twice on 2026-08-26; the first was healed incidentally by the next merge
+    # and filed as self-healing, which was true of the instance and false of the
+    # class.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python scripts/check_doc_terminators.py
+
   # --- Adapter gate (Phase 2 onwards) ---------------------------------------
   #
   # Contract tests run offline against committed fixtures and block a merge.

@@ -202,6 +202,7 @@ def _commands(step: dict[str, Any]) -> list[str]:
 #: command is pinned outright. Changing it is meant to cost an edit here.
 _SCRIPTS_RUFF_COMMANDS = ["ruff check scripts", "ruff format --check scripts"]
 _SCRIPTS_ESLINT_COMMANDS = ["../frontend/node_modules/.bin/eslint ."]
+_DOC_TERMINATOR_COMMANDS = ["python scripts/check_doc_terminators.py"]
 
 
 def _assert_step_is_live(step: dict[str, Any], what: str) -> None:
@@ -293,6 +294,43 @@ def test_the_two_javascript_probes_are_linted_by_some_job(jobs: dict[str, Any]) 
             "eslint must run from `scripts/`, because flat config resolves its "
             "`files` patterns relative to the config's base directory"
         )
+
+
+def test_the_append_only_docs_are_checked_for_a_trailing_newline(jobs: dict[str, Any]) -> None:
+    """A job deletable in one line, whose absence is invisible in a green run.
+
+    `docs/handoff.md` lost its trailing newline twice on 2026-08-26. Without
+    one, an appended `## YYYY-MM-DD` heading is welded onto the last line, so
+    `predict_union.py` does not count it and the diff looks entirely normal -
+    the entry is present and uncountable.
+
+    **The owning job is checked as well as the step, and that is not
+    belt-and-braces.** `test_code_gate_jobs_are_not_conditional` enumerates job
+    names in a literal list, so a job added later is unprotected by it until
+    somebody remembers - and `if: ${{ false }}` on the job disables the step
+    without touching it. Driven: with only the step checked, that mutation
+    escaped. Asserting the job that *actually contains* the command needs no
+    list and cannot fall behind one.
+    """
+    found = [
+        (job_name, step)
+        for job_name, job in jobs.items()
+        for step in job.get("steps", [])
+        if _commands(step) == _DOC_TERMINATOR_COMMANDS
+    ]
+
+    assert found, (
+        f"no job runs exactly {_DOC_TERMINATOR_COMMANDS}; an appended handoff "
+        f"entry can then be silently uncountable"
+    )
+    for job_name, step in found:
+        _assert_step_is_live(step, f"the doc-terminator step in `{job_name}`")
+        job = jobs[job_name]
+        assert "if" not in job, (
+            f"job `{job_name}` is conditional, so its steps can be arranged not "
+            f"to run without anyone editing them"
+        )
+        assert not job.get("continue-on-error"), f"job `{job_name}` is allowed to fail"
 
 
 # --- Per-run metrics -----------------------------------------------------

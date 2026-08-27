@@ -247,7 +247,15 @@ def resolve_append_only(path: pathlib.Path) -> None:
             out.append(line)
     if mode != "normal" or ours or theirs:
         sys.exit(f"{path}: unterminated conflict block; refusing to write")
-    path.write_text("\n".join(out), encoding="utf-8")
+    # `newline="\n"`, and it is load-bearing rather than tidiness. Without it,
+    # Python's text mode translates every `\n` to `\r\n` on Windows, so running
+    # this tool rewrites all 28,596 lines of `docs/handoff.md`. `core.autocrlf`
+    # does **not** save you: measured on 2026-08-27, the staged blob kept its
+    # CRLF while `origin/main` was LF, and `git diff --numstat` reported the
+    # entire append-only log as changed. That reads exactly like the
+    # catastrophic append-only breach every check here exists to detect, and it
+    # is produced by the tool the lanes are told to run.
+    path.write_text("\n".join(out), encoding="utf-8", newline="\n")
 
 
 def resolve_backlog(path: pathlib.Path) -> None:
@@ -426,7 +434,10 @@ def resolve_backlog(path: pathlib.Path) -> None:
             "file rather than trusting either reading of this number."
         )
 
-    path.write_text(text, encoding="utf-8")
+    # `newline="\n"`: see the note on the conflict-stripping write above. This
+    # one rewrites `docs/backlog.md`, whose header is derived and recomputed on
+    # nearly every branch, so it is the more frequently executed of the two.
+    path.write_text(text, encoding="utf-8", newline="\n")
     print(f"  backlog header recomputed: {header}")
 
 
