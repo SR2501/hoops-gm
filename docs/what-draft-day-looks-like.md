@@ -107,11 +107,199 @@ played" is the wrong target.]
    a symptom rather than a result.
 5. **"Maximise expected games played" is explicitly rejected as an objective.**
 
+---
+
+# The questionnaire, answered
+
+**Captured 2026-08-26 and 2026-08-27, in conversation.** Fourteen of fifteen.
+These are his words. Anything of mine is marked `[architect inference]` and can
+be struck without argument.
+
+## Part 1 — The room
+
+**Q1. Where are you sitting, and on what?**
+
+> Laptop with at least one external monitor. Phone close by. Samsung tablet
+> available if there is a reason. Expecting draft companion in an overlay or
+> separate app with **realtime awareness of draft status so that I don't need to
+> input all of that information**.
+
+`[architect inference]` The last clause rules out a manual-entry fallback. There
+is no planned degraded mode in which he types picks as they happen.
+
+**Q2. Who else is in the room, and can they see your screen?**
+
+> Remote — everyone's on their own machine, nobody sees my screen.
+
+`[architect inference]` No discretion constraint. The overlay can be as loud as
+is useful.
+
+**Q3. How fast does the auction move?**
+
+> Usually **2 minutes per pick** with a limited bank. Sometimes there is
+> positional trading, but since we're auction this year, that should not be an
+> issue.
+
+`[architect inference]` Two minutes is enough to *read*, not just glance. An
+evidence panel behind a recommendation is affordable. This contradicts the
+8–30 second budget the overlay had been designed against.
+
+## Part 2 — The moment
+
+**Q4. It's your nomination. What do you want on screen?**
+
+> Per game and per 36 projections, sorting by position and category and team,
+> **visibility on other teams' positional and categorical needs**, punt
+> suggestions and awareness — if it's obvious another team is punting a
+> category, it should be visible somewhere. Kind of the way BBM uses RED for
+> poor performance and green for excellence; some way to show me that of the 4
+> teams who still have not passed on a player, **only one of them is really
+> competitive in a top category**.
+>
+> As the tier 1 point guards go off the board, it should be visible that **top
+> assist makers or ball stealers may be at a premium**.
+>
+> There will be a point where I'm **competing with another player who has
+> stumbled into the same build strategy** — this might mean we're both willing
+> to overpay.
+>
+> There will also be **pivot opportunities** — if a player is priced well under
+> projections.
+>
+> Essentially, **having an agent to talk through the choices with** is probably
+> ideal.
+>
+> **Hard stop points during bidding, calculated at the time of a player
+> nomination, with rationale included.**
+>
+> There may be times where I sit back and wait for players to go off the board
+> to equalize money pool, or let players go so that I can **bully people with a
+> bigger bank roll**. The mocks will help with some of this.
+
+**Q5. Someone else nominates. Same screen?**
+
+> Mostly the same, but the **hard stop / max bid matters more**.
+
+**Q6. The single number you most want right**
+
+> The **projections** are the most important thing. After per game / per 36
+> would be the **reliability**. Games played being low isn't a non-starter — it
+> just decreases the overall value. The most important number, if it can even be
+> reliably projected, is probably the **player reliability metric**.
+>
+> Good production from an unreliable player is the most frustrating part of 2026
+> fantasy basketball and the thing that makes so much maintenance necessary.
+> **That said, if the system can manage the chaos for me and handles suggestions
+> and lineup choices, then a lot of this is moot anyway.**
+
+`[architect inference]` The final sentence is a fork the plan does not account
+for. Reliability matters at the draft *because* in-season chaos is expensive. The
+plan currently lists the in-season lineup manager as the first thing to cut.
+
+**Q7. When should the tool tell you you're wrong?**
+
+> **Tell me loudly**, but understand this is fun and there will always be one or
+> two **heart picks** that override head picks. They have to be the exception. A
+> **red warning banner, with the category of warning or multiple categories
+> listed**.
+
+`[architect inference]` Advise everywhere, override nowhere. A tool that refuses
+a pick gets closed.
+
+## Part 3 — Money
+
+**Q8. Budget and habits**
+
+> I think **200**, but it's **slightly different per team based on last years'
+> final totals**. I like to bid later if I can maintain the discipline. There
+> needs to be some **policing** on picks going for way too cheap. Sometimes you
+> bid on someone just to play defense, then **win some of those bids
+> accidentally**. **The bad habit would probably be over policing.**
+
+**Q9. Halfway through and over budget**
+
+> The **full draft board with vertical categories per team**. **Who is winning
+> each category** — a **tier list for all of the owners, based on expected
+> performance, 1 to X in rebounds**. So I can see categories I'm deficient in
+> and excelling in. At some point **punt recommendations become more
+> important**. **Deciding actively how many categories to compete in.**
+
+**Q10. The worst thing that can happen**
+
+> A roster full of injury risks — exactly what I said before.
+
+## Part 4 — Trust
+
+**Q11. What would make you believe a $34 valuation?**
+
+> A little of both doesn't hurt. **We will probably refine as the mocks get
+> worked.**
+
+`[architect inference]` This fork is settled by observation, which makes an early
+throwaway mock the deciding instrument.
+
+**Q12. What would make you close the laptop?**
+
+> **It loses track of the draft — shows me picks that already happened or misses
+> one.**
+
+## Part 5 — The honest ones
+
+**Q13. What do you already do well that the tool should not touch?**
+
+> Nothing really — I want help with all of it.
+
+**Q14. What do you always get wrong?**
+
+> Definitely **valuing injured and unreliable players too highly**, and **not
+> knowing when to cut someone who is proven to have been a bad pick**. Overall
+> evaluation, and **not feeding back on my own bias**.
+
+**Q15. If you could only have ONE thing working on 18 October**
+
+> **The live draft board with picks and budgets tracked automatically.**
+
+Added the following morning, unprompted:
+
+> Another thing to include in the live draft support is **addressing positional
+> need**. Usually going for categories means **leaning too far into Guards,
+> Forwards or Centers**, and inevitably there will be some **positional players
+> who slip**. On that same tier, **stats out of position are especially
+> valuable**. That will almost certainly be included in ADP. Not sure how to
+> quantify that, but it is good to be aware of.
+
+---
+
+## What Q15 changed
+
+`draft-tracker` — the live board — does **not** sit behind the nine-item
+valuation chain. `auction-budget-manager` depends on `draft-tracker`, not the
+reverse. Six of its seven dependencies were already done when he answered; the
+seventh, `draft-tracker-bridge-feed`, merged as #104 on 2026-08-27.
+
+**Q12 is why #109 exists.** The draft feed merged with one known defect — a
+record whose player id is unreadable is counted at ingest and never surfaced on
+`GET`, so the board is silently short a player with every channel reading clean.
+That is Q12 verbatim, so the fix is a **dependency edge** rather than a caveat:
+`draft-tracker` cannot be marked done while it exists.
+
+## Named by him, and not in the backlog
+
+1. **A live league category table** — every team ranked 1-to-N in every category
+   on expected performance. Asked for twice, in Q4 and Q9.
+2. **Rival-strategy detection** — the other GM converging on his build.
+3. **Positional scarcity tipping points.**
+4. **Out-of-position production** — distinct from scarcity.
+5. **An agent to talk choices through with** — a different surface from a
+   dashboard.
+6. **An over-policing warning** — his self-named bad habit.
+7. **Per-team budgets.** Confirmed not representable: `DraftParticipant` has no
+   budget column, `auction_budget` is one scalar on `Draft`, and
+   `draft/state.py:680-682` derives every seat's remaining budget from it.
+8. **A personal bias feedback loop** — from Q14. The only requested feature that
+   improves with use, and it cannot begin until he has drafted once.
+
 ## What is still missing from this page
 
-The questions in
-`files/what-draft-day-looks-like-QUESTIONS.md` that this did not answer:
-the room and the screen, how fast the auction moves, what he wants visible at
-his own nomination versus someone else's, his budget habits, what would make him
-close the laptop, and **question 15** - if exactly one thing works on 18 October,
-what is it.
+Nothing he was asked. **What is missing is his correction** — every
+`[architect inference]` above is mine, and none has been struck or confirmed.
