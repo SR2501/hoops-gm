@@ -112,12 +112,19 @@ def default_branch_head() -> str:
 
 
 def classify_job(job: dict[str, Any]) -> str:
-    """`skipped`, `starved`, or the job's own conclusion.
+    """`skipped`, `starved`, `running`, or the job's own conclusion.
 
     A skipped job and a job that never got a runner both have no `runner_name`.
     They are told apart by the conclusion, and conflating them is what made
     `jobsWithRunner=9/10` unreadable.
+
+    A job that has not finished has **no conclusion at all**, and is neither of
+    those. It is reported as `running` rather than falling through to
+    `str(None)`, because an unfinished job is the partial-set case: see
+    `report_run`.
     """
+    if job.get("status") != "completed":
+        return "running"
     conclusion = job.get("conclusion")
     if conclusion == "skipped":
         return "skipped"
@@ -126,13 +133,22 @@ def classify_job(job: dict[str, Any]) -> str:
     return str(conclusion)
 
 
-def report_run(run: dict[str, Any]) -> tuple[int, int]:
-    """Print one run's gates. Returns (failed steps, starved jobs)."""
+def report_run(run: dict[str, Any]) -> tuple[int, int, int]:
+    """Print one run's gates. Returns (failed steps, starved jobs, unfinished jobs).
+
+    **Unfinished jobs are counted and returned, and that is the point.** The
+    first time this tool was pointed at a live pull request it reported
+    `0 failed steps` and exited 0 while three gates were still running - a
+    verdict over a partial set, which is the defect the whole script exists to
+    catch, in the script itself. `0 of 3 finished` and `0 of 11 failed` are the
+    same number and opposite facts.
+    """
     jobs = gh_api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
 
     failed_steps = 0
     starved = 0
     skipped = 0
+    unfinished = 0
     for job in jobs:
         failed_steps += sum(
             1 for step in job.get("steps", []) if step.get("conclusion") == "failure"
@@ -140,6 +156,7 @@ def report_run(run: dict[str, Any]) -> tuple[int, int]:
         state = classify_job(job)
         starved += state == "starved"
         skipped += state == "skipped"
+        unfinished += state == "running"
 
     print(f"  run {run['id']}  event={run['event']}  attempt={run.get('run_attempt')}")
     print(f"    reported conclusion : {run['status']}/{run['conclusion']}   <- not a result")
@@ -147,11 +164,12 @@ def report_run(run: dict[str, Any]) -> tuple[int, int]:
     print(f"    steps conclusion=failure : {failed_steps}")
     print(f"    jobs skipped by design   : {skipped}")
     print(f"    jobs STARVED of a runner : {starved}")
+    print(f"    jobs STILL RUNNING       : {unfinished}")
     if not jobs:
         print("    no jobs at all - this run establishes nothing about the commit")
     for job in jobs:
         print(f"      {classify_job(job):<9} {job['name']}")
-    return failed_steps, starved
+    return failed_steps, starved, unfinished
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -199,17 +217,29 @@ def main(argv: list[str] | None = None) -> int:
 
     total_failed = 0
     total_starved = 0
+    total_unfinished = 0
     for run in gates:
         print()
-        failed, starved = report_run(run)
+        failed, starved, unfinished = report_run(run)
         total_failed += failed
         total_starved += starved
+        total_unfinished += unfinished
 
     print()
     print(
         f"=== {len(gates)} {GATE_WORKFLOW} run(s): {total_failed} failed steps, "
-        f"{total_starved} starved jobs ==="
+        f"{total_starved} starved jobs, {total_unfinished} still running ==="
     )
+    if total_unfinished:
+        # Reported before the failure count, because it changes what that count
+        # means: with jobs outstanding, `0 failed steps` is "nothing has failed
+        # YET", which is not a verdict. Non-zero exit, so a caller that only
+        # checks the status cannot read an unfinished run as a pass.
+        print(
+            f"NOT A VERDICT: {total_unfinished} job(s) have not finished, so the "
+            f"failure count above is over a partial set. Re-run when they complete."
+        )
+        return 1
     if total_failed or total_starved:
         return 1
     print("No step failed and no job was starved. A skipped job is reported above by name;")

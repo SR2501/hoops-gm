@@ -35,13 +35,15 @@ def checker() -> ModuleType:
     return module
 
 
-def _run(id_: int, name: str = "CI", conclusion: str = "success") -> dict[str, Any]:
+def _run(id_: int, name: str = "CI", conclusion: str | None = "success") -> dict[str, Any]:
     return {
         "id": id_,
         "name": name,
         "event": "push",
         "run_attempt": 1,
-        "status": "completed",
+        # `status` mirrors the API: a run still going reports `in_progress` and
+        # a `conclusion` of `None`, which is exactly the partial-set case.
+        "status": "completed" if conclusion is not None else "in_progress",
         "conclusion": conclusion,
     }
 
@@ -52,7 +54,17 @@ def _job(
     steps = [{"conclusion": "success"} for _ in range(3)]
     for index in range(failed_steps):
         steps[index] = {"conclusion": "failure"}
-    return {"name": name, "conclusion": conclusion, "runner_name": runner, "steps": steps}
+    # `status` is not decoration: `classify_job` reads it to tell an unfinished
+    # job from a finished one, and a real API payload always carries it. A
+    # fixture omitting it would make every job here look like it was still
+    # running, which is the fixture lying rather than the code failing.
+    return {
+        "name": name,
+        "status": "completed",
+        "conclusion": conclusion,
+        "runner_name": runner,
+        "steps": steps,
+    }
 
 
 # --- the refusal, which must happen before any query --------------------------
@@ -213,3 +225,52 @@ def test_codeql_is_reported_but_not_counted_as_a_gate(
 
     assert exit_code == 1, "a head with only CodeQL has not been gated"
     assert "(not a gate) PR #108" in out
+
+
+def test_an_unfinished_run_is_not_reported_as_a_pass(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Found by pointing this tool at a live pull request - it passed itself.
+
+    Three gates were still running, no step had failed yet, and it printed
+    `0 failed steps` and exited 0. **`0 of 3 finished` and `0 of 11 failed` are
+    the same number and opposite facts**, which is the partial-set defect this
+    whole script exists to catch, in the script itself.
+    """
+    jobs = [_job("done gate", "success", runner="gh-1")]
+    running: dict[str, Any] = {
+        "name": "running gate",
+        "status": "in_progress",
+        "conclusion": None,
+        "steps": [],
+    }
+    jobs.append(running)
+
+    def _api(path: str) -> Any:
+        if "/jobs" in path:
+            return {"jobs": jobs}
+        return {"workflow_runs": [_run(1, conclusion=None)]}
+
+    monkeypatch.setattr(checker, "gh_api", _api)
+
+    exit_code = checker.main(["a" * 40])
+    out = capsys.readouterr().out
+
+    assert exit_code == 1, "an unfinished run must not read as a pass"
+    assert "jobs STILL RUNNING       : 1" in out
+    assert "NOT A VERDICT" in out
+
+
+def test_a_finished_job_is_still_classified_by_its_conclusion(checker: ModuleType) -> None:
+    """The control for the test above: `running` must not swallow real states.
+
+    A guard that classifies everything as unfinished would make the tool exit 1
+    forever, which is as useless as exiting 0 forever and much more annoying.
+    """
+    done = _job("gate", "success", runner="gh-1")
+    done["status"] = "completed"
+    assert checker.classify_job(done) == "success"
+
+    skipped = _job("live smoke", "skipped", runner=None)
+    skipped["status"] = "completed"
+    assert checker.classify_job(skipped) == "skipped"

@@ -28772,6 +28772,31 @@ and its own "not restored" assertion could not see it. **I have not established
 whether that happens**, and it is recorded below as a question rather than a
 finding.
 
+### The tool passed itself on a partial set, which is the defect it exists to catch
+
+Pointed at this branch's own pull request, `check_ci_gates.py` printed
+**`0 failed steps`** and exited **0** while three gates were still running.
+
+**`0 of 3 finished` and `0 of 11 failed` are the same number and opposite
+facts.** Every trap this tool was built for is a summary over an empty or
+partial set, and it had one of its own: `classify_job` read `conclusion` without
+reading `status`, so an unfinished job with no conclusion fell through as a
+plain value rather than being recognised as unfinished.
+
+It now counts jobs still running, reports them on their own line, and returns
+non-zero with **`NOT A VERDICT`** - so a caller checking only the exit status
+cannot read an in-flight run as a pass. The unfinished count is printed *before*
+the failure count, because it changes what that count means.
+
+Two tests, both driven: the unfinished case, and the control that a finished job
+is still classified by its conclusion - a guard calling everything unfinished
+would exit 1 forever, which is as useless as exiting 0 forever and considerably
+more irritating. The `_job` fixture now sets `status`, with a comment saying why:
+a fixture omitting a field the code reads is the fixture lying rather than the
+code failing.
+
+**Found by using the tool on itself.** I would not have found it by reading it.
+
 ### Verified at this commit
 
 From `backend/`: `ruff check .` clean, `ruff format --check .` **227 files**,
@@ -28783,7 +28808,7 @@ pending - 152 total**; `check_doc_terminators.py` exit 0.
 
 Tests: `test_check_ci_gates.py` **7**, `test_doc_terminators.py` **6**,
 `test_ci_workflow.py` **36**, and 110 passed across the five affected modules.
-**Thirteen mutations driven red across the two tools, zero escaped**, every
+**Fifteen mutations driven red across the two tools plus the CRLF fix and the partial-set fix, zero escaped**, every
 mutated file restored byte-identically by hash.
 
 ### What I could not verify
