@@ -28007,8 +28007,15 @@ is upstream and `:3:` is the commit being replayed, which is inverted from a mer
 `working-directory: backend`, on the rebased tree:
 
 - `ruff check .` -- clean
-- `ruff format --check .` -- 223 files
-- `mypy` -- clean, 214 source files
+- `ruff format --check .` -- **225 files** (this entry said `223` when written,
+  and `223` was wrong: no `.py` file has been added to or deleted from
+  `backend` since this commit -- `git diff --name-status --diff-filter=AD
+  5c84f33 HEAD -- backend` returns nothing for `.py` -- so the population these
+  tools scan is provably identical and the figure cannot have moved. Round nine
+  caught it, filed it as an instance to correct on the next append, and the
+  next four appends did not correct it.)
+- `mypy` -- clean, **216 source files** (said `214`; same correction, same
+  basis)
 - `pytest tests/test_draft_feed.py` -- 78 passed
 - full suite -- 2223 passed, 1 skipped, 41 deselected
 - model-derived guard enumeration harness -- 11/11 verdicts, both controls
@@ -28409,13 +28416,17 @@ Gates from `backend/`: `ruff check .` clean over 225, `ruff format --check .`
 passed / 1 skipped / 41 deselected** (was 2239). `test_draft_feed.py` **101
 passed** — corrected from `108`, which this entry stated on first writing and
 which was never measured; re-measuring the reviewed SHA gives 101 collected,
-101 passed, and 94 + 7 new = 101 reconciles. This is my **second** measurement
+101 passed, and 94 + 7 new = 101 reconciles. This is the **third** measurement
 error in this PR — the first was a pre-rebase `2188` written as a measured
-figure against a real `2223` — so the pattern is mine and not incidental: both
-times I wrote a number I expected instead of one I had read back. Corrected
-here in place because this entry has not merged; disclosed rather than quietly
-amended because the whole argument of this PR is that a plausible wrong number
-is the failure mode nothing catches.
+figure against a real `2223`, the second was the round-eight gate block's
+`223`/`214` against a real `225`/`216`, which round nine caught and filed and
+which four subsequent appends failed to correct. (On first writing, this
+paragraph said "second" and omitted the round-eight one — a fourth error of the
+same kind, made while enumerating the others from memory.) The pattern is mine
+and not incidental: **every one is a number written from expectation instead of
+read back.** Corrected here in place because this entry has not merged;
+disclosed rather than quietly amended because the whole argument of this PR is
+that a plausible wrong number is the failure mode nothing catches.
 
 **Could not verify.** The general form of "make unenforced rules red" is not
 buildable and I am not claiming it: the guard added here enforces one
@@ -28531,10 +28542,24 @@ change in the unit in the same commit in which I stop the rounds.
 **Finding four was mine.** I published `108 passed` for `test_draft_feed.py` in
 both the PR body and the round-twelve entry. The reviewed SHA gives **101
 collected, 101 passed**, and 94 + 7 new reconciles to 101. `108` was never
-measured. That is my second measurement error in this PR and the round-twelve
-entry is corrected in place above, disclosed rather than quietly amended,
+measured.
+
+**And this entry originally called that my second measurement error, which was
+itself a fourth one.** Closing out round nine's filed instances afterwards, I
+found the round-eight gate block still reading `223 files` and `214 source
+files` against a real `225` and `216` -- caught by round nine, filed to correct
+on the next append, and uncorrected through four appends. So the count is
+**three**: the pre-rebase `2188` written as measured against a real `2223`, the
+round-eight `223`/`214`, and `108`. Corrected above, in place, because that
+entry has not merged.
+
+The pattern is now unarguable and it is mine: **every one of them is a number I
+wrote from expectation instead of reading back**, and the fourth was me
+enumerating my own errors from memory while writing the paragraph that
+complains about doing exactly that. It is disclosed rather than quietly amended
 because the argument of this PR is that a plausible wrong number is the failure
-nothing catches.
+nothing catches -- and the only reason any of these surfaced is that something
+else went looking. Nothing in any gate would have flagged one of them.
 
 **Mutation control, in the corrected form** — delete the mechanism *and* inject
 the defect it names, verify both byte-present on disk, green baseline first.
