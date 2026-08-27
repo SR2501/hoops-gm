@@ -554,8 +554,47 @@ def _candidate_lists(block: Any, locator: str, depth: int = 0) -> list[tuple[str
 
 def _accept_list(
     records: list[Any], context: RecognitionContext, kind: InstantKind
-) -> tuple[list[dict[str, Any]], str | None]:
-    """Accept the whole list or none of it, and say why when none.
+) -> tuple[list[tuple[int, dict[str, Any]]], str | None, list[dict[str, Any]]]:
+    """Accept the list, refuse it, or accept it minus the rows it cannot read.
+
+    Returns ``(admitted, refusal, unreadable)``. The third element is the reason
+    this returns three things instead of two, and it separates two questions
+    that were one until a review drove them apart:
+
+    * **"This is not a pick log."** Every refusal below is evidence about the
+      *kind* of list — a standings table, a keeper roster, another league's
+      data. One bad record is enough to conclude it, and refusing the whole list
+      is the point: the discriminator is what keeps a priced keeper roster off
+      the board.
+    * **"This is a pick log and I cannot read one row of it."** An unreadable
+      ``playerId`` says nothing about the other records. Refusing the list on
+      its account discards picks this module read perfectly well.
+
+    Conflating those cost the whole board. **Fantrax republishes the entire
+    pick list on every pick**, so a single malformed historical row is present
+    in *every* subsequent capture, and "the next capture is seconds away" never
+    arrives. Driven: one 5,000-character ``playerId`` in a three-record board
+    produced ``observations_written=0`` on both captures, no stored rows at all,
+    and a status screen reading ``pending=0 blocked=() skipped=()`` -- which is
+    byte-identical to what a draft that has not started yet looks like. **The
+    owner has no manual fallback**, so that is the tool going permanently blind
+    from one row it could have simply left out.
+
+    The unreadable rows are reported by the caller *unconditionally*, on the
+    same reasoning ``locator_too_long_to_record`` already carries: a refusal
+    that means "this is the log and I could not write part of it down" must not
+    be suppressed by another list in the same entry being accepted. A dropped
+    record is a **missing pick**, and this module's whole position is that a
+    missing pick reported as nothing is the failure it exists to prevent.
+
+    A list whose records are *all* unreadable still refuses as a list, because
+    at that point there is nothing left to say it was a pick log at all.
+
+    The admitted records carry their **original index**, not their index among
+    the survivors. Renumbering them would change a pick's ``locator`` the day
+    the malformed row beside it became readable, and ``locator`` is a third of
+    the identity ``(transport, artifact_key, locator)`` this feed dedupes on --
+    so the same pick would store a second time as a new observation.
 
     The refusals are separate strings rather than one because they mean
     different things to whoever reads the status screen: a length refusal says
@@ -617,30 +656,38 @@ def _accept_list(
     No fixture exists to say which way it will go. See ``docs/handoff.md``.
     """
     if not records or len(records) > MAX_RECORD_LIST:
-        return [], "list_length_out_of_range"
+        return [], "list_length_out_of_range", []
 
     typed = [record for record in records if isinstance(record, dict)]
     if len(typed) != len(records):  # pragma: no cover - _candidate_lists filters this
-        return [], "mixed_record_types"
+        return [], "mixed_record_types", []
 
     seen_players: set[str] = set()
-    for record in typed:
+    admitted: list[tuple[int, dict[str, Any]]] = []
+    unreadable: list[dict[str, Any]] = []
+    for position, record in enumerate(typed):
         team = _as_text(_first(record, "team_external_id"), limit=MAX_EXTERNAL_ID_CHARS)
         if team is None or team not in context.team_external_ids:
-            return [], "no_seat_anchor"
+            return [], "no_seat_anchor", []
         identity = _player_identity(record)
         if isinstance(identity, _Unreadable):
-            return [], "player_external_id_unreadable"
+            # Dropped, not fatal. See this function's docstring: a row whose id
+            # this module cannot read is not evidence about the other rows.
+            unreadable.append(record)
+            continue
         if identity is None:
-            return [], "record_names_no_player"
+            return [], "record_names_no_player", []
         if identity == team:
-            return [], "player_identity_is_the_seat"
+            return [], "player_identity_is_the_seat", []
         if not _has_draft_coordinate(record, kind):
-            return [], "record_missing_draft_coordinate"
+            return [], "record_missing_draft_coordinate", []
         if identity in seen_players:
-            return [], "duplicate_player_in_list"
+            return [], "duplicate_player_in_list", []
         seen_players.add(identity)
-    return typed, None
+        admitted.append((position, record))
+    if not admitted:
+        return [], "player_external_id_unreadable", []
+    return admitted, None, unreadable
 
 
 def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
@@ -986,14 +1033,27 @@ def recognise_bridge_payload(
                     )
                 )
                 continue
-            typed, refusal = _accept_list(records, context, kind)
+            typed, refusal, unreadable = _accept_list(records, context, kind)
             if refusal is not None:
                 shape_refusals.append(
                     (list_locator, _keys_of(records[0] if records else None), refusal)
                 )
                 continue
             accepted_here = True
-            for position, record in enumerate(typed):
+            if unreadable:
+                # Reported here rather than through ``shape_refusals`` because
+                # this list *was* accepted, and the suppression below would
+                # therefore swallow it entirely. A dropped record is a missing
+                # pick; the count is the number of rows this board is short.
+                unrecognised.append(
+                    UnrecognisedShape(
+                        keys=_keys_of(unreadable[0]),
+                        occurrences=len(unreadable),
+                        example_locator=list_locator,
+                        reason="player_external_id_unreadable",
+                    )
+                )
+            for position, record in typed:
                 dropped = _fields_dropped_for_kind(record, kind)
                 if dropped:
                     coerced += 1

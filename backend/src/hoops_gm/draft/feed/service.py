@@ -422,6 +422,30 @@ def ingest_bridge(
         .scalars()
         .all()
     )
+    # Selected newest-first so ``scan_limit`` keeps the *recent* window, then
+    # walked oldest-first so observations are written in publication order.
+    #
+    # Those are two different requirements and writing in scan order served
+    # only the first. Observation ``id`` is the tie-break both identity
+    # supersession and the newest-per-transport collapse fall back on when two
+    # captures share an ``observed_at`` -- which production SQLite's
+    # ``CURRENT_TIMESTAMP`` produces without any fixture help, because two
+    # captures a fraction of a second apart round to the same second. Written
+    # in scan order, the *newest* payload got the *lowest* observation id, so
+    # the tie-break elected the stale reading and called the correction
+    # superseded.
+    #
+    # Driven: publication order ``k1`` ("The Joker", t1, $50) then ``k2``
+    # ("Nikola Jokic", t2, $10) put The Joker on seat one at $50 -- wrong buyer
+    # and wrong price -- with the true reading blocked as
+    # ``identity_superseded``, which on the status screen reads exactly like a
+    # correction being handled properly.
+    #
+    # This is the house rule about self-describing fields applied to ordering:
+    # a timestamp that cannot separate two events is not an ordering, and the
+    # tie-break underneath it has to be something independently true. Arrival
+    # order is that, but only if it is actually recorded in arrival order.
+    rows.reverse()
     participants = _participant_by_external_id(session, draft)
     existing = _existing_keys(session, draft)
 
@@ -795,7 +819,10 @@ _BOARD_FACTS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
-def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
+def _identity_conflicts(
+    pending: list[DraftFeedObservation],
+    applied: list[DraftFeedObservation],
+) -> dict[str, str]:
     """Player keys where the payload's two identity signals disagree.
 
     Excludes: one player reaching the board twice, and two players collapsing
@@ -865,6 +892,45 @@ def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
     (``duplicate_player_in_list``). So that direction only ever fires across
     artifacts, where it is a correction, or across transports, where it is a
     genuine conflict and still blocks.
+
+    **Everything above reasons only about rows still pending, and the pending
+    set is not the board.** On draft night ingest-and-apply runs between picks,
+    so the reading a later capture corrects has usually *already applied*. Both
+    checks above then see a single reading, find nothing to disagree with, and
+    the defect they exist to stop happens one apply-cycle later instead:
+
+    * **One id, two labels, applied apart.** Driven: ``p123`` applied as
+      ``"The Joker"`` at $50, then republished as ``"Nikola Jokic"``. Both
+      applied -- sequences 1 and 2 -- and the seat's ``remaining_budget`` read
+      ``100.00`` where ``150.00`` was correct. ``pending_count=0``,
+      ``blocked=()``, ``skipped=()``: one player drafted twice and debited
+      twice, with every channel reporting a clean board.
+    * **One label, two ids, applied apart.** Driven: ``p1`` applied as
+      ``"Gary Payton"``, then ``p2`` -- a different player -- arriving under the
+      same normalised key at the same seat and price. It was filed
+      ``already_in_log``, and *nothing in this package ever clears*
+      ``skipped_reason``, so that pick is gone permanently and the status screen
+      calls it a duplicate. **A missing pick reported as nothing**, which is
+      round ten's defect surviving the apply boundary its fix did not cross.
+
+    So identity is read from applied rows too. The asymmetry between the two
+    directions is unchanged, but the *response* differs from the pending case,
+    and deliberately: a pending reading can be superseded because nothing has
+    happened yet, while an applied one cannot be, because **this is the read
+    path and it does not rewrite the board**. Editing a landed pick is a write,
+    and a write needs the Automation gate and an independent sign-off this unit
+    does not have. The pick is therefore blocked and named, leaving the owner a
+    stated discrepancy he can correct in one keystroke rather than a silent one
+    he has to notice.
+
+    Rows skipped as ``already_in_log`` or ``duplicate_within_run`` count as
+    applied history here: they carry ``applied_event_sequence``, so they are
+    evidence that this id and this label landed together, which is exactly what
+    the check needs.
+
+    Absence still is not disagreement. An applied row with no external id
+    contributes nothing, so a later reading that *does* carry one is not
+    accused of conflicting with it -- the same rule as everywhere else here.
     """
     readings: list[tuple[DraftFeedObservation, str, str]] = []
     ids_by_label: dict[str, set[str]] = defaultdict(set)
@@ -910,12 +976,43 @@ def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
         live = current[(row.transport.value, external_id)]
         if key != live:
             conflicts.setdefault(key, f"identity_superseded:{external_id}:{key}->{live}")
+
+    applied_key_for_id: dict[str, str] = {}
+    applied_ids_for_key: dict[str, set[str]] = defaultdict(set)
+    for row in applied:
+        admitted = _admit(row)
+        if isinstance(admitted, str):
+            continue
+        external_id = row.player_external_id
+        if not external_id:
+            continue
+        landed_key = normalize_key(admitted.player_label)
+        applied_key_for_id[external_id] = landed_key
+        applied_ids_for_key[landed_key].add(external_id)
+
+    for _row, external_id, key in readings:
+        landed = applied_key_for_id.get(external_id)
+        if landed is not None and landed != key:
+            # This id is on the board under another name. Not superseded --
+            # superseding would mean editing a landed pick, and this is the
+            # read path.
+            conflicts.setdefault(key, f"identity_already_applied:{external_id}:{landed}->{key}")
+        already = applied_ids_for_key.get(key)
+        if already and external_id not in already:
+            # A different player already holds this normalised name. Blocking
+            # keeps it out of ``already_in_log``, which is permanent.
+            conflicts.setdefault(
+                key,
+                "identity_conflict:one_label_many_player_ids:"
+                f"{key}:{'|'.join(sorted(already | {external_id}))}",
+            )
     return conflicts
 
 
 def _contradicted_keys(
     pending: list[DraftFeedObservation],
     held: dict[str, _Recorded],
+    applied: list[DraftFeedObservation],
 ) -> dict[str, str]:
     """Player keys where the readings we hold do not agree about a board fact.
 
@@ -945,7 +1042,7 @@ def _contradicted_keys(
             continue
         grouped[normalize_key(admitted.player_label)].append(row)
 
-    contradicted: dict[str, str] = _identity_conflicts(pending)
+    contradicted: dict[str, str] = _identity_conflicts(pending, applied)
     for key, rows in grouped.items():
         # One reading per source, newest first. A draft board republishes the
         # whole list on every pick, so a source that corrects itself — or that
@@ -1014,11 +1111,16 @@ def apply_observations(
     stamp = now or datetime.now(UTC)
     state = draft_service.load_state(session, draft)
 
+    observations = load_observations(session, draft)
     pending = [
         row
-        for row in load_observations(session, draft)
+        for row in observations
         if row.applied_event_sequence is None and row.skipped_reason is None
     ]
+    # Identity history. A row that was skipped as a duplicate still carries the
+    # sequence it corroborated, so it is evidence about which id landed under
+    # which name -- see :func:`_identity_conflicts`.
+    applied_history = [row for row in observations if row.applied_event_sequence is not None]
     pending.sort(key=_apply_order)
 
     # Cleared before anything is attempted, so ``blocked_reason`` is always a
@@ -1050,7 +1152,7 @@ def apply_observations(
         return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
 
     held = _held_keys(state)
-    contradicted = _contradicted_keys(pending, held)
+    contradicted = _contradicted_keys(pending, held, applied_history)
 
     applied: list[AppliedEvent] = []
     skipped: list[tuple[int, str]] = []

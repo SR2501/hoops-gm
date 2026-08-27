@@ -4551,3 +4551,375 @@ def test_an_absent_player_id_cannot_conflict(session: Session) -> None:
 
     rows = feed_service.load_observations(session, draft)
     assert [row.blocked_reason for row in rows] == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# Round twelve: the pending set is not the board, and one bad row is not a bad
+# board.
+# ---------------------------------------------------------------------------
+
+
+def test_a_correction_arriving_after_the_pick_applied_does_not_draft_him_twice(
+    session: Session,
+) -> None:
+    """Excludes: one player, bought once, appearing twice and debited twice.
+
+    Round ten stopped this *within* a run and round eleven taught the same pass
+    to read a relabelling as a correction. Both reason only over rows still
+    pending. On draft night ingest-and-apply runs between picks, so the reading
+    a later capture corrects has already applied -- and then neither check sees
+    anything to disagree with.
+
+    Driven before the fix: ``p123`` applied as "The Joker" at $50, republished
+    as "Nikola Jokic", both applied at sequences 1 and 2, and the seat's
+    ``remaining_budget`` read ``100.00`` where ``150.00`` was correct -- with
+    ``pending_count=0``, ``blocked=()`` and ``skipped=()``. Every channel the
+    owner can see reported a clean board while it held one player twice.
+
+    **Reading in which this passes and the defect is present:** none that I can
+    construct for the budget assertion. ``remaining_budget`` is derived from the
+    log by :mod:`hoops_gm.draft.state`, not from anything this module writes, so
+    150.00 cannot be produced by a second sale having been recorded. The
+    ``blocked_reason`` assertion is the weaker half and is here to pin the
+    *reason*, not the outcome.
+    """
+    draft = _auction_draft(session)
+
+    _bridge_naming(session, "t1", 50.0, key="r12-a1", label="The Joker", player_id="p123")
+    feed_service.ingest(session, draft, client=None)
+    assert len(feed_service.apply_observations(session, draft).applied) == 1
+
+    _bridge_naming(session, "t1", 50.0, key="r12-a2", label=JOKIC, player_id="p123")
+    feed_service.ingest(session, draft, client=None)
+    second = feed_service.apply_observations(session, draft)
+
+    assert second.applied == ()
+    state = draft_service.load_state(session, draft)
+    seat = state.participants[0]
+    assert [holding.player_label for holding in seat.holdings] == ["The Joker"]
+    assert seat.remaining_budget == Decimal("150.00")
+
+    rows = feed_service.load_observations(session, draft)
+    assert rows[1].applied_event_sequence is None
+    expected = f"identity_already_applied:p123:the joker->{normalize_key(JOKIC)}"
+    assert rows[1].blocked_reason == expected
+
+
+def test_a_second_player_sharing_a_name_with_an_applied_pick_is_not_deduplicated(
+    session: Session,
+) -> None:
+    """Excludes: a pick that happened being filed as one we already had.
+
+    ``normalize_key`` erases generational suffixes, so two genuinely different
+    players can share a key. Round ten refused that pair within a run. Across
+    the apply boundary the second one reached ``already_in_log`` instead --
+    and **nothing in this package ever clears ``skipped_reason``**, so the pick
+    was gone permanently while the status screen called it a duplicate.
+
+    The assertion that carries this is ``skipped_reason is None``. Blocking is
+    recoverable and skipping is not, so "refused" and "burnt" are the two
+    states worth telling apart here; asserting only that it did not apply would
+    be satisfied by the defect.
+
+    **Reading in which this passes and the defect is present:** if the second
+    reading were refused for some *other* reason before identity was consulted
+    -- a seat or price disagreement, say -- ``skipped_reason`` would also be
+    ``None``. The two readings are therefore given the same seat and the same
+    amount, so nothing but identity can separate them, and the reason is
+    asserted exactly.
+    """
+    draft = _auction_draft(session)
+
+    _bridge_naming(session, "t1", 50.0, key="r12-b1", label="Gary Payton", player_id="p1")
+    feed_service.ingest(session, draft, client=None)
+    assert len(feed_service.apply_observations(session, draft).applied) == 1
+
+    _bridge_naming(session, "t1", 50.0, key="r12-b2", label="Gary Payton", player_id="p2")
+    feed_service.ingest(session, draft, client=None)
+    feed_service.apply_observations(session, draft)
+
+    rows = feed_service.load_observations(session, draft)
+    second = rows[1]
+    assert second.skipped_reason is None
+    assert second.applied_event_sequence is None
+    assert second.blocked_reason == "identity_conflict:one_label_many_player_ids:gary payton:p1|p2"
+
+    status = feed_service.feed_status(session, draft)
+    assert status.pending_count == 1
+    assert status.skipped == ()
+
+
+def test_two_captures_at_one_instant_elect_the_one_published_later(session: Session) -> None:
+    """Excludes: the stale reading winning a tie and the correction being
+    labelled as the thing it corrected.
+
+    Bridge payloads are selected newest-first so ``scan_limit`` keeps a recent
+    window. Writing observations in that order gave the newest payload the
+    lowest observation id, and observation id is the tie-break both identity
+    supersession and the newest-per-transport collapse fall back on when
+    ``observed_at`` ties -- which production SQLite produces on its own for two
+    captures inside the same second.
+
+    Driven before the fix: publication order "The Joker"/t1/$50 then
+    "Nikola Jokic"/t2/$10 put The Joker on seat one at $50 -- **wrong buyer and
+    wrong price** -- and blocked the true reading as ``identity_superseded``,
+    which reads on the status screen exactly like a correction being handled.
+
+    **Reading in which this passes and the defect is present:** if the two
+    captures did not actually tie, the ``observed_at`` comparison would order
+    them correctly and the tie-break would never be consulted. So the tie is
+    asserted directly before the outcome is.
+    """
+    draft = _auction_draft(session)
+
+    _bridge_naming(session, "t1", 50.0, key="r12-c1", label="The Joker", player_id="p123")
+    _bridge_naming(session, "t2", 10.0, key="r12-c2", label=JOKIC, player_id="p123")
+
+    payloads = session.query(BridgePayload).order_by(BridgePayload.id).all()
+    assert [payload.dedupe_key for payload in payloads] == ["r12-c1", "r12-c2"]
+    assert payloads[0].created_at == payloads[1].created_at, "the tie this test is about is absent"
+
+    feed_service.ingest(session, draft, client=None)
+    feed_service.apply_observations(session, draft)
+
+    state = draft_service.load_state(session, draft)
+    holdings = {
+        participant.participant.id: [
+            (holding.player_label, holding.price) for holding in participant.holdings
+        ]
+        for participant in state.participants
+    }
+    assert holdings[state.participants[0].participant.id] == []
+    assert holdings[state.participants[1].participant.id] == [(JOKIC, Decimal("10.00"))]
+
+
+def test_one_unreadable_record_does_not_discard_the_healthy_board(session: Session) -> None:
+    """Excludes: a whole republished board being thrown away for one bad row.
+
+    Round eleven refused the entire capture when any record carried an
+    unreadable ``playerId``. **Fantrax republishes the full pick list on every
+    pick**, so a single malformed historical row is in every subsequent capture
+    and the feed never recovers -- "the next capture is seconds away" is not a
+    mitigation when the next capture contains the same row.
+
+    Driven before the fix: ``observations_written=0`` on both captures, no
+    stored rows, an empty board, and a status of ``pending=0 blocked=()
+    skipped=()`` that is byte-identical to a draft which has not started.
+
+    The dropped row is reported rather than merely omitted, because a missing
+    pick reported as nothing is the failure this module exists to prevent.
+    """
+    records: list[dict[str, Any]] = [
+        {
+            "teamId": "t1",
+            "playerName": "Broken",
+            "overallPick": 1,
+            "amount": 5.0,
+            "playerId": "x" * (MAX_EXTERNAL_ID_CHARS + 1),
+        },
+        {
+            "teamId": "t2",
+            "playerName": "Healthy Two",
+            "overallPick": 2,
+            "amount": 7.0,
+            "playerId": "p2",
+        },
+    ]
+    draft = _auction_draft(session)
+    _capture(session, records=records, dedupe_key="r12-d1")
+
+    outcome = feed_service.ingest(session, draft, client=None)
+    bridge = next(
+        source for source in outcome.sources if source.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    assert bridge.observations_written == 1
+    assert [shape.reason for shape in bridge.unrecognised] == ["player_external_id_unreadable"]
+    assert bridge.unrecognised[0].occurrences == 1
+
+    feed_service.apply_observations(session, draft)
+    state = draft_service.load_state(session, draft)
+    assert [
+        holding.player_label
+        for participant in state.participants
+        for holding in participant.holdings
+    ] == ["Healthy Two"]
+
+
+def test_a_board_of_only_unreadable_records_is_still_refused(session: Session) -> None:
+    """Excludes: an unreadable list counting as an accepted, empty pick log and
+    silencing every other list in the same block.
+
+    Dropping unreadable rows is right *because* the surviving rows are evidence
+    the list was a pick log. With no survivors there is no such evidence -- and
+    "accepted" is not an inert word here. ``accepted_here`` suppresses the shape
+    refusals of every other candidate list in the entry, which is the defect the
+    comment above ``capacity_refusals`` already describes: *one shallow accepted
+    list silencing exactly that about a deep one, a missing pick reported as
+    nothing, defeated by the channel it reports on.* An all-unreadable list
+    accepted as empty does that to whichever list actually was the board.
+
+    **This assertion was wrong the first time and the mutation control caught
+    it.** It originally asserted ``observations_written == 0`` and the reason
+    string, both of which the caller still produces with the refusal deleted --
+    the reason simply arrives through the dropped-record channel instead. The
+    check passed while naming a defect it did not exclude. What discriminates is
+    the sibling list's refusal still being reported, so that is what is asserted.
+    """
+    draft = _auction_draft(session)
+    unreadable = [
+        {
+            "teamId": "t1",
+            "playerName": "Broken One",
+            "overallPick": 1,
+            "amount": 5.0,
+            "playerId": "x" * (MAX_EXTERNAL_ID_CHARS + 1),
+        },
+    ]
+    row = BridgePayload(
+        schema_name="hoops-gm.bridge-payload.v1",
+        source="xhr",
+        captured_at=NOW,
+        request_method="POST",
+        request_url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        response_status=200,
+        response_ok=True,
+        response_content_type="application/json",
+        body_raw="{}",
+        # The non-pick list is first so it is the refusal that would be reported
+        # if anything is reported at all; the unreadable board follows it.
+        body_json={
+            "responses": [
+                {
+                    "data": {
+                        "standings": [{"teamId": "not-a-seat", "playerName": "X", "amount": 1.0}],
+                        "draftPicks": unreadable,
+                    }
+                }
+            ]
+        },
+        dedupe_key="r12-e1",
+        raw_payload="{}",
+        created_at=NOW,
+    )
+    session.add(row)
+    session.flush()
+
+    outcome = feed_service.ingest(session, draft, client=None)
+    bridge = next(
+        source for source in outcome.sources if source.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    assert bridge.observations_written == 0
+    reasons = {shape.reason for shape in bridge.unrecognised}
+    assert "no_seat_anchor" in reasons, (
+        f"reasons were {reasons}; the unreadable list was treated as an accepted "
+        "board and suppressed the other list's refusal"
+    )
+
+
+def test_dropping_a_record_does_not_renumber_the_ones_beside_it(session: Session) -> None:
+    """Excludes: the same pick storing twice the day its bad neighbour heals.
+
+    ``locator`` is a third of the ``(transport, artifact_key, locator)``
+    identity this feed dedupes on. If admitted records were numbered among the
+    survivors rather than by their true position, a healthy pick's locator
+    would change as soon as the malformed row above it became readable, and the
+    feed would store it a second time as a new observation.
+
+    This is not a hypothetical: it is a defect I introduced writing the fix
+    above and caught before running it, which is why it is pinned rather than
+    reasoned about.
+    """
+    draft = _auction_draft(session)
+    _capture(
+        session,
+        records=[
+            {
+                "teamId": "t1",
+                "playerName": "Broken",
+                "overallPick": 1,
+                "amount": 5.0,
+                "playerId": "x" * (MAX_EXTERNAL_ID_CHARS + 1),
+            },
+            {
+                "teamId": "t2",
+                "playerName": "Healthy Two",
+                "overallPick": 2,
+                "amount": 7.0,
+                "playerId": "p2",
+            },
+        ],
+        dedupe_key="r12-f1",
+    )
+    feed_service.ingest(session, draft, client=None)
+
+    rows = feed_service.load_observations(session, draft)
+    assert [row.player_label for row in rows] == ["Healthy Two"]
+    assert rows[0].locator.endswith("[1]"), (
+        f"locator {rows[0].locator!r} numbers the survivor as if the dropped "
+        "record had never been there"
+    )
+
+
+def test_a_falling_back_reader_never_uses_the_storing_coercer() -> None:
+    """Excludes: the round-eleven defect being reintroduced by a new call site.
+
+    ``_as_text`` documents its own unsafe caller -- "safe for a caller that
+    stores the result and unsafe for one that falls back to another key. Those
+    callers use ``_read_text``" -- and ``_player_identity`` was that caller for
+    as long as it existed. Nothing executable connected the rule to the call
+    site, so the rule was true, written in the right place, and unenforced.
+
+    Both findings of round eleven had that shape, which is why this is a check
+    rather than a third fix: **a rule this repository has already written down
+    and does not enforce is the failure mode, not any particular field.**
+
+    Two properties, because one alone is satisfiable without the other:
+
+    * No ``_as_text`` call may be a non-final operand of an ``or``. That is the
+      fallback form the docstring names, and it is the form the defect took.
+    * ``_player_identity`` and ``_player_label`` must both read their explicit
+      key through ``_read_text``. They are siblings with one discipline and one
+      of them drifted; naming the pair is what makes the drift visible rather
+      than requiring someone to notice it.
+
+    **Reading in which this passes and the defect is present:** a *new* falling
+    back reader written as ``x = _as_text(...)`` followed by ``if x is None:``
+    and a second key. This does not do dataflow analysis and would not see it.
+    That is a real hole and it is narrower than the one it closes -- the
+    ``or`` form is what both existing readers were written in.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "hoops_gm" / "draft" / "feed" / "recognise.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    fallbacks = [
+        operand.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+        for operand in node.values[:-1]
+        if isinstance(operand, ast.Call)
+        and isinstance(operand.func, ast.Name)
+        and operand.func.id == "_as_text"
+    ]
+    assert fallbacks == [], (
+        f"_as_text used as an `or` fallback at lines {fallbacks}. It collapses "
+        "'absent' and 'present but refused' into one answer; a caller that "
+        "falls back to another key must use _read_text and handle _Unreadable. "
+        "See _as_text's own docstring, and the round-eleven entry in "
+        "docs/handoff.md for what this cost."
+    )
+
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    for name in ("_player_identity", "_player_label"):
+        assert name in functions, f"{name} was renamed; this guard now checks nothing"
+        called = {
+            child.func.id
+            for child in ast.walk(functions[name])
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+        }
+        assert "_read_text" in called, (
+            f"{name} reads a payload key without _read_text. Both identity "
+            "readers fall back to a second key, so both must be able to tell "
+            "'refused' from 'absent' -- one of them drifted once already."
+        )
