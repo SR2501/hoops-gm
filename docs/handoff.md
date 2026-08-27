@@ -28860,3 +28860,48 @@ mutated file restored byte-identically by hash.
 
 **Next:** architect, for review and merge. Code gate only; nothing here produces
 a number a decision rests on.
+
+## 2026-08-27 — backend — writing down the mock capture procedure before archiving
+
+**Unit:** follow-up to `draft-tracker-bridge-feed` (#104, merged). Docs only.
+
+Asked before archiving what I held that was not in the repository, the honest
+answer was two things, and one of them I had already destroyed.
+
+**What I destroyed.** At the end of the previous turn I deleted 81 scratch files
+from `$env:TEMP` — every mutation harness from rounds 6 through 13, every probe,
+the 23-neighbour `OverflowError` sweep, and the CI helpers. Their *verdicts*
+survive in this file and in #104. The harnesses do not. Anyone re-running a
+mutation control on this unit rebuilds it from the description rather than the
+script. `scripts/capture_draft_fixtures.py` already carries this exact lesson in
+its own docstring — "the original fixtures were captured by hand and no script
+was kept" — and I read that docstring during the audit, after the deletion.
+
+**What I wrote down instead.** `docs/mocks/instrumented-capture.md`. Running a
+mock *with the userscript loaded* is a different experiment from the blind mock
+in `docs/mocks/README.md`, which is about uncontaminated prices; this one is
+about payload shape. The procedure existed only in my head across thirteen
+rounds while I kept saying it was the highest-value thing anyone could do.
+
+I grounded "what shape to look for" in the recogniser's actual refusal reasons,
+read out of `recognise.py`, rather than in my recollection of them — four
+measurement errors in this unit were all numbers written from expectation
+instead of read back, and a table of reason codes is the same hazard.
+
+**One probe run rather than described.** The committed tests pin only the
+*string* forms of non-finite prices. `json.loads` accepts bare `Infinity` and
+`NaN` tokens and yields a `float`, so a hand-rolled or proxied serialiser could
+deliver a float where only strings are pinned. Checked directly: `_as_amount`
+and `_as_int` refuse real `float('inf')`, `-inf`, `nan` and `-0.0` as well as
+the string forms. **Behaviour correct, pinning string-only.** Not a defect; a
+test that would not notice if it became one.
+
+**Could not verify:** that a mock draft room is the same code path as a real
+one, so a clean instrumented capture raises confidence in the recogniser without
+establishing that draft night is covered. Also unchanged from #104 and stated
+again because it is the thing a capture would settle: the recogniser has never
+been shown a real Fantrax draft-room payload — **not disproved, unestablished**
+— and `capture_order_disputed`, the one refusal this unit introduced rather than
+removed, cannot be ruled out as a live-board outage without one.
+
+**Next:** architect. Code gate only; docs change, no number a decision rests on.

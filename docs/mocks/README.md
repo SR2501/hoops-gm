@@ -2,6 +2,10 @@
 
 Run mocks now. Record them here. The value evaporates if they aren't captured in a usable shape.
 
+**Running a mock *with* the userscript loaded is a different experiment** and is
+described in [instrumented-capture.md](instrumented-capture.md). Do not run both
+in one session: a blind mock is only blind if nothing observed it.
+
 ## Why blind mocks matter more than they sound
 
 A "blind" mock is one run **without the tool** — before it exists, or with it deliberately not consulted. It is not a degraded version of an instrumented rehearsal. It is a different experiment, and three of its properties cannot be recovered later:
