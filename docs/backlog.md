@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**55 done - 1 blocked - 88 pending - 144 total**
+**56 done - 1 blocked - 87 pending - 144 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1743,7 +1743,7 @@ Mock drafts for both snake and auction against calibrated opponent models, inclu
 
 ### `draft-tracker-bridge-feed` - Feeding the tracker from the bridge and official API
 
-- [ ] **pending**
+- [x] **done** - Landed 2026-08-26. The tracker reads the board from the bridge and, where it answers, the official API. Provenance is recorded per instant, freshness is computed on the server clock, and a disagreement between the two sources is reported and never resolved. Ordering is by publication time rather than arrival, and where those two disagree about which reading is current the feed refuses both rather than preferring either clock. Open caveats: neither source has ever returned a real draft payload, so the recogniser is fail-closed by design and may recognise nothing until one mock draft is run with the userscript loaded; **a record whose player id is present but unreadable is counted at ingest and is not surfaced on `GET`, so the board can be silently short a player with every channel reading clean** (confirmed High, filed not fixed - the route is to carry it as `skipped_reason`, which crosses into the recogniser's contract); and whether the refusal above fires on real captures is unknown, because it depends on the userscript setting `captured_at` consistently.
 - **Depends on:** `draft-tracker-persistence`, `bridge-capture`, `fantrax-official-adapter`
 
 ### `draft-tracker` - Building the live draft tracker

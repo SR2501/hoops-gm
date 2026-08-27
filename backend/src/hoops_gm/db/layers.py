@@ -156,8 +156,8 @@ PERMITTED_FLOWS: Final[frozenset[tuple[DataLayer, DataLayer]]] = frozenset(
         (DataLayer.VALUATION, DataLayer.TERMINAL),
         # Into the market: which player it is about, and nothing else of ours.
         # Layer granularity is too coarse to say that on its own — OBSERVATIONS
-        # is 29 tables and includes ``draft_events``, whose prices our own
-        # recommendations can have moved. Narrowed per-table by
+        # is the broadest layer and includes ``draft_events``, whose prices our
+        # own recommendations can have moved. Narrowed per-table by
         # :data:`MARKET_IDENTITY_SOURCES`.
         (DataLayer.OBSERVATIONS, DataLayer.MARKET),
         # Everything may be compared. Comparison feeds nothing.
@@ -252,6 +252,11 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
     "drafts": DataLayer.OBSERVATIONS,
     "draft_participants": DataLayer.OBSERVATIONS,
     "draft_events": DataLayer.OBSERVATIONS,
+    # What a machine read off Fantrax about a draft, with the identity of the
+    # bytes it read it from. A claim, not a pick — kept at the same layer as
+    # the log it feeds because it is the same kind of thing: an observation of
+    # the outside world, with nothing computed in it.
+    "draft_feed_observations": DataLayer.OBSERVATIONS,
     # Raw transport and provenance.
     "bridge_payloads": DataLayer.OBSERVATIONS,
     "refresh_runs": DataLayer.OBSERVATIONS,
@@ -348,7 +353,7 @@ TABLE_LAYERS: Final[dict[str, DataLayer]] = {
 #: fixing it is cheap.
 FLOW_SCAN_LIMIT: Final = (
     "declared foreign keys only; an undeclared identifier column or a value copied "
-    "between layers in Python leaves no key. Ten columns ending _id carry no foreign "
+    "between layers in Python leaves no key. Twelve columns ending _id carry no foreign "
     "key today, all of them foreign-system identifiers rather than references to a "
     "mapped table, so the count is a tripwire on arrival and not a live gap (count "
     "reproducible from Base.metadata; an earlier note said sixteen on an unstated "
@@ -369,7 +374,7 @@ FLOW_SCAN_LIMIT: Final = (
 #: red with advice to consider making it a real foreign key, which will be the
 #: wrong advice, and the right repair will be to bump this number. That is a
 #: known cost of the spelling, accepted deliberately rather than by omission.
-NAKED_IDENTIFIER_COLUMNS: Final = 10
+NAKED_IDENTIFIER_COLUMNS: Final = 12
 
 #: What the import-time call does **not** see.
 #:
@@ -409,8 +414,8 @@ IMPORT_TIME_LIMIT: Final = (
 #:
 #: ``(OBSERVATIONS, MARKET)`` exists so a published auction value can say which
 #: player it is about. Read at layer granularity it says much more than that:
-#: ``OBSERVATIONS`` holds 29 tables including ``draft_events`` — prices a human
-#: paid, which our own recommendations can have caused, which is why
+#: ``OBSERVATIONS`` is the broadest layer and includes ``draft_events`` — prices
+#: a human paid, which our own recommendations can have caused, which is why
 #: ``DraftToolUsage`` exists — and ``absence_splits``, an aggregate we compute.
 #: Seeding an AAV table from observed clearing prices is a tempting future
 #: feature and it is R38 through a side door: our output returning as somebody

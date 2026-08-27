@@ -517,6 +517,14 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
     assertion below would pass vacuously. That is exactly the shape of check
     this project keeps getting bitten by, which is why the presence assertion
     comes first.
+
+    The feed paths are pinned here rather than mounted under a prefix of their
+    own. A separate prefix would have left this exact-set assertion untouched
+    and passing while adding two unscanned draft routes, which is evading the
+    check rather than satisfying it. Both are read-path: ``GET /feed`` reports
+    freshness and reconciliation, ``POST /feed/ingest`` appends to the same log
+    through ``draft_service`` and offers no way to edit or delete, so the
+    property this test defends still holds over the wider surface.
     """
     document = cast("FastAPI", client.app).openapi()
     draft_routes = {
@@ -531,6 +539,8 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         "/api/v1/drafts",
         "/api/v1/drafts/{draft_id}",
         "/api/v1/drafts/{draft_id}/events",
+        "/api/v1/drafts/{draft_id}/feed",
+        "/api/v1/drafts/{draft_id}/feed/ingest",
     }
 
     mutating = {(path, method) for path, method in draft_routes if method in _MUTATING}
@@ -542,6 +552,8 @@ def test_the_draft_surface_offers_no_way_to_edit_or_delete(client: TestClient) -
         ("/api/v1/drafts/{draft_id}", "GET"),
         ("/api/v1/drafts/{draft_id}/events", "GET"),
         ("/api/v1/drafts/{draft_id}/events", "POST"),
+        ("/api/v1/drafts/{draft_id}/feed", "GET"),
+        ("/api/v1/drafts/{draft_id}/feed/ingest", "POST"),
     }
 
 

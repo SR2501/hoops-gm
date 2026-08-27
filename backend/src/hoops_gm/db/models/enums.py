@@ -336,6 +336,42 @@ class DraftEventType(enum.StrEnum):
     CLOSED = "closed"
 
 
+class DraftFeedTransport(enum.StrEnum):
+    """How a claim about the draft reached us — the *pipe*, not the parser.
+
+    Two claims that travelled the same pipe are not independent of each other
+    however differently they were parsed afterwards, which is the question
+    :class:`hoops_gm.draft.feed.reconcile.SourceIndependence` asks and the
+    reason this is stored per observation rather than inferred at read time.
+
+    Kept deliberately coarse. A finer value ("which recogniser", "which
+    endpoint") is recorded alongside in its own column; folding it in here
+    would let two readings off one pipe look like two pipes, which is the exact
+    defect the independence guard exists to catch.
+    """
+
+    #: Stored by the userscript into ``bridge_payloads``. Observed traffic.
+    BRIDGE_CAPTURE = "bridge_capture"
+    #: Requested by us from Fantrax's official ``/fxea/`` API.
+    OFFICIAL_HTTP = "official_http"
+
+
+class DraftFeedInstantKind(enum.StrEnum):
+    """The shape of the thing a feed source claims happened.
+
+    A deliberately smaller set than :class:`DraftEventType`. A feed observes
+    completed facts — a player went to a seat, a lot cleared at a price — and
+    does not observe the intermediate states (``bid``, ``nomination``) or the
+    recorder's own acts (``void``, ``closed``), which exist only because a
+    person is keeping the log.
+    """
+
+    #: An ordered-draft selection. Carries a coordinate, never a price.
+    SELECTION = "selection"
+    #: An auction lot clearing. Carries a price, never a coordinate.
+    SALE = "sale"
+
+
 class DraftToolUsage(enum.StrEnum):
     """Whether this project's own numbers drove the bidding in a draft.
 

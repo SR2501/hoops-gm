@@ -426,6 +426,41 @@ class TestFantraxOfficialIsAlive:
             f"{result.settings.unmapped_rule_paths}"
         )
 
+    def test_get_draft_picks_says_what_it_actually_returns(
+        self, fantrax: FantraxOfficialClient
+    ) -> None:
+        """FAILS IF: ``getDraftPicks`` starts working, or changes how it fails.
+
+        This is the only test in this repository that can settle the open
+        question in ``docs/adapters/fantrax-official.md``: whether
+        ``getDraftPicks`` returns draft *results* — who took whom — or the
+        tradeable future pick assets ``fantraxapi`` models under the same name
+        (``round`` + ``year`` + ``origOwnerTeam``). The parser's key names are
+        guesses, and no recorded fixture can test a guess.
+
+        It is written to be *informative on failure* rather than green. A
+        success here is the interesting outcome: it means the draft feed's
+        corroborating source has become real and the assertions below should be
+        replaced with ones about the payload's actual shape.
+        """
+        league_id = os.environ.get("HOOPS_GM_FANTRAX_LEAGUE_ID")
+        if not league_id:
+            pytest.skip("set HOOPS_GM_FANTRAX_LEAGUE_ID to smoke-test getDraftPicks")
+
+        payload = fantrax.fetch_json("getDraftPicks", {"leagueId": league_id}, max_age=NO_CACHE)
+
+        # Deliberately weak, because the point is to record what came back, not
+        # to pass. Any non-empty reply is worth reading by hand: attach it to
+        # the adapter doc and the feed's recogniser can stop guessing.
+        assert payload is not None, (
+            "getDraftPicks returned nothing at all. Previously it had never "
+            "returned a successful real payload; that is unchanged."
+        )
+        assert isinstance(payload, dict | list), (
+            f"getDraftPicks returned a {type(payload).__name__}, which no "
+            "parser in this repository expects."
+        )
+
 
 # ==========================================================================
 # stats.nba.com

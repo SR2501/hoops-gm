@@ -26800,3 +26800,1797 @@ I checked my own and reasoned about the general form, but did not read anyone el
 append path. And R2's blind spot is demonstrated, not closed; closing it needs a check
 that walks the fixture for hazard shapes rather than walking the declarations, which is
 a different and much weaker test to write because the set of shapes is open.
+
+## 2026-08-26 - backend - draft feed: reading the board instead of typing it
+
+**Unit:** `draft-tracker-bridge-feed`. **Base verified on: `28d0d88`.** Not rebased -
+merge freeze respected; `origin/main` had moved to `02ec617` by the time I finished
+and I did not pull it.
+
+### What this is for
+
+At 7:14pm on Sunday 18 October someone takes Jokic and the board only knows what
+the owner types. He cannot think about value while he is being a keyboard. So the
+acceptance question I built against was not "does a row appear" but "could he stop
+typing", and that changed what the code does: it records provenance per instant,
+computes freshness on our clock, and refuses rather than guesses.
+
+### What landed
+
+`backend/src/hoops_gm/draft/feed/` - `observations` (types), `recognise` (fail-closed,
+seat-anchored reader), `reconcile` (freshness + independence guard), `service`
+(ingest, apply, status). `db/models/draft_feed.py` + migration `0020`. Two endpoints
+on the existing drafts prefix: `GET /drafts/{id}/feed`, `POST /drafts/{id}/feed/ingest`.
+Neither writes to Fantrax. Ingest appends through `draft_service` only, so every rule
+the tracker already enforces applies unchanged to a machine-fed pick.
+
+Three properties, each chosen against a specific way this project has been wrong before:
+
+1. **Provenance per instant.** A `frontend` probe once compared a screen against an
+   API and agreed because it had read one field into both sides. The independence
+   guard here requires distinct artifact keys *and* distinct transports before a
+   match is called an agreement; otherwise it goes to `unwitnessed_matches` and
+   `agreements` is empty. The property is named `witnessed_by_two_transports`, never
+   `agreed`, because the name is the claim.
+2. **Freshness on the server clock only.** `captured_at` is the browser's claim about
+   itself and is carried, displayed, published as `claim_skew_seconds`, and never
+   subtracted. A silent source reports `last_seen_at=None`/`silent=True`, not zero.
+3. **Refusal over guessing.** The recogniser walks for lists of dicts and accepts a
+   list only if *every* record resolves to a `fantrax_team_id` this draft has a seat
+   for. A wrong alias yields zero records and a visible unrecognised-shape count,
+   never a half-read list. A half-read board is worse than an empty one: it looks
+   correct.
+
+### Findings, in the order they were found
+
+**The central one, reported to the coordinator on day one rather than at the end:
+neither feed source has ever seen a real draft payload.** `getDraftPicks` has never
+returned a successful real response (`docs/adapters/fantrax-official.md` lines 4 and
+261-263; the parser's own docstring; `docs/handoff.md` line 184). `fantraxapi` 1.0.1
+models a "draft pick" as `round` + `year` + `origOwnerTeam` - a *tradeable future
+asset*, not a result. There is no draft-room fixture in `backend/tests/fixtures/` and
+no league id in this environment. **The honest expectation is that this recogniser
+may recognise nothing on 18 October.** It is built to emit nothing rather than
+garbage, and to say loudly that it read nothing. The single highest-value action
+before draft day is one mock draft with the userscript loaded, which produces the
+payload that turns every guessed key name in `FIELD_ALIASES` into a known one.
+
+**Fantrax signals errors in-band with HTTP 200.** Found by reading the pinned
+`fantraxapi._request` source: it checks `"pageError" in response_json` *after* the
+status check. An expired cookie therefore produced the same string on the screen as
+a Fantrax redesign. Both yield no picks; only one is fixed by logging in again, and
+draft night is the worst time to work out which. Now named
+`page_error:WARNING_NOT_LOGGED_IN`.
+
+**`duplicate_within_run` was unreachable.** `held` is updated on every apply, so a
+second source naming a player already fed in that run was recorded as
+`already_in_log` - the reason that means *the owner typed it*. That conflation would
+have deleted the corroboration signal from the status screen at the moment it was
+worth something. Both branches are now reachable and both link the sequence.
+
+**`applied: []` meant two different things.** "Apply was not requested" and "apply ran
+and appended nothing" serialised identically. On draft night the second means the feed
+has stopped keeping up. Now a nullable object.
+
+**"The bridge is quiet" and "the bridge is busy but for another league" both reported
+`artifacts_examined == 0`.** They call for opposite actions from the owner. Added
+`artifacts_scanned` alongside it.
+
+**Two comments in `db/layers.py` claimed OBSERVATIONS is "29 tables". It was 30 at
+`28d0d88`, before I added one.** The figure was already stale by one and nobody had
+noticed - which is precisely the rot `NAKED_IDENTIFIER_COLUMNS` exists to prevent for
+its own figure, and evidence that an unpinned count in prose does not survive. I
+removed the number rather than moving it, because the argument rests on *which* tables
+OBSERVATIONS holds, not how many. "The broadest layer" is checkable and I checked it:
+31 against 7 for the next largest.
+
+### Gates
+
+All commands run with **working directory `backend/`**, which is what every Python CI
+job declares. From the repo root the same commands report other lanes' files.
+
+One caution for the next lane, because I did it to myself: I drafted this table before
+the runs finished and wrote **335** for the ruff file count. The real number is **218**.
+Nothing would have caught that - a plausible figure in prose is not checked by anything,
+and I only found it because I re-ran the command rather than trusting my own note. Quote
+gates from the run, not from the draft.
+
+- `python -m ruff check .` - **All checks passed!** (it prints no file count; the
+  companion format run below reports 218 files in the same tree)
+- `python -m ruff format --check .` - **218 files already formatted**
+- `python -m mypy` (bare, as CI runs it) - **Success: no issues found in 209 source files**
+- `python -m pytest` (no extra flags; `addopts` already carries `-q`) -
+  **2070 passed, 38 deselected in 971.04s (0:16:11)**. The 38 deselected are
+  `live_smoke`, one of which is this unit's `getDraftPicks` probe.
+- `python scripts\test_name_diff.py origin/main HEAD` - **Nothing dropped**, 20 names added
+- `alembic upgrade head` / `downgrade 0019` / `upgrade head` on scratch SQLite, and the
+  same three steps on an isolated Postgres 16.9 database
+  (`postgresql+psycopg://qimember@127.0.0.1:55432/hgm_feed_check`), dropped afterwards.
+  After the second upgrade, `to_regclass('public.draft_feed_observations')` resolved and
+  the table carried 23 columns and 7 indexes. That the downgrade really dropped it is an
+  inference rather than a direct observation: the second `CREATE TABLE` succeeded, which
+  it could not have done against a surviving table.
+
+**Adapter gate, with a disagreement stated.** The gate asks for a recorded fixture plus
+a contract test. I did not commit a fixture, and I think committing one would have been
+wrong: there is no captured draft-room payload to record, and a synthesised file in
+`tests/fixtures/` would have needed a `captured_at` for something never captured -
+a hand-written mock wearing a recording's clothes, which is what ADR-006 rejects and
+what `test_every_manifest_entry_names_its_source_and_endpoint` would have forced me to
+write. Instead the contract test reads the **installed `fantraxapi` 1.0.1 source** and
+pins the four expressions the recogniser depends on (`params={"leagueId": league_id}`,
+`response_json["responses"]`, the positional `[r["data"] for r in ...]` comprehension,
+and `json_data = {"msgs":`), plus the version they were read from. That is a real
+third-party artifact drifting against a real dependency, not a restatement of our own
+constants. A live smoke test for `getDraftPicks` is marked `live_smoke`, deselected
+from the default run, and written to be informative on failure.
+
+**Mutation evidence.** Five mutants, each confirmed **present in the file** by grepping
+for a `MUTANT` marker with context before the run was read, then reverted:
+
+| Mutation | Killed by |
+|---|---|
+| `elif shared_artifacts:` -> `elif False:` | `test_one_artifact_read_into_both_sides_is_not_reported_as_agreement` |
+| age computed from `source_claimed_at` | `test_the_sources_own_timestamp_never_moves_the_age` |
+| seat anchor dropped from `_accept_list` | `test_one_unknown_team_refuses_the_whole_list` |
+| out-of-turn skips instead of halting | `test_an_out_of_turn_pick_halts_the_run_rather_than_being_skipped` |
+| wrong-league check removed | `test_a_capture_for_another_league_is_refused` |
+
+Each surviving test also has a positive control, because "asserts nothing was read"
+is satisfied by a recogniser that never reads anything.
+
+### Could not verify
+
+1. **That the recogniser fires on a real Fantrax draft room.** It has never seen one.
+   Every key name in `FIELD_ALIASES` is a guess inherited from `parse_draft_picks`.
+   The seat anchor means a wrong guess produces zero rows rather than wrong rows, so
+   the failure mode is safe - but "safe" here means "the board stays empty and the
+   owner keeps typing", which is the thing this unit exists to prevent.
+2. **What `getDraftPicks` actually returns.** Results, or tradeable future picks.
+   Unresolvable in this environment; the live smoke test is the only thing that can
+   settle it and it needs a league id nobody has configured here.
+3. **That the seat anchor excludes a prior season's draft for the same league.** It
+   does not. A correctly-read block about last year's draft, for a league whose team
+   ids are unchanged, would be accepted. I could not construct a check that separates
+   them from the payload alone - the discriminator would have to be a date field, and
+   every date field in this payload is one of the self-describing values this project
+   has already been burned by. Stated rather than papered over.
+4. **The Postgres path under load.** `alembic upgrade head` was exercised on an
+   isolated Postgres database. The feed's own tests ran on SQLite; they only touch
+   Postgres if `TEST_DATABASE_URL` is set, which it was not for the recorded run.
+   The unique constraint is exercised on SQLite, where an `IntegrityError` aborts the
+   flush rather than the transaction - the Postgres behaviour differs and `_store`'s
+   in-Python pre-check exists partly for that reason, but I did not observe it there.
+5. **That halting on an out-of-turn pick is the right call rather than merely the safe
+   one.** Skipping desynchronises silently; halting stops a live board. I chose the
+   loud failure. If the owner would rather have a partial board than a stopped one,
+   this is a decision that should be his and not mine.
+6. **Whether two sources are worth the complexity at all**, given finding 1. If the
+   official source never produces anything, the independence guard is machinery that
+   protects against a defect that cannot occur, and the honest simplification would be
+   to delete it. I have left it in because the guard costs nothing at runtime and the
+   alternative - adding it later, after the first time a screen reports corroboration
+   it did not have - is the pattern this project keeps paying for.
+
+### Incidental, not fixed
+
+`db/models/bridge.py` line 40 describes `raw_payload` as "Exact UTF-8 request body".
+It is the body of the bridge's POST to *our* endpoint (`routes/bridge.py` line 243),
+not the Fantrax request body. Technically true, momentarily misleading to anyone
+looking for the `msgs` block - which is exactly what someone extending this
+recogniser will be looking for. Not edited: another lane's file, during a freeze.
+
+## 2026-08-26 - backend - draft feed: independent review outcome, and the one thing the owner can do that we cannot
+
+Follow-up to the `draft-tracker-bridge-feed` entry above. An independent
+exact-head review (non-`backend`) of `5e5b7f8` re-ran the suite against a clean
+`git archive` export and checked three claims that entry made.
+
+**Held.** The independence guard: it could not construct a path in which one
+artifact read into both sides reports as agreement, the key spaces being
+disjoint and the guard triple-checked. And the server-clock rule:
+`source_claimed_at` reaches storage and display only, never an arithmetic
+operation that produces an age.
+
+**Did not hold.** "Refusal over guessing." Two of the five findings were
+serious, and both were the same species of mistake the first entry warned
+about: a check that keys on something plausible rather than something real.
+
+1. **Critical.** `draft_feed_observations` carries a CHECK tying `kind` to the
+   fields it permits, and the recogniser read all seven fields regardless of
+   kind. `salary` is one of our own `amount` aliases, so a snake pick carrying
+   one produced `kind=selection` *with* an amount. Worse in the other
+   direction: `parse_draft_picks` populates round, pick, overall *and* the
+   auction amount from the same row unconditionally, so an auction league's
+   own official results are the expected shape that violates the CHECK - not
+   an edge case, the ordinary case. `_store` flushed once for the whole
+   artifact, so one such record returned 500 and stored **zero** observations
+   from either source. Records are now conformed to the kind the draft's own
+   snapshotted format dictates, the loss is counted as `coerced_to_kind` and
+   published, and each row is written inside its own savepoint so a refusal
+   costs one row rather than the run.
+2. **High.** `name`, `shortName` and `displayName` were `player_label`
+   aliases - which is exactly what a **team** object carries. A `draftOrder`
+   or standings block, the *likeliest* list in any draft-room batch, satisfied
+   the seat anchor perfectly (it is a list of this draft's seats) and was read
+   as a full board of picks. With `apply: true` those become real
+   `draft_events`. The test that claimed to exclude this used a team record
+   with **no name key at all**, so it passed throughout. Acceptance now
+   requires an unambiguous player key; ambiguous names may still supply a
+   display label once a record has identified itself as a player some other
+   way.
+3. **Medium.** The out-of-turn halt set `skipped_reason` before breaking, and
+   nothing in this package ever clears it - so the observation that triggered
+   the halt was dropped permanently and `pending_count == 0` said there was
+   nothing outstanding. Halting is only the recoverable choice if the row
+   survives it.
+4. **Low.** `only_bridge`/`only_official` filtered on `if instant.player_label`,
+   so an id-only instant seen by one source alone rendered as `[]` - "only one
+   source saw this pick" reading as "nothing to report".
+5. **Low.** `silent` was judged on the newest *pick*, so a bridge capturing
+   perfectly reported `silent: true` through every deliberation. An indicator
+   that cries wolf through ordinary play is one the owner has stopped
+   believing by round four. Proof-of-life is now a separate clock read from
+   `bridge_payloads`; the official source reports `contact_is_known: false`
+   rather than borrowing the bridge's traffic, because its poll happens during
+   ingest and is not recorded anywhere.
+
+Seven new tests, each naming the defect excluded and a reading in which the old
+flag was true while the defect was present. All seven mutation-verified: the
+`MUTANT` marker was grepped and confirmed present in the file *before* the run
+was read, and 0 markers remained afterwards.
+
+**What this says about the method, not just the code.** Every one of these got
+through a test suite whose tests each name a defect. Findings 1 and 2 were
+invisible because the *tests* encoded the same assumption the code did - the
+team-block test asserted refusal using a payload that had no name key, which is
+not the payload that defeats the guard. Naming the defect is necessary and it
+is not sufficient; the reading that must also be constructed is the one where
+the flag is true **and the defect is present**, and for both of these that
+reading was the test's own body.
+
+### `getDraftPicks`: not disproved, unestablished
+
+Stating this precisely because the project distinguishes the two. `fantraxapi`
+1.0.1 models a "draft pick" as `round` + `year` + `origOwnerTeam`, which is the
+shape of a **tradeable future asset**, not a selection that happened. If that
+is what the endpoint returns, the corroborating source corroborates nothing
+about a live draft. Nothing available in this environment settles it: no league
+id, no `FANTRAX_*` variables, both `.env` files absent, and no captured
+response. It is **not disproved and it is unestablished**, and the
+`live_smoke`-marked test exists to settle it the moment credentials exist.
+
+### Could not verify
+
+- Whether the recogniser fires on a real Fantrax draft-room payload. No
+  capture of one exists. Every key alias is a guess; the *anchor* is not (it
+  requires a `fantrax_team_id` already seated in this draft), which is why a
+  wrong guess yields zero records and a visible unrecognised-shape count rather
+  than a pick against the wrong seat.
+- Whether `getDraftPicks` returns results or future assets (above).
+- Whether halting on out-of-turn is right rather than merely safe. It is
+  arguably an owner decision and I made it as a lane.
+- Postgres was exercised for migration `0020` up/down/up on 16.9; the
+  savepoint behaviour added here was exercised on SQLite only.
+
+### The ask: one mock draft, as specifically as I can state it
+
+This is the highest-value thing available before 18 October and no agent can do
+it. It converts every guess above into a fixture.
+
+**What to do**, roughly 20-30 minutes:
+
+1. Start the backend on `http://127.0.0.1:8000` and leave it running.
+2. In `userscript/`, run `npm install` then `npm run build`.
+3. Open `http://127.0.0.1:8000/bridge/userscript.user.js` **by hand, in the
+   browser where Tampermonkey lives**. Not via `start <url>` or any OS-routed
+   opener - that uses the default browser, which may not be the paired one.
+4. Enter a Fantrax mock draft and let it run for **five or six picks**. It does
+   not need to finish.
+5. **Keep the Fantrax tab visible and focused the whole time.** After about
+   five minutes hidden, Chrome throttles timers to roughly once a minute and
+   stalls Fantrax's own polling - so a hidden tab produces a quiet capture log
+   that looks like a broken userscript.
+6. Then report two things, and only these two - no cookies, no secrets, no
+   request bodies: the **`source` values** present in `bridge_payloads`
+   (`fetch`/`xhr`/`cache-storage` vs `rendered-view`/`manual-export`), and the
+   **URL in the address bar** of the draft room.
+
+**Any league or must it be his?** Unknown, and worth saying rather than
+guessing. The recogniser needs seats linked to `fantrax_team_id`, which a mock
+against strangers will not have - but that affects the *tracker*, not the
+*capture*. For the purpose of this ask, any mock draft is useful, because what
+we need is the payload shape, and that arrives in `bridge_payloads` regardless
+of whether the draft is one we could track.
+
+**The one thing that could make it produce nothing:** the userscript matches
+`https://www.fantrax.com/fantasy/league/*`. If Fantrax serves its mock draft
+room from a path outside that - a lobby, a separate mock host - the script
+never loads and the capture log is empty for a reason that has nothing to do
+with any of this. That is why step 6 asks for the URL: it is five seconds of
+his time and it distinguishes "the recogniser cannot read it" from "the
+userscript was never there".
+
+**What each answer would mean.** Raw `fetch`/`xhr` rows: the RPC body is
+reachable and a real fixture is one export away. Only `rendered-view`: the
+draft room comes through the service worker, page script never sees the JSON,
+and this feed's bridge path cannot work as built - which would be a finding
+that changes the plan for the draft board, and is better known in October than
+on the 18th.
+
+
+## 2026-08-26 - backend - draft feed: a fix that made things worse, and what caught it
+
+Second independent review round on `draft-tracker-bridge-feed`, read at exact
+head `2e06c89`. Four findings, all real, all closed in `eb31a7a`. The review is
+posted as a comment on PR #104 rather than left in the lane's session, because a
+review only this lane can read is not one anyone can audit.
+
+**The one worth remembering: I made the tracker worse while fixing a Low.**
+
+Round one's lowest-severity finding was that `silent` was judged on the newest
+*pick*, so a bridge capturing perfectly reported silent through every four-minute
+deliberation - an indicator that cries wolf. I fixed it by judging `silent`
+against proof-of-life instead. That converted a false alarm into a **false
+all-clear**: a bridge capturing page HTML from a service-worker-served draft room
+lands captures continuously while the recogniser reads nothing, so a feed that
+had read **zero picks, ever** reported `silent: false`. Reproduced by the
+reviewer verbatim.
+
+A board frozen at pick 4 under a green light is worse than no board, because the
+indicator is the thing that tells him whether to look. And I had written two
+docstrings in `reconcile.py` asserting the opposite property - "there is no
+reading of this object in which a source looks current because it has never been
+heard from" - and left them unchanged while making them false.
+
+The rule now: **contact may suppress silence only for a source that has been read
+successfully at least once.** Zero instants means silent, always, whatever the
+transport is doing. Contact is still published, because "the userscript is alive
+but reading nothing" is a real and separately actionable state.
+
+The general lesson, which is not about this field: *a fix aimed at a
+false-positive should be checked for whether it can produce a false-negative,
+because they are rarely symmetric in cost.* Nothing in the gates asks that
+question.
+
+**`_transport_contact` was proof of the wrong thing.** It matched
+`request_url.contains(league_id)`. That accepted a neighbouring league whose id
+merely has ours as a prefix, our id appearing in any unrelated query parameter,
+and (unescaped LIKE) an id containing `_` or `%` as a wildcard. The threat was
+never a forged row - nothing but `POST /bridge/payloads` writes that table - it
+was a **genuine row that is not evidence of the property being claimed**. It now
+re-parses the URL with `league_id_in` and counts only RPC capture sources.
+
+**Seat-plus-player is a shape, and four lists in a draft room have it.** The
+reviewer got a keeper roster, an auction bid history, a waiver claim list and an
+on-the-clock block all read as the pick log. Keepers are not picks and would have
+become real `draft_events`; a bid history would have credited the *opening* bid
+as the clearing price. Acceptance now additionally requires the coordinate the
+record's kind is defined by - an ordinal for a snake selection, an amount for an
+auction sale - refuses a list containing the same player twice, and refuses a
+record whose player id equals its own seat id.
+
+**This is the sharpest live risk in the unit and I want it recorded as such.** If
+a real Fantrax pick log does not carry an ordinal under any of our guessed
+aliases, that rule refuses the entire board and the unit delivers nothing on
+draft night. I chose it deliberately, on the same trade the whole module makes: a
+blank board with the refused list's key names on the status endpoint is a
+five-minute fix; a populated board built from a roster block is a season. But it
+is a guess defended by an argument, not by evidence, and one recorded capture
+would settle it.
+
+**Two of my own tests had pinned the defect as the specification.** Both were
+written in round one to close F5, and both asserted the behaviour F6 says is
+wrong. A future reader fixing F6 would have broken them and concluded the fix was
+wrong. This is the same failure as the round-one team-block test that asserted
+refusal using a payload which did not defeat the guard: *the test encoded the
+same assumption the code did.* Naming the defect is necessary and not sufficient
+- the reading that must also be constructed is the one where the flag is true and
+the defect is present.
+
+**A halt was invisible to anything that only polls.** Leaving the halting row
+pending (round one's fix) was right, but `halted` is returned on the ingest
+response only and a live board polls `GET`. An unresolvable ordering problem
+re-halted every run while the status endpoint showed `pending_count: 1`,
+indistinguishable from an ordinary queue. `blocked_reason` now carries it,
+cleared at the start of every run so it can never become sticky - which would
+have been the round-one defect wearing a new name.
+
+**`coerced_to_kind` was answering two questions with one number.** Sporadic
+coercion means Fantrax sent a stray field. *Total* coercion means **our** draft
+format snapshot is wrong - the league is an auction, we recorded it as snake, and
+every price is being stripped on the way in while the board shows a priceless
+snake draft. `kind` comes from our snapshot, so the dangerous reading is the one
+where the authoritative side is the broken side. The rate separates them where
+the count cannot; `format_snapshot_suspect` publishes it.
+
+**A test fixture had been lying about the capture layer.** `_capture` labelled
+every stored payload `source="fantrax"` - a value `userscript/src/capture.js`
+never emits. It emits `fetch`, `xhr`, `cache-storage`, `rendered-view`,
+`manual-export`. Nothing depended on it until the F6 filter did, at which point
+it failed loudly. Worth noting because the fixture had been read by three rounds
+of tests as if it represented the real thing.
+
+**One of my own worries was disproved.** I had flagged that `begin_nested()`
+might be a no-op under pysqlite and that the round-one mutation might have died
+for a reason other than the one I assumed. The reviewer verified directly,
+outside my fixture on a freshly-committed database: SQLAlchemy emits a real
+`SAVEPOINT`, only the offending row is discarded, the session stays usable, and
+without it the run dies of `PendingRollbackError` - which is precisely the
+failure it exists to stop.
+
+**`getDraftPicks` remains not disproved, unestablished.** No change: no league
+id, no `FANTRAX_*` variables, both `.env` files absent. Neither feed source has
+ever seen a real draft payload.
+
+### Could not verify
+
+- **Whether any of this fires on a real Fantrax draft room.** Unchanged and still
+  the largest gap. Every key alias, the envelope shape, and now the coordinate
+  rule are guesses. The recogniser is built to yield zero records rather than
+  wrong ones, and to publish the key names it refused, but "fails safe" is not
+  "works".
+- **Whether the coordinate rule refuses a legitimate board.** Specifically: a
+  pick log where only some records carry an ordinal, and whether a player can be
+  drafted, dropped and re-drafted within one auction - which `duplicate_player_
+  in_list` would treat as grounds to refuse the whole list. I could not construct
+  either case from evidence. Both are all-or-nothing refusals, so the cost of
+  being wrong is the entire board, not one row.
+- **`begin_nested()` on Postgres.** Verified on SQLite by two parties now.
+  Postgres has first-class savepoints and the direction of risk runs the other
+  way, but I have run no Postgres test of that path and claim nothing about it.
+- **Whether `_CONTACT_SCAN_LIMIT = 50` is enough.** A user with more than fifty
+  non-matching captures newer than the matching one loses contact. I believe that
+  degrades safely to the instant clock rather than to a false all-clear, but I
+  have not constructed the case.
+- **Whether the third review round is clean.** Requested at `eb31a7a`, not
+  returned at the time of writing.
+
+### Append-only check, corrected
+
+The coordinator's earlier rule - confirm `0 removed` on this file - is wrong, by
+its own author's finding: an append onto a file whose last line lacked a trailing
+newline correctly reports `1 removed`. The property is a **byte-prefix**: the
+base blob must be a byte prefix of the committed one. Verified here against the
+base this branch was cut from:
+
+    28d0d88   bytes=1655587  byte-prefix=True  appended=19976
+    HEAD      committed blob contains 0 CRLF
+
+The normalisation caveat (a whole-file CRLF->LF rewrite would pass a normalised
+comparison) has nothing to hide in this case, because the raw and normalised
+results agree and the committed blob contains no CRLF at all. The working copy
+does, from the Windows checkout; comparing working files rather than committed
+blobs reports a spurious failure.
+
+Against `origin/main` the prefix is **False**, which is the merge freeze and not
+a violation: main has gained other lanes' entries this branch has not rebased
+onto. Stated so the next person running the check is not alarmed by it.
+
+## 2026-08-26 - draft feed: third review round, and a docstring that promised what the code did not deliver
+
+`backend` lane, unit `draft-tracker-bridge-feed`, PR #104. Third independent
+review, read at exact head `eb31a7a` by a non-`backend` agent. Six findings, all
+real, every one supported by a probe the reviewer actually ran rather than by
+argument. Fixed in `a074742`. Rebased onto `c07aefb` after the coordinator opened
+the window.
+
+### The finding worth reading if you read only one
+
+`record_missing_draft_coordinate` is the rule that makes this feed safe to fail:
+every record in a candidate list must carry the coordinate its `kind` is defined
+by, or the whole list is refused. Its docstring said it was "the strongest of the
+three and the one that excludes keepers".
+
+**That is true under `SELECTION` and very largely false under `SALE`**, which is
+the path where keepers actually have salaries. The amount aliases are
+`("amount", "bid", "salary", "price", "winningBid")` - and `salary` is the
+defining field of a keeper roster row, while `bid` is the defining field of a
+FAAB waiver claim. The reviewer drove a priced auction keeper roster end to end
+and it became two real `draft_events` rows at 30.00 and 22.00.
+
+A priced keeper roster and an auction sale log are **the same tuple**. There is
+no structural discriminator available to this module, so I did not invent one.
+The docstring now states the gap, and
+`test_a_priced_keeper_roster_is_a_known_gap_on_the_auction_path` pins it as a
+gap so the claim cannot be quietly reinstated.
+
+**A stated protection that does not exist is worse than a known gap**, because it
+is what stops the next reader from looking. That is the transferable part.
+
+### The other five
+
+- **`format_snapshot_suspect` named a cause it could not establish.** It claimed
+  a total coercion rate was the signature of *our own* format snapshot being
+  wrong. Falsified in both directions: it fires permanently on a correctly
+  recorded auction from the official source (ordinals and amount arrive on the
+  same row as a matter of course and nothing is lost), and it *cannot* fire in
+  the case it was named for, because an auction log read under a snake snapshot
+  is refused by the coordinate rule before a single instant exists. Renamed
+  `every_instant_coerced`, which is what it measures.
+- **A closed draft with a pending backlog showed as a healthy queue.** The
+  likeliest permanent halt in this system - the owner closes the draft, the
+  userscript keeps capturing, `ingest` keeps writing rows that can never apply -
+  returned `draft_closed` to the caller and left the polling endpoint showing a
+  backlog with no reason. Now recorded on the rows.
+- **`blocked_reason` was sticky behind a closed draft.** The closed-draft early
+  return preceded the clearing loop, so a reason set while the draft was live
+  froze on the row for ever. That is the stale-reason defect wearing a new field
+  name. The clear moved above the return.
+- **The coordinate gate tested presence; the reader tests parseability.** A
+  record carrying `{"round": "N/A"}` satisfied "every record carries its
+  coordinate" and then produced an instant with every ordinal `None`, landing in
+  the unordered fallback bucket of `_apply_order` - arrival-order application,
+  which is exactly what sorting on the coordinate exists to prevent. The gate now
+  uses the same `_as_int` / `_as_amount` coercers as the reader.
+  **This also answers an open question from the previous entry:** that fallback
+  bucket is *not* dead code on the bridge path. It was reachable.
+- **Two `reconcile.py` docstrings contradicted the code.** My own F6 fix had
+  falsified them and I did not update them - the second time in two rounds I have
+  left a docstring asserting a property I had just removed. `contact_is_known`
+  is a published field whose documented job is to tell a screen how to read
+  `silent`, and a frontend following the old text would have read
+  `contact_is_known=True, contact_age_seconds=20.0, silent=True` as an
+  inconsistent payload. It is consistent; the asymmetry is deliberate.
+
+### What the reviewer checked and did not call a defect
+
+Worth recording, because these were my own stated worries and three of them were
+unfounded:
+
+- `_CONTACT_SCAN_LIMIT = 50` **is not a hole.** Probed with 60 newer
+  non-matching RPC rows ahead of the matching one: contact is lost and the flag
+  degrades to the instant clock, which is the safe direction, and it can only
+  fail that way.
+- `RPC_CAPTURE_SOURCES` **matches `userscript/src/capture.js` exactly**, checked
+  against the JSDoc union, `PAGE_EVENT_SOURCES`, and both snapshot emitters.
+- `duplicate_player_in_list` **is the least risky of the three rules.** The
+  reviewer could construct no legitimate Fantrax pick log with a repeated player
+  identity. My worry about a drafted/dropped/re-drafted player was misplaced:
+  that is a transaction, not a draft record.
+- Editing the unmerged migration `0020` in place **is fine** - `0020` does not
+  exist off this branch.
+
+One asymmetry found and deliberately not fixed: `source` is not consulted on the
+ingest path, so a capture from an unknown source is refused as *proof of life*
+but still trusted as a *source of picks*. The weaker claim is gated harder than
+the stronger one. Named here rather than changed, because tightening it without
+a real payload would be another guess.
+
+### Gates
+
+All from `backend/`, which is the `working-directory` every Python CI job
+declares. From the repo root the same commands report other lanes' files and a
+number that was never this lane's to read.
+
+- `python -m ruff check .` - All checks passed
+- `python -m ruff format --check .` - 218 files already formatted
+- `python -m mypy` - Success, 209 source files
+- `python -m pytest tests/test_draft_feed.py` - 59 passed
+- Six mutations, each confirmed **present in the file** by marker count before
+  the run was read. All six killed, zero markers left behind.
+
+### Could not verify
+
+- **Whether the keeper gap matters in practice.** No real Fantrax auction payload
+  has ever been seen, so whether `salary` appears in one at all is unknown. The
+  gap is named from the alias list, which is checkable; its frequency is not.
+  *Not disproved, unestablished.*
+- **Whether the coordinate rule refuses a legitimate board.** Confirmed by the
+  reviewer that a snake log where only *some* records carry an ordinal is refused
+  entirely. Whether a real board looks like that is still unknown, and it remains
+  the sharpest live risk in the unit.
+- **Whether the recogniser fires at all on a real draft-room payload.** Unchanged
+  and unchangeable here. This is what the owner's mock-draft capture would settle.
+- **`begin_nested()` on Postgres.** The CI Postgres job was cancelled mid-run by
+  concurrency on my previous head, so the one dialect that path exists for is
+  still unverified by me at the time of writing.
+
+### A CI reading worth keeping
+
+My run on `2e06c89` reported `conclusion: failure`. It had **zero failed steps**,
+and **none of its ten jobs was ever assigned a runner**. Nothing had failed;
+nothing had run. Two obvious explanations were checked and both are false:
+`cancel-in-progress` did not do it, because the cancel at 15:43:06Z precedes the
+next commit at 15:52:52Z by ten minutes, and it was not a timeout, because
+`ci.yml` declares no `timeout-minutes` and the default is 360.
+
+The coordinator had independently found the mirror image: `mergeStateStatus:
+CLEAN` on a PR whose gates never ran. **`failure` with zero failed steps and
+`CLEAN` with zero runs are the same non-event wearing different colours.** The
+field that discriminates is neither - it is whether any step exists. Recorded
+because a merge decision was nearly made on each of them in the same hour.
+
+## 2026-08-26 - backend - draft feed: round four, and the asymmetry underneath it
+
+Fourth independent review of `draft-tracker-bridge-feed`, read at exact head
+`f085b01`. Six findings, all real, all with executed probes. **Two of them were
+inside round three's own fixes**, which makes it four rounds out of four where a
+defect lived inside the previous round's repair. Recording the pattern as well as
+the fixes, because the pattern is the more useful artefact.
+
+### The structural cause, which is the real finding
+
+This package has **two recognisers with different admission rules**, and three
+rounds of my own reasoning generalised from one to both.
+
+`recognise_bridge_payload` guesses at an arbitrary JSON block, so it is defended:
+`_accept_list` applies a seat anchor, a player identity check,
+`player_identity_is_the_seat`, `_has_draft_coordinate`, and
+`duplicate_player_in_list`. `recognise_official_draft_picks` reads an
+already-typed `FantraxDraftPick` and applies **only** the seat anchor and a name
+check. No coordinate rule at all.
+
+Every docstring I wrote that argued "the coordinate rule refuses that payload
+before an instant exists" was therefore true of one path and asserted for both.
+That is not six unrelated bugs; it is one omission generating claims that are
+half true, and it would have kept generating them. The asymmetry is now stated in
+`recognise_official_draft_picks`' own docstring, at the place where the next
+person is most likely to make the same inference.
+
+### What was wrong, and what changed
+
+**1 (High). `every_instant_coerced` told the owner to ignore a real signal.** I
+had removed the property's causal claim on the grounds that the disaster it was
+named for -- an auction log read under a snake snapshot, every price silently
+stripped -- could not reach an instant. On the bridge path that is true. On the
+official path there is no coordinate rule, so it is reachable: the reviewer drove
+a priced payload under a snake context and got two instants, every amount gone,
+the flag `True`, and a docstring reading **"Do not treat this as evidence the
+board is lying."** The one published signal that catches a wrong format snapshot,
+on the only source that could show it, annotated as noise.
+
+The fix is not to restore the old causal claim, which was false in the other
+direction. `every_instant_coerced` is also `True` for a perfectly healthy
+auction, so the *rate* genuinely cannot discriminate. What discriminates is the
+**direction** of the loss, which was being computed and thrown away.
+`_fields_dropped_for_kind` now returns the field **names** rather than a bool,
+and they are published as `fields_dropped` on `RecognitionResult`, on
+`SourceOutcome` and on the API. `("amount",)` on a draft recorded as a snake
+means every pick carried a price, and a real snake has none to carry --
+`parse_draft_picks` reads `auction_amount` only from `amount`, `bid` or `salary`.
+Dropped ordinals on an auction are the expected shape and mean nothing is wrong.
+Same flag, opposite meaning, and only the names separate them.
+
+**2 (Medium). Three docstrings pointed at a field that did not exist.** Having
+deleted the diagnosis, I replaced it three times with "read `fields_dropped`".
+There was no such field anywhere -- `_fields_dropped_for_kind` was a private bool
+predicate that enumerated nothing. The entire stated remedy resolved to nothing.
+Fixing finding 1 by publishing the names is what makes those three sentences
+true; they were a promise written before the thing promised.
+
+**3 (Medium). A reopened draft reported itself permanently halted.** The round-3
+fix stamps `blocked_reason = "draft_closed"` on pending rows. A close is voidable
+(`draft.service.record_void`), and the clear only runs inside
+`apply_observations`, which only a caller passing `apply=true` reaches. A screen
+polling `GET /drafts/{id}/feed` never runs it. So after a void the board showed
+the one string that means "stuck for ever" on a draft that was live again. The
+reviewer confirmed the reading was clean before my commit and present after: I
+removed one stale reason by manufacturing another. `feed_status` now filters
+`draft_closed` against the draft's actual status rather than trusting the stamp.
+
+**4 (Medium). The coordinate gate admitted records the sort cannot order.**
+Round three tightened `_has_draft_coordinate` from presence to parseability,
+which fixed `{"round": "N/A"}` and left `{"round": 1, "pick": "N/A"}`.
+`_apply_order` needs `overall_pick`, or round **and** pick-in-round, so a
+half-ordinal record still fell into the arrival-order fallback. Driven end to end
+it halted the board on `draft_pick_out_of_turn` -- deterministically, so it never
+self-heals, and with the blame attached to turn order rather than to the payload.
+The gate now requires exactly what the sort requires. A board numbering rounds
+but not picks within them is refused, deliberately: both readings apply zero
+picks, and a named `record_missing_draft_coordinate` count says which payload was
+unreadable while an out-of-turn halt does not.
+
+**5 (Medium). One of my round-3 tests did not exclude the defect it named.** It
+was written for "the clear must sit above the closed-draft return". The reviewer
+moved the clear back below the return and **all 59 tests passed**: the stamp loop
+overwrites every pending row anyway, so the two orderings are indistinguishable.
+The assertion was satisfied by the other half of the fix. The clear's position is
+genuinely not load-bearing, so the comment claiming it was has been removed
+rather than a test invented to defend it, and the test now pins a transition that
+is real. The reopen path from finding 3 is what actually needed a test.
+
+**6 (Low).** The keeper-gap test's docstring claimed "end to end" while its
+assertions stopped at recognition. The claim was true -- the reviewer drove it --
+but untested, so a later apply-layer guard would have falsified it with no red
+test. It now applies.
+
+### Tests
+
+61 in `test_draft_feed.py`, up from 59. Two net new:
+`test_a_reopened_draft_does_not_keep_reporting_itself_closed` and
+`test_the_official_path_has_no_coordinate_rule_and_reports_the_loss_by_name`.
+The coordinate test gained the half-ordinal case and a second positive control,
+and its old positive control `{"round": 1}` had to change -- **the tightened gate
+refuses it**, which is worth knowing before someone reads the diff and assumes a
+test was weakened.
+
+### Gates
+
+All from `backend/`, which is the `working-directory` every Python CI job
+declares. From the repo root the same commands report other lanes' files.
+
+- `python -m ruff check .` - All checks passed
+- `python -m ruff format --check .` - 218 files already formatted
+- `python -m mypy` - Success, 209 source files
+- `python -m pytest tests/test_draft_feed.py` - 61 passed
+- Six mutations, each confirmed **present in the file** by marker count before
+  the run was read. All six killed, zero markers left behind.
+
+One mutation initially reported `ANCHOR NOT FOUND` because `ruff format` had
+rewrapped the line the harness was anchored to. The harness declined to report a
+verdict for it rather than counting it as killed, which is the only reason the
+6/6 above means anything.
+
+### Could not verify
+
+- **Whether the recogniser fires at all on a real draft-room payload.** Unchanged
+  and unchangeable here. `getDraftPicks` has never returned a verified real
+  payload, no draft-room fixture exists anywhere, and `/fxpa/req` captures are
+  method-anonymous by construction because `capture.js` records responses while
+  the method name lives in the request body. *Not disproved, unestablished.*
+- **Whether the tightened coordinate gate now refuses a legitimate board.** It
+  refuses strictly more than the previous version: a snake log numbering rounds
+  but not picks within them used to be accepted and now is not. The change trades
+  a misattributed halt for a named refusal, which is the better failure, but
+  whether any real board looks like that is unknown. This remains the sharpest
+  live risk in the unit.
+- **Whether four rounds is convergence.** Round four found two defects inside
+  round three's fixes, so the base rate is unbroken. A fifth round finding
+  nothing would be the first actual evidence of convergence; nothing here
+  establishes it, and the fixes above are exactly the kind of change that has
+  carried a defect every previous time.
+- **Whether `fields_dropped` is read by anything.** Nothing consumes it yet --
+  `grep` over `frontend/src` finds no reference to it or to
+  `every_instant_coerced`. It is published and correct and currently unread,
+  which also means the round-3 rename could not have broken a TS consumer.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round five
+
+Round five read `0813473`, the rebase onto `553df7a`. It returned three
+findings. Two were real and both predate every earlier review; one was
+withdrawn on evidence after I challenged it, and the challenge produced a
+correction to this unit's headline claim that is worth more than the finding
+would have been.
+
+**What round five did not find is the news.** Every round-four fix survived
+it -- including the `every_instant_coerced` High -- so for the first time in
+five rounds no defect was found inside the previous round's fixes. That is not
+a clean round and I am not reporting it as one, but the R2/R3/R4 shape did not
+recur.
+
+### The two real defects were in the type coercers, which no review had read
+
+Four rounds re-read `_has_draft_coordinate` and none read the two functions it
+delegates to. The gate was never stricter than they were.
+
+- `_as_amount` promised "a Decimal or `None`". `Decimal("NaN")` *constructs*,
+  so it cleared the `try` and then raised `InvalidOperation` on the `> 0`
+  comparison one line outside the handler. A captured `"winningBid": "NaN"`
+  made recognition raise instead of yielding zero records and a named count.
+  The reviewer found that. Running its neighbours found the worse half it had
+  missed: `Decimal("Infinity")` never raises, compares greater than zero
+  happily, and was returned as a **valid clearing price** bound for a
+  `Numeric(10, 2)` column. A fix written to the report -- catching
+  `InvalidOperation` upstream -- would have left `Infinity` believed. Both now
+  refused by `is_finite()`.
+- `_as_int` was a bare `int()`. `overallPick: 1.9` produced one instant at
+  **pick 1 with no unrecognised shape**: a board placing a pick at a position
+  no payload claimed, carrying a clean bill of health. `0` and negatives parsed
+  too and were caught only by the database CHECK, arriving as a generic
+  `observations_rejected` rather than the named `record_missing_draft_coordinate`
+  the gate promises. Now exact positive integers, with integral floats (`2.0`)
+  still accepted because that is how JSON delivers whole numbers.
+
+The tightening lives in the coercers rather than in the gate, so every caller
+gets it. Both are used in one role each -- `_as_int` only for coordinates,
+`_as_amount` only for prices -- which was checked before changing them, and is
+why the change is safe to make there. Widening either later would be wrong for
+a count and right for a position; the docstrings say so.
+
+### The withdrawn finding produced a better correction than the finding
+
+The reviewer rated "a priced keeper roster is read as auction sales" High. It
+is not a defect: it is a gap already pinned by a test whose docstring says so,
+because a priced keeper row and an auction sale row are the same tuple. I asked
+the reviewer to attack irreducibility rather than existence, and to say
+"withdrawn" in those words if that was its conclusion. It was: record count,
+URL, `dedupe_key`, alias fields and draft state were each checked as candidate
+discriminators and each fails.
+
+But its answer corrected this unit's headline claim, and the correction is
+right. **The seat anchor establishes a structural fact, not a semantic one.**
+The value read is one of this draft's configured team ids; that the field
+*means* "the team that drafted this player" is not established. So "never a
+pick attributed to the wrong seat" is true only as "never an *unconfigured*
+seat". Narrowed in the `recognise` module docstring. That is an overclaim
+removed, not a claim softened.
+
+### The gap was invisible on every channel, so it is now a note
+
+The reviewer's third question was where this limit is visible to someone not
+reading the suite. The answer was nowhere: on a keeper-as-sale read
+`fields_dropped` is empty, `coerced_to_kind` is zero, and no unrecognised shape
+is produced, so **every channel reports a clean read**. There is now a note on
+the response, conditioned only on a fact already held -- this scan produced at
+least one sale -- classifying no record and changing no outcome.
+
+### And my own fix shipped the defect I have criticised in three reviews
+
+The mutation harness reached six verdicts and killed five. **The survivor was
+the new note's own guard.** My test docstring claimed a snake-draft assertion
+carried it. It carried nothing: `_kind_for` derives one kind per scan from
+`draft_type`, so a snake context yields no `SALE` instants by construction and
+the draft-type clause in my condition was **unreachable, not untested**. No test
+could have defended it, because no input distinguishes the two readings.
+
+Removed the redundant clause rather than writing a test to dress it up, and
+relabelled the snake case in the test as the weak check it actually is -- kept
+deliberately, because it starts doing work the day anyone makes kind
+per-record. A check that excludes nothing while claiming to is the exact defect
+I have raised against three other pieces of work, committed here inside a fix
+for a finding about honesty of reporting.
+
+### Gates
+
+From `working-directory: backend`. `ruff check` clean; `ruff format --check`
+218 files; `mypy` 209 source files, no issues; `pytest tests/test_draft_feed.py`
+64 passed, up from 61. Mutations: 6/6 verdicts reached, 5/6 killed, 1 removed
+as an equivalent mutant, 0 `# MUTANT` markers left in either file.
+
+### Could not verify
+
+- **Whether F2 or F3 was ever reachable from a real Fantrax payload.** `NaN`
+  and fractional pick numbers are what an undocumented endpoint emits, but that
+  is an argument from the class of source, not evidence about this one. Both
+  were reachable from *arbitrary* JSON, which is what the bridge delivers, and
+  that is the whole basis for fixing them.
+- **Whether five rounds is convergence.** The R2/R3/R4 pattern did not recur,
+  which is the first evidence in either direction. But round five found two
+  defects that four rounds had walked past, so the reviews are still finding
+  things that were always there -- and the fixes above are exactly the kind of
+  change that has carried a defect every previous time. A sixth round reading
+  the coercer fixes and the note is running.
+- **Whether the auction note reads as furniture.** It is emitted on every scan
+  that reads a sale, which in a live auction is most of them. A caveat that is
+  always present is a caveat nobody sees. The alternative -- marking only some
+  rows -- requires a classifier that cannot exist, so this is the honest
+  version rather than the useful one, and I could not make it both.
+- **Whether the recogniser fires at all on a real draft-room payload.**
+  Unchanged and still the largest unknown in this unit. `getDraftPicks` has
+  never returned a verified real payload, no draft-room fixture exists, and
+  `/fxpa/req` captures are method-anonymous by construction. Not disproved,
+  unestablished. One mock draft with the userscript loaded turns every guess
+  here into a fixture.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round six and the class underneath it
+
+Round six read `4db9123` and returned three findings. Two of them were inside
+round five's own fixes, so the "each round finds a defect in the previous
+round's fix" pattern resumed after one clean round. All three reproduced by
+direct execution before I touched anything.
+
+### What the three were
+
+**A price can be finite and still not be storable.** `is_finite()` was round
+five's fix and it is not the same question as "can `Numeric(10, 2)` hold this".
+`1E+30` and `0.001` both pass it. Measured against the real model: the first
+reloads as `1000000000000000019884624838656.00`; the second passes the
+`amount > 0` CHECK, stores, and **reloads as `0.00`**. That second one is the
+one that matters -- a player the owner watched sell, shown on the board at no
+price, on the source that carries the prices, with nothing about the row
+malformed.
+
+**A coordinate can be integral and still not be bindable.** JSON `1e100` has
+`float.is_integer() == True`, so round five's exactness rule admits it, and it
+becomes a 101-digit int that raises `OverflowError` at `session.flush()`.
+`_store` catches `IntegrityError` and nothing else, so that is not a refused
+row -- it is the **whole ingest** failing and discarding every good pick
+captured beside it.
+
+**The integrality rule was written for `float` only.** `int(Decimal("1.9"))` is
+also `1`. Same defect, surviving inside its own fix.
+
+### The class, and what I did about it
+
+All three are one shape: **the coercers validated form, and the question that
+mattered was capacity.** So rather than fix three instances I enumerated every
+column this path writes, and found four more of the same shape that no review
+had raised:
+
+- `player_label` is `String(128)` and `_as_text` was unbounded. **SQLite ignores
+  a `VARCHAR` length entirely**, so a 5,000-character name stores cleanly in
+  every test in this file and raises `DataError` on Postgres -- outside the
+  `IntegrityError` `_store` handles, so again the whole ingest. A defect
+  invisible on the development engine and fatal on the deployment one is
+  precisely what ADR-001's "every access goes through SQLAlchemy" exists to
+  keep out, and the Postgres CI job could not have caught it because no test
+  used a long string.
+- `locator` is `String(128)` and is built from **the payload's own key names**.
+  Six levels of realistic Fantrax naming reaches 128 characters without trying;
+  the test case is 137. This is the least exotic of the lot.
+- `artifact_key` is `String(128)` and is filled from `bridge_payloads.dedupe_key`,
+  which is `TEXT` -- unbounded. The mismatch spans two tables owned by two
+  units and **neither model is wrong on its own**, so reading either alone
+  would never show it.
+
+`locator` is refused rather than truncated, and that choice is load-bearing: it
+is a third of the idempotency key `(transport, artifact_key, locator)`. Two
+distinct paths truncated to the same 128 characters collapse into one row and
+the second pick is dropped as a duplicate -- a pick **missing** from the board,
+reported as nothing at all. Truncating a name is the same error in a quieter
+place.
+
+Then a test that derives the guards from the model rather than restating them:
+every bound must equal the column it describes, and every bounded column must
+be either guarded or explicitly declared not payload-derived, so *adding* a
+column is red until someone decides which it is. **It fired on its first run**,
+flagging `skipped_reason` -- `Text` subclasses `String` with `length is None`,
+so the class hierarchy says "bounded" where the model says "unbounded". The
+rule now keys on `length`. That correction came from the check catching
+something rather than from me reasoning about it, which is the only reason I
+trust the other half of it.
+
+### Gates
+
+From `working-directory: backend`. `ruff check` clean; `ruff format --check`
+218 files; `mypy` 209 source files, no issues; `pytest tests/test_draft_feed.py`
+70 passed, up from 64. Mutations: **8/8 verdicts reached, 8/8 killed**, each
+marker confirmed present in the file on disk before its run was read, source
+restored byte-for-byte after each. Full backend suite run separately.
+
+`docs/handoff.md` shows as modified in `git status` with a **zero-byte
+`git diff`** -- worktree CRLF against an LF index, content-identical. Round six
+reported the tree as unclean on this and it is an artifact, not a change.
+
+### Could not verify
+
+- **Whether any of the seven bounds is reachable from a real Fantrax payload.**
+  Unchanged in kind from round five and still an argument from the class of
+  source rather than evidence about this one. The `locator` case is the one I
+  would bet on, because it needs no hostile input at all -- only long key
+  names, which Fantrax uses.
+- **Whether the enumeration is complete.** It covers the columns of
+  `draft_feed_observations` that this path writes. It cannot see columns other
+  units write from the same payloads, and it checks that a bound exists and
+  matches, **not that the coercer is wired to it** -- a guard could be correct
+  and uncalled. The per-rule mutations cover the wiring; nothing covers both at
+  once.
+- **Whether six rounds is convergence.** It is not. Round five was clean of the
+  previous round's fixes and round six was not, so the one piece of evidence
+  for convergence has been withdrawn by the next round. Round seven is reading
+  these fixes, and these fixes are larger than round five's.
+- **Whether the recogniser fires at all on a real draft-room payload.**
+  Unchanged and still the largest unknown in this unit. `getDraftPicks` has
+  never returned a verified real payload, no draft-room fixture exists, and
+  `/fxpa/req` captures are method-anonymous by construction. Not disproved,
+  unestablished. One mock draft with the userscript loaded turns every guess
+  here into a fixture.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round seven and the collapsed distinctions
+
+Seventh independent review of `draft-tracker-bridge-feed` (PR #104), read at `1a861d0`. **Five
+findings, two High, and a direct hit on the structural test I had told the coordinator was
+protecting us.** Round five remains the only round clean of the previous round's fixes, and round
+six withdrew that evidence; seven rounds have now produced seven findings.
+
+All five were reproduced by execution before anything was changed, and the neighbours of each
+reported input were run before its fix was written. That found **three more defects no review
+raised**.
+
+### The correction I owe, first
+
+I told the coordinator the model-derived guard test made *"adding a column red until someone
+decides which"*. **That was true only for `String` columns.** The reviewer appended an unlisted
+`Numeric(12,3)` and an unlisted `Integer` and watched the test stay green, because the loop
+enumerated `String(length)` and nothing else.
+
+That is not a cosmetic gap. `MAX_COORDINATE` was `2**63 - 1` on the strength of a comment
+asserting the real bound was *"not readable off the model"* -- and every coordinate column
+compiles to Postgres `INTEGER`, which is `2**31 - 1`. **The guard was wrong by a factor of four
+billion and the check written to catch exactly that class could not see the column.** The bound is
+now *derived* by compiling each column under `postgresql.dialect()` rather than asserted, and the
+enumeration covers `String`, `Integer` and `Numeric` (11/11 controls, including an unlisted `Text`
+column that must *not* fire).
+
+Worth generalising beyond this file: **a comment claiming something cannot be checked is itself an
+unchecked claim.** That sentence is what stopped anyone deriving the number for three rounds.
+
+### The five findings
+
+| # | Sev | Defect | Measured before the fix |
+|---|---|---|---|
+| F1 | High | An overlong `playerName` fell through to the ambiguous `name` alias | `player_label='Seat One'` -- **the seat's own name on the board as the player taken**, with `unrecognised == ()` |
+| F2 | High | The official path copied `overall_pick` / `round_number` / `pick_number` / `player_name` / `player_id` **raw**, bypassing every coercer | `int(1e100)` recognised, then `OverflowError` at flush killing **the whole ingest**; a 129-char name and 65-char id stored clean on SQLite |
+| F3 | Med | `MAX_COORDINATE` was 64-bit; the columns are 32-bit on Postgres | `_as_int(2147483648)` returned the value and SQLite stored it |
+| F4 | Med | A capacity refusal was suppressed when a sibling list was accepted | deep list alone -> `locator_too_long_to_record`; deep **plus** shallow -> `unrecognised []`, `rejected None` |
+| F5 | Med | `int()` and `Decimal()` implement **Python literal grammar**, not JSON's | `"1_0"` -> 10; `"\u0661\u0662"` -> 12; `"_10"`, `"1__0"`, `"10_"` -> `Decimal(10)` **applied as a sale price** |
+
+### Three more, found by running the neighbours
+
+- The official path admitted **`overall_pick=0`** and **`overall_pick=-5`**; the bridge path
+  refuses both as not one-indexed. Same asymmetry as F2, one field along.
+- `_as_amount("1e2")` returned `Decimal('1E+2')` and was accepted as 100.
+- **Not mine to fix:** `ingest/fantrax_official/parsers._as_int` truncates with a bare `int()`, so
+  `parse_draft_picks` turns `1.9` into `overall_pick=1` and `2.999` into `2` *upstream of this
+  module*. Re-coercion here cannot recover it -- the information is gone before the feed sees the
+  record. Also `overallPick: 0` is dropped by that file's `or` chain, because `0` is falsy. **This
+  is a `data-engineer` item and is filed, not patched.**
+
+### The generator, and why it survived three rounds
+
+F1, F2, F3 and the structural-test miss are one shape: **a distinction that exists in the domain
+was collapsed by the code, and the collapse was invisible on SQLite.**
+
+- F1 collapsed *absent* and *present but refused*, and substituted a different field's value.
+- F2 collapsed *typed* and *bounded* -- `int | None` is arbitrary precision, `str | None` has no
+  length.
+- F3 and the meta finding collapsed *the Python type* and *the storage width*.
+
+F2 is explicitly the round-four asymmetry one layer down. Round four closed a difference in how
+the two recognisers **admitted a list**; this was a difference in how they **read a field**, and
+it survived because every subsequent round re-read admission. That is the coordinator's own
+prediction -- *look at whatever the last round's fixes now delegate to* -- proving correct twice.
+
+The fix is a rule rather than five patches: a three-way `_read_text` returning text / `UNREADABLE`
+/ `None` so presence and usability stay separate; ASCII-only grammar regexes plus width ceilings
+applied *before* conversion; and `recognise_official_draft_picks` routing every field through the
+same coercers the bridge path uses, anchoring on the coerced id.
+
+### For ADR-001
+
+`MAX_COORDINATE` is a second defect **invisible on SQLite and fatal on Postgres**, and the
+Postgres CI job could not have caught it, because no test used a value above `2**31`. A gate that
+runs the same suite against both engines **only discriminates on inputs that differ between the
+engines** -- and nobody had written one. This belongs in the ADR-001 amendment alongside the
+`String(128)` case, not only in the PR.
+
+### Verification
+
+- `pytest` full backend suite: **2132 passed, 38 deselected** (baseline `1a861d0` was 2128; four
+  new tests). `working-directory: backend`.
+- `test_draft_feed.py`: **74 passed**.
+- Mutation harness: **10/10 killed**, `recognise.py` restored byte-identical, zero `# MUTANT`
+  residue, post-restore suite green.
+- Enumeration harness: **11/11**, positive control and restored-state control both pass.
+- `ruff check` clean; `ruff format --check` 218 files already formatted; `mypy` clean, 209 files.
+
+### Could not verify
+
+- **Whether any of this fires on a real draft-room payload.** No real Fantrax draft payload has
+  ever been seen by anyone on this project. Every fixture is constructed. The correct wording is
+  **not disproved, unestablished** -- and it is behind the one mock draft, which is with the owner.
+- **Whether `NaN`, `Infinity`, fractional or non-ASCII-digit values are reachable from a real
+  payload at all.** Unestablished for the same reason. The fixes are cheap and fail closed, which
+  is why they were made anyway.
+- **That the coercers are wired to the guards.** The enumeration proves a bound *exists and
+  matches the column*; the per-rule mutations prove the *wiring*. **Nothing covers both at once**,
+  so a guard could be correct and uncalled in a combination neither check reaches. Named rather
+  than closed badly.
+- **My own instrumentation, three times over.** The mutation harness silently covered only
+  single-line anchors on its first run, because the working tree is CRLF and the anchors were
+  written with `\n`. It was caught only by the harness's own rule -- refuse a verdict unless the
+  anchor appears exactly once -- which reported `anchor appears 0 times` instead of a false pass.
+  I have now had three instrumentation bugs on this unit and each was found by a self-check rather
+  than by reasoning.
+
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round eight and the guard that was never called
+
+Eighth independent review of `draft-tracker-bridge-feed` (PR #104), read at `c51a160`. **Two
+findings, one High, and both of them are in a file this unit does not own.** Then a separate
+experiment, run afterwards on the coordinator's corrected instructions, found **three more defects
+that no review has raised in eight rounds**. Eight rounds, eight findings, and no convergence.
+
+### What round eight found
+
+Both findings are in `backend/src/hoops_gm/ingest/fantrax_official/parsers.py`, which belongs to
+`data-engineer`:
+
+- **High** -- `parse_draft_picks` normalises the payload before this unit's coercers see anything.
+  It converts with a bare `int()` / `float()` / `str()` and selects aliases with a truthy `or`
+  chain.
+- **Medium** -- a malformed container becomes a *successful empty read*. A missing `draftPicks`
+  key, a non-list value and a non-object row all return `[]`, so `rejected` is `None` and
+  `unrecognised` is empty. **On draft night "nobody has picked yet" and "I could not read the
+  response" call for opposite actions, and they are byte-identical here.**
+
+### Why this is the same defect as rounds four and seven, one layer down
+
+Round four was how the two recognisers **admitted a list**. Round seven F2 was how they **read a
+field**. Round eight is **what they read from at all**: the bridge reader takes raw JSON, the
+official reader takes dataclasses a parser has already digested. The coordinator's standing
+prediction -- *look at whatever the last round's fixes now delegate to* -- is **three for three**,
+and is the most reliable predictor produced on this unit.
+
+The consequence is that **the information is destroyed upstream and cannot be recovered
+downstream**. Measured on the real chain, with the same raw record handed to the bridge reader:
+
+| Raw record | Parser output | Official path | Bridge path |
+|---|---|---|---|
+| `{"overallPick": 1.9}` | `1` | recorded at pick 1 | refuses, `record_missing_draft_coordinate` |
+| `{"overallPick": "1_0"}` | `10` | recorded at pick 10 | refuses |
+| `{"overallPick": 0, "overall": 3}` | `3` | recorded at pick 3 | refuses |
+| `{"amount": 0, "bid": 10}` | `10.0` | stored as a $10 sale | refuses |
+
+`1.9` reaches my coercers as an exact `1`, **indistinguishable from a genuine `1`**. Round seven
+closed the asymmetry at the typed-dataclass layer and **not** across the raw source, and
+`recognise_official_draft_picks` carried a docstring asserting the opposite -- that it *"can afford
+to be weaker, because the shape is already typed by `parse_draft_picks`"*. **Being typed by that
+parser is not a safety property.** The docstring now carries the retraction, the four measured
+conversions, and an instruction not to reintroduce a "the parser validates that" clause.
+
+I did not edit `parsers.py`. The reasoning is the one the coordinator used for the `artifact_key`
+case: neither module is wrong on its own terms, so the defect lives in the seam and it is an
+**architecture** finding. I also declined the large fix -- reading raw payloads on both paths --
+because eight rounds have shown large late changes carry defects, and this one crosses two units.
+
+What I did instead is **three executable tests that pin the seam**, asserting the current defective
+behaviour *alongside the bridge path's refusal of the identical bytes*, which is what stops a
+reader dismissing them as two paths permitted to differ. Each was proved load-bearing by
+temporarily fixing the upstream defect and confirming it turns red naming the fix.
+
+### The finding the neighbours produced and the review did not
+
+Round eight's sample for the alias chain was `{"playerName": False, "name": "Seat One"}`, where the
+paths **disagree**. Running the neighbours found the case it masked: with `playerName` **absent**
+-- the realistic shape, not the hostile one -- or explicitly `None`, **both paths yield
+`player_label='Seat One'`**.
+
+They agree. **And because they agree, reconciliation cannot see it.** This is exactly the failure
+the unit brief warned about in its first numbered point: two sources agreeing is weaker evidence
+than it looks. No check is constructible either -- `player_identity_is_the_seat` compares **ids**,
+not labels, and `RecognitionContext` carries no team names.
+
+### The guard that was correct, matched its column, and was never called
+
+The coordinator corrected a control he had given me: **deleting an assert and staying green proves
+nothing**, because it is green by construction unless something else covers the property. The
+discriminating experiment deletes the assert *and injects the defect it names*. Applied to my own
+could-not-verify -- *"the enumeration checks that a bound exists and matches, not that the coercer
+is wired to it"* -- that meant leaving every `MAX_*` constant correct, so the enumeration harness
+stays green by construction, and widening only the `limit=` actually passed, one production call
+site at a time.
+
+**Six of nine sites turned the behaviour suite red. Three did not.** So the gap was real, not
+theoretical, and I had filed it as an open question when it was measurable all along.
+
+All three failed for a single reason, and it is the generator:
+
+> **`no_seat_anchor` is produced by two independent mechanisms** -- the bound refusing the text,
+> and the resulting text simply not being a configured seat.
+
+The existing assertion used an over-long team id that was *also* not a configured seat, so both
+mechanisms were live and the outcome was identical either way. **Widening the bound to ten million
+kept it green.** That is this project's own review rule failing on this project's own test: name a
+reading in which the assertion holds and the defect is present.
+
+Measured with the two limits widened and the constants left correct, the official path **anchored,
+reported nothing, and carried a 65-character id into a `String(64)` column** -- silently truncated
+on SQLite, and a `DataError` outside `IntegrityError` on Postgres, which fails the whole ingest
+rather than the row. **That is the ADR-001 divergence class again, and the Postgres job could not
+have caught it, because no test used a string long enough.**
+
+The fix is the rule rather than the three fields: **assert each bound where no other cause can
+produce the refusal**, by configuring the over-long id as a genuine seat so that anchoring at all
+can only mean the guard is gone. Re-running the full experiment afterwards reports **9/9 sites
+covered, 0 gaps**, with all three previously-blind sites killed by the new test specifically.
+
+### Instrumentation, which was wrong again and refused rather than lying
+
+Two of the nine anchors matched **zero times**, because they were written with `\n` against a CRLF
+working tree. The harness **refused a verdict** instead of reporting COVERED. Had it not, I would
+have reported 9/9 clean on a run where two sites were never tested -- and one of those two, once
+corrected, was a gap. Separately, an earlier mutation was mangled by PowerShell backslash handling
+and **never landed**, and the test run still printed `2 passed`, which reads exactly like a
+mutation the tests failed to kill. **Only the on-disk check separated "the tests are weak" from
+"the experiment did not happen".** That is now five instrumentation defects on this unit, every one
+caught by a self-check rather than by reasoning.
+
+### Two things every lane rebasing needs, learned expensively
+
+- **`scripts/resolve_doc_conflicts.py` must not be used to resolve a `docs/handoff.md` rebase
+  conflict.** Its union behaviour re-duplicates the accumulated file on every iteration. Mine
+  reached **2,078 dated entries, 12 MB, 184,572 lines**, and the rebase **reported success on the
+  destroyed file**. It is fine as post-rebase hygiene on a clean tree; it is not a merge driver.
+- **Git does not normalise CRLF to LF when staging a *conflicted* path.** A normal `git add` does
+  -- proved in both directions. So a Windows rebase that resolves `docs/handoff.md` commits it as
+  CRLF against an LF blob and produces a **26,542-line phantom diff**.
+
+The correct merge needs no heuristic. Since every version is a byte-prefix of the next,
+`merged = ours + heal + theirs[len(base):]` taken from index stages `:1:` / `:2:` / `:3:`,
+refusing outright if base is not a byte-prefix of either side. Note that during a *rebase* `:2:`
+is upstream and `:3:` is the commit being replayed, which is inverted from a merge.
+
+### Gates
+
+`working-directory: backend`, on the rebased tree:
+
+- `ruff check .` -- clean
+- `ruff format --check .` -- **225 files** (this entry said `223` when written,
+  and `223` was wrong: no `.py` file has been added to or deleted from
+  `backend` since this commit -- `git diff --name-status --diff-filter=AD
+  5c84f33 HEAD -- backend` returns nothing for `.py` -- so the population these
+  tools scan is provably identical and the figure cannot have moved. Round nine
+  caught it, filed it as an instance to correct on the next append, and the
+  next four appends did not correct it.)
+- `mypy` -- clean, **216 source files** (said `214`; same correction, same
+  basis)
+- `pytest tests/test_draft_feed.py` -- 78 passed
+- full suite -- 2223 passed, 1 skipped, 41 deselected
+- model-derived guard enumeration harness -- 11/11 verdicts, both controls
+- round-seven mutation harness -- 10/10 killed, byte-identical restore
+- guard-wiring experiment -- **9/9 sites covered, 0 gaps**
+
+Note on the Adapter gate: `c339` records that the **live smoke half converts `pytest` exit 5 --
+nothing collected -- into a green with a `::notice::`**. So the live half of this unit's Adapter
+gate can report success while running nothing, and **the Adapter claim here rests on the
+recorded-fixture half only**.
+
+### Could not verify
+
+- **Whether the recogniser fires at all on a real draft-room payload.** No real Fantrax draft
+  payload has been seen by anyone on this project. **Not disproved, unestablished.** Behind the one
+  mock draft, which is with the owner.
+- **Whether `name` is the team name in real Fantrax `draftPicks` records.** If it is, every board
+  row shows the seat's name instead of the player's, **on both paths, with the sources agreeing**,
+  and nothing in this unit reports a problem.
+- **Whether the three seam tests describe a reachable payload.** They pin what the parser *does*
+  with values that no observed Fantrax response has ever contained. They are a statement about the
+  code path, not about Fantrax.
+- **Whether round nine finds a defect inside round eight's fixes.** Eight for eight so far. The
+  previous could-not-verify -- that nothing covered bound-and-wiring at once -- turned out to be
+  concealing three live defects, which is the argument against treating any remaining one as
+  merely theoretical.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round nine and the reading that was never compared
+
+Ninth review round, ninth finding. One High, fixed as a generator; one Low,
+corrected below rather than filed, because the thing it corrects is a claim in
+this file.
+
+**The finding.** `apply_observations` filed a second observation naming an
+already-recorded player as `duplicate_within_run` *without comparing what the
+two readings said*. Two sources naming one player is the entire point of
+running two sources -- but it is corroboration only if they agree. Where they
+disagreed, the pass applied whichever sorted first and reported a clean
+corroboration. That is the same error as preferring the newer source, wearing
+the opposite bias.
+
+Reproduced by execution before fixing, auction league, both sources naming one
+player. Bridge `t1` / official `t2`, both $50: applied to seat 1. Both `t1`,
+$50 against $10: applied. After the fix both are blocked and neither reaches
+the board.
+
+**Fixed as one rule, not three cases.** `values_disagree` is now public in
+`reconcile` and imported by the apply path: reconciliation *reports* a
+disagreement and application *refuses to act on* one, two jobs sharing one
+implementation so they cannot drift. `_contradicted_keys` collapses to the
+newest reading per transport before comparing, treats the draft log as a third
+reading, and writes `blocked_reason` rather than `skipped_reason`.
+
+Three things in that sentence are load-bearing and each was earned rather than
+designed:
+
+- **The within-source collapse is not a cross-source preference.** A draft
+  board republishes the whole list on every pick, so a source that corrects
+  itself must not read as disagreeing with itself. My own regression test found
+  the omission: without the collapse a single transient disagreement blocks the
+  key *permanently*, the sources agree from the next capture onwards and the
+  pick stays blocked anyway. That is the burnt-row failure `blocked_reason`
+  exists to avoid, arriving through a different door.
+- **The log is a reading too.** A feed contradicting what the owner already
+  typed is exactly as much of a finding as two sources contradicting each
+  other, and `already_in_log` reported the collision while discarding the
+  contradiction inside it. This case was **not in the review**; it came from
+  running the neighbours of the reported one.
+- **`blocked_reason`, not `skipped_reason`.** Nothing in this package ever
+  clears `skipped_reason`, so a contradiction written there would burn every
+  row for that player permanently *and* remove them from `pending_count`,
+  telling the screen there is nothing outstanding.
+
+**A fourth thing, which mypy found and I did not.** The first fix centralised
+admission into `_unusable_reason(row) -> str | None`, and callers then re-read
+`row.participant_id` and `row.player_label` themselves. mypy named five reads
+that had type-checked only by accident before. The fix is `_admit(row) ->
+_Admitted | str`, returning the values rather than a verdict, so **the field
+that was checked and the field that is used are the same object**. An edit
+reading a fourth field the admission rule never examined is now a type error
+instead of a silent acceptance. I did not reason my way to that shape; the type
+checker refused the one I wrote.
+
+**Two model-derived guards.** One walks the actual arguments
+`apply_observations` passes to `record_sale`/`record_pick` and requires each to
+be compared in `_BOARD_FACTS` or explicitly declared not-comparable with a
+written reason, so a new payload field is red until someone classifies it. Its
+first version read the base name `row` alone -- and the `_Admitted` refactor
+above would have left it reading one argument and passing vacuously. **The base
+name is now part of what the test checks rather than part of what it assumes.**
+The other asserts `fantrax_official_client` appears exactly once in
+`backend/src`, so the commit that arms the parser seam is the commit that turns
+it red. That one also fired on its own failure message on first run, unscoped,
+matching four times for one wiring fact.
+
+**Six mutations, in the corrected form.** Delete the mechanism *and* inject the
+defect it names -- deleting an assertion alone is green by construction unless
+something else covers the property. 6/6 load-bearing: removing the
+newest-per-transport collapse, removing the log-as-third-reading, dropping
+price from `_BOARD_FACTS` (which reddened **two** tests), arming the official
+client, passing an unclassified field to the board, and reading a payload field
+off an undeclared binding. Every mutation was confirmed byte-equal to the
+intended text on disk before its run was read; the harness refused three
+verdicts on its first pass for CRLF-mismatched anchors and for a "landed" check
+that was wrong for a mutation which adds a line containing its own anchor.
+
+**The official path reaches the board without the bridge.** An official
+observation applies with no bridge capture present at all. Worse, where the
+bridge sees the identical record and *refuses* it, the refusal produces no row
+-- so **a bridge refusal and a bridge silence are indistinguishable to the
+apply pass**, and there is nothing for the official reading to disagree with.
+But `git grep fantrax_official_client -- backend/src` returns exactly one
+occurrence, the read at `api/routes/draft_feed.py:465`. **Nothing sets
+`app.state.fantrax_official_client`**, so `_draft_pick_source` returns `None` on
+every request. The seam is not merely untested against real data; it is not
+wired. The refusal/silence conflation is gated behind the same wiring commit,
+and the guard above is what holds both.
+
+**Per-team budgets are not representable.** `DraftParticipant`
+(`db/models/draft.py:146-191`) has no budget column; `auction_budget` is a
+single scalar on `Draft` copied from `League`, and `state.py:680-682` computes
+every seat's `remaining_budget` from that one scalar. The owner's leagues use
+per-team banks derived from last season's totals. Filed rather than fixed: it
+is a schema change on a unit already marked done, at round nine, on the unit
+gating his stated first priority.
+
+**The reviewer's `OverflowError` neighbour note is not reproducible.** Twenty-
+three neighbours -- `float`/`Decimal`/`str` forms of infinity, NaN, sNaN, `1e100`,
+`1E+30`, signed zero, `0.001`, `1_0` -- through both `_as_int` and `_as_amount`:
+zero raised, all refused. `recognise.py:451-456` is a docstring describing the
+defect the bound was *added* to fix, and it was read as a live one.
+
+**Correcting a measurement in this file.** The 2026-08-26 round-eight entry
+records ruff formatting **223** files and mypy checking **214**. Both are wrong.
+Measured against the commands CI actually runs, from `backend`: `ruff format
+--check .` reports **225 files already formatted** and bare `mypy` (not `mypy
+.`, which selects a different 203-file population) reports **216 source files**.
+The PR body figures were correct; the handoff entry was not.
+
+Gates, all from `backend` with `PYTHONPATH=$PWD\src`: `ruff check .` clean over
+225 files, `ruff format --check .` 225 formatted, `mypy` clean over 216 source
+files, full suite **2232 passed, 1 skipped, 41 deselected** (up nine: seven
+behavioural tests and two guards).
+
+**Could not verify.** Whether the recogniser fires at all on a real Fantrax
+draft-room payload: not disproved, unestablished -- no real payload has ever
+been observed, so every shape here is inferred from fixtures I wrote. Whether
+the three parser-seam tests describe a *reachable* payload is likewise open.
+The Adapter gate's live-smoke half converts pytest exit 5 -- nothing collected
+-- into a green with a notice (`c339`, not mine), so the Adapter claim rests on
+the recorded-fixture half only. And the guard-wiring hole named in round eight
+is narrowed but not closed: M5 and M6 now show the AST guard reads the real call
+site, but nothing proves a *correct and uncalled* coercer would be caught. I
+would rather leave that named than close it badly -- round eight found three
+live defects hiding behind a could-not-verify I had written myself, which is the
+argument against ever treating a remaining one as merely theoretical.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round ten: which readings are about the same player
+
+Tenth review round on PR #104, tenth finding. Two reported, one rejected with
+evidence and one accepted and widened.
+
+**Rejected.** The review said a stale reading is applied and the correction
+silently labelled a duplicate. Driven at the exact head: the correction carries
+`blocked_reason = "sources_disagree:amount:bridge_capture:...=Decimal('50.00'):log=Decimal('10.00')"`.
+The board keeps the first price because the feed cannot rewrite an append-only
+draft log -- and it says so, by name, with both values. The reviewer read
+`applied=()` from outside the call and never read `blocked_reason`. **`applied=()`
+is what a silent drop and a correctly-reported refusal look like from the same
+vantage point**, which is why that field alone cannot distinguish them. Same
+shape as the round-five withdrawal.
+
+**Accepted, and its quiet neighbour is worse than the case reported.**
+Reconciliation keys observations by `player_external_id` first and falls back to
+the normalised label (`observations.py:106-131`); the apply pass keyed on
+`normalize_key(player_label)` alone. Two rules for the same question.
+
+The reported case was the loud one -- two labels for one id, *disagreeing* on
+price, both applied, two seats. The neighbour beside it is the agreeing case and
+nothing reports it at all: two captures naming `p123` as "Nikola Jokic" and "The
+Joker", same seat, same $50, both applied, seat holds the player twice and
+`remaining_budget` reads **100.00 where 150.00 is correct**. One player, bought
+once, debited twice, nothing blocked, nothing skipped, nothing disagreeing. On
+draft night every subsequent bid is reasoned from a bank wrong by the price of a
+player. The standing "run the neighbours of the reported case" rule paying out
+again.
+
+The mirror direction is as bad and quieter still: `normalize_key` erases
+generational suffixes, so "Gary Payton II" keys to "gary payton". Two distinct
+players applied first-wins, and the second was filed `duplicate_within_run` -- **a
+pick that happened, reported as nothing**, the same shape as round six's
+truncated locator.
+
+Fixed as a generator, not two bounds: `_identity_conflicts` in `service.py`
+seeds `_contradicted_keys`, blocking both directions with a reason naming the
+signals. **Refusal, not merging** -- grouping readings on a shared id would be a
+cross-source identity claim this package is not entitled to make (ADR-008, R23),
+and the transitive closure of "shares an id or shares a label" would let two
+genuinely different ids become one through an intermediate label. Absence is not
+disagreement: a row with no external id cannot conflict with one that has it,
+which is `values_disagree`'s rule applied to identity rather than restated.
+
+Four tests. **Five mutations, 5/5 load-bearing** under the corrected control
+(delete the mechanism *and* inject the defect it names -- deleting an assertion
+alone is green by construction). Seeding removed reddens both directions; each
+direction disabled reddens only its own case; absence-treated-as-a-value reddens
+the absence control; over-refusal reddens the ordinary applying case. The two
+controls exist because a fix that blocked every key carrying an id would pass
+both defect tests while feeding nothing to the board -- and **a board that never
+fills looks exactly like a draft that has not started.**
+
+This is the same generator at a fifth successive depth: how the two recognisers
+admitted a list (round four), how they read a field (seven), what they read from
+at all (eight), whether a second reading agrees before being called
+corroboration (nine), and now which readings are about the same player. The
+coordinator's predictor -- *read whatever the last round's fixes now delegate
+to* -- is five for five.
+
+Also confirmed, not fixed: **`DraftParticipant` has no budget column.**
+`auction_budget` is one scalar on `Draft` copied from `League`, and
+`state.py:680-682` computes every seat's `remaining_budget` from it. The owner's
+stated budgets differ per team. **Not representable today.** Filed for the
+architect's sequencing rather than changed at round ten on a done unit.
+
+Gates, from `backend/`: ruff check clean over 225 files, `ruff format --check`
+225 already formatted, bare `mypy` clean over 216 source files (not `mypy .`,
+which selects 203 -- that discrepancy was the round-nine Low), `test_draft_feed.py`
+91 passed, full suite 2236 passed / 1 skipped / 41 deselected.
+
+Could not verify: two labels for one player arriving with **no** external id at
+all. There is no signal in the payload to detect that with and nothing here
+claims to. Still unestablished, and separately: whether the recogniser fires at
+all on a real Fantrax draft-room payload -- **not disproved, unestablished.** Ten
+rounds, ten findings; no convergence evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round eleven: a refused reading is not an absent one, and a correction is not a conflict
+
+Eleventh round, eleventh finding -- two of them, both driven, both accepted, both
+the same generator at a sixth and seventh depth.
+
+**A supplied-but-unreadable player id was stored as absent.** `_player_identity`
+called `_as_text`, whose own docstring says it "collapses absent and present but
+refused into one answer, which is safe for a caller that stores the result and
+**unsafe for one that falls back to another key**. Those callers use
+`_read_text`." That function falls back to another key. It had used `_as_text`
+since it was written.
+
+Driven: two captures carrying the same 5,000-character `playerId` under "Nikola
+Jokic" and "The Joker" both applied, the seat held one player twice,
+`remaining_budget` read **100.00 where 150.00 was correct**, and `fields_dropped`
+named only the ordinal. **Round ten's identity guard could not fire, because by
+the time it looked the evidence it needed had been erased upstream.** A fix one
+layer down was silently disarmed by a coercion one layer up -- which is why "the
+guard is correct" and "the guard can act" are different claims.
+
+This is unexamined inheritance in the exact form `AGENTS.md` names: the rule was
+written down, in the right place, and the one call site it was written for did
+not follow it. Nothing executable connected the two. Now the list admission
+refuses the capture and names the field, `player_external_id_unreadable`. That
+loses a scan, and the next capture is seconds away.
+
+**A source correcting itself read as a source disagreeing with itself.** That
+rule is stated six lines into `_contradicted_keys` -- *"without it a single
+transient disagreement is permanent... the burnt-row failure `blocked_reason`
+exists to avoid, arriving by a different door"* -- and I added
+`_identity_conflicts` immediately above it in round ten without applying it.
+
+Driven: a bridge capture renaming `p123` from "The Joker" to "Nikola Jokic"
+blocked the player **permanently**. Republishing the correct reading twice more
+left `applied` at 0, `holdings` empty and `pending_count` climbing to 3, while
+reconciliation correctly exposed only the newest reading. **The owner has no
+manual fallback**, so a player the feed can never record is a real loss and not
+merely a visible one. Round ten moved this case from wrong-and-silent to
+safe-but-stuck; round eleven moves it to right.
+
+The collapse is deliberately asymmetric and the asymmetry is the argument. One
+id under changing labels collapses to the newest reading per transport, and the
+stale *key* is blocked so it cannot apply as a second player. One label under
+several ids does not collapse at all, because two distinct ids are evidence of
+two distinct players and superseding one would silently drop a pick -- round
+ten's mirror defect returning wearing the fix's clothes. Within a single
+artifact the first case cannot arise at all: list admission already refuses a
+list carrying one id twice.
+
+**Five mutations, 5/5 load-bearing -- but M9 first reported NOT LOAD-BEARING and
+the defect was in the mutation.** It added a transport-less entry to the collapse
+dict while leaving the real per-transport entries in place, so the conflict was
+still detected and the mechanism was never actually removed. **A control that
+does not discriminate reports identically to a guard that is not needed**, and
+the only reason I did not record a spurious gap is that the control's own output
+was surprising enough to re-read. Injecting it properly -- one label kept per id
+-- reddens the cross-source test.
+
+Also relevant to how these rounds are being read: **one of the two findings this
+round arrived alongside a third that I rejected last round with evidence** -- a
+reviewer read `applied=()` from outside the call and never read `blocked_reason`.
+`applied=()` is what a silent drop and a correctly-reported refusal look like
+from the same vantage point. Reviewers keep reporting the loud form of a defect
+whose silent neighbour is worse; running the neighbours has now paid out three
+rounds running.
+
+Gates, from `backend/`: ruff check clean over 225 files, `ruff format --check`
+225 already formatted, bare `mypy` clean over 216 source files,
+`tests/test_draft_feed.py` 94 passed, full suite 2239 passed / 1 skipped / 41
+deselected.
+
+Could not verify: **an id that is readable but wrong** -- a source publishing one
+player's id against another player's name. Nothing here detects that, and
+nothing here claims to. Nor two labels for one player arriving with no external
+id at all; there is no signal to detect it with. And still, separately: whether
+the recogniser fires at all on a real Fantrax draft-room payload -- **not
+disproved, unestablished.** Eleven rounds, eleven findings; no convergence
+evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round twelve: the apply boundary the identity fixes did not cross
+
+`backend` lane, PR #104. Round twelve (independent, `data-engineer`) read
+`bcdf80e` and returned three findings. All three were driven here before being
+accepted; all three were real; all three are generators. Every one of them was
+a **could-not-verify I had written myself in an earlier round** — which is the
+argument against ever treating a remaining could-not-verify as theoretical.
+
+**The pending set is not the board.** Rounds ten and eleven taught the apply
+pass to tell one player from two and a correction from a conflict. Both reason
+only over rows still pending. On draft night ingest-and-apply runs between
+picks, so the reading a later capture corrects has usually already applied, and
+both checks then see a single reading with nothing to disagree with.
+
+Driven: `p123` applied as "The Joker" at $50, republished as "Nikola Jokic".
+Both applied, sequences 1 and 2. Seat holds one player twice.
+`remaining_budget` reads `100.00` where `150.00` is correct, with
+`pending_count=0`, `blocked=()`, `skipped=()` — **every channel clean**. The
+mirror: `p1` applied as "Gary Payton", then `p2`, a genuinely different player,
+arriving under the same normalised key at the same seat and price. Filed
+`already_in_log`. **Nothing in this package ever clears `skipped_reason`**, so
+that pick is gone permanently and the screen calls it a duplicate. Round ten's
+defect surviving the apply boundary its fix did not cross.
+
+Identity is now read from applied rows too. An applied pick is **blocked and
+named** rather than superseded, because superseding it would mean editing the
+board, and that is a write.
+
+**Ordering.** Bridge payloads are selected newest-first so `scan_limit` keeps a
+recent window; observations were written in that order, so the newest payload
+got the *lowest* observation id — and observation id is the tie-break both
+identity supersession and the newest-per-transport collapse fall back on when
+`observed_at` ties, which production SQLite's `CURRENT_TIMESTAMP` produces on
+its own for two captures inside one second. Driven: publication order "The
+Joker"/t1/$50 then "Nikola Jokic"/t2/$10 put The Joker on seat one at $50 —
+**wrong buyer and wrong price** — with the true reading blocked as
+`identity_superseded`, which reads like a correction being handled properly.
+Captures are now walked oldest-first. This is the house rule about
+self-describing fields applied to ordering: a timestamp that cannot separate two
+events is not an ordering, and the tie-break underneath it has to be
+independently true.
+
+**Blast radius.** Round eleven refused the whole capture on any unreadable
+`playerId`, and I recorded then that its reachability was unmeasured. It is
+reachable and it does not heal: Fantrax republishes the entire pick list on
+every pick, so one malformed historical row is present in every later capture.
+Driven with a three-record board: `observations_written=0` on both captures, no
+stored rows, empty board, and a status of `pending=0 blocked=() skipped=()` —
+byte-identical to a draft that has not started. The row is now dropped and
+reported, unconditionally, on the same reasoning `locator_too_long_to_record`
+already carries.
+
+Admitted records keep their **original index**. Renumbering survivors would
+change a pick's `locator` the day the malformed row above it became readable,
+and `locator` is a third of the `(transport, artifact_key, locator)` identity
+this feed dedupes on — the same pick would store twice. That was a defect I
+introduced writing the fix and caught before running it; it is pinned by a test
+rather than reasoned about.
+
+**Mutation control: six mutations, six load-bearing**, each removing the
+mechanism *and* injecting the defect it names, with the mutation verified
+byte-present on disk before its run was read. **One of them failed first time
+and the failure was in my test, not the mechanism**: the all-unreadable-list
+refusal was deleted and the test still passed, because it asserted a reason
+string the caller still produces through the dropped-record channel. What the
+refusal actually buys is that an unreadable list must not count as *accepted* —
+`accepted_here` suppresses the shape refusals of every other candidate list in
+the block. **That rule was already written down**, in the comment above
+`capacity_refusals`, describing this exact defect for the capacity case, and my
+new code path walked into it anyway. The test now asserts the sibling list's
+refusal is still reported.
+
+That is the **third** instance of the pattern I named after round eleven —
+a rule this repository has written down and does not enforce — but it was
+found by the mutation control rather than by a review round, and it is in
+code I wrote today rather than inherited. Added a static guard for
+`_as_text`'s own documented rule (no `_as_text` as a non-final `or` operand;
+both identity readers must call `_read_text`). Injecting the round-eleven
+defect reddens it — **but four behavioural tests also redden**, so it is an
+earlier and better-named signal, not a sole guard.
+
+Gates from `backend/`: `ruff check .` clean over 225, `ruff format --check .`
+225 formatted, bare `mypy` clean over 216 source files, full suite **2246
+passed / 1 skipped / 41 deselected** (was 2239). `test_draft_feed.py` **101
+passed** — corrected from `108`, which this entry stated on first writing and
+which was never measured; re-measuring the reviewed SHA gives 101 collected,
+101 passed, and 94 + 7 new = 101 reconciles. This is the **third** measurement
+error in this PR — the first was a pre-rebase `2188` written as a measured
+figure against a real `2223`, the second was the round-eight gate block's
+`223`/`214` against a real `225`/`216`, which round nine caught and filed and
+which four subsequent appends failed to correct. (On first writing, this
+paragraph said "second" and omitted the round-eight one — a fourth error of the
+same kind, made while enumerating the others from memory.) The pattern is mine
+and not incidental: **every one is a number written from expectation instead of
+read back.** Corrected here in place because this entry has not merged;
+disclosed rather than quietly amended because the whole argument of this PR is
+that a plausible wrong number is the failure mode nothing catches.
+
+**Could not verify.** The general form of "make unenforced rules red" is not
+buildable and I am not claiming it: the guard added here enforces one
+docstring by name, and nothing detects the next rule someone writes in prose.
+Whether the recogniser fires at all on a real Fantrax draft-room payload
+remains **not disproved, unestablished** — no such payload has ever been
+observed. An id that is readable but *wrong* — one player's id against
+another's name — is still undetectable, and the applied-history check makes it
+slightly worse, because a wrong id now blocks a correct pick. Two labels for
+one player with **no** external id anywhere remains without any signal. And the
+new `identity_already_applied` block is recoverable only in the sense that
+`blocked_reason` is recomputed; if the source never republishes the original
+label, the corrected pick stays blocked until the owner types it.
+
+Twelve rounds, twelve findings. No convergence evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round thirteen: the ordering spine rested on arrival time, and my stopping criterion fired
+
+Round thirteen was `quant`, deliberately a different lens from round twelve's
+`data-engineer`, run against exact head `9cbfb6c`. It returned four findings. I
+drove every one before accepting it, and one is worse than the reviewer framed
+it.
+
+**My stopping criterion fired, so the rounds stop here.** Before commissioning
+the round I pre-registered the rule the coordinator adopted from round eleven:
+all-instance findings mean stop and merge; a generator means fix and reassess;
+**a third unenforced-rule finding means stop the rounds and build the check.**
+Three of round thirteen's four are unenforced-rule findings. I must disclose
+that I created an incentive for that labelling — the reviewer was told a
+commitment turned on it — so I assessed each independently rather than counting
+labels. Finding three is unambiguously one: my own docstring, in the right
+place, naming the exact hazard, with nothing executable connecting it to the
+code. Finding one is one: my round-twelve comment says the rows are "written in
+publication order" while its own caveat only ever justified *arrival* order.
+Finding two is a capability gap in the same family rather than a rule stated and
+ignored, and I would not have counted it alone. Two clear plus one adjacent is
+enough; I am not going to argue the count down to keep a round.
+
+**Finding one — the primary sort key was the wrong clock.** `observed_at` is
+`provenance.received_at`, which is *arrival* — when the payload reached us. The
+entire ordering spine rests on it: identity supersession, newest-per-transport
+collapse, reconciliation's newest-per-key, freshness. `captured_at` —
+publication time, what the browser recorded when the pick appeared — was stored
+per observation, reached `InstantProvenance` as `source_claimed_at`, and was
+**ignored**. Round twelve's `rows.reverse()` fixed ordering *within* an ingest
+and left the key itself wrong. Driven on the reviewed SHA, two captures of one
+`playerId` delivered out of order:
+
+```
+stored:   (1, 'published-new', 'Nikola Jokic', 't2', 10.00, 23:14:00)
+          (2, 'published-old', 'The Joker',    't1', 50.00, 23:14:01)
+holdings: [[('The Joker', 50.00)], []]
+blocked:  ('identity_superseded:p123:nikola jokic->the joker',)
+```
+
+The wrong buyer on the board at the wrong price, and the truth blocked as
+`identity_superseded` — which on the status screen reads exactly like a
+correction handled properly.
+
+**The fix refuses rather than preferring the browser's clock.** Two module-level
+functions in `observations.py`, `publication_order` and `arrival_order`, written
+side by side so that "these are two different orderings" is something the code
+says rather than something a reader has to notice. Where they name different
+current labels for one `(transport, external_id)` group, `_identity_conflicts`
+emits `capture_order_disputed:<id>:<by_arrival>|<by_publication>` against both
+and applies neither. Preferring `captured_at` would be trusting a
+self-describing field — the `gameEt` lesson — and preferring ours is the defect
+being removed. `feed_status`'s own docstring saved me from the wrong fix here:
+*"no source's own timestamp reaches an arithmetic operation."* `captured_at` may
+**order**; it must never become an age.
+
+**Finding two — two passes answering one question differently.** `_to_instant`
+discarded `row.id`, so `InstantProvenance` had no sequence. `_newest_per_key`
+and `freshness_of` tie-broke on `received_at` alone with a strict `>`, keeping
+the *first* of a tie, while the apply path works on rows, has the id, and keeps
+the *last*. Two passes, one question, opposite answers. `sequence` added to
+`InstantProvenance`; `_newest_per_key` now imports the same ordering rule the
+apply path uses rather than restating it, so the two cannot drift.
+
+**Finding three is CONFIRMED, High, and I did not fix it.** `unrecognised`
+reaches only the POST ingest response; `_status_out` has no such field. So a
+payload whose player id is unreadable is counted at ingest and then invisible:
+
+```
+POST -> written: 1  unrecognised: [('player_external_id_unreadable', 1)]
+GET  -> observations 1  applied 1  pending 0  blocked ()  skipped ()
+        freshness: bridge_capture silent: False
+board holdings: [[], [('Healthy Two', 10.00)]]
+```
+
+**A player silently missing from the board, every channel clean, freshness
+saying not-silent.** My own `UnrecognisedShape` docstring says it is *"counted
+and **published** rather than logged and forgotten, because the failure this
+guards against is **silence**"*, and `FeedStatus.blocked`'s comment already
+states the enforcing rationale — *"a live board polls `GET`."* The rule was
+written down twice and enforced nowhere.
+
+I filed it rather than fixing it, and the argument is not that it is minor.
+Every cheap route is closed: storing `player_external_id=None` is what round
+eleven explicitly forbade, `blocked_reason` leaves the row pending so it becomes
+an application candidate, and re-running recognition at status time is two code
+paths answering one question, which is the defect class this whole PR is about.
+The safe fix changes the recogniser's contract so unreadable records arrive as
+instants carrying `skipped_reason` — a field that *is* surfaced on `GET`, never
+applies, and never joins pending identity matching, and whose permanence is
+arguably correct for an id that cannot be read. That is the recommended route.
+The reason it is not in this commit is narrow and I want it on the record:
+**every fix I have made at this depth has itself contained a defect caught only
+by the next round** — round twelve's locator renumbering, round eleven's
+never-heals, round ten's apply boundary. I will not land the most invasive
+change in the unit in the same commit in which I stop the rounds.
+
+**Finding four was mine.** I published `108 passed` for `test_draft_feed.py` in
+both the PR body and the round-twelve entry. The reviewed SHA gives **101
+collected, 101 passed**, and 94 + 7 new reconciles to 101. `108` was never
+measured.
+
+**And this entry originally called that my second measurement error, which was
+itself a fourth one.** Closing out round nine's filed instances afterwards, I
+found the round-eight gate block still reading `223 files` and `214 source
+files` against a real `225` and `216` -- caught by round nine, filed to correct
+on the next append, and uncorrected through four appends. So the count is
+**three**: the pre-rebase `2188` written as measured against a real `2223`, the
+round-eight `223`/`214`, and `108`. Corrected above, in place, because that
+entry has not merged.
+
+The pattern is now unarguable and it is mine: **every one of them is a number I
+wrote from expectation instead of reading back**, and the fourth was me
+enumerating my own errors from memory while writing the paragraph that
+complains about doing exactly that. It is disclosed rather than quietly amended
+because the argument of this PR is that a plausible wrong number is the failure
+nothing catches -- and the only reason any of these surfaced is that something
+else went looking. Nothing in any gate would have flagged one of them.
+
+**Mutation control, in the corrected form** — delete the mechanism *and* inject
+the defect it names, verify both byte-present on disk, green baseline first.
+Five mutations, four load-bearing, and **one that was not**, which is the useful
+result. `M2` swapped the supersession sort back to arrival order and stayed
+green. That is not a coverage gap: the sort makes `current` the publication-max
+of each `(transport, external_id)` group, and the refusal added directly below
+groups by the same key and blocks whenever publication-max and arrival-max
+disagree — so the only inputs on which the sort key could change the answer are
+inputs already taken out of play. **Unreachable by construction is not the same
+as covered**, and I have said so at the call site rather than let the green
+mutation read as an untested line. `M5` is the over-refusal control: forcing the
+dispute to fire on every repeated player reddens the ordinary-captures test,
+which matters because a fix that blocked everything would pass the defect test
+while being worse than the defect — a board that never fills looks exactly like
+a draft that has not started.
+
+Gates from `backend/`: `ruff check .` clean over 225 files, `ruff format
+--check .` 225 formatted, bare `mypy` clean over 216 source files, full suite
+**2249 passed / 1 skipped / 41 deselected** (was 2246; +3 is exactly the three
+tests added here). `test_draft_feed.py` **104 passed**, measured, not projected.
+
+**Could not verify.** Whether `capture_order_disputed` fires in real operation
+is unknown and is the risk this change introduces: if the userscript sets
+`captured_at` inconsistently across captures, real picks will be refused on a
+live board. The over-refusal control shows only that ordinary *fixture*
+captures are not disputed. Whether the recogniser fires at all on a real
+Fantrax draft-room payload remains **not disproved, unestablished** — no such
+payload has ever been observed. An id that is readable but *wrong* stays
+undetectable. Two labels for one player with no external id at all produce no
+signal. Finding three is a known unfixed High and the board can still be
+silently short a player. And thirteen rounds have produced thirteen findings:
+**no convergence evidence stands**, and the criterion I am stopping on is about
+the *kind* of thing being found, not about the unit having run out of depth.
