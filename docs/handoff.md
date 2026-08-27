@@ -28905,3 +28905,117 @@ been shown a real Fantrax draft-room payload — **not disproved, unestablished*
 removed, cannot be ruled out as a live-board outage without one.
 
 **Next:** architect. Code gate only; docs change, no number a decision rests on.
+
+## 2026-08-27 - architect - Coordinator handoff: ten merges, four lanes closed, and what the next architect needs
+
+**Written as a handoff brief.** This session is being retired for context reasons
+and its successor should start here.
+
+### State, re-derived rather than recalled
+
+- `main` = `0a89f37`. **Zero open pull requests.**
+- `docs/backlog.md` recounts to **57 done / 2 blocked / 93 pending / 152 total**,
+  matching its own header. `backlog_graph.py` exit 0.
+- `docs/handoff.md` ends with a newline, 0 CRLF, and this is entry 319.
+- All four lane sessions archived **after** being asked what they held. None
+  answered "nothing"; two were holding finished work that had to be recovered.
+
+### What merged, 26–27 August
+
+`#103` the owner's draft-day page · `#104` the draft feed, thirteen review rounds
+· `#105` reliability endpoint · `#106`/`#108` verification toolchain · `#107`
+projection profile · `#109` the board blocker · `#110`/`#111`/`#112` recovered
+tooling and the coordinator register · `#113` the owner's questionnaire answers ·
+`#114` the instrumented mock capture procedure · `#115` the ASP.NET postback
+probe · `#116` what thirteen rounds could not establish.
+
+### The thing that reorders everything
+
+**The owner answered the questionnaire.** `docs/what-draft-day-looks-like.md`
+now carries all fifteen questions. Question 15 — *the one thing that must work
+on 18 October* — is **"the live draft board with picks and budgets tracked
+automatically."**
+
+That is `draft-tracker`, and it does **not** sit behind the nine-item valuation
+chain. `auction-budget-manager` depends on `draft-tracker`, not the reverse. Six
+of its seven dependencies were already done; the seventh merged as `#104`.
+
+**I had the dependency graph the entire time and never asked which end he cared
+about.** That is the single most expensive mistake of the week and it cost
+nothing to fix once asked.
+
+### Three of his answers contradict assumptions the plan was built on
+
+1. **Two minutes per pick**, not the 8–30 seconds the overlay was designed
+   against. An evidence panel is affordable.
+2. **No manual fallback exists in his plan** — *"realtime awareness of draft
+   status so that I don't need to input all of that information."* The bridge
+   feed is load-bearing, not a convenience.
+3. **Projections rank above reliability**, with reliability's value explicitly
+   conditional on whether the tool absorbs in-season chaos. That makes the
+   in-season lineup manager — currently first on the cut list — load-bearing for
+   a reason the plan does not state. **This is an open decision, costed and
+   owed to him, not a question to re-ask.**
+
+### Blocked on the owner
+
+- **One mock draft with the userscript loaded.** Procedure now written down at
+  `docs/mocks/instrumented-capture.md`. It settles three open questions at once,
+  including whether `capture_order_disputed` will refuse *real* picks on a live
+  board. Waiting five days and rising in value.
+- **Bind or decline preregistration v3.** Declining costs no schedule.
+- **Correct this page.** Every `[architect inference]` in
+  `what-draft-day-looks-like.md` is unstruck and unconfirmed.
+
+**Ruled by him on 2026-08-27:** the repository stays **public** with his draft
+strategy in it. Raised, declined with the exposure stated. Do not privatise or
+revert `#113` on that basis without asking again.
+
+### Eight units he named that are not in the backlog
+
+Live league category table (asked for twice) · rival-strategy detection ·
+positional scarcity tipping points · out-of-position production · an agent to
+talk choices through with · an over-policing warning · per-team budgets · a
+feedback loop on his own bias.
+
+**Per-team budgets is a schema gap, not a feature.** `DraftParticipant` has no
+budget column; `auction_budget` is one scalar on `Draft` and
+`draft/state.py:680-682` derives every seat's remaining bank from it.
+
+### What is on `main` that will save the next architect time
+
+- `scripts/check_ci_gates.py` — the only honest way to read a CI head. Reports
+  failed **steps**, splits **skipped from starved**, refuses a short SHA before
+  querying, and returns non-zero while jobs are still running.
+- `scripts/check_append_only.py` — byte-prefix containment against the
+  **merge-base**, blob to blob, both negative controls gating.
+- `scripts/check_doc_terminators.py` and its CI job — the trailing-newline
+  hazard recurred twice before this existed.
+- `docs/governance/coordinator-register.md` — 338 entries.
+- `docs/adapters/draft-feed-what-thirteen-rounds-could-not-establish.md`.
+
+### What I could not verify
+
+- **That the recogniser fires on a real Fantrax draft-room payload.** It never
+  has. Every key in `FIELD_ALIASES` is a guess. Not disproved, unestablished.
+- **That the register is complete.** It is complete as of `#112`, and the gap
+  reopens the moment anyone adds an entry, because nothing syncs the session
+  table to the file.
+- **That the eight recovered caveat blocks are all of them.** 81 scratch files
+  were deleted before I asked what that lane held, and the loss is inferred from
+  memory rather than audited.
+- **That no other lane's work is stranded.** I found two lanes' finished tooling
+  by enumerating worktrees and temp directories *after* sessions went idle — not
+  by any process that would have caught it.
+
+### The failure mode this coordinator kept producing
+
+Twelve corrections from the lanes. The pattern worth inheriting: **I would reach
+a correct conclusion from a real artefact by a mechanism that was wrong**, and
+the wrong mechanism would then propagate as an instruction. I told four lanes to
+verify append-only against `origin/main`, which moves. I told them to run
+`resolve_doc_conflicts.py`, which silently rewrote 28,596 lines LF→CRLF while
+printing `Safe to stage.` I used `mergeStateStatus: CLEAN` as a merge signal.
+
+**State the mechanism, not just the conclusion** — it is the only thing that made
+those catchable.
