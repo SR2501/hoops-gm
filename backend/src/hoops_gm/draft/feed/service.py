@@ -795,6 +795,82 @@ _BOARD_FACTS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
+def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
+    """Player keys where the payload's two identity signals disagree.
+
+    Excludes: one player reaching the board twice, and two players collapsing
+    into one, because the apply pass keys on the normalised label while the
+    payload also carries the source's own player id.
+
+    The apply pass groups by ``normalize_key(player_label)``. Reconciliation
+    keys by ``player_external_id`` first and falls back to the label -- see
+    :func:`~hoops_gm.draft.feed.observations.matching_key`. **Two rules for the
+    same question is the defect this unit's reviews have found at four
+    successive depths**, and this is that generator again: which readings are
+    about the same player.
+
+    Both directions are wrong and neither is loud:
+
+    * **One id, two labels.** Driven: two captures naming ``p123`` as
+      ``"Nikola Jokic"`` and ``"The Joker"``, *agreeing* on seat and price,
+      both applied. The board showed one player twice and the seat's
+      ``remaining_budget`` read ``100.00`` where ``150.00`` was correct -- one
+      player, bought once, **debited twice**, with nothing blocked, nothing
+      skipped and nothing disagreeing. Every subsequent bid the owner reasons
+      about is then computed from a bank that is wrong by the price of a
+      player.
+    * **One label, two ids.** ``normalize_key`` erases digits and generational
+      suffixes, so ``"Gary Payton II"`` keys to ``"gary payton"``. Two distinct
+      players whose names differ only by a suffix therefore group together, the
+      first applies and the second is filed ``duplicate_within_run``: **a pick
+      that happened, reported as nothing.**
+
+    Refusing rather than merging is the load-bearing choice. Grouping the two
+    readings on a shared id would be a cross-source identity claim this package
+    is not entitled to make -- ADR-008 and R23 are about precisely that
+    laundering -- and taking the transitive closure of "shares an id or shares
+    a label" would let two genuinely different ids become one through an
+    intermediate label. A conflict is a finding, so both keys are blocked and
+    the reason names the signals, which is the same trade made everywhere else
+    here: visibly absent beats confidently wrong.
+
+    Absence is not disagreement: a row carrying no external id cannot conflict
+    with one that does, which is :func:`values_disagree`'s rule applied to
+    identity rather than restated.
+    """
+    labels_by_id: dict[str, set[str]] = defaultdict(set)
+    ids_by_label: dict[str, set[str]] = defaultdict(set)
+
+    for row in pending:
+        admitted = _admit(row)
+        if isinstance(admitted, str):
+            continue
+        external_id = row.player_external_id
+        if not external_id:
+            continue
+        key = normalize_key(admitted.player_label)
+        labels_by_id[external_id].add(key)
+        ids_by_label[key].add(external_id)
+
+    conflicts: dict[str, str] = {}
+    for external_id, keys in labels_by_id.items():
+        if len(keys) < 2:
+            continue
+        reason = (
+            f"identity_conflict:one_player_id_many_labels:{external_id}:{'|'.join(sorted(keys))}"
+        )
+        for key in keys:
+            conflicts.setdefault(key, reason)
+    for key, external_ids in ids_by_label.items():
+        if len(external_ids) < 2:
+            continue
+        conflicts.setdefault(
+            key,
+            f"identity_conflict:one_label_many_player_ids:{key}:{'|'.join(sorted(external_ids))}",
+        )
+    return conflicts
+
+
 def _contradicted_keys(
     pending: list[DraftFeedObservation],
     held: dict[str, _Recorded],
@@ -827,7 +903,7 @@ def _contradicted_keys(
             continue
         grouped[normalize_key(admitted.player_label)].append(row)
 
-    contradicted: dict[str, str] = {}
+    contradicted: dict[str, str] = _identity_conflicts(pending)
     for key, rows in grouped.items():
         # One reading per source, newest first. A draft board republishes the
         # whole list on every pick, so a source that corrects itself — or that

@@ -4263,3 +4263,154 @@ def test_the_official_source_is_not_wired_into_the_running_app() -> None:
         "those reachable on the board."
     )
     assert "getattr(request.app.state" in occurrences[0]
+
+
+# ---------------------------------------------------------------------------
+# Round ten: the payload carries two identity signals and they must agree.
+# ---------------------------------------------------------------------------
+
+
+def _bridge_naming(
+    session: Session,
+    team_id: str,
+    amount: float,
+    *,
+    key: str,
+    label: str,
+    player_id: str | None = None,
+) -> None:
+    """One bridge capture naming a player, optionally with the source's id.
+
+    ``player_id`` is optional because absence is the interesting control: a row
+    that carries no external id must not be able to conflict with one that
+    does.
+    """
+    record: dict[str, Any] = {
+        "teamId": team_id,
+        "playerName": label,
+        "overallPick": 1,
+        "amount": amount,
+    }
+    if player_id is not None:
+        record["playerId"] = player_id
+    _capture(session, records=[record], dedupe_key=key)
+
+
+def test_one_player_id_under_two_labels_is_refused_not_double_counted(
+    session: Session,
+) -> None:
+    """Excludes: one player reaching the board twice and being paid for twice.
+
+    This is the *agreeing* case, which is why it matters. The two readings name
+    the same seat and the same price, so nothing disagrees, nothing is skipped
+    and no channel reports a problem -- and before this fix the board held the
+    player under both labels and the seat's ``remaining_budget`` read
+    ``100.00`` where ``150.00`` was correct. Every bid the owner reasons about
+    after that is computed from a bank wrong by the price of a player.
+
+    Reading in which the flag is false and the defect is present: none I can
+    construct for *this* payload. The budget is asserted directly rather than
+    inferred from the holdings, so a fix that deduplicated the display while
+    still debiting twice fails this. What it does not cover is two labels for
+    one player arriving with **no** external id -- there is no signal to detect
+    that with, and this test does not claim to.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r10-a", label="Nikola Jokic", player_id="p123")
+    _bridge_naming(session, "t1", 50, key="r10-b", label="The Joker", player_id="p123")
+    feed_service.ingest(session, draft, client=None)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [0, 0]
+    assert [seat.remaining_budget for seat in state.participants] == [
+        Decimal("200.00"),
+        Decimal("200.00"),
+    ]
+
+    rows = feed_service.load_observations(session, draft)
+    assert all(row.blocked_reason is not None for row in rows)
+    reason = rows[0].blocked_reason
+    assert reason is not None
+    # The reason names the id and both labels. "identity conflict" alone would
+    # be true and useless with a clock running.
+    assert reason.startswith("identity_conflict:one_player_id_many_labels:p123:")
+    assert "nikola jokic" in reason
+    assert "the joker" in reason
+
+
+def test_two_player_ids_under_one_label_are_refused_not_deduplicated(
+    session: Session,
+) -> None:
+    """Excludes: two different players collapsing into one, losing a pick.
+
+    ``normalize_key`` erases digits and generational suffixes, so
+    ``"Gary Payton II"`` keys to ``"gary payton"``. Before this fix the first
+    reading applied and the second was filed ``duplicate_within_run`` -- **a
+    pick that happened, reported as nothing**, which is the same shape as a
+    truncated locator collapsing two rows into one.
+
+    Reading in which the flag is false and the defect is present: two distinct
+    players normalising together where the payload supplies **no** ids. Nothing
+    in the payload distinguishes them then, and this refuses on the signal that
+    exists rather than pretending to a better one.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r10-c", label="Gary Payton", player_id="p1")
+    _bridge_naming(session, "t2", 10, key="r10-d", label="Gary Payton II", player_id="p2")
+    feed_service.ingest(session, draft, client=None)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [0, 0]
+
+    rows = feed_service.load_observations(session, draft)
+    reason = rows[0].blocked_reason
+    assert reason is not None
+    assert reason.startswith("identity_conflict:one_label_many_player_ids:gary payton:")
+    assert "p1" in reason and "p2" in reason
+
+
+def test_one_id_under_one_label_still_applies_once(session: Session) -> None:
+    """Control: the refusal above must not fire on the ordinary case.
+
+    Without this, a fix that blocked *any* key carrying an external id would
+    pass both tests above while feeding nothing to the board at all -- which is
+    the failure the owner cannot see, because a board that never fills looks
+    identical to a draft that has not started.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r10-e", label="Nikola Jokic", player_id="p123")
+    _bridge_naming(session, "t1", 50, key="r10-f", label="Nikola Jokic", player_id="p123")
+    feed_service.ingest(session, draft, client=None)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [1, 0]
+    assert state.participants[0].remaining_budget == Decimal("150.00")
+
+
+def test_an_absent_player_id_cannot_conflict(session: Session) -> None:
+    """Control: absence is not disagreement, applied to identity.
+
+    A row carrying no external id must not conflict with one that does, for the
+    same reason a source silent on price has not contradicted one that supplies
+    it. Without this the mixed case -- bridge records carrying ``playerId``,
+    official records not -- would block every player on the board.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r10-g", label="Nikola Jokic", player_id="p123")
+    _bridge_naming(session, "t1", 50, key="r10-h", label="Nikola Jokic")
+    feed_service.ingest(session, draft, client=None)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
+
+    rows = feed_service.load_observations(session, draft)
+    assert [row.blocked_reason for row in rows] == [None, None]
