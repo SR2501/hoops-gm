@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**56 done - 1 blocked - 88 pending - 145 total**
+**57 done - 2 blocked - 93 pending - 152 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2501,3 +2501,119 @@ The single largest timing edge. When a player clears waivers he is first-come-fi
 Z-score valuation for FG%, FT%, 3PM, PTS, REB, AST, STL, BLK, TO. Volume-weighted impact for percentage categories (not raw pct) and correct TO sign handling. League-context replacement level from league size x roster spots.
 
 
+
+### `coordinator-register-triage` - Promoting every action in the coordinator register into a task
+
+- [ ] **pending**
+
+`docs/governance/coordinator-register.md` holds 320 findings and rules from the
+coordination layer. **It is a record, not a task list**, and its `**Status:**`
+field does not mean what it looks like - `pending` there means "recorded", not
+"awaiting work", so `c292` *"collection is not execution"* is `pending` and is a
+rule nobody will ever do.
+
+Seven entries that named real, unscheduled work were promoted into this file on
+2026-08-26. **Nobody has read the other 313 for the same property.** The
+promotion was done by reading the entries the coordinator could recall, which is
+the same sampling that let the register accumulate unlanded work in the first
+place.
+
+Read it end to end and promote anything that names an action somebody must take.
+The property to look for is **not** in the heading and **not** in the status
+field - three separate classifications on those were each wrong, once by an
+order of magnitude. It is only visible in the body.
+
+### `record-refresh-lineage-relabel` - Fixing record_refresh's in-place lineage relabel with the cohort regeneration
+
+- [ ] **pending**
+- **Depends on:** `schedule-cohort-fingerprint-list`
+
+**Latent defect on `main`, pinned rather than fixed.** `record_refresh` relabels
+the lineage source in place, so a refreshed record reports a provenance it did
+not have. Promoted from coordinator register `c288`.
+
+Routed to `data-engineer` **as a joint unit with the cohort manifest
+regeneration** (`c301`): the manifest pins six source files by whole-file
+SHA-256, so fixing the relabel invalidates the manifest, and regenerating the
+manifest without the fix bakes the wrong lineage in. Doing either alone is worse
+than doing neither - which is why this is one item and not two.
+
+### `derived-value-merge-gate-audit` - Auditing which derived values auto-merge clean with no gate
+
+- [ ] **pending**
+
+**Open question with no owner**, promoted from coordinator register `c307`.
+
+`docs/backlog.md`'s header is derived and recomputed; `docs/handoff.md`'s entry
+count is derived and predicted. Both have a check. The question nobody has
+answered is **which other derived values in this repository merge cleanly while
+being wrong** - a value computed from a file that both sides of a merge appended
+to will auto-merge into a number that matches neither side and fails nothing.
+
+Enumerate them, then decide per value whether it needs a recount, a refusal, or
+nothing. The enumeration is the deliverable; the fixes may each be small.
+
+### `demo-sanity-numbers-gate` - Gating the sanity numbers published in docs/demo.md
+
+- [ ] **pending**
+
+Promoted from coordinator register `c308`. `docs/demo.md` publishes figures a
+reader uses to decide whether their local demo came up correctly. **Nothing
+checks them against what the demo actually produces**, so they can silently
+invert: a reader whose demo is broken compares it against a number that is also
+broken and concludes it is fine.
+
+This is the "a check that can silently invert" shape. The cheap form is a test
+that regenerates the demo and asserts the published figures, which also means
+the figures cannot drift without someone noticing.
+
+### `ci-head-verification-tool` - Verifying what CI actually did on one exact commit
+
+- [x] **done** - Landed 2026-08-26 as `scripts/check_ci_gates.py` with
+  `backend/tests/test_check_ci_gates.py`. Seven tests, six mutations driven red,
+  zero escaped.
+
+Promoted from coordinator register `c315`. Three GitHub summary fields were each
+read as a result on 2026-08-26 and each was wrong: `mergeStateStatus=CLEAN` on a
+pull request with **zero** checks on its head, `conclusion=failure` on a run
+where **no job was ever assigned a runner**, and `conclusion=cancelled` on a run
+with six jobs green and **zero** failed steps.
+
+The tool reports gate count, gate names, failed-step count, and the
+**skipped-versus-starved split** - `jobsWithRunner=9/10` cannot distinguish a
+job skipped by design from one starved of a runner, and both have no runner. It
+refuses a short SHA **before querying**, because `?head_sha=` returns an empty
+set for one without complaining, and it proves its own query works against the
+default-branch head before reporting an absence.
+
+### `fingerprint-boundary-ruling` - Ruling where the injury cohort manifest's frozen boundary sits
+
+- [ ] **blocked** - needs an architect ruling before any of the six pinned files can change
+
+Promoted from coordinator register `c283` and `c295`. Six source files are
+frozen by whole-file SHA-256 in the injury cohort manifest, so an edit to any of
+them invalidates the manifest's provenance and fails `test_cohort_evidence.py`.
+
+Two things need deciding together: **which files the boundary should contain**,
+and **what the fingerprint check is actually entitled to claim** - it passes for
+whoever ran it, so it establishes that the bytes are unchanged and not that the
+run was authorised. Blocks `record-refresh-lineage-relabel` in practice, and it
+is why the console-encoding rule exempts `backend/src/`.
+
+### `coordinator-rules-distillation` - Deciding whether the register's rules belong in gates.md
+
+- [ ] **pending**
+- **Depends on:** `coordinator-register-triage`
+
+`docs/governance/coordinator-register.md` contains roughly 168 entries that are
+durable rules rather than dated observations. **Whether they belong in
+`gates.md` or `AGENTS.md` as governance, rather than in a register as history,
+is a real question and it is deliberately deferred rather than dodged.**
+
+The reason for deferring: landing the register unabridged is strictly reversible
+and distilling it now is not, and a distillation performed inside the context
+that produced it will drop exactly the entries whose value is not yet visible -
+which is the register's own thesis about failures nobody thought to look for.
+
+Filed as a task rather than left as a paragraph, because that distinction is the
+finding that produced this whole group of items.
