@@ -28035,3 +28035,133 @@ recorded-fixture half only**.
   previous could-not-verify -- that nothing covered bound-and-wiring at once -- turned out to be
   concealing three live defects, which is the argument against treating any remaining one as
   merely theoretical.
+
+## 2026-08-26 -- backend -- draft-tracker-bridge-feed, round nine and the reading that was never compared
+
+Ninth review round, ninth finding. One High, fixed as a generator; one Low,
+corrected below rather than filed, because the thing it corrects is a claim in
+this file.
+
+**The finding.** `apply_observations` filed a second observation naming an
+already-recorded player as `duplicate_within_run` *without comparing what the
+two readings said*. Two sources naming one player is the entire point of
+running two sources -- but it is corroboration only if they agree. Where they
+disagreed, the pass applied whichever sorted first and reported a clean
+corroboration. That is the same error as preferring the newer source, wearing
+the opposite bias.
+
+Reproduced by execution before fixing, auction league, both sources naming one
+player. Bridge `t1` / official `t2`, both $50: applied to seat 1. Both `t1`,
+$50 against $10: applied. After the fix both are blocked and neither reaches
+the board.
+
+**Fixed as one rule, not three cases.** `values_disagree` is now public in
+`reconcile` and imported by the apply path: reconciliation *reports* a
+disagreement and application *refuses to act on* one, two jobs sharing one
+implementation so they cannot drift. `_contradicted_keys` collapses to the
+newest reading per transport before comparing, treats the draft log as a third
+reading, and writes `blocked_reason` rather than `skipped_reason`.
+
+Three things in that sentence are load-bearing and each was earned rather than
+designed:
+
+- **The within-source collapse is not a cross-source preference.** A draft
+  board republishes the whole list on every pick, so a source that corrects
+  itself must not read as disagreeing with itself. My own regression test found
+  the omission: without the collapse a single transient disagreement blocks the
+  key *permanently*, the sources agree from the next capture onwards and the
+  pick stays blocked anyway. That is the burnt-row failure `blocked_reason`
+  exists to avoid, arriving through a different door.
+- **The log is a reading too.** A feed contradicting what the owner already
+  typed is exactly as much of a finding as two sources contradicting each
+  other, and `already_in_log` reported the collision while discarding the
+  contradiction inside it. This case was **not in the review**; it came from
+  running the neighbours of the reported one.
+- **`blocked_reason`, not `skipped_reason`.** Nothing in this package ever
+  clears `skipped_reason`, so a contradiction written there would burn every
+  row for that player permanently *and* remove them from `pending_count`,
+  telling the screen there is nothing outstanding.
+
+**A fourth thing, which mypy found and I did not.** The first fix centralised
+admission into `_unusable_reason(row) -> str | None`, and callers then re-read
+`row.participant_id` and `row.player_label` themselves. mypy named five reads
+that had type-checked only by accident before. The fix is `_admit(row) ->
+_Admitted | str`, returning the values rather than a verdict, so **the field
+that was checked and the field that is used are the same object**. An edit
+reading a fourth field the admission rule never examined is now a type error
+instead of a silent acceptance. I did not reason my way to that shape; the type
+checker refused the one I wrote.
+
+**Two model-derived guards.** One walks the actual arguments
+`apply_observations` passes to `record_sale`/`record_pick` and requires each to
+be compared in `_BOARD_FACTS` or explicitly declared not-comparable with a
+written reason, so a new payload field is red until someone classifies it. Its
+first version read the base name `row` alone -- and the `_Admitted` refactor
+above would have left it reading one argument and passing vacuously. **The base
+name is now part of what the test checks rather than part of what it assumes.**
+The other asserts `fantrax_official_client` appears exactly once in
+`backend/src`, so the commit that arms the parser seam is the commit that turns
+it red. That one also fired on its own failure message on first run, unscoped,
+matching four times for one wiring fact.
+
+**Six mutations, in the corrected form.** Delete the mechanism *and* inject the
+defect it names -- deleting an assertion alone is green by construction unless
+something else covers the property. 6/6 load-bearing: removing the
+newest-per-transport collapse, removing the log-as-third-reading, dropping
+price from `_BOARD_FACTS` (which reddened **two** tests), arming the official
+client, passing an unclassified field to the board, and reading a payload field
+off an undeclared binding. Every mutation was confirmed byte-equal to the
+intended text on disk before its run was read; the harness refused three
+verdicts on its first pass for CRLF-mismatched anchors and for a "landed" check
+that was wrong for a mutation which adds a line containing its own anchor.
+
+**The official path reaches the board without the bridge.** An official
+observation applies with no bridge capture present at all. Worse, where the
+bridge sees the identical record and *refuses* it, the refusal produces no row
+-- so **a bridge refusal and a bridge silence are indistinguishable to the
+apply pass**, and there is nothing for the official reading to disagree with.
+But `git grep fantrax_official_client -- backend/src` returns exactly one
+occurrence, the read at `api/routes/draft_feed.py:465`. **Nothing sets
+`app.state.fantrax_official_client`**, so `_draft_pick_source` returns `None` on
+every request. The seam is not merely untested against real data; it is not
+wired. The refusal/silence conflation is gated behind the same wiring commit,
+and the guard above is what holds both.
+
+**Per-team budgets are not representable.** `DraftParticipant`
+(`db/models/draft.py:146-191`) has no budget column; `auction_budget` is a
+single scalar on `Draft` copied from `League`, and `state.py:680-682` computes
+every seat's `remaining_budget` from that one scalar. The owner's leagues use
+per-team banks derived from last season's totals. Filed rather than fixed: it
+is a schema change on a unit already marked done, at round nine, on the unit
+gating his stated first priority.
+
+**The reviewer's `OverflowError` neighbour note is not reproducible.** Twenty-
+three neighbours -- `float`/`Decimal`/`str` forms of infinity, NaN, sNaN, `1e100`,
+`1E+30`, signed zero, `0.001`, `1_0` -- through both `_as_int` and `_as_amount`:
+zero raised, all refused. `recognise.py:451-456` is a docstring describing the
+defect the bound was *added* to fix, and it was read as a live one.
+
+**Correcting a measurement in this file.** The 2026-08-26 round-eight entry
+records ruff formatting **223** files and mypy checking **214**. Both are wrong.
+Measured against the commands CI actually runs, from `backend`: `ruff format
+--check .` reports **225 files already formatted** and bare `mypy` (not `mypy
+.`, which selects a different 203-file population) reports **216 source files**.
+The PR body figures were correct; the handoff entry was not.
+
+Gates, all from `backend` with `PYTHONPATH=$PWD\src`: `ruff check .` clean over
+225 files, `ruff format --check .` 225 formatted, `mypy` clean over 216 source
+files, full suite **2232 passed, 1 skipped, 41 deselected** (up nine: seven
+behavioural tests and two guards).
+
+**Could not verify.** Whether the recogniser fires at all on a real Fantrax
+draft-room payload: not disproved, unestablished -- no real payload has ever
+been observed, so every shape here is inferred from fixtures I wrote. Whether
+the three parser-seam tests describe a *reachable* payload is likewise open.
+The Adapter gate's live-smoke half converts pytest exit 5 -- nothing collected
+-- into a green with a notice (`c339`, not mine), so the Adapter claim rests on
+the recorded-fixture half only. And the guard-wiring hole named in round eight
+is narrowed but not closed: M5 and M6 now show the AST guard reads the real call
+site, but nothing proves a *correct and uncalled* coercer would be caught. I
+would rather leave that named than close it badly -- round eight found three
+live defects hiding behind a could-not-verify I had written myself, which is the
+argument against ever treating a remaining one as merely theoretical.
