@@ -28322,3 +28322,104 @@ id at all; there is no signal to detect it with. And still, separately: whether
 the recogniser fires at all on a real Fantrax draft-room payload -- **not
 disproved, unestablished.** Eleven rounds, eleven findings; no convergence
 evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round twelve: the apply boundary the identity fixes did not cross
+
+`backend` lane, PR #104. Round twelve (independent, `data-engineer`) read
+`bcdf80e` and returned three findings. All three were driven here before being
+accepted; all three were real; all three are generators. Every one of them was
+a **could-not-verify I had written myself in an earlier round** — which is the
+argument against ever treating a remaining could-not-verify as theoretical.
+
+**The pending set is not the board.** Rounds ten and eleven taught the apply
+pass to tell one player from two and a correction from a conflict. Both reason
+only over rows still pending. On draft night ingest-and-apply runs between
+picks, so the reading a later capture corrects has usually already applied, and
+both checks then see a single reading with nothing to disagree with.
+
+Driven: `p123` applied as "The Joker" at $50, republished as "Nikola Jokic".
+Both applied, sequences 1 and 2. Seat holds one player twice.
+`remaining_budget` reads `100.00` where `150.00` is correct, with
+`pending_count=0`, `blocked=()`, `skipped=()` — **every channel clean**. The
+mirror: `p1` applied as "Gary Payton", then `p2`, a genuinely different player,
+arriving under the same normalised key at the same seat and price. Filed
+`already_in_log`. **Nothing in this package ever clears `skipped_reason`**, so
+that pick is gone permanently and the screen calls it a duplicate. Round ten's
+defect surviving the apply boundary its fix did not cross.
+
+Identity is now read from applied rows too. An applied pick is **blocked and
+named** rather than superseded, because superseding it would mean editing the
+board, and that is a write.
+
+**Ordering.** Bridge payloads are selected newest-first so `scan_limit` keeps a
+recent window; observations were written in that order, so the newest payload
+got the *lowest* observation id — and observation id is the tie-break both
+identity supersession and the newest-per-transport collapse fall back on when
+`observed_at` ties, which production SQLite's `CURRENT_TIMESTAMP` produces on
+its own for two captures inside one second. Driven: publication order "The
+Joker"/t1/$50 then "Nikola Jokic"/t2/$10 put The Joker on seat one at $50 —
+**wrong buyer and wrong price** — with the true reading blocked as
+`identity_superseded`, which reads like a correction being handled properly.
+Captures are now walked oldest-first. This is the house rule about
+self-describing fields applied to ordering: a timestamp that cannot separate two
+events is not an ordering, and the tie-break underneath it has to be
+independently true.
+
+**Blast radius.** Round eleven refused the whole capture on any unreadable
+`playerId`, and I recorded then that its reachability was unmeasured. It is
+reachable and it does not heal: Fantrax republishes the entire pick list on
+every pick, so one malformed historical row is present in every later capture.
+Driven with a three-record board: `observations_written=0` on both captures, no
+stored rows, empty board, and a status of `pending=0 blocked=() skipped=()` —
+byte-identical to a draft that has not started. The row is now dropped and
+reported, unconditionally, on the same reasoning `locator_too_long_to_record`
+already carries.
+
+Admitted records keep their **original index**. Renumbering survivors would
+change a pick's `locator` the day the malformed row above it became readable,
+and `locator` is a third of the `(transport, artifact_key, locator)` identity
+this feed dedupes on — the same pick would store twice. That was a defect I
+introduced writing the fix and caught before running it; it is pinned by a test
+rather than reasoned about.
+
+**Mutation control: six mutations, six load-bearing**, each removing the
+mechanism *and* injecting the defect it names, with the mutation verified
+byte-present on disk before its run was read. **One of them failed first time
+and the failure was in my test, not the mechanism**: the all-unreadable-list
+refusal was deleted and the test still passed, because it asserted a reason
+string the caller still produces through the dropped-record channel. What the
+refusal actually buys is that an unreadable list must not count as *accepted* —
+`accepted_here` suppresses the shape refusals of every other candidate list in
+the block. **That rule was already written down**, in the comment above
+`capacity_refusals`, describing this exact defect for the capacity case, and my
+new code path walked into it anyway. The test now asserts the sibling list's
+refusal is still reported.
+
+That is the **third** instance of the pattern I named after round eleven —
+a rule this repository has written down and does not enforce — but it was
+found by the mutation control rather than by a review round, and it is in
+code I wrote today rather than inherited. Added a static guard for
+`_as_text`'s own documented rule (no `_as_text` as a non-final `or` operand;
+both identity readers must call `_read_text`). Injecting the round-eleven
+defect reddens it — **but four behavioural tests also redden**, so it is an
+earlier and better-named signal, not a sole guard.
+
+Gates from `backend/`: `ruff check .` clean over 225, `ruff format --check .`
+225 formatted, bare `mypy` clean over 216 source files, full suite **2246
+passed / 1 skipped / 41 deselected** (was 2239). `test_draft_feed.py` 108
+passed.
+
+**Could not verify.** The general form of "make unenforced rules red" is not
+buildable and I am not claiming it: the guard added here enforces one
+docstring by name, and nothing detects the next rule someone writes in prose.
+Whether the recogniser fires at all on a real Fantrax draft-room payload
+remains **not disproved, unestablished** — no such payload has ever been
+observed. An id that is readable but *wrong* — one player's id against
+another's name — is still undetectable, and the applied-history check makes it
+slightly worse, because a wrong id now blocks a correct pick. Two labels for
+one player with **no** external id anywhere remains without any signal. And the
+new `identity_already_applied` block is recoverable only in the sense that
+`blocked_reason` is recomputed; if the source never republishes the original
+label, the corrected pick stays blocked until the owner types it.
+
+Twelve rounds, twelve findings. No convergence evidence stands.
