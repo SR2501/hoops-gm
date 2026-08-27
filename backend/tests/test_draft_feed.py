@@ -4923,3 +4923,167 @@ def test_a_falling_back_reader_never_uses_the_storing_coercer() -> None:
             "readers fall back to a second key, so both must be able to tell "
             "'refused' from 'absent' -- one of them drifted once already."
         )
+
+
+def _naming_record(team: str, label: str, amount: float, player_id: str) -> dict[str, Any]:
+    """One draft-pick record, with the capture timing left to the caller.
+
+    ``_bridge_naming`` writes its own capture and so cannot vary ``captured_at``
+    against ``created_at``, which is the whole subject of the tests below.
+    """
+    return {
+        "teamId": team,
+        "playerName": label,
+        "overallPick": 1,
+        "amount": amount,
+        "playerId": player_id,
+    }
+
+
+def test_a_correction_delivered_before_the_reading_it_corrects_is_not_applied(
+    session: Session,
+) -> None:
+    """Excludes: delivery order deciding which reading is current.
+
+    ``observed_at`` is our clock at the moment a capture reached the backend.
+    Every ordering decision in this package was made on it -- identity
+    supersession, the newest-per-transport collapse, reconciliation's
+    newest-per-key -- and that is correct for freshness and wrong for
+    supersession. ``userscript/src/capture.js`` posts captures without a global
+    queue, so two published a second apart can be delivered in either order.
+
+    Driven before the fix: a correction published at t+1 but delivered first
+    put the *stale* reading on the board -- The Joker, seat one, $50, when the
+    truth was Nikola Jokic, seat two, $10 -- and blocked the true reading as
+    ``identity_superseded``, which on the status screen reads exactly like a
+    correction being handled properly.
+
+    The fix does not resolve the disagreement by preferring the source's own
+    clock, which is the browser's and self-describing. It refuses, and names
+    the refusal, leaving the player visibly absent rather than confidently
+    attached to the wrong seat.
+
+    **Reading in which this passes and the defect is present:** if the two
+    captures were delivered in publication order, publication and arrival would
+    agree, nothing would be disputed, and the assertion below would be
+    satisfied by a package that had never learned the difference. So the
+    inversion is asserted directly, on the stored rows, before the outcome is.
+    """
+    draft = _auction_draft(session)
+
+    _capture(
+        session,
+        records=[_naming_record("t1", "The Joker", 50.0, "p123")],
+        dedupe_key="published-old",
+        captured_at=NOW,
+        created_at=NOW + timedelta(seconds=1),
+    )
+    _capture(
+        session,
+        records=[_naming_record("t2", JOKIC, 10.0, "p123")],
+        dedupe_key="published-new",
+        captured_at=NOW + timedelta(seconds=1),
+        created_at=NOW,
+    )
+
+    feed_service.ingest(session, draft, client=None)
+    rows = feed_service.load_observations(session, draft)
+    arrival = [row.artifact_key for row in sorted(rows, key=lambda r: (r.observed_at, r.id))]
+    published = [
+        row.artifact_key
+        for row in sorted(rows, key=lambda r: (r.source_claimed_at or r.observed_at, r.id))
+    ]
+    assert arrival != published, "the delivery inversion this test is about is absent"
+
+    feed_service.apply_observations(session, draft)
+    status = feed_service.feed_status(session, draft)
+
+    state = draft_service.load_state(session, draft)
+    holdings = [
+        [(holding.player_label, holding.price) for holding in participant.holdings]
+        for participant in state.participants
+    ]
+    assert holdings == [[], []], "a disputed ordering put somebody on the board"
+    assert status.blocked == ("capture_order_disputed:p123:the joker|nikola jokic",)
+
+
+def test_captures_delivered_in_publication_order_are_not_disputed(session: Session) -> None:
+    """Excludes: the ordering refusal firing on an ordinary draft.
+
+    The over-refusal control for the test above. ``capture_order_disputed``
+    blocks a key outright, so a version of it that fired whenever two captures
+    named one player would empty the board -- and **a board that never fills
+    looks exactly like a draft that has not started**, which is the failure
+    this module exists to prevent. A fix that blocked everything would pass the
+    test above while being worse than the defect.
+
+    Two captures, published and delivered in the same order, correcting a
+    label. The correction must land.
+    """
+    draft = _auction_draft(session)
+
+    _capture(
+        session,
+        records=[_naming_record("t1", "The Joker", 50.0, "p123")],
+        dedupe_key="in-order-old",
+        captured_at=NOW,
+        created_at=NOW,
+    )
+    _capture(
+        session,
+        records=[_naming_record("t1", JOKIC, 50.0, "p123")],
+        dedupe_key="in-order-new",
+        captured_at=NOW + timedelta(seconds=1),
+        created_at=NOW + timedelta(seconds=1),
+    )
+
+    feed_service.ingest(session, draft, client=None)
+    feed_service.apply_observations(session, draft)
+    status = feed_service.feed_status(session, draft)
+
+    assert not any(reason.startswith("capture_order_disputed") for reason in status.blocked)
+    state = draft_service.load_state(session, draft)
+    holdings = [
+        [(holding.player_label, holding.price) for holding in participant.holdings]
+        for participant in state.participants
+    ]
+    assert holdings == [[(JOKIC, Decimal("50.00"))], []]
+
+
+def test_a_stored_instant_carries_its_storage_order(session: Session) -> None:
+    """Excludes: two passes answering "which reading is current" differently.
+
+    ``InstantProvenance`` carried no sequence, so every consumer working on
+    instants -- ``_newest_per_key``, ``freshness_of`` -- tie-broke on
+    ``received_at`` alone and silently kept whichever tied reading it saw
+    first, while the apply path, which works on rows and *has* the id, kept the
+    last. Two captures inside one second tie under production SQLite's
+    ``CURRENT_TIMESTAMP`` without any fixture help, so the disagreement is
+    reachable on an ordinary draft night rather than only under a contrived
+    clock.
+
+    **Reading in which this passes and the defect is present:** asserting only
+    that ``sequence`` is populated would be satisfied by a field that nothing
+    consults -- the "a guard can be correct and uncalled" gap this PR has
+    already hit once. So the collapse itself is exercised: two tied readings
+    are reconciled and the one stored *last* must be the one that survives.
+    """
+    draft = _auction_draft(session)
+
+    _bridge_naming(session, "t1", 50.0, key="tie-first", label=JOKIC, player_id="p123")
+    _bridge_naming(session, "t2", 10.0, key="tie-second", label=JOKIC, player_id="p123")
+    feed_service.ingest(session, draft, client=None)
+
+    rows = feed_service.load_observations(session, draft)
+    assert rows[0].observed_at == rows[1].observed_at, "the tie this test is about is absent"
+    instants = [feed_service._to_instant(row) for row in rows]
+    assert [instant.provenance.sequence for instant in instants] == [rows[0].id, rows[1].id]
+
+    from hoops_gm.draft.feed.reconcile import _newest_per_key
+
+    latest = _newest_per_key(instants)
+    assert len(latest) == 1
+    surviving = next(iter(latest.values()))
+    assert surviving.provenance.sequence == rows[1].id
+    assert surviving.team_external_id == "t2"
+    assert surviving.amount == Decimal("10.00")

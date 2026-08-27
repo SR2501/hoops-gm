@@ -65,6 +65,7 @@ from hoops_gm.draft.feed.observations import (
     ObservedInstant,
     SourceTransport,
     matching_key,
+    publication_order,
 )
 
 
@@ -388,13 +389,19 @@ class ReconciliationReport:
 def _newest_per_key(
     instants: list[ObservedInstant],
 ) -> dict[tuple[str, str], ObservedInstant]:
-    """One reading per player per side, keeping the newest by our clock.
+    """One reading per player per side, keeping the one published last.
 
     A source that reported the same player in two captures — the ordinary case
     for a draft board that republishes the whole list on every pick — should
-    not produce a self-disagreement. Newest-by-``received_at`` is a *within*
-    -source collapse and is not the cross-source preference this module refuses
-    to make.
+    not produce a self-disagreement. This is a *within*-source collapse and is
+    not the cross-source preference this module refuses to make.
+
+    Ordered by :func:`~hoops_gm.draft.feed.observations.publication_order`,
+    the same rule the apply path uses, imported rather than restated so the
+    two cannot drift. It previously compared ``received_at`` alone with a
+    strict ``>``, which answered two different questions wrongly: ties kept
+    whichever reading arrived first in the list, and arrival is not
+    publication when captures are delivered out of order.
     """
     latest: dict[tuple[str, str], ObservedInstant] = {}
     for instant in instants:
@@ -402,9 +409,17 @@ def _newest_per_key(
         if key is None:
             continue
         seen = latest.get(key)
-        if seen is None or instant.provenance.received_at > seen.provenance.received_at:
+        if seen is None or _order_of(instant) > _order_of(seen):
             latest[key] = instant
     return latest
+
+
+def _order_of(instant: ObservedInstant) -> tuple[datetime, int]:
+    return publication_order(
+        instant.provenance.source_claimed_at,
+        instant.provenance.received_at,
+        instant.provenance.sequence or 0,
+    )
 
 
 def reconcile(

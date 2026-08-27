@@ -28406,8 +28406,16 @@ earlier and better-named signal, not a sole guard.
 
 Gates from `backend/`: `ruff check .` clean over 225, `ruff format --check .`
 225 formatted, bare `mypy` clean over 216 source files, full suite **2246
-passed / 1 skipped / 41 deselected** (was 2239). `test_draft_feed.py` 108
-passed.
+passed / 1 skipped / 41 deselected** (was 2239). `test_draft_feed.py` **101
+passed** — corrected from `108`, which this entry stated on first writing and
+which was never measured; re-measuring the reviewed SHA gives 101 collected,
+101 passed, and 94 + 7 new = 101 reconciles. This is my **second** measurement
+error in this PR — the first was a pre-rebase `2188` written as a measured
+figure against a real `2223` — so the pattern is mine and not incidental: both
+times I wrote a number I expected instead of one I had read back. Corrected
+here in place because this entry has not merged; disclosed rather than quietly
+amended because the whole argument of this PR is that a plausible wrong number
+is the failure mode nothing catches.
 
 **Could not verify.** The general form of "make unenforced rules red" is not
 buildable and I am not claiming it: the guard added here enforces one
@@ -28423,3 +28431,141 @@ new `identity_already_applied` block is recoverable only in the sense that
 label, the corrected pick stays blocked until the owner types it.
 
 Twelve rounds, twelve findings. No convergence evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round thirteen: the ordering spine rested on arrival time, and my stopping criterion fired
+
+Round thirteen was `quant`, deliberately a different lens from round twelve's
+`data-engineer`, run against exact head `9cbfb6c`. It returned four findings. I
+drove every one before accepting it, and one is worse than the reviewer framed
+it.
+
+**My stopping criterion fired, so the rounds stop here.** Before commissioning
+the round I pre-registered the rule the coordinator adopted from round eleven:
+all-instance findings mean stop and merge; a generator means fix and reassess;
+**a third unenforced-rule finding means stop the rounds and build the check.**
+Three of round thirteen's four are unenforced-rule findings. I must disclose
+that I created an incentive for that labelling — the reviewer was told a
+commitment turned on it — so I assessed each independently rather than counting
+labels. Finding three is unambiguously one: my own docstring, in the right
+place, naming the exact hazard, with nothing executable connecting it to the
+code. Finding one is one: my round-twelve comment says the rows are "written in
+publication order" while its own caveat only ever justified *arrival* order.
+Finding two is a capability gap in the same family rather than a rule stated and
+ignored, and I would not have counted it alone. Two clear plus one adjacent is
+enough; I am not going to argue the count down to keep a round.
+
+**Finding one — the primary sort key was the wrong clock.** `observed_at` is
+`provenance.received_at`, which is *arrival* — when the payload reached us. The
+entire ordering spine rests on it: identity supersession, newest-per-transport
+collapse, reconciliation's newest-per-key, freshness. `captured_at` —
+publication time, what the browser recorded when the pick appeared — was stored
+per observation, reached `InstantProvenance` as `source_claimed_at`, and was
+**ignored**. Round twelve's `rows.reverse()` fixed ordering *within* an ingest
+and left the key itself wrong. Driven on the reviewed SHA, two captures of one
+`playerId` delivered out of order:
+
+```
+stored:   (1, 'published-new', 'Nikola Jokic', 't2', 10.00, 23:14:00)
+          (2, 'published-old', 'The Joker',    't1', 50.00, 23:14:01)
+holdings: [[('The Joker', 50.00)], []]
+blocked:  ('identity_superseded:p123:nikola jokic->the joker',)
+```
+
+The wrong buyer on the board at the wrong price, and the truth blocked as
+`identity_superseded` — which on the status screen reads exactly like a
+correction handled properly.
+
+**The fix refuses rather than preferring the browser's clock.** Two module-level
+functions in `observations.py`, `publication_order` and `arrival_order`, written
+side by side so that "these are two different orderings" is something the code
+says rather than something a reader has to notice. Where they name different
+current labels for one `(transport, external_id)` group, `_identity_conflicts`
+emits `capture_order_disputed:<id>:<by_arrival>|<by_publication>` against both
+and applies neither. Preferring `captured_at` would be trusting a
+self-describing field — the `gameEt` lesson — and preferring ours is the defect
+being removed. `feed_status`'s own docstring saved me from the wrong fix here:
+*"no source's own timestamp reaches an arithmetic operation."* `captured_at` may
+**order**; it must never become an age.
+
+**Finding two — two passes answering one question differently.** `_to_instant`
+discarded `row.id`, so `InstantProvenance` had no sequence. `_newest_per_key`
+and `freshness_of` tie-broke on `received_at` alone with a strict `>`, keeping
+the *first* of a tie, while the apply path works on rows, has the id, and keeps
+the *last*. Two passes, one question, opposite answers. `sequence` added to
+`InstantProvenance`; `_newest_per_key` now imports the same ordering rule the
+apply path uses rather than restating it, so the two cannot drift.
+
+**Finding three is CONFIRMED, High, and I did not fix it.** `unrecognised`
+reaches only the POST ingest response; `_status_out` has no such field. So a
+payload whose player id is unreadable is counted at ingest and then invisible:
+
+```
+POST -> written: 1  unrecognised: [('player_external_id_unreadable', 1)]
+GET  -> observations 1  applied 1  pending 0  blocked ()  skipped ()
+        freshness: bridge_capture silent: False
+board holdings: [[], [('Healthy Two', 10.00)]]
+```
+
+**A player silently missing from the board, every channel clean, freshness
+saying not-silent.** My own `UnrecognisedShape` docstring says it is *"counted
+and **published** rather than logged and forgotten, because the failure this
+guards against is **silence**"*, and `FeedStatus.blocked`'s comment already
+states the enforcing rationale — *"a live board polls `GET`."* The rule was
+written down twice and enforced nowhere.
+
+I filed it rather than fixing it, and the argument is not that it is minor.
+Every cheap route is closed: storing `player_external_id=None` is what round
+eleven explicitly forbade, `blocked_reason` leaves the row pending so it becomes
+an application candidate, and re-running recognition at status time is two code
+paths answering one question, which is the defect class this whole PR is about.
+The safe fix changes the recogniser's contract so unreadable records arrive as
+instants carrying `skipped_reason` — a field that *is* surfaced on `GET`, never
+applies, and never joins pending identity matching, and whose permanence is
+arguably correct for an id that cannot be read. That is the recommended route.
+The reason it is not in this commit is narrow and I want it on the record:
+**every fix I have made at this depth has itself contained a defect caught only
+by the next round** — round twelve's locator renumbering, round eleven's
+never-heals, round ten's apply boundary. I will not land the most invasive
+change in the unit in the same commit in which I stop the rounds.
+
+**Finding four was mine.** I published `108 passed` for `test_draft_feed.py` in
+both the PR body and the round-twelve entry. The reviewed SHA gives **101
+collected, 101 passed**, and 94 + 7 new reconciles to 101. `108` was never
+measured. That is my second measurement error in this PR and the round-twelve
+entry is corrected in place above, disclosed rather than quietly amended,
+because the argument of this PR is that a plausible wrong number is the failure
+nothing catches.
+
+**Mutation control, in the corrected form** — delete the mechanism *and* inject
+the defect it names, verify both byte-present on disk, green baseline first.
+Five mutations, four load-bearing, and **one that was not**, which is the useful
+result. `M2` swapped the supersession sort back to arrival order and stayed
+green. That is not a coverage gap: the sort makes `current` the publication-max
+of each `(transport, external_id)` group, and the refusal added directly below
+groups by the same key and blocks whenever publication-max and arrival-max
+disagree — so the only inputs on which the sort key could change the answer are
+inputs already taken out of play. **Unreachable by construction is not the same
+as covered**, and I have said so at the call site rather than let the green
+mutation read as an untested line. `M5` is the over-refusal control: forcing the
+dispute to fire on every repeated player reddens the ordinary-captures test,
+which matters because a fix that blocked everything would pass the defect test
+while being worse than the defect — a board that never fills looks exactly like
+a draft that has not started.
+
+Gates from `backend/`: `ruff check .` clean over 225 files, `ruff format
+--check .` 225 formatted, bare `mypy` clean over 216 source files, full suite
+**2249 passed / 1 skipped / 41 deselected** (was 2246; +3 is exactly the three
+tests added here). `test_draft_feed.py` **104 passed**, measured, not projected.
+
+**Could not verify.** Whether `capture_order_disputed` fires in real operation
+is unknown and is the risk this change introduces: if the userscript sets
+`captured_at` inconsistently across captures, real picks will be refused on a
+live board. The over-refusal control shows only that ordinary *fixture*
+captures are not disputed. Whether the recogniser fires at all on a real
+Fantrax draft-room payload remains **not disproved, unestablished** — no such
+payload has ever been observed. An id that is readable but *wrong* stays
+undetectable. Two labels for one player with no external id at all produce no
+signal. Finding three is a known unfixed High and the board can still be
+silently short a player. And thirteen rounds have produced thirteen findings:
+**no convergence evidence stands**, and the criterion I am stopping on is about
+the *kind* of thing being found, not about the unit having run out of depth.

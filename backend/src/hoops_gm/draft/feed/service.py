@@ -63,7 +63,9 @@ from hoops_gm.draft.feed.observations import (
     RecognitionResult,
     SourceTransport,
     UnrecognisedShape,
+    arrival_order,
     matching_key,
+    publication_order,
 )
 from hoops_gm.draft.feed.recognise import (
     RPC_CAPTURE_SOURCES,
@@ -690,6 +692,7 @@ def _to_instant(row: DraftFeedObservation) -> ObservedInstant:
             received_at=row.observed_at,
             source_claimed_at=row.source_claimed_at,
             locator=row.locator,
+            sequence=row.id,
         ),
         team_external_id=row.team_external_id,
         player_label=row.player_label,
@@ -946,9 +949,22 @@ def _identity_conflicts(
         readings.append((row, external_id, key))
         ids_by_label[key].add(external_id)
 
+    # This ordering is defence in depth and nothing observable rests on it.
+    # ``current`` becomes the publication-max of each ``(transport,
+    # external_id)`` group, and the refusal below groups by that same key and
+    # blocks the group whenever publication-max and arrival-max name different
+    # labels. So the only inputs on which this sort key would change the answer
+    # are inputs the refusal has already taken out of play. A mutation swapping
+    # it back to arrival order stays green for that reason -- which is what
+    # "unreachable" looks like from a test, and is not the same as "covered".
+    # It is written this way so that narrowing the refusal cannot silently
+    # restore delivery order as the tiebreak.
     current: dict[tuple[str, str], str] = {}
     for row, external_id, key in sorted(
-        readings, key=lambda item: (item[0].observed_at, item[0].id)
+        readings,
+        key=lambda item: publication_order(
+            item[0].source_claimed_at, item[0].observed_at, item[0].id
+        ),
     ):
         current[(row.transport.value, external_id)] = key
 
@@ -957,6 +973,39 @@ def _identity_conflicts(
         labels_by_id[external_id].add(key)
 
     conflicts: dict[str, str] = {}
+
+    # Publication order and arrival order are two different claims about which
+    # reading is current, and ``publication_order`` trusts a timestamp the
+    # browser wrote. Where they disagree, this package does what it does
+    # everywhere else: it refuses rather than picking a side. Preferring the
+    # source's own clock would be trusting a self-describing field; preferring
+    # ours would be the defect this ordering fix exists to remove.
+    #
+    # Scoped to one ``(transport, external_id)`` group, because that is the
+    # unit supersession acts on. A disagreement between two *different*
+    # players' readings is not a disagreement about either of them.
+    grouped_by_id: dict[tuple[str, str], list[tuple[DraftFeedObservation, str]]] = defaultdict(list)
+    for row, external_id, key in readings:
+        grouped_by_id[(row.transport.value, external_id)].append((row, key))
+    for (_transport, external_id), members in grouped_by_id.items():
+        if len(members) < 2:
+            continue
+        by_publication = max(
+            members,
+            key=lambda item: publication_order(
+                item[0].source_claimed_at, item[0].observed_at, item[0].id
+            ),
+        )[1]
+        by_arrival = max(
+            members,
+            key=lambda item: arrival_order(item[0].observed_at, item[0].id),
+        )[1]
+        if by_publication == by_arrival:
+            continue
+        reason = f"capture_order_disputed:{external_id}:{by_arrival}|{by_publication}"
+        conflicts.setdefault(by_publication, reason)
+        conflicts.setdefault(by_arrival, reason)
+
     for external_id, keys in labels_by_id.items():
         if len(keys) < 2:
             continue
@@ -1058,7 +1107,10 @@ def _contradicted_keys(
         # contradicts. That is the burnt-row failure ``blocked_reason`` exists
         # to avoid, arriving by a different door.
         newest: dict[str, DraftFeedObservation] = {}
-        for row in sorted(rows, key=lambda item: (item.observed_at, item.id)):
+        for row in sorted(
+            rows,
+            key=lambda item: publication_order(item.source_claimed_at, item.observed_at, item.id),
+        ):
             newest[row.transport.value] = row
 
         readings: list[tuple[str, Any]] = [

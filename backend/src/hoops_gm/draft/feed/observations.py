@@ -71,6 +71,18 @@ class InstantProvenance:
     #: Where inside the artifact this came from — e.g. ``responses[1].data``
     #: and the index within the list. A path, not a copy of the payload.
     locator: str = ""
+    #: Storage order, when this instant was read back from a row. ``None`` for
+    #: an instant that has not been stored.
+    #:
+    #: Carried because ordering two readings needs a tie-break and a timestamp
+    #: is not one: two captures inside a second share ``received_at`` under
+    #: production SQLite. Without it every consumer working on instants —
+    #: ``_newest_per_key``, ``freshness_of`` — silently kept whichever tied
+    #: reading it happened to see first, while the apply path, which works on
+    #: rows and *has* the id, kept the last. **Two passes answering "which
+    #: reading is current" with different answers**, which is the drift this
+    #: package exists to catch.
+    sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +113,54 @@ class ObservedInstant:
     pick_in_round: int | None = None
     #: An observed clearing price. Never a computed one.
     amount: Decimal | None = None
+
+
+def publication_order(
+    claimed_at: datetime | None,
+    received_at: datetime,
+    sequence: int,
+) -> tuple[datetime, int]:
+    """Where a reading sits in the order its **source** published it.
+
+    Distinct from arrival order, which is :func:`arrival_order`. The two are
+    routinely the same and are not the same *fact*, and this package had them
+    conflated: ``observed_at`` is our clock at the moment a capture reached the
+    backend, and every ordering decision — identity supersession, the
+    newest-per-transport collapse, reconciliation's newest-per-key — was made
+    on it.
+
+    That is correct for freshness and wrong for supersession. The userscript
+    posts captures without a global queue, so two captures published a second
+    apart can be delivered in either order; the later publication then carries
+    the *earlier* ``observed_at``, and "which reading is current" is answered
+    backwards. Driven: a correction published second and delivered first put
+    the stale reading on the board — wrong buyer *and* wrong price — and
+    blocked the true one as ``identity_superseded``, which reads on the status
+    screen exactly like a correction being handled properly.
+
+    ``claimed_at`` is the capture's own timestamp, which is the browser's
+    clock and therefore **self-describing and not to be trusted on its own**.
+    It is used to *order* and never to compute an age; ``feed_status`` still
+    measures every interval against ``observed_at``, our clock, and that
+    remains the rule its docstring states. Where the two orders disagree about
+    which reading is current, the caller refuses rather than picking one — see
+    ``_identity_conflicts``.
+
+    ``sequence`` breaks ties, because two captures inside one second share a
+    timestamp under production SQLite's ``CURRENT_TIMESTAMP`` without any
+    fixture help.
+    """
+    return (claimed_at or received_at, sequence)
+
+
+def arrival_order(received_at: datetime, sequence: int) -> tuple[datetime, int]:
+    """Where a reading sits in the order it reached **us**. Our clock.
+
+    Kept beside :func:`publication_order` rather than inlined at its two call
+    sites, so that "these are two different orderings" is a thing the code
+    says rather than a thing a reader has to notice.
+    """
+    return (received_at, sequence)
 
 
 def matching_key(instant: ObservedInstant) -> tuple[str, str] | None:
