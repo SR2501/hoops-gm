@@ -28243,3 +28243,82 @@ all. There is no signal in the payload to detect that with and nothing here
 claims to. Still unestablished, and separately: whether the recogniser fires at
 all on a real Fantrax draft-room payload -- **not disproved, unestablished.** Ten
 rounds, ten findings; no convergence evidence stands.
+
+## 2026-08-27 - backend - draft-tracker-bridge-feed - round eleven: a refused reading is not an absent one, and a correction is not a conflict
+
+Eleventh round, eleventh finding -- two of them, both driven, both accepted, both
+the same generator at a sixth and seventh depth.
+
+**A supplied-but-unreadable player id was stored as absent.** `_player_identity`
+called `_as_text`, whose own docstring says it "collapses absent and present but
+refused into one answer, which is safe for a caller that stores the result and
+**unsafe for one that falls back to another key**. Those callers use
+`_read_text`." That function falls back to another key. It had used `_as_text`
+since it was written.
+
+Driven: two captures carrying the same 5,000-character `playerId` under "Nikola
+Jokic" and "The Joker" both applied, the seat held one player twice,
+`remaining_budget` read **100.00 where 150.00 was correct**, and `fields_dropped`
+named only the ordinal. **Round ten's identity guard could not fire, because by
+the time it looked the evidence it needed had been erased upstream.** A fix one
+layer down was silently disarmed by a coercion one layer up -- which is why "the
+guard is correct" and "the guard can act" are different claims.
+
+This is unexamined inheritance in the exact form `AGENTS.md` names: the rule was
+written down, in the right place, and the one call site it was written for did
+not follow it. Nothing executable connected the two. Now the list admission
+refuses the capture and names the field, `player_external_id_unreadable`. That
+loses a scan, and the next capture is seconds away.
+
+**A source correcting itself read as a source disagreeing with itself.** That
+rule is stated six lines into `_contradicted_keys` -- *"without it a single
+transient disagreement is permanent... the burnt-row failure `blocked_reason`
+exists to avoid, arriving by a different door"* -- and I added
+`_identity_conflicts` immediately above it in round ten without applying it.
+
+Driven: a bridge capture renaming `p123` from "The Joker" to "Nikola Jokic"
+blocked the player **permanently**. Republishing the correct reading twice more
+left `applied` at 0, `holdings` empty and `pending_count` climbing to 3, while
+reconciliation correctly exposed only the newest reading. **The owner has no
+manual fallback**, so a player the feed can never record is a real loss and not
+merely a visible one. Round ten moved this case from wrong-and-silent to
+safe-but-stuck; round eleven moves it to right.
+
+The collapse is deliberately asymmetric and the asymmetry is the argument. One
+id under changing labels collapses to the newest reading per transport, and the
+stale *key* is blocked so it cannot apply as a second player. One label under
+several ids does not collapse at all, because two distinct ids are evidence of
+two distinct players and superseding one would silently drop a pick -- round
+ten's mirror defect returning wearing the fix's clothes. Within a single
+artifact the first case cannot arise at all: list admission already refuses a
+list carrying one id twice.
+
+**Five mutations, 5/5 load-bearing -- but M9 first reported NOT LOAD-BEARING and
+the defect was in the mutation.** It added a transport-less entry to the collapse
+dict while leaving the real per-transport entries in place, so the conflict was
+still detected and the mechanism was never actually removed. **A control that
+does not discriminate reports identically to a guard that is not needed**, and
+the only reason I did not record a spurious gap is that the control's own output
+was surprising enough to re-read. Injecting it properly -- one label kept per id
+-- reddens the cross-source test.
+
+Also relevant to how these rounds are being read: **one of the two findings this
+round arrived alongside a third that I rejected last round with evidence** -- a
+reviewer read `applied=()` from outside the call and never read `blocked_reason`.
+`applied=()` is what a silent drop and a correctly-reported refusal look like
+from the same vantage point. Reviewers keep reporting the loud form of a defect
+whose silent neighbour is worse; running the neighbours has now paid out three
+rounds running.
+
+Gates, from `backend/`: ruff check clean over 225 files, `ruff format --check`
+225 already formatted, bare `mypy` clean over 216 source files,
+`tests/test_draft_feed.py` 94 passed, full suite 2239 passed / 1 skipped / 41
+deselected.
+
+Could not verify: **an id that is readable but wrong** -- a source publishing one
+player's id against another player's name. Nothing here detects that, and
+nothing here claims to. Nor two labels for one player arriving with no external
+id at all; there is no signal to detect it with. And still, separately: whether
+the recogniser fires at all on a real Fantrax draft-room payload -- **not
+disproved, unestablished.** Eleven rounds, eleven findings; no convergence
+evidence stands.
