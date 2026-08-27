@@ -327,13 +327,20 @@ _COMPARED_FIELDS: tuple[str, ...] = (
 )
 
 
-def _values_disagree(left: Any, right: Any) -> bool:
+def values_disagree(left: Any, right: Any) -> bool:
     """Absence is not disagreement; a different value is.
 
     A source that omits ``round_number`` has not contradicted a source that
     supplies it, and filing that as a disagreement would bury the real ones
     under one row per missing field per pick. Decimal and int compare by value
     so ``Decimal("41")`` and ``41`` are not a finding.
+
+    Public because :mod:`hoops_gm.draft.feed.service` asks the same question of
+    the same fields for a different purpose — reconciliation reports a
+    disagreement, application refuses to act on one. Those are two jobs, but
+    "do these two readings differ?" must not be two implementations: the last
+    five review rounds on this package all found the same defect, which was two
+    functions that were meant to agree about a payload and had drifted.
     """
     if left is None or right is None:
         return False
@@ -433,7 +440,7 @@ def reconcile(
         for field_name in _COMPARED_FIELDS:
             left_value = getattr(left_instant, field_name)
             right_value = getattr(right_instant, field_name)
-            if _values_disagree(left_value, right_value):
+            if values_disagree(left_value, right_value):
                 found.append(
                     Disagreement(
                         key=key,

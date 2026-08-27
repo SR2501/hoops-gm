@@ -35,9 +35,11 @@ owner would find out at pick 30 rather than pick 8.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from decimal import Decimal
+from typing import Any, Final, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -77,6 +79,7 @@ from hoops_gm.draft.feed.reconcile import (
     SourceFreshness,
     freshness_of,
     reconcile,
+    values_disagree,
 )
 from hoops_gm.draft.state import DraftLogError
 from hoops_gm.identity.names import normalize_key
@@ -686,13 +689,36 @@ def load_observations(session: Session, draft: Draft) -> list[DraftFeedObservati
     )
 
 
-def _held_keys(state: Any) -> dict[str, int]:
-    """Player keys already on the board, mapped to the log sequence that put
-    them there. Used to recognise a republished pick as one we already have."""
-    held: dict[str, int] = {}
+@dataclass(frozen=True, slots=True)
+class _Recorded:
+    """What the board already asserts about one player.
+
+    ``participant_id`` and ``price`` are here because a pending observation
+    naming this player has to be checked *against* them, not merely counted as
+    a second sighting of the same name. The sequence alone cannot answer "does
+    this reading agree with what we already show?".
+    """
+
+    sequence: int
+    participant_id: int
+    #: Named ``price`` on the board and ``amount`` on an observation. The two
+    #: are compared, so the mapping is spelled out in ``_BOARD_FACTS`` rather
+    #: than left to whoever next reads both dataclasses.
+    price: Decimal | None
+
+
+def _held_keys(state: Any) -> dict[str, _Recorded]:
+    """Player keys already on the board, mapped to what the board says about
+    them. Used to recognise a republished pick as one we already have — and to
+    notice when a "republished" pick is not the same pick at all."""
+    held: dict[str, _Recorded] = {}
     for participant in state.participants:
         for holding in participant.holdings:
-            held[holding.player_key] = holding.event_sequence
+            held[holding.player_key] = _Recorded(
+                sequence=holding.event_sequence,
+                participant_id=participant.participant.id,
+                price=holding.price,
+            )
     return held
 
 
@@ -710,6 +736,148 @@ def _apply_order(row: DraftFeedObservation) -> tuple[int, int, int, str]:
     if row.round_number is not None and row.pick_in_round is not None:
         return (0, row.round_number * 1000 + row.pick_in_round, 0, row.locator)
     return (1, 0, row.id, row.locator)
+
+
+@dataclass(frozen=True, slots=True)
+class _Admitted:
+    """The fields an admitted row supplies, with their optionality discharged.
+
+    Returned instead of ``None`` so that the field which was *checked* and the
+    field which is *used* are the same object. The first version returned a
+    reason-or-``None`` and left callers re-reading ``row.participant_id``,
+    which type-checks only by accident: a later edit reading a fourth field
+    the admission rule never examined would have been accepted silently. mypy
+    named all five of those reads, which is how this shape got written.
+    """
+
+    participant_id: int
+    player_label: str
+
+
+def _admit(row: DraftFeedObservation) -> _Admitted | str:
+    """The values this row supplies, or why it can never be applied.
+
+    One rule, two callers: the apply loop skips on it, and the contradiction
+    pre-pass ignores the same rows so that the two passes consider exactly the
+    same population. Written as a function rather than inlined twice because
+    an admission rule implemented in two places that were meant to agree is
+    the single defect this package's reviews have found most often — rounds
+    four, seven and eight were all that shape at different depths.
+    """
+    if row.participant_id is None:
+        return "no_seat_for_team_external_id"
+    if not row.player_label:
+        # The log requires a verbatim label for anything naming a player, and
+        # inventing one from an external id would be a resolution this package
+        # is not entitled to make.
+        return "no_player_label"
+    return _Admitted(participant_id=row.participant_id, player_label=row.player_label)
+
+
+#: The facts about a pick that an observation supplies and the board then
+#: asserts, as ``(observation attribute, recorded attribute)``.
+#:
+#: These, and only these, are what a second reading has to agree about before
+#: it can be filed as corroboration. The set is deliberately narrower than
+#: :data:`hoops_gm.draft.feed.reconcile._COMPARED_FIELDS`, which compares
+#: everything two readings say: the coordinate fields order the apply pass but
+#: are never passed to the draft service, so a coordinate disagreement cannot
+#: make the board assert anything false about *this* holding, and blocking on
+#: it would strand real picks over a difference the owner can never see.
+#:
+#: ``test_the_blocking_facts_are_exactly_what_the_board_is_told`` derives this
+#: set from the call site rather than trusting this comment, so passing a new
+#: ``row.`` field into ``record_pick``/``record_sale`` is red until someone
+#: classifies it.
+_BOARD_FACTS: Final[tuple[tuple[str, str], ...]] = (
+    ("participant_id", "participant_id"),
+    ("amount", "price"),
+)
+
+
+def _contradicted_keys(
+    pending: list[DraftFeedObservation],
+    held: dict[str, _Recorded],
+) -> dict[str, str]:
+    """Player keys where the readings we hold do not agree about a board fact.
+
+    Excludes: a second reading being filed as corroboration of the first while
+    the two of them name different buyers or different prices.
+
+    Two sources naming one player is the whole point of running two sources,
+    but it is only corroboration if they *agree*. Where they do not, applying
+    either one records a fact this package does not have, and the older
+    behaviour applied whichever sorted first — which is the same error as
+    preferring the newer source, wearing the opposite bias.
+
+    A disagreement is therefore a refusal, not a resolution: nothing is
+    applied for that key and the reason reaches the status screen. That leaves
+    the player visibly absent from the board rather than confidently attached
+    to the wrong seat, which is the trade this package makes everywhere else.
+
+    Absence is not disagreement — a source that says nothing about the price
+    has not contradicted one that does. That distinction is
+    :func:`~hoops_gm.draft.feed.reconcile.values_disagree`'s, imported rather
+    than restated so the two passes cannot drift.
+    """
+    grouped: dict[str, list[DraftFeedObservation]] = defaultdict(list)
+    for row in pending:
+        admitted = _admit(row)
+        if isinstance(admitted, str):
+            continue
+        grouped[normalize_key(admitted.player_label)].append(row)
+
+    contradicted: dict[str, str] = {}
+    for key, rows in grouped.items():
+        # One reading per source, newest first. A draft board republishes the
+        # whole list on every pick, so a source that corrects itself — or that
+        # simply reported the same player twice — must not read as
+        # disagreeing with itself. This is the same within-source collapse
+        # :func:`~hoops_gm.draft.feed.reconcile._newest_per_key` makes, and for
+        # the same stated reason: it is not the cross-source preference this
+        # package refuses to make.
+        #
+        # Without it a single transient disagreement is permanent. The sources
+        # agree from the next capture onwards and the pick stays blocked
+        # anyway, because the stale reading is still pending and still
+        # contradicts. That is the burnt-row failure ``blocked_reason`` exists
+        # to avoid, arriving by a different door.
+        newest: dict[str, DraftFeedObservation] = {}
+        for row in sorted(rows, key=lambda item: (item.observed_at, item.id)):
+            newest[row.transport.value] = row
+
+        readings: list[tuple[str, Any]] = [
+            (f"{row.transport.value}:{row.artifact_key}", row) for row in newest.values()
+        ]
+        recorded = held.get(key)
+        if recorded is not None:
+            # The log is a reading too. A feed that disagrees with what the
+            # owner already typed is exactly as much of a finding as two
+            # sources disagreeing with each other, and filing it as
+            # "already_in_log" reports the collision while discarding the
+            # contradiction inside it.
+            readings.append(("log", recorded))
+
+        for index, (left_name, left) in enumerate(readings):
+            for right_name, right in readings[index + 1 :]:
+                for observation_field, recorded_field in _BOARD_FACTS:
+                    left_value = getattr(
+                        left,
+                        observation_field if left_name != "log" else recorded_field,
+                        None,
+                    )
+                    right_value = getattr(
+                        right,
+                        observation_field if right_name != "log" else recorded_field,
+                        None,
+                    )
+                    if values_disagree(left_value, right_value):
+                        contradicted.setdefault(
+                            key,
+                            f"sources_disagree:{observation_field}:"
+                            f"{left_name}={left_value!r}:{right_name}={right_value!r}",
+                        )
+    return contradicted
 
 
 def apply_observations(
@@ -764,6 +932,7 @@ def apply_observations(
         return ApplyOutcome(halted="draft_closed", last_sequence=state.last_sequence)
 
     held = _held_keys(state)
+    contradicted = _contradicted_keys(pending, held)
 
     applied: list[AppliedEvent] = []
     skipped: list[tuple[int, str]] = []
@@ -771,34 +940,38 @@ def apply_observations(
     seen_this_run: set[str] = set()
 
     for row in pending:
-        if row.participant_id is None:
-            skipped.append((row.id, "no_seat_for_team_external_id"))
-            row.skipped_reason = "no_seat_for_team_external_id"
-            continue
-        if not row.player_label:
-            # The log requires a verbatim label for anything naming a player,
-            # and inventing one from an external id would be a resolution this
-            # package is not entitled to make.
-            skipped.append((row.id, "no_player_label"))
-            row.skipped_reason = "no_player_label"
+        admitted = _admit(row)
+        if isinstance(admitted, str):
+            skipped.append((row.id, admitted))
+            row.skipped_reason = admitted
             continue
 
-        key = normalize_key(row.player_label)
+        key = normalize_key(admitted.player_label)
+        if key in contradicted:
+            # Not ``skipped_reason``: nothing in this package ever clears that,
+            # so a contradiction would burn every row for this player
+            # permanently, and the owner resolving it by typing the pick
+            # himself would still never see them leave the backlog.
+            # ``blocked_reason`` is recomputed every run, so this states the
+            # position now and stops stating it when it stops being true.
+            row.blocked_reason = contradicted[key]
+            continue
         if key in seen_this_run:
-            # Two sources naming the same player in one run. The first has
-            # already been appended; this one is corroboration, not a second
-            # pick. Checked before ``held`` because ``held`` was updated by
-            # that append a moment ago and would otherwise absorb this row as
-            # "already_in_log" — which is the reason meaning *the owner typed
-            # it*, and conflating the two would delete the corroboration signal
-            # from the status screen at the moment it is worth something.
-            row.applied_event_sequence = held[key]
+            # Two sources naming the same player in one run, agreeing on every
+            # fact the board records. The first has already been appended; this
+            # one is corroboration, not a second pick. Checked before ``held``
+            # because ``held`` was updated by that append a moment ago and would
+            # otherwise absorb this row as "already_in_log" — which is the
+            # reason meaning *the owner typed it*, and conflating the two would
+            # delete the corroboration signal from the status screen at the
+            # moment it is worth something.
+            row.applied_event_sequence = held[key].sequence
             row.applied_at = stamp
             row.skipped_reason = "duplicate_within_run"
             skipped.append((row.id, "duplicate_within_run"))
             continue
         if key in held:
-            row.applied_event_sequence = held[key]
+            row.applied_event_sequence = held[key].sequence
             row.applied_at = stamp
             row.skipped_reason = "already_in_log"
             skipped.append((row.id, "already_in_log"))
@@ -813,17 +986,17 @@ def apply_observations(
                 state = draft_service.record_sale(
                     session,
                     draft,
-                    participant_id=row.participant_id,
+                    participant_id=admitted.participant_id,
                     amount=row.amount,
-                    player_label=row.player_label,
+                    player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
                 )
             else:
                 state = draft_service.record_pick(
                     session,
                     draft,
-                    participant_id=row.participant_id,
-                    player_label=row.player_label,
+                    participant_id=admitted.participant_id,
+                    player_label=admitted.player_label,
                     note=f"feed:{row.transport.value}:{row.artifact_key}",
                 )
         except DraftLogError as error:
@@ -852,7 +1025,13 @@ def apply_observations(
 
         row.applied_event_sequence = state.last_sequence
         row.applied_at = stamp
-        held[key] = state.last_sequence
+        # Re-derived from the board rather than assembled from ``row``, so that
+        # what ``held`` says and what the board says cannot differ. Building a
+        # ``_Recorded`` here from the values we happened to pass in would be a
+        # second derivation of the same fact, and every review round on this
+        # package has found a defect in exactly that shape. A draft is a few
+        # hundred rows, so the cost is not worth a correctness argument.
+        held = _held_keys(state)
         seen_this_run.add(key)
         applied.append(
             AppliedEvent(

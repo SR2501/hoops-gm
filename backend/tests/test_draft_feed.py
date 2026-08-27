@@ -18,10 +18,14 @@ counted.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import subprocess
+import textwrap
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -3867,3 +3871,395 @@ def test_every_bound_is_asserted_where_no_other_cause_can_produce_the_refusal() 
     assert len(healthy.instants) == 1
     assert healthy.unrecognised == ()
     assert healthy.instants[0].team_external_id == at_bound_team
+
+
+# ---------------------------------------------------------------------------
+# Round nine: a second reading is only corroboration if it agrees.
+# ---------------------------------------------------------------------------
+
+
+def _auction_draft(session: Session) -> Draft:
+    league = _league(session, draft_type=DraftType.AUCTION, budget=Decimal("200.00"))
+    teams = _teams(session, league, ["t1", "t2"])
+    return _draft(session, league, teams)
+
+
+def _official_saying(team_id: str, amount: float | None, *, sha: str = "officialsha") -> Any:
+    """An official client naming one player, with no coordinate.
+
+    ``sha`` is a parameter because the ingest path dedupes on the artifact
+    key: two readings that returned the same sha would be *one* stored
+    observation, and a test that varied the values while holding the sha
+    constant would be asserting about a row that was never written. That is
+    the "compared a source with itself" defect this project has already
+    shipped once, so the knob is explicit rather than defaulted-and-forgotten.
+    """
+
+    class _Official:
+        def get_draft_picks_with_provenance(
+            self, league_id: str, *, max_age: timedelta | None = None
+        ) -> tuple[list[FantraxDraftPick], str, datetime]:
+            return (
+                [
+                    FantraxDraftPick(
+                        team_id=team_id,
+                        player_id=None,
+                        player_name=JOKIC,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=amount,
+                    )
+                ],
+                sha,
+                NOW,
+            )
+
+    return _Official()
+
+
+def _bridge_saying(session: Session, team_id: str, amount: float) -> None:
+    _capture(
+        session,
+        records=[{"teamId": team_id, "playerName": JOKIC, "overallPick": 1, "amount": amount}],
+        dedupe_key=f"r9-{team_id}-{amount}",
+    )
+
+
+def test_two_sources_naming_different_buyers_put_nobody_on_the_board(
+    session: Session,
+) -> None:
+    """Excludes: a disagreement being applied as though it were corroboration.
+
+    Reading in which the flag is false and the defect is present: none that I
+    can construct. The board is asserted empty for *both* seats, so a fix that
+    merely applied the other reading fails this too — the assertion is about
+    refusing to choose, not about which one was chosen.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t2", 50))
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [0, 0]
+
+    rows = feed_service.load_observations(session, draft)
+    assert all(row.blocked_reason is not None for row in rows)
+    # The reason names the field, both readings, and which source produced
+    # each. A reason of "they disagree" would be true and useless at 7:14pm.
+    reason = rows[0].blocked_reason
+    assert reason is not None
+    assert reason.startswith("sources_disagree:participant_id:")
+    assert "bridge_capture" in reason
+    assert "official_http" in reason
+
+
+def test_two_sources_naming_different_prices_put_nobody_on_the_board(
+    session: Session,
+) -> None:
+    """Excludes: a price disagreement being resolved by whichever sorted first.
+
+    The owner's league is an auction, so the price *is* the fact. A pick
+    recorded at the wrong price is not a lesser error than one recorded
+    against the wrong seat.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t1", 10))
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [0, 0]
+
+    reason = feed_service.load_observations(session, draft)[0].blocked_reason
+    assert reason is not None
+    assert reason.startswith("sources_disagree:amount:")
+    assert "50.00" in reason and "10.00" in reason
+
+
+def test_a_source_silent_on_price_has_not_contradicted_one_that_supplies_it(
+    session: Session,
+) -> None:
+    """Excludes: the refusal being so broad it strands ordinary picks.
+
+    This is the reading in which blocking is *wrong*. The official source
+    omits the amount; that is absence, not disagreement, and a check that
+    cannot tell them apart would block every pick the two sources describe at
+    different levels of detail — which is most of them.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t1", None))
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
+    assert [reason for _, reason in outcome.skipped] == ["duplicate_within_run"]
+
+    state = draft_service.load_state(session, draft)
+    assert [holding.player_label for holding in state.participants[0].holdings] == [JOKIC]
+    assert state.participants[0].holdings[0].price == Decimal("50.00")
+
+
+def test_two_sources_that_agree_still_apply_once_and_corroborate(
+    session: Session,
+) -> None:
+    """Excludes: the disagreement check breaking the corroboration path.
+
+    The regression guard for the fix itself. Running two sources is only worth
+    anything if agreement still produces one pick and one witness.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t1", 50))
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
+    assert [reason for _, reason in outcome.skipped] == ["duplicate_within_run"]
+
+    rows = feed_service.load_observations(session, draft)
+    assert all(row.blocked_reason is None for row in rows)
+    corroboration = next(row for row in rows if row.skipped_reason == "duplicate_within_run")
+    assert corroboration.applied_event_sequence == outcome.applied[0].sequence
+
+
+def test_a_feed_contradicting_what_the_owner_typed_is_a_disagreement_not_a_duplicate(
+    session: Session,
+) -> None:
+    """Excludes: the log being treated as a name to match rather than a reading.
+
+    Found by running the neighbours of the reported case rather than the
+    reported case. The review's finding was two *feed* sources disagreeing;
+    this is a feed source disagreeing with the log, and before the fix it was
+    filed ``already_in_log`` — which reports the collision and throws away the
+    contradiction inside it.
+
+    That matters more than the reported case, not less: the owner typing a
+    pick is the fallback he uses when the feed looks wrong, so this is exactly
+    the moment he is already suspicious and the tool tells him everything
+    agrees.
+    """
+    draft = _auction_draft(session)
+    seat_one = next(seat for seat in draft.participants if seat.team_slot == 1)
+    draft_service.record_sale(
+        session,
+        draft,
+        participant_id=seat_one.id,
+        amount=Decimal("50.00"),
+        player_label=JOKIC,
+        note="the owner typed it",
+    )
+
+    _bridge_saying(session, "t2", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t2", 50))
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+    assert [reason for _, reason in outcome.skipped] == []
+
+    rows = feed_service.load_observations(session, draft)
+    assert all(row.blocked_reason is not None for row in rows)
+    reason = rows[0].blocked_reason
+    assert reason is not None
+    assert reason.startswith("sources_disagree:participant_id:")
+    assert ":log=" in reason
+
+    # What the owner typed is untouched. The feed does not get to move a pick
+    # it disagrees about, and "blocked" must not read as "reverted".
+    state = draft_service.load_state(session, draft)
+    assert [holding.player_label for holding in state.participants[0].holdings] == [JOKIC]
+    assert state.participants[1].holdings == ()
+
+
+def test_a_blocked_contradiction_is_reported_on_the_polled_status(
+    session: Session,
+) -> None:
+    """Excludes: the refusal being invisible to the screen that must show it.
+
+    A pick that silently fails to appear is the failure this whole unit exists
+    to avoid: the owner cannot tell "nobody has bought him yet" from "we
+    refused to say". ``blocked`` is on the *polled* status because a live
+    board polls; returning it only on the ingest response would show it to the
+    userscript and never to him.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t2", 50))
+    feed_service.apply_observations(session, draft)
+
+    status = feed_service.feed_status(session, draft)
+    assert status.pending_count > 0
+    assert any(reason.startswith("sources_disagree:") for reason in status.blocked)
+
+
+def test_a_contradiction_clears_when_the_sources_stop_disagreeing(
+    session: Session,
+) -> None:
+    """Excludes: a blocked pick being burnt permanently.
+
+    ``skipped_reason`` is never cleared by anything in this package, so
+    recording the contradiction there would mean the row could never apply
+    again even once the disagreement was resolved -- and the row would also
+    leave ``pending_count``, so the screen would report nothing outstanding.
+    ``blocked_reason`` is recomputed every run, which is the whole reason the
+    refusal is written there.
+    """
+    draft = _auction_draft(session)
+    _bridge_saying(session, "t1", 50)
+    feed_service.ingest(session, draft, client=_official_saying("t2", 50))
+    assert feed_service.apply_observations(session, draft).applied == ()
+
+    # The disagreeing official reading is superseded by one that agrees. A
+    # distinct sha is essential: the same sha would dedupe to the same stored
+    # observation and this test would pass without a second reading existing.
+    feed_service.ingest(session, draft, client=_official_saying("t1", 50, sha="officialsha2"))
+    outcome = feed_service.apply_observations(session, draft)
+
+    assert len(outcome.applied) == 1
+    state = draft_service.load_state(session, draft)
+    assert [holding.player_label for holding in state.participants[0].holdings] == [JOKIC]
+
+
+def test_the_blocking_facts_are_exactly_what_the_board_is_told() -> None:
+    """Excludes: a fact reaching the board that no source ever had to agree on.
+
+    Derived from the call site rather than from a list someone maintained.
+    ``_BOARD_FACTS`` says which readings must agree before a pick is applied;
+    this reads the *actual arguments* ``apply_observations`` passes to
+    ``record_sale``/``record_pick`` and requires every ``row.`` attribute among
+    them to be either compared or explicitly declared not-comparable.
+
+    So adding an argument is **red until someone classifies it**, which is the
+    only property here that survives me not being the next person to touch it.
+    The round-eight guard of this shape caught a real defect on its first run,
+    which is the only reason I trust this one.
+
+    Name the defect it excludes, then the reading in which it is false and the
+    defect present: the flag is false only if a new ``row.X`` is passed to the
+    draft service *and* is classified. Classification is a deliberate act with
+    a written reason, so the failure mode left is someone classifying wrongly
+    on purpose -- which no check catches and this one does not claim to.
+    """
+    source = textwrap.dedent(inspect.getsource(feed_service.apply_observations))
+    tree = ast.parse(source)
+
+    #: Local bindings that carry payload into the draft service. A rename must
+    #: be added here deliberately. The first version of this walk read ``row``
+    #: alone; refactoring the two optional fields onto an ``_Admitted`` record
+    #: would have left it reading one argument and passing vacuously, so the
+    #: base name is now part of what the test checks rather than part of what
+    #: it assumes.
+    payload_bases = {"row", "admitted"}
+
+    recorded_attrs: set[str] = set()
+    seen_bases: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in {"record_sale", "record_pick"}:
+            continue
+        # Arguments only. Walking the whole call would collect the callee
+        # (``draft_service.record_sale``) as an attribute access too.
+        for passed in [*node.args, *(keyword.value for keyword in node.keywords)]:
+            for argument in ast.walk(passed):
+                if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+                    seen_bases.add(argument.value.id)
+                    if argument.value.id in payload_bases:
+                        recorded_attrs.add(argument.attr)
+
+    # A positive control on the extractor itself. If this is empty the walk
+    # found nothing and every assertion below is vacuously true -- which is
+    # exactly the "the experiment did not happen" reading that has been
+    # mistaken for a result twice on this branch.
+    assert recorded_attrs, "extractor found no payload arguments; the walk is broken, not the code"
+    assert "participant_id" in recorded_attrs
+
+    undeclared_bases = seen_bases - payload_bases
+    assert not undeclared_bases, (
+        f"{sorted(undeclared_bases)} carry attributes into record_sale/record_pick but are not "
+        "declared payload bases. Add them to payload_bases, or this test stops reading them."
+    )
+
+    compared = {observation_field for observation_field, _ in feed_service._BOARD_FACTS}
+
+    #: Passed to the board but deliberately not required to agree, with the
+    #: reason each one is safe. Anything not here and not in ``_BOARD_FACTS``
+    #: fails this test.
+    declared_not_comparable = {
+        # The grouping key itself. Two labels that normalise to one key are
+        # *meant* to be the same player -- accents, punctuation, "Jr." -- and
+        # refusing on a verbatim difference would block precisely the case
+        # normalisation exists to allow.
+        "player_label",
+        # Provenance. These are *required* to differ: two readings from one
+        # transport with one artifact key are one reading. Comparing them
+        # would flag every corroboration as a contradiction.
+        "transport",
+        "artifact_key",
+    }
+
+    unclassified = recorded_attrs - compared - declared_not_comparable
+    assert not unclassified, (
+        f"{sorted(unclassified)} reach the board but are neither compared in _BOARD_FACTS "
+        "nor declared not-comparable. Decide which, and write down why."
+    )
+
+    # And the converse: a compared field that no longer reaches the board is a
+    # bound on nothing, which reads as protection and is not.
+    stale = compared - recorded_attrs
+    assert not stale, f"{sorted(stale)} are compared but no longer passed to the board"
+
+
+def test_the_official_source_is_not_wired_into_the_running_app() -> None:
+    """Excludes: the parser seam reaching the board without anyone deciding to.
+
+    ``docs/handoff.md`` records that ``parse_draft_picks`` normalises values
+    the bridge recogniser refuses -- ``{"amount": 0, "bid": 10}`` becomes a $10
+    sale, ``{"overallPick": 1.9}`` becomes pick 1. Three tests in this file pin
+    that. The reason it is not a live defect is **not** that the bridge gates
+    it: an official observation reaches the board with no bridge capture
+    present at all. It is that nothing constructs the official client, so
+    ``_draft_pick_source`` returns ``None`` on every request.
+
+    That is a wiring fact, and wiring facts change quietly. This asserts the
+    only occurrence of ``fantrax_official_client`` in the tree is the read in
+    the route -- so the commit that arms the seam is the commit that turns this
+    red, and whoever writes it is told what they have just made reachable.
+
+    Reading in which the flag is false and the defect is present: someone
+    constructs a client and attaches it under a *different* attribute name.
+    This does not exclude that, and says so rather than implying otherwise.
+
+    Scoped to ``backend/src`` deliberately, and the first run taught me why:
+    unscoped it matched its own failure message and this docstring, four hits
+    for one wiring fact. Test code that attaches a stub to ``app.state`` is
+    also not production wiring, so ``src`` is both the scope that works and
+    the scope that is meant.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        ["git", "grep", "-n", "fantrax_official_client", "--", "backend/src"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # ``git grep`` exits 1 for "no matches". Zero matches would mean the read
+    # itself is gone and this test is asserting about nothing.
+    assert completed.returncode == 0, "no occurrences at all; this guard is measuring nothing"
+
+    occurrences = [line for line in completed.stdout.splitlines() if line.strip()]
+    assert len(occurrences) == 1, (
+        "fantrax_official_client is now referenced in more than one place:\n"
+        + "\n".join(occurrences)
+        + "\n\nIf this is the commit that wires the official client into the app, read "
+        "test_the_official_coercers_do_not_survive_the_parser_that_feeds_them first: "
+        "the official path records values the bridge path refuses, and wiring it makes "
+        "those reachable on the board."
+    )
+    assert "getattr(request.app.state" in occurrences[0]
