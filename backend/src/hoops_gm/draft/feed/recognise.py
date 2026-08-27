@@ -629,6 +629,8 @@ def _accept_list(
         if team is None or team not in context.team_external_ids:
             return [], "no_seat_anchor"
         identity = _player_identity(record)
+        if isinstance(identity, _Unreadable):
+            return [], "player_external_id_unreadable"
         if identity is None:
             return [], "record_names_no_player"
         if identity == team:
@@ -684,16 +686,39 @@ def _has_draft_coordinate(record: dict[str, Any], kind: InstantKind) -> bool:
     )
 
 
-def _player_identity(record: dict[str, Any]) -> str | None:
-    """The record's own claim to be about a player, or ``None``.
+def _player_identity(record: dict[str, Any]) -> str | _Unreadable | None:
+    """The record's own claim to be about a player, or why there isn't one.
 
     Only unambiguous keys count. :data:`AMBIGUOUS_NAME_ALIASES` is deliberately
     not consulted here — that is the whole distinction, and consulting it would
     restore the defect this split exists to remove.
+
+    **This is a caller that falls back to another key**, which is precisely the
+    caller :func:`_as_text` documents as unsafe for itself. It used
+    :func:`_as_text` anyway, so a record supplying a ``playerId`` this module
+    could not read — over the column's 64 characters, or a list, dict or bool —
+    fell straight through to the label and stored ``None``, making *supplied
+    but refused* indistinguishable from *never supplied*.
+
+    Driven before the fix: two captures naming the same 5,000-character
+    ``playerId`` under ``"Nikola Jokic"`` and ``"The Joker"`` both applied, the
+    seat held one player twice and ``remaining_budget`` read ``100.00`` where
+    ``150.00`` was correct — with nothing blocked, nothing skipped, and
+    ``fields_dropped`` naming only the ordinal. The identity guard added the
+    round before could not fire, because by the time it looked the evidence it
+    needed had been erased here.
+
+    So the unreadable case is returned as itself. The list admission refuses the
+    capture and names the field, which loses a scan and is the trade this module
+    makes everywhere: a blank board you can diagnose beats a populated one that
+    is quietly lying.
     """
-    return _as_text(_first(record, "player_external_id"), limit=MAX_EXTERNAL_ID_CHARS) or _as_text(
-        _first(record, "player_label"), limit=MAX_LABEL_CHARS
-    )
+    external = _read_text(_first(record, "player_external_id"), limit=MAX_EXTERNAL_ID_CHARS)
+    if isinstance(external, str):
+        return external
+    if _first(record, "player_external_id") is not None:
+        return external
+    return _as_text(_first(record, "player_label"), limit=MAX_LABEL_CHARS)
 
 
 def _player_label(record: dict[str, Any]) -> str | None:

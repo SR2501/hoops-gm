@@ -837,8 +837,36 @@ def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
     Absence is not disagreement: a row carrying no external id cannot conflict
     with one that does, which is :func:`values_disagree`'s rule applied to
     identity rather than restated.
+
+    **A source correcting itself is not a source disagreeing with itself.**
+    That rule is stated six lines into :func:`_contradicted_keys` and was not
+    applied here, so a bridge capture that renamed ``p123`` from ``"The Joker"``
+    to ``"Nikola Jokic"`` blocked the player permanently: driven, the correct
+    reading republished twice more and ``applied`` stayed ``0``, ``holdings``
+    stayed empty and ``pending_count`` climbed to 3, while reconciliation
+    correctly exposed only the newest reading. **The owner has no manual
+    fallback**, so a player the feed can never record is a real loss and not
+    merely a visible one.
+
+    The collapse is deliberately asymmetric, and the asymmetry is the argument:
+
+    * **One id, changing labels** collapses to the newest reading per transport.
+      An id is a stable identifier and a label is display text, so a later
+      reading of the same id supersedes the earlier one. The stale *key* is then
+      blocked too -- otherwise it applies as a second player, which is the
+      double-debit this function exists to stop, arriving through the fix for
+      it.
+    * **One label, several ids** does not collapse at all. Two distinct ids are
+      evidence of two distinct players, so superseding one would silently drop a
+      pick -- round ten's mirror defect returning wearing the fix's clothes.
+
+    Within a single artifact the one-id-many-labels case cannot arise: list
+    admission already refuses a list carrying one id twice
+    (``duplicate_player_in_list``). So that direction only ever fires across
+    artifacts, where it is a correction, or across transports, where it is a
+    genuine conflict and still blocks.
     """
-    labels_by_id: dict[str, set[str]] = defaultdict(set)
+    readings: list[tuple[DraftFeedObservation, str, str]] = []
     ids_by_label: dict[str, set[str]] = defaultdict(set)
 
     for row in pending:
@@ -849,8 +877,18 @@ def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
         if not external_id:
             continue
         key = normalize_key(admitted.player_label)
-        labels_by_id[external_id].add(key)
+        readings.append((row, external_id, key))
         ids_by_label[key].add(external_id)
+
+    current: dict[tuple[str, str], str] = {}
+    for row, external_id, key in sorted(
+        readings, key=lambda item: (item[0].observed_at, item[0].id)
+    ):
+        current[(row.transport.value, external_id)] = key
+
+    labels_by_id: dict[str, set[str]] = defaultdict(set)
+    for (_transport, external_id), key in current.items():
+        labels_by_id[external_id].add(key)
 
     conflicts: dict[str, str] = {}
     for external_id, keys in labels_by_id.items():
@@ -868,6 +906,10 @@ def _identity_conflicts(pending: list[DraftFeedObservation]) -> dict[str, str]:
             key,
             f"identity_conflict:one_label_many_player_ids:{key}:{'|'.join(sorted(external_ids))}",
         )
+    for row, external_id, key in readings:
+        live = current[(row.transport.value, external_id)]
+        if key != live:
+            conflicts.setdefault(key, f"identity_superseded:{external_id}:{key}->{live}")
     return conflicts
 
 

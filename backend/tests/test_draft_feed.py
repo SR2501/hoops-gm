@@ -67,6 +67,7 @@ from hoops_gm.draft.feed.recognise import (
     _as_text,
     _player_label,
 )
+from hoops_gm.identity.names import normalize_key
 from hoops_gm.ingest.fantrax_official.models import FantraxDraftPick
 from hoops_gm.ingest.fantrax_official.parsers import parse_draft_picks
 
@@ -3918,6 +3919,65 @@ def _official_saying(team_id: str, amount: float | None, *, sha: str = "official
     return _Official()
 
 
+def _bridge_naming(
+    session: Session,
+    team_id: str,
+    amount: float,
+    *,
+    key: str,
+    label: str,
+    player_id: object | None = None,
+) -> None:
+    """One bridge capture naming a player, optionally with the source's id.
+
+    ``player_id`` is typed ``object`` because the interesting inputs are the
+    ones a payload can supply and this module cannot read -- an over-long
+    string, a list, a bool -- and typing it ``str`` here would make those
+    unwritable in the very tests that exist to drive them.
+    """
+    record: dict[str, Any] = {
+        "teamId": team_id,
+        "playerName": label,
+        "overallPick": 1,
+        "amount": amount,
+    }
+    if player_id is not None:
+        record["playerId"] = player_id
+    _capture(session, records=[record], dedupe_key=key)
+
+
+def _official_naming(team_id: str, amount: float, *, player_id: str, label: str) -> Any:
+    """An official client naming one player *with* the source's own id.
+
+    Separate from :func:`_official_saying` because that one hardcodes
+    ``player_id=None``: a cross-source identity conflict cannot be driven with
+    a helper that never supplies an identity, and reusing it would have made
+    the test pass by never reaching the code it names.
+    """
+
+    class _Official:
+        def get_draft_picks_with_provenance(
+            self, league_id: str, *, max_age: timedelta | None = None
+        ) -> tuple[list[FantraxDraftPick], str, datetime]:
+            return (
+                [
+                    FantraxDraftPick(
+                        team_id=team_id,
+                        player_id=player_id,
+                        player_name=label,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=amount,
+                    )
+                ],
+                f"officialsha-{player_id}-{label}",
+                NOW,
+            )
+
+    return _Official()
+
+
 def _bridge_saying(session: Session, team_id: str, amount: float) -> None:
     _capture(
         session,
@@ -4270,50 +4330,31 @@ def test_the_official_source_is_not_wired_into_the_running_app() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _bridge_naming(
-    session: Session,
-    team_id: str,
-    amount: float,
-    *,
-    key: str,
-    label: str,
-    player_id: str | None = None,
-) -> None:
-    """One bridge capture naming a player, optionally with the source's id.
-
-    ``player_id`` is optional because absence is the interesting control: a row
-    that carries no external id must not be able to conflict with one that
-    does.
-    """
-    record: dict[str, Any] = {
-        "teamId": team_id,
-        "playerName": label,
-        "overallPick": 1,
-        "amount": amount,
-    }
-    if player_id is not None:
-        record["playerId"] = player_id
-    _capture(session, records=[record], dedupe_key=key)
-
-
-def test_one_player_id_under_two_labels_is_refused_not_double_counted(
+def test_one_player_id_relabelled_by_one_source_is_a_correction_not_a_conflict(
     session: Session,
 ) -> None:
     """Excludes: one player reaching the board twice and being paid for twice.
 
     This is the *agreeing* case, which is why it matters. The two readings name
     the same seat and the same price, so nothing disagrees, nothing is skipped
-    and no channel reports a problem -- and before this fix the board held the
-    player under both labels and the seat's ``remaining_budget`` read
+    and no channel reports a problem -- and before the identity guard the board
+    held the player under both labels and the seat's ``remaining_budget`` read
     ``100.00`` where ``150.00`` was correct. Every bid the owner reasons about
     after that is computed from a bank wrong by the price of a player.
 
-    Reading in which the flag is false and the defect is present: none I can
-    construct for *this* payload. The budget is asserted directly rather than
-    inferred from the holdings, so a fix that deduplicated the display while
-    still debiting twice fails this. What it does not cover is two labels for
-    one player arriving with **no** external id -- there is no signal to detect
-    that with, and this test does not claim to.
+    The guard's first form blocked both readings, which stopped the double
+    debit and replaced it with a player the feed could **never** record: the
+    stale reading stayed pending and kept contradicting, so republishing the
+    correct one changed nothing. The owner has no manual fallback, so that is a
+    loss and not merely a visible one.
+
+    A source correcting itself is therefore a correction. The newest reading per
+    transport wins, the stale *key* is blocked so it cannot apply as a second
+    player, and the reason names what replaced it.
+
+    Reading in which the flag is false and the defect is present: two labels for
+    one player arriving with **no** external id. There is no signal to detect
+    that with, and this does not claim to.
     """
     draft = _auction_draft(session)
     _bridge_naming(session, "t1", 50, key="r10-a", label="Nikola Jokic", player_id="p123")
@@ -4321,24 +4362,120 @@ def test_one_player_id_under_two_labels_is_refused_not_double_counted(
     feed_service.ingest(session, draft, client=None)
 
     outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
+
+    state = draft_service.load_state(session, draft)
+    assert [len(seat.holdings) for seat in state.participants] == [1, 0]
+    # The budget assertion is the point. A fix that deduplicated the display
+    # while still debiting twice passes every other check here.
+    assert [seat.remaining_budget for seat in state.participants] == [
+        Decimal("150.00"),
+        Decimal("200.00"),
+    ]
+
+    rows = feed_service.load_observations(session, draft)
+    reasons = [row.blocked_reason for row in rows]
+    assert reasons.count(None) == 1
+    stale = next(reason for reason in reasons if reason is not None)
+    # Tied to what actually reached the board rather than to a fixed direction.
+    # Which capture the fixture happens to order last is not the property under
+    # test, and asserting it would let this pass while the wrong reading won.
+    live_key = normalize_key(state.participants[0].holdings[0].player_label)
+    superseded_key = next(key for key in ("nikola jokic", "the joker") if key != live_key)
+    assert stale == f"identity_superseded:p123:{superseded_key}->{live_key}"
+
+
+def test_two_sources_disagreeing_about_a_player_id_still_block(session: Session) -> None:
+    """Excludes: the supersession above swallowing a genuine cross-source conflict.
+
+    Newest-per-transport is a *within-source* collapse. Applied across sources
+    it would become the "prefer the newer source" preference this package
+    refuses to make everywhere else -- and it would do so silently, since the
+    loser leaves no row.
+
+    Reading in which the flag is false and the defect is present: none for two
+    transports. It says nothing about three, where the newest two agreeing
+    against an older third is a case no fixture exists for.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r11-x", label="The Joker", player_id="p9")
+    feed_service.ingest(
+        session, draft, client=_official_naming("t1", 50, player_id="p9", label="Nikola Jokic")
+    )
+
+    outcome = feed_service.apply_observations(session, draft)
     assert outcome.applied == ()
 
     state = draft_service.load_state(session, draft)
     assert [len(seat.holdings) for seat in state.participants] == [0, 0]
+
+    rows = feed_service.load_observations(session, draft)
+    assert all(
+        (row.blocked_reason or "").startswith("identity_conflict:one_player_id_many_labels:p9:")
+        for row in rows
+    )
+
+
+def test_a_supplied_but_unreadable_player_id_refuses_the_capture(session: Session) -> None:
+    """Excludes: *supplied but refused* being stored as *never supplied*.
+
+    ``_player_identity`` fell back to the label through :func:`_as_text`, whose
+    own docstring names a falling-back caller as the unsafe one. Driven before
+    the fix: two captures carrying the same 5,000-character ``playerId`` under
+    two labels both applied, the seat held one player twice and
+    ``remaining_budget`` read ``100.00`` where ``150.00`` was correct, with
+    nothing blocked, nothing skipped, and ``fields_dropped`` naming only the
+    ordinal. The identity guard could not fire because the evidence it needed
+    had already been erased.
+
+    Refusing the capture loses a scan. That is the trade this module makes
+    everywhere: a blank board you can diagnose beats a populated one quietly
+    lying, and the next capture is seconds away.
+
+    Reading in which the flag is false and the defect is present: an id that is
+    readable but *wrong* -- a source publishing one player's id against another
+    player's name. Nothing here detects that.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r11-a", label="Nikola Jokic", player_id="x" * 5000)
+    _bridge_naming(session, "t1", 50, key="r11-b", label="The Joker", player_id="x" * 5000)
+    result = feed_service.ingest(session, draft, client=None)
+
+    bridge = next(
+        source for source in result.sources if source.transport is DraftFeedTransport.BRIDGE_CAPTURE
+    )
+    assert bridge.instants_recognised == 0
+    assert bridge.observations_written == 0
+    # The reason names the field. "unrecognised" alone would be true and
+    # useless with a clock running.
+    assert any(shape.reason == "player_external_id_unreadable" for shape in bridge.unrecognised)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert outcome.applied == ()
+    state = draft_service.load_state(session, draft)
     assert [seat.remaining_budget for seat in state.participants] == [
         Decimal("200.00"),
         Decimal("200.00"),
     ]
 
+
+def test_a_readable_numeric_player_id_is_not_treated_as_unreadable(session: Session) -> None:
+    """Control: the refusal above must not fire on an ordinary id.
+
+    Without this, a fix that refused every capture carrying a ``playerId``
+    would pass the test above while feeding nothing to the board at all -- and
+    a board that never fills looks exactly like a draft that has not started.
+    ``123`` is the case that matters, because a JSON number is what a real feed
+    is most likely to send.
+    """
+    draft = _auction_draft(session)
+    _bridge_naming(session, "t1", 50, key="r11-c", label="Nikola Jokic", player_id=123)
+    feed_service.ingest(session, draft, client=None)
+
+    outcome = feed_service.apply_observations(session, draft)
+    assert len(outcome.applied) == 1
     rows = feed_service.load_observations(session, draft)
-    assert all(row.blocked_reason is not None for row in rows)
-    reason = rows[0].blocked_reason
-    assert reason is not None
-    # The reason names the id and both labels. "identity conflict" alone would
-    # be true and useless with a clock running.
-    assert reason.startswith("identity_conflict:one_player_id_many_labels:p123:")
-    assert "nikola jokic" in reason
-    assert "the joker" in reason
+    assert [row.player_external_id for row in rows] == ["123"]
 
 
 def test_two_player_ids_under_one_label_are_refused_not_deduplicated(
