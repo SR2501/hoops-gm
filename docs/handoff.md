@@ -30002,7 +30002,70 @@ parsed `N failed` counts as CAUGHT, files asserted byte-identical afterwards,
 baseline green before anything is touched, and SKIP or crash counted as failure
 rather than success.
 
-MUTATION_RESULTS_PLACEHOLDER
+```
+baseline: 134 passed, rc=0
+
+[M01 the original defect: counted at POST, never stored, absent from GET]  CAUGHT
+[M02 the refusal is dropped before it is even counted]                     CAUGHT
+[M03 the row is stored but says nothing, so it is pending and appliable]   CAUGHT
+[M04 a refused record keeps a label, so it joins identity matching]        CAUGHT
+[M05 nameless rows counted as readings (freshness false all-clear)]        CAUGHT
+[M06 the official path goes back to dropping an unidentifiable record]     CAUGHT
+[M07 CONTROL: every record refused, so the board never fills]              CAUGHT
+[M08 a refusal counted as a reading the recogniser understood]             CAUGHT
+[M09 the refusal reuses the admitted record's locator slot]                CAUGHT
+[M10 the model CHECK never widened; nameless row refused at flush]         CAUGHT
+[M11 the migration never widened; a migrated database refuses the row]     CAUGHT
+[M12 the downgrade deletes rows that name a player]                        CAUGHT
+[M13 the official path stops telling the two refusals apart]               CAUGHT
+
+=== 13 mutations: 13 caught, 0 survived, 0 harness failures ===
+```
+
+Run as `python scripts/mutate_draft_feed_identity.py` from the repository root;
+`python scripts/mutate_draft_feed_identity.py M12` re-runs one. Each verdict
+names the test that went red, because `1 failed` says *something* broke and not
+that the *right* thing broke.
+
+**That table is the second sweep, and the first one disagreed with it. Read
+this before quoting the 13/13.** The first honest sweep reported **M12
+SURVIVED**, 12 of 13. M12 was then driven four further times — standalone
+through the harness, by hand with `-k 0021`, by hand with the harness's exact
+two-file `-x` command, and by hand immediately after M11 to test an ordering
+hypothesis — and it was **CAUGHT every time**, failing
+`test_0021_is_reversible_and_takes_only_the_rows_it_permitted` with
+`assert [] == ['Nikola Jokic']`. The second full sweep then caught it too.
+
+So the test covers the mutation and the survivor was a harness flake. **I could
+not find the mechanism**, and I am not going to invent one: I ruled out
+mutation-ordering (driven), a stale anchor (the harness refuses an anchor that
+does not match exactly once, and refuses a mutation that changes nothing), and
+a CRLF multi-line anchor problem (M09 and M10 are multi-line and were caught in
+both sweeps). What remains is unexplained non-determinism in a harness whose
+whole job is to be more trustworthy than the suite it wraps.
+
+**The honest reading of this unit's mutation evidence is therefore "13/13 on
+one sweep, 12/13 on another, one unexplained flake", not "13/13".** A harness
+that answers differently on two identical runs is a harness whose green means
+less than it appears to, and that is worth more to the next lane than a clean
+number would have been.
+
+That flake is also **the third instrumentation finding on this unit tonight**,
+which is the pattern rather than the incident:
+
+1. A first sweep reported a clean **13/13 that was entirely spurious** — I was
+   editing `test_draft_feed.py` while it ran, a `SyntaxError` made every run
+   red, and `classify()` scored red as CAUGHT. `gates.md` already says a verdict
+   on a tree that moved underneath it is not a verdict; I was the author who
+   moved it, which is the half of that rule I had read as being about
+   reviewers. `classify()` now scores a collection or import error as a harness
+   failure.
+2. An interrupted sweep **left an M12 mutation on disk** — `" WHERE 1 = 1"` in
+   the committed migration — because the restore is in a `finally` that a
+   killed process never reaches. Caught by `git status` on resuming, not by
+   anything I built. Any harness that mutates a tracked file needs `git diff`
+   checked after it, and mine does not do that for you.
+3. The unexplained M12 flake above.
 
 `M01` is the one that matters: it reverts to exactly the state the backlog
 records - the refused record still counted on the `POST` response, and no
@@ -30016,7 +30079,22 @@ that never fills looks exactly like a draft that has not started.
 
 Run from `backend/` with `PYTHONPATH=$PWD/src`:
 
-GATE_RESULTS_PLACEHOLDER
+```
+ruff check .          All checks passed!            (228 files)
+ruff format --check . 228 files already formatted
+mypy                  Success: no issues found      (222 source files)
+pytest                2274 passed, 1 skipped, 41 deselected   (17m17s)
+pytest tests/test_draft_feed.py tests/test_migrations.py
+                      134 passed
+```
+
+The full-suite figure is from the run at `22ed70b`'s tree, which had one
+failure — the adapter contract test catching the emission ordering — fixed in
+that commit; the `2274 passed` line is the count from that run with the one
+failure excluded, so **treat it as `2274 passed + 1 then-failing`, not as a
+clean full-suite run at the final tree.** The 134 is measured at the final
+tree. The full suite has not been re-run end to end since, which is the honest
+statement and the reason CI matters here rather than my local numbers.
 
 Code gate, and the Adapter gate as argued above. No Model gate: nothing here
 produces a number a decision rests on. No Automation gate: this is the read
@@ -30047,7 +30125,82 @@ burned permanently, and re-ingesting the same capture dedupes against the
 burned row rather than retrying it. So it is not "the pick is missing tonight";
 it is "the pick is unrecoverable without the owner typing it".
 
+### Where this stopped, and what is not done
+
+**No PR was opened and nothing was merged.** The coordinator's delegated
+authority expired at 03:45 CT and it was ~04:50 when the work reached a
+committable state; spending that authority retroactively is not mine to do.
+The branch `sr2501-draft-feed-unreadable-id-surfacing` is pushed at `4808fe7`,
+three commits on top of `431cc71`, working tree clean. **Opening the PR is the
+owner's call.**
+
+So the unit is *complete and unlanded*, and CI has never run on it. Every gate
+figure here is local and single-engine. In particular the Postgres half of
+ADR-001 has not been exercised at all, and migration `0021` is the change most
+exposed to that.
+
+### Things I tried that failed, which are the least likely to be in a commit
+
+- **`batch_op.drop_constraint` with the expanded constraint name.** Passing
+  `ck_draft_feed_observations_feed_names_a_player` gets it expanded a *second*
+  time by the metadata naming convention, producing
+  `ck_draft_feed_observations_ck_draft_feed_observations_feed_names_a_player`
+  and `ValueError: No such constraint`. Pass the **bare** name,
+  `feed_names_a_player`, to both `drop_constraint` and
+  `create_check_constraint`. This broke fourteen migration tests at once, which
+  is the good outcome — had it broken only the two new ones I would have
+  suspected my tests.
+- **Seeding `leagues` and `drafts` from memory in a raw-SQL test.** Both have
+  NOT NULL columns with no default that are easy to forget (`scoring_type`,
+  `is_active` on `leagues`; `is_mock` on `drafts`), and there is no `status` or
+  `last_sequence` column on `drafts` at all — I wrote both from expectation and
+  got `NOT NULL constraint failed`. Read `PRAGMA table_info` against a migrated
+  database rather than guessing; `_seed_draft_for_feed` now holds the right set.
+- **Carrying `skipped_reason` from the row back onto the instant in
+  `_to_instant`, and having `matching_key` return `None` for any instant
+  carrying one.** This is the obvious design, it type-checks, and it is wrong —
+  see above. If a later lane finds `_to_instant`'s omission surprising and
+  "fixes" it, that is the defect returning.
+- **Asserting the emission order of instants without checking it.** My adapter
+  contract test asserted refusals came second; the implementation emitted them
+  first. It cost a full 17-minute suite run to find, and it is the one thing
+  here a cheaper test would have caught sooner.
+
+### Answers to the specific handover questions
+
+- **The mirror fix on `recognise_official_draft_picks` has its own tests**, two
+  of them, and is not covered only incidentally:
+  `test_the_official_path_surfaces_a_refused_identity_too` drives it end to end
+  through `ingest` and asserts the reason reaches `feed_status`, and
+  `test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path`
+  gained assertions pinning that a record losing *both* identifiers becomes a
+  skipped instant naming nobody rather than being dropped, and that a record
+  naming nobody at all gets the *different* reason `record_names_no_player`.
+  M06 and M13 inject against exactly those.
+- **Migration `0021` up/down/up, beyond what the file says.** Driven on SQLite
+  only, by `test_0021_is_reversible_and_takes_only_the_rows_it_permitted`: head
+  → insert two rows → `downgrade 0020` → assert only the named row survives →
+  assert the narrow rule genuinely refuses a nameless row again → `upgrade head`
+  → assert it is admitted once more. The assertion that matters is the *second*
+  one: without it the test passes for a downgrade that dropped the constraint
+  entirely instead of restoring it. What is **not** established is any of this
+  on Postgres, where the batch operation compiles to `DROP CONSTRAINT` /
+  `ADD CONSTRAINT` with no table rebuild — a different code path, and the one
+  ADR-001 exists for.
+
 ### What I could not verify
+
+- **The mutation evidence disagrees with itself and I could not resolve it.**
+  One full sweep says 12/13 with M12 surviving; a second identical sweep says
+  13/13; M12 driven four other ways is caught every time. The test is sound —
+  that part is driven. The harness is not deterministic and I could not find
+  why. *Driven that the test catches it; unexplained that the harness once said
+  otherwise.*
+- **The full suite has not been run end to end at the final tree.** The
+  `2274 passed` figure is from `22ed70b`'s tree and included one then-failing
+  test fixed in that same commit. Since then I have run
+  `test_draft_feed.py` + `test_migrations.py` (134 passed), lint, format and
+  mypy — not the whole suite. *Measured on an earlier tree, not the final one.*
 
 - **Whether any of this fires on a real Fantrax draft-room payload.** No such
   payload has ever been observed. Every fixture is constructed. Unchanged from
@@ -30097,3 +30250,6 @@ it is "the pick is unrecoverable without the owner typing it".
 
 **Next:** `per-team-auction-budgets`, which is now the thing standing between
 the owner and `draft-tracker`.
+the owner and `draft-tracker`. And **this branch needs a PR opened by the
+owner** — it is finished work sitting unlanded, and nothing in CI has ever seen
+it.

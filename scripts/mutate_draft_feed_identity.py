@@ -209,6 +209,17 @@ def classify(rc: int, out: str) -> str:
 
 
 def main() -> int:
+    # Optional argv filter, so one mutation can be re-run without a full sweep.
+    # Added because a sweep reported M12 SURVIVED while the same mutation,
+    # driven by hand with the identical pytest command, went red twice --
+    # "the harness disagrees with the thing it wraps" is not answerable by
+    # reading either one.
+    wanted = sys.argv[1:]
+    selected = [m for m in MUTATIONS if not wanted or any(w in m[0] for w in wanted)]
+    if not selected:
+        print(f"no mutation matches {wanted}")
+        return 1
+
     print("=== baseline ===")
     rc, out = run(TESTS, stop_early=False)
     base = re.search(r"(\d+) passed", out)
@@ -223,7 +234,7 @@ def main() -> int:
     }
 
     caught = survived = harness = 0
-    for name, rel, old, new in MUTATIONS:
+    for name, rel, old, new in selected:
         path = SRC / rel
         text = originals[rel]
         found = text.count(old)
@@ -255,7 +266,7 @@ def main() -> int:
         assert (SRC / rel).read_text(encoding="utf-8") == text, f"{rel} not restored"
 
     print(
-        f"\n=== {len(MUTATIONS)} mutations: {caught} caught, "
+        f"\n=== {len(selected)} mutations: {caught} caught, "
         f"{survived} survived, {harness} harness failures ==="
     )
     return 0 if survived == 0 and harness == 0 else 1
