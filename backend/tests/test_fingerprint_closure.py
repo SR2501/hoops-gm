@@ -18,6 +18,7 @@ import ast
 import importlib.util
 import io
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -25,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "fingerprint_closure.py"
 
 
-def _load():
+def _load() -> ModuleType:
     spec = importlib.util.spec_from_file_location("fingerprint_closure", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
