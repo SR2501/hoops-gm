@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 118 pending - 179 total**
+**60 done - 0 blocked - 120 pending - 180 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1229,11 +1229,68 @@ Userscript build pipeline, @match rules for fantrax.com, shared-secret handshake
 
 ## Blocked
 
+### `fantrax-auction-capture` - Capturing a Fantrax auction draft room before the real one
+
+- [ ] **pending**
+- **Depends on:** `bridge-capture`
+
+**The snake capture on 2026-08-28 tested half the recogniser. This is the other
+half, and it is calendar-blocked rather than unavailable.** Fantrax will run NBA
+auction mocks closer to the season; they simply have not started. That makes this
+a *scheduling* problem with a known resolution, not an open question.
+
+**What the snake mock could not touch.** It ran with `isAuction=false`, so
+nominations, bids, prices, budget derivation and everything Route B rewrote on
+2026-08-27 remain **completely unobserved**. `FIELD_ALIASES["amount"]` guesses
+`amount`, `bid`, `salary`, `price`, `winningBid` — five names, none confirmed
+against a real payload, and the same guessing that produced `teamId` where
+Fantrax sends `draftTeamId`.
+
+**The schedule risk, stated plainly because it is the point of filing this
+early.** One afternoon on a snake mock found a defect that would have emptied the
+board — a missing team alias, invisible to every test. The auction path carries
+*more* guessed field names than the snake path did, has had a substantial
+behaviour change land since (Route B), and has never been driven at all. If a
+Fantrax auction mock only opens in early October, the window between "first
+auction payload seen" and 18 October could be **days**, with no slack to fix what
+it reveals.
+
+**So this is not a task to schedule; it is a trigger to watch.** The moment
+Fantrax auction lobbies open, run one — ahead of any other capture, ahead of
+polish, and treat whatever it refuses as the highest-priority defect in the
+project. `docs/mocks/instrumented-capture.md` is the procedure; record the format
+as auction and note that identity results transfer only if the mock is NBA.
+
+**Distinct from `blind-mocks`, and they must not be merged.** That item wants
+*uncontaminated market prices* and is satisfied by ESPN today. This one wants
+*Fantrax payload shape* and can only ever be satisfied by Fantrax. Running one
+does not discharge the other.
+
 ### `blind-mocks` - Running blind mocks when auction lobbies open
 
-- [ ] **blocked**
+- [ ] **pending**
 
-EXTERNALLY BLOCKED 2026-08-17: the owner found no site currently offering live mocks, including auction mocks. Do not manufacture simulated clearing prices and call them market evidence. When auction lobbies open, run observation-only mocks without this tool and capture each using docs/mocks/TEMPLATE.md. They remain the uncontaminated control group for R38, the counterfactual baseline for measuring whether the tool helps, and the empirical AAV evidence R37 needs. League configuration is mandatory on every capture.
+**UNBLOCKED 2026-08-28.** The block below rested on a premise that has stopped
+being true: the owner reports **ESPN is running live NBA auction mocks now**,
+while Fantrax has none. Everything this item asks for is platform-agnostic — it
+never named Fantrax — so ESPN satisfies it in full.
+
+**Run them on ESPN, capture by hand with `docs/mocks/TEMPLATE.md`, and do not
+build collection tooling.** Three reasons, and the third is the one that decides
+it: a scraper for a platform the owner does not draft on is throwaway code while
+`draft-board-dom-parser` is the critical path to 4 October; the item's own method
+is a manual capture form; and it explicitly requires the mock be run **without
+this tool**, so automation aimed at *our* side of the loop is beside the point.
+
+**This is perishable.** Auction lobbies are seasonal, the corpus only accumulates
+while they are open, and prices sharpen as the season approaches. A mock not run
+in September cannot be run in November.
+
+**Do not let the tool near it.** R38's circularity risk is the whole reason this
+is the control group: once bidding is informed by our own values, the corpus
+contains our own output and stops being independent evidence.
+
+EXTERNALLY BLOCKED 2026-08-17 (superseded, kept for the record): the owner found no site currently offering live mocks, including auction mocks. Do not manufacture simulated clearing prices and call them market evidence. When auction lobbies open, run observation-only mocks without this tool and capture each using docs/mocks/TEMPLATE.md. They remain the uncontaminated control group for R38, the counterfactual baseline for measuring whether the tool helps, and the empirical AAV evidence R37 needs. League configuration is mandatory on every capture.
 
 ---
 
