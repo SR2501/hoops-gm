@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 1 blocked - 109 pending - 170 total**
+**60 done - 1 blocked - 110 pending - 171 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1670,6 +1670,40 @@ already recorded for the scoring profile in `ownership.md`.
 - **Depends on:** `punt-builds`, `userscript-foundation`
 
 Shadow-DOM overlay rendering hoops-gm recommendations directly on Fantrax pages, so decisions surface where they are made.
+
+### `bridge-status-strip` - Showing, on the Fantrax page, whether the bridge is alive
+
+- [ ] **pending**
+- **Depends on:** `userscript-foundation`, `bridge-capture`
+
+**Split out of `bridge-overlay` on 2026-08-28 because the two have different
+dependencies and only one of them is reachable before draft day.**
+`bridge-overlay` renders *recommendations*, so it sits behind `punt-builds` and
+the whole valuation chain — seven unbuilt items deep, and it will not exist on
+18 October. This item renders only *what has already been captured*: picks seen,
+last capture time, paired or not, and any refusal reason the feed returned. That
+needs no valuation, no `p(play)`, and no projection. Every input already exists.
+
+**The argument for it is that the bridge's failure mode is silence.** An
+unpaired userscript, a refused envelope and a draft that has not started are
+indistinguishable from the Fantrax page, which is the page the owner is looking
+at. `docs/mocks/instrumented-capture.md` says an unpaired script is "silently
+useless, which looks identical to a draft that has not started", and the owner's
+Q12 answer names losing track of the draft as the thing that would make him
+close the laptop. A status strip does not prevent that failure; it makes it
+*visible where he already is*, which is the only place a silent failure can be
+noticed in time.
+
+**Deliberately not a recommendation surface.** It must not show a price, a
+value, a suggested bid or a ranking — those are `bridge-overlay`'s and they
+carry the Model gate with them. If this item grows one, it has become the wrong
+item and should be refused rather than widened.
+
+**Reconsider it if** the owner decides a second monitor fully covers the need.
+His Q1 answer allows either — *"draft companion in an overlay or separate app"*
+— and his Q3 answer of two minutes per pick makes glancing at the dashboard
+affordable. The narrow case that survives that objection is *noticing silence*,
+not *reading numbers*.
 
 ### `contingent-value` - Building the contingent value graph
 
