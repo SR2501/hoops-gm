@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**64 done - 0 blocked - 123 pending - 187 total**
+**65 done - 0 blocked - 123 pending - 188 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -2254,14 +2254,62 @@ credentials, so if it ever populates, polling it is cheap.
 
 ### `draft-feed-team-alias-draftteamid` - Admitting the team id Fantrax actually sends
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `draft-tracker-bridge-feed`
 
+`draftTeamId` and `cellTeamId` were **added** to
+`FIELD_ALIASES["team_external_id"]` in `recognise.py`, ahead of `teamId`, and
+nothing was removed. The widening applies to the **bridge** recogniser
+(`fxpa_req.seat_anchored.v1`) only; the official path builds typed
+`FantraxDraftPick` records in `parse_draft_picks`, which keeps its own
+`teamId`/`fantasyTeamId` pair. `scorerId` was confirmed correct by the same
+capture and was not touched.
+
+**Do not read this as draft-day progress.** The same capture established that
+`/fxpa/req` is unreachable from a userscript — 49 of 49 payloads were rendered
+HTML, none contained `fxpa` — so the recogniser this widens is currently
+starved. Live pick tracking is `draft-board-dom-parser`'s `board_dom.py`, which
+reads the rendered page. What shipped here removes a *guaranteed* failure from a
+reader that receives nothing today. Worth one tuple against the cost of the
+whole board; not worth counting as the board working.
+
+**The DOM lane narrowed the evidence while this was in flight.** It examined the
+real captured markup and found `draftTeamId` and `cellTeamId` in Fantrax's
+console logging and **nowhere in the markup**, which is why it keys a seat on
+the column ordinal. So console output is the only place either name has ever
+been seen. The RPC body is still unobserved and is a different surface, so this
+does not falsify the aliases — but **nothing independently corroborates them**,
+and that is the honest state.
+
+**The capture was NFL and snake, and that bounds what it licenses.** These are
+platform-level names only if Fantrax's draft room is sport-agnostic, which is
+plausible and unverified. And nothing here is evidence about an **auction** room
+at all: every name in `FIELD_ALIASES["amount"]` remains a pure guess, none has
+ever been observed, and an auction is a format this league may run. Any Fantrax
+auction mock in any sport would close that half — see `blind-mocks` and
+`mock-ingestion`.
+
+**The acceptance criterion below was not fully met, and the shortfall is the
+finding.** There is no recorded fixture *for this path*, because there is no
+captured body to record: the evidence is Fantrax's own client's console
+vocabulary, and the captures that exist are rendered HTML in the owner's private
+folder. The one recorded Fantrax draft fixture,
+`fantrax_getdraftpicks_completed_snake_empty.json` from `#126`, is an **official
+`getDraftPicks` response and an empty list** — it names no per-record field at
+all, so it cannot stand in for a bridge payload, and
+`test_no_populated_fantrax_draft_payload_exists_yet` still holds that half open.
+The Adapter gate's recorded-fixture half therefore remains undischarged here.
+What shipped instead is two `adapter_contract` tests against a constructed
+envelope, red before the change and naming `no_seat_anchor`, plus a seven-strong
+mutation sweep (`scripts/mutate_draft_feed_team_alias.py`) that requires each
+red to name both the expected test and the expected reason. The observed lines
+are transcribed in `docs/adapters/fantrax-private.md`.
+
 **Found in the first instrumented capture, 2026-08-28, on a live Fantrax draft
-room.** `FIELD_ALIASES["team_external_id"]` is `("teamId", "fantasyTeamId",
+room.** `FIELD_ALIASES["team_external_id"]` was `("teamId", "fantasyTeamId",
 "franchiseId", "teamID")`. Fantrax emits **`draftTeamId`** on every
 `processScorerDrafted` and **`cellTeamId`** on every `Board cell MATCHED`.
-Neither is in the tuple.
+Neither was in the tuple.
 
 **Consequence if unchanged.** `recognise.py`'s own contract: a record with no
 resolvable buyer disqualifies the entire list it is in. So every pick refuses as
@@ -2288,6 +2336,37 @@ folder, not in this repository.
 **Acceptance:** a recorded fixture built from a real capture, a contract test
 that fails against the current tuple and passes after, and an explicit statement
 of which recogniser the widening applies to.
+
+### `draft-feed-pick-number-temp` - Deciding what `pickNumberTemp` is before trusting it
+
+- [ ] **pending**
+- **Depends on:** `draft-feed-team-alias-draftteamid`
+
+**Observed in the same 2026-08-28 capture, and deliberately not acted on.** The
+`processScorerDrafted` line reads `pickNumber=undefined, pickNumberTemp=7`
+alongside `round=8` and `overallPick=91`, and `pickNumber` is `undefined` on
+**every** such line in the capture rather than occasionally.
+`FIELD_ALIASES["pick_in_round"]` is `("pick", "pickNumber", "pickInRound")`, so
+if the wire carries that pair the in-round coordinate is readable only under a
+key whose name says *temporary*.
+
+**Why it was left alone rather than added with the team ids.** A field named
+`Temp` is a plausible in-flight or optimistic-UI value, and
+`hoops_gm.draft.feed.service._apply_order` sorts on stored coordinates — writing
+a provisional number into a stored pick is a worse failure than not having one,
+because it is wrong rather than absent. Nothing is lost today either:
+`_has_draft_coordinate` accepts a snake selection on `overallPick` alone, and
+`overallPick=91` is in the same record.
+
+**What would settle it** is a captured body showing whether `pickNumber` is
+genuinely absent on the wire or merely undefined in the client's own log, and
+whether `pickNumberTemp` still holds `7` once the pick is final. That is one
+observation on the next instrumented mock, not an inference. Until then the
+honest state is: **observed, unexplained, unused.**
+
+**Reconsider urgently if** a capture ever shows a record with `round` but no
+`overallPick`. Then the ordinal fallback in `_apply_order` is the arrival-order
+bucket the sort exists to avoid, and this stops being cosmetic.
 
 ### `bridge-drop-cache-storage-poller` - Removing a five-second poll of a store that is permanently empty
 

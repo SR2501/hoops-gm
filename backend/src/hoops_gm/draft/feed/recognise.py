@@ -30,11 +30,59 @@ several unrelated answers. Discrimination has to happen on the response's own
 content.
 
 **Not known.** Which method a Fantrax draft room calls, and what its response
-looks like. ``fantraxapi`` implements no draft method. No draft-room payload has
-ever been captured — ``backend/tests/fixtures/`` holds none, and
-``docs/adapters/fantrax-official.md`` records ``getDraftPicks`` as never having
-returned a successful real response either. So there is no shape to match
-against and writing one from imagination is what ADR-006 rejects.
+looks like. ``fantraxapi`` implements no draft method, and **no ``/fxpa/req``
+draft-room payload has ever been captured** — ``backend/tests/fixtures/`` holds
+none. So there is no shape to match against on this path, and writing one from
+imagination is what ADR-006 rejects.
+
+**One neighbouring claim was settled on 2026-08-28 and this paragraph used to
+state it wrongly.** It said ``docs/adapters/fantrax-official.md`` records
+``getDraftPicks`` as never having returned a successful real response. That is
+no longer true: the *official* endpoint was verified reachable and returned
+``{"currentDraftPicks":[]}`` for a completed 216-pick draft, recorded as
+``fantrax_getdraftpicks_completed_snake_empty.json``. Read the scope narrowly —
+that settles a **container key on a different endpoint**, and every per-record
+field name on either path remains a guess, because no populated draft row has
+been observed anywhere. It says nothing whatever about this module's aliases.
+
+**Known since 2026-08-28, and it changes how this module should be read.** The
+userscript **cannot capture a ``/fxpa/req`` body at all.** The first
+instrumented capture of a live draft room produced 49 payloads, every one of
+them ``rendered-view`` or ``manual-export``, and **none** containing ``fxpa``:
+those calls originate inside Fantrax's own service worker, and no browser API or
+Tampermonkey grant lets a userscript observe another origin-scoped script's
+internal ``self.fetch()``. :func:`recognise_bridge_payload` refuses anything
+whose URL is not :data:`FXPA_REQ_PATHNAME`, so on that evidence **that one
+function is currently unreachable in practice**. See
+``docs/adapters/fantrax-private.md``.
+
+Read that precisely, because this module is not all one thing and a reader who
+takes it as "this file is dead" would be wrong. :func:`league_id_in_page_url` is
+live and is exercised on every snapshot, which is how a rendered capture is
+attributed to a league at all; :func:`recognise_official_draft_picks` is a
+different path with a different upstream and its own separate verdict. What the
+finding kills is the RPC-body route, and nothing else here.
+
+Nothing has been deleted on the strength of it either. A capture route to an RPC
+body may yet be found, the code costs nothing while it is unused, and the
+finding is one capture on one league — but a reader who assumes
+:func:`recognise_bridge_payload` is what fills the board on draft night is
+assuming something that is, today, false. What does fill it is
+:mod:`hoops_gm.draft.feed.board_dom`, which reads the rendered page — the
+capture path that demonstrably works. The two are **not joined**: nothing here
+calls that parser, and a board reading is not an
+:class:`~hoops_gm.draft.feed.observations.ObservedInstant` until someone decides
+what its transport and provenance are. See :func:`league_id_in_page_url`, whose
+docstring records the same boundary from the other side.
+
+**And that module independently narrowed the evidence for the two names added
+to** :data:`FIELD_ALIASES` **below.** It examined the real captured markup and
+reports that ``draftTeamId`` and ``cellTeamId`` appear "in Fantrax's console
+logging and nowhere in its markup", which is why it keys a seat on the column
+ordinal instead. So the only place either name has ever been observed is console
+output. That does not make them wrong — the RPC body remains unobserved and is a
+different surface from the DOM — but it does mean **no independent artifact
+corroborates them**, and the aliases rest on the asymmetry argument alone.
 
 ## How this is discriminated without guessing a shape
 
@@ -129,22 +177,81 @@ RPC_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"fetch", "xhr", "cache-s
 #: Mostly the same vocabulary
 #: :func:`hoops_gm.ingest.fantrax_official.parsers.parse_draft_picks` already
 #: uses, so there is one list of guesses in this repository rather than two that
-#: can drift. Order is preference order within each field. The one deliberate
-#: divergence is ``player_label``, explained below.
+#: can drift. Order is preference order within each field. There are two
+#: deliberate divergences: ``player_label``, explained below, and the two
+#: draft-room team names at the head of ``team_external_id``, explained next.
+#:
+#: ``draftTeamId`` and ``cellTeamId`` were added on 2026-08-28 and **this table
+#: is read only by the bridge recogniser** (:data:`_BRIDGE_RECOGNISER`). The
+#: official path builds its records in ``parse_draft_picks`` and reaches
+#: :func:`recognise_official_draft_picks` as a typed
+#: :class:`~hoops_gm.ingest.fantrax_official.models.FantraxDraftPick`, so
+#: nothing here widens it. Nothing was removed, for the same reason: the
+#: existing names have never been shown wrong, only never shown right.
+#:
+#: **What the two new names rest on.** The owner's first instrumented capture
+#: of a live Fantrax draft room logged ``draftTeamId`` on every
+#: ``processScorerDrafted`` and ``cellTeamId`` on every ``Board cell MATCHED``.
+#: That is Fantrax's **own client's console vocabulary**, which may rename a
+#: field on ingest — evidence of internal naming, *not* proof of the wire
+#: format, and no response body has been captured to settle it (the captures
+#: are rendered HTML). The lines are transcribed in
+#: ``docs/adapters/fantrax-private.md`` so this can be re-derived.
+#:
+#: **Three further limits on that evidence, each of which narrows it.** The
+#: capture was **NFL**, not NBA, so these are platform-level names only if
+#: Fantrax's draft room is sport-agnostic — plausible, since the envelope is,
+#: and unverified. It was a **snake** draft, so nothing here is evidence about
+#: an auction room at all; in particular every name in ``amount`` below remains
+#: unobserved, and an auction is the format this league might actually use.
+#: And :mod:`hoops_gm.draft.feed.board_dom`, which examined the real captured
+#: markup, reports that both names appear in Fantrax's console logging and
+#: **nowhere in its markup** — so the strongest independent check available
+#: came back negative. It does not falsify them, because the DOM is not the RPC
+#: body, but nothing corroborates them either.
+#:
+#: The argument for widening on evidence that weak is an asymmetry rather than
+#: a certainty. A record whose buyer cannot be resolved refuses **the entire
+#: list it is in** (:func:`_admit_records`), so an alias that is used and
+#: missing costs the whole board while an alias that is never used costs
+#: nothing measurable. Under that asymmetry the wrong move is to wait for
+#: proof.
+#:
+#: **These names are never written into a locator or a refusal message.** The
+#: bridge path builds its locators from the payload's *own* key names as the
+#: walk encounters them, so a diagnostic here can only ever name a key that was
+#: really present. That is deliberate and is the point ``field-name-guess-audit``
+#: makes about ``draftPicks[].teamId`` — a locator naming a guessed key asserts
+#: the guess to whoever reads the status screen.
+#:
+#: The draft-scoped names sort **ahead** of ``teamId`` on purpose. ``teamId``
+#: is the generic name, and a draft-room record is exactly where it could mean
+#: a player's *NBA* team rather than a seat; a record carrying both must be
+#: read by the name that says ``draft``. Precedence here is a property of this
+#: tuple, never of the producer's key order — :func:`_first` walks these in
+#: order — and ``test_a_record_naming_several_team_keys_is_read_by_alias_order_not_key_order``
+#: pins it so.
 #:
 #: ``id`` is excluded from the team aliases on purpose. It is the most likely
 #: key name in any JSON on the internet and matching it would let an arbitrary
 #: list of objects be accepted the moment one of its ``id`` values collided with
 #: a Fantrax team id — which turns the anchor from a check into a coincidence.
 #:
+#: ``scorerId`` is **correct and is not a typo.** It came in from
+#: ``fantraxapi``'s NHL heritage and the same capture confirms Fantrax really
+#: does send it — ``processScorerDrafted`` carries ``scorerId=06s74``. A
+#: reading of a compressed screenshot once claimed the wire said ``scoreId``
+#: and that this alias was wrong; that was a misreading of a low-resolution
+#: image, caught before anything was edited. Do not "fix" it.
+#:
 #: ``name``, ``shortName`` and ``displayName`` are excluded from
-#: ``player_label`` for exactly the same reason, and it took an independent
-#: review to see it. A **team** object carries those keys. So a ``draftOrder``
-#: or standings block — a list of this league's own teams, which is the single
-#: most likely list to appear anywhere in a draft-room batch — satisfied the
-#: seat anchor *perfectly* (every record resolves to a seat, because every
-#: record **is** a seat) and satisfied "names a player" with the team's own
-#: name. It was read as a full board of picks, one per seat, with
+#: ``player_label`` for exactly the same reason as ``id``, and it took an
+#: independent review to see it. A **team** object carries those keys. So a
+#: ``draftOrder`` or standings block — a list of this league's own teams, which
+#: is the single most likely list to appear anywhere in a draft-room batch —
+#: satisfied the seat anchor *perfectly* (every record resolves to a seat,
+#: because every record **is** a seat) and satisfied "names a player" with the
+#: team's own name. It was read as a full board of picks, one per seat, with
 #: ``player_label="Team Rocket"``. That is not the safe failure this module
 #: claims; it is the half-read board it exists to prevent, and with
 #: ``apply=true`` it would have become real ``draft_events``.
@@ -152,7 +259,14 @@ RPC_CAPTURE_SOURCES: Final[frozenset[str]] = frozenset({"fetch", "xhr", "cache-s
 #: They survive in :data:`AMBIGUOUS_NAME_ALIASES` as a *label of last resort*,
 #: usable only once the record has independently identified a player.
 FIELD_ALIASES: Final[dict[str, tuple[str, ...]]] = {
-    "team_external_id": ("teamId", "fantasyTeamId", "franchiseId", "teamID"),
+    "team_external_id": (
+        "draftTeamId",
+        "cellTeamId",
+        "teamId",
+        "fantasyTeamId",
+        "franchiseId",
+        "teamID",
+    ),
     "player_external_id": ("playerId", "scorerId", "fantasyPlayerId"),
     "player_label": ("playerName", "scorerName", "playerFullName"),
     "amount": ("amount", "bid", "salary", "price", "winningBid"),

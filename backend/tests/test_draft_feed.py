@@ -3599,15 +3599,160 @@ def test_no_populated_fantrax_draft_payload_exists_yet() -> None:
 
 
 @pytest.mark.adapter_contract
+@pytest.mark.parametrize("team_key", ["draftTeamId", "cellTeamId"])
+def test_the_team_key_a_live_draft_room_emits_resolves_to_a_seat(team_key: str) -> None:
+    """Excludes: an alias tuple no live Fantrax draft room can satisfy.
+
+    On 2026-08-28 the owner ran the first instrumented capture against a live
+    Fantrax draft room. Fantrax's own client logs ``draftTeamId`` on every
+    ``processScorerDrafted`` and ``cellTeamId`` on every ``Board cell
+    MATCHED``. Neither was in ``FIELD_ALIASES["team_external_id"]``, and the
+    consequence is not a degraded reading but a total one: this module's
+    contract is that **a record with no resolvable buyer disqualifies the
+    entire list it is in**, so every pick refused as ``no_seat_anchor``, the
+    board stayed empty, and freshness still reported the transport healthy.
+    That is the owner's Q12 disqualifier — *"it loses track of the draft"* —
+    arriving with nothing on screen saying so.
+
+    **What this test rests on, stated so it can be discounted rather than
+    inherited.** Those lines are console output from Fantrax's own JavaScript,
+    which may rename a field between the wire and the log. They are evidence of
+    *internal vocabulary*, not proof of the payload shape, and **no response
+    body has been captured** — the captures are ``rendered-view`` HTML in the
+    owner's private folder, so this runs against a constructed envelope like
+    every other bridge-path test in this file. The one recorded Fantrax draft
+    fixture, ``fantrax_getdraftpicks_completed_snake_empty.json``, is an
+    *official* ``getDraftPicks`` response and is an **empty list**, so it names
+    no field at all and cannot stand in for one — which is exactly what
+    :func:`test_no_populated_fantrax_draft_payload_exists_yet` still holds open.
+    The observed lines are recorded verbatim in
+    ``docs/adapters/fantrax-private.md`` so the claim can be re-derived rather
+    than taken from a chat.
+
+    The argument for widening on that evidence is an **asymmetry, not a
+    certainty**: an alias that turns out to be unused costs nothing at all,
+    while an alias that is used and absent costs the whole board. Nothing here
+    claims the wire carries these names.
+
+    The reading in which this passes while the defect is present would need
+    ``recognise_bridge_payload`` to resolve a seat from a key it does not
+    consult, which the seat-anchor refusal below rules out on the mutation
+    run: reverting the tuple turns this red naming ``no_seat_anchor``.
+    """
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {team_key: "t1", "scorerId": "06s74", "playerName": JOKIC, "overallPick": 91},
+                {team_key: "t2", "scorerId": "06s75", "playerName": EDWARDS, "overallPick": 92},
+            ]
+        ),
+        dedupe_key="adapter-contract-team-key",
+        received_at=NOW,
+        captured_at=NOW,
+        context=_context(),
+    )
+
+    assert [shape.reason for shape in result.unrecognised] == [], team_key
+    assert result.rejected is None, team_key
+    assert [instant.team_external_id for instant in result.instants] == ["t1", "t2"], team_key
+    assert [instant.player_label for instant in result.instants] == [JOKIC, EDWARDS], team_key
+    assert [instant.player_external_id for instant in result.instants] == ["06s74", "06s75"], (
+        team_key
+    )
+    assert [instant.overall_pick for instant in result.instants] == [91, 92], team_key
+
+
+@pytest.mark.adapter_contract
+def test_a_record_naming_several_team_keys_is_read_by_alias_order_not_key_order() -> None:
+    """Excludes: which seat a multi-keyed record is attributed to being decided
+    by the order Fantrax happened to serialise its keys in.
+
+    ``_first`` walks ``FIELD_ALIASES[field]`` and takes the first alias
+    *present with a non-null value*, so precedence is a property of the tuple
+    and not of the record. That is worth pinning rather than assuming, because
+    widening the tuple is the moment a record can satisfy two aliases at once,
+    and an unpinned answer would be dict-insertion order — a property of the
+    producer, not of us.
+
+    **The order chosen, and why the draft-scoped names go first.** ``teamId``
+    is generic and a draft-room record is exactly where it could mean
+    something else — a player row's *NBA* team is the obvious other referent
+    for that name. If a real record carries both, the name that says
+    ``draft`` is the one making a claim about this draft. Ordering it after
+    ``teamId`` would reintroduce the original defect in a subtler form: an
+    ``teamId`` holding an NBA franchise id resolves to no seat, and one
+    unresolvable record refuses the whole list.
+
+    Two cases, and the first is the one dict order could win:
+
+    * every alias present and all six resolving to real, configured seats — so
+      refusal cannot produce a pass and only precedence can. Asserted under
+      both key orders, so a reader-side change that walked the *record* instead
+      of the tuple shows up as the reversed order returning ``teamID``'s value;
+    * a generic ``teamId`` that is *not* a seat of this draft alongside a
+      ``draftTeamId`` that is — must be read, not refused.
+    """
+    seats = frozenset({"t1", "t2", "t3", "t4", "t5", "t6"})
+    every_alias = {
+        "draftTeamId": "t1",
+        "cellTeamId": "t2",
+        "teamId": "t3",
+        "fantasyTeamId": "t4",
+        "franchiseId": "t5",
+        "teamID": "t6",
+    }
+    for keys in (every_alias, dict(reversed(list(every_alias.items())))):
+        result = recognise_bridge_payload(
+            url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+            body_json=_envelope(
+                [{**keys, "scorerId": "06s74", "playerName": JOKIC, "overallPick": 91}]
+            ),
+            dedupe_key="adapter-contract-precedence",
+            received_at=NOW,
+            captured_at=NOW,
+            context=_context(team_ids=seats),
+        )
+        assert [shape.reason for shape in result.unrecognised] == [], list(keys)
+        assert [instant.team_external_id for instant in result.instants] == ["t1"], list(keys)
+
+    shadowed = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": "nba-1610612743",
+                    "draftTeamId": "t1",
+                    "scorerId": "06s74",
+                    "playerName": JOKIC,
+                    "overallPick": 91,
+                }
+            ]
+        ),
+        dedupe_key="adapter-contract-shadowed",
+        received_at=NOW,
+        captured_at=NOW,
+        context=_context(),
+    )
+    assert [shape.reason for shape in shadowed.unrecognised] == []
+    assert [instant.team_external_id for instant in shadowed.instants] == ["t1"]
+
+
+@pytest.mark.adapter_contract
 def test_a_refused_player_identity_is_recorded_rather_than_dropped() -> None:
     """Contract: what the recogniser does with a record it cannot identify.
 
     Adapter-marked because it pins a decision about an *external* payload
     shape — specifically, that a record supplying ``playerId`` in a form this
     reader refuses is neither admitted as a pick nor discarded. It runs
-    offline against a constructed envelope, which is all that is available
-    (see :func:`test_no_recorded_fantrax_draft_payload_exists_yet`), and it
-    asserts the two properties a real payload would have to preserve:
+    offline against a constructed envelope, which is all that is available on
+    the bridge path: no ``/fxpa/req`` draft-room body has ever been captured.
+    (This used to cite ``test_no_recorded_fantrax_draft_payload_exists_yet``,
+    which was **narrowed and renamed** to
+    :func:`test_no_populated_fantrax_draft_payload_exists_yet` when the
+    official ``getDraftPicks`` fixture landed — not deleted, because only half
+    its claim expired.) It asserts the two properties a real payload would have
+    to preserve:
 
     * the refused record produces an instant, so the loss reaches storage and
       therefore ``GET``, rather than only the ``POST`` response's counters;

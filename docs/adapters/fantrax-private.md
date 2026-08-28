@@ -86,6 +86,132 @@ surfaces, two in-band error shapes, neither of them a status code.
 
 ---
 
+## What a live draft room called its ids — console vocabulary, 2026-08-28
+
+**This is the weakest kind of evidence in this file, and it is recorded here so
+it can be weighed rather than inherited.** On 2026-08-28 the owner ran the first
+instrumented capture against a live Fantrax draft room. What was read was
+Fantrax's **own client's console output**, not a response body:
+
+```
+processScorerDrafted: round=8, pickNumber=undefined, pickNumberTemp=7,
+  overallPick=91, scorerId=06s74, draftTeamId=rkpw0zbyms46061d
+Board cell MATCHED: round=8, cellTeamId=rkpw0zbyms46061d, cellOverallPick=91
+```
+
+Those lines are emitted by Fantrax's JavaScript, which is free to rename a field
+between the wire and the log. So this is evidence of **internal vocabulary** and
+**not proof of the payload shape**. No `/fxpa/req` draft-room *body* has been
+captured — the captures that exist are rendered HTML page snapshots, they live
+in the owner's private folder, and they are not in this repository.
+
+### Three limits on that evidence, all of which narrow it
+
+**The capture was NFL, not NBA.** These are platform-level names only if
+Fantrax's draft room is sport-agnostic. That is plausible — the `/fxpa/req`
+envelope is, and `fantraxapi` itself came from an NHL league — but it is not
+verified, and this project's own history has one instance of a Fantrax id format
+that turned out to be football-only (team-defence ids, `20050#1090`).
+
+**It was a snake draft (`isAuction=false`).** So nothing observed here is
+evidence about an auction room. That matters more than it looks: every name in
+`FIELD_ALIASES["amount"]` — `amount`, `bid`, `salary`, `price`, `winningBid` —
+is still a pure guess, none has ever been seen, and an auction is a format this
+league may actually run. A capture of any Fantrax auction mock, in any sport,
+would close it.
+
+**The strongest independent check came back negative.** `board_dom.py` examined
+the real captured markup and reports that `draftTeamId` and `cellTeamId` appear
+in Fantrax's console logging and **nowhere in its markup**, which is why it keys
+a seat on the column ordinal instead. The DOM is not the RPC body, so this does
+not falsify the names — but it does mean **no artifact anywhere corroborates
+them**, and console output is the only place either has ever been seen.
+
+### What was changed on that evidence, and the argument for changing anything
+
+`FIELD_ALIASES["team_external_id"]` in
+`backend/src/hoops_gm/draft/feed/recognise.py` held
+`("teamId", "fantasyTeamId", "franchiseId", "teamID")`. Neither observed name
+was in it. That is not a partial reading: the recogniser's contract is that **a
+record with no resolvable buyer disqualifies the entire list it is in**, so
+every pick would refuse as `no_seat_anchor`, the board would stay empty, and
+freshness would still report the transport healthy — the owner's Q12
+disqualifier, *"it loses track of the draft"*, with nothing on screen saying so.
+
+`draftTeamId` and `cellTeamId` were **added**, ahead of `teamId`; nothing was
+removed. The justification is an asymmetry, not a certainty: an alias that turns
+out to be unused costs nothing measurable, and an alias that is used and missing
+costs the whole board. The draft-scoped names sort first because `teamId` is the
+generic one and a draft-room record is exactly where it could refer to a
+player's *NBA* team instead of a seat.
+
+The widening applies to the **bridge** recogniser only
+(`fxpa_req.seat_anchored.v1`). The official path builds typed
+`FantraxDraftPick` records in
+`hoops_gm.ingest.fantrax_official.parsers.parse_draft_picks`, which keeps its
+own `teamId`/`fantasyTeamId` pair and is untouched.
+
+### The qualification that matters more than the fix
+
+The same capture established that **`/fxpa/req` is unreachable from a
+userscript**: 49 of 49 payloads were `rendered-view` or `manual-export` and zero
+contained `fxpa`, because those calls originate in Fantrax's own service worker
+and no browser API lets a userscript observe another origin-scoped script's
+internal `self.fetch()`. `recognise_bridge_payload` refuses any capture whose URL
+is not `/fxpa/req`, so **on today's evidence this alias table is unreachable in
+practice**. Live pick tracking is done by
+`backend/src/hoops_gm/draft/feed/board_dom.py`, which reads the rendered page —
+the capture path that works.
+
+The widening is still worth having for the same asymmetry that justified it —
+one tuple against the whole board — but it should not be read as draft-day
+progress. It removes a *guaranteed* failure from a reader that is currently
+starved, which is a different and smaller claim.
+
+**And the DOM parser narrowed the evidence for these two names.** It examined
+the real captured markup and reports that `draftTeamId` and `cellTeamId` appear
+in Fantrax's console logging and **nowhere in its markup**, which is why it keys
+a seat on the column ordinal instead. So the only place either name has ever
+been observed is console output. That does not make them wrong — the RPC body is
+still unobserved, and the DOM is a different surface from a JSON response — but
+**no independent artifact corroborates them**, and they rest on the asymmetry
+argument alone.
+
+`#126` verified the official `getDraftPicks` endpoint reachable on 2026-08-28
+and settled its **container** key (`currentDraftPicks`), but the response was an
+**empty list** for a league whose 216-pick draft was already complete. So
+whether `fxea` uses this same draft-room vocabulary for *per-record* names is
+still **unknown**, and every field name in `parse_draft_picks` remains a guess.
+It is a different Fantrax surface with a different error envelope, so the names
+are not transferable by assumption; that is the official lane's question to
+settle against a populated response, not one to pre-empt here.
+
+### `scorerId` is correct and is not a typo
+
+The same capture confirms it: `processScorerDrafted` carries `scorerId=06s74`.
+It entered from `fantraxapi`'s NHL heritage and the vocabulary genuinely is
+scorer-shaped across sports. A reading of a compressed screenshot once claimed
+Fantrax sent `scoreId` and that this alias was wrong; that was a misreading of a
+low-resolution image, caught before anything was edited. Recorded because the
+next person to notice the spelling will have the same thought.
+
+### `pickNumberTemp` is observed, unexplained, and deliberately not wired in
+
+The same line reads `pickNumber=undefined, pickNumberTemp=7`. The capture
+established the stronger form: `pickNumber` is `undefined` on **every**
+`processScorerDrafted` line, not occasionally. If the wire carries that pair,
+`FIELD_ALIASES["pick_in_round"]` — `("pick", "pickNumber",
+"pickInRound")` — reads nothing, and the in-round coordinate is only available
+under a key whose name says *temporary*. It was **not** added, because a field
+named `Temp` is a plausible in-flight value and writing a provisional
+coordinate into a stored pick is a worse failure than not having one. Nothing is
+lost today: `overallPick=91` is present in the same record and
+`_has_draft_coordinate` accepts a snake selection on an overall ordinal alone.
+Filed as `draft-feed-pick-number-temp` in `docs/backlog.md` rather than decided
+here.
+
+---
+
 ## Cookie storage and the re-login flow
 
 ### How it is stored

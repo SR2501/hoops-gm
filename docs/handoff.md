@@ -31566,3 +31566,329 @@ went to the lane as well as into the file.
   the other direction** - one that under-counts consistently, so that both the
   real count and the seeded count are wrong by the same amount. The control
   asserts a delta of exactly one, which such a counter would still satisfy.
+## 2026-08-28 - backend - `draft-feed-team-alias-draftteamid`: the team id a live draft room actually sends, and how weak the evidence for it is
+
+`FIELD_ALIASES["team_external_id"]` in
+`backend/src/hoops_gm/draft/feed/recognise.py` was
+`("teamId", "fantasyTeamId", "franchiseId", "teamID")`. The owner's first
+instrumented capture of a live Fantrax draft room, 2026-08-28, shows Fantrax's
+own client emitting `draftTeamId` on every `processScorerDrafted` and
+`cellTeamId` on every `Board cell MATCHED`. Neither was in the tuple.
+
+That is not a degraded reading. `_admit_records`' contract is that **a record
+with no resolvable buyer disqualifies the entire list it is in**, so every pick
+refuses as `no_seat_anchor`, the board stays empty, and `freshness_of` still
+reports the transport healthy — the owner's Q12 disqualifier, *"it loses track
+of the draft"*, arriving with nothing on screen saying so.
+
+### What shipped
+
+Both names **added**, ahead of `teamId`, with nothing removed. Bridge
+recogniser only (`fxpa_req.seat_anchored.v1`): the official path builds typed
+`FantraxDraftPick` records in
+`hoops_gm.ingest.fantrax_official.parsers.parse_draft_picks`, which keeps its
+own hard-coded `teamId`/`fantasyTeamId` pair and never reads this table.
+Verified by reading, not assumed: `_first` is called only from `_instant_from`,
+`_player_identity`, `_player_label` and `_admit_records`, all of which are on
+the bridge path, and `recognise_official_draft_picks` reads `pick.team_id`.
+
+The draft-scoped names sort **first**, and that is a decision rather than a
+detail. `teamId` is the generic name and a draft-room record is exactly where it
+could mean a player's *NBA* team; ordering it ahead would reintroduce the same
+defect in a subtler form, because one unresolvable `teamId` refuses the whole
+list. Precedence is a property of the tuple — `_first` walks the aliases, not
+the record — so dict-insertion order never decides, and there is now a test that
+fails if that changes.
+
+### What the change actually rests on, stated so it can be discounted
+
+**Those lines are console output from Fantrax's own JavaScript, which may rename
+a field on ingest. They are evidence of internal vocabulary and are not proof of
+the wire format.** No `/fxpa/req` draft-room *body* has been captured; the
+captures that exist are rendered HTML page snapshots in the owner's private
+folder and are not in this repository. I did not go looking for them and I
+cannot confirm the payload shape.
+
+So the argument for changing anything is an **asymmetry, not a certainty**: an
+alias that turns out to be unused costs nothing measurable, and an alias that is
+used and missing costs the entire board. Under that asymmetry, waiting for proof
+is the expensive option. That is the whole case, and I would rather it be read
+as thin-but-cheap than mistaken for established.
+
+Consequently the Adapter gate's recorded-fixture half is **still undischarged**
+on the bridge path. `#126` landed a real Fantrax draft fixture while this was in
+flight — `fantrax_getdraftpicks_completed_snake_empty.json` — and it does not
+change that: it is an *official* `getDraftPicks` response and it is an **empty
+list**, so it names no per-record field at all. `test_no_populated_fantrax_draft_payload_exists_yet`
+(narrowed and renamed from `..._no_recorded_...` by that lane, not deleted,
+because only half its claim expired) still holds the remaining half open.
+Nothing was added to `tests/fixtures/manifest.json` here, because a synthesised
+entry would need a `captured_at` for something never captured — manufacturing
+the provenance record the manifest exists to be. The observed lines are
+transcribed instead in `docs/adapters/fantrax-private.md`, so the claim can be
+re-derived rather than
+taken from a chat.
+
+### The proof, and the two places my own harness caught me
+
+Two `adapter_contract` tests, written before the change and **red first**, both
+naming `no_seat_anchor`:
+`test_the_team_key_a_live_draft_room_emits_resolves_to_a_seat` (parametrised
+over both names) and
+`test_a_record_naming_several_team_keys_is_read_by_alias_order_not_key_order`.
+
+`scripts/mutate_draft_feed_team_alias.py` sweeps seven injections and requires
+each red to name **both the expected test and the expected reason**, on an
+`E`-prefixed assertion line. The `E` prefix is not fussiness: both tests print
+`no_seat_anchor` in their own docstrings, pytest renders the docstring above the
+failure, and a plain substring search would therefore have matched the prose and
+passed for exactly the wrong reason.
+
+Result: **7 caught, 0 survived, 0 harness failures**, baseline green before
+(140 passed) and re-asserted green after restore. M01 is the tuple restored
+byte-for-byte to its `main` state; M06 is the over-refusal control; M07 deletes
+`scorerId` and confirms the new tests would notice.
+
+The first sweep reported 5 caught and **2 harness failures, both mine**, and
+both were the harness being right:
+
+- **M05 named the wrong reason.** I predicted a precedence diff; the mutation
+  actually tripped the seat anchor first, because the sub-case I had placed
+  first refuses rather than mis-attributes. Fixed by reordering the test so the
+  all-six-seats case — where refusal is impossible and only precedence can fail
+  — runs first. It now reddens as `['t6'] == ['t1']`, which is the signature of
+  the record's key order deciding.
+- **M06 named the wrong test.** With `-x`, the over-refusal control reddened a
+  *pre-existing* positive control earlier in the file and stopped before
+  reaching mine. `-x` was removed: a harness that stops before the test it is
+  asking about cannot answer the question, and "something went red" is precisely
+  the evidence `gates.md` records as insufficient four separate times.
+
+Neither was reasoned to. Both came from requiring the verdict to name what it
+caught.
+
+### The finding that qualifies all of this: the path being widened may currently receive nothing
+
+Read alongside the `architect` entry immediately above, which landed while this
+was in flight. **49 of 49 captured payloads were `rendered-view` or
+`manual-export`, and zero contained `fxpa`** — `/fxpa/req` originates in
+Fantrax's own service worker and no userscript can observe another
+origin-scoped script's internal `self.fetch()`. `recognise_bridge_payload`
+refuses any capture whose URL is not `/fxpa/req` (`FXPA_REQ_PATHNAME`), so on
+today's evidence **this alias table is unreachable in practice** and automatic
+pick tracking rests on the official `getDraftPicks` path instead. *(That last
+clause was falsified within hours and before this entry landed — see the
+correction three paragraphs below. It is left standing because it is what I
+believed and acted on, and because the way it was wrong is the useful part.)*
+
+That does not make the change wrong, and I want to be exact about why rather
+than wave at it. It changes what the change *is*: not "the board will now fill
+on 18 October", but "one guaranteed way for it to fail has been removed from a
+reader that is currently starved". The cost of being right about that is one
+tuple; the cost of leaving it wrong, if any capture route to an RPC body is ever
+found, is the whole board. Anyone quoting this unit as draft-day progress is
+quoting it wrongly.
+
+**A sentence I wrote earlier in this same entry was falsified before it landed,
+and I am correcting it rather than quietly editing it.** I wrote that automatic
+pick tracking therefore "rests on the official `getDraftPicks` path". That was
+true when the `architect` capture entry was the latest word and is **false
+now**: `#127` landed `hoops_gm.draft.feed.board_dom`, which reads the board out
+of the rendered page — the one capture path that demonstrably works — and its
+own docstring says plainly that it is "not a fallback. On draft day it is the
+only thing that knows a pick happened." The official path is the *other*
+starved one: `#126` verified it reachable but it returned an empty list for a
+finished 216-pick draft.
+
+The mistake is worth naming because it is the failure mode this repository keeps
+cataloguing. I took a true observation — the bridge cannot see `/fxpa/req` —
+and completed it with an inference about where tracking *must therefore* come
+from, then wrote the pair as one settled fact. The inference was reasonable and
+wrong, and it was wrong within three hours. `889cfbc` records the coordinator
+making structurally the same error on the same day.
+
+**And the DOM lane independently narrowed the evidence for the two names I
+added.** `BoardPick`'s docstring reports that `draftTeamId` and `cellTeamId`
+appear "in Fantrax's console logging and nowhere in its markup", which is why it
+keys a seat on the column ordinal instead — established against the real
+captured HTML, which is evidence I did not have and could not get. That does not
+falsify the aliases: the RPC body is still unobserved, and a JSON response is a
+different surface from the DOM. But it does mean **the only place either name
+has ever been seen is console output, and no independent artifact corroborates
+them.** The asymmetry argument is now the *whole* case rather than the main one.
+
+**And the official path does not share this table.** `parse_draft_picks` keeps
+its own `row.get("teamId") or row.get("fantasyTeamId")`. Whether `fxea`'s
+`getDraftPicks` uses the same draft-room vocabulary is unknown and is
+`official-getdraftpicks-live-verification`'s question, not this unit's — but it
+is worth that lane knowing this vocabulary exists before it writes against a
+guess.
+
+### An answer to an open question in `append-only-docs-line-ending-check`, obtained by tripping over it
+
+That item, filed on `main` while this was in flight, asks whether normalising
+the 149 stray CRLF bytes in `docs/handoff.md` is *permitted* — and says plainly
+that a worktree test was **inconclusive, because `check_append_only.py` reads
+committed blobs and never examined the uncommitted change.** I hit the same
+bytes from the other direction and the committed-blob measurement now exists.
+
+**It is not permitted. Normalisation fails the containment check.**
+`scripts/resolve_doc_conflicts.py` reads and rewrites the whole file, so
+resolving a routine rebase conflict silently converted all 149 CRLF to LF. The
+commit went in, and `check_append_only.py` reported
+`CONTAINMENT: False`, `CR in base blob 149`, `CR in head blob 0`. So the
+repair the item contemplates cannot be made by any tool that rewrites the file,
+which includes the repository's own conflict resolver — **and that resolver runs
+on essentially every rebase of this file.** The item's second branch is the live
+one: the check is the only remedy, and every future append inherits the mixed
+file until something stops the *next* CRLF entering.
+
+Worth noting what this does to the failure's appearance, because it is the same
+shape as the item's own argument. The breach presented as a **478-line diff on
+an append-only document** with the heading sequence still perfectly correct and
+every content check green — `check_doc_terminators.py` passed, the recount
+passed, the slug diff passed, and the handoff heading order was provably main's
+sequence plus my one entry. Only the byte-level containment check saw it.
+
+**How it was repaired here**, which is a workaround and not the fix the item
+asks for: rebuild the blob as `base bytes || appended tail` and write it with
+`git hash-object -w --no-filters`, then `update-index --cacheinfo`. Containment
+then passes with `CR in base 149 / CR in head 149` and the diff drops to 180
+insertions, 0 deletions. That restores the base bytes rather than normalising
+them, so it sidesteps the question instead of answering it — the answer above is
+the useful part, and `frontend-skeleton` still gates the item's real acceptance.
+
+**One more thing the coordinator was right to insist on, and it changed my
+confidence rather than my result.** Its rule: before trusting a delta, run the
+same extraction against a known non-zero case, because *a counter that has never
+been shown to move is not evidence that nothing moved.* My extraction went
+through Python's `subprocess` and `pathlib.read_bytes()` rather than a
+PowerShell pipeline, so it was byte-faithful — but I had never demonstrated
+that. Driven against three samples, it reported `appended CR` of **0, then 1,
+then 3** for the real file, the file plus one injected CRLF, and the file plus
+three. The zero is now evidence rather than an assertion. The trap it warns
+about is real and specific: `git cat-file ... | Out-String` normalises line
+endings crossing the pipeline, so the instrument silently rewrites the sample it
+is measuring — and it fails *toward* "repair needed", which in an append-only
+file is the destructive direction.
+
+I did not edit that item. It is not mine, its acceptance is unchanged, and one
+lane's measurement belongs in the record rather than in someone else's task.
+
+### The seam between this and the DOM parser, checked rather than assumed
+
+`#127` edited `league_id_in_page_url`'s docstring in the same file, ~1000 lines
+from my edits, and git auto-merged both without a conflict. **That is exactly
+the case where a merge can be clean and the meaning wrong**, so I read the two
+together in the merged file rather than trusting the diff.
+
+They agree, and one phrase of mine had to move to keep them agreeing. I had
+written that "this recogniser is currently unreachable in practice" immediately
+after naming `recognise_bridge_payload` — accurate in context and misreadable as
+*this module*, which would be false: `league_id_in_page_url` runs on every
+snapshot and is how a rendered capture is attributed to a league at all, and
+`recognise_official_draft_picks` is a different upstream with its own verdict.
+Narrowed to "that one function", with the distinction spelled out and a pointer
+to `#127`'s docstring, which records the same boundary from the other side.
+
+No hand-resolution of `recognise.py` was needed or done — the only `board_dom`
+reference in my diff is the one I added.
+
+### Adjacent to `field-name-guess-audit`, and checked against it
+
+That item's fourth instance is `#126`'s diagnostic locators — `draftPicks[]` and
+`draftPicks[].teamId`, naming a key the endpoint does not send. I checked my own
+diff for the same defect and it does not have it: **this change introduces no
+locator and no refusal message containing a field name.** The bridge path builds
+locators from the payload's *own* keys as the walk encounters them
+(`f"{list_locator}[{position}]"`, where `list_locator` is the walked path), and
+`_keys_of` publishes the keys that were actually present. So a diagnostic on
+this path can only ever name a key that really existed in the body — which is
+the property that item is asking for, and it holds here by construction rather
+than by my having been careful.
+
+The audit's control is worth restating because it is the honest frame for this
+whole unit: `scorerId` was a guess made from reading a format, and it was
+**right**. The lesson is not that guesses are wrong, but that nothing in this
+repository distinguishes a verified name from a guessed one at the point of use
+— and after this change `team_external_id` holds six names of which **zero** are
+verified against a body, exactly as before. The tuple got wider, not better
+evidenced.
+
+### Filed rather than decided: `pickNumberTemp`
+
+The same line reads `pickNumber=undefined, pickNumberTemp=7`, and the
+`architect` entry above establishes the stronger form: `pickNumber` is
+`undefined` on **every** `processScorerDrafted` line in the capture, not
+occasionally. `FIELD_ALIASES["pick_in_round"]` is `("pick", "pickNumber",
+"pickInRound")`, so if the wire carries that pair the in-round coordinate is
+readable only under a key whose name says *temporary*. **Not added**: a `Temp`
+field is a plausible in-flight value and a provisional coordinate written into a
+stored pick is wrong rather than absent, which is the worse of the two. Nothing
+is lost today — `_has_draft_coordinate` accepts a snake selection on
+`overallPick` alone and `overallPick=91` is in the same record, and the capture
+shows `overallPick` running monotonically to 216. Filed as
+`draft-feed-pick-number-temp`.
+
+`scorerId` was **not** touched. The same capture confirms Fantrax sends exactly
+that; the earlier claim that it should be `scoreId` was a misreading of a
+compressed screenshot. Noted in `recognise.py` beside the alias so the next
+person to notice the spelling does not "fix" it.
+
+### What I could not verify
+
+- **The wire format.** The entire change rests on console vocabulary. Fantrax's
+  client may rename fields between the response and the log, so it remains
+  possible that the body says `teamId` and the log says `draftTeamId`. **Not
+  disproved, unestablished** — and unlike the previous instances of that phrase
+  on this module, the fix is cheap either way, because an unused alias costs
+  nothing.
+- **Whether the recogniser fires on a real draft-room payload at all.** Still
+  no such payload has been observed by anyone on this project. This unit moves
+  that claim not at all; it only removes one specific way it was guaranteed to
+  fail.
+- **Whether `cellTeamId` and `draftTeamId` can co-occur on one record.** I
+  defined the precedence and tested it, but I have never seen a record carrying
+  both — they appear in two different client messages. The ordering is
+  reasoned, not observed.
+- **That `teamId` in a real draft-room record is not itself the seat.** The
+  shadowing case I tested (`teamId` holding an NBA franchise id) is
+  constructed. If `teamId` *is* the seat and `draftTeamId` is something else,
+  the new ordering attributes to `draftTeamId` and I have moved the failure
+  rather than removed it. The seat anchor still bounds the damage to
+  *configured* seats, which `recognise.py`'s docstring is already explicit is
+  not the same as *correct* seats.
+- **Postgres.** Everything here ran on SQLite locally. Nothing in this change
+  touches storage, coercion or a bound, so I do not expect a dialect
+  difference — but I did not run the Postgres job locally and that expectation
+  is an argument, not a result. CI's `postgres` job is the check.
+- **Whether the bridge will ever deliver an RPC body for this table to read.**
+  On today's evidence it cannot: 49 of 49 captures were rendered HTML, and the
+  reason is architectural rather than a timing problem. So the alias I added may
+  be permanently unexercised, and I cannot distinguish "correct and unused" from
+  "wrong and unused" — no observation available to me separates them.
+- **That the official `getDraftPicks` path shares this vocabulary.** `#126`
+  verified that endpoint reachable and settled its *container* key
+  (`currentDraftPicks`), but it returned an **empty list** for a completed
+  216-pick draft, so every per-record field name there is still a guess too. The
+  two paths are different Fantrax surfaces with different error envelopes, and I
+  deliberately did not transfer these names across.
+- **That either name appears anywhere outside a console log.** `#127` looked at
+  the real captured markup and found neither — that is the strongest independent
+  check available today, and it came back negative. It does not falsify them,
+  because the DOM is not the RPC body, but I can no longer say any artifact
+  corroborates them.
+- **That the names generalise off the sport and format they were seen in.** The
+  capture was **NFL** and **snake**. Platform-level naming is plausible — the
+  envelope is, and `fantraxapi` came from an NHL league — but unverified, and
+  this project already has one Fantrax id format that proved football-only. More
+  sharply: **nothing observed here says anything about an auction room**, so
+  every name in `FIELD_ALIASES["amount"]` is still a pure guess with zero
+  observations behind it, and that is the half a live auction would decide. I
+  did not widen it, because guessing a second time from the same reading is what
+  `field-name-guess-audit` exists to stop.
+- **Whether adding a backlog item was mine to do.** `draft-feed-pick-number-temp`
+  was not in my brief. I judged that an observation this specific belongs in the
+  file rather than in a session, and recounted the header from the merged file
+  (178 items) with a slug diff against the merge base showing zero dropped and
+  exactly one added. If `architect` disagrees, deleting it costs one edit.
