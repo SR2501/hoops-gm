@@ -2039,8 +2039,7 @@ otherwise. That is precisely the argument for a mechanical check rather than a
 convention.
 
 **Read the bytes, not a pipeline's rendering of them — this bit the coordinator
-on 2026-08-28 while checking exactly this defect.** Counting CR with
-`git cat-file blob <sha>:docs/handoff.md | Out-String` reported **31,400 before
+on 2026-08-28 while checking exactly this defect.** Counting CR with`git cat-file blob <sha>:docs/handoff.md | Out-String` reported **31,400 before
 and 31,481 after** an append that in fact introduced **zero** CR. PowerShell
 normalises line endings crossing the pipeline, so the instrument was rewriting
 the sample it measured. The byte-faithful count — redirect through
@@ -2055,6 +2054,35 @@ injected. A counter that cannot be shown to move is not evidence that nothing
 moved. Note also that `check_append_only.py` already reports
 `CR in base blob` / `CR in head blob` correctly, so it is the working reference
 implementation to copy rather than a second thing to write.
+
+**Done on 2026-08-28, in `check_append_only.py` rather than the terminator
+gate.** The two counts were already printed and never compared; the gate now
+fails when `head_cr > base_cr`, with a seeded-CRLF control asserting the counter
+moves. Proved both directions on a throwaway branch: clean `main` passes with
+`CR added by HEAD: 0`, and an injected three-CR append reports exactly 3 and
+exits 1.
+
+**It is a delta, not "contains no CRLF", and that is deliberate.**
+`docs/handoff.md` already carries 149 and the file is append-only, so a
+zero-tolerance gate would be red on `main` from the day it landed — and a gate
+that is red on `main` is one everybody learns to route around. What remains open
+is only the original 149, not the mechanism.
+
+**A second instance landed the same day, from the same lane as the first**, and
+was caught in review rather than by CI because the gate did not exist yet: PR
+#130's handoff entry carried **171 new CR** with containment intact and every
+gate green.
+
+**Still open: there is no `.gitattributes` in this repository at all.** Line
+ending handling therefore depends entirely on each machine's `core.autocrlf`,
+which is an unstated per-machine dependency and the most likely reason CRLF
+reaches blobs here at all. **Adding `* text=auto eol=lf` is not a safe fix and
+must not be done casually** — git would then want to normalise the existing 149
+on the next commit touching `docs/handoff.md`, which alters bytes
+`check_append_only.py` requires to survive and converts a cosmetic defect into a
+blocking one. Any `.gitattributes` must exclude the append-only documents
+explicitly. **This mechanism is reasoned, not tested**; establish it on a
+throwaway branch before acting on it.
 
 ### `board-dimensions-per-draft` - A board is only short-and-clean if nothing remembers how big it was
 
