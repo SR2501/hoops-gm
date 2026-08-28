@@ -1826,9 +1826,14 @@ go looking, and do not commit them.
 **What is already known about the parse, from a first pass:**
 
 - The snapshots contain team names and player names as text.
-- A naive regex for board cells (`>12-7<` style) finds **nothing** — Angular's
-  markup does not expose the coordinates that way. Real DOM work, not a pattern
-  match.
+- A naive regex for board cells finds nothing **only because of a leading
+  space**: `>12-7<` matches zero times and `> 12-7<` matches once, because
+  Angular renders `<mark class="ng-star-inserted"> 12-7</mark>`. An earlier
+  version of this item said *"Angular's markup does not expose the coordinates
+  that way"* and that was **false** — the first half was a measurement, the
+  second was an inference presented as observation, and it was written into a
+  lane brief marked do-not-re-derive. The lane measured it anyway and corrected
+  it. Coordinates are exposed exactly there.
 - Console logging on the live page shows the client's own model, which is a
   guide to what the DOM must encode: `round`, `pickNumberTemp`, `overallPick`,
   `draftTeamId`, `cellTeamId`, `scorerId`. **`pickNumber` is `undefined` on every
