@@ -30461,3 +30461,145 @@ gates. The backlog header was recomputed by `resolve_doc_conflicts.py` and then
   the design hook flags as a generated-UI tell. It is pre-existing and unrelated
   to this change, so I left it. I removed the equivalent border I had briefly
   added to the over-budget seat rather than suppress the finding.
+
+## 2026-08-28 - architect - The closure count had no recount, and the method that produced it was in a deleted file
+
+**Unit:** unprompted follow-up to #118 and #121, taken because the coordinator
+asked what this session held that the repository did not. **The honest answer
+was a method, and this landed it rather than describing it.** One new script,
+one new test module, one ADR amendment, two backlog items sharpened.
+
+### The thing I was holding
+
+`ADR-019` rests on a measurement - *34 files in the closure, 3 fingerprinted* -
+that I took **once, by hand, in a throwaway probe I then deleted**. Every reader
+since has had to believe it.
+
+That is the shape this repository has a rule against, and I instantiated it in
+the same unit that repaired an instance of it. `docs/backlog.md`'s header is
+recounted by `backlog_graph.py`; `docs/handoff.md`'s terminator by
+`check_doc_terminators.py`; ADR-019's central number by **nothing**. It would
+have decayed silently as the generator's imports moved, and the next reader
+would have inherited a stale integer with an ADR's authority behind it.
+
+The backend lane already wrote the matching lesson into
+`scripts/capture_draft_fixtures.py` - *"the original fixtures were captured by
+hand and no script was kept"* - and I read that docstring **before** deleting my
+probe. Knowing the rule is not the same as applying it to yourself.
+
+### What landed
+
+`scripts/fingerprint_closure.py` recounts ADR-019's claim in one command and
+prints the 31 unfingerprinted closure files by name.
+`backend/tests/test_fingerprint_closure.py` drives its resolution rules against a
+synthetic package - transitive depth, import cycles, package-versus-module
+resolution, out-of-package imports - rather than pinning today's counts, because
+pinning 34 would turn every honest change to the generator's imports into a red
+test and the tool exists to *report* that movement.
+
+Three design choices worth inheriting:
+
+- **It parses the declared tuple rather than importing it.** Importing needs the
+  package on `sys.path` and would cheerfully read a stale installed copy of
+  `hoops_gm` instead of this checkout - the exact substitution the tool exists to
+  detect elsewhere.
+- **It refuses rather than reporting an empty domain.** A renamed constant would
+  otherwise yield an empty declared set and make *every* closure file look
+  unfingerprinted: a maximally alarming report produced by a rename. Two tests
+  assert the refusals.
+- **It reports and exits 0.** A gate red until the set is widened is one everyone
+  learns to route around. Failing is `cohort-fingerprint-closure-check`'s job.
+
+### Two things only running it could have found
+
+**The tool's own refusal path was broken.** `_relative` called
+`Path.relative_to`, which raises `ValueError` for a path outside the repository -
+and the first caller is the refusal that fires when the generator has moved. So
+**the error message was the thing that crashed**, replacing a clean refusal with
+a `pathlib` traceback. Found by `test_an_absent_generator_refuses`, which is the
+argument for asserting a refusal instead of trusting one; a test that only
+checked the happy path would have shipped it.
+
+**The superseded four-week manifest records 4 fingerprints against 6 declared**,
+missing `db/lineage.py` and `merge_stores.py`. That is the declared-versus-
+recorded divergence `_source_fingerprints`' docstring narrates, now visible from
+a command instead of from a comment. **Not a defect** - a frozen manifest
+describes the code that produced *it* - and the tool says so in its own output so
+the next reader does not "fix" it.
+
+### The coordinator closed one of my doubts, and it produced a sharper finding
+
+I flagged that I had grepped `_refuse_if_over_budget` within `draft/state.py`
+only. The coordinator ran the wider search across `backend/src/hoops_gm` for
+`auction_budget` - 33 matches in 7 files - and classified every one: **exactly
+two sites derive a seat's bank**, both in `draft/state.py` (457 refusal, 671
+display), and nothing else subtracts `spent_by` from a budget anywhere in the
+tree. Both halves of my doubt are closed.
+
+**That search found something neither of us had.** The scalar does not originate
+on `Draft`: `draft/formats.py:242` copies it from `League.auction_budget`
+(`db/models/league.py:85`), which is **also a single nullable scalar** - verified
+by reading both files here, not taken on report. So the one-budget-per-league
+assumption is baked one level above the draft, and **a fix that only adds a
+column to `DraftParticipant` leaves the league-level scalar as the only thing a
+seat can be seeded from.** Correct at the seat, still wrong at the source, and
+found on the second pass by whoever implements it. Written into
+`per-team-auction-budgets`, because it changes the shape of the migration.
+
+### On being corrected by tooling twice in one night
+
+I recorded this as a pattern in my own errors and the coordinator's reply is
+worth keeping rather than paraphrasing: **both times the claim was the thing that
+caused the check to be run.** The cycle surfaced only because I wrote the edge I
+believed in; the import closure got walked only because the item asserted
+over-inclusion. An architect who writes down only what is already verified
+produces nothing to verify. The part that has to hold is letting the artefact win
+immediately and writing the corrected reasoning into the item, so the next reader
+meets the truth rather than the refusal.
+
+The coordinator recorded the matching thing about itself in the same exchange: a
+wall-clock time relayed three hours wrong because it was counted from polling
+intervals instead of read from `Get-Date`, and a register identifier `c354`
+propagated out of its own handoff brief that **the register does not contain**.
+Both are derived numbers nobody re-derived from the thing they describe - the
+defect class this repository's tooling exists to catch, and which **none of that
+tooling covers when the number lives in a prompt.** Recorded here because a
+handoff is exactly where such a number gets copied next.
+
+### Verified at this commit
+
+From the repo root: `ruff check scripts` clean, `ruff format --check scripts`
+**17 files**, bare `mypy` clean on the new script. From `backend/`:
+`test_fingerprint_closure.py` **15**, plus `test_console_encoding.py` and
+`test_cohort_evidence.py` - **79 passed** across the three.
+`python scripts/fingerprint_closure.py` exit 0, reproducing **34 / 3 / 31** and
+the two store producers.
+
+`backlog_graph.py` exit 0 with the header unchanged at **58 done - 1 blocked -
+108 pending - 167 total** - no items added, two edited, and the count recounted
+rather than assumed. `check_doc_terminators.py` exit 0. Rebased on `2ff50ff`,
+which was `origin/main` at the time of writing.
+
+### What I could not verify
+
+1. **That the closure is 34.** It is **at least** 34. The walk sees `import`
+   statements; a module reached by `importlib`, a string name, an entry point or
+   a subprocess is invisible to it. The tool prints this in its output, the ADR
+   amendment states it, and the backlog item repeats it - three copies on
+   purpose, because the number is the part people quote.
+2. **That the tool's synthetic-package tests resemble `hoops_gm`.** They cover
+   depth, cycles, package resolution and out-of-package imports. They do not
+   cover conditional imports under `TYPE_CHECKING`, which the AST sees and the
+   runtime does not - so the closure may include modules that are never actually
+   loaded. **That direction is safe** (it over-reports) and is therefore
+   untested, which is exactly when an assumption goes stale.
+3. **The 33-matches classification of `auction_budget`.** That is the
+   coordinator's search, not mine. I verified only the two claims I used:
+   `formats.py:242` copying from `League`, and `league.py:85` being a single
+   nullable scalar.
+4. **The full backend suite at this commit.** Not run - three modules pass.
+   Unmeasured elsewhere, and I am not stating a predicted total as a
+   measurement.
+
+**Next:** coordinator. Code gate only; the tool produces no number a decision
+rests on - it recounts one that already exists.

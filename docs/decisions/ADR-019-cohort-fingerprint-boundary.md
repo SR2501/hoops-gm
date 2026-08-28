@@ -101,3 +101,50 @@ set is currently three of thirty-four closure files, so **every manifest
 published before the set is widened carries a provenance claim narrower than its
 derivation** — that is true today, it is not repaired by this ADR, and it is
 filed as `cohort-fingerprint-closure-check`.
+
+## Amendments
+
+### 2026-08-28 — the closure count is now recountable, and was a number nobody could check
+
+**Status:** Proposed. Written by `architect`, the author of the body above; only
+the project owner accepts.
+
+**The decision does not change.** What changes is the standing of the evidence
+under it.
+
+This ADR rests on a measurement — *34 files in the closure, 3 fingerprinted* —
+that was taken **once, by hand, in a throwaway script that was then deleted**.
+Every reader since has had to believe it. That is precisely the shape this
+repository has a rule against: `docs/backlog.md`'s header is recounted by
+`backlog_graph.py`, `docs/handoff.md`'s terminator by
+`check_doc_terminators.py`, and this ADR's central number by nothing. **A
+derived number with no tool that re-derives it from the thing it describes is a
+claim, not a measurement**, and it decays silently as the generator's imports
+move.
+
+`scripts/fingerprint_closure.py` is that tool, with
+`backend/tests/test_fingerprint_closure.py` driving its resolution rules against
+a synthetic package. It reproduces both figures above and prints the 31
+unfingerprinted files by name.
+
+**It reports and exits 0; it does not gate.** A check that is red until the set
+is widened is one everyone learns to route around, and the widening is
+`cohort-fingerprint-closure-check`'s job. The domain limit is printed in the
+tool's own **output**, not only its docstring: this counts imports, so **34 is a
+floor**, and a file absent from it has not been shown to be irrelevant — only
+not to be imported.
+
+**Two things the tool found that the body above did not know.** The superseded
+four-week manifest records **4** fingerprints against **6** declared, missing
+`db/lineage.py` and `merge_stores.py` — the declared-versus-recorded divergence
+`_source_fingerprints` describes in prose, now visible from a command. That is
+not a defect: a frozen manifest describes the code that produced *it*. And the
+tool's own refusal path was broken when first driven — `_relative` raised
+`ValueError` from `pathlib` instead of printing the refusal, so **the error
+message was the thing that failed.** Found by the test that asserts the refusal
+rather than trusting it.
+
+**What would flip this amendment.** The tool proving unmaintainable against
+`hoops_gm`'s real import graph, or a closure file being shown to matter that no
+import reaches — either sends membership back to a hand-list, and the body's
+completeness claim is then withdrawn rather than quietly weakened.
