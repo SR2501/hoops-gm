@@ -30830,3 +30830,152 @@ expensive state.
   player names, but a first pass found no trivially extractable board cells.
   That work is now possible offline against real evidence, which is the point of
   keeping 49 of them.
+
+## 2026-08-28 - bridge - A poll that could never succeed, and the four failures that all looked like nothing happening
+
+Two units, both from the first instrumented capture. Userscript 0.5.1 to 0.5.2.
+
+### Unit 1: the Cache Storage poller is gone, and the finding stayed
+
+`capture.js` ran `setInterval(pollCacheStorage, 5000)` on every Fantrax league
+page. Capture path 1 was a reasonable hypothesis - Cache Storage is per-origin,
+so a response written by `fx-sw.js` is readable by page script, and persisting
+API responses there is a common Workbox pattern - and it was honestly labelled
+*"unverified against the live site"*.
+
+It is now **verified absent**, which is a result rather than a failed attempt.
+The origin's Cache Storage holds five entries, every one an `ngsw:`-prefixed
+Angular service-worker **asset** cache. Angular separates `assetGroups` from
+`dataGroups`; Fantrax declares only asset groups, so `/fxpa/req` responses are
+never written there and the poll could not have succeeded on any tick.
+
+Removed for the cost, not the tidiness: a recurring background timer competes
+for attention in a tab the browser may be throttling, and the rendered-view
+path - the one that does work - already depends on `setTimeout` and
+`MutationObserver` firing promptly during a draft.
+
+The reasoning is kept where the code was: the hypothesis, the observed cache
+names, the mechanism that explains them, and the single condition under which
+re-testing is worthwhile (a cache name that is not `ngsw:`-prefixed). `README.md`
+described the watcher as implemented and best-effort; that was about to become a
+false guarantee in a document nothing tests, so it was rewritten rather than
+left. The IndexedDB note is untouched - still unimplemented, still an option.
+
+**`"cache-storage"` stays a valid envelope source.** Nothing emits it now, but
+it is part of `hoops-gm.bridge-payload.v1`, which `api/routes/bridge.py`
+validates and which stored payloads may carry. Removing a producer is
+bridge-local; retiring a shared schema value is a contract change `backend`
+owns. A test pins that distinction so the two are not conflated later.
+
+### The three tests it replaced were green for the wrong reason
+
+Worth recording, because it is the failure mode this repository keeps finding.
+Two of the three Cache Storage tests asserted `published.length === 0` - one for
+a hidden tab, one for a rejecting `caches.keys()`. **Both kept passing after the
+poller was deleted**, because publishing nothing is exactly what absent code
+does. Only the third noticed. A green result that survives the removal of the
+code it covers is not evidence of anything.
+
+The replacements assert the absence directly: `window.caches` is never touched
+even when a fake store is loaded with a matching `/fxpa/req` entry that any
+reader would find, no recurring timer is installed, and the finding is still in
+the source.
+
+### Unit 2: the status strip
+
+The userscript rendered nothing on the page. Its only DOM interaction was
+injecting a script element. An unpaired script, a refused envelope, a stale
+build and a draft that has not started were **indistinguishable from the Fantrax
+page**, which is the page the owner is looking at. He hit two of the four in one
+session on 2026-08-28.
+
+0.5.2 renders a shadow-DOM strip in the bottom-left corner showing the running
+`@version`, paired or not, envelopes the backend acknowledged, how many were
+dropped as byte-identical, when the last capture happened, which path produced
+it, and the last refusal reason. All four failures now read differently.
+
+**The refusal reason did not exist anywhere before this.** `forward()`'s `catch`
+took no argument and discarded the error, so "backend unreachable", "bridge is
+not paired" and "HTTP 401" were already distinct strings inside the transport
+and were thrown away one frame later.
+
+Constraints, each with a test rather than a claim:
+
+- **Closed shadow root.** Fantrax's Angular styles cannot reach in, nothing
+  leaks out, and their page script cannot reach it via `element.shadowRoot`.
+- **Every style through the CSSOM**, never a `<style>` element or a `style`
+  attribute. A `style-src` CSP on fantrax.com blocks those two and would leave
+  an invisible strip; CSP does not restrict CSSOM writes. `all: initial` is
+  written first or its resets would wipe the positioning written before it.
+- **`pointer-events: none`.** Q7 is *advise everywhere, override nowhere*, and
+  this is the structural version: the strip cannot swallow a click meant for the
+  draft board. The Tampermonkey menu carries the show/hide toggle instead, which
+  is why the strip never needs to accept a click. Hiding is deliberately **not**
+  persisted - a remembered "hidden" recreates the silence the strip exists to
+  break, on a later page load where nobody remembers switching it off.
+- **No timer.** It rides the rendered-view watcher's existing one-second context
+  check and suppresses DOM writes when the rendered text is unchanged. The age
+  is bucketed to "just now" then whole minutes for the same reason: a per-second
+  age would rewrite the DOM every second for the whole draft. Adding a status
+  interval right after removing the Cache Storage interval would have been a
+  wash.
+- **`textContent`, never `innerHTML`**, with secret-shaped tokens redacted from
+  refusal text first. No transport rejection in `userscript.js` carries the
+  bridge secret, but this is the one capture-derived string that reaches the
+  DOM, so the guarantee is enforced rather than inherited from every future
+  error path.
+- **No price, value, suggested bid or ranking**, asserted against a matrix of
+  states. Growing one fails loudly instead of quietly becoming `bridge-overlay`,
+  which carries the Model gate with it.
+
+### Where I refused the brief
+
+The item asked for **picks seen** and **the refusal reason the feed returned**.
+The strip shows neither, and shows transport-level refusals instead.
+
+Both are draft-scoped: they need a `draft_id` for `GET /drafts/{draft_id}/feed`,
+whose `observation_count`, `blocked` and `skipped` fields are exactly right. The
+userscript cannot honestly obtain one. A Fantrax league page URL carries
+Fantrax's **external** league id; `DraftSummary.league_id` from `GET /drafts` is
+our **internal** database id. Nothing served to the browser joins them. The
+available shortcut - take the newest draft - renders a confident pick count for
+possibly the wrong draft during a live draft, which is worse than rendering
+none, and it is the shape of wrongness this project keeps finding.
+
+The item's claim that *"every input already exists"* is true of the four silent
+failures and false of the pick count. Filed as
+`bridge-status-strip-feed-counts`, owned by `backend`, because the fix is a REST
+contract and not a heuristic in the bridge.
+
+### Could not verify
+
+- **Nothing rendered in a real browser.** Every strip test runs against an
+  injected fake DOM in `node:vm`. The shadow root, `pointer-events: none`, the
+  CSSOM styling and the CSP argument are all tested as *intentions expressed in
+  code*, not as observed pixels on fantrax.com. **The CSP claim is the one most
+  worth doubting**: I assert CSP does not restrict CSSOM writes, which is
+  correct as a spec claim, but I have not seen this strip render on a page
+  serving Fantrax's actual CSP. First thing to check on the next live run - and
+  if the strip is invisible, `GM_addElement` is already granted and is the
+  escape hatch.
+- **Whether the strip is legible or in the way.** Position, size, colour and
+  contrast were chosen blind. Bottom-left was picked because draft controls tend
+  to sit bottom-right; that is a guess about Fantrax's NBA draft room, and the
+  49 captures are from an NFL room.
+- **`GM_info.script.version` was never read from a real Tampermonkey.** It needs
+  no `@grant` and is documented as always present, so the `@grant` list is
+  unchanged and `build.test.js` still freezes it - but that is an inherited
+  guarantee, exactly the kind this repository has repeatedly found false. If it
+  is absent the headline degrades to "hoops-gm bridge" rather than breaking,
+  which is the intended failure but not the intended outcome.
+- **The one silent failure that remains silent.** A payload the *recogniser*
+  cannot read still looks healthy here: the strip says "sent", because it was
+  sent. That is `bridge-status-strip-feed-counts`, and until it lands the strip
+  answers "is the bridge alive" and not "is the draft being tracked".
+- **`dist/` is gitignored, so nothing in CI can see the built artifact.** I
+  bumped to 0.5.2 and rebuilt in this worktree, and verified the built file
+  carries `@version 0.5.2`, contains `installStatusStrip`, and contains no
+  executable reference to `caches`. **The owner must run `npm run build` in his
+  own checkout after merging**, or the backend keeps serving 0.5.1 and Tampermonkey
+  keeps truthfully reporting no update available. That is exactly
+  `userscript-served-version-check`, which is filed and is not this unit.

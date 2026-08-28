@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**60 done - 0 blocked - 120 pending - 180 total**
+**62 done - 0 blocked - 119 pending - 181 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1975,59 +1975,108 @@ of which recogniser the widening applies to.
 
 ### `bridge-drop-cache-storage-poller` - Removing a five-second poll of a store that is permanently empty
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `bridge-capture`
 
-`capture.js:675` runs `setInterval(pollCacheStorage, 5000)` on every Fantrax
-league page. Capture path 1 was **verified empty on a live draft room** on
-2026-08-28: the origin's Cache Storage holds five `ngsw:` entries, all Angular
-service-worker *asset* groups, and no data group. `/fxpa/req` responses are never
-written there, so the poll can never find anything.
+`capture.js` ran `setInterval(pollCacheStorage, 5000)` on every Fantrax league
+page. Capture path 1 was **verified empty on a live draft room** on 2026-08-28:
+the origin's Cache Storage holds five `ngsw:` entries, all Angular
+service-worker *asset* groups, and no data group. `/fxpa/req` responses are
+never written there, so the poll could never find anything.
 
-**Two costs, and the second is the one that matters on draft day.** It is wasted
-work on every page load; and it is a recurring background timer competing for
-attention in a tab Brave may be throttling, in a browser where the snapshot
-path already depends on `setTimeout` and `MutationObserver` firing promptly.
+Removed in 0.5.2, and the reasoning was kept where the code used to be: the
+hypothesis, the observed cache names, the `assetGroups`/`dataGroups` mechanism
+that explains them, and the one condition under which re-testing is worthwhile.
+The four-path commentary now reads path 1 as verified-absent rather than
+unverified. The IndexedDB note stands unchanged — still unimplemented, still a
+documented option.
 
-**Do not delete the reasoning with the code.** The path was a legitimate
-hypothesis — a common Workbox pattern — and the finding is that *Fantrax does not
-use it*. Leave a comment recording that it was tried, verified absent, and why,
-so nobody re-adds it. Keep the IndexedDB note as it stands: still unimplemented,
-still a documented option.
+`"cache-storage"` remains a valid `hoops-gm.bridge-payload.v1` source and is
+still accepted by the isolated-world receiver. Removing the producer is
+bridge-local; retiring a schema value the backend validates and stored payloads
+may carry is a contract change `backend` owns.
+
+**The three tests it replaced are worth recording as a failure of testing.**
+Two of them asserted that nothing was published — for a hidden tab and for a
+rejecting `caches.keys()` — and **both kept passing after the poller was
+deleted**, because publishing nothing is exactly what absent code does. Only
+the third failed. A green result that survives the removal of the code it
+covers is not evidence, so the replacements assert the absence directly: that
+`window.caches` is never read even when a matching `/fxpa/req` entry is offered,
+that no recurring timer is installed, and that the finding is still in the
+source.
 
 ### `bridge-status-strip` - Showing, on the Fantrax page, whether the bridge is alive
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `userscript-foundation`, `bridge-capture`
 
-**Split out of `bridge-overlay` on 2026-08-28 because the two have different
-dependencies and only one of them is reachable before draft day.**
-`bridge-overlay` renders *recommendations*, so it sits behind `punt-builds` and
-the whole valuation chain — seven unbuilt items deep, and it will not exist on
-18 October. This item renders only *what has already been captured*: picks seen,
-last capture time, paired or not, and any refusal reason the feed returned. That
-needs no valuation, no `p(play)`, and no projection. Every input already exists.
+Shipped in 0.5.2. A shadow-DOM strip in the bottom-left corner of any Fantrax
+league page reporting the running `@version`, paired or not, envelopes the
+backend acknowledged, how many were dropped as byte-identical, when the last
+capture happened, which path produced it, and the last refusal reason.
 
-**The argument for it is that the bridge's failure mode is silence.** An
-unpaired userscript, a refused envelope and a draft that has not started are
-indistinguishable from the Fantrax page, which is the page the owner is looking
-at. `docs/mocks/instrumented-capture.md` says an unpaired script is "silently
-useless, which looks identical to a draft that has not started", and the owner's
-Q12 answer names losing track of the draft as the thing that would make him
-close the laptop. A status strip does not prevent that failure; it makes it
-*visible where he already is*, which is the only place a silent failure can be
-noticed in time.
+**It closes all four silent failures**, which was the argument for it: an
+unpaired script, a refused envelope, a stale build and a draft that has not
+started were previously indistinguishable from the Fantrax page. The refusal
+reason existed nowhere before this — `forward()`'s `catch` discarded the error,
+which is what made "backend unreachable", "bridge is not paired" and "HTTP 401"
+render identically as nothing happening.
 
-**Deliberately not a recommendation surface.** It must not show a price, a
-value, a suggested bid or a ranking — those are `bridge-overlay`'s and they
-carry the Model gate with them. If this item grows one, it has become the wrong
-item and should be refused rather than widened.
+Constraints, all of them tested: closed shadow root; every style written
+through the CSSOM rather than a `<style>` element or `style` attribute, because
+a `style-src` CSP on fantrax.com would block those two and leave an invisible
+strip; `pointer-events: none`, so it is structurally incapable of swallowing a
+click meant for the draft board; `textContent` rather than markup, with
+secret-shaped tokens redacted from refusal text; and **no timer of its own** —
+it rides the rendered-view watcher's existing one-second context check and
+suppresses DOM writes when its rendered text is unchanged. Adding a status
+interval immediately after removing the Cache Storage interval would have been
+a wash.
 
-**Reconsider it if** the owner decides a second monitor fully covers the need.
-His Q1 answer allows either — *"draft companion in an overlay or separate app"*
-— and his Q3 answer of two minutes per pick makes glancing at the dashboard
-affordable. The narrow case that survives that objection is *noticing silence*,
-not *reading numbers*.
+**It deliberately does not show picks the feed recognised**, which the original
+item listed. That number is draft-scoped: it needs a `draft_id` for
+`GET /drafts/{id}/feed`, and the userscript has no honest way to learn one. A
+Fantrax league page URL carries Fantrax's *external* league id while
+`GET /drafts` returns our *internal* `league_id`, so the two cannot be joined in
+the browser, and guessing "the newest draft" would render a confident number for
+the wrong draft. Surfacing it needs a backend contract `backend` owns, not a
+heuristic in the bridge. Filed as `bridge-status-strip-feed-counts`.
+
+No price, value, suggested bid or ranking, and a test asserts the rendered text
+carries none of that vocabulary — so the drift into `bridge-overlay`'s territory,
+which carries the Model gate, fails loudly rather than quietly.
+
+### `bridge-status-strip-feed-counts` - Showing recognised picks on the strip, once a draft can be identified from the browser
+
+- [ ] **pending**
+- **Depends on:** `bridge-status-strip`, `draft-tracker-bridge-feed`
+
+`bridge-status-strip` shipped without the one field its own description asked
+for: picks the feed actually recognised, and the refusal reason the *feed*
+returned as opposed to the one the *transport* returned. Both are draft-scoped
+and need `GET /drafts/{draft_id}/feed`, whose `observation_count`,
+`applied_count`, `blocked` and `skipped` fields already carry exactly the right
+information.
+
+**The blocker is identity, not plumbing.** The userscript knows the Fantrax page
+URL, which carries Fantrax's external league id. `GET /drafts` returns
+`DraftSummary.league_id`, which is our internal database id. Nothing served to
+the browser joins the two, so the strip cannot resolve a draft without guessing
+— and a strip confidently reporting another draft's pick count during a live
+draft is worse than one reporting nothing.
+
+**Acceptance:** a local-only read that maps a Fantrax external league id to a
+draft, decided and owned by `backend` as a REST contract rather than
+reverse-engineered in the userscript, plus the strip consuming it. If the answer
+is that the owner should just pass a league id in GM storage at pairing time,
+that is a smaller and more reversible answer and should win — but it is still
+`backend`'s call, because the strip would then be asserting a linkage nothing
+validates.
+
+**Do not solve this by polling every draft.** `GET /drafts` loads every draft's
+full state to build its summaries, and the strip would be calling it on a timer
+during the one hour where the backend has real work to do.
 
 ### `contingent-value` - Building the contingent value graph
 
