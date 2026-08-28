@@ -2024,6 +2024,24 @@ where `Add-Content` and most editors default to CRLF, and nothing told it
 otherwise. That is precisely the argument for a mechanical check rather than a
 convention.
 
+**Read the bytes, not a pipeline's rendering of them — this bit the coordinator
+on 2026-08-28 while checking exactly this defect.** Counting CR with
+`git cat-file blob <sha>:docs/handoff.md | Out-String` reported **31,400 before
+and 31,481 after** an append that in fact introduced **zero** CR. PowerShell
+normalises line endings crossing the pipeline, so the instrument was rewriting
+the sample it measured. The byte-faithful count — redirect through
+`cmd.exe`, then `[System.IO.File]::ReadAllBytes` — is **149 before and 149
+after**. Had the first reading been believed, it would have looked like an
+81-line regression and provoked a "repair" of bytes that were already correct, in
+an append-only file where that repair breaks containment.
+
+So the check must read blobs in binary and must be **proved against a known
+non-zero case**: inject a CRLF, confirm the count moves by exactly the number
+injected. A counter that cannot be shown to move is not evidence that nothing
+moved. Note also that `check_append_only.py` already reports
+`CR in base blob` / `CR in head blob` correctly, so it is the working reference
+implementation to copy rather than a second thing to write.
+
 ### `field-name-guess-audit` - Auditing every field name guessed from a format rather than read from one
 
 - [ ] **pending**
