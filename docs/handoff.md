@@ -29374,15 +29374,48 @@ collided with a drawn percentage. A check that cries wolf on a correct screen
 gets loosened by whoever meets it next, so the fix was to teach it the displayed
 forms rather than to widen the tolerance.
 
+### A layout defect only a narrow real browser found
+
+At 900px the **document** scrolled sideways instead of the table, which takes
+the sticky team column off screen with it - and the team column is the one thing
+that must stay put while a reader scans nine categories. Cause:
+`.shell__main` is a CSS grid item, a grid item's `min-width` defaults to
+`auto`, and `auto` means "never narrower than my min-content width". The
+eleven columns' `min-width` values summed past the window, so the `1fr`
+track refused to shrink and the `overflow: auto` wrapper never became the
+thing that overflowed.
+
+**It surfaced because the probe measured something that could disagree with
+itself.** `documentOverflowsHorizontally: true` beside
+`tableFitsViewportWidth: true` is a contradiction if you believe the wrapper
+is the scrollport, and reading the pair is what named the cause. A probe
+reporting only "the table fits" would have passed.
+
+`stickySeatColumnHeldAfterScroll` had read `null` at every viewport and I
+had written that down as an untested gap. **It was not a gap in coverage; it was
+the defect reporting itself as an absence** - the wrapper never had horizontal
+overflow, so there was no scroll for the sticky column to survive. Worth
+recording: a probe field that is persistently `null` is a finding, not a
+missing measurement, and I nearly shipped it as the latter.
+
+Fixed with `min-width: 0` scoped by `:has(.page--categories)` rather than
+applied to `.shell__main`, because every screen is a grid item and the
+schedule grid is far wider than this one - the general fix is a layout change to
+seven screens nobody has measured. Before and after at 900px:
+`documentOverflowsHorizontally` true -> false,
+`stickySeatColumnHeldAfterScroll` null -> true, and `--differs-from`
+confirmed the two readings differ. 1440x900 and 1366x768 unchanged except that
+the document no longer overflows.
 ### What I could not verify
 
 - **That the ranking is useful.** Everything above establishes that the numbers
   are the ones I claim they are. It establishes nothing about whether ranking
   seats on an availability-blind, depth-unadjusted sum helps him at a live
   auction. Only he can say, and the honest test is a mock draft.
-- **That it is readable at a full board.** 48 of 156 slots, 12 seats, on one
-  laptop screen at 1268px. Nothing here says the table works at 156 filled
-  slots, at a longer team name, or on the external monitor he actually uses.
+- **That it is readable at a full board.** 48 of 156 slots, 12 seats, measured
+  at 1440x900, 1366x768 and 900x700. Nothing here says the table works at 156
+  filled slots, at a longer team name, or on the external monitor he actually
+  uses.
 - **That the nine categories are this league's nine.** They are 2025-26's,
   unverified for 2026-27, and there is no endpoint to check them against.
 - **That the demo distribution resembles anything.** The seat sizes

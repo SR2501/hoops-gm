@@ -1952,3 +1952,24 @@ a:focus-visible {
   border-radius: 3px;
   font-size: 0.7rem;
 }
+/* A grid item's `min-width` defaults to `auto`, which means "never narrower
+   than my min-content width". The category table's eleven columns each carry a
+   `min-width`, so their sum pushed the `1fr` track wider than the window and
+   **the document scrolled sideways instead of the table** - which takes the
+   sticky team column off screen with it, and the team column is the one thing
+   that must stay put while a reader scans nine categories.
+
+   Measured at a 900px viewport, before and after, with `scripts/browser_probe.mjs`:
+   `documentOverflowsHorizontally` true -> false, and
+   `stickySeatColumnHeldAfterScroll` null -> true, because until the wrapper
+   was the thing that overflowed there was no horizontal scroll for the sticky
+   column to survive. The reading changed in both fields, which is what makes it
+   evidence rather than a plausible edit.
+
+   Scoped with `:has()` to this page rather than applied to `.shell__main`
+   itself: every screen is a grid item and the schedule grid is far wider than
+   this one, so the general fix is a layout change to seven screens that nobody
+   has measured. Narrow and reversible beats correct-looking and broad. */
+.shell__main:has(.page--categories) {
+  min-width: 0;
+}
