@@ -68,18 +68,17 @@ retraction worth costing.
 `draft-board-feed-integration` has a contract and can be scoped.
 
 Three things still look identical at the DOM: a repaint, an undo, and a capture
-cut inside the board. The third is *mostly* excluded — `ragged_columns` and
-`coordinate_grid_incomplete` refuse an incomplete cover — but that is established
-only against captures whose cut landed **past** the board, which is all 22
-truncated ones on record. A cut landing inside a longer board has never been
-observed, so `bridge-snapshot-budget` is load-bearing rather than hygiene.
+cut inside the board. **The third is excluded by measurement — 794 cut offsets,
+0 parsed clean and short — but by a different mechanism than this paragraph
+originally claimed, and there is a live hole beside it. See the amendment.**
+`bridge-snapshot-budget` is load-bearing rather than hygiene.
 
 **Every byte of evidence under this ADR is football, snake format.** Nothing here
 has been driven against an auction board or an NBA one.
 
 ## Amendments
 
-### 2026-08-28 — the truncation and seat-stability claims are now measured, not reasoned
+### 2026-08-28 — the truncation guard I named was dead, and the safety is in the layout rather than the check
 
 **Status:** Proposed. Written by `architect`, the author of the body above; only
 the project owner accepts.
@@ -91,28 +90,74 @@ under it, both of which the handoff entry listed as "could not verify".
 Coordinate marks in `backend/tests/fixtures/fantrax_draft_board_complete.html`
 run `1-1, 2-12, 3-1, 4-12 … 17-1, 18-12` — all eighteen of seat 1's picks,
 snaking within the one column — and only then `1-2, 2-11, …`. The same holds in
-**all 42 board-bearing captures**. The Consequences paragraph above therefore
-stands: a byte cut either removes whole trailing columns, leaving `seen` short of
-an `expected` built from the **header**-derived `seat_count` and tripping
-`coordinate_grid_incomplete`, or lands mid-column and trips `ragged_columns`.
-Both refuse. Had the layout been row-major, a cut would have removed trailing
-rounds uniformly, `rounds` is derived from the rendered cell count
-(`board_dom.py:475-484`), and a truncated capture would have parsed **clean and
-short** — the precise defect the unit exists to prevent.
+**all 42 board-bearing captures**. The DOM is
+`__body > __column ×12 > __item ×18`.
+
+**A truncated capture never parses short. Measured, not reasoned:** a real
+216-pick capture cut at **794 offsets** plus all 12 exact column boundaries gave
+**769 refused, 25 parsed-full (cut landed past the board), 0 parsed clean and
+short.**
+
+**The mechanism named in the first draft of this amendment was wrong, and the
+correction matters more than the conclusion.** It said the cut shortens the last
+column and trips `coordinate_grid_incomplete` or `ragged_columns`. Across 771
+in-board cuts the actual distribution is **`seat_column_mismatch` 705,
+`ragged_columns` 61, `coordinate_grid_incomplete` 0 — it never fires at all.**
+
+It is not merely unused; it is **unreachable by truncation**, and for a reason of
+source order rather than logic. `expected` is built from `seat_count`, which
+comes from the header, so by the time the cover check at `board_dom.py:554` runs,
+`seat_column_mismatch` at `:462` has already refused any input whose column count
+disagrees with the header — and dropping whole trailing columns is exactly that
+input. `ragged_columns` catches only the residue: cuts landing inside the *last*
+column, where 12 columns are still present.
+
+So the guarantee is **"the header precedes the body in document order"**, which
+is a *different property from column-major* and must be pinned separately: a
+redesign could preserve either and break the other. I had named one secondary
+guard and one dead one, and got the right answer for the wrong reason — which
+would have survived indefinitely, because the conclusion was correct.
 
 **Seat index is stable.** Column *i* begins with coordinate `1-i` in **all 42**
-captures, spanning 0 to 216 picks. Decision 2 digests `seat` and excludes
-`seat_name`, and that is the property that holds: the four renames
-`board_dom.py:171` records are of displayed *names*, and the digest never reads
-one.
+captures, spanning 0 to 216 picks. Checked by content rather than header text:
+**0** columns ever lost a pick they previously held, and **0** `overall → seat`
+remappings. The **4** name changes are `Mock Drafter N` → real name at fixed
+indices (seats 4, 12, 6, 10). Decision 2 digests `seat` and excludes `seat_name`,
+and that is precisely the property that holds.
+
+### The safety comes from the layout, not from the check
+
+**A uniformly-short board parses clean, short, and `is_complete=True`.** Built and
+driven: 12 columns uniformly cut to 14 cells parses as a *finished* 12×14 draft
+reporting 168 of 216 picks. No structural check sees it — `rounds` is derived
+from the cell count at `board_dom.py:475-484`, and a uniformly-short board is
+perfectly rectangular with a complete coordinate cover.
+
+The only thing that catches it is the chat cross-check, **and the chat pane does
+not exist on the `/draft/board` route.** Five recorded snapshots (0043–0047,
+157–205 picks) carry picks and no chat pane, and **the owner navigated to that
+route mid-draft.**
+
+Today the layout and the check give the same answer. A Fantrax redesign, a
+virtualised board or a partial Angular re-render separates them, and on
+`/draft/board` nothing would notice.
+
+**This is not a parser defect and must not be fixed there.** A parser sees one
+snapshot and cannot know that 14 rounds is wrong. **Board dimensions are a
+property of the draft, not of the snapshot**: once an 18-round board has been
+seen for a draft, a 14-round reading must refuse. That is a fifth decision for
+`draft-board-feed-integration`, and it is the one with a live failure behind it
+rather than a hypothetical.
+
+Related: `is_complete` means "every rendered cell is filled", not "the draft is
+over". On a uniformly-short board it returns `True` for a partial draft.
 
 **What this still does not establish.** One draft, one league, football, snake.
-It says nothing about an auction board, which may not carry coordinates at all,
-and nothing about whether column order survives a mid-draft re-render in a
-different league.
+It says nothing about an auction board, which may not carry coordinates — or be a
+grid — at all, and nothing about a team being removed mid-draft or a re-sortable
+board. Stability here is 42 snapshots of one uninterrupted session.
 
-**Because the fixture is committed, this is a test rather than a claim** — no
-private capture is needed to re-derive either figure. Pinning column-major order
-against that fixture is now an acceptance criterion on
-`draft-board-feed-integration`, so the property is re-derived rather than
-believed.
+**Because the fixture is committed, the two structural claims are tests rather
+than claims** — no private capture is needed to re-derive either. Pinning
+column-major order against that fixture is an acceptance criterion on
+`draft-board-feed-integration`.

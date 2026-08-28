@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**64 done - 0 blocked - 120 pending - 184 total**
+**64 done - 0 blocked - 123 pending - 187 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1982,9 +1982,15 @@ else would carry them:**
   amendment rests on it and it is currently held by nothing: coordinate marks run
   `1-1, 2-12, 3-1 … 18-12` for seat 1 before `1-2` appears, and column *i* begins
   with `1-i`. Both were measured across all 42 board-bearing captures and both
-  reproduce from the committed fixture, so **no private capture is needed**. If
-  the layout ever becomes row-major, a truncated capture parses clean and short
-  instead of refusing, and nothing else in the suite would notice.
+  reproduce from the committed fixture, so **no private capture is needed**.
+- **Pin "the header precedes the body in document order" as a *separate*
+  property.** It is not the same claim as column-major, and it is the one
+  actually doing the work: `seat_column_mismatch` at `board_dom.py:462` refuses
+  before the cover check at `:554` is ever reached, which is why
+  `coordinate_grid_incomplete` fired **0 times in 771 in-board cuts** while
+  `seat_column_mismatch` fired 705. A redesign could preserve either property and
+  break the other. **A test asserting only "it refuses" passes while pinning the
+  wrong mechanism**, and the mechanism is what the next reader relies on.
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 
@@ -2050,8 +2056,84 @@ moved. Note also that `check_append_only.py` already reports
 `CR in base blob` / `CR in head blob` correctly, so it is the working reference
 implementation to copy rather than a second thing to write.
 
-### `field-name-guess-audit` - Auditing every field name guessed from a format rather than read from one
+### `board-dimensions-per-draft` - A board is only short-and-clean if nothing remembers how big it was
 
+- [ ] **pending**
+- **Depends on:** `draft-board-dom-parser`, `draft-board-feed-integration`
+
+`board_dom.py:475-484` derives `rounds` from the rendered cell count, so a
+**uniformly short** board is rectangular, has a complete coordinate cover, and
+parses clean with `is_complete=True`. Measured: 12 columns cut to 14 cells
+reports **168 picks of 216 as a finished 12x14 draft**.
+
+Nothing structural catches it. The chat cross-check does - and the chat pane is
+absent on the `/draft/board` route, where captures 0043-0047 hold 157-205 picks
+and no chat at all. The owner navigated to that route mid-draft.
+
+**Not currently reachable**, because the board is column-major and a byte cut
+drops whole columns, which `seat_column_mismatch` refuses. The point is that the
+safety comes from Fantrax's *layout* rather than from our *check*, and only one
+of those is ours. A virtualised board, a partial re-render, or a redesign
+separates them.
+
+**Acceptance:** board dimensions are a property of the draft, not of the
+snapshot. Once an 18-round board has been observed for a draft, a 14-round
+reading refuses. A parser sees one snapshot and cannot know 14 is wrong, so this
+is a feed-level check. Also rename or document `is_complete`: it means "every
+rendered cell is filled", not "the draft is over".
+
+### `capture-corpus-verifier` - The headline parser figure can be re-derived, or it is a claim
+
+- [ ] **pending**
+- **Depends on:** `draft-board-dom-parser`
+
+`docs/handoff.md` records the board parser as **42 parsed / 7 refused / 0
+mismatches over 49 real captures**, and that number is currently re-derivable by
+exactly one thing: a scratch script in a session directory that dies with the
+session. ADR-019's amendment already settles what that means - *a derived number
+with no tool that re-derives it from the thing it describes is a claim, not a
+measurement* - and this is the most load-bearing number the draft board has.
+
+The lane's `verify_real.py` is the tool. It drives the parser over every capture
+and cross-checks each against an independently written count **and** against the
+chat pane's own arithmetic, which is the part that makes it evidence rather than
+the parser agreeing with itself. Rescued to
+`hoops-gm-private/lane-artifacts/2026-08-28-draft-board-dom-parser/`.
+
+**Acceptance:** committed under `scripts/` taking `--captures-dir`, following the
+same convention as the schedule seed's `--fixtures-dir` - tool in the repository,
+data outside it, no vendor payload ever committed. It cannot run in CI and should
+not pretend to; it is a command a human runs against a corpus, and it prints the
+three figures plus any disagreement by capture name. The same run should also
+report the guard split on a truncation sweep, because ADR-020's amendment now
+rests on 705/61/0 and nothing re-derives that either.
+
+### `diff-scanned-against-real-values` - Grep a branch's own diff for values only a real capture could contain
+
+- [ ] **pending**
+- **Depends on:** `draft-board-dom-parser`
+
+`check_no_secrets.py` passes on a league id and is right to - a league id is not a
+credential. But `b2gyornvms4606iv` is on `main` in two append-only files, and
+those files may not be repairable at all. The rule that was broken exists only as
+an instruction to lanes, and **no gate implements it**.
+
+The lane's `grep_diff_for_real_data.py` inverts the usual direction: instead of
+matching patterns that look secret, it reads **actual values out of the private
+capture corpus** - league ids, team ids, scorer ids, player names - and greps
+every file the branch touches for them. It found a real scorer id sitting in a
+docstring that two separate fixture scanners were structurally blind to, because
+they scanned fixtures and the value was in prose.
+
+**Acceptance:** committed under `scripts/`, taking `--captures-dir` and a diff
+range, defaulting to `origin/main...HEAD`. **Position-aware matching is
+mandatory** - the lane recorded that naive substring matching false-positives on
+`NE`, because DST scorer names are two-letter pro-team codes that occur inside
+ordinary words. Prove it by injection against a known-clean branch: plant one
+real id, watch it named, remove it, watch it pass. Whether this becomes a gate is
+`coordinator-rules-distillation`'s call, not this item's; land the tool first.
+
+### `field-name-guess-audit` - Auditing every field name guessed from a format rather than read from one
 - [ ] **pending**
 - **Depends on:** `draft-tracker-bridge-feed`, `fantrax-official-adapter`
 
