@@ -17,6 +17,12 @@ because of:
   visible count, never a half-read pick.
 """
 
+from hoops_gm.draft.feed.board_dom import (
+    BoardParseRefused,
+    BoardPick,
+    BoardReading,
+    parse_draft_board,
+)
 from hoops_gm.draft.feed.observations import (
     InstantKind,
     InstantProvenance,
@@ -49,6 +55,9 @@ from hoops_gm.draft.feed.reconcile import (
 __all__ = [
     "FIELD_ALIASES",
     "SNAPSHOT_CAPTURE_SOURCES",
+    "BoardParseRefused",
+    "BoardPick",
+    "BoardReading",
     "Disagreement",
     "InstantKind",
     "InstantProvenance",
@@ -66,6 +75,7 @@ __all__ = [
     "league_id_in",
     "league_id_in_page_url",
     "matching_key",
+    "parse_draft_board",
     "recognise_bridge_payload",
     "recognise_official_draft_picks",
     "reconcile",

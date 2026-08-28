@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**63 done - 0 blocked - 119 pending - 182 total**
+**64 done - 0 blocked - 120 pending - 184 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1798,7 +1798,7 @@ other two.
 
 ### `draft-board-dom-parser` - Reading the draft board from the rendered page, because nothing else can
 
-- [ ] **pending**
+- [x] **done**
 - **Depends on:** `bridge-capture`, `draft-tracker-bridge-feed`
 
 **This became the critical path to 4 October on 2026-08-28, when both automatic
@@ -1852,6 +1852,106 @@ one"*, and a miscount produces no error code.
   `MutationObserver` and `setTimeout`, both throttled in hidden tabs. A parse is
   only as current as its snapshot, and the strip in `bridge-status-strip` is
   where that must be visible.
+
+**Landed at `backend/src/hoops_gm/draft/feed/board_dom.py`.** The board is
+recoverable and the first pass's central claim about it was wrong: Angular does
+render the coordinates, as `<mark> 12-7</mark>`, and the regex that found zero
+searched for `>12-7<` without the leading space. Real DOM work was still
+required, but for a different reason - the coordinate says round and
+pick-within-round, never the seat, which is the column the cell sits in.
+
+**Why the count can be trusted.** Fantrax renders the *whole* grid from the
+moment the room loads: all 216 cells carry their coordinate before a single
+pick is made, verified across 42 board-bearing captures where the cell count was
+216 in every one while picks climbed 0 -> 216. The board is **not virtualised**,
+so the parse can require the coordinates to cover `rounds x seats` exactly once
+and a missing cell becomes evidence of damage rather than of scrolling. Driven
+against all 49 real captures: 42 parsed, 7 refused - and the 7 are exactly the
+snapshots of other pages - with 0 disagreements against an independent count.
+
+**The arithmetic is corroborated from outside the parser.** The chat pane
+announces each pick as `drafted - 16-4 [184]`, which is Fantrax's own overall
+number computed in a different subtree. `(round - 1) * seats + pick_in_round`
+agreed with it **749 times out of 749**.
+
+**Three findings that change other lanes:**
+
+1. **A 250,000-character snapshot is not large enough to be comfortable.** The
+   finished 216-pick board occupied 208 KB of `AUTO_SNAPSHOT_MAX_CHARS`, leaving
+   42 KB. 22 of 42 board-bearing captures were truncated; every one happened to
+   be cut past the board. A longer league loses the tail, and the picks that
+   survive the cut look exactly like a complete board. See
+   `bridge-snapshot-budget`.
+2. **Manual export is not capped.** The three owner-triggered exports ran to
+   727 KB. On draft day it is the only capture path that cannot lose the board.
+3. **A seat's displayed name is not an identity.** Four seats changed name
+   mid-session as owners joined and Fantrax's `Mock Drafter N` placeholder was
+   replaced. The DOM carries no team id at all - `draftTeamId` and `cellTeamId`
+   are console vocabulary and appear nowhere in the markup - so the column
+   ordinal is the only stable key there is.
+
+**Not wired into the feed.** `recognise_bridge_payload` still does not read a
+snapshot's contents. Turning a board reading into an `ObservedInstant` means
+deciding its transport, its provenance and what it means for two readings of the
+same board to corroborate each other, and that is a contract question rather
+than a parsing one. See `draft-board-feed-integration`.
+
+### `bridge-snapshot-budget` - The snapshot cap is one league size away from eating the board
+
+- [ ] **pending**
+- **Depends on:** `draft-board-dom-parser`
+
+`AUTO_SNAPSHOT_MAX_CHARS` is 250,000 in `userscript/src/capture.js`. On the
+recorded 12-team, 18-round football draft the finished board rendered to
+**208 KB**, so the cut landed 42 KB past it and nothing was lost. That margin is
+the whole safety story, and it was not designed - it is where the number
+happened to fall.
+
+**22 of the 42 board-bearing captures were truncated.** The cap is reached
+routinely, not exceptionally.
+
+**Why this is not merely a bigger-number problem.** `buildDomSnapshotHtml` builds the
+payload as `html.slice(0, limit)` followed by the marker, so the cut lands
+mid-tag and the marker is folded into an attribute value rather than parsed as a
+comment. Every truncated capture on record would read as untruncated to a
+comment-based check; `board_dom.py` scans the raw string instead. Raising the
+cap without fixing that leaves the same blind spot at a higher number.
+
+**The board is also not first in the document.** It is preceded by the navbar
+and status bar and followed by the chat pane, so what gets cut depends on
+layout, not on how much of it matters.
+
+**Acceptance:** either the cap accommodates the owner's real league with
+evidence of the margin, or the snapshot is scoped to the board subtree rather
+than the page, or truncation is reported to the backend as a first-class field
+rather than inferred from a marker. `board_dom.py` already refuses a board cut
+mid-grid, so this is about not reaching that state on draft night.
+
+### `draft-board-feed-integration` - Joining a board reading to the draft feed
+
+- [ ] **pending**
+- **Depends on:** `draft-board-dom-parser`
+
+`board_dom.parse_draft_board` returns picks; `draft/feed/` records
+`ObservedInstant`s with provenance and reconciles them. Nothing joins the two,
+deliberately, because the join is a contract decision and not a parsing one.
+
+**The questions it has to answer**, none of which the parser is entitled to
+decide on its own:
+
+- **What is a board reading's `transport`?** `SourceTransport` distinguishes
+  bridge from official. A rendered snapshot is the bridge, but it is not the RPC
+  body, and `recognise.py` exists partly to keep those apart.
+- **What is its `artifact_key`?** For an RPC capture that is the userscript's
+  `dedupe_key`. Two snapshots taken a minute apart with no pick in between are
+  the *same* board seen twice and must not read as corroboration; two different
+  captures of the same pick from different paths should.
+- **Does a board reading corroborate an RPC reading?** They cannot currently
+  disagree, because there are no RPC readings. If `getDraftPicks` ever starts
+  answering, they will.
+- **What happens when a later snapshot holds fewer picks than an earlier one?**
+  It should not, but SPA navigation, a re-render and a throttled tab are all
+  ways it might, and "the board went backwards" needs a defined answer.
 
 ### `append-only-docs-line-ending-check` - Failing when an append introduces CRLF into an LF file
 

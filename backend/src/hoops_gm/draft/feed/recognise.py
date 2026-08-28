@@ -967,8 +967,19 @@ def league_id_in_page_url(url: str) -> str | None:
     a capture belonging to somebody else's league.
 
     This exists only to attribute a snapshot to a league so the count can be
-    *reported*. Nothing reads a snapshot's contents. Rendered HTML is not the
-    RPC body and this module does not pretend otherwise.
+    *reported*. **This module** never reads a snapshot's contents: rendered HTML
+    is not the RPC body and nothing here pretends otherwise.
+
+    That sentence used to say "nothing reads a snapshot's contents", full stop,
+    and it stopped being true on 2026-08-28 when
+    :mod:`hoops_gm.draft.feed.board_dom` landed. It has to, because
+    ``/fxpa/req`` turned out to be unobservable and the rendered board is the
+    only source of live picks there is. The two are still not joined: nothing
+    in this module calls that parser, and a board reading is not an
+    :class:`~hoops_gm.draft.feed.observations.ObservedInstant` until someone
+    decides what its transport and provenance are. Corrected in place rather
+    than deleted, because a false mechanism left in a docstring is an assertion
+    somebody cites later with no cheap way to test it.
     """
     try:
         parsed = urlparse(url)
