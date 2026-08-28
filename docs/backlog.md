@@ -2,7 +2,7 @@
 
 Generated from the planning session on 2026-08-17. **This is the authoritative task list** - it lived only in a chat session before this, which is exactly what `docs/handoff.md` exists to prevent.
 
-**62 done - 0 blocked - 119 pending - 181 total**
+**63 done - 0 blocked - 118 pending - 181 total**
 
 (Recomputed from the status markers in this finished file, never
 reconciled from two headers; the `###` headings and the status markers
@@ -1893,48 +1893,57 @@ step, and it is enough to stop the next instance shipping unnoticed.
 
 ### `official-getdraftpicks-live-verification` - Establishing whether the official API can carry the draft board
 
-- [ ] **pending**
+- [x] **done** — *smoked live 2026-08-28. **The answer is no.** The endpoint is
+  reachable and unauthenticated, and it returned an empty list for a completed
+  216-pick draft.*
 - **Depends on:** `fantrax-official-adapter`
 
-**This became the fork the whole draft-day story hangs on, on 2026-08-28.** The
-first instrumented capture established that the bridge **cannot** read Fantrax's
-`/fxpa/req`: those calls originate in Fantrax's own service worker, no userscript
-can observe them, and the one remaining escape route — Cache Storage — was
-verified empty on a live draft room (five `ngsw:` asset caches, no data group).
+**Result, in the form that lets someone disprove it.** `GET /fxea/general/getDraftPicks?leagueId=b2gyornvms4606iv`,
+no `userSecretId`, returned **HTTP 200**, `Content-Type: text/plain`, **24
+bytes**:
 
-So automatic pick tracking now rests on the **other** path, and that path has
-never been tested. `docs/adapters/fantrax-official.md:4` is explicit:
-*"`getLeagueInfo` verified live 2026-08-18. `getDraftPicks` remains
-unverified."* `recognise.py:1462` says the same from the other end:
-*"`getDraftPicks` has never returned a verified real payload."*
+```json
+{"currentDraftPicks":[]}
+```
 
-**Everything needed to answer it now exists.** `client.py:182`
-`get_draft_picks(league_id)` is implemented, `get_draft_picks_with_provenance`
-returns the payload digest the feed needs, `recognise_official_draft_picks` is
-wired into the feed, and the endpoint is documented and unauthenticated —
-`getLeagueInfo` returned a private league's settings without a `userSecretId` on
-2026-08-18, so there is precedent. The owner now has a **completed 18-round
-draft** in a real league to read.
+`sha256:b5811c858f69d6f11a9f6e0d5a878d9622edd21fe1d6f202a9d2bf5cfb915fca`,
+observed at `2026-08-28T19:01:40.124943+00:00`, recorded byte-exact as
+`backend/tests/fixtures/fantrax_getdraftpicks_completed_snake_empty.json`. The
+league held a **completed 18-round, 12-team snake draft** — 216 selections. The
+endpoint reported none of them. One request, no retry, no other league id, no
+parameter adjustment.
 
-**Both answers are load-bearing, which is why not knowing is the expensive
-state:**
+**Which failure class this is.** Not authentication: no 401/403, no error
+envelope, and the read succeeded with only a non-secret `leagueId`, so **no owner
+credentials decision is required** and an empty list cannot be blamed on not
+being logged in. Not transport: a clean 200 with well-formed JSON. It is an
+empty draft — plus, separately, a shape nobody anticipated.
 
-- **It works** → the live board polls a documented endpoint. The bridge becomes
-  useful for what only it can see, and DOM parsing is not needed for picks.
-- **It fails** → DOM parsing of the rendered board becomes load-bearing for
-  `draft-tracker`, needs scoping, and is the critical path to 4 October. The 49
-  captured snapshots exist precisely so that work can be done offline.
+**The second, independent finding.** The container key is `currentDraftPicks`.
+`parse_draft_picks` was looking for `draftPicks` or `picks` and would have
+matched neither. That did *not* cause the zero — the list is empty under its real
+name too — but had the endpoint been publishing selections all along, the parser
+would have returned zero of them and the feed would have reported a healthy,
+*silent* source. Green tests, empty board. Fixed by adding the observed key ahead
+of the two guesses, which are kept: one real payload names one key and does not
+disprove the others. Key selection is now by presence rather than by a truthy
+`or` chain, which would step past an empty-but-present list to a later key.
 
-**Acceptance:** a live smoke against a real league id, a recorded fixture
-committed from whatever comes back, and a contract test. Under the Adapter gate,
-the live smoke must fail loudly and must not gate a merge. **If it returns
-nothing or refuses, that is the finding** — record it as such rather than
-retrying until something arrives, and say plainly whether the failure is
-authentication, an empty draft, or a shape nobody expected.
+**What this did not settle, and could not.** `fantraxapi==1.0.1` models a draft
+pick as `round` + `year` + `origOwnerTeam` — a **tradeable future pick asset**,
+not a selection. A completed draft has no unused picks left, so *both* readings
+predict the empty list that was observed, and the key name `currentDraftPicks` is
+weak evidence for the asset reading and nothing more. Every per-record field name
+remains a guess, because **no populated row has ever been seen on this path**.
+One hypothesis was left deliberately untested: the league is NFL and the request
+sends no `sport` parameter — trying one would have been adjusting the request
+until it succeeded.
 
-**Do not widen scope to make it succeed.** If it needs a `userSecretId`, stop and
-say so: that is an owner decision about credentials, not an implementation
-detail.
+**Consequence.** Both automatic pick-tracking paths are now negative — the bridge
+cannot read `/fxpa/req` at all, and the official API does not carry the board. See
+`draft-board-dom-parser`, which this result promoted to the critical path for
+4 October. The one consolation is real: the endpoint is reachable and needs no
+credentials, so if it ever populates, polling it is cheap.
 
 ### `draft-feed-team-alias-draftteamid` - Admitting the team id Fantrax actually sends
 

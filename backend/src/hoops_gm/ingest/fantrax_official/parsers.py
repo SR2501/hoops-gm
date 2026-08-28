@@ -26,7 +26,7 @@ identifier format load-bearing.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from hoops_gm.identity.names import NON_PLAYER_POSITIONS, normalize_team_abbreviation
 from hoops_gm.ingest.errors import SourceContractError, SourceRejected
@@ -346,14 +346,40 @@ def parse_league_info(
 # --------------------------------------------------------------------------
 
 
+#: Keys that may carry the list of picks, in the order they are tried.
+#:
+#: ``currentDraftPicks`` is the **only one ever observed**: league
+#: ``b2gyornvms4606iv`` returned ``{"currentDraftPicks":[]}`` under HTTP 200 on
+#: 2026-08-28 (fixture ``fantrax_getdraftpicks_completed_snake_empty.json``).
+#: ``draftPicks`` and ``picks`` were this parser's original guesses. They are
+#: kept rather than deleted because one real payload names one key and does not
+#: disprove the others — but they are now demoted below a name we have actually
+#: seen.
+_DRAFT_PICK_LIST_KEYS: Final = ("currentDraftPicks", "draftPicks", "picks")
+
+
 def parse_draft_picks(payload: Any) -> list[FantraxDraftPick]:
     """Parse ``getDraftPicks``.
 
-    **Also never run against a real payload**, for the same reason as
-    :func:`parse_league_info`. Both draft formats are first-class in this
-    project, so neither the snake shape (round/pick) nor the auction shape
-    (a price) is assumed: every field is optional and an auction amount is read
-    if present.
+    Both draft formats are first-class in this project, so neither the snake
+    shape (round/pick) nor the auction shape (a price) is assumed: every field
+    is optional and an auction amount is read if present.
+
+    **The list key is selected by presence, not by truthiness.** The original
+    ``payload.get("draftPicks") or payload.get("picks")`` would step straight
+    past an empty-but-present list to a later key — silently converting *"this
+    source says there are no picks"* into *"look somewhere else"*. That is the
+    same defect class already recorded against the value aliases at
+    :func:`hoops_gm.draft.feed.recognise.recognise_official_draft_picks`, where
+    ``{"overallPick": 0, "overall": 3}`` yields ``3``. It matters here because
+    the one real payload we have **is** an empty list under the first key.
+
+    **An unrecognised object still returns no picks rather than raising.** The
+    feed is built to treat this source's silence as silence, not as failure, and
+    inventing a new error mode on a case never observed would trade a survivable
+    outcome for an unsurvivable one. Drift in the key name is caught by the live
+    smoke, which asserts the observed key against the real endpoint — not here,
+    because a committed fixture cannot notice that the source was renamed.
     """
     endpoint = "getDraftPicks"
     raise_for_error_envelope(payload, endpoint=endpoint)
@@ -362,8 +388,12 @@ def parse_draft_picks(payload: Any) -> list[FantraxDraftPick]:
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict):
-        found = payload.get("draftPicks") or payload.get("picks")
-        rows = found if isinstance(found, list) else []
+        rows = []
+        for key in _DRAFT_PICK_LIST_KEYS:
+            if key in payload:
+                candidate = payload[key]
+                rows = candidate if isinstance(candidate, list) else []
+                break
     else:
         raise SourceContractError(
             f"expected an array or object, got {type(payload).__name__}",

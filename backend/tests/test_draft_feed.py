@@ -3503,31 +3503,74 @@ def test_the_feed_endpoints_refuse_an_unknown_draft(client: TestClient) -> None:
 
 
 @pytest.mark.adapter_contract
-def test_no_recorded_fantrax_draft_payload_exists_yet() -> None:
-    """The Adapter gate's recorded-fixture half, stated so it can go red.
+def test_the_recorded_getdraftpicks_payload_runs_the_whole_official_chain() -> None:
+    """The Adapter gate's recorded-fixture half, discharged on the official path.
 
-    ``gates.md`` asks for "a real captured response, checked in". There is
-    none for a Fantrax draft room: no such payload has ever been observed by
-    anyone on this project, which every docstring in
-    ``hoops_gm.draft.feed.recognise`` says and none of them could be held to.
-    Synthesising one would require a ``captured_at`` in ``manifest.json`` for
-    something never captured, which is manufacturing the provenance record the
-    manifest exists to be — so the gate is discharged on this path by
-    :func:`test_the_envelope_shape_still_matches_the_pinned_client`, which
-    reads a real third-party artifact instead.
+    A real captured response now exists — league ``b2gyornvms4606iv``,
+    2026-08-28, ``{"currentDraftPicks":[]}`` under HTTP 200 — so the recogniser
+    can finally be pointed at recorded bytes rather than at a hand-built
+    envelope. This runs the whole chain: fixture file -> ``parse_draft_picks``
+    -> :func:`recognise_official_draft_picks`.
 
-    **This test is the part that stops that being a permanent excuse.** It
-    fails the moment a draft-room fixture *is* recorded, which is the point at
-    which the recogniser must be pointed at it and this claim withdrawn. A
-    paragraph saying "we should wire it up when we have one" is the kind of
-    rule this repository has repeatedly found written down and unenforced.
-
-    Deliberately keyed on the manifest rather than on filenames: an entry is
-    what carries ``source`` and ``endpoint``, and a fixture with neither is
-    already refused by ``test_every_fixture_is_described_in_the_manifest``.
+    **It is a weak test and saying so is the point.** The payload is empty, so
+    the only thing it can prove is that the chain executes end to end on real
+    bytes and reports nothing. It cannot exercise a single per-record field
+    name, because no populated row has ever been observed on this path. The
+    companion alarm below is what stops that gap being forgotten.
     """
-    manifest_path = Path(__file__).resolve().parent / "fixtures" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    fixture = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "fantrax_getdraftpicks_completed_snake_empty.json"
+    )
+    payload = json.loads(fixture.read_text(encoding="utf-8"))
+
+    picks = parse_draft_picks(payload)
+    assert picks == []
+
+    result = recognise_official_draft_picks(
+        picks,
+        artifact_key="sha256:b5811c858f69d6f11a9f6e0d5a878d9622edd21fe1d6f202a9d2bf5cfb915fca",
+        received_at=NOW,
+        context=_context(),
+    )
+
+    assert result.rejected is None, (
+        "an empty official payload is silence, not a refusal; the feed is "
+        "built to report it as a silent source"
+    )
+    assert result.instants == ()
+    assert result.unrecognised == ()
+
+
+@pytest.mark.adapter_contract
+def test_no_populated_fantrax_draft_payload_exists_yet() -> None:
+    """The narrowed claim, stated so it can still go red.
+
+    **What this test used to say, and why it had to change.** It asserted that
+    *no* draft payload had ever been recorded, and it fired on 2026-08-28 when
+    one was: a real ``getDraftPicks`` response, with a genuine ``captured_at``
+    from an actual read. Its own message said to point a recogniser at the
+    fixture and delete it, and the first half of that is done immediately
+    above.
+
+    **It was not deleted, because only half the claim expired.** A real
+    response has been observed. A real response *containing a pick* has not —
+    the endpoint returned an empty list for a league whose 216-pick draft was
+    already complete. Every per-record field name in ``parse_draft_picks``
+    (``teamId``, ``playerId``, ``round``, ``overallPick``, ``amount``) is still
+    a guess, and deleting this test would have retired the alarm at exactly the
+    moment its remaining half became the interesting one. Withdrawing a claim
+    that has become *narrower* is not the same as withdrawing one that has
+    become false.
+
+    Still keyed on the manifest, for the original reason — an entry is what
+    carries ``source`` and ``endpoint``. But it now reads the recorded bytes
+    rather than trusting the entry, because a fixture's own manifest row is not
+    evidence about the fixture's contents.
+    """
+    fixtures_dir = Path(__file__).resolve().parent / "fixtures"
+    manifest = json.loads((fixtures_dir / "manifest.json").read_text(encoding="utf-8"))
 
     draft_entries = sorted(
         name
@@ -3535,13 +3578,24 @@ def test_no_recorded_fantrax_draft_payload_exists_yet() -> None:
         if "draft" in str(entry.get("endpoint", "")).lower()
         or "draft" in str(entry.get("source", "")).lower()
     )
-
-    assert draft_entries == [], (
-        f"{draft_entries} looks like a recorded draft payload. If it is, the "
-        "Adapter gate's recorded-fixture half is now dischargeable on this "
-        "path: point recognise_bridge_payload or recognise_official_draft_picks "
-        "at it in a contract test, and delete this one."
+    assert draft_entries == ["fantrax_getdraftpicks_completed_snake_empty.json"], (
+        f"{draft_entries} is not the set of recorded draft payloads this test "
+        "knows about. A new one must be read by hand before this assertion is "
+        "widened to admit it."
     )
+
+    for name in draft_entries:
+        payload = json.loads((fixtures_dir / name).read_text(encoding="utf-8"))
+        picks = parse_draft_picks(payload)
+        assert picks == [], (
+            f"{name} now contains {len(picks)} pick(s). **This is the outcome "
+            "the project has been waiting for.** Read the rows by hand, confirm "
+            "whether they are selections that happened or tradeable future pick "
+            "assets, replace the per-record field-name guesses in "
+            "hoops_gm.ingest.fantrax_official.parsers with observed names, and "
+            "delete this test - its remaining claim has now expired too. "
+            f"First pick: {picks[0]!r}"
+        )
 
 
 @pytest.mark.adapter_contract

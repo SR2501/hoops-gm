@@ -10,7 +10,11 @@ admitted into the log.
 A claim can be wrong — the recogniser's key names are unverified guesses
 (``draft/feed/recognise.py``), and an unverified guess writing directly into an
 append-only log means the only correction path is a ``void`` event for every
-mistake. Two sources can disagree, and a disagreement is a finding to look at
+mistake. That stopped being hypothetical on 2026-08-28, when two of those
+guesses were falsified in one day: the official reader was looking for
+``draftPicks`` where the endpoint sends ``currentDraftPicks``, and the bridge
+reader for ``teamId`` where a live draft room sends ``draftTeamId``. Two sources
+can disagree, and a disagreement is a finding to look at
 rather than something to resolve by preferring the newer source; there is
 nowhere in ``draft_events`` to put "the bridge says Jokić went for $61 and the
 official API says $16". And a captured board republishes the whole draft on
