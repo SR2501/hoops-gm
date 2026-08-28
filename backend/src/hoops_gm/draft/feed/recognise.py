@@ -13,8 +13,13 @@ string; the response is ``{"responses": [{"data": {...}}, ...]}``, positionally
 aligned with the request. That is not inferred from a captured payload — it is
 read off ``fantraxapi`` 1.0.1's ``api.py``, which is a pinned dependency of this
 project and a working client against the live endpoint.
-``test_draft_feed_contracts.py`` re-reads that source and fails when it stops
-saying so, which makes this the one claim here with a drift check behind it.
+``test_draft_feed.py``'s
+``test_the_envelope_shape_still_matches_the_pinned_client`` re-reads that
+source and fails when it stops saying so, which makes this the one claim here
+with a drift check behind it. (This paragraph used to name
+``test_draft_feed_contracts.py``, which does not exist and never has — an
+unenforced rule wearing the clothes of an enforced one, which is the exact
+failure mode this package's reviews keep finding.)
 
 **The consequence, which shapes everything below.** The method name lives in the
 *request* body. The userscript never reads a request body — deliberately, and
@@ -554,7 +559,7 @@ def _candidate_lists(block: Any, locator: str, depth: int = 0) -> list[tuple[str
 
 def _accept_list(
     records: list[Any], context: RecognitionContext, kind: InstantKind
-) -> tuple[list[tuple[int, dict[str, Any]]], str | None, list[dict[str, Any]]]:
+) -> tuple[list[tuple[int, dict[str, Any]]], str | None, list[tuple[int, dict[str, Any]]]]:
     """Accept the list, refuse it, or accept it minus the rows it cannot read.
 
     Returns ``(admitted, refusal, unreadable)``. The third element is the reason
@@ -580,21 +585,35 @@ def _accept_list(
     owner has no manual fallback**, so that is the tool going permanently blind
     from one row it could have simply left out.
 
-    The unreadable rows are reported by the caller *unconditionally*, on the
-    same reasoning ``locator_too_long_to_record`` already carries: a refusal
-    that means "this is the log and I could not write part of it down" must not
-    be suppressed by another list in the same entry being accepted. A dropped
-    record is a **missing pick**, and this module's whole position is that a
-    missing pick reported as nothing is the failure it exists to prevent.
+    **The unreadable rows are now returned with their positions and become
+    stored observations carrying a ``skipped_reason``**, rather than being
+    reported only as a count. Reporting them was not enough: ``unrecognised``
+    reaches the ``POST`` ingest response and ``FeedStatus`` has no such field,
+    so a live board polling ``GET`` saw a clean feed while being short a
+    player. That is the failure the owner named as disqualifying, and it is
+    ``draft-feed-unreadable-id-surfacing`` in ``docs/backlog.md``. The count is
+    still published beside the rows, because only the count carries the block's
+    *key names*, which is what a five-minute fix needs.
 
-    A list whose records are *all* unreadable still refuses as a list, because
-    at that point there is nothing left to say it was a pick log at all.
+    **Storing them is defensible here and would not be for a refused list**, and
+    the difference is what has been established. A list reaches this return
+    having had at least one record satisfy every admission rule, so it *is* a
+    pick log and the board *is* short exactly these rows. A list whose records
+    are all unreadable is refused instead — nothing about it establishes it was
+    a pick log at all, and writing observations for records in a list that may
+    be a standings block would put unfounded rows on the status screen,
+    indistinguishable from real missing picks. That case is reported on the
+    ``POST`` response only, and is named in ``docs/handoff.md`` rather than
+    quietly claimed closed.
 
     The admitted records carry their **original index**, not their index among
     the survivors. Renumbering them would change a pick's ``locator`` the day
     the malformed row beside it became readable, and ``locator`` is a third of
     the identity ``(transport, artifact_key, locator)`` this feed dedupes on --
-    so the same pick would store a second time as a new observation.
+    so the same pick would store a second time as a new observation. The
+    unreadable rows carry theirs for the same reason and one more: their
+    locator has to name a slot no *admitted* record can also claim, or the two
+    would collide on the unique constraint.
 
     The refusals are separate strings rather than one because they mean
     different things to whoever reads the status screen: a length refusal says
@@ -664,16 +683,18 @@ def _accept_list(
 
     seen_players: set[str] = set()
     admitted: list[tuple[int, dict[str, Any]]] = []
-    unreadable: list[dict[str, Any]] = []
+    unreadable: list[tuple[int, dict[str, Any]]] = []
     for position, record in enumerate(typed):
         team = _as_text(_first(record, "team_external_id"), limit=MAX_EXTERNAL_ID_CHARS)
         if team is None or team not in context.team_external_ids:
             return [], "no_seat_anchor", []
         identity = _player_identity(record)
         if isinstance(identity, _Unreadable):
-            # Dropped, not fatal. See this function's docstring: a row whose id
-            # this module cannot read is not evidence about the other rows.
-            unreadable.append(record)
+            # Held back rather than admitted, and held back rather than
+            # dropped. See this function's docstring: a row whose id this
+            # module cannot read is not evidence about the other rows, and it
+            # is also not nothing.
+            unreadable.append((position, record))
             continue
         if identity is None:
             return [], "record_names_no_player", []
@@ -807,6 +828,7 @@ def _instant_from(
     *,
     kind: InstantKind,
     provenance: InstantProvenance,
+    skipped_reason: str | None = None,
 ) -> ObservedInstant:
     """Read one record into the shape its ``kind`` permits.
 
@@ -822,6 +844,33 @@ def _instant_from(
     ``kind`` comes from the draft's own snapshotted format, not from the
     payload, so it is the authoritative side of the disagreement. Dropping is
     still a loss and :class:`RecognitionResult` counts it.
+
+    **``skipped_reason`` changes what the record is allowed to claim, and that
+    is the whole difference between the two callers.** A skipped record stores
+    **no player label and no player id**. The id is the field that failed; the
+    label is withheld deliberately, on two grounds.
+
+    :func:`_player_label` is documented as the name for "a record already known
+    to be about a player", and its fallback to
+    :data:`AMBIGUOUS_NAME_ALIASES` is safe *because* :func:`_player_identity`
+    has already succeeded. On a skipped record it has not — it returned
+    :data:`UNREADABLE` — so the precondition that fallback rests on is absent,
+    and taking the ambiguous key anyway is how a seat's own name once reached
+    the board as the player taken.
+
+    And withholding even an *explicit*, readable ``playerName`` is what makes
+    "a refused record never joins identity matching" true by construction: a
+    row naming nobody has no
+    :func:`~hoops_gm.draft.feed.observations.matching_key`, so no rule has to
+    remember to exclude it. The cost is real and is the intended direction —
+    the status screen says the board is short a record at seat ``t1`` rather
+    than naming the player. A name attached to a record whose identity this
+    module refused is a claim it is not entitled to make, and this package's
+    position everywhere else is that visibly absent beats confidently wrong.
+
+    That is why such a row names no player at all, which is what the
+    ``feed_names_a_player`` CHECK forbade until migration ``0021`` admitted it
+    for rows that carry a reason.
     """
     amount = _as_amount(_first(record, "amount"))
     overall_pick = _as_int(_first(record, "overall_pick"))
@@ -832,6 +881,20 @@ def _instant_from(
         amount = None
     else:
         overall_pick = round_number = pick_in_round = None
+
+    if skipped_reason is not None:
+        return ObservedInstant(
+            kind=kind,
+            provenance=provenance,
+            team_external_id=_as_text(
+                _first(record, "team_external_id"), limit=MAX_EXTERNAL_ID_CHARS
+            ),
+            overall_pick=overall_pick,
+            round_number=round_number,
+            pick_in_round=pick_in_round,
+            amount=amount,
+            skipped_reason=skipped_reason,
+        )
 
     return ObservedInstant(
         kind=kind,
@@ -1045,12 +1108,40 @@ def recognise_bridge_payload(
                 # this list *was* accepted, and the suppression below would
                 # therefore swallow it entirely. A dropped record is a missing
                 # pick; the count is the number of rows this board is short.
+                #
+                # The count alone was not enough, and that is
+                # ``draft-feed-unreadable-id-surfacing``: it reaches the ``POST``
+                # ingest response and ``FeedStatus`` has no such field, so a
+                # board polling ``GET`` read clean while missing a player. The
+                # rows below are the surfacing; this stays because only it
+                # carries the block's key names.
                 unrecognised.append(
                     UnrecognisedShape(
-                        keys=_keys_of(unreadable[0]),
+                        keys=_keys_of(unreadable[0][1]),
                         occurrences=len(unreadable),
                         example_locator=list_locator,
                         reason="player_external_id_unreadable",
+                    )
+                )
+            for position, record in unreadable:
+                # Stored as an instant that says why it is not a pick, at the
+                # same locator scheme the admitted records use -- so a
+                # republished capture dedupes against it instead of writing a
+                # second copy, and so it can never collide with an admitted
+                # record's slot.
+                instants.append(
+                    _instant_from(
+                        record,
+                        kind=kind,
+                        provenance=InstantProvenance(
+                            transport=SourceTransport.BRIDGE_CAPTURE,
+                            artifact_key=dedupe_key,
+                            recogniser=_BRIDGE_RECOGNISER,
+                            received_at=received_at,
+                            source_claimed_at=captured_at,
+                            locator=f"{list_locator}[{position}]",
+                        ),
+                        skipped_reason="player_external_id_unreadable",
                     )
                 )
             for position, record in typed:
@@ -1250,15 +1341,39 @@ def recognise_official_draft_picks(
         if lost:
             unreadable += 1
             unreadable_fields.update(lost)
+        skipped_reason: str | None = None
         if not (player_external_id or player_label):
             unnamed += 1
-            continue
+            # **Recorded rather than dropped**, and this is the mirror of the
+            # bridge path's ``player_external_id_unreadable`` surfacing. Round
+            # eight of this unit found three arguments that held on one path
+            # only, so the same defect is closed on both: dropping here left a
+            # record the source published for one of *our* seats visible on the
+            # ``POST`` response and nowhere on ``GET``, which is a pick that
+            # happened reported as nothing.
+            #
+            # The two reasons are kept apart because they call for different
+            # reactions. A refused identity means the source named someone and
+            # this reader could not read it -- the board is short a pick. A
+            # record naming nobody at all may simply be an unmade future pick,
+            # which is not a loss, and calling it one would teach the owner to
+            # dismiss the count.
+            skipped_reason = (
+                "player_external_id_unreadable"
+                if pick.player_id is not None or pick.player_name is not None
+                else "record_names_no_player"
+            )
         # ``parse_draft_picks`` fills the ordinals *and* the amount from the
         # same row unconditionally, so an auction league's own results are the
         # expected shape that violates the storage CHECK. Conform to the kind
         # the draft's snapshotted format dictates, and count the loss.
+        #
+        # A skipped record is conformed but **not counted**: ``coerced_to_kind``
+        # is read against ``instants_recognised``, which excludes skipped rows,
+        # and ``every_instant_coerced`` compares the two. Counting one side and
+        # not the other is how a rate becomes nonsense.
         if kind is InstantKind.SELECTION:
-            if amount is not None:
+            if amount is not None and skipped_reason is None:
                 coerced += 1
                 dropped_names.add("amount")
             amount = None
@@ -1273,8 +1388,9 @@ def recognise_official_draft_picks(
                 if value is not None
             )
             if ordinals:
-                coerced += 1
-                dropped_names.update(ordinals)
+                if skipped_reason is None:
+                    coerced += 1
+                    dropped_names.update(ordinals)
                 overall_pick = round_number = pick_in_round = None
         instants.append(
             ObservedInstant(
@@ -1297,6 +1413,7 @@ def recognise_official_draft_picks(
                 round_number=round_number,
                 pick_in_round=pick_in_round,
                 amount=amount,
+                skipped_reason=skipped_reason,
             )
         )
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import subprocess
 import textwrap
 from datetime import UTC, datetime, timedelta
@@ -55,6 +56,7 @@ from hoops_gm.draft.feed import (
     reconcile,
 )
 from hoops_gm.draft.feed import service as feed_service
+from hoops_gm.draft.feed.observations import matching_key
 from hoops_gm.draft.feed.recognise import (
     MAX_AMOUNT,
     MAX_ARTIFACT_KEY_CHARS,
@@ -2444,13 +2446,27 @@ def test_the_official_path_applies_the_same_field_bounds_as_the_bridge_path() ->
     over_id = official(player_id="p" * (MAX_EXTERNAL_ID_CHARS + 1))
     assert [instant.player_external_id for instant in over_id.instants] == [None]
 
-    # Losing *both* identifiers is a refusal, not a nameless instant.
+    # Losing *both* identifiers no longer discards the record. It becomes an
+    # instant that names nobody and says why -- the official mirror of
+    # ``draft-feed-unreadable-id-surfacing``. Dropping it left a record the
+    # source published for one of our seats visible on ``POST`` and nowhere on
+    # ``GET``, which a live board polls.
     both = official(
         player_id="p" * (MAX_EXTERNAL_ID_CHARS + 1),
         player_name="N" * (MAX_LABEL_CHARS + 1),
     )
-    assert both.instants == ()
+    assert [instant.skipped_reason for instant in both.instants] == [
+        "player_external_id_unreadable"
+    ]
+    assert both.recognised_count == 0, "a record we could not identify is not a reading"
+    assert [instant.player_label for instant in both.instants] == [None]
+    assert [instant.player_external_id for instant in both.instants] == [None]
     assert "record_names_no_player" in [shape.reason for shape in both.unrecognised]
+
+    # A record naming nobody *at all* is a different fact from one whose names
+    # we refused, and gets a different reason: it may simply be an unmade pick.
+    nobody = official(player_id=None, player_name=None)
+    assert [instant.skipped_reason for instant in nobody.instants] == ["record_names_no_player"]
 
     # An over-long team id cannot anchor, and says so by name.
     unanchored = official(team_id="t" * (MAX_EXTERNAL_ID_CHARS + 1))
@@ -3089,14 +3105,14 @@ def test_an_auction_sale_carrying_ordinals_is_stored_without_them(session: Sessi
         None,
     )
     # And it survives the CHECK, which is the part that was failing.
-    written, already, rejected = feed_service._store(
+    written, already, rejected, unreadable = feed_service._store(
         session,
         draft,
         result,
         participants={"t1": draft.participants[0].id},
         existing=set(),
     )
-    assert (written, already, rejected) == (1, 0, 0)
+    assert (written, already, rejected, unreadable) == (1, 0, 0, 0)
 
 
 def test_the_kind_split_is_a_database_guarantee(session: Session) -> None:
@@ -3172,7 +3188,7 @@ def test_one_unstorable_row_does_not_cost_the_rest_of_the_run(session: Session) 
         locator="a[2]",
     )
 
-    written, already, rejected = feed_service._store(
+    written, already, rejected, _unreadable = feed_service._store(
         session,
         draft,
         RecognitionResult(instants=(good, bad, also_good)),
@@ -3484,6 +3500,115 @@ def test_the_feed_endpoints_refuse_an_unknown_draft(client: TestClient) -> None:
 # --------------------------------------------------------------------------
 # 6. adapter gate: drift against the pinned client
 # --------------------------------------------------------------------------
+
+
+@pytest.mark.adapter_contract
+def test_no_recorded_fantrax_draft_payload_exists_yet() -> None:
+    """The Adapter gate's recorded-fixture half, stated so it can go red.
+
+    ``gates.md`` asks for "a real captured response, checked in". There is
+    none for a Fantrax draft room: no such payload has ever been observed by
+    anyone on this project, which every docstring in
+    ``hoops_gm.draft.feed.recognise`` says and none of them could be held to.
+    Synthesising one would require a ``captured_at`` in ``manifest.json`` for
+    something never captured, which is manufacturing the provenance record the
+    manifest exists to be — so the gate is discharged on this path by
+    :func:`test_the_envelope_shape_still_matches_the_pinned_client`, which
+    reads a real third-party artifact instead.
+
+    **This test is the part that stops that being a permanent excuse.** It
+    fails the moment a draft-room fixture *is* recorded, which is the point at
+    which the recogniser must be pointed at it and this claim withdrawn. A
+    paragraph saying "we should wire it up when we have one" is the kind of
+    rule this repository has repeatedly found written down and unenforced.
+
+    Deliberately keyed on the manifest rather than on filenames: an entry is
+    what carries ``source`` and ``endpoint``, and a fixture with neither is
+    already refused by ``test_every_fixture_is_described_in_the_manifest``.
+    """
+    manifest_path = Path(__file__).resolve().parent / "fixtures" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    draft_entries = sorted(
+        name
+        for name, entry in manifest.items()
+        if "draft" in str(entry.get("endpoint", "")).lower()
+        or "draft" in str(entry.get("source", "")).lower()
+    )
+
+    assert draft_entries == [], (
+        f"{draft_entries} looks like a recorded draft payload. If it is, the "
+        "Adapter gate's recorded-fixture half is now dischargeable on this "
+        "path: point recognise_bridge_payload or recognise_official_draft_picks "
+        "at it in a contract test, and delete this one."
+    )
+
+
+@pytest.mark.adapter_contract
+def test_a_refused_player_identity_is_recorded_rather_than_dropped() -> None:
+    """Contract: what the recogniser does with a record it cannot identify.
+
+    Adapter-marked because it pins a decision about an *external* payload
+    shape — specifically, that a record supplying ``playerId`` in a form this
+    reader refuses is neither admitted as a pick nor discarded. It runs
+    offline against a constructed envelope, which is all that is available
+    (see :func:`test_no_recorded_fantrax_draft_payload_exists_yet`), and it
+    asserts the two properties a real payload would have to preserve:
+
+    * the refused record produces an instant, so the loss reaches storage and
+      therefore ``GET``, rather than only the ``POST`` response's counters;
+    * that instant names nobody, so it cannot be matched to a player, and it
+      is not counted as a reading — ``recognised_count`` stays at the number
+      of records this reader actually understood.
+
+    The control is the other half: the healthy record beside it is untouched
+    and keeps its own locator. A fix that refused the whole list on one bad
+    row would pass the first assertion and fail this.
+    """
+    result = recognise_bridge_payload(
+        url=f"https://www.fantrax.com/fxpa/req?leagueId={LEAGUE}",
+        body_json=_envelope(
+            [
+                {
+                    "teamId": "t1",
+                    "playerId": "p-jokic",
+                    "playerName": JOKIC,
+                    "overallPick": 1,
+                },
+                {
+                    "teamId": "t2",
+                    "playerId": ["not", "a", "string"],
+                    "playerName": EDWARDS,
+                    "overallPick": 2,
+                },
+            ]
+        ),
+        dedupe_key="adapter-contract",
+        received_at=NOW,
+        captured_at=NOW,
+        context=_context(),
+    )
+
+    assert result.rejected is None
+    assert result.recognised_count == 1
+    assert [instant.skipped_reason for instant in result.instants] == [
+        None,
+        "player_external_id_unreadable",
+    ]
+
+    refused = result.instants[1]
+    assert (refused.player_label, refused.player_external_id) == (None, None)
+    assert refused.team_external_id == "t2"
+    assert matching_key(refused) is None
+
+    healthy = result.instants[0]
+    assert healthy.player_label == JOKIC
+    assert healthy.provenance.locator.endswith("[0]")
+    assert refused.provenance.locator.endswith("[1]")
+
+    assert [(shape.reason, shape.occurrences) for shape in result.unrecognised] == [
+        ("player_external_id_unreadable", 1)
+    ]
 
 
 def test_the_envelope_shape_still_matches_the_pinned_client() -> None:
@@ -4708,6 +4833,12 @@ def test_one_unreadable_record_does_not_discard_the_healthy_board(session: Sessi
 
     The dropped row is reported rather than merely omitted, because a missing
     pick reported as nothing is the failure this module exists to prevent.
+    **Reporting it was not enough**, and that is
+    ``draft-feed-unreadable-id-surfacing``: the count below reaches the ``POST``
+    ingest response only, and a live board polls ``GET``. The row is now stored
+    with a ``skipped_reason``, so both channels say it. This test still owns the
+    original property -- the healthy record is untouched -- and the surfacing
+    itself is asserted where it belongs, on the status endpoint.
     """
     records: list[dict[str, Any]] = [
         {
@@ -4732,7 +4863,9 @@ def test_one_unreadable_record_does_not_discard_the_healthy_board(session: Sessi
     bridge = next(
         source for source in outcome.sources if source.transport is SourceTransport.BRIDGE_CAPTURE
     )
-    assert bridge.observations_written == 1
+    assert bridge.instants_recognised == 1, "the unreadable record is not a reading"
+    assert bridge.observations_written == 2
+    assert bridge.observations_skipped == 1
     assert [shape.reason for shape in bridge.unrecognised] == ["player_external_id_unreadable"]
     assert bridge.unrecognised[0].occurrences == 1
 
@@ -4828,6 +4961,12 @@ def test_dropping_a_record_does_not_renumber_the_ones_beside_it(session: Session
     This is not a hypothetical: it is a defect I introduced writing the fix
     above and caught before running it, which is why it is pinned rather than
     reasoned about.
+
+    The unreadable record is now stored too, carrying a ``skipped_reason``, so
+    the property is stronger than when the row was dropped: the two locators
+    must be *distinct and true*. If the refusal reused the survivor's slot the
+    two rows would collide on the unique constraint, and one of the pair would
+    be lost to whichever write lost the race.
     """
     draft = _auction_draft(session)
     _capture(
@@ -4853,11 +4992,15 @@ def test_dropping_a_record_does_not_renumber_the_ones_beside_it(session: Session
     feed_service.ingest(session, draft, client=None)
 
     rows = feed_service.load_observations(session, draft)
-    assert [row.player_label for row in rows] == ["Healthy Two"]
-    assert rows[0].locator.endswith("[1]"), (
-        f"locator {rows[0].locator!r} numbers the survivor as if the dropped "
+    by_locator = {row.locator: row for row in rows}
+    assert len(by_locator) == 2, "two records must occupy two locators"
+    survivor = next(row for row in rows if row.player_label == "Healthy Two")
+    refused = next(row for row in rows if row.skipped_reason)
+    assert survivor.locator.endswith("[1]"), (
+        f"locator {survivor.locator!r} numbers the survivor as if the refused "
         "record had never been there"
     )
+    assert refused.locator.endswith("[0]")
 
 
 def test_a_falling_back_reader_never_uses_the_storing_coercer() -> None:
@@ -5087,3 +5230,254 @@ def test_a_stored_instant_carries_its_storage_order(session: Session) -> None:
     assert surviving.provenance.sequence == rows[1].id
     assert surviving.team_external_id == "t2"
     assert surviving.amount == Decimal("10.00")
+
+
+# ---------------------------------------------------------------------------
+# draft-feed-unreadable-id-surfacing: a record dropped at ingest and invisible
+# on the endpoint a live board polls.
+# ---------------------------------------------------------------------------
+
+
+UNREADABLE_ID = "p" * (MAX_EXTERNAL_ID_CHARS + 1)
+
+
+def _short_a_player(session: Session) -> Draft:
+    """Two captured picks, one of which carries a ``playerId`` we cannot read.
+
+    The list is admitted, because the *other* record satisfies every admission
+    rule -- so this is established to be a pick log and the board is
+    established to be short exactly one row of it. That distinction is what
+    makes storing the unreadable record an observation rather than an
+    invention; see :func:`~hoops_gm.draft.feed.recognise._accept_list`.
+
+    The readable record is pick **one** deliberately. With the unreadable
+    record first, a snake board halts on ``draft_pick_out_of_turn`` rather than
+    applying anything -- correct behaviour, and a *different* symptom from the
+    one this file is about. The reproduction in ``docs/backlog.md`` is a board
+    that applied a pick and is silently short another, so the fixture has to
+    reach that state rather than a loud halt.
+    """
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p-jokic", "playerName": JOKIC, "overallPick": 1},
+            {"teamId": "t2", "playerId": UNREADABLE_ID, "playerName": EDWARDS, "overallPick": 2},
+        ],
+        dedupe_key="short-a-player",
+    )
+    return draft
+
+
+def test_a_record_whose_player_id_cannot_be_read_reaches_the_status_endpoint(
+    session: Session,
+) -> None:
+    """Excludes: a captured pick counted at ingest and reported as nothing.
+
+    The owner was asked what would make him abandon the tool mid-auction and
+    answered *"it loses track of the draft - shows me picks that already
+    happened or misses one"*. This is that failure exactly, and it was driven
+    at PR #104 head ``7a66d4e``::
+
+        POST -> written 1, unrecognised [('player_external_id_unreadable', 1)]
+        GET  -> observations 1  applied 1  pending 0  blocked ()  skipped ()
+                freshness bridge_capture silent: False
+
+    Two records captured, one player on the board, **and every channel a live
+    screen polls reading clean**. ``unrecognised`` reached the ``POST``
+    response only; ``FeedStatus`` carried no such field, and a board polls
+    ``GET``.
+
+    **Reading under which this test passes while the defect is present:** the
+    assertion is not "``observation_count`` went up", which a row stored for
+    any reason would satisfy. It is that the *reason* survives to ``GET``
+    under the name of the field that could not be read, so a fix which stored
+    the row without saying why -- or which said why only on the ingest
+    response -- still fails here.
+    """
+    draft = _short_a_player(session)
+
+    outcome = feed_service.ingest(session, draft).sources[0]
+    assert [(shape.reason, shape.occurrences) for shape in outcome.unrecognised] == [
+        ("player_external_id_unreadable", 1)
+    ], "the ingest-side report is the precondition of this test, not its subject"
+
+    feed_service.apply_observations(session, draft)
+    status = feed_service.feed_status(session, draft)
+
+    assert dict(status.skipped) == {"player_external_id_unreadable": 1}
+    assert status.observation_count == 2
+    assert status.applied_count == 1
+    assert status.pending_count == 0
+
+
+def test_an_unreadable_record_is_never_applied_and_never_pending(session: Session) -> None:
+    """Excludes: surfacing the record by making it an application candidate.
+
+    ``blocked_reason`` was the cheap route and it is wrong for this: a blocked
+    row is still pending, so it is retried on every apply run and would land
+    the moment anything narrowed the block. An id that cannot be read is not
+    going to become readable, so the correct state is permanent.
+
+    Also excludes the *other* cheap route -- ``player_external_id=None`` on an
+    ordinary applicable row -- which round eleven forbade because it makes
+    "supplied and refused" indistinguishable from "never supplied". The
+    distinction survives here in ``skipped_reason``, which names the field.
+    """
+    draft = _short_a_player(session)
+    feed_service.ingest(session, draft)
+    feed_service.apply_observations(session, draft)
+
+    rows = feed_service.load_observations(session, draft)
+    unreadable = [row for row in rows if row.skipped_reason == "player_external_id_unreadable"]
+    assert len(unreadable) == 1
+    row = unreadable[0]
+    assert row.applied_event_sequence is None
+    assert row.blocked_reason is None
+    assert row.player_external_id is None, "an id we could not read must not be stored as one"
+    assert row.player_label is None, (
+        "a name on a record whose identity we refused is a claim we cannot make, "
+        "and withholding it is what keeps the row out of identity matching"
+    )
+    assert row.team_external_id == "t2", "the seat was readable and is diagnostic"
+
+    # A second apply run must not resurrect it.
+    again = feed_service.apply_observations(session, draft)
+    assert all(event.observation_id != row.id for event in again.applied)
+    assert all(observation_id != row.id for observation_id, _reason in again.skipped)
+    assert feed_service.feed_status(session, draft).pending_count == 0
+
+
+def test_an_unreadable_record_does_not_join_identity_matching(session: Session) -> None:
+    """Excludes: a record we could not identify being matched to a player.
+
+    A skipped row still carries whatever the payload said, and the explicit
+    ``playerName`` here is readable. If that label reached
+    :func:`~hoops_gm.draft.feed.observations.matching_key`, the row would
+    become a one-sided reading of Jokic in the reconciliation report -- a claim
+    about a player, made out of a record whose own identity field this module
+    refused. It would also count toward ``instant_count``, and
+    ``freshness_of`` lets contact suppress ``silent`` only for a transport that
+    has produced at least one instant, so a feed that had read *no* picks could
+    report itself not silent on the strength of a record it could not read.
+
+    That second half is the assertion that would have caught the round-thirteen
+    transcript's ``freshness bridge_capture silent: False``.
+    """
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p-jokic", "playerName": JOKIC, "overallPick": 1},
+            {"teamId": "t2", "playerId": UNREADABLE_ID, "playerName": EDWARDS, "overallPick": 2},
+        ],
+        dedupe_key="not-a-player-claim",
+    )
+    feed_service.ingest(session, draft)
+
+    status = feed_service.feed_status(session, draft)
+    assert status.reconciliation is not None
+    assert [instant.player_label for instant in status.reconciliation.only_left] == [JOKIC], (
+        "the refused record must not appear as a reading about Anthony Edwards"
+    )
+    bridge = next(
+        entry for entry in status.freshness if entry.transport is SourceTransport.BRIDGE_CAPTURE
+    )
+    assert bridge.instant_count == 1
+
+
+def test_a_record_with_no_readable_identity_at_all_is_still_surfaced(session: Session) -> None:
+    """Excludes: the same silence returning when there is no name to fall back on.
+
+    The previous tests all leave a readable ``playerName`` on the unreadable
+    record, so a fix that only stored rows which still named *something* would
+    pass them. This record names nothing this module will accept: the id is
+    over the column and the only name key present is ``name``, which
+    :data:`AMBIGUOUS_NAME_ALIASES` classifies as a key a *team* object also
+    carries -- and :func:`_player_label`'s fallback to it is documented as safe
+    only once ``_player_identity`` has succeeded, which here it has not.
+
+    So the row names no player, which is what the ``feed_names_a_player``
+    CHECK forbade. Migration ``0021`` admits it **only** when a
+    ``skipped_reason`` says why, which keeps the invariant that anything
+    applicable names a player.
+    """
+    league = _league(session, draft_type=DraftType.SNAKE)
+    teams = _teams(session, league, ["t1", "t2"])
+    draft = _draft(session, league, teams)
+    _capture(
+        session,
+        records=[
+            {"teamId": "t1", "playerId": "p-jokic", "playerName": JOKIC, "overallPick": 1},
+            {"teamId": "t2", "playerId": UNREADABLE_ID, "name": "Seat Two", "overallPick": 2},
+        ],
+        dedupe_key="no-identity-at-all",
+    )
+
+    outcome = feed_service.ingest(session, draft).sources[0]
+    assert outcome.observations_rejected == 0, (
+        "a row the storage layer refuses is the silence this unit exists to remove"
+    )
+
+    status = feed_service.feed_status(session, draft)
+    assert dict(status.skipped) == {"player_external_id_unreadable": 1}
+
+    rows = feed_service.load_observations(session, draft)
+    orphan = next(row for row in rows if row.skipped_reason)
+    assert orphan.player_label is None, (
+        "'name' is ambiguous and the record never established it was about a player"
+    )
+    assert orphan.player_external_id is None
+
+
+def test_the_official_path_surfaces_a_refused_identity_too(session: Session) -> None:
+    """Excludes: the fix holding on one path only.
+
+    Round eight of this unit found three docstrings arguing from a rule that
+    existed on the bridge path alone. ``recognise_official_draft_picks``
+    reaches the same end state by a different route -- ``_as_text`` refuses the
+    over-long ``player_id``, ``player_name`` is absent, and the record was
+    dropped at ``if not (player_external_id or player_label)`` with the loss
+    counted only on the ``POST`` response.
+    """
+    draft = _auction_draft(session)
+
+    class _Official:
+        def get_draft_picks_with_provenance(
+            self, league_id: str, *, max_age: timedelta | None = None
+        ) -> tuple[list[FantraxDraftPick], str, datetime]:
+            return (
+                [
+                    FantraxDraftPick(
+                        team_id="t1",
+                        player_id=UNREADABLE_ID,
+                        player_name=None,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=50.0,
+                    ),
+                    FantraxDraftPick(
+                        team_id="t2",
+                        player_id="p-edwards",
+                        player_name=EDWARDS,
+                        round_number=None,
+                        pick_number=None,
+                        overall_pick=None,
+                        auction_amount=10.0,
+                    ),
+                ],
+                "officialsha-unreadable",
+                NOW,
+            )
+
+    feed_service.ingest(session, draft, client=_Official())
+    feed_service.apply_observations(session, draft)
+
+    status = feed_service.feed_status(session, draft)
+    assert dict(status.skipped) == {"player_external_id_unreadable": 1}
+    assert status.observation_count == 2

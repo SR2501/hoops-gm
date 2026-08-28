@@ -271,6 +271,16 @@ class SourceOutcomeOut(BaseModel):
     #: is counted rather than raised so one bad row does not cost the run.
     observations_rejected: int
     observations_written: int
+    #: Rows this run wrote that record a **refusal** rather than a pick: a
+    #: record whose player identity the recogniser could not read. Included in
+    #: ``observations_written`` and excluded from ``instants_recognised``, so
+    #: the two differ by exactly this on newly-seen artifacts.
+    #:
+    #: These rows exist so a missing pick is visible on ``GET`` rather than
+    #: only here. They are never applied, never reconciled, and never counted
+    #: as the source having produced a reading; ``skipped`` on the status
+    #: response is where a polling board sees them.
+    observations_skipped: int
     observations_already_present: int
     unrecognised: list[UnrecognisedOut]
     scan_truncated: bool
@@ -549,6 +559,7 @@ def ingest_feed(
                 every_instant_coerced=source.every_instant_coerced,
                 observations_rejected=source.observations_rejected,
                 observations_written=source.observations_written,
+                observations_skipped=source.observations_skipped,
                 observations_already_present=source.observations_already_present,
                 unrecognised=[_unrecognised_out(shape) for shape in source.unrecognised],
                 scan_truncated=source.scan_truncated,

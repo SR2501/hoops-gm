@@ -26,6 +26,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
 from hoops_gm.core.config import Settings
@@ -1207,5 +1208,147 @@ def test_a_settings_url_with_a_percent_sign_survives_env_py(
     engine = create_engine(url)
     try:
         assert "players" in set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def _feed_row(**overrides: object) -> dict[str, object]:
+    """One ``draft_feed_observations`` row, written as raw SQL on purpose.
+
+    Going through ``text()`` rather than the ORM means the assertion is about
+    what the *database built by the migration* accepts, which is what runs on
+    the owner's machine. Asserting through the model would be asserting about
+    the model's own copy of the constraint.
+    """
+    row: dict[str, object] = {
+        "draft_id": 1,
+        "transport": "bridge_capture",
+        "artifact_key": "artifact",
+        "locator": "$[0]",
+        "recogniser": "test",
+        "observed_at": "2026-10-18 23:14:00",
+        "kind": "selection",
+        "team_external_id": "t1",
+        "player_label": None,
+        "player_external_id": None,
+        "skipped_reason": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _insert_feed_row(connection: Connection, row: dict[str, object]) -> None:
+    columns = ", ".join(row)
+    values = ", ".join(f":{name}" for name in row)
+    connection.execute(
+        text(f"INSERT INTO draft_feed_observations ({columns}) VALUES ({values})"),
+        row,
+    )
+
+
+def _seed_draft_for_feed(connection: Connection) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO leagues"
+            " (id, name, season, scoring_type, draft_type, is_active, team_count, roster_size)"
+            " VALUES (1, 'l', '2026-27', 'h2h_categories', 'snake', 1, 2, 2)"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO drafts"
+            " (id, league_id, name, is_mock, tool_usage, draft_type, team_count, roster_size)"
+            " VALUES (1, 1, 'd', 1, 'instrumented', 'snake', 2, 2)"
+        )
+    )
+
+
+def test_0021_admits_a_nameless_observation_only_when_it_says_why(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """The widened CHECK, driven in both directions against a real database.
+
+    ``draft-feed-unreadable-id-surfacing``: a record whose player id was
+    present and unreadable used to be dropped, and was reported only on the
+    ``POST`` ingest response — so a board polling ``GET`` was silently short a
+    pick. Recording it needs a row that names nobody, which the original
+    ``feed_names_a_player`` CHECK forbade.
+
+    **The widening has to stay narrow**, and that is what the second half
+    asserts. A nameless row is admitted *only* while it carries a
+    ``skipped_reason``, and the apply pass filters ``pending`` on
+    ``skipped_reason IS NULL`` — so the invariant the CHECK was protecting,
+    that anything which can become a ``draft_events`` entry names a player,
+    survives. Asserting only the first half would pass just as well for a
+    constraint that had been dropped outright.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _seed_draft_for_feed(connection)
+            _insert_feed_row(connection, _feed_row(skipped_reason="player_external_id_unreadable"))
+
+        with engine.begin() as connection:
+            count = connection.execute(
+                text("SELECT COUNT(*) FROM draft_feed_observations")
+            ).scalar_one()
+        assert count == 1
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            _insert_feed_row(connection, _feed_row(locator="$[1]"))
+    finally:
+        engine.dispose()
+
+
+def test_0021_is_reversible_and_takes_only_the_rows_it_permitted(
+    alembic_config: Config, migration_url: str
+) -> None:
+    """Down and up again, with the one data case the downgrade can meet.
+
+    A row written under the wider rule violates the narrower one, so the
+    downgrade deletes exactly those and no others. Driven rather than reasoned:
+    the ``WHERE`` names both halves of the condition, and a row naming a player
+    must survive the round trip.
+    """
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _seed_draft_for_feed(connection)
+            _insert_feed_row(connection, _feed_row(skipped_reason="player_external_id_unreadable"))
+            _insert_feed_row(connection, _feed_row(locator="$[1]", player_label="Nikola Jokic"))
+    finally:
+        engine.dispose()
+
+    command.downgrade(alembic_config, "0020")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            surviving = connection.execute(
+                text("SELECT player_label FROM draft_feed_observations")
+            ).scalars()
+            assert list(surviving) == ["Nikola Jokic"]
+
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            _insert_feed_row(
+                connection,
+                _feed_row(locator="$[2]", skipped_reason="player_external_id_unreadable"),
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(alembic_config, "head")
+
+    engine = create_engine(migration_url)
+    try:
+        with engine.begin() as connection:
+            _insert_feed_row(
+                connection,
+                _feed_row(locator="$[3]", skipped_reason="player_external_id_unreadable"),
+            )
     finally:
         engine.dispose()
